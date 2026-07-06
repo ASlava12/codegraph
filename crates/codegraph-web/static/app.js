@@ -93,6 +93,10 @@ const pathButton = document.querySelector("#pathButton");
 const pathResult = document.querySelector("#pathResult");
 const insightCount = document.querySelector("#insightCount");
 const insightList = document.querySelector("#insightList");
+const insightSeverityInput = document.querySelector("#insightSeverityInput");
+const insightKindInput = document.querySelector("#insightKindInput");
+const insightSearchInput = document.querySelector("#insightSearchInput");
+const insightFilterButton = document.querySelector("#insightFilterButton");
 const kindFilters = document.querySelector("#kindFilters");
 const selectionTitle = document.querySelector("#selectionTitle");
 const selectionBody = document.querySelector("#selectionBody");
@@ -114,6 +118,12 @@ pathButton.addEventListener("click", () => runPathQuery());
 for (const input of [pathFromInput, pathToInput, pathDepthInput, pathEdgeKindInput]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") runPathQuery();
+  });
+}
+insightFilterButton.addEventListener("click", () => loadInsights());
+for (const input of [insightSeverityInput, insightKindInput, insightSearchInput]) {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") loadInsights();
   });
 }
 pagePrevButton.addEventListener("click", () => shiftGraphPage(-1));
@@ -491,6 +501,14 @@ async function loadInsights() {
   state.insightRequest += 1;
   const requestId = state.insightRequest;
   const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
+  const severity = insightSeverityInput.value.trim();
+  const kind = insightKindInput.value.trim();
+  const search = insightSearchInput.value.trim();
+  if (severity) params.set("severity", severity);
+  if (kind) params.set("kind", kind);
+  if (search) params.set("search", search);
+  params.set("limit", "50");
+  insightFilterButton.disabled = true;
 
   try {
     const response = await fetch(`/api/insights?${params.toString()}`);
@@ -505,6 +523,10 @@ async function loadInsights() {
     if (requestId !== state.insightRequest) return;
     state.insightReport = null;
     renderInsights();
+  } finally {
+    if (requestId === state.insightRequest) {
+      insightFilterButton.disabled = false;
+    }
   }
 }
 
@@ -813,18 +835,21 @@ function renderInsights() {
   const sourceInsights = report?.insights || buildClientInsights(state.graph);
   const insights = sourceInsights.slice(0, report ? 50 : 30);
   const total = report?.total ?? insights.length;
+  const severitySummary = renderInsightSeveritySummary(report);
 
   insightCount.textContent = String(total);
   if (insights.length === 0) {
     insightList.innerHTML = report
-      ? '<p class="empty">No obvious issues in the project.</p>'
+      ? `${severitySummary}<p class="empty">No matching insights.</p>`
       : '<p class="empty">No obvious issues in the visible graph.</p>';
     return;
   }
 
-  insightList.innerHTML = insights
-    .map(
-      (insight, index) => `
+  insightList.innerHTML =
+    severitySummary +
+    insights
+      .map(
+        (insight, index) => `
         <button class="insight ${escapeHtml(insight.severity)}" type="button" data-insight-index="${index}">
           <span>
             <strong>${escapeHtml(formatKind(insight.kind))}</strong>
@@ -832,8 +857,8 @@ function renderInsights() {
           </span>
         </button>
       `,
-    )
-    .join("");
+      )
+      .join("");
 
   insightList.querySelectorAll(".insight").forEach((button) => {
     button.addEventListener("click", () => {
@@ -841,6 +866,17 @@ function renderInsights() {
       if (insight) focusInsight(insight);
     });
   });
+}
+
+function renderInsightSeveritySummary(report) {
+  if (!report?.by_severity) return "";
+  const rows = ["error", "warning", "info"]
+    .map((severity) => {
+      const count = report.by_severity[severity] || 0;
+      return `<span class="${severity}">${escapeHtml(formatKind(severity))}: ${count}</span>`;
+    })
+    .join("");
+  return `<div class="insight-summary">${rows}</div>`;
 }
 
 function insightNodeId(insight) {

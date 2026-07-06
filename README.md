@@ -36,6 +36,7 @@ Implemented now:
 - Web path navigation for finding, focusing, and visually highlighting dependency paths between graph nodes.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
 - Server-backed web insights for project-wide findings while browsing paged graph slices.
+- Server-side insight filters for severity, kind, search, and capped agent/UI reads.
 - Insight focus API and web interaction for turning findings into focused graph views.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
@@ -168,6 +169,7 @@ curl 'http://127.0.0.1:3765/api/focus?path=.&node_ids=1,2&edge_indexes=0&edge_li
 curl 'http://127.0.0.1:3765/api/summary?path=.'
 curl 'http://127.0.0.1:3765/api/entrypoints?path=.'
 curl 'http://127.0.0.1:3765/api/insights?path=.'
+curl 'http://127.0.0.1:3765/api/insights?path=.&severity=warning&kind=dependency&limit=25'
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=nodes kind:function label:main'

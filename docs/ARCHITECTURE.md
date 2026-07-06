@@ -103,7 +103,7 @@ Responsibilities:
 - provide JSON, DOT, and NDJSON export endpoints
 - provide async scan job endpoints and SSE status streams for long-running scans
 - provide summary, entrypoint, and trace endpoints
-- provide investigation insight endpoints
+- provide investigation insight endpoints with severity, kind, search, and limit filters
 - provide graph query endpoints
 - provide graph slice endpoints with server-side paging and filtering
 - provide node context endpoints for paged detail exploration
