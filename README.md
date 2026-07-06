@@ -16,6 +16,7 @@ Implemented now:
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, PHP, and Bash.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
 - Manifest-defined entrypoints from Cargo, npm, Python, and Composer project metadata.
+- Resolved manifest entrypoint targets for common file paths, command paths, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
 - Manifest dependency extraction from Cargo, npm, Go, Python, and Composer projects.
 - Heuristic config reads, environment reads, and potential error/exception constructs.
@@ -183,6 +184,10 @@ build dependency data when the manifest format exposes that distinction.
 Manifest entrypoints are represented as `entrypoint` nodes linked from the
 repository root with exact `entrypoint` edges. Examples include Cargo binaries,
 npm scripts, Python project scripts, Composer scripts, and Composer binaries.
+When a manifest target can be mapped back to code, the entrypoint node also
+emits `references` edges with metadata such as `relation=entrypoint_file` or
+`relation=entrypoint_function`; traces follow these edges before continuing into
+regular call, import, config, environment, dependency, and error-flow edges.
 
 ## Workspace
 

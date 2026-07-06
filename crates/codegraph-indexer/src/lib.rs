@@ -27,8 +27,10 @@ pub struct IndexOptions {
 struct IndexContext {
     graph: CodeGraph,
     function_symbols: BTreeMap<String, Vec<NodeId>>,
+    file_nodes: BTreeMap<String, NodeId>,
     external_dependencies: BTreeMap<String, NodeId>,
     pending_calls: Vec<PendingCall>,
+    pending_entrypoint_targets: Vec<PendingEntrypointTarget>,
 }
 
 struct PendingCall {
@@ -36,6 +38,22 @@ struct PendingCall {
     label: String,
     span: SourceSpan,
     language: String,
+}
+
+struct PendingEntrypointTarget {
+    entrypoint: NodeId,
+    manifest_label: String,
+    target: String,
+    ecosystem: String,
+    entrypoint_kind: String,
+}
+
+struct EntrypointTargetCandidate {
+    path: String,
+    symbol: Option<String>,
+    file_confidence: Confidence,
+    function_confidence: Confidence,
+    resolution: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,8 +94,10 @@ pub fn scan_project(
     let mut context = IndexContext {
         graph: CodeGraph::new(root_label),
         function_symbols: BTreeMap::new(),
+        file_nodes: BTreeMap::new(),
         external_dependencies: BTreeMap::new(),
         pending_calls: Vec::new(),
+        pending_entrypoint_targets: Vec::new(),
     };
 
     for entry in WalkDir::new(root)
@@ -116,6 +136,7 @@ pub fn scan_project(
     }
 
     resolve_pending_calls(&mut context);
+    resolve_pending_entrypoint_targets(&mut context);
 
     Ok(context.graph)
 }
@@ -139,6 +160,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
     let file_id = context
         .graph
         .add_node_with_metadata(NodeKind::File, label, None, metadata);
+    context.file_nodes.insert(label.to_string(), file_id);
     context.graph.add_edge(
         context.graph.root,
         file_id,
@@ -147,7 +169,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
     );
 
     if let Ok(source) = fs::read_to_string(path) {
-        index_manifest_facts(context, file_id, path, &source);
+        index_manifest_facts(context, file_id, path, label, &source);
     }
 
     if let Some((language, parse_result)) = parse_result {
@@ -288,9 +310,15 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
     }
 }
 
-fn index_manifest_facts(context: &mut IndexContext, file_id: NodeId, path: &Path, source: &str) {
+fn index_manifest_facts(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
     index_manifest_dependencies(context, file_id, path, source);
-    index_manifest_entrypoints(context, file_id, path, source);
+    index_manifest_entrypoints(context, file_id, path, label, source);
 }
 
 fn index_manifest_dependencies(
@@ -342,16 +370,17 @@ fn index_manifest_entrypoints(
     context: &mut IndexContext,
     file_id: NodeId,
     path: &Path,
+    label: &str,
     source: &str,
 ) {
     for entrypoint in manifest_entrypoints(path, source) {
         let mut metadata = BTreeMap::new();
         metadata.insert("item_kind".to_string(), "manifest_entrypoint".to_string());
-        metadata.insert("entrypoint_kind".to_string(), entrypoint.kind);
-        metadata.insert("ecosystem".to_string(), entrypoint.ecosystem);
+        metadata.insert("entrypoint_kind".to_string(), entrypoint.kind.clone());
+        metadata.insert("ecosystem".to_string(), entrypoint.ecosystem.clone());
         metadata.insert("source".to_string(), "manifest".to_string());
-        if let Some(target) = entrypoint.target {
-            metadata.insert("target".to_string(), target);
+        if let Some(target) = entrypoint.target.as_deref() {
+            metadata.insert("target".to_string(), target.to_string());
         }
 
         let entrypoint_id = context.graph.add_node_with_metadata(
@@ -375,6 +404,17 @@ fn index_manifest_entrypoints(
             EdgeKind::Entrypoint,
             Confidence::Exact,
         );
+        if let Some(target) = entrypoint.target {
+            context
+                .pending_entrypoint_targets
+                .push(PendingEntrypointTarget {
+                    entrypoint: entrypoint_id,
+                    manifest_label: label.to_string(),
+                    target,
+                    ecosystem: entrypoint.ecosystem,
+                    entrypoint_kind: entrypoint.kind,
+                });
+        }
     }
 }
 
@@ -911,6 +951,306 @@ fn resolve_pending_calls(context: &mut IndexContext) {
     }
 }
 
+fn resolve_pending_entrypoint_targets(context: &mut IndexContext) {
+    let pending_targets = std::mem::take(&mut context.pending_entrypoint_targets);
+
+    for pending in pending_targets {
+        for candidate in entrypoint_target_candidates(&pending) {
+            if let Some(file_id) = context.file_nodes.get(&candidate.path).copied() {
+                add_entrypoint_reference(
+                    &mut context.graph,
+                    pending.entrypoint,
+                    file_id,
+                    "entrypoint_file",
+                    candidate.resolution,
+                    candidate.file_confidence,
+                    None,
+                );
+            }
+
+            let Some(symbol) = candidate.symbol.as_deref() else {
+                continue;
+            };
+            let function_targets =
+                function_targets_in_file(&context.graph, &candidate.path, symbol);
+            for target in function_targets {
+                add_entrypoint_reference(
+                    &mut context.graph,
+                    pending.entrypoint,
+                    target,
+                    "entrypoint_function",
+                    candidate.resolution,
+                    candidate.function_confidence,
+                    Some(symbol),
+                );
+            }
+        }
+    }
+}
+
+fn entrypoint_target_candidates(
+    pending: &PendingEntrypointTarget,
+) -> Vec<EntrypointTargetCandidate> {
+    match pending.ecosystem.as_str() {
+        "cargo" => manifest_path_candidate(
+            pending,
+            &pending.target,
+            Some("main".to_string()),
+            Confidence::Exact,
+            Confidence::Syntactic,
+            "manifest_path",
+        )
+        .into_iter()
+        .collect(),
+        "python" => python_entrypoint_candidates(pending),
+        "npm" => command_path_candidate(pending)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "command_path",
+            })
+            .into_iter()
+            .collect(),
+        "composer" if pending.entrypoint_kind == "binary" => manifest_path_candidate(
+            pending,
+            &pending.target,
+            None,
+            Confidence::Exact,
+            Confidence::Exact,
+            "manifest_path",
+        )
+        .into_iter()
+        .collect(),
+        "composer" => command_path_candidate(pending)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "command_path",
+            })
+            .into_iter()
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn manifest_path_candidate(
+    pending: &PendingEntrypointTarget,
+    target: &str,
+    symbol: Option<String>,
+    file_confidence: Confidence,
+    function_confidence: Confidence,
+    resolution: &'static str,
+) -> Option<EntrypointTargetCandidate> {
+    normalize_manifest_relative_path(&pending.manifest_label, target).map(|path| {
+        EntrypointTargetCandidate {
+            path,
+            symbol,
+            file_confidence,
+            function_confidence,
+            resolution,
+        }
+    })
+}
+
+fn python_entrypoint_candidates(
+    pending: &PendingEntrypointTarget,
+) -> Vec<EntrypointTargetCandidate> {
+    let Some((module, symbol)) = pending.target.split_once(':') else {
+        return Vec::new();
+    };
+    let module = module.trim();
+    let symbol = simple_symbol_name(symbol.trim());
+    if module.is_empty() || symbol.is_empty() {
+        return Vec::new();
+    }
+
+    let module_path = module.replace('.', "/");
+    [
+        format!("{module_path}.py"),
+        format!("{module_path}/__init__.py"),
+    ]
+    .into_iter()
+    .filter_map(|path| {
+        manifest_path_candidate(
+            pending,
+            &path,
+            Some(symbol.clone()),
+            Confidence::Heuristic,
+            Confidence::Heuristic,
+            "python_module",
+        )
+    })
+    .collect()
+}
+
+fn command_path_candidate(pending: &PendingEntrypointTarget) -> Option<String> {
+    command_source_path_candidate(&pending.target)
+        .and_then(|path| normalize_manifest_relative_path(&pending.manifest_label, &path))
+}
+
+fn command_source_path_candidate(command: &str) -> Option<String> {
+    split_command_tokens(command)
+        .into_iter()
+        .find(|token| is_command_path_candidate(token))
+}
+
+fn split_command_tokens(command: &str) -> Vec<String> {
+    command
+        .split(|character: char| {
+            character.is_whitespace() || matches!(character, '"' | '\'' | '`' | ';' | '&' | '|')
+        })
+        .filter_map(clean_command_token)
+        .collect()
+}
+
+fn clean_command_token(token: &str) -> Option<String> {
+    let token = token
+        .trim()
+        .trim_matches(|character: char| matches!(character, '(' | ')' | '[' | ']' | '{' | '}'))
+        .trim_matches(|character: char| matches!(character, ',' | ':'));
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
+}
+
+fn is_command_path_candidate(token: &str) -> bool {
+    if token.starts_with('-')
+        || token.starts_with('$')
+        || token.contains("://")
+        || token.contains('=')
+        || token.contains('*')
+    {
+        return false;
+    }
+    token.contains('/') || has_known_source_extension(token)
+}
+
+fn has_known_source_extension(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension,
+                "rs" | "py"
+                    | "pyw"
+                    | "js"
+                    | "mjs"
+                    | "cjs"
+                    | "ts"
+                    | "mts"
+                    | "cts"
+                    | "tsx"
+                    | "go"
+                    | "c"
+                    | "h"
+                    | "cc"
+                    | "cpp"
+                    | "cxx"
+                    | "hpp"
+                    | "hh"
+                    | "hxx"
+                    | "php"
+                    | "phtml"
+                    | "sh"
+                    | "bash"
+                    | "zsh"
+                    | "ksh"
+            )
+        })
+}
+
+fn normalize_manifest_relative_path(manifest_label: &str, target: &str) -> Option<String> {
+    let target = target.trim().trim_matches('"').trim_matches('\'');
+    if target.is_empty()
+        || target.starts_with('-')
+        || target.starts_with('$')
+        || target.contains("://")
+    {
+        return None;
+    }
+    let target_path = Path::new(target);
+    if target_path.is_absolute() {
+        return None;
+    }
+
+    let base = Path::new(manifest_label)
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    let joined = base.map_or_else(|| PathBuf::from(target), |base| base.join(target));
+    normalize_relative_path(&joined)
+}
+
+fn normalize_relative_path(path: &Path) -> Option<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => parts.push(part.to_string_lossy().to_string()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                parts.pop()?;
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => return None,
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
+}
+
+fn function_targets_in_file(graph: &CodeGraph, path: &str, symbol: &str) -> Vec<NodeId> {
+    graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == NodeKind::Function
+                && node.span.as_ref().is_some_and(|span| span.path == path)
+                && function_symbol_matches(&node.label, symbol)
+        })
+        .map(|node| node.id)
+        .collect()
+}
+
+fn function_symbol_matches(label: &str, symbol: &str) -> bool {
+    symbol_keys(label)
+        .into_iter()
+        .any(|key| key == symbol || simple_symbol_name(&key) == symbol)
+}
+
+fn add_entrypoint_reference(
+    graph: &mut CodeGraph,
+    source: NodeId,
+    target: NodeId,
+    relation: &str,
+    resolution: &str,
+    confidence: Confidence,
+    target_symbol: Option<&str>,
+) {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("relation".to_string(), relation.to_string());
+    metadata.insert("source".to_string(), "manifest".to_string());
+    metadata.insert("resolution".to_string(), resolution.to_string());
+    if let Some(target_symbol) = target_symbol {
+        metadata.insert("target_symbol".to_string(), target_symbol.to_string());
+    }
+    add_edge_once_with_metadata(
+        graph,
+        source,
+        target,
+        EdgeKind::References,
+        confidence,
+        metadata,
+    );
+}
+
 fn register_function_symbol(symbols: &mut BTreeMap<String, Vec<NodeId>>, label: &str, id: NodeId) {
     for key in symbol_keys(label) {
         let values = symbols.entry(key).or_default();
@@ -1356,7 +1696,30 @@ dependencies = ["pydantic>=2"]
     fn scan_project_adds_manifest_entrypoint_edges() {
         let root = temp_project_root();
         fs::create_dir_all(root.join("src")).unwrap();
-        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        fs::create_dir_all(root.join("src").join("bin")).unwrap();
+        fs::create_dir_all(root.join("codegraph")).unwrap();
+        fs::create_dir_all(root.join("bin")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() { helper(); }\nfn helper() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("bin").join("worker.rs"),
+            "fn main() {}\n",
+        )
+        .unwrap();
+        fs::write(root.join("src").join("index.js"), "console.log('start');\n").unwrap();
+        fs::write(
+            root.join("codegraph").join("cli.py"),
+            "def main():\n    pass\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("bin").join("codegraph"),
+            "#!/usr/bin/env php\n<?php\n",
+        )
+        .unwrap();
         fs::write(
             root.join("Cargo.toml"),
             r#"[package]
@@ -1427,8 +1790,95 @@ cg = "codegraph.cli:main"
                     .get("target")
                     .is_some_and(|value| value == "node src/index.js")
         }));
+        let cargo_entrypoint = node_id(&graph, NodeKind::Entrypoint, "cargo bin:demo");
+        let cargo_file = node_id(&graph, NodeKind::File, "src/main.rs");
+        let cargo_main = function_id_in_file(&graph, "main", "src/main.rs");
+        let npm_entrypoint = node_id(&graph, NodeKind::Entrypoint, "npm script:start");
+        let npm_file = node_id(&graph, NodeKind::File, "src/index.js");
+        let python_entrypoint = node_id(&graph, NodeKind::Entrypoint, "python console_script:cg");
+        let python_main = function_id_in_file(&graph, "main", "codegraph/cli.py");
+        let composer_entrypoint =
+            node_id(&graph, NodeKind::Entrypoint, "composer bin:bin/codegraph");
+        let composer_file = node_id(&graph, NodeKind::File, "bin/codegraph");
+
+        assert!(has_entrypoint_reference(
+            &graph,
+            cargo_entrypoint,
+            cargo_file,
+            "entrypoint_file",
+            Confidence::Exact,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            cargo_entrypoint,
+            cargo_main,
+            "entrypoint_function",
+            Confidence::Syntactic,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            npm_entrypoint,
+            npm_file,
+            "entrypoint_file",
+            Confidence::Heuristic,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            python_entrypoint,
+            python_main,
+            "entrypoint_function",
+            Confidence::Heuristic,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            composer_entrypoint,
+            composer_file,
+            "entrypoint_file",
+            Confidence::Exact,
+        ));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn node_id(graph: &CodeGraph, kind: NodeKind, label: &str) -> NodeId {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == kind && node.label == label)
+            .map(|node| node.id)
+            .unwrap_or_else(|| panic!("missing {kind:?} node `{label}`"))
+    }
+
+    fn function_id_in_file(graph: &CodeGraph, label: &str, path: &str) -> NodeId {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == NodeKind::Function
+                    && node.label == label
+                    && node.span.as_ref().is_some_and(|span| span.path == path)
+            })
+            .map(|node| node.id)
+            .unwrap_or_else(|| panic!("missing function `{label}` in `{path}`"))
+    }
+
+    fn has_entrypoint_reference(
+        graph: &CodeGraph,
+        source: NodeId,
+        target: NodeId,
+        relation: &str,
+        confidence: Confidence,
+    ) -> bool {
+        graph.edges.iter().any(|edge| {
+            edge.source == source
+                && edge.target == target
+                && edge.kind == EdgeKind::References
+                && edge.confidence == confidence
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == relation)
+        })
     }
 
     fn temp_project_root() -> PathBuf {

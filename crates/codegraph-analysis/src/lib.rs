@@ -726,7 +726,14 @@ fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) 
     let called: BTreeSet<NodeId> = graph
         .edges
         .iter()
-        .filter(|edge| edge.kind == EdgeKind::Calls)
+        .filter(|edge| {
+            edge.kind == EdgeKind::Calls
+                || (edge.kind == EdgeKind::References
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|relation| relation == "entrypoint_function"))
+        })
         .map(|edge| edge.target)
         .collect();
 
@@ -1111,6 +1118,7 @@ fn is_trace_edge(kind: &EdgeKind) -> bool {
     matches!(
         kind,
         EdgeKind::Calls
+            | EdgeKind::References
             | EdgeKind::Imports
             | EdgeKind::ReadsConfig
             | EdgeKind::ReadsEnvironment
@@ -1240,6 +1248,33 @@ mod tests {
     }
 
     #[test]
+    fn trace_follows_entrypoint_reference_edges() {
+        let mut graph = CodeGraph::new("repo");
+        let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        graph.add_edge_with_metadata(
+            entrypoint,
+            main,
+            EdgeKind::References,
+            Confidence::Syntactic,
+            BTreeMap::from([("relation".to_string(), "entrypoint_function".to_string())]),
+        );
+
+        let result = trace(
+            &graph,
+            TraceRequest {
+                start: TraceStart::Label("cargo bin:demo".to_string()),
+                max_depth: 1,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.nodes.len(), 2);
+        assert_eq!(result.edges.len(), 1);
+        assert!(result.nodes.iter().any(|node| node.node.id == main));
+    }
+
+    #[test]
     fn query_filters_nodes_by_kind_label_and_metadata() {
         let mut graph = CodeGraph::new("repo");
         let mut metadata = BTreeMap::new();
@@ -1316,6 +1351,30 @@ mod tests {
                 .iter()
                 .any(|insight| insight.kind == "unresolved_call")
         );
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "orphan_function" && insight.nodes.contains(&orphan)
+        }));
+    }
+
+    #[test]
+    fn insights_do_not_report_manifest_referenced_functions_as_orphans() {
+        let mut graph = CodeGraph::new("repo");
+        let entrypoint = graph.add_node(NodeKind::Entrypoint, "python console_script:cg");
+        let referenced = graph.add_node(NodeKind::Function, "main");
+        let orphan = graph.add_node(NodeKind::Function, "unused");
+        graph.add_edge_with_metadata(
+            entrypoint,
+            referenced,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([("relation".to_string(), "entrypoint_function".to_string())]),
+        );
+
+        let report = insights(&graph);
+
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "orphan_function" && insight.nodes.contains(&referenced)
+        }));
         assert!(report.insights.iter().any(|insight| {
             insight.kind == "orphan_function" && insight.nodes.contains(&orphan)
         }));

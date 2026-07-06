@@ -33,6 +33,7 @@ Goal: extract language-independent structure from source files.
 - [x] Detect config and environment reads.
 - [x] Detect basic error/exception constructs.
 - [x] Detect manifest-defined entrypoints from project metadata.
+- [x] Resolve manifest entrypoints to target files and functions where possible.
 - Add graph export formats:
   - [x] JSON
   - [x] DOT/Graphviz

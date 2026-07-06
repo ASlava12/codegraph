@@ -481,7 +481,13 @@ function buildClientInsights(graph) {
     graph.edges.filter((edge) => edge.kind === "entrypoint").map((edge) => edge.target),
   );
   const calledIds = new Set(
-    graph.edges.filter((edge) => edge.kind === "calls").map((edge) => edge.target),
+    graph.edges
+      .filter(
+        (edge) =>
+          edge.kind === "calls" ||
+          (edge.kind === "references" && edge.metadata?.relation === "entrypoint_function"),
+      )
+      .map((edge) => edge.target),
   );
 
   graph.nodes.forEach((node) => {
@@ -1291,6 +1297,8 @@ function edgeColor(edge) {
       return "rgba(242, 193, 78, 0.72)";
     case "entrypoint":
       return "rgba(92, 200, 167, 0.82)";
+    case "references":
+      return "rgba(103, 183, 220, 0.58)";
     case "imports":
       return "rgba(184, 142, 230, 0.5)";
     case "depends_on":
