@@ -6,7 +6,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
-    TraceRequest, TraceStart, entrypoints, export_dot, export_ndjson, insights, summarize, trace,
+    TraceRequest, TraceStart, entrypoints, export_dot, export_ndjson, insights, query_graph,
+    summarize, trace,
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
@@ -77,6 +78,12 @@ struct TraceQuery {
     label: Option<String>,
     node_id: Option<u64>,
     depth: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphQuery {
+    path: Option<PathBuf>,
+    q: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -194,6 +201,7 @@ async fn main() -> Result<()> {
         .route("/api/summary", get(summary))
         .route("/api/entrypoints", get(entrypoints_api))
         .route("/api/insights", get(insights_api))
+        .route("/api/query", get(query_api))
         .route("/api/trace", get(trace_api))
         .route("/api/source", get(source))
         .fallback(not_found)
@@ -410,6 +418,16 @@ async fn insights_api(
 ) -> Result<Json<codegraph_analysis::InsightReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(insights(&graph)))
+}
+
+async fn query_api(
+    State(state): State<AppState>,
+    Query(query): Query<GraphQuery>,
+) -> Result<Json<codegraph_analysis::QueryResult>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let result =
+        query_graph(&graph, &query.q).map_err(|error| ApiError::bad_request(error.to_string()))?;
+    Ok(Json(result))
 }
 
 async fn trace_api(

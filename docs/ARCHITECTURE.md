@@ -34,6 +34,7 @@ It currently builds file, symbol, import, call, config, environment, error-flow,
 - outgoing dependency traces
 - investigation insights
 - dependency consistency checks
+- graph query results for agent and API clients
 - DOT and NDJSON exports
 
 This crate is shared by the CLI and server so humans, UI features, and agents receive the same structured answers.
@@ -90,6 +91,7 @@ Responsibilities:
 - provide async scan job endpoints for long-running scans
 - provide summary, entrypoint, and trace endpoints
 - provide investigation insight endpoints
+- provide graph query endpoints
 - provide source preview endpoints for graph spans
 - provide export endpoints for Graphviz DOT and NDJSON
 - constrain scan paths to a configured root by default

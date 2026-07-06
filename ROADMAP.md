@@ -79,6 +79,7 @@ Goal: answer practical code investigation questions.
 - [x] Add investigation insights for unresolved calls, parse/syntax issues, duplicate labels, orphan functions, and error-flow facts.
 - [x] Detect package manifest dependency boundaries.
 - [x] Detect external imports that are missing declared manifest dependencies.
+- [x] Add first graph query language for nodes, edges, calls, dependencies, and traces.
 - Add richer query language.
 
 Example commands:

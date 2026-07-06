@@ -24,13 +24,13 @@ Implemented now:
 - Source preview API and UI panel for graph nodes with source spans.
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
+- Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Dependency consistency insights for external imports that are not backed by declared manifest dependencies.
 
 Planned next:
 
-- Graph query commands.
 - Better graph layout and path-aware navigation.
 - Graph queries for humans and agents.
 - Production hardening for large repositories.
@@ -66,6 +66,15 @@ List investigation insights:
 
 ```bash
 cargo run -p codegraph-cli -- insights .
+```
+
+Query focused graph slices:
+
+```bash
+cargo run -p codegraph-cli -- query 'nodes kind:function label:main' .
+cargo run -p codegraph-cli -- query 'edges kind:calls source:main' .
+cargo run -p codegraph-cli -- query 'calls(function:main)' .
+cargo run -p codegraph-cli -- query 'trace label:main depth:3' .
 ```
 
 Trace outgoing dependencies from a label:
@@ -129,6 +138,9 @@ Analysis APIs:
 curl 'http://127.0.0.1:3765/api/summary?path=.'
 curl 'http://127.0.0.1:3765/api/entrypoints?path=.'
 curl 'http://127.0.0.1:3765/api/insights?path=.'
+curl --get 'http://127.0.0.1:3765/api/query' \
+  --data-urlencode 'path=.' \
+  --data-urlencode 'q=nodes kind:function label:main'
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
 ```
 

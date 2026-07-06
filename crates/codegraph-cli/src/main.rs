@@ -1,6 +1,8 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use codegraph_analysis::{TraceRequest, TraceStart, entrypoints, insights, summarize, trace};
+use codegraph_analysis::{
+    TraceRequest, TraceStart, entrypoints, insights, query_graph, summarize, trace,
+};
 use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{IndexOptions, scan_project};
 use std::path::PathBuf;
@@ -42,6 +44,24 @@ enum Command {
 
     /// Emit investigation insights such as unresolved calls and error flows.
     Insights(ScanArgs),
+
+    /// Query focused graph slices as JSON.
+    Query {
+        /// Query expression, for example: nodes kind:function label:main.
+        expression: String,
+
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+    },
 
     /// Trace outgoing code-flow dependencies from a node label.
     Trace {
@@ -112,6 +132,18 @@ fn main() -> Result<()> {
         Command::Insights(args) => {
             let graph = scan_with_options(args.path, args.include_hidden, args.include_ignored)?;
             println!("{}", serde_json::to_string_pretty(&insights(&graph))?);
+        }
+        Command::Query {
+            expression,
+            path,
+            include_hidden,
+            include_ignored,
+        } => {
+            let graph = scan_with_options(path, include_hidden, include_ignored)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&query_graph(&graph, &expression)?)?
+            );
         }
         Command::Trace {
             label,

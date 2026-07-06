@@ -2,6 +2,7 @@ use codegraph_core::{CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphSummary {
@@ -40,6 +41,37 @@ pub struct TraceNode {
     pub node: Node,
     pub depth: usize,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueryResult {
+    pub query: String,
+    pub nodes: Vec<Node>,
+    pub edges: Vec<Edge>,
+    pub total_nodes: usize,
+    pub total_edges: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryError {
+    message: String,
+}
+
+impl QueryError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for QueryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for QueryError {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InsightReport {
@@ -253,6 +285,363 @@ pub fn trace(graph: &CodeGraph, request: TraceRequest) -> Option<TraceResult> {
         edges,
         truncated,
     })
+}
+
+pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, QueryError> {
+    let spec = QuerySpec::parse(expression)?;
+    match spec.command.as_str() {
+        "nodes" | "node" => query_nodes(graph, spec),
+        "edges" | "edge" => query_edges(graph, spec, None),
+        "calls" | "call" => query_edges(graph, spec, Some(EdgeKind::Calls)),
+        "dependencies" | "depends" => query_edges(graph, spec, Some(EdgeKind::DependsOn)),
+        "trace" => query_trace(graph, spec),
+        other => Err(QueryError::new(format!(
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, or trace"
+        ))),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QuerySpec {
+    original: String,
+    command: String,
+    terms: BTreeMap<String, String>,
+    positional: Vec<String>,
+    limit: usize,
+}
+
+impl QuerySpec {
+    fn parse(expression: &str) -> Result<Self, QueryError> {
+        let original = expression.trim();
+        if original.is_empty() {
+            return Err(QueryError::new("query expression is empty"));
+        }
+
+        if let Some(spec) = parse_call_expression(original)? {
+            return Ok(spec);
+        }
+
+        let tokens = split_query_tokens(original)?;
+        let Some(command) = tokens.first() else {
+            return Err(QueryError::new("query expression is empty"));
+        };
+
+        let mut terms = BTreeMap::new();
+        let mut positional = Vec::new();
+        let mut limit = 100;
+        for token in tokens.iter().skip(1) {
+            if let Some((key, value)) = token.split_once(':') {
+                let key = key.trim().to_ascii_lowercase();
+                let value = value.trim().to_string();
+                if key.is_empty() || value.is_empty() {
+                    return Err(QueryError::new(format!("invalid query token `{token}`")));
+                }
+                if key == "limit" {
+                    limit = parse_limit(&value)?;
+                } else {
+                    terms.insert(key, value);
+                }
+            } else {
+                positional.push(token.clone());
+            }
+        }
+
+        Ok(Self {
+            original: original.to_string(),
+            command: command.to_ascii_lowercase(),
+            terms,
+            positional,
+            limit,
+        })
+    }
+}
+
+fn parse_call_expression(expression: &str) -> Result<Option<QuerySpec>, QueryError> {
+    let Some(rest) = expression.strip_prefix("calls(") else {
+        return Ok(None);
+    };
+    let Some(inner) = rest.strip_suffix(')') else {
+        return Err(QueryError::new("calls(...) query is missing closing `)`"));
+    };
+    let mut terms = BTreeMap::new();
+    for token in inner.split_whitespace() {
+        let Some((key, value)) = token.split_once(':') else {
+            return Err(QueryError::new(format!(
+                "invalid calls(...) token `{token}`"
+            )));
+        };
+        let key = match key {
+            "function" => "source",
+            other => other,
+        };
+        terms.insert(key.to_ascii_lowercase(), value.to_string());
+    }
+    Ok(Some(QuerySpec {
+        original: expression.to_string(),
+        command: "calls".to_string(),
+        terms,
+        positional: Vec::new(),
+        limit: 100,
+    }))
+}
+
+fn query_nodes(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    validate_node_terms(&spec)?;
+    let matched: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| node_matches(node, &spec.terms))
+        .cloned()
+        .collect();
+    let total_nodes = matched.len();
+    let nodes = matched.into_iter().take(spec.limit).collect();
+
+    Ok(QueryResult {
+        query: spec.original,
+        nodes,
+        edges: Vec::new(),
+        total_nodes,
+        total_edges: 0,
+        truncated: total_nodes > spec.limit,
+    })
+}
+
+fn query_edges(
+    graph: &CodeGraph,
+    mut spec: QuerySpec,
+    fixed_kind: Option<EdgeKind>,
+) -> Result<QueryResult, QueryError> {
+    if let Some(kind) = fixed_kind {
+        spec.terms.insert("kind".to_string(), edge_kind_name(&kind));
+    }
+
+    if matches!(
+        spec.command.as_str(),
+        "calls" | "call" | "dependencies" | "depends"
+    ) {
+        if let Some(first) = spec.positional.first() {
+            spec.terms
+                .entry("source".to_string())
+                .or_insert(first.clone());
+        }
+        if let Some(function) = spec.terms.remove("function") {
+            spec.terms.entry("source".to_string()).or_insert(function);
+        }
+    }
+
+    validate_edge_terms(&spec)?;
+    let matched: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge_matches(graph, edge, &spec.terms))
+        .cloned()
+        .collect();
+    let total_edges = matched.len();
+    let edges: Vec<_> = matched.into_iter().take(spec.limit).collect();
+    let nodes = endpoint_nodes(graph, &edges);
+
+    Ok(QueryResult {
+        query: spec.original,
+        total_nodes: nodes.len(),
+        total_edges,
+        truncated: total_edges > spec.limit,
+        nodes,
+        edges,
+    })
+}
+
+fn query_trace(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    let depth = spec
+        .terms
+        .get("depth")
+        .map(|value| parse_limit(value).map(|value| value.clamp(1, 8)))
+        .transpose()?
+        .unwrap_or(2);
+    let start = if let Some(id) = spec.terms.get("id").or_else(|| spec.terms.get("node_id")) {
+        TraceStart::NodeId(parse_node_id(id)?)
+    } else if let Some(label) = spec
+        .terms
+        .get("label")
+        .or_else(|| spec.terms.get("start"))
+        .or_else(|| spec.positional.first())
+    {
+        TraceStart::Label(label.clone())
+    } else {
+        return Err(QueryError::new(
+            "trace query requires `label:<value>`, `id:<node-id>`, or a positional label",
+        ));
+    };
+
+    let Some(result) = trace(
+        graph,
+        TraceRequest {
+            start,
+            max_depth: depth,
+        },
+    ) else {
+        return Ok(QueryResult {
+            query: spec.original,
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            total_nodes: 0,
+            total_edges: 0,
+            truncated: false,
+        });
+    };
+
+    Ok(QueryResult {
+        query: spec.original,
+        total_nodes: result.nodes.len(),
+        total_edges: result.edges.len(),
+        truncated: result.truncated,
+        nodes: result.nodes.into_iter().map(|node| node.node).collect(),
+        edges: result.edges,
+    })
+}
+
+fn validate_node_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if is_node_term(key) {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported node query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_edge_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if is_edge_term(key) {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported edge query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
+fn is_node_term(key: &str) -> bool {
+    matches!(
+        key,
+        "id" | "kind" | "label" | "language" | "item_kind" | "package_id"
+    ) || key.starts_with("metadata.")
+}
+
+fn is_edge_term(key: &str) -> bool {
+    matches!(key, "kind" | "source" | "target") || key.starts_with("metadata.")
+}
+
+fn node_matches(node: &Node, terms: &BTreeMap<String, String>) -> bool {
+    terms.iter().all(|(key, expected)| match key.as_str() {
+        "id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        "kind" => text_matches(&kind_name(&node.kind), expected),
+        "label" => text_matches(&node.label, expected),
+        "language" | "item_kind" | "package_id" => node
+            .metadata
+            .get(key)
+            .is_some_and(|value| text_matches(value, expected)),
+        key if key.starts_with("metadata.") => node
+            .metadata
+            .get(key.trim_start_matches("metadata."))
+            .is_some_and(|value| text_matches(value, expected)),
+        _ => false,
+    })
+}
+
+fn edge_matches(graph: &CodeGraph, edge: &Edge, terms: &BTreeMap<String, String>) -> bool {
+    terms.iter().all(|(key, expected)| match key.as_str() {
+        "kind" => text_matches(&edge_kind_name(&edge.kind), expected),
+        "source" => endpoint_matches(graph, edge.source, expected),
+        "target" => endpoint_matches(graph, edge.target, expected),
+        key if key.starts_with("metadata.") => edge
+            .metadata
+            .get(key.trim_start_matches("metadata."))
+            .is_some_and(|value| text_matches(value, expected)),
+        _ => false,
+    })
+}
+
+fn endpoint_matches(graph: &CodeGraph, id: NodeId, expected: &str) -> bool {
+    parse_node_id(expected).is_ok_and(|expected_id| expected_id == id)
+        || graph
+            .nodes
+            .iter()
+            .find(|node| node.id == id)
+            .is_some_and(|node| text_matches(&node.label, expected))
+}
+
+fn endpoint_nodes(graph: &CodeGraph, edges: &[Edge]) -> Vec<Node> {
+    let mut ids = BTreeSet::new();
+    for edge in edges {
+        ids.insert(edge.source);
+        ids.insert(edge.target);
+    }
+    graph
+        .nodes
+        .iter()
+        .filter(|node| ids.contains(&node.id))
+        .cloned()
+        .collect()
+}
+
+fn text_matches(actual: &str, expected: &str) -> bool {
+    actual
+        .to_ascii_lowercase()
+        .contains(&expected.to_ascii_lowercase())
+}
+
+fn parse_node_id(value: &str) -> Result<NodeId, QueryError> {
+    let value = value.trim().trim_start_matches('n');
+    value
+        .parse::<u64>()
+        .map(NodeId)
+        .map_err(|_| QueryError::new(format!("invalid node id `{value}`")))
+}
+
+fn parse_limit(value: &str) -> Result<usize, QueryError> {
+    value
+        .parse::<usize>()
+        .map(|value| value.clamp(1, 1000))
+        .map_err(|_| QueryError::new(format!("invalid limit `{value}`")))
+}
+
+fn split_query_tokens(expression: &str) -> Result<Vec<String>, QueryError> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+
+    for character in expression.chars() {
+        match quote {
+            Some(current_quote) if character == current_quote => {
+                quote = None;
+            }
+            Some(_) => current.push(character),
+            None if character == '"' || character == '\'' => {
+                quote = Some(character);
+            }
+            None if character.is_whitespace() => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            None => current.push(character),
+        }
+    }
+
+    if let Some(open_quote) = quote {
+        return Err(QueryError::new(format!(
+            "unterminated quoted string starting with `{open_quote}`"
+        )));
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    Ok(tokens)
 }
 
 fn add_parse_error_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
@@ -847,6 +1236,59 @@ mod tests {
                 .depth,
             1
         );
+    }
+
+    #[test]
+    fn query_filters_nodes_by_kind_label_and_metadata() {
+        let mut graph = CodeGraph::new("repo");
+        let mut metadata = BTreeMap::new();
+        metadata.insert("language".to_string(), "rust".to_string());
+        graph.add_node_with_metadata(NodeKind::Function, "load_config", None, metadata);
+        graph.add_node(NodeKind::Function, "render");
+        graph.add_node(NodeKind::File, "src/main.rs");
+
+        let result = query_graph(
+            &graph,
+            "nodes kind:function label:load metadata.language:rust",
+        )
+        .unwrap();
+
+        assert_eq!(result.total_nodes, 1);
+        assert_eq!(result.nodes[0].label, "load_config");
+        assert!(result.edges.is_empty());
+    }
+
+    #[test]
+    fn query_filters_edges_and_supports_calls_alias() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let other = graph.add_node(NodeKind::Function, "other");
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(other, helper, EdgeKind::Calls, Confidence::Heuristic);
+
+        let result = query_graph(&graph, "calls(function:main)").unwrap();
+
+        assert_eq!(result.total_edges, 1);
+        assert_eq!(result.edges[0].source, main);
+        assert_eq!(result.edges[0].target, helper);
+        assert_eq!(result.nodes.len(), 2);
+    }
+
+    #[test]
+    fn query_trace_returns_focused_subgraph() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let dependency = graph.add_node(NodeKind::ExternalDependency, "serde");
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(helper, dependency, EdgeKind::DependsOn, Confidence::Exact);
+
+        let result = query_graph(&graph, "trace label:main depth:2").unwrap();
+
+        assert_eq!(result.total_nodes, 3);
+        assert_eq!(result.total_edges, 2);
+        assert!(result.nodes.iter().any(|node| node.label == "serde"));
     }
 
     #[test]
