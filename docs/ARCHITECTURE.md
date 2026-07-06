@@ -41,6 +41,7 @@ The first implementation stores whole-graph JSON cache records keyed by root pat
 - investigation insights
 - dependency consistency checks
 - graph query results for agent and API clients
+- graph slices for paged UI and agent loading
 - DOT and NDJSON exports
 
 This crate is shared by the CLI and server so humans, UI features, and agents receive the same structured answers.
@@ -99,6 +100,7 @@ Responsibilities:
 - provide summary, entrypoint, and trace endpoints
 - provide investigation insight endpoints
 - provide graph query endpoints
+- provide graph slice endpoints with server-side paging and filtering
 - provide source preview endpoints for graph spans
 - provide export endpoints for Graphviz DOT and NDJSON
 - constrain scan paths to a configured root by default

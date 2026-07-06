@@ -52,6 +52,33 @@ pub struct QueryResult {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphSliceRequest {
+    pub node_offset: usize,
+    pub node_limit: usize,
+    pub edge_offset: usize,
+    pub edge_limit: usize,
+    pub kind: Option<String>,
+    pub search: Option<String>,
+    pub language: Option<String>,
+    pub item_kind: Option<String>,
+    pub edge_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphSlice {
+    pub nodes: Vec<Node>,
+    pub edges: Vec<Edge>,
+    pub total_nodes: usize,
+    pub total_edges: usize,
+    pub node_offset: usize,
+    pub node_limit: usize,
+    pub edge_offset: usize,
+    pub edge_limit: usize,
+    pub truncated_nodes: bool,
+    pub truncated_edges: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryError {
     message: String,
@@ -298,6 +325,60 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         other => Err(QueryError::new(format!(
             "unknown query command `{other}`; expected nodes, edges, calls, dependencies, or trace"
         ))),
+    }
+}
+
+pub fn slice_graph(graph: &CodeGraph, request: GraphSliceRequest) -> GraphSlice {
+    let node_offset = request.node_offset;
+    let node_limit = request.node_limit.clamp(1, 1000);
+    let edge_offset = request.edge_offset;
+    let edge_limit = request.edge_limit.clamp(1, 2000);
+
+    let matched_nodes: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| slice_node_matches(node, &request))
+        .cloned()
+        .collect();
+    let total_nodes = matched_nodes.len();
+    let nodes: Vec<_> = matched_nodes
+        .into_iter()
+        .skip(node_offset)
+        .take(node_limit)
+        .collect();
+    let page_node_ids: BTreeSet<_> = nodes.iter().map(|node| node.id).collect();
+
+    let matched_edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            page_node_ids.contains(&edge.source)
+                && page_node_ids.contains(&edge.target)
+                && request
+                    .edge_kind
+                    .as_deref()
+                    .is_none_or(|expected| text_matches(&edge_kind_name(&edge.kind), expected))
+        })
+        .cloned()
+        .collect();
+    let total_edges = matched_edges.len();
+    let edges = matched_edges
+        .into_iter()
+        .skip(edge_offset)
+        .take(edge_limit)
+        .collect();
+
+    GraphSlice {
+        nodes,
+        edges,
+        total_nodes,
+        total_edges,
+        node_offset,
+        node_limit,
+        edge_offset,
+        edge_limit,
+        truncated_nodes: node_offset.saturating_add(node_limit) < total_nodes,
+        truncated_edges: edge_offset.saturating_add(edge_limit) < total_edges,
     }
 }
 
@@ -549,6 +630,40 @@ fn node_matches(node: &Node, terms: &BTreeMap<String, String>) -> bool {
             .is_some_and(|value| text_matches(value, expected)),
         _ => false,
     })
+}
+
+fn slice_node_matches(node: &Node, request: &GraphSliceRequest) -> bool {
+    request
+        .kind
+        .as_deref()
+        .is_none_or(|expected| text_matches(&kind_name(&node.kind), expected))
+        && request
+            .language
+            .as_deref()
+            .is_none_or(|expected| metadata_matches(node, "language", expected))
+        && request
+            .item_kind
+            .as_deref()
+            .is_none_or(|expected| metadata_matches(node, "item_kind", expected))
+        && request
+            .search
+            .as_deref()
+            .is_none_or(|expected| node_search_matches(node, expected))
+}
+
+fn metadata_matches(node: &Node, key: &str, expected: &str) -> bool {
+    node.metadata
+        .get(key)
+        .is_some_and(|value| text_matches(value, expected))
+}
+
+fn node_search_matches(node: &Node, expected: &str) -> bool {
+    text_matches(&node.label, expected)
+        || text_matches(&kind_name(&node.kind), expected)
+        || node
+            .metadata
+            .iter()
+            .any(|(key, value)| text_matches(key, expected) || text_matches(value, expected))
 }
 
 fn edge_matches(graph: &CodeGraph, edge: &Edge, terms: &BTreeMap<String, String>) -> bool {
@@ -1325,6 +1440,89 @@ mod tests {
         assert_eq!(result.total_nodes, 3);
         assert_eq!(result.total_edges, 2);
         assert!(result.nodes.iter().any(|node| node.label == "serde"));
+    }
+
+    #[test]
+    fn graph_slice_filters_and_pages_nodes() {
+        let mut graph = CodeGraph::new("repo");
+        let mut metadata = BTreeMap::new();
+        metadata.insert("language".to_string(), "rust".to_string());
+        metadata.insert("item_kind".to_string(), "function".to_string());
+        let main = graph.add_node_with_metadata(NodeKind::Function, "main", None, metadata);
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let file = graph.add_node(NodeKind::File, "src/main.rs");
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(file, main, EdgeKind::Contains, Confidence::Syntactic);
+
+        let result = slice_graph(
+            &graph,
+            GraphSliceRequest {
+                node_offset: 0,
+                node_limit: 1,
+                edge_offset: 0,
+                edge_limit: 10,
+                kind: Some("function".to_string()),
+                search: None,
+                language: None,
+                item_kind: None,
+                edge_kind: None,
+            },
+        );
+
+        assert_eq!(result.total_nodes, 2);
+        assert_eq!(result.nodes.len(), 1);
+        assert!(result.truncated_nodes);
+        assert!(result.edges.is_empty());
+
+        let result = slice_graph(
+            &graph,
+            GraphSliceRequest {
+                node_offset: 0,
+                node_limit: 10,
+                edge_offset: 0,
+                edge_limit: 10,
+                kind: Some("function".to_string()),
+                search: Some("rust".to_string()),
+                language: Some("rust".to_string()),
+                item_kind: Some("function".to_string()),
+                edge_kind: None,
+            },
+        );
+
+        assert_eq!(result.total_nodes, 1);
+        assert_eq!(result.nodes[0].label, "main");
+    }
+
+    #[test]
+    fn graph_slice_pages_edges_inside_returned_node_page() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let other = graph.add_node(NodeKind::Function, "other");
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(helper, other, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(main, other, EdgeKind::References, Confidence::Heuristic);
+
+        let result = slice_graph(
+            &graph,
+            GraphSliceRequest {
+                node_offset: 0,
+                node_limit: 10,
+                edge_offset: 0,
+                edge_limit: 1,
+                kind: Some("function".to_string()),
+                search: None,
+                language: None,
+                item_kind: None,
+                edge_kind: Some("calls".to_string()),
+            },
+        );
+
+        assert_eq!(result.total_nodes, 3);
+        assert_eq!(result.total_edges, 2);
+        assert_eq!(result.edges.len(), 1);
+        assert_eq!(result.edges[0].source, main);
+        assert!(result.truncated_edges);
     }
 
     #[test]

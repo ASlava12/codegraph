@@ -28,6 +28,7 @@ Implemented now:
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
+- Server-side graph paging and filtering endpoint for large repository exploration.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Persistent server-side graph cache with project fingerprint invalidation.
@@ -149,6 +150,7 @@ curl 'http://127.0.0.1:3765/api/scan-jobs/scan-1/result'
 Analysis APIs:
 
 ```bash
+curl 'http://127.0.0.1:3765/api/graph?path=.&node_limit=250&kind=function'
 curl 'http://127.0.0.1:3765/api/summary?path=.'
 curl 'http://127.0.0.1:3765/api/entrypoints?path=.'
 curl 'http://127.0.0.1:3765/api/insights?path=.'
@@ -157,6 +159,10 @@ curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'q=nodes kind:function label:main'
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
 ```
+
+`/api/graph` supports `node_offset`, `node_limit`, `edge_offset`,
+`edge_limit`, `kind`, `search`, `language`, `item_kind`, and `edge_kind`.
+Returned edges connect nodes in the returned node page.
 
 Source preview API:
 

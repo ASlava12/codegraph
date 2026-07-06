@@ -70,4 +70,5 @@ jobs:
           second="$(curl -fsS 'http://127.0.0.1:3765/api/scan?path=.' | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(JSON.parse(input).cache.status));')"
           test "$first" = "miss"
           test "$second" = "hit"
+          curl -fsS 'http://127.0.0.1:3765/api/graph?path=.&node_limit=10&kind=function' | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const body = JSON.parse(input); if (!Array.isArray(body.nodes) || typeof body.total_nodes !== "number") process.exit(1); });'
           find "$cache_dir" -maxdepth 1 -type f -name 'graph-*.json' | grep .

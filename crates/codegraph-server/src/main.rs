@@ -8,8 +8,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
-    TraceRequest, TraceStart, entrypoints, export_dot, export_ndjson, insights, query_graph,
-    summarize, trace,
+    GraphSlice, GraphSliceRequest, TraceRequest, TraceStart, entrypoints, export_dot,
+    export_ndjson, insights, query_graph, slice_graph, summarize, trace,
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
@@ -99,6 +99,20 @@ struct TraceQuery {
 struct GraphQuery {
     path: Option<PathBuf>,
     q: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphSliceQuery {
+    path: Option<PathBuf>,
+    node_offset: Option<usize>,
+    node_limit: Option<usize>,
+    edge_offset: Option<usize>,
+    edge_limit: Option<usize>,
+    kind: Option<String>,
+    search: Option<String>,
+    language: Option<String>,
+    item_kind: Option<String>,
+    edge_kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -243,6 +257,7 @@ async fn main() -> Result<()> {
         .route("/api/scan-jobs/{id}/events", get(scan_job_events))
         .route("/api/scan-jobs/{id}/result", get(scan_job_result))
         .route("/api/export", get(export_api))
+        .route("/api/graph", get(graph_api))
         .route("/api/summary", get(summary))
         .route("/api/entrypoints", get(entrypoints_api))
         .route("/api/insights", get(insights_api))
@@ -507,6 +522,27 @@ async fn export_api(
         .into_response())
 }
 
+async fn graph_api(
+    State(state): State<AppState>,
+    Query(query): Query<GraphSliceQuery>,
+) -> Result<Json<GraphSlice>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    Ok(Json(slice_graph(
+        &graph,
+        GraphSliceRequest {
+            node_offset: query.node_offset.unwrap_or(0),
+            node_limit: query.node_limit.unwrap_or(250),
+            edge_offset: query.edge_offset.unwrap_or(0),
+            edge_limit: query.edge_limit.unwrap_or(500),
+            kind: normalize_query_string(query.kind),
+            search: normalize_query_string(query.search),
+            language: normalize_query_string(query.language),
+            item_kind: normalize_query_string(query.item_kind),
+            edge_kind: normalize_query_string(query.edge_kind),
+        },
+    )))
+}
+
 async fn summary(
     State(state): State<AppState>,
     Query(query): Query<ScanQuery>,
@@ -705,6 +741,12 @@ fn resolve_canonical_path(state: &AppState, candidate: PathBuf) -> Result<PathBu
     }
 
     Ok(canonical)
+}
+
+fn normalize_query_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 async fn not_found() -> impl IntoResponse {
