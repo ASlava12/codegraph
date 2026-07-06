@@ -19,6 +19,7 @@ Implemented now:
 - Heuristic config reads, environment reads, and potential error/exception constructs.
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
+- Async scan job API for long-running repository scans.
 - Source preview API and UI panel for graph nodes with source spans.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 
@@ -85,6 +86,16 @@ Scan API:
 
 ```bash
 curl 'http://127.0.0.1:3765/api/scan?path=.'
+```
+
+Async scan job API:
+
+```bash
+curl -X POST 'http://127.0.0.1:3765/api/scan-jobs' \
+  -H 'content-type: application/json' \
+  -d '{"path":"."}'
+curl 'http://127.0.0.1:3765/api/scan-jobs/scan-1'
+curl 'http://127.0.0.1:3765/api/scan-jobs/scan-1/result'
 ```
 
 Analysis APIs:

@@ -83,6 +83,7 @@ CLI output must remain machine-friendly. Human-oriented formatting can be added,
 Responsibilities:
 
 - provide health and scan endpoints
+- provide async scan job endpoints for long-running scans
 - provide summary, entrypoint, and trace endpoints
 - provide source preview endpoints for graph spans
 - constrain scan paths to a configured root by default

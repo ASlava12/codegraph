@@ -15,6 +15,7 @@ const state = {
   animationFrame: null,
   selectionRequest: 0,
   traceRequest: 0,
+  scanJobId: null,
 };
 
 const colors = {
@@ -69,27 +70,24 @@ resizeCanvas();
 scan();
 
 async function scan() {
-  setStatus("scan", "busy");
+  setStatus("queue", "busy");
   scanButton.disabled = true;
   selectionTitle.textContent = "Selection";
   selectionBody.innerHTML = "";
 
   try {
-    const path = encodeURIComponent(pathInput.value.trim() || ".");
-    const response = await fetch(`/api/scan?path=${path}`);
+    const response = await fetch("/api/scan-jobs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: pathInput.value.trim() || "." }),
+    });
     const body = await response.json();
     if (!response.ok) {
-      throw new Error(body.error || "scan failed");
+      throw new Error(body.error || "failed to start scan");
     }
 
-    state.graph = body.graph;
-    state.selectedId = null;
-    state.hoveredId = null;
-    state.positions.clear();
-    state.velocities.clear();
-    rootLabel.textContent = body.root;
-    initializeGraph();
-    setStatus("ready");
+    state.scanJobId = body.id;
+    await pollScanJob(body.id);
   } catch (error) {
     setStatus("error", "error");
     selectionTitle.textContent = "Error";
@@ -97,6 +95,47 @@ async function scan() {
   } finally {
     scanButton.disabled = false;
   }
+}
+
+async function pollScanJob(jobId) {
+  while (state.scanJobId === jobId) {
+    const response = await fetch(`/api/scan-jobs/${encodeURIComponent(jobId)}`);
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.error || "scan status failed");
+    }
+
+    if (body.status === "queued" || body.status === "running") {
+      setStatus(body.status === "queued" ? "queue" : "scan", "busy");
+      await sleep(350);
+      continue;
+    }
+
+    if (body.status === "failed") {
+      throw new Error(body.message || "scan failed");
+    }
+
+    const resultResponse = await fetch(`/api/scan-jobs/${encodeURIComponent(jobId)}/result`);
+    const result = await resultResponse.json();
+    if (!resultResponse.ok) {
+      throw new Error(result.error || "scan result failed");
+    }
+
+    setStatus("load", "busy");
+    state.graph = result.graph;
+    state.selectedId = null;
+    state.hoveredId = null;
+    state.positions.clear();
+    state.velocities.clear();
+    rootLabel.textContent = result.root;
+    initializeGraph();
+    setStatus("ready");
+    return;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function initializeGraph() {

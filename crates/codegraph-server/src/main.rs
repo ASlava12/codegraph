@@ -1,18 +1,22 @@
 use anyhow::{Context, Result};
-use axum::extract::{Query, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{TraceRequest, TraceStart, entrypoints, summarize, trace};
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Parser)]
 #[command(name = "codegraph-server")]
@@ -48,6 +52,8 @@ struct AppState {
     root: PathBuf,
     options: IndexOptions,
     allow_any_path: bool,
+    jobs: Arc<RwLock<BTreeMap<String, ScanJob>>>,
+    next_job_id: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +75,39 @@ struct TraceQuery {
     label: Option<String>,
     node_id: Option<u64>,
     depth: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ScanJobRequest {
+    path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ScanJob {
+    id: String,
+    status: ScanJobStatus,
+    path: String,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<codegraph_analysis::GraphSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    graph: Option<CodeGraph>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ScanJobStatus {
+    Queued,
+    Running,
+    Complete,
+    Failed,
+}
+
+#[derive(Debug, Serialize)]
+struct ScanJobResult {
+    id: String,
+    root: String,
+    graph: CodeGraph,
 }
 
 #[derive(Debug, Serialize)]
@@ -122,6 +161,8 @@ async fn main() -> Result<()> {
             ..IndexOptions::default()
         },
         allow_any_path: args.allow_any_path,
+        jobs: Arc::new(RwLock::new(BTreeMap::new())),
+        next_job_id: Arc::new(AtomicU64::new(1)),
     };
 
     let app = Router::new()
@@ -130,6 +171,9 @@ async fn main() -> Result<()> {
         .route("/styles.css", get(styles_css))
         .route("/api/health", get(health))
         .route("/api/scan", get(scan))
+        .route("/api/scan-jobs", post(start_scan_job))
+        .route("/api/scan-jobs/{id}", get(scan_job_status))
+        .route("/api/scan-jobs/{id}/result", get(scan_job_result))
         .route("/api/summary", get(summary))
         .route("/api/entrypoints", get(entrypoints_api))
         .route("/api/trace", get(trace_api))
@@ -143,6 +187,116 @@ async fn main() -> Result<()> {
     println!("CodeGraph listening on http://{bind_addr}");
     axum::serve(listener, app).await.context("server failed")?;
     Ok(())
+}
+
+async fn start_scan_job(
+    State(state): State<AppState>,
+    Json(request): Json<ScanJobRequest>,
+) -> Result<Json<ScanJob>, ApiError> {
+    let root = resolve_scan_root(&state, request.path.as_deref())?;
+    let id = format!("scan-{}", state.next_job_id.fetch_add(1, Ordering::Relaxed));
+    let path = root.display().to_string();
+    let job = ScanJob {
+        id: id.clone(),
+        status: ScanJobStatus::Queued,
+        path: path.clone(),
+        message: "queued".to_string(),
+        summary: None,
+        graph: None,
+    };
+    state.jobs.write().await.insert(id.clone(), job.clone());
+
+    let jobs = Arc::clone(&state.jobs);
+    let options = state.options.clone();
+    tokio::spawn(async move {
+        update_scan_job(
+            &jobs,
+            &id,
+            ScanJobStatus::Running,
+            "scanning project".to_string(),
+            None,
+            None,
+        )
+        .await;
+
+        let scan_root = root.clone();
+        let result = tokio::task::spawn_blocking(move || scan_project(scan_root, &options)).await;
+        match result {
+            Ok(Ok(graph)) => {
+                let summary = summarize(&graph);
+                update_scan_job(
+                    &jobs,
+                    &id,
+                    ScanJobStatus::Complete,
+                    "complete".to_string(),
+                    Some(summary),
+                    Some(graph),
+                )
+                .await;
+            }
+            Ok(Err(error)) => {
+                update_scan_job(
+                    &jobs,
+                    &id,
+                    ScanJobStatus::Failed,
+                    error.to_string(),
+                    None,
+                    None,
+                )
+                .await;
+            }
+            Err(error) => {
+                update_scan_job(
+                    &jobs,
+                    &id,
+                    ScanJobStatus::Failed,
+                    format!("scanner task failed: {error}"),
+                    None,
+                    None,
+                )
+                .await;
+            }
+        }
+    });
+
+    Ok(Json(job))
+}
+
+async fn scan_job_status(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<ScanJob>, ApiError> {
+    let jobs = state.jobs.read().await;
+    let job = jobs
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found("scan job not found"))?;
+    Ok(Json(job_without_graph(job)))
+}
+
+async fn scan_job_result(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<ScanJobResult>, ApiError> {
+    let jobs = state.jobs.read().await;
+    let job = jobs
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found("scan job not found"))?;
+    match job.status {
+        ScanJobStatus::Complete => {
+            let graph = job
+                .graph
+                .ok_or_else(|| ApiError::internal("scan job completed without graph"))?;
+            Ok(Json(ScanJobResult {
+                id: job.id,
+                root: job.path,
+                graph,
+            }))
+        }
+        ScanJobStatus::Failed => Err(ApiError::internal(job.message)),
+        _ => Err(ApiError::bad_request("scan job is not complete")),
+    }
 }
 
 async fn index() -> Html<&'static str> {
@@ -349,6 +503,13 @@ struct ApiError {
 }
 
 impl ApiError {
+    fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
+    }
+
     fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
@@ -362,6 +523,27 @@ impl ApiError {
             message: message.into(),
         }
     }
+}
+
+async fn update_scan_job(
+    jobs: &RwLock<BTreeMap<String, ScanJob>>,
+    id: &str,
+    status: ScanJobStatus,
+    message: String,
+    summary: Option<codegraph_analysis::GraphSummary>,
+    graph: Option<CodeGraph>,
+) {
+    if let Some(job) = jobs.write().await.get_mut(id) {
+        job.status = status;
+        job.message = message;
+        job.summary = summary;
+        job.graph = graph;
+    }
+}
+
+fn job_without_graph(mut job: ScanJob) -> ScanJob {
+    job.graph = None;
+    job
 }
 
 impl IntoResponse for ApiError {
