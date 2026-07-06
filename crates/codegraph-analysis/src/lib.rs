@@ -732,9 +732,10 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "calls" | "call" => query_edges(graph, spec, Some(EdgeKind::Calls)),
         "dependencies" | "depends" => query_edges(graph, spec, Some(EdgeKind::DependsOn)),
         "trace" => query_trace(graph, spec),
+        "neighbors" | "neighbor" | "neighborhood" => query_neighbors(graph, spec),
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, neighbors, or path"
         ))),
     }
 }
@@ -1079,6 +1080,122 @@ fn query_trace(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryE
     })
 }
 
+fn query_neighbors(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    validate_neighbor_terms(&spec)?;
+    let max_depth = spec
+        .terms
+        .get("depth")
+        .map(|value| parse_limit(value).map(|value| value.clamp(1, 16)))
+        .transpose()?
+        .unwrap_or(1);
+    let direction = spec
+        .terms
+        .get("direction")
+        .or_else(|| spec.terms.get("dir"))
+        .map(|value| parse_neighbor_direction(value))
+        .transpose()?
+        .unwrap_or(NeighborDirection::Both);
+    let start = if let Some(id) = spec.terms.get("id").or_else(|| spec.terms.get("node_id")) {
+        let id = parse_node_id(id)?;
+        graph
+            .nodes
+            .iter()
+            .any(|node| node.id == id)
+            .then_some(id)
+            .ok_or_else(|| {
+                QueryError::new(format!("neighbors start `{id}` did not match a node"))
+            })?
+    } else if let Some(label) = spec
+        .terms
+        .get("label")
+        .or_else(|| spec.terms.get("start"))
+        .or_else(|| spec.terms.get("node"))
+        .or_else(|| spec.positional.first())
+    {
+        resolve_node_reference(graph, label).ok_or_else(|| {
+            QueryError::new(format!("neighbors start `{label}` did not match a node"))
+        })?
+    } else {
+        return Err(QueryError::new(
+            "neighbors query requires `label:<value>`, `id:<node-id>`, or a positional label",
+        ));
+    };
+    let edge_kind = spec
+        .terms
+        .get("edge_kind")
+        .or_else(|| spec.terms.get("kind"));
+    let confidence = spec.terms.get("confidence");
+
+    let mut visited_nodes = BTreeSet::from([start]);
+    let mut seen_edges = BTreeSet::new();
+    let mut edges = Vec::new();
+    let mut total_edges = 0;
+    let mut queue = VecDeque::from([(start, 0usize)]);
+    let mut truncated = false;
+
+    while let Some((node_id, depth)) = queue.pop_front() {
+        if depth >= max_depth {
+            if graph.edges.iter().any(|edge| {
+                neighbor_edge_matches(
+                    edge,
+                    node_id,
+                    direction,
+                    edge_kind.map(String::as_str),
+                    confidence.map(String::as_str),
+                )
+            }) {
+                truncated = true;
+            }
+            continue;
+        }
+
+        for (edge_index, edge) in graph.edges.iter().enumerate().filter(|(_, edge)| {
+            neighbor_edge_matches(
+                edge,
+                node_id,
+                direction,
+                edge_kind.map(String::as_str),
+                confidence.map(String::as_str),
+            )
+        }) {
+            if !seen_edges.insert(edge_index) {
+                continue;
+            }
+            total_edges += 1;
+            if edges.len() >= spec.limit {
+                truncated = true;
+                continue;
+            }
+
+            edges.push(edge.clone());
+            let neighbor = if edge.source == node_id {
+                edge.target
+            } else {
+                edge.source
+            };
+            if visited_nodes.insert(neighbor) {
+                queue.push_back((neighbor, depth + 1));
+            }
+        }
+    }
+
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| visited_nodes.contains(&node.id))
+        .cloned()
+        .collect();
+
+    Ok(QueryResult {
+        query: spec.original,
+        nodes,
+        edges,
+        total_nodes: visited_nodes.len(),
+        total_edges,
+        truncated,
+    })
+}
+
 fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
     validate_path_terms(&spec)?;
     let max_depth = spec
@@ -1215,6 +1332,30 @@ fn validate_path_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     Ok(())
 }
 
+fn validate_neighbor_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if matches!(
+            key.as_str(),
+            "id" | "node_id"
+                | "label"
+                | "start"
+                | "node"
+                | "depth"
+                | "direction"
+                | "dir"
+                | "kind"
+                | "edge_kind"
+                | "confidence"
+        ) {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported neighbors query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 fn is_node_term(key: &str) -> bool {
     matches!(
         key,
@@ -1335,6 +1476,42 @@ fn resolve_node_reference(graph: &CodeGraph, value: &str) -> Option<NodeId> {
 fn path_edge_matches(edge: &Edge, edge_kind: Option<&str>) -> bool {
     is_trace_edge(&edge.kind)
         && edge_kind.is_none_or(|expected| text_matches(&edge_kind_name(&edge.kind), expected))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NeighborDirection {
+    In,
+    Out,
+    Both,
+}
+
+fn parse_neighbor_direction(value: &str) -> Result<NeighborDirection, QueryError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "in" | "incoming" => Ok(NeighborDirection::In),
+        "out" | "outgoing" => Ok(NeighborDirection::Out),
+        "both" | "any" | "all" => Ok(NeighborDirection::Both),
+        other => Err(QueryError::new(format!(
+            "invalid neighbors direction `{other}`; expected in, out, or both"
+        ))),
+    }
+}
+
+fn neighbor_edge_matches(
+    edge: &Edge,
+    node_id: NodeId,
+    direction: NeighborDirection,
+    edge_kind: Option<&str>,
+    confidence: Option<&str>,
+) -> bool {
+    let direction_matches = match direction {
+        NeighborDirection::In => edge.target == node_id,
+        NeighborDirection::Out => edge.source == node_id,
+        NeighborDirection::Both => edge.source == node_id || edge.target == node_id,
+    };
+    direction_matches
+        && edge_kind.is_none_or(|expected| text_matches(&edge_kind_name(&edge.kind), expected))
+        && confidence
+            .is_none_or(|expected| text_matches(&confidence_name(edge.confidence), expected))
 }
 
 fn reconstruct_path_edges(
@@ -2886,6 +3063,37 @@ mod tests {
         .unwrap();
         assert!(calls_only.nodes.is_empty());
         assert!(!calls_only.truncated);
+    }
+
+    #[test]
+    fn query_neighbors_returns_directional_neighborhoods() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let service = graph.add_node(NodeKind::Function, "service");
+        let config = graph.add_node(NodeKind::Config, "settings.toml");
+        let caller = graph.add_node(NodeKind::Function, "caller");
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(helper, service, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(helper, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
+        graph.add_edge(caller, main, EdgeKind::Calls, Confidence::Heuristic);
+
+        let outgoing = query_graph(
+            &graph,
+            "neighbors label:main direction:out depth:2 edge_kind:calls",
+        )
+        .unwrap();
+        assert_eq!(outgoing.total_edges, 2);
+        assert!(outgoing.nodes.iter().any(|node| node.id == main));
+        assert!(outgoing.nodes.iter().any(|node| node.id == helper));
+        assert!(outgoing.nodes.iter().any(|node| node.id == service));
+        assert!(!outgoing.nodes.iter().any(|node| node.id == config));
+        assert!(!outgoing.nodes.iter().any(|node| node.id == caller));
+
+        let incoming = query_graph(&graph, "neighbors main direction:in").unwrap();
+        assert_eq!(incoming.total_edges, 1);
+        assert!(incoming.nodes.iter().any(|node| node.id == caller));
+        assert!(!incoming.nodes.iter().any(|node| node.id == helper));
     }
 
     #[test]

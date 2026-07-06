@@ -91,7 +91,7 @@ Goal: answer practical code investigation questions.
 - [x] Add directed path queries between graph labels or node ids.
 - [x] Add confidence-aware edge queries and UI provenance labels.
 - [x] Add web path navigation with visual dependency-path highlighting.
-- Add richer query language.
+- [x] Add richer query language with neighborhood expansion.
 
 Example commands:
 
@@ -101,6 +101,7 @@ codegraph trace main
 codegraph trace-entrypoints --search server
 codegraph trace-config DATABASE_URL
 codegraph trace-errors "failed to load data"
+codegraph query 'neighbors label:main direction:out depth:2 edge_kind:calls'
 codegraph query 'calls(function:main)'
 ```
 

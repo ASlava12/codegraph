@@ -100,6 +100,7 @@ cargo run -p codegraph-cli -- query 'edges kind:calls source:main' .
 cargo run -p codegraph-cli -- query 'edges confidence:heuristic' .
 cargo run -p codegraph-cli -- query 'calls(function:main)' .
 cargo run -p codegraph-cli -- query 'trace label:main depth:3' .
+cargo run -p codegraph-cli -- query 'neighbors label:main direction:out depth:2 edge_kind:calls' .
 cargo run -p codegraph-cli -- query 'path from:main to:load_config depth:6' .
 ```
 
@@ -199,6 +200,9 @@ curl 'http://127.0.0.1:3765/api/insights?path=.&severity=warning&kind=dependency
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=nodes kind:function label:main'
+curl --get 'http://127.0.0.1:3765/api/query' \
+  --data-urlencode 'path=.' \
+  --data-urlencode 'q=neighbors label:main direction:out depth:2 edge_kind:calls'
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=path from:main to:load_config depth:6'
