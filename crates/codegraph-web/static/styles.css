@@ -1060,6 +1060,53 @@ button:disabled {
   height: 100%;
 }
 
+.graph-controls {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+  padding: 8px;
+  background: rgba(16, 18, 20, 0.84);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  backdrop-filter: blur(8px);
+}
+
+.graph-control-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.graph-controls button {
+  min-width: 34px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(92, 200, 167, 0.24);
+  color: var(--text);
+  background: rgba(32, 38, 42, 0.94);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.graph-controls button:hover:not(:disabled) {
+  border-color: rgba(92, 200, 167, 0.72);
+  background: rgba(92, 200, 167, 0.14);
+}
+
+.viewport-info {
+  min-width: 132px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+}
+
 .legend {
   position: absolute;
   right: 16px;
@@ -1098,5 +1145,16 @@ button:disabled {
 
   .graph-stage {
     order: 1;
+  }
+
+  .graph-controls {
+    top: 10px;
+    left: 10px;
+    max-width: calc(100% - 20px);
+  }
+
+  .viewport-info {
+    width: 100%;
+    text-align: left;
   }
 }

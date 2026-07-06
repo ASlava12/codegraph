@@ -98,6 +98,8 @@ Graph-reading CLI commands use the shared storage cache by default and expose `-
 
 ### Server And Web UI
 
+The web UI renders the current graph slice on a canvas with explicit viewport controls for zooming, fitting, resetting, and pausing force layout simulation.
+
 `codegraph-server` exposes the graph over HTTP and serves the embedded browser UI from `codegraph-web`.
 
 Responsibilities:

@@ -218,6 +218,18 @@
       </aside>
 
       <section class="graph-stage" aria-label="Code graph">
+        <div class="graph-controls" aria-label="Graph viewport controls">
+          <div class="graph-control-group">
+            <button id="zoomOutButton" type="button" aria-label="Zoom out">-</button>
+            <button id="zoomInButton" type="button" aria-label="Zoom in">+</button>
+            <button id="fitGraphButton" type="button" aria-label="Fit visible graph">Fit</button>
+          </div>
+          <div class="graph-control-group">
+            <button id="resetLayoutButton" type="button" aria-label="Restart graph layout">Reset</button>
+            <button id="toggleLayoutButton" type="button" aria-label="Pause graph layout">Pause</button>
+          </div>
+          <span id="viewportInfo" class="viewport-info">0 nodes</span>
+        </div>
         <canvas id="graphCanvas"></canvas>
         <div class="legend" id="legend"></div>
       </section>

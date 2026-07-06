@@ -30,6 +30,7 @@ const state = {
   queryFocus: null,
   scanJobId: null,
   scanEvents: null,
+  layoutPaused: false,
   graphPage: {
     nodeOffset: 0,
     nodeLimit: 250,
@@ -116,6 +117,12 @@ const kindFilters = document.querySelector("#kindFilters");
 const selectionTitle = document.querySelector("#selectionTitle");
 const selectionBody = document.querySelector("#selectionBody");
 const legend = document.querySelector("#legend");
+const zoomOutButton = document.querySelector("#zoomOutButton");
+const zoomInButton = document.querySelector("#zoomInButton");
+const fitGraphButton = document.querySelector("#fitGraphButton");
+const resetLayoutButton = document.querySelector("#resetLayoutButton");
+const toggleLayoutButton = document.querySelector("#toggleLayoutButton");
+const viewportInfo = document.querySelector("#viewportInfo");
 
 scanButton.addEventListener("click", () => scan());
 pathInput.addEventListener("keydown", (event) => {
@@ -162,6 +169,11 @@ for (const input of [insightSeverityInput, insightKindInput, insightSearchInput]
 pagePrevButton.addEventListener("click", () => shiftGraphPage(-1));
 pageNextButton.addEventListener("click", () => shiftGraphPage(1));
 pageReloadButton.addEventListener("click", () => loadGraphPage({ resetPage: true }));
+zoomOutButton.addEventListener("click", () => zoomAtCanvasCenter(0.82));
+zoomInButton.addEventListener("click", () => zoomAtCanvasCenter(1.18));
+fitGraphButton.addEventListener("click", () => fitVisibleGraph());
+resetLayoutButton.addEventListener("click", () => resetGraphLayout());
+toggleLayoutButton.addEventListener("click", () => toggleLayout());
 for (const input of [
   nodeLimitInput,
   edgeLimitInput,
@@ -684,7 +696,18 @@ function initializeGraph(options = {}) {
   state.enabledKinds = new Set(kinds);
   renderKindFilters(kinds);
   renderLegend(kinds);
+  state.layoutPaused = false;
+  renderViewportControls();
 
+  seedGraphLayout();
+
+  state.pan = preserveView ? previousPan : { x: canvas.width / 2, y: canvas.height / 2 };
+  state.zoom = preserveView ? previousZoom : 1;
+  applyFilters();
+  startAnimation();
+}
+
+function seedGraphLayout() {
   const radius = Math.max(180, Math.min(canvas.width, canvas.height) * 0.28);
   state.graph.nodes.forEach((node, index) => {
     const angle = (Math.PI * 2 * index) / Math.max(1, state.graph.nodes.length);
@@ -694,11 +717,6 @@ function initializeGraph(options = {}) {
     });
     state.velocities.set(node.id, { x: 0, y: 0 });
   });
-
-  state.pan = preserveView ? previousPan : { x: canvas.width / 2, y: canvas.height / 2 };
-  state.zoom = preserveView ? previousZoom : 1;
-  applyFilters();
-  startAnimation();
 }
 
 async function runGraphQuery() {
@@ -1199,7 +1217,11 @@ function applyFilters() {
     if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) {
       return false;
     }
-    return !state.queryFocus || state.queryFocus.edgeKeys.size === 0 || state.queryFocus.edgeKeys.has(edgeKey(edge));
+    return (
+      !state.queryFocus ||
+      state.queryFocus.edgeKeys.size === 0 ||
+      state.queryFocus.edgeKeys.has(edgeKey(edge))
+    );
   });
 
   nodeCount.textContent = String(state.visibleNodes.length);
@@ -1219,6 +1241,7 @@ function applyFilters() {
   entryCount.textContent = String(
     state.graph.edges.filter((edge) => edge.kind === "entrypoint").length,
   );
+  renderViewportControls();
   renderInsights();
 
   if (state.selectedId && !visibleIds.has(state.selectedId)) {
@@ -1758,11 +1781,91 @@ function renderLegend(kinds) {
 function startAnimation() {
   if (state.animationFrame) cancelAnimationFrame(state.animationFrame);
   const tick = () => {
-    simulateLayout();
+    if (!state.layoutPaused) {
+      simulateLayout();
+    }
     draw();
     state.animationFrame = requestAnimationFrame(tick);
   };
   tick();
+}
+
+function renderViewportControls() {
+  viewportInfo.textContent = `${state.visibleNodes.length} nodes / ${state.visibleEdges.length} edges`;
+  toggleLayoutButton.textContent = state.layoutPaused ? "Run" : "Pause";
+  toggleLayoutButton.setAttribute(
+    "aria-label",
+    state.layoutPaused ? "Resume graph layout" : "Pause graph layout",
+  );
+  fitGraphButton.disabled = state.visibleNodes.length === 0;
+  resetLayoutButton.disabled = state.graph.nodes.length === 0;
+  zoomInButton.disabled = state.graph.nodes.length === 0;
+  zoomOutButton.disabled = state.graph.nodes.length === 0;
+  toggleLayoutButton.disabled = state.graph.nodes.length === 0;
+}
+
+function zoomAtCanvasCenter(scale) {
+  zoomAt(canvas.width / 2, canvas.height / 2, scale);
+}
+
+function zoomAt(screenX, screenY, scale) {
+  const before = screenToWorld(screenX, screenY);
+  state.zoom = Math.max(0.18, Math.min(3.5, state.zoom * scale));
+  const after = screenToWorld(screenX, screenY);
+  state.pan.x += (after.x - before.x) * state.zoom;
+  state.pan.y += (after.y - before.y) * state.zoom;
+  draw();
+}
+
+function fitVisibleGraph() {
+  if (state.visibleNodes.length === 0) return;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  state.visibleNodes.forEach((node) => {
+    const position = state.positions.get(node.id);
+    if (!position) return;
+    const radius = nodeRadius(node) + 24;
+    minX = Math.min(minX, position.x - radius);
+    minY = Math.min(minY, position.y - radius);
+    maxX = Math.max(maxX, position.x + radius);
+    maxY = Math.max(maxY, position.y + radius);
+  });
+
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return;
+
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+  const padding = 72;
+  const zoomX = (canvas.width - padding * 2) / width;
+  const zoomY = (canvas.height - padding * 2) / height;
+  state.zoom = Math.max(0.18, Math.min(3.5, Math.min(zoomX, zoomY)));
+  state.pan = {
+    x: canvas.width / 2 - ((minX + maxX) / 2) * state.zoom,
+    y: canvas.height / 2 - ((minY + maxY) / 2) * state.zoom,
+  };
+  draw();
+}
+
+function resetGraphLayout() {
+  if (state.graph.nodes.length === 0) return;
+  state.positions.clear();
+  state.velocities.clear();
+  seedGraphLayout();
+  state.pan = { x: canvas.width / 2, y: canvas.height / 2 };
+  state.zoom = 1;
+  state.layoutPaused = false;
+  renderViewportControls();
+  draw();
+}
+
+function toggleLayout() {
+  if (state.graph.nodes.length === 0) return;
+  state.layoutPaused = !state.layoutPaused;
+  renderViewportControls();
+  draw();
 }
 
 function simulateLayout() {
@@ -2351,12 +2454,8 @@ function onPointerUp() {
 
 function onWheel(event) {
   event.preventDefault();
-  const before = screenToWorld(event.offsetX, event.offsetY);
   const delta = event.deltaY > 0 ? 0.9 : 1.1;
-  state.zoom = Math.max(0.18, Math.min(3.5, state.zoom * delta));
-  const after = screenToWorld(event.offsetX, event.offsetY);
-  state.pan.x += (after.x - before.x) * state.zoom;
-  state.pan.y += (after.y - before.y) * state.zoom;
+  zoomAt(event.offsetX, event.offsetY, delta);
 }
 
 function screenToWorld(x, y) {
@@ -2379,10 +2478,18 @@ function findNodeAt(point) {
 }
 
 function resizeCanvas() {
+  const previousWidth = canvas.width;
+  const previousHeight = canvas.height;
   const rect = canvas.getBoundingClientRect();
   canvas.width = Math.max(1, Math.floor(rect.width));
   canvas.height = Math.max(1, Math.floor(rect.height));
-  state.pan = { x: rect.width / 2, y: rect.height / 2 };
+  if (previousWidth > 1 && previousHeight > 1) {
+    state.pan.x += (canvas.width - previousWidth) / 2;
+    state.pan.y += (canvas.height - previousHeight) / 2;
+  } else {
+    state.pan = { x: canvas.width / 2, y: canvas.height / 2 };
+  }
+  draw();
 }
 
 function nodeRadius(node) {
