@@ -374,6 +374,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_duplicate_function_insights(graph, &mut insights);
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
+    add_unreachable_config_read_insights(graph, &mut insights);
     add_undeclared_import_insights(graph, &mut insights);
     add_unused_dependency_insights(graph, &mut insights);
     add_conflicting_dependency_insights(graph, &mut insights);
@@ -2021,6 +2022,35 @@ fn add_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     }
 }
 
+fn add_unreachable_config_read_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let reachable = entrypoint_reachable_nodes(graph);
+    if reachable.is_empty() {
+        return;
+    }
+
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if !matches!(
+            edge.kind,
+            EdgeKind::ReadsConfig | EdgeKind::ReadsEnvironment
+        ) || reachable.contains(&edge.source)
+        {
+            continue;
+        }
+
+        let reader = node_label(graph, edge.source).unwrap_or("unknown");
+        let target = node_label(graph, edge.target).unwrap_or("unknown");
+        insights.push(Insight {
+            kind: "unreachable_config_read".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "`{reader}` reads `{target}` but is not reachable from any entrypoint"
+            ),
+            nodes: vec![edge.source, edge.target],
+            edges: vec![index],
+        });
+    }
+}
+
 fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let declared = declared_package_ids(graph);
     let declared_ecosystems: BTreeSet<_> = declared
@@ -2702,6 +2732,31 @@ fn is_trace_edge(kind: &EdgeKind) -> bool {
             | EdgeKind::MayError
             | EdgeKind::DependsOn
     )
+}
+
+fn entrypoint_reachable_nodes(graph: &CodeGraph) -> BTreeSet<NodeId> {
+    let mut reachable = BTreeSet::new();
+    let mut queue = VecDeque::new();
+
+    for edge in &graph.edges {
+        if edge.kind == EdgeKind::Entrypoint && reachable.insert(edge.target) {
+            queue.push_back(edge.target);
+        }
+    }
+
+    while let Some(node) = queue.pop_front() {
+        for edge in graph
+            .edges
+            .iter()
+            .filter(|edge| edge.source == node && is_trace_edge(&edge.kind))
+        {
+            if reachable.insert(edge.target) {
+                queue.push_back(edge.target);
+            }
+        }
+    }
+
+    reachable
 }
 
 fn node_label(graph: &CodeGraph, id: NodeId) -> Option<&str> {
@@ -3534,6 +3589,44 @@ mod tests {
                 .iter()
                 .any(|insight| insight.kind == "potential_error_flow")
         );
+    }
+
+    #[test]
+    fn insights_report_unreachable_config_reads() {
+        let mut graph = CodeGraph::new("repo");
+        let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let live_config = graph.add_node(NodeKind::Environment, "DATABASE_URL");
+        let unused_loader = graph.add_node(NodeKind::Function, "unused_loader");
+        let unused_config = graph.add_node(NodeKind::Config, "config/legacy.toml");
+        graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(entry, main, EdgeKind::References, Confidence::Exact);
+        graph.add_edge(
+            main,
+            live_config,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            unused_loader,
+            unused_config,
+            EdgeKind::ReadsConfig,
+            Confidence::Heuristic,
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unreachable_config_read")
+            .expect("expected unreachable config read insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert_eq!(insight.nodes, vec![unused_loader, unused_config]);
+        assert!(insight.message.contains("unused_loader"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unreachable_config_read" && insight.nodes.contains(&main)
+        }));
     }
 
     #[test]
