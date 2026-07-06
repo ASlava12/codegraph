@@ -85,6 +85,7 @@ Goal: answer practical code investigation questions.
 - [x] Back web insights with server analysis during paged graph exploration.
 - [x] Add first graph query language for nodes, edges, calls, dependencies, and traces.
 - [x] Add directed path queries between graph labels or node ids.
+- [x] Add confidence-aware edge queries and UI provenance labels.
 - Add richer query language.
 
 Example commands:

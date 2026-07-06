@@ -829,7 +829,7 @@ fn is_node_term(key: &str) -> bool {
 }
 
 fn is_edge_term(key: &str) -> bool {
-    matches!(key, "kind" | "source" | "target") || key.starts_with("metadata.")
+    matches!(key, "kind" | "source" | "target" | "confidence") || key.starts_with("metadata.")
 }
 
 fn node_matches(node: &Node, terms: &BTreeMap<String, String>) -> bool {
@@ -888,6 +888,7 @@ fn edge_matches(graph: &CodeGraph, edge: &Edge, terms: &BTreeMap<String, String>
         "kind" => text_matches(&edge_kind_name(&edge.kind), expected),
         "source" => endpoint_matches(graph, edge.source, expected),
         "target" => endpoint_matches(graph, edge.target, expected),
+        "confidence" => text_matches(&confidence_name(edge.confidence), expected),
         key if key.starts_with("metadata.") => edge
             .metadata
             .get(key.trim_start_matches("metadata."))
@@ -1667,6 +1668,10 @@ fn edge_kind_name(kind: &EdgeKind) -> String {
     serde_json_name(kind).unwrap_or_else(|| format!("{kind:?}").to_ascii_lowercase())
 }
 
+fn confidence_name(confidence: codegraph_core::Confidence) -> String {
+    serde_json_name(&confidence).unwrap_or_else(|| format!("{confidence:?}").to_ascii_lowercase())
+}
+
 fn severity_name(severity: InsightSeverity) -> &'static str {
     match severity {
         InsightSeverity::Info => "info",
@@ -1841,6 +1846,25 @@ mod tests {
         assert_eq!(result.edges[0].source, main);
         assert_eq!(result.edges[0].target, helper);
         assert_eq!(result.nodes.len(), 2);
+    }
+
+    #[test]
+    fn query_filters_edges_by_confidence() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let manifest = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(manifest, main, EdgeKind::References, Confidence::Exact);
+
+        let heuristic = query_graph(&graph, "edges confidence:heuristic").unwrap();
+        assert_eq!(heuristic.total_edges, 1);
+        assert_eq!(heuristic.edges[0].kind, EdgeKind::Calls);
+
+        let exact_reference =
+            query_graph(&graph, "edges kind:references confidence:exact").unwrap();
+        assert_eq!(exact_reference.total_edges, 1);
+        assert_eq!(exact_reference.edges[0].source, manifest);
     }
 
     #[test]

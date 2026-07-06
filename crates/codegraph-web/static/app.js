@@ -457,12 +457,14 @@ function renderQueryNode(node) {
 function renderQueryEdge(edge, nodeMap) {
   const source = nodeMap.get(edge.source) || state.graph.nodes.find((node) => node.id === edge.source);
   const target = nodeMap.get(edge.target) || state.graph.nodes.find((node) => node.id === edge.target);
+  const facts = renderEdgeFacts(edge);
   return `
     <li>
       <button class="query-item query-edge" type="button" data-node-id="${edge.target}">
         <span>${escapeHtml(formatKind(edge.kind))}</span>
         <strong>${escapeHtml(source?.label || String(edge.source))}</strong>
         <em>${escapeHtml(target?.label || String(edge.target))}</em>
+        ${facts}
       </button>
     </li>
   `;
@@ -1376,12 +1378,14 @@ function renderTraceNode(node, depth) {
 function renderTraceEdge(edge, nodeMap) {
   const source = nodeMap.get(edge.source);
   const target = nodeMap.get(edge.target);
+  const facts = renderEdgeFacts(edge);
   return `
     <li>
       <button class="trace-edge" type="button" data-node-id="${edge.target}">
         <span>${escapeHtml(formatKind(edge.kind))}</span>
         <strong>${escapeHtml(source?.label || String(edge.source))}</strong>
         <em>${escapeHtml(target?.label || String(edge.target))}</em>
+        ${facts}
       </button>
     </li>
   `;
@@ -1433,12 +1437,30 @@ function renderNeighbor(edge, selectedId, nodeMap = null) {
   const otherId = edge.source === selectedId ? edge.target : edge.source;
   const other = nodeMap?.get(otherId) || state.graph.nodes.find((node) => node.id === otherId);
   const direction = edge.source === selectedId ? "out" : "in";
+  const facts = renderEdgeFacts(edge);
   return `
     <button type="button" class="neighbor" data-node-id="${otherId}">
       <span>${escapeHtml(direction)} ${escapeHtml(formatKind(edge.kind))}</span>
       <span>${escapeHtml(other ? other.label : String(otherId))}</span>
+      ${facts}
     </button>
   `;
+}
+
+function renderEdgeFacts(edge) {
+  const facts = edgeFacts(edge);
+  if (facts.length === 0) return "";
+  return `<span class="edge-facts">${facts.map((fact) => escapeHtml(fact)).join(" · ")}</span>`;
+}
+
+function edgeFacts(edge) {
+  const facts = [];
+  if (edge.confidence) facts.push(formatKind(edge.confidence));
+  const metadata = edge.metadata || {};
+  for (const key of ["source", "relation", "resolution", "dependency_kind", "target_symbol"]) {
+    if (metadata[key]) facts.push(`${formatKind(key)}: ${metadata[key]}`);
+  }
+  return facts;
 }
 
 function edgeKey(edge) {

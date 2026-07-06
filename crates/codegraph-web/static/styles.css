@@ -332,6 +332,24 @@ button:disabled {
   color: var(--muted);
 }
 
+.edge-facts {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.query-edge .edge-facts,
+.trace-edge .edge-facts,
+.neighbor .edge-facts {
+  grid-column: 1 / -1;
+}
+
+.trace-edge .edge-facts {
+  font-weight: 600;
+}
+
 .query-edge em::before {
   content: "-> ";
 }
@@ -533,7 +551,7 @@ button:disabled {
   text-align: left;
 }
 
-.neighbor span:last-child {
+.neighbor span:not(.edge-facts):last-of-type {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

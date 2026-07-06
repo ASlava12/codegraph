@@ -29,6 +29,7 @@ Implemented now:
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
 - Path queries for finding directed dependency paths between labels or node ids.
+- Confidence-aware edge queries and UI edge labels for fact provenance.
 - Server-side graph paging and filtering endpoint for large repository exploration.
 - Web graph page controls backed by the server-side paging API.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
@@ -86,6 +87,7 @@ Query focused graph slices:
 ```bash
 cargo run -p codegraph-cli -- query 'nodes kind:function label:main' .
 cargo run -p codegraph-cli -- query 'edges kind:calls source:main' .
+cargo run -p codegraph-cli -- query 'edges confidence:heuristic' .
 cargo run -p codegraph-cli -- query 'calls(function:main)' .
 cargo run -p codegraph-cli -- query 'trace label:main depth:3' .
 cargo run -p codegraph-cli -- query 'path from:main to:load_config depth:6' .
