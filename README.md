@@ -25,6 +25,7 @@ Implemented now:
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
+- Dependency consistency insights for external imports that are not backed by declared manifest dependencies.
 
 Planned next:
 

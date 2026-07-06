@@ -315,6 +315,8 @@ function buildClientInsights(graph) {
       });
     });
 
+  addUndeclaredImportInsights(graph, insights);
+
   const severityOrder = { error: 0, warning: 1, info: 2 };
   return insights.sort(
     (left, right) =>
@@ -323,6 +325,221 @@ function buildClientInsights(graph) {
       left.message.localeCompare(right.message),
   );
 }
+
+function addUndeclaredImportInsights(graph, insights) {
+  const declared = new Set(
+    graph.nodes
+      .filter((node) => node.metadata?.item_kind === "dependency" && node.metadata?.package_id)
+      .map((node) => node.metadata.package_id),
+  );
+  const declaredEcosystems = new Set(
+    Array.from(declared)
+      .map((packageId) => packageId.split(":")[0])
+      .filter(Boolean),
+  );
+
+  if (declaredEcosystems.size === 0) return;
+
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  graph.edges
+    .filter((edge) => edge.kind === "imports")
+    .forEach((edge) => {
+      const source = nodeById.get(edge.source);
+      const target = nodeById.get(edge.target);
+      const candidate = importPackageCandidate(target?.metadata?.language, target?.label || "");
+      if (!candidate) return;
+      if (!declaredEcosystems.has(candidate.ecosystem)) return;
+      if (isDeclaredPackage(declared, candidate.ecosystem, candidate.package)) return;
+
+      insights.push({
+        kind: "undeclared_external_import",
+        severity: "warning",
+        message: `${source?.label || edge.source} imports ${candidate.package} without a matching ${candidate.ecosystem} dependency`,
+        nodeId: target?.id || source?.id,
+      });
+    });
+}
+
+function importPackageCandidate(language, label) {
+  switch (language) {
+    case "rust":
+      return rustImportPackage(label);
+    case "python":
+      return pythonImportPackage(label);
+    case "javascript":
+    case "typescript":
+    case "tsx":
+      return jsImportPackage(label);
+    case "go":
+      return goImportPackage(label);
+    default:
+      return null;
+  }
+}
+
+function rustImportPackage(label) {
+  const match = label.trim().match(/^use\s+::?\s*([A-Za-z_][A-Za-z0-9_]*)/);
+  if (!match) return null;
+  const packageName = match[1].toLowerCase();
+  if (["std", "core", "alloc", "crate", "self", "super"].includes(packageName)) return null;
+  return { ecosystem: "cargo", package: packageName };
+}
+
+function pythonImportPackage(label) {
+  const value = label.trim();
+  const match = value.match(/^import\s+([A-Za-z_][A-Za-z0-9_.-]*)/) ||
+    value.match(/^from\s+([A-Za-z_][A-Za-z0-9_.-]*)\s+import\b/);
+  if (!match) return null;
+  const packageName = normalizePythonPackageName(match[1].split(".")[0]);
+  if (!packageName || pythonStdlibPackages.has(packageName)) return null;
+  return { ecosystem: "python", package: packageName };
+}
+
+function jsImportPackage(label) {
+  const moduleName = firstQuotedString(label);
+  if (!moduleName) return null;
+  if (
+    moduleName.startsWith(".") ||
+    moduleName.startsWith("/") ||
+    moduleName.startsWith("node:") ||
+    nodeBuiltinModules.has(moduleName)
+  ) {
+    return null;
+  }
+
+  if (moduleName.startsWith("@")) {
+    const [scope, name] = moduleName.split("/");
+    if (!scope || !name) return null;
+    return { ecosystem: "npm", package: `${scope}/${name}`.toLowerCase() };
+  }
+  return { ecosystem: "npm", package: moduleName.split("/")[0].toLowerCase() };
+}
+
+function goImportPackage(label) {
+  for (const moduleName of quotedStrings(label)) {
+    if (moduleName.startsWith(".") || moduleName.startsWith("/")) continue;
+    const firstSegment = moduleName.split("/")[0];
+    if (firstSegment.includes(".")) {
+      return { ecosystem: "go", package: moduleName };
+    }
+  }
+  return null;
+}
+
+function isDeclaredPackage(declared, ecosystem, packageName) {
+  if (ecosystem === "go") {
+    return Array.from(declared).some((packageId) => {
+      if (!packageId.startsWith("go:")) return false;
+      const moduleName = packageId.slice(3);
+      return packageName === moduleName || packageName.startsWith(`${moduleName}/`);
+    });
+  }
+  if (ecosystem === "cargo") {
+    const canonical = packageName.toLowerCase();
+    return (
+      declared.has(`cargo:${canonical}`) ||
+      declared.has(`cargo:${canonical.replaceAll("_", "-")}`) ||
+      declared.has(`cargo:${canonical.replaceAll("-", "_")}`)
+    );
+  }
+  if (ecosystem === "python") {
+    return declared.has(`python:${normalizePythonPackageName(packageName)}`);
+  }
+  return declared.has(`${ecosystem}:${packageName.toLowerCase()}`);
+}
+
+function normalizePythonPackageName(value) {
+  return value.trim().toLowerCase().replaceAll(/[_.-]+/g, "-");
+}
+
+function firstQuotedString(value) {
+  return quotedStrings(value)[0] || "";
+}
+
+function quotedStrings(value) {
+  const matches = [];
+  const pattern = /["'`]([^"'`]+)["'`]/g;
+  let match = pattern.exec(value);
+  while (match) {
+    matches.push(match[1]);
+    match = pattern.exec(value);
+  }
+  return matches;
+}
+
+const nodeBuiltinModules = new Set([
+  "assert",
+  "buffer",
+  "child_process",
+  "cluster",
+  "crypto",
+  "dgram",
+  "dns",
+  "events",
+  "fs",
+  "http",
+  "https",
+  "module",
+  "net",
+  "os",
+  "path",
+  "process",
+  "querystring",
+  "readline",
+  "stream",
+  "string_decoder",
+  "timers",
+  "tls",
+  "tty",
+  "url",
+  "util",
+  "vm",
+  "zlib",
+]);
+
+const pythonStdlibPackages = new Set([
+  "abc",
+  "argparse",
+  "asyncio",
+  "base64",
+  "collections",
+  "contextlib",
+  "csv",
+  "dataclasses",
+  "datetime",
+  "functools",
+  "glob",
+  "hashlib",
+  "http",
+  "importlib",
+  "inspect",
+  "io",
+  "itertools",
+  "json",
+  "logging",
+  "math",
+  "os",
+  "pathlib",
+  "pickle",
+  "random",
+  "re",
+  "shutil",
+  "sqlite3",
+  "statistics",
+  "string",
+  "subprocess",
+  "sys",
+  "tempfile",
+  "threading",
+  "time",
+  "typing",
+  "unittest",
+  "urllib",
+  "uuid",
+  "venv",
+  "warnings",
+  "xml",
+]);
 
 function renderKindFilters(kinds) {
   kindFilters.innerHTML = "";

@@ -78,6 +78,7 @@ Goal: answer practical code investigation questions.
 - [x] Expose structured summary, entrypoints, and trace APIs.
 - [x] Add investigation insights for unresolved calls, parse/syntax issues, duplicate labels, orphan functions, and error-flow facts.
 - [x] Detect package manifest dependency boundaries.
+- [x] Detect external imports that are missing declared manifest dependencies.
 - Add richer query language.
 
 Example commands:

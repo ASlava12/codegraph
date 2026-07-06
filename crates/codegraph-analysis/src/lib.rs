@@ -170,6 +170,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_duplicate_function_insights(graph, &mut insights);
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
+    add_undeclared_import_insights(graph, &mut insights);
     insights.sort_by(|left, right| {
         right
             .severity
@@ -383,6 +384,325 @@ fn add_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     }
 }
 
+fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let declared = declared_package_ids(graph);
+    let declared_ecosystems: BTreeSet<_> = declared
+        .iter()
+        .filter_map(|package_id| package_id.split_once(':').map(|(ecosystem, _)| ecosystem))
+        .collect();
+
+    if declared_ecosystems.is_empty() {
+        return;
+    }
+
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind != EdgeKind::Imports {
+            continue;
+        }
+
+        let Some(import_node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+            continue;
+        };
+        let Some(language) = import_node.metadata.get("language").map(String::as_str) else {
+            continue;
+        };
+        let Some(import) = import_package_candidate(language, &import_node.label) else {
+            continue;
+        };
+        if !declared_ecosystems.contains(import.ecosystem.as_str()) {
+            continue;
+        }
+        if is_declared_package(&declared, &import.ecosystem, &import.package) {
+            continue;
+        }
+
+        let source = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == edge.source)
+            .map(|node| node.label.as_str())
+            .unwrap_or("unknown");
+        insights.push(Insight {
+            kind: "undeclared_external_import".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "`{source}` imports `{}` but no matching {} dependency was found",
+                import.package, import.ecosystem
+            ),
+            nodes: vec![edge.source, edge.target],
+            edges: vec![index],
+        });
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImportPackage {
+    ecosystem: String,
+    package: String,
+}
+
+fn declared_package_ids(graph: &CodeGraph) -> BTreeSet<String> {
+    graph
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            if node
+                .metadata
+                .get("item_kind")
+                .is_some_and(|value| value == "dependency")
+            {
+                node.metadata.get("package_id").cloned()
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn import_package_candidate(language: &str, label: &str) -> Option<ImportPackage> {
+    match language {
+        "rust" => rust_import_package(label).map(|package| ImportPackage {
+            ecosystem: "cargo".to_string(),
+            package,
+        }),
+        "python" => python_import_package(label).map(|package| ImportPackage {
+            ecosystem: "python".to_string(),
+            package,
+        }),
+        "javascript" | "typescript" | "tsx" => {
+            js_import_package(label).map(|package| ImportPackage {
+                ecosystem: "npm".to_string(),
+                package,
+            })
+        }
+        "go" => go_import_package(label).map(|package| ImportPackage {
+            ecosystem: "go".to_string(),
+            package,
+        }),
+        _ => None,
+    }
+}
+
+fn rust_import_package(label: &str) -> Option<String> {
+    let value = label.trim().strip_prefix("use ")?;
+    let first = value
+        .trim()
+        .trim_start_matches("::")
+        .split([':', ';', ',', '{', ' ', '\n', '\t'])
+        .find(|part| !part.is_empty())?;
+    if matches!(first, "std" | "core" | "alloc" | "crate" | "self" | "super") {
+        None
+    } else {
+        Some(first.to_ascii_lowercase())
+    }
+}
+
+fn python_import_package(label: &str) -> Option<String> {
+    let value = label.trim();
+    let package = if let Some(rest) = value.strip_prefix("import ") {
+        rest.split([',', ' ', '\n', '\t'])
+            .find(|part| !part.is_empty())
+            .and_then(|part| part.split('.').next())
+    } else if let Some(rest) = value.strip_prefix("from ") {
+        rest.split_whitespace()
+            .next()
+            .and_then(|part| part.split('.').next())
+    } else {
+        None
+    }?;
+
+    let package = canonical_python_package_name(package);
+    if is_python_stdlib_package(&package) || package.is_empty() {
+        None
+    } else {
+        Some(package)
+    }
+}
+
+fn js_import_package(label: &str) -> Option<String> {
+    let module = first_quoted_string(label)?;
+    if module.starts_with('.')
+        || module.starts_with('/')
+        || module.starts_with("node:")
+        || is_node_builtin_module(&module)
+    {
+        return None;
+    }
+
+    if module.starts_with('@') {
+        let mut parts = module.split('/');
+        let scope = parts.next()?;
+        let name = parts.next()?;
+        Some(format!("{scope}/{name}").to_ascii_lowercase())
+    } else {
+        module
+            .split('/')
+            .next()
+            .filter(|part| !part.is_empty())
+            .map(|package| package.to_ascii_lowercase())
+    }
+}
+
+fn go_import_package(label: &str) -> Option<String> {
+    for module in quoted_strings(label) {
+        if module.starts_with('.') || module.starts_with('/') {
+            continue;
+        }
+        let first = module.split('/').next().unwrap_or("");
+        if first.contains('.') {
+            return Some(module);
+        }
+    }
+    None
+}
+
+fn is_declared_package(declared: &BTreeSet<String>, ecosystem: &str, package: &str) -> bool {
+    match ecosystem {
+        "go" => declared.iter().any(|package_id| {
+            package_id.strip_prefix("go:").is_some_and(|module| {
+                package == module || package.starts_with(&format!("{module}/"))
+            })
+        }),
+        "cargo" => {
+            let canonical = package.to_ascii_lowercase();
+            let hyphenated = canonical.replace('_', "-");
+            let underscored = canonical.replace('-', "_");
+            declared.contains(&format!("cargo:{canonical}"))
+                || declared.contains(&format!("cargo:{hyphenated}"))
+                || declared.contains(&format!("cargo:{underscored}"))
+        }
+        "python" => declared.contains(&format!(
+            "python:{}",
+            canonical_python_package_name(package)
+        )),
+        "npm" => declared.contains(&format!("npm:{}", package.to_ascii_lowercase())),
+        _ => declared.contains(&format!("{ecosystem}:{package}")),
+    }
+}
+
+fn canonical_python_package_name(name: &str) -> String {
+    let mut normalized = String::new();
+    let mut previous_separator = false;
+    for character in name.trim().chars() {
+        if matches!(character, '-' | '_' | '.') {
+            if !previous_separator {
+                normalized.push('-');
+            }
+            previous_separator = true;
+        } else {
+            normalized.extend(character.to_lowercase());
+            previous_separator = false;
+        }
+    }
+    normalized
+}
+
+fn first_quoted_string(value: &str) -> Option<String> {
+    quoted_strings(value).into_iter().next()
+}
+
+fn quoted_strings(value: &str) -> Vec<String> {
+    let mut strings = Vec::new();
+    let mut quote = None;
+    let mut start = 0;
+
+    for (index, character) in value.char_indices() {
+        match quote {
+            Some(current_quote) if character == current_quote => {
+                strings.push(value[start..index].to_string());
+                quote = None;
+            }
+            None if character == '"' || character == '\'' || character == '`' => {
+                quote = Some(character);
+                start = index + character.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    strings
+}
+
+fn is_node_builtin_module(module: &str) -> bool {
+    matches!(
+        module,
+        "assert"
+            | "buffer"
+            | "child_process"
+            | "cluster"
+            | "crypto"
+            | "dgram"
+            | "dns"
+            | "events"
+            | "fs"
+            | "http"
+            | "https"
+            | "module"
+            | "net"
+            | "os"
+            | "path"
+            | "process"
+            | "querystring"
+            | "readline"
+            | "stream"
+            | "string_decoder"
+            | "timers"
+            | "tls"
+            | "tty"
+            | "url"
+            | "util"
+            | "vm"
+            | "zlib"
+    )
+}
+
+fn is_python_stdlib_package(package: &str) -> bool {
+    matches!(
+        package,
+        "abc"
+            | "argparse"
+            | "asyncio"
+            | "base64"
+            | "collections"
+            | "contextlib"
+            | "csv"
+            | "dataclasses"
+            | "datetime"
+            | "functools"
+            | "glob"
+            | "hashlib"
+            | "http"
+            | "importlib"
+            | "inspect"
+            | "io"
+            | "itertools"
+            | "json"
+            | "logging"
+            | "math"
+            | "os"
+            | "pathlib"
+            | "pickle"
+            | "random"
+            | "re"
+            | "shutil"
+            | "sqlite3"
+            | "statistics"
+            | "string"
+            | "subprocess"
+            | "sys"
+            | "tempfile"
+            | "threading"
+            | "time"
+            | "typing"
+            | "unittest"
+            | "urllib"
+            | "uuid"
+            | "venv"
+            | "warnings"
+            | "xml"
+    )
+}
+
 fn incoming_edge_indexes(graph: &CodeGraph, target: NodeId, kind: EdgeKind) -> Vec<usize> {
     graph
         .edges
@@ -579,5 +899,117 @@ mod tests {
                 .iter()
                 .any(|insight| insight.kind == "potential_error_flow")
         );
+    }
+
+    #[test]
+    fn insights_report_undeclared_external_imports() {
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node(NodeKind::File, "src/main.ts");
+        let react = dependency_node(&mut graph, "react", "npm:react");
+        graph.add_edge(file, react, EdgeKind::DependsOn, Confidence::Exact);
+
+        let react_import = import_node(&mut graph, "import React from \"react\";", "typescript");
+        let express_import =
+            import_node(&mut graph, "import express from \"express\";", "typescript");
+        let fs_import = import_node(&mut graph, "import fs from \"node:fs\";", "typescript");
+        graph.add_edge(file, react_import, EdgeKind::Imports, Confidence::Syntactic);
+        graph.add_edge(
+            file,
+            express_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(file, fs_import, EdgeKind::Imports, Confidence::Syntactic);
+
+        let report = insights(&graph);
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "undeclared_external_import" && insight.message.contains("express")
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "undeclared_external_import" && insight.message.contains("react")
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "undeclared_external_import" && insight.message.contains("node:fs")
+        }));
+    }
+
+    #[test]
+    fn insights_match_cargo_python_and_go_import_conventions() {
+        let mut graph = CodeGraph::new("repo");
+        let rust_file = graph.add_node(NodeKind::File, "src/lib.rs");
+        let python_file = graph.add_node(NodeKind::File, "app.py");
+        let go_file = graph.add_node(NodeKind::File, "main.go");
+
+        let serde_json = dependency_node(&mut graph, "serde-json", "cargo:serde-json");
+        let fastapi = dependency_node(&mut graph, "fastapi", "python:fastapi");
+        let gin = dependency_node(
+            &mut graph,
+            "github.com/gin-gonic/gin",
+            "go:github.com/gin-gonic/gin",
+        );
+        graph.add_edge(
+            rust_file,
+            serde_json,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+        );
+        graph.add_edge(python_file, fastapi, EdgeKind::DependsOn, Confidence::Exact);
+        graph.add_edge(go_file, gin, EdgeKind::DependsOn, Confidence::Exact);
+
+        for (file, label, language) in [
+            (rust_file, "use serde_json::Value;", "rust"),
+            (rust_file, "use anyhow::Result;", "rust"),
+            (rust_file, "use std::fs;", "rust"),
+            (python_file, "from fastapi import FastAPI", "python"),
+            (python_file, "import requests", "python"),
+            (python_file, "import os", "python"),
+            (go_file, "import \"github.com/gin-gonic/gin/binding\"", "go"),
+            (go_file, "import \"github.com/pkg/errors\"", "go"),
+            (go_file, "import \"fmt\"", "go"),
+        ] {
+            let import = import_node(&mut graph, label, language);
+            graph.add_edge(file, import, EdgeKind::Imports, Confidence::Syntactic);
+        }
+
+        let report = insights(&graph);
+        for expected in ["anyhow", "requests", "github.com/pkg/errors"] {
+            assert!(
+                report.insights.iter().any(|insight| {
+                    insight.kind == "undeclared_external_import"
+                        && insight.message.contains(expected)
+                }),
+                "missing undeclared import insight for {expected}"
+            );
+        }
+        for ignored in [
+            "serde_json",
+            "fastapi",
+            "github.com/gin-gonic/gin/binding",
+            "std::fs",
+            "os",
+            "fmt",
+        ] {
+            assert!(
+                !report.insights.iter().any(|insight| {
+                    insight.kind == "undeclared_external_import"
+                        && insight.message.contains(ignored)
+                }),
+                "unexpected undeclared import insight for {ignored}"
+            );
+        }
+    }
+
+    fn import_node(graph: &mut CodeGraph, label: &str, language: &str) -> NodeId {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "import".to_string());
+        metadata.insert("language".to_string(), language.to_string());
+        graph.add_node_with_metadata(NodeKind::ExternalDependency, label, None, metadata)
+    }
+
+    fn dependency_node(graph: &mut CodeGraph, label: &str, package_id: &str) -> NodeId {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "dependency".to_string());
+        metadata.insert("package_id".to_string(), package_id.to_string());
+        graph.add_node_with_metadata(NodeKind::ExternalDependency, label, None, metadata)
     }
 }

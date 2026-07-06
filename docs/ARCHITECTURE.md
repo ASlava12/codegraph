@@ -33,6 +33,7 @@ It currently builds file, symbol, import, call, config, environment, error-flow,
 - entrypoint candidates
 - outgoing dependency traces
 - investigation insights
+- dependency consistency checks
 - DOT and NDJSON exports
 
 This crate is shared by the CLI and server so humans, UI features, and agents receive the same structured answers.
@@ -111,4 +112,4 @@ Graph facts should declare how they were discovered:
 
 This is central to the project. A useful imperfect graph is acceptable when uncertainty is explicit.
 
-Current call, config, environment, and error-flow facts are `heuristic`: they are resolved by syntax patterns and simple-name matching. Package manifest dependencies are `exact` because they come from declared project metadata; package nodes expose `package_id`, and `depends_on` edge metadata records the declaration kind. Future LSP, framework, and compiler integrations should upgrade resolvable code edges to `semantic` or `exact`.
+Current call, config, environment, and error-flow facts are `heuristic`: they are resolved by syntax patterns and simple-name matching. Package manifest dependencies are `exact` because they come from declared project metadata; package nodes expose `package_id`, and `depends_on` edge metadata records the declaration kind. Dependency consistency insights compare syntactic external imports with declared package nodes and report likely undeclared package usage. Future LSP, framework, and compiler integrations should upgrade resolvable code edges to `semantic` or `exact`.
