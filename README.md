@@ -50,6 +50,7 @@ Implemented now:
 - CLI scan benchmark reports with timing and graph-size metrics for regression tracking.
 - CI checks for formatting, clippy, tests, UI syntax, CLI scan, and server cache smoke tests.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
+- Investigation insights for manifest entrypoints whose declared target cannot be resolved to a file or function.
 - Investigation insights for config/environment reads that are not reachable from any detected entrypoint.
 - Dependency consistency insights for external imports that are not backed by declared manifest dependencies.
 - Dependency consistency insights for runtime manifest dependencies with no matching import.

@@ -374,6 +374,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_duplicate_function_insights(graph, &mut insights);
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
+    add_unresolved_entrypoint_insights(graph, &mut insights);
     add_unreachable_config_read_insights(graph, &mut insights);
     add_undeclared_import_insights(graph, &mut insights);
     add_unused_dependency_insights(graph, &mut insights);
@@ -2022,6 +2023,48 @@ fn add_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     }
 }
 
+fn add_unresolved_entrypoint_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Entrypoint
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "manifest_entrypoint")
+        {
+            continue;
+        }
+        let Some(target) = node
+            .metadata
+            .get("target")
+            .map(|target| target.trim())
+            .filter(|target| !target.is_empty())
+        else {
+            continue;
+        };
+        let resolved = graph.edges.iter().any(|edge| {
+            edge.source == node.id
+                && edge.kind == EdgeKind::References
+                && edge.metadata.get("relation").is_some_and(|relation| {
+                    matches!(relation.as_str(), "entrypoint_file" | "entrypoint_function")
+                })
+        });
+        if resolved {
+            continue;
+        }
+
+        insights.push(Insight {
+            kind: "unresolved_entrypoint_target".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Entrypoint `{}` declares target `{target}` but no matching file or function was found",
+                node.label
+            ),
+            nodes: vec![node.id],
+            edges: incoming_edge_indexes(graph, node.id, EdgeKind::Entrypoint),
+        });
+    }
+}
+
 fn add_unreachable_config_read_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let reachable = entrypoint_reachable_nodes(graph);
     if reachable.is_empty() {
@@ -3589,6 +3632,71 @@ mod tests {
                 .iter()
                 .any(|insight| insight.kind == "potential_error_flow")
         );
+    }
+
+    #[test]
+    fn insights_report_unresolved_manifest_entrypoints() {
+        let mut graph = CodeGraph::new("repo");
+        let broken = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "npm script:start",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "manifest_entrypoint".to_string()),
+                ("target".to_string(), "node missing.js".to_string()),
+            ]),
+        );
+        let resolved = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "cargo bin:demo",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "manifest_entrypoint".to_string()),
+                ("target".to_string(), "src/main.rs".to_string()),
+            ]),
+        );
+        let targetless = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "cargo package:repo",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "manifest_entrypoint".to_string())]),
+        );
+        let main_file = graph.add_node(NodeKind::File, "src/main.rs");
+        graph.add_edge(graph.root, broken, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(
+            graph.root,
+            resolved,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(
+            graph.root,
+            targetless,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge_with_metadata(
+            resolved,
+            main_file,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "entrypoint_file".to_string())]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_entrypoint_target")
+            .expect("expected unresolved entrypoint insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert_eq!(insight.nodes, vec![broken]);
+        assert!(insight.message.contains("missing.js"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_entrypoint_target"
+                && (insight.nodes.contains(&resolved) || insight.nodes.contains(&targetless))
+        }));
     }
 
     #[test]

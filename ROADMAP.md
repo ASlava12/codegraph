@@ -81,6 +81,7 @@ Goal: answer practical code investigation questions.
 - [x] Add investigation insights for unresolved calls, parse/syntax issues, duplicate labels, orphan functions, and error-flow facts.
 - [x] Detect directed dependency cycles across calls, imports, references, and dependency edges.
 - [x] Detect package manifest dependency boundaries.
+- [x] Detect manifest entrypoints whose declared target cannot be resolved.
 - [x] Detect external imports that are missing declared manifest dependencies.
 - [x] Detect runtime manifest dependencies with no matching import.
 - [x] Detect conflicting manifest dependency constraints for the same package.
