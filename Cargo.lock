@@ -272,9 +272,22 @@ dependencies = [
  "codegraph-analysis",
  "codegraph-core",
  "codegraph-indexer",
+ "codegraph-storage",
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "codegraph-storage"
+version = "0.1.0"
+dependencies = [
+ "codegraph-core",
+ "codegraph-indexer",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "walkdir",
 ]
 
 [[package]]

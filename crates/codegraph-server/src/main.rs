@@ -13,6 +13,7 @@ use codegraph_analysis::{
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
+use codegraph_storage::{GraphCache, default_cache_dir};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -53,6 +54,14 @@ struct Args {
     /// Allow scanning paths outside the configured root.
     #[arg(long)]
     allow_any_path: bool,
+
+    /// Disable persistent graph cache.
+    #[arg(long)]
+    no_cache: bool,
+
+    /// Directory for persistent graph cache records.
+    #[arg(long)]
+    cache_dir: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -60,6 +69,7 @@ struct AppState {
     root: PathBuf,
     options: IndexOptions,
     allow_any_path: bool,
+    cache: Option<GraphCache>,
     jobs: Arc<RwLock<BTreeMap<String, ScanJob>>>,
     next_job_id: Arc<AtomicU64>,
 }
@@ -116,6 +126,7 @@ struct ScanJob {
     status: ScanJobStatus,
     path: String,
     message: String,
+    cache: Option<CacheInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     summary: Option<codegraph_analysis::GraphSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -142,12 +153,33 @@ struct ScanJobResult {
 struct HealthResponse {
     status: &'static str,
     root: String,
+    cache_dir: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 struct ScanResponse {
     root: String,
+    cache: CacheInfo,
     graph: CodeGraph,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CacheInfo {
+    status: CacheStatus,
+    dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CacheStatus {
+    Disabled,
+    Hit,
+    Miss,
+}
+
+struct ScanOutput {
+    graph: CodeGraph,
+    cache: CacheInfo,
 }
 
 #[derive(Debug, Serialize)]
@@ -189,6 +221,13 @@ async fn main() -> Result<()> {
             ..IndexOptions::default()
         },
         allow_any_path: args.allow_any_path,
+        cache: if args.no_cache {
+            None
+        } else {
+            Some(GraphCache::new(
+                args.cache_dir.unwrap_or_else(default_cache_dir),
+            ))
+        },
         jobs: Arc::new(RwLock::new(BTreeMap::new())),
         next_job_id: Arc::new(AtomicU64::new(1)),
     };
@@ -233,6 +272,7 @@ async fn start_scan_job(
         status: ScanJobStatus::Queued,
         path: path.clone(),
         message: "queued".to_string(),
+        cache: None,
         summary: None,
         graph: None,
     };
@@ -240,6 +280,7 @@ async fn start_scan_job(
 
     let jobs = Arc::clone(&state.jobs);
     let options = state.options.clone();
+    let cache = state.cache.clone();
     tokio::spawn(async move {
         update_scan_job(
             &jobs,
@@ -248,19 +289,29 @@ async fn start_scan_job(
             "scanning project".to_string(),
             None,
             None,
+            None,
         )
         .await;
 
         let scan_root = root.clone();
-        let result = tokio::task::spawn_blocking(move || scan_project(scan_root, &options)).await;
+        let result =
+            tokio::task::spawn_blocking(move || scan_project_with_cache(scan_root, options, cache))
+                .await;
         match result {
-            Ok(Ok(graph)) => {
+            Ok(Ok(output)) => {
+                let graph = output.graph;
                 let summary = summarize(&graph);
+                let message = match output.cache.status {
+                    CacheStatus::Disabled => "complete".to_string(),
+                    CacheStatus::Hit => "complete (cache hit)".to_string(),
+                    CacheStatus::Miss => "complete (cache refreshed)".to_string(),
+                };
                 update_scan_job(
                     &jobs,
                     &id,
                     ScanJobStatus::Complete,
-                    "complete".to_string(),
+                    message,
+                    Some(output.cache),
                     Some(summary),
                     Some(graph),
                 )
@@ -274,6 +325,7 @@ async fn start_scan_job(
                     error.to_string(),
                     None,
                     None,
+                    None,
                 )
                 .await;
             }
@@ -283,6 +335,7 @@ async fn start_scan_job(
                     &id,
                     ScanJobStatus::Failed,
                     format!("scanner task failed: {error}"),
+                    None,
                     None,
                     None,
                 )
@@ -402,6 +455,10 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
         root: state.root.display().to_string(),
+        cache_dir: state
+            .cache
+            .as_ref()
+            .map(|cache| cache.dir().display().to_string()),
     })
 }
 
@@ -411,15 +468,17 @@ async fn scan(
 ) -> Result<Json<ScanResponse>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let options = state.options.clone();
+    let cache = state.cache.clone();
     let root_label = root.display().to_string();
-    let graph = tokio::task::spawn_blocking(move || scan_project(root, &options))
+    let output = tokio::task::spawn_blocking(move || scan_project_with_cache(root, options, cache))
         .await
         .map_err(|error| ApiError::internal(format!("scanner task failed: {error}")))?
         .map_err(|error| ApiError::internal(error.to_string()))?;
 
     Ok(Json(ScanResponse {
         root: root_label,
-        graph,
+        cache: output.cache,
+        graph: output.graph,
     }))
 }
 
@@ -565,10 +624,50 @@ async fn source(
 async fn scan_graph(state: &AppState, requested: Option<&Path>) -> Result<CodeGraph, ApiError> {
     let root = resolve_scan_root(state, requested)?;
     let options = state.options.clone();
-    tokio::task::spawn_blocking(move || scan_project(root, &options))
+    let cache = state.cache.clone();
+    tokio::task::spawn_blocking(move || scan_project_with_cache(root, options, cache))
         .await
         .map_err(|error| ApiError::internal(format!("scanner task failed: {error}")))?
+        .map(|output| output.graph)
         .map_err(|error| ApiError::internal(error.to_string()))
+}
+
+fn scan_project_with_cache(
+    root: PathBuf,
+    options: IndexOptions,
+    cache: Option<GraphCache>,
+) -> Result<ScanOutput> {
+    let Some(cache) = cache else {
+        return Ok(ScanOutput {
+            graph: scan_project(root, &options)?,
+            cache: CacheInfo {
+                status: CacheStatus::Disabled,
+                dir: None,
+            },
+        });
+    };
+
+    let fingerprint = GraphCache::fingerprint_project(&root, &options)
+        .with_context(|| format!("failed to fingerprint {}", root.display()))?;
+    if let Ok(Some(graph)) = cache.load(&root, &options, &fingerprint) {
+        return Ok(ScanOutput {
+            graph,
+            cache: CacheInfo {
+                status: CacheStatus::Hit,
+                dir: Some(cache.dir().display().to_string()),
+            },
+        });
+    }
+
+    let graph = scan_project(&root, &options)?;
+    let _ = cache.store(&root, &options, fingerprint, &graph);
+    Ok(ScanOutput {
+        graph,
+        cache: CacheInfo {
+            status: CacheStatus::Miss,
+            dir: Some(cache.dir().display().to_string()),
+        },
+    })
 }
 
 fn resolve_scan_root(state: &AppState, requested: Option<&Path>) -> Result<PathBuf, ApiError> {
@@ -651,12 +750,14 @@ async fn update_scan_job(
     id: &str,
     status: ScanJobStatus,
     message: String,
+    cache: Option<CacheInfo>,
     summary: Option<codegraph_analysis::GraphSummary>,
     graph: Option<CodeGraph>,
 ) {
     if let Some(job) = jobs.write().await.get_mut(id) {
         job.status = status;
         job.message = message;
+        job.cache = cache;
         job.summary = summary;
         job.graph = graph;
     }

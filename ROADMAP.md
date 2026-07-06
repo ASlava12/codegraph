@@ -125,7 +125,8 @@ Exit criteria:
 
 Goal: handle real repositories efficiently.
 
-- Add persistent index storage.
+- [x] Add first persistent graph cache for server scans.
+- Add persistent index storage with partial graph reuse.
 - Incrementally update changed files.
 - Cache parser and LSP facts.
 - Support large graph filtering and paging.

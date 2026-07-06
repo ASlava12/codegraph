@@ -30,6 +30,7 @@ Implemented now:
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
+- Persistent server-side graph cache with project fingerprint invalidation.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Dependency consistency insights for external imports that are not backed by declared manifest dependencies.
 
@@ -113,11 +114,18 @@ Open:
 http://127.0.0.1:3765
 ```
 
+The server stores persistent graph cache records outside the project by default
+(`CODEGRAPH_CACHE_DIR`, `XDG_CACHE_HOME/codegraph`, `~/Library/Caches/codegraph`
+on macOS, or a temp fallback). Use `--cache-dir <path>` to choose a directory or
+`--no-cache` to force every request to rescan.
+
 Scan API:
 
 ```bash
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 ```
+
+The scan response includes `cache.status` as `hit`, `miss`, or `disabled`.
 
 Export API:
 
@@ -197,6 +205,7 @@ crates/
   codegraph-analysis/  summaries, entrypoints, and trace subgraphs
   codegraph-parser/    Tree-sitter syntax extraction
   codegraph-indexer/   project scanning and graph construction
+  codegraph-storage/   persistent graph cache and project fingerprints
   codegraph-cli/       command-line interface
   codegraph-server/    HTTP API and embedded static web app
   codegraph-web/       browser UI assets

@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 
+pub const CODEGRAPH_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u64);
 
@@ -93,7 +95,7 @@ impl CodeGraph {
     pub fn new(root_label: impl Into<String>) -> Self {
         let root = NodeId(1);
         Self {
-            schema_version: 1,
+            schema_version: CODEGRAPH_SCHEMA_VERSION,
             root,
             nodes: vec![Node {
                 id: root,

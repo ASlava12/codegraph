@@ -1405,6 +1405,7 @@ fn is_ignored_name(entry: &DirEntry, ignored_names: &BTreeSet<String>) -> bool {
 fn default_ignored_names() -> BTreeSet<String> {
     [
         ".git",
+        ".codegraph",
         ".hg",
         ".svn",
         "target",
@@ -1442,8 +1443,10 @@ mod tests {
         let root = temp_project_root();
         fs::create_dir_all(root.join("src")).unwrap();
         fs::create_dir_all(root.join("target")).unwrap();
+        fs::create_dir_all(root.join(".codegraph")).unwrap();
         fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
         fs::write(root.join("target").join("debug.log"), "noise\n").unwrap();
+        fs::write(root.join(".codegraph").join("graph.json"), "{}\n").unwrap();
 
         let graph = scan_project(&root, &IndexOptions::default()).unwrap();
         let labels: Vec<_> = graph.nodes.iter().map(|node| node.label.as_str()).collect();
@@ -1451,6 +1454,8 @@ mod tests {
         assert!(labels.contains(&"src/main.rs"));
         assert!(!labels.contains(&"target"));
         assert!(!labels.contains(&"target/debug.log"));
+        assert!(!labels.contains(&".codegraph"));
+        assert!(!labels.contains(&".codegraph/graph.json"));
 
         fs::remove_dir_all(root).unwrap();
     }

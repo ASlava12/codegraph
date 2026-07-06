@@ -7,6 +7,7 @@ members = [
     "crates/codegraph-indexer",
     "crates/codegraph-parser",
     "crates/codegraph-server",
+    "crates/codegraph-storage",
 ]
 
 [workspace.package]
@@ -23,6 +24,7 @@ codegraph-analysis = { path = "crates/codegraph-analysis" }
 codegraph-core = { path = "crates/codegraph-core" }
 codegraph-indexer = { path = "crates/codegraph-indexer" }
 codegraph-parser = { path = "crates/codegraph-parser" }
+codegraph-storage = { path = "crates/codegraph-storage" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"

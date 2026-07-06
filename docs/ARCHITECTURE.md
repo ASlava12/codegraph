@@ -25,6 +25,12 @@ This crate should stay small and dependency-light.
 
 It currently builds file, symbol, import, call, config, environment, error-flow, manifest entrypoint, and package dependency graph facts from syntax-level parser output and project manifests. Manifest dependencies are normalized by ecosystem-specific package identity, so multiple manifest files can point at the same external package node while preserving declaration details on each edge. Manifest entrypoints are resolved after the full scan so path and function targets can be linked regardless of filesystem walk order. Future implementations should merge stronger semantic facts from LSP and compiler layers.
 
+### Storage
+
+`codegraph-storage` owns persistent graph cache records and project fingerprints.
+
+The first implementation stores whole-graph JSON cache records keyed by root path and scan options. A fingerprint records scanned relative paths, file sizes, and modification times; a cache hit is only used when the current fingerprint matches the stored record. This is deliberately conservative: it accelerates repeated API and UI scans without yet promising partial graph reuse.
+
 ### Analysis
 
 `codegraph-analysis` turns a full graph into focused artifacts:
@@ -87,6 +93,7 @@ CLI output must remain machine-friendly. Human-oriented formatting can be added,
 Responsibilities:
 
 - provide health and scan endpoints
+- reuse persistent graph cache records when project fingerprints match
 - provide JSON, DOT, and NDJSON export endpoints
 - provide async scan job endpoints and SSE status streams for long-running scans
 - provide summary, entrypoint, and trace endpoints
