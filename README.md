@@ -15,8 +15,8 @@ Implemented now:
 - Filesystem scanner with default build/vendor ignore rules.
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, PHP, and Bash.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
-- Manifest-defined entrypoints from Cargo, npm, Python, and Composer project metadata.
-- Resolved manifest entrypoint targets for common file paths, command paths, and Python module callables.
+- Manifest-defined entrypoints from Cargo, npm, Python, Composer, and CMake project metadata.
+- Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
 - Manifest dependency extraction from Cargo, npm, Go, Python, and Composer projects.
 - Heuristic config reads, environment reads, and potential error/exception constructs.

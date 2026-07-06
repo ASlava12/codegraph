@@ -34,6 +34,7 @@ Goal: extract language-independent structure from source files.
 - [x] Detect basic error/exception constructs.
 - [x] Detect manifest-defined entrypoints from project metadata.
 - [x] Resolve manifest entrypoints to target files and functions where possible.
+- [x] Detect CMake `add_executable` entrypoints for C and C++ projects.
 - Add graph export formats:
   - [x] JSON
   - [x] DOT/Graphviz

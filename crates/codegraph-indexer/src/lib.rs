@@ -447,6 +447,7 @@ fn manifest_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
         Some("package.json") => package_json_entrypoints(source),
         Some("pyproject.toml") => pyproject_entrypoints(source),
         Some("composer.json") => composer_entrypoints(source),
+        Some("CMakeLists.txt") => cmake_entrypoints(source),
         _ => Vec::new(),
     }
 }
@@ -606,6 +607,36 @@ fn composer_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
     }
 
     entrypoints
+}
+
+fn cmake_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    cmake_command_bodies(source, "add_executable")
+        .into_iter()
+        .filter_map(|body| {
+            let args = cmake_command_args(&body);
+            let name = args.first()?.trim();
+            if name.is_empty()
+                || args.iter().any(|arg| arg.eq_ignore_ascii_case("IMPORTED"))
+                || args
+                    .get(1)
+                    .is_some_and(|arg| arg.eq_ignore_ascii_case("ALIAS"))
+            {
+                return None;
+            }
+
+            let target = args
+                .iter()
+                .skip(1)
+                .find(|arg| is_cmake_source_argument(arg))
+                .cloned();
+            Some(manifest_entrypoint(
+                format!("cmake executable:{name}"),
+                "executable",
+                "cmake",
+                target,
+            ))
+        })
+        .collect()
 }
 
 fn cargo_dependencies(
@@ -1114,6 +1145,16 @@ fn entrypoint_target_candidates(
         .into_iter()
         .collect(),
         "python" => python_entrypoint_candidates(pending),
+        "cmake" => manifest_path_candidate(
+            pending,
+            &pending.target,
+            Some("main".to_string()),
+            Confidence::Exact,
+            Confidence::Syntactic,
+            "manifest_path",
+        )
+        .into_iter()
+        .collect(),
         "npm" => command_path_candidate(pending)
             .map(|path| EntrypointTargetCandidate {
                 path,
@@ -1207,6 +1248,133 @@ fn command_source_path_candidate(command: &str) -> Option<String> {
     split_command_tokens(command)
         .into_iter()
         .find(|token| is_command_path_candidate(token))
+}
+
+fn cmake_command_bodies(source: &str, command_name: &str) -> Vec<String> {
+    let source = strip_cmake_comments(source);
+    let lowered = source.to_ascii_lowercase();
+    let needle = command_name.to_ascii_lowercase();
+    let mut bodies = Vec::new();
+    let mut search_from = 0;
+
+    while let Some(offset) = lowered[search_from..].find(&needle) {
+        let start = search_from + offset;
+        let before = source[..start].chars().next_back();
+        let after_name = start + needle.len();
+        let after = source[after_name..].chars().next();
+        if before.is_some_and(is_cmake_ident_char) || after.is_some_and(is_cmake_ident_char) {
+            search_from = after_name;
+            continue;
+        }
+
+        let Some(open_offset) = source[after_name..].find('(') else {
+            break;
+        };
+        let open = after_name + open_offset;
+        if !source[after_name..open]
+            .chars()
+            .all(|character| character.is_whitespace())
+        {
+            search_from = after_name;
+            continue;
+        }
+
+        let Some((body, close)) = cmake_parenthesized_body(&source, open) else {
+            break;
+        };
+        bodies.push(body);
+        search_from = close + 1;
+    }
+
+    bodies
+}
+
+fn strip_cmake_comments(source: &str) -> String {
+    let mut stripped = String::with_capacity(source.len());
+    let mut quote = None;
+    let mut chars = source.chars().peekable();
+    while let Some(character) = chars.next() {
+        match quote {
+            Some(current_quote) if character == current_quote => {
+                quote = None;
+                stripped.push(character);
+            }
+            Some(_) => stripped.push(character),
+            None if character == '"' || character == '\'' => {
+                quote = Some(character);
+                stripped.push(character);
+            }
+            None if character == '#' => {
+                for next in chars.by_ref() {
+                    if next == '\n' {
+                        stripped.push('\n');
+                        break;
+                    }
+                }
+            }
+            None => stripped.push(character),
+        }
+    }
+    stripped
+}
+
+fn cmake_parenthesized_body(source: &str, open: usize) -> Option<(String, usize)> {
+    let mut depth = 0usize;
+    let mut quote = None;
+    let body_start = open + '('.len_utf8();
+
+    for (index, character) in source[open..].char_indices() {
+        let absolute = open + index;
+        match quote {
+            Some(current_quote) if character == current_quote => quote = None,
+            Some(_) => {}
+            None if character == '"' || character == '\'' => quote = Some(character),
+            None if character == '(' => depth += 1,
+            None if character == ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some((source[body_start..absolute].to_string(), absolute));
+                }
+            }
+            None => {}
+        }
+    }
+
+    None
+}
+
+fn cmake_command_args(body: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+
+    for character in body.chars() {
+        match quote {
+            Some(current_quote) if character == current_quote => quote = None,
+            Some(_) => current.push(character),
+            None if character == '"' || character == '\'' => quote = Some(character),
+            None if character.is_whitespace() || character == ';' => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            None => current.push(character),
+        }
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+
+    args
+}
+
+fn is_cmake_source_argument(value: &str) -> bool {
+    let value = value.trim();
+    !value.starts_with('$') && !value.starts_with('<') && has_known_source_extension(value)
+}
+
+fn is_cmake_ident_char(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '_'
 }
 
 fn split_command_tokens(command: &str) -> Vec<String> {
@@ -1884,6 +2052,11 @@ dependencies = ["pydantic>=2"]
         .unwrap();
         fs::write(root.join("src").join("index.js"), "console.log('start');\n").unwrap();
         fs::write(
+            root.join("src").join("main.c"),
+            "int main(void) { return 0; }\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("codegraph").join("cli.py"),
             "def main():\n    pass\n",
         )
@@ -1932,6 +2105,20 @@ cg = "codegraph.cli:main"
 }"#,
         )
         .unwrap();
+        fs::write(
+            root.join("CMakeLists.txt"),
+            r#"# comment add_executable(nope src/nope.c)
+cmake_minimum_required(VERSION 3.20)
+project(demo_c)
+add_executable(demo_c
+  src/main.c
+  src/extra.c
+)
+add_executable(alias_target ALIAS demo_c)
+add_executable(imported_tool IMPORTED)
+"#,
+        )
+        .unwrap();
 
         let graph = scan_project(&root, &IndexOptions::default()).unwrap();
         let entrypoints: BTreeSet<_> = graph
@@ -1949,9 +2136,13 @@ cg = "codegraph.cli:main"
             "python console_script:cg",
             "composer bin:bin/codegraph",
             "composer script:analyse",
+            "cmake executable:demo_c",
         ] {
             assert!(entrypoints.contains(expected), "missing {expected}");
         }
+        assert!(!entrypoints.contains("cmake executable:alias_target"));
+        assert!(!entrypoints.contains("cmake executable:imported_tool"));
+        assert!(!entrypoints.contains("cmake executable:nope"));
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == EdgeKind::Entrypoint && edge.confidence == Confidence::Exact
         }));
@@ -1973,6 +2164,9 @@ cg = "codegraph.cli:main"
         let composer_entrypoint =
             node_id(&graph, NodeKind::Entrypoint, "composer bin:bin/codegraph");
         let composer_file = node_id(&graph, NodeKind::File, "bin/codegraph");
+        let cmake_entrypoint = node_id(&graph, NodeKind::Entrypoint, "cmake executable:demo_c");
+        let cmake_file = node_id(&graph, NodeKind::File, "src/main.c");
+        let cmake_main = function_id_in_file(&graph, "main", "src/main.c");
 
         assert!(has_entrypoint_reference(
             &graph,
@@ -2008,6 +2202,20 @@ cg = "codegraph.cli:main"
             composer_file,
             "entrypoint_file",
             Confidence::Exact,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            cmake_entrypoint,
+            cmake_file,
+            "entrypoint_file",
+            Confidence::Exact,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            cmake_entrypoint,
+            cmake_main,
+            "entrypoint_function",
+            Confidence::Syntactic,
         ));
 
         fs::remove_dir_all(root).unwrap();
