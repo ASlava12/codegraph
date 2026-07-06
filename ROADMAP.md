@@ -73,7 +73,7 @@ Exit criteria:
 
 Goal: answer practical code investigation questions.
 
-- Trace from entrypoints.
+- [x] Trace from entrypoints.
 - [x] Trace config loading and environment variable reads.
 - [x] Identify error and exception paths.
 - [x] Add structured summary, entrypoints, and trace commands.
@@ -98,6 +98,7 @@ Example commands:
 ```bash
 codegraph entrypoints
 codegraph trace main
+codegraph trace-entrypoints --search server
 codegraph trace-config DATABASE_URL
 codegraph trace-errors "failed to load data"
 codegraph query 'calls(function:main)'

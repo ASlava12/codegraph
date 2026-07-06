@@ -8,11 +8,12 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
-    ConfigTraceRequest, ConfigTraceResult, ErrorTraceRequest, ErrorTraceResult, FocusRequest,
-    GraphSlice, GraphSliceRequest, InsightFilter, InsightReport, InsightSeverity, NodeContext,
-    TraceRequest, TraceStart, entrypoints, export_dot, export_ndjson, filter_insight_report,
-    focus_subgraph, insights, node_context, query_graph, slice_graph, summarize, trace,
-    trace_config, trace_errors,
+    ConfigTraceRequest, ConfigTraceResult, EntrypointTraceReport, EntrypointTraceRequest,
+    ErrorTraceRequest, ErrorTraceResult, FocusRequest, GraphSlice, GraphSliceRequest,
+    InsightFilter, InsightReport, InsightSeverity, NodeContext, TraceRequest, TraceStart,
+    entrypoints, export_dot, export_ndjson, filter_insight_report, focus_subgraph, insights,
+    node_context, query_graph, slice_graph, summarize, trace, trace_config, trace_entrypoints,
+    trace_errors,
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
@@ -96,6 +97,14 @@ struct TraceQuery {
     label: Option<String>,
     node_id: Option<u64>,
     depth: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EntrypointTraceQuery {
+    path: Option<PathBuf>,
+    search: Option<String>,
+    depth: Option<usize>,
+    limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -306,6 +315,7 @@ async fn main() -> Result<()> {
         .route("/api/focus", get(focus_api))
         .route("/api/summary", get(summary))
         .route("/api/entrypoints", get(entrypoints_api))
+        .route("/api/entrypoint-traces", get(entrypoint_traces_api))
         .route("/api/insights", get(insights_api))
         .route("/api/query", get(query_api))
         .route("/api/trace", get(trace_api))
@@ -637,6 +647,21 @@ async fn entrypoints_api(
 ) -> Result<Json<Vec<codegraph_core::Node>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(entrypoints(&graph)))
+}
+
+async fn entrypoint_traces_api(
+    State(state): State<AppState>,
+    Query(query): Query<EntrypointTraceQuery>,
+) -> Result<Json<EntrypointTraceReport>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    Ok(Json(trace_entrypoints(
+        &graph,
+        EntrypointTraceRequest {
+            search: normalize_query_string(query.search),
+            max_depth: query.depth.unwrap_or(3).clamp(1, 32),
+            limit: query.limit.unwrap_or(25).clamp(1, 500),
+        },
+    )))
 }
 
 async fn insights_api(

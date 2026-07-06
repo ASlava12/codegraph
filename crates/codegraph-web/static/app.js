@@ -15,6 +15,7 @@ const state = {
   animationFrame: null,
   selectionRequest: 0,
   traceRequest: 0,
+  entryFlowRequest: 0,
   queryRequest: 0,
   pathRequest: 0,
   configTraceRequest: 0,
@@ -72,6 +73,10 @@ const overviewTotals = document.querySelector("#overviewTotals");
 const languageList = document.querySelector("#languageList");
 const confidenceList = document.querySelector("#confidenceList");
 const entrypointList = document.querySelector("#entrypointList");
+const entryFlowSearchInput = document.querySelector("#entryFlowSearchInput");
+const entryFlowDepthInput = document.querySelector("#entryFlowDepthInput");
+const entryFlowButton = document.querySelector("#entryFlowButton");
+const entryFlowResult = document.querySelector("#entryFlowResult");
 const pageInfo = document.querySelector("#pageInfo");
 const nodeLimitInput = document.querySelector("#nodeLimitInput");
 const edgeLimitInput = document.querySelector("#edgeLimitInput");
@@ -124,6 +129,12 @@ queryButton.addEventListener("click", () => runGraphQuery());
 queryInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runGraphQuery();
 });
+entryFlowButton.addEventListener("click", () => runEntryFlowTrace());
+for (const input of [entryFlowSearchInput, entryFlowDepthInput]) {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") runEntryFlowTrace();
+  });
+}
 pathButton.addEventListener("click", () => runPathQuery());
 for (const input of [pathFromInput, pathToInput, pathDepthInput, pathEdgeKindInput]) {
   input.addEventListener("keydown", (event) => {
@@ -367,6 +378,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     state.queryFocus = null;
     state.insightReport = null;
     queryResult.innerHTML = "";
+    entryFlowResult.innerHTML = "";
     pathResult.innerHTML = "";
     configTraceResult.innerHTML = "";
     errorTraceResult.innerHTML = "";
@@ -519,6 +531,111 @@ function updateGraphPageControls() {
   pagePrevButton.disabled = state.graphPage.nodeOffset === 0;
   pageNextButton.disabled = !state.graphPage.truncatedNodes;
   pageReloadButton.disabled = false;
+}
+
+async function runEntryFlowTrace() {
+  const depth = clampNumber(Number(entryFlowDepthInput.value || 3), 1, 32);
+  entryFlowDepthInput.value = String(depth);
+  state.entryFlowRequest += 1;
+  const requestId = state.entryFlowRequest;
+  entryFlowButton.disabled = true;
+  entryFlowResult.innerHTML = '<p class="empty">Tracing entrypoints...</p>';
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    depth: String(depth),
+    limit: "25",
+  });
+  const search = entryFlowSearchInput.value.trim();
+  if (search) params.set("search", search);
+
+  try {
+    const response = await fetch(`/api/entrypoint-traces?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.entryFlowRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "entrypoint trace failed");
+    }
+    entryFlowResult.innerHTML = renderEntryFlowReport(body);
+    attachEntryFlowActions(entryFlowResult, body);
+  } catch (error) {
+    if (requestId !== state.entryFlowRequest) return;
+    entryFlowResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.entryFlowRequest) {
+      entryFlowButton.disabled = false;
+    }
+  }
+}
+
+function renderEntryFlowReport(report) {
+  const summary = `
+    <div class="query-summary">
+      <span>${report.total_entrypoints} entrypoints</span>
+      <span>${report.traces.length} traces</span>
+      <span>depth ${report.max_depth}</span>
+    </div>
+  `;
+  if (!report.traces.length) {
+    return `${summary}<p class="empty">No matching entrypoint flows.</p>`;
+  }
+
+  const rows = report.traces
+    .slice(0, 25)
+    .map((trace, index) => {
+      const nodes = [...trace.nodes]
+        .sort((left, right) => left.depth - right.depth || left.node.label.localeCompare(right.node.label))
+        .slice(0, 10)
+        .map(
+          ({ node, depth }) => `
+            <li>
+              <button class="trace-node" type="button" data-node-id="${node.id}" style="--depth:${depth}">
+                <span>${escapeHtml(formatKind(node.kind))}</span>
+                <strong>${escapeHtml(node.label)}</strong>
+              </button>
+            </li>
+          `,
+        )
+        .join("");
+      const truncated = trace.truncated ? '<p class="empty">Trace truncated by depth.</p>' : "";
+      return `
+        <section class="trace-columns">
+          <h3>${escapeHtml(trace.start.label)}</h3>
+          <div class="trace-summary">
+            <span>${trace.nodes.length} nodes</span>
+            <span>${trace.edges.length} edges</span>
+            <span>${escapeHtml(formatKind(trace.start.metadata?.entrypoint_kind || trace.start.kind))}</span>
+          </div>
+          <div class="query-actions">
+            <button type="button" data-entry-flow="${index}">Focus flow</button>
+          </div>
+          ${nodes ? `<ul class="trace-list">${nodes}</ul>` : '<p class="empty">No outgoing dependency edges.</p>'}
+          ${truncated}
+        </section>
+      `;
+    })
+    .join("");
+  const truncated = report.truncated ? '<p class="empty">Report truncated by limit or depth.</p>' : "";
+  return `${summary}${rows}${truncated}`;
+}
+
+function attachEntryFlowActions(container, report) {
+  attachQueryNavigation(container);
+  container.querySelectorAll("[data-entry-flow]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const trace = report.traces[Number(button.dataset.entryFlow)];
+      if (!trace) return;
+      const focused = {
+        query: `trace-entrypoints ${trace.start.label}`,
+        nodes: trace.nodes.map(({ node }) => node),
+        edges: trace.edges,
+        total_nodes: trace.nodes.length,
+        total_edges: trace.edges.length,
+        truncated: trace.truncated,
+      };
+      showFocusedGraph(focused, `Entry: ${trace.start.label}`, trace.start.id);
+    });
+  });
 }
 
 async function loadInsights() {

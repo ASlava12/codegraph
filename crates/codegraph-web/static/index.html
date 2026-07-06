@@ -45,6 +45,24 @@
           <div id="entrypointList" class="entrypoint-list"></div>
         </section>
 
+        <section class="entrypoint-flows" aria-label="Entrypoint flows">
+          <header>
+            <h2>Entry Flows</h2>
+          </header>
+          <div class="entrypoint-flow-fields">
+            <label class="field compact">
+              <span>Search</span>
+              <input id="entryFlowSearchInput" type="text" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span>Depth</span>
+              <input id="entryFlowDepthInput" type="number" min="1" max="32" value="3" />
+            </label>
+          </div>
+          <button id="entryFlowButton" type="button">Trace Entrypoints</button>
+          <div id="entryFlowResult" class="query-result"></div>
+        </section>
+
         <section class="graph-page" aria-label="Graph page">
           <header>
             <h2>Graph Page</h2>

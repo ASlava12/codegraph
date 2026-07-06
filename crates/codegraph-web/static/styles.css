@@ -289,6 +289,41 @@ button:disabled {
   font-size: 12px;
 }
 
+.entrypoint-flows {
+  display: grid;
+  gap: 8px;
+}
+
+.entrypoint-flows header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.entrypoint-flows h2 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.entrypoint-flow-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 86px;
+  gap: 8px;
+}
+
+.entrypoint-flow-fields input {
+  height: 34px;
+}
+
+.entrypoint-flows > button {
+  height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
 .graph-page {
   display: grid;
   gap: 10px;

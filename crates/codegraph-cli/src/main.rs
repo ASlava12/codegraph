@@ -1,9 +1,9 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
-    ConfigTraceRequest, ErrorTraceRequest, InsightFilter, InsightSeverity, TraceRequest,
-    TraceStart, entrypoints, filter_insight_report, insights, query_graph, summarize, trace,
-    trace_config, trace_errors,
+    ConfigTraceRequest, EntrypointTraceRequest, ErrorTraceRequest, InsightFilter, InsightSeverity,
+    TraceRequest, TraceStart, entrypoints, filter_insight_report, insights, query_graph, summarize,
+    trace, trace_config, trace_entrypoints, trace_errors,
 };
 use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{IndexOptions, scan_project};
@@ -77,6 +77,33 @@ enum Command {
         /// Maximum outgoing dependency depth.
         #[arg(long, default_value_t = 2)]
         depth: usize,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+    },
+
+    /// Trace outgoing code-flow dependencies from entrypoint candidates.
+    TraceEntrypoints {
+        /// Filter entrypoints by label, kind, language, or metadata.
+        #[arg(long)]
+        search: Option<String>,
+
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Maximum outgoing dependency depth.
+        #[arg(long, default_value_t = 3)]
+        depth: usize,
+
+        /// Maximum entrypoint traces to return.
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
 
         /// Include hidden files and directories.
         #[arg(long)]
@@ -257,6 +284,25 @@ fn main() -> Result<()> {
                 },
             );
             println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::TraceEntrypoints {
+            search,
+            path,
+            depth,
+            limit,
+            include_hidden,
+            include_ignored,
+        } => {
+            let graph = scan_with_options(path, include_hidden, include_ignored)?;
+            let report = trace_entrypoints(
+                &graph,
+                EntrypointTraceRequest {
+                    search,
+                    max_depth: depth,
+                    limit,
+                },
+            );
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::TraceConfig {
             target,

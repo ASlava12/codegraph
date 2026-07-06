@@ -26,6 +26,7 @@ Implemented now:
 - SSE scan job status stream for live web progress updates.
 - Source preview API and UI panel for graph nodes with source spans.
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
+- Entrypoint trace API, CLI command, and web panel for comparing startup flows from manifest/code entrypoints.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
@@ -108,6 +109,13 @@ Trace outgoing dependencies from a label:
 cargo run -p codegraph-cli -- trace main . --depth 3
 ```
 
+Trace startup flows from entrypoint candidates:
+
+```bash
+cargo run -p codegraph-cli -- trace-entrypoints . --depth 3
+cargo run -p codegraph-cli -- trace-entrypoints . --search server --depth 4
+```
+
 Trace config files and environment variables back to readers and entrypoints:
 
 ```bash
@@ -185,6 +193,7 @@ curl 'http://127.0.0.1:3765/api/node-context?path=.&node_id=1&edge_limit=80'
 curl 'http://127.0.0.1:3765/api/focus?path=.&node_ids=1,2&edge_indexes=0&edge_limit=200'
 curl 'http://127.0.0.1:3765/api/summary?path=.'
 curl 'http://127.0.0.1:3765/api/entrypoints?path=.'
+curl 'http://127.0.0.1:3765/api/entrypoint-traces?path=.&search=server&depth=4'
 curl 'http://127.0.0.1:3765/api/insights?path=.'
 curl 'http://127.0.0.1:3765/api/insights?path=.&severity=warning&kind=dependency&limit=25'
 curl --get 'http://127.0.0.1:3765/api/query' \
@@ -248,6 +257,8 @@ When a manifest target can be mapped back to code, the entrypoint node also
 emits `references` edges with metadata such as `relation=entrypoint_file` or
 `relation=entrypoint_function`; traces follow these edges before continuing into
 regular call, import, config, environment, dependency, and error-flow edges.
+Entrypoint trace reports run this traversal for all matching entrypoints so a
+project's startup flows can be compared without manually copying labels.
 Config traces specialize that graph traversal by matching `config` and
 `environment` nodes, listing direct readers, and returning shortest known paths
 from manifest entrypoints to the reader and final read edge.

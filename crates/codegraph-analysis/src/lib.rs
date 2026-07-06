@@ -38,6 +38,21 @@ pub struct TraceResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntrypointTraceRequest {
+    pub search: Option<String>,
+    pub max_depth: usize,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntrypointTraceReport {
+    pub max_depth: usize,
+    pub total_entrypoints: usize,
+    pub traces: Vec<TraceResult>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigTraceRequest {
     pub target: String,
     pub max_depth: usize,
@@ -482,6 +497,45 @@ pub fn trace(graph: &CodeGraph, request: TraceRequest) -> Option<TraceResult> {
         edges,
         truncated,
     })
+}
+
+pub fn trace_entrypoints(
+    graph: &CodeGraph,
+    request: EntrypointTraceRequest,
+) -> EntrypointTraceReport {
+    let max_depth = request.max_depth.clamp(1, 32);
+    let limit = request.limit.clamp(1, 500);
+    let search = request
+        .search
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
+    let matched: Vec<_> = entrypoints(graph)
+        .into_iter()
+        .filter(|node| search.is_none_or(|expected| node_search_matches(node, expected)))
+        .collect();
+
+    let traces: Vec<_> = matched
+        .iter()
+        .take(limit)
+        .filter_map(|node| {
+            trace(
+                graph,
+                TraceRequest {
+                    start: TraceStart::NodeId(node.id),
+                    max_depth,
+                },
+            )
+        })
+        .collect();
+    let truncated = matched.len() > traces.len() || traces.iter().any(|trace| trace.truncated);
+
+    EntrypointTraceReport {
+        max_depth,
+        total_entrypoints: matched.len(),
+        traces,
+        truncated,
+    }
 }
 
 pub fn trace_config(graph: &CodeGraph, request: ConfigTraceRequest) -> ConfigTraceResult {
@@ -2631,6 +2685,74 @@ mod tests {
         assert_eq!(result.nodes.len(), 2);
         assert_eq!(result.edges.len(), 1);
         assert!(result.nodes.iter().any(|node| node.node.id == main));
+    }
+
+    #[test]
+    fn trace_entrypoints_returns_filtered_entrypoint_flows() {
+        let mut graph = CodeGraph::new("repo");
+        let cli_entrypoint = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "cargo bin:codegraph-cli",
+            None,
+            BTreeMap::from([("entrypoint_kind".to_string(), "binary".to_string())]),
+        );
+        let server_entrypoint = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "cargo bin:codegraph-server",
+            None,
+            BTreeMap::from([("entrypoint_kind".to_string(), "binary".to_string())]),
+        );
+        let cli_main = graph.add_node(NodeKind::Function, "cli_main");
+        let server_main = graph.add_node(NodeKind::Function, "server_main");
+        graph.add_edge(
+            graph.root,
+            cli_entrypoint,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(
+            graph.root,
+            server_entrypoint,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(
+            cli_entrypoint,
+            cli_main,
+            EdgeKind::References,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            server_entrypoint,
+            server_main,
+            EdgeKind::References,
+            Confidence::Syntactic,
+        );
+
+        let report = trace_entrypoints(
+            &graph,
+            EntrypointTraceRequest {
+                search: Some("server".to_string()),
+                max_depth: 1,
+                limit: 10,
+            },
+        );
+
+        assert_eq!(report.total_entrypoints, 1);
+        assert_eq!(report.traces.len(), 1);
+        assert_eq!(report.traces[0].start.id, server_entrypoint);
+        assert!(
+            report.traces[0]
+                .nodes
+                .iter()
+                .any(|node| node.node.id == server_main)
+        );
+        assert!(
+            !report.traces[0]
+                .nodes
+                .iter()
+                .any(|node| node.node.id == cli_main)
+        );
     }
 
     #[test]
