@@ -19,6 +19,7 @@ pub enum NodeKind {
     File,
     Module,
     Function,
+    Entrypoint,
     Type,
     Config,
     Environment,

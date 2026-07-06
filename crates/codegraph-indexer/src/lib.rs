@@ -45,6 +45,14 @@ struct ManifestDependency {
     ecosystem: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ManifestEntrypoint {
+    label: String,
+    kind: String,
+    ecosystem: String,
+    target: Option<String>,
+}
+
 impl Default for IndexOptions {
     fn default() -> Self {
         Self {
@@ -139,7 +147,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
     );
 
     if let Ok(source) = fs::read_to_string(path) {
-        index_manifest_dependencies(context, file_id, path, &source);
+        index_manifest_facts(context, file_id, path, &source);
     }
 
     if let Some((language, parse_result)) = parse_result {
@@ -280,6 +288,11 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
     }
 }
 
+fn index_manifest_facts(context: &mut IndexContext, file_id: NodeId, path: &Path, source: &str) {
+    index_manifest_dependencies(context, file_id, path, source);
+    index_manifest_entrypoints(context, file_id, path, source);
+}
+
 fn index_manifest_dependencies(
     context: &mut IndexContext,
     file_id: NodeId,
@@ -325,6 +338,46 @@ fn index_manifest_dependencies(
     }
 }
 
+fn index_manifest_entrypoints(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    source: &str,
+) {
+    for entrypoint in manifest_entrypoints(path, source) {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "manifest_entrypoint".to_string());
+        metadata.insert("entrypoint_kind".to_string(), entrypoint.kind);
+        metadata.insert("ecosystem".to_string(), entrypoint.ecosystem);
+        metadata.insert("source".to_string(), "manifest".to_string());
+        if let Some(target) = entrypoint.target {
+            metadata.insert("target".to_string(), target);
+        }
+
+        let entrypoint_id = context.graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            entrypoint.label,
+            None,
+            metadata,
+        );
+        add_edge_once(
+            &mut context.graph,
+            file_id,
+            entrypoint_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+        );
+        let root_id = context.graph.root;
+        add_edge_once(
+            &mut context.graph,
+            root_id,
+            entrypoint_id,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+    }
+}
+
 fn manifest_dependencies(path: &Path, source: &str) -> Vec<ManifestDependency> {
     match path.file_name().and_then(|name| name.to_str()) {
         Some("Cargo.toml") => cargo_dependencies(source),
@@ -335,6 +388,175 @@ fn manifest_dependencies(path: &Path, source: &str) -> Vec<ManifestDependency> {
         Some("composer.json") => composer_dependencies(source),
         _ => Vec::new(),
     }
+}
+
+fn manifest_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some("Cargo.toml") => cargo_entrypoints(path, source),
+        Some("package.json") => package_json_entrypoints(source),
+        Some("pyproject.toml") => pyproject_entrypoints(source),
+        Some("composer.json") => composer_entrypoints(source),
+        _ => Vec::new(),
+    }
+}
+
+fn cargo_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
+    let Ok(value) = toml::from_str::<toml::Value>(source) else {
+        return Vec::new();
+    };
+    let mut entrypoints = Vec::new();
+
+    if let Some(package_name) = value
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(|name| name.as_str())
+    {
+        if path
+            .parent()
+            .map(|parent| parent.join("src").join("main.rs").is_file())
+            .unwrap_or(false)
+        {
+            entrypoints.push(manifest_entrypoint(
+                format!("cargo bin:{package_name}"),
+                "binary",
+                "cargo",
+                Some("src/main.rs".to_string()),
+            ));
+        }
+    }
+
+    collect_cargo_target_entrypoints(&value, "bin", "binary", &mut entrypoints);
+    collect_cargo_target_entrypoints(&value, "example", "example", &mut entrypoints);
+    entrypoints
+}
+
+fn collect_cargo_target_entrypoints(
+    value: &toml::Value,
+    table_name: &str,
+    entrypoint_kind: &str,
+    entrypoints: &mut Vec<ManifestEntrypoint>,
+) {
+    let Some(targets) = value.get(table_name).and_then(|value| value.as_array()) else {
+        return;
+    };
+
+    for target in targets {
+        let Some(name) = target
+            .get("name")
+            .and_then(|name| name.as_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let target_path = target
+            .get("path")
+            .and_then(|path| path.as_str())
+            .map(str::to_string);
+        entrypoints.push(manifest_entrypoint(
+            format!("cargo {entrypoint_kind}:{name}"),
+            entrypoint_kind,
+            "cargo",
+            target_path,
+        ));
+    }
+}
+
+fn package_json_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let mut entrypoints = Vec::new();
+    let Some(scripts) = value.get("scripts").and_then(|value| value.as_object()) else {
+        return entrypoints;
+    };
+
+    for (name, command) in scripts {
+        entrypoints.push(manifest_entrypoint(
+            format!("npm script:{name}"),
+            "script",
+            "npm",
+            command.as_str().map(str::to_string),
+        ));
+    }
+    entrypoints
+}
+
+fn pyproject_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    let Ok(value) = toml::from_str::<toml::Value>(source) else {
+        return Vec::new();
+    };
+    let mut entrypoints = Vec::new();
+
+    if let Some(project) = value.get("project") {
+        collect_toml_entrypoint_keys(
+            project,
+            "scripts",
+            "console_script",
+            "python",
+            &mut entrypoints,
+        );
+        collect_toml_entrypoint_keys(
+            project,
+            "gui-scripts",
+            "gui_script",
+            "python",
+            &mut entrypoints,
+        );
+    }
+
+    if let Some(poetry) = value.get("tool").and_then(|value| value.get("poetry")) {
+        collect_toml_entrypoint_keys(
+            poetry,
+            "scripts",
+            "poetry_script",
+            "python",
+            &mut entrypoints,
+        );
+    }
+
+    entrypoints
+}
+
+fn composer_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let mut entrypoints = Vec::new();
+
+    if let Some(scripts) = value.get("scripts").and_then(|value| value.as_object()) {
+        for (name, command) in scripts {
+            let target = command.as_str().map(str::to_string).or_else(|| {
+                command.as_array().map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" && ")
+                })
+            });
+            entrypoints.push(manifest_entrypoint(
+                format!("composer script:{name}"),
+                "script",
+                "composer",
+                target,
+            ));
+        }
+    }
+
+    if let Some(bins) = value.get("bin").and_then(|value| value.as_array()) {
+        for bin in bins {
+            if let Some(path) = bin.as_str() {
+                entrypoints.push(manifest_entrypoint(
+                    format!("composer bin:{path}"),
+                    "binary",
+                    "composer",
+                    Some(path.to_string()),
+                ));
+            }
+        }
+    }
+
+    entrypoints
 }
 
 fn cargo_dependencies(source: &str) -> Vec<ManifestDependency> {
@@ -538,6 +760,26 @@ fn collect_toml_table_keys(
     }
 }
 
+fn collect_toml_entrypoint_keys(
+    value: &toml::Value,
+    table_name: &str,
+    entrypoint_kind: &str,
+    ecosystem: &str,
+    entrypoints: &mut Vec<ManifestEntrypoint>,
+) {
+    let Some(table) = value.get(table_name).and_then(|value| value.as_table()) else {
+        return;
+    };
+    for (name, target) in table {
+        entrypoints.push(manifest_entrypoint(
+            format!("{ecosystem} {entrypoint_kind}:{name}"),
+            entrypoint_kind,
+            ecosystem,
+            target.as_str().map(str::to_string),
+        ));
+    }
+}
+
 fn collect_json_object_keys(
     value: &serde_json::Value,
     object_name: &str,
@@ -613,6 +855,20 @@ fn manifest_dependency(
         name: name.into(),
         kind: dependency_kind.into(),
         ecosystem: ecosystem.into(),
+    }
+}
+
+fn manifest_entrypoint(
+    label: impl Into<String>,
+    entrypoint_kind: impl Into<String>,
+    ecosystem: impl Into<String>,
+    target: Option<String>,
+) -> ManifestEntrypoint {
+    ManifestEntrypoint {
+        label: label.into(),
+        kind: entrypoint_kind.into(),
+        ecosystem: ecosystem.into(),
+        target,
     }
 }
 
@@ -1091,6 +1347,85 @@ dependencies = ["pydantic>=2"]
             node.metadata
                 .get("ecosystem")
                 .is_some_and(|value| value == "npm")
+        }));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_adds_manifest_entrypoint_edges() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "demo"
+version = "0.1.0"
+
+[[bin]]
+name = "worker"
+path = "src/bin/worker.rs"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "vitest"
+  }
+}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("pyproject.toml"),
+            r#"[project.scripts]
+cg = "codegraph.cli:main"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("composer.json"),
+            r#"{
+  "bin": ["bin/codegraph"],
+  "scripts": {
+    "analyse": "phpstan analyse"
+  }
+}"#,
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let entrypoints: BTreeSet<_> = graph
+            .nodes
+            .iter()
+            .filter(|node| node.kind == NodeKind::Entrypoint)
+            .map(|node| node.label.as_str())
+            .collect();
+
+        for expected in [
+            "cargo bin:demo",
+            "cargo binary:worker",
+            "npm script:start",
+            "npm script:test",
+            "python console_script:cg",
+            "composer bin:bin/codegraph",
+            "composer script:analyse",
+        ] {
+            assert!(entrypoints.contains(expected), "missing {expected}");
+        }
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Entrypoint && edge.confidence == Confidence::Exact
+        }));
+        assert!(graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::Entrypoint
+                && node.label == "npm script:start"
+                && node
+                    .metadata
+                    .get("target")
+                    .is_some_and(|value| value == "node src/index.js")
         }));
 
         fs::remove_dir_all(root).unwrap();

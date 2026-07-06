@@ -15,6 +15,7 @@ Implemented now:
 - Filesystem scanner with default build/vendor ignore rules.
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, PHP, and Bash.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
+- Manifest-defined entrypoints from Cargo, npm, Python, and Composer project metadata.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
 - Manifest dependency extraction from Cargo, npm, Go, Python, and Composer projects.
 - Heuristic config reads, environment reads, and potential error/exception constructs.
@@ -178,6 +179,10 @@ Manifest dependencies are normalized into canonical package nodes with a stable
 manifest files connect to those package nodes with `depends_on` edges; the edge
 metadata records whether the declaration is runtime, dev, optional, peer, or
 build dependency data when the manifest format exposes that distinction.
+
+Manifest entrypoints are represented as `entrypoint` nodes linked from the
+repository root with exact `entrypoint` edges. Examples include Cargo binaries,
+npm scripts, Python project scripts, Composer scripts, and Composer binaries.
 
 ## Workspace
 

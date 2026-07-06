@@ -27,6 +27,7 @@ const colors = {
   file: "#67b7dc",
   module: "#8ccf7e",
   function: "#f2c14e",
+  entrypoint: "#5cc8a7",
   type: "#df7e7e",
   external_dependency: "#b88ee6",
   config: "#e5b454",
@@ -1271,6 +1272,8 @@ function nodeRadius(node) {
       return 10;
     case "function":
       return 8;
+    case "entrypoint":
+      return 10;
     case "type":
       return 9;
     default:

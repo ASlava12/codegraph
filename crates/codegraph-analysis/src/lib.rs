@@ -1149,6 +1149,7 @@ fn dot_color(kind: &NodeKind) -> &'static str {
         NodeKind::File => "#67b7dc",
         NodeKind::Module => "#8ccf7e",
         NodeKind::Function => "#f2c14e",
+        NodeKind::Entrypoint => "#5cc8a7",
         NodeKind::Type => "#df7e7e",
         NodeKind::Config => "#e5b454",
         NodeKind::Environment => "#d8a657",
