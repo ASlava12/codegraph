@@ -45,6 +45,7 @@ Implemented now:
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Persistent server-side graph cache with project fingerprint invalidation.
+- Persistent CLI graph cache using the same project fingerprinting and cache records as the server.
 - CLI scan benchmark reports with timing and graph-size metrics for regression tracking.
 - CI checks for formatting, clippy, tests, UI syntax, CLI scan, and server cache smoke tests.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
@@ -147,6 +148,14 @@ Include default ignored paths such as `target` and `node_modules`:
 
 ```bash
 cargo run -p codegraph-cli -- scan . --include-ignored
+```
+
+CLI graph commands use the persistent graph cache by default. Disable it for a
+single run or pin records to a specific directory:
+
+```bash
+cargo run -p codegraph-cli -- summary . --no-cache
+cargo run -p codegraph-cli -- summary . --cache-dir /tmp/codegraph-cache
 ```
 
 The output is JSON using the shared graph schema from `codegraph-core`.

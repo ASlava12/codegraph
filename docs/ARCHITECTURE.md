@@ -94,6 +94,7 @@ Responsibilities:
 
 CLI output must remain machine-friendly. Human-oriented formatting can be added, but JSON should stay stable.
 The CLI also owns local scan benchmark reports: it runs the same indexer path repeatedly and emits timing, graph size, and summary metrics without changing the graph schema.
+Graph-reading CLI commands use the shared storage cache by default and expose `--no-cache` plus `--cache-dir` for deterministic runs.
 
 ### Server And Web UI
 

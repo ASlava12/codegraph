@@ -7,6 +7,7 @@ use codegraph_analysis::{
 };
 use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{IndexOptions, scan_project};
+use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -38,6 +39,9 @@ enum Command {
         /// Output format.
         #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
         format: OutputFormat,
+
+        #[command(flatten)]
+        cache: CacheArgs,
     },
 
     /// Emit graph summary counts as JSON.
@@ -69,6 +73,9 @@ enum Command {
         /// Include default ignored directories such as target and node_modules.
         #[arg(long)]
         include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
     },
 
     /// Trace outgoing code-flow dependencies from a node label.
@@ -91,6 +98,9 @@ enum Command {
         /// Include default ignored directories such as target and node_modules.
         #[arg(long)]
         include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
     },
 
     /// Trace outgoing code-flow dependencies from entrypoint candidates.
@@ -118,6 +128,9 @@ enum Command {
         /// Include default ignored directories such as target and node_modules.
         #[arg(long)]
         include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
     },
 
     /// Trace config files and environment variables back to readers and entrypoints.
@@ -144,6 +157,9 @@ enum Command {
         /// Include default ignored directories such as target and node_modules.
         #[arg(long)]
         include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
     },
 
     /// Trace potential error/exception constructs back to sources and entrypoints.
@@ -170,6 +186,9 @@ enum Command {
         /// Include default ignored directories such as target and node_modules.
         #[arg(long)]
         include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
     },
 }
 
@@ -186,6 +205,20 @@ struct ScanArgs {
     /// Include default ignored directories such as target and node_modules.
     #[arg(long)]
     include_ignored: bool,
+
+    #[command(flatten)]
+    cache: CacheArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+struct CacheArgs {
+    /// Disable persistent graph cache for this command.
+    #[arg(long)]
+    no_cache: bool,
+
+    /// Directory for persistent graph cache records.
+    #[arg(long)]
+    cache_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -273,12 +306,18 @@ fn main() -> Result<()> {
             include_hidden,
             include_ignored,
             format,
+            cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored)?;
+            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
             print_graph(&graph, format)?;
         }
         Command::Summary(args) => {
-            let graph = scan_with_options(args.path, args.include_hidden, args.include_ignored)?;
+            let graph = scan_with_options(
+                args.path,
+                args.include_hidden,
+                args.include_ignored,
+                &args.cache,
+            )?;
             println!("{}", serde_json::to_string_pretty(&summarize(&graph))?);
         }
         Command::Benchmark(args) => {
@@ -286,7 +325,12 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Entrypoints(args) => {
-            let graph = scan_with_options(args.path, args.include_hidden, args.include_ignored)?;
+            let graph = scan_with_options(
+                args.path,
+                args.include_hidden,
+                args.include_ignored,
+                &args.cache,
+            )?;
             println!("{}", serde_json::to_string_pretty(&entrypoints(&graph))?);
         }
         Command::Insights(args) => {
@@ -294,6 +338,7 @@ fn main() -> Result<()> {
                 args.scan.path,
                 args.scan.include_hidden,
                 args.scan.include_ignored,
+                &args.scan.cache,
             )?;
             let report = filter_insight_report(
                 insights(&graph),
@@ -311,8 +356,9 @@ fn main() -> Result<()> {
             path,
             include_hidden,
             include_ignored,
+            cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored)?;
+            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&query_graph(&graph, &expression)?)?
@@ -324,8 +370,9 @@ fn main() -> Result<()> {
             depth,
             include_hidden,
             include_ignored,
+            cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored)?;
+            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
             let result = trace(
                 &graph,
                 TraceRequest {
@@ -342,8 +389,9 @@ fn main() -> Result<()> {
             limit,
             include_hidden,
             include_ignored,
+            cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored)?;
+            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
             let report = trace_entrypoints(
                 &graph,
                 EntrypointTraceRequest {
@@ -361,8 +409,9 @@ fn main() -> Result<()> {
             limit,
             include_hidden,
             include_ignored,
+            cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored)?;
+            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
             let result = trace_config(
                 &graph,
                 ConfigTraceRequest {
@@ -380,8 +429,9 @@ fn main() -> Result<()> {
             limit,
             include_hidden,
             include_ignored,
+            cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored)?;
+            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
             let result = trace_errors(
                 &graph,
                 ErrorTraceRequest {
@@ -420,13 +470,22 @@ fn scan_with_options(
     path: PathBuf,
     include_hidden: bool,
     include_ignored: bool,
+    cache_args: &CacheArgs,
 ) -> Result<codegraph_core::CodeGraph> {
     let options = IndexOptions {
         include_hidden,
         include_ignored,
         ..IndexOptions::default()
     };
-    Ok(scan_project(path, &options)?)
+    let cache = (!cache_args.no_cache).then(|| {
+        GraphCache::new(
+            cache_args
+                .cache_dir
+                .clone()
+                .unwrap_or_else(default_cache_dir),
+        )
+    });
+    Ok(scan_project_cached(path, &options, cache.as_ref())?.graph)
 }
 
 fn benchmark_scans(args: BenchmarkArgs) -> Result<BenchmarkReport> {

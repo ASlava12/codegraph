@@ -1,5 +1,5 @@
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
-use codegraph_indexer::IndexOptions;
+use codegraph_indexer::{IndexError, IndexOptions, scan_project};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
@@ -16,6 +16,26 @@ const FNV_PRIME: u64 = 0x100000001b3;
 #[derive(Debug, Clone)]
 pub struct GraphCache {
     dir: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CachedScan {
+    pub graph: CodeGraph,
+    pub cache: CacheInfo,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CacheInfo {
+    pub status: CacheStatus,
+    pub dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheStatus {
+    Disabled,
+    Hit,
+    Miss,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,6 +72,8 @@ pub enum CacheError {
     },
     #[error("failed to encode or decode cache record: {0}")]
     Codec(#[from] serde_json::Error),
+    #[error("failed to index project: {0}")]
+    Index(#[from] IndexError),
 }
 
 impl GraphCache {
@@ -196,6 +218,44 @@ impl GraphCache {
         self.dir
             .join(format!("graph-{:016x}.json", hasher.finish()))
     }
+}
+
+pub fn scan_project_cached(
+    root: impl AsRef<Path>,
+    options: &IndexOptions,
+    cache: Option<&GraphCache>,
+) -> Result<CachedScan, CacheError> {
+    let root = root.as_ref();
+    let Some(cache) = cache else {
+        return Ok(CachedScan {
+            graph: scan_project(root, options)?,
+            cache: CacheInfo {
+                status: CacheStatus::Disabled,
+                dir: None,
+            },
+        });
+    };
+
+    let fingerprint = GraphCache::fingerprint_project(root, options)?;
+    if let Ok(Some(graph)) = cache.load(root, options, &fingerprint) {
+        return Ok(CachedScan {
+            graph,
+            cache: CacheInfo {
+                status: CacheStatus::Hit,
+                dir: Some(cache.dir().display().to_string()),
+            },
+        });
+    }
+
+    let graph = scan_project(root, options)?;
+    let _ = cache.store(root, options, fingerprint, &graph);
+    Ok(CachedScan {
+        graph,
+        cache: CacheInfo {
+            status: CacheStatus::Miss,
+            dir: Some(cache.dir().display().to_string()),
+        },
+    })
 }
 
 pub fn default_cache_dir() -> PathBuf {
@@ -362,6 +422,25 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn cached_scan_reports_miss_then_hit() {
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        let options = IndexOptions::default();
+        let cache = GraphCache::new(&cache_dir);
+
+        let first = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        let second = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+
+        assert_eq!(first.cache.status, CacheStatus::Miss);
+        assert_eq!(second.cache.status, CacheStatus::Hit);
+        assert_eq!(first.graph, second.graph);
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();
     }

@@ -16,8 +16,10 @@ use codegraph_analysis::{
     trace_errors,
 };
 use codegraph_core::CodeGraph;
-use codegraph_indexer::{IndexOptions, scan_project};
-use codegraph_storage::{GraphCache, default_cache_dir};
+use codegraph_indexer::IndexOptions;
+use codegraph_storage::{
+    CacheInfo, CacheStatus, GraphCache, default_cache_dir, scan_project_cached,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -230,25 +232,6 @@ struct ScanResponse {
     graph: CodeGraph,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct CacheInfo {
-    status: CacheStatus,
-    dir: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum CacheStatus {
-    Disabled,
-    Hit,
-    Miss,
-}
-
-struct ScanOutput {
-    graph: CodeGraph,
-    cache: CacheInfo,
-}
-
 #[derive(Debug, Serialize)]
 struct SourceResponse {
     path: String,
@@ -367,9 +350,10 @@ async fn start_scan_job(
         .await;
 
         let scan_root = root.clone();
-        let result =
-            tokio::task::spawn_blocking(move || scan_project_with_cache(scan_root, options, cache))
-                .await;
+        let result = tokio::task::spawn_blocking(move || {
+            scan_project_cached(scan_root, &options, cache.as_ref())
+        })
+        .await;
         match result {
             Ok(Ok(output)) => {
                 let graph = output.graph;
@@ -543,10 +527,11 @@ async fn scan(
     let options = state.options.clone();
     let cache = state.cache.clone();
     let root_label = root.display().to_string();
-    let output = tokio::task::spawn_blocking(move || scan_project_with_cache(root, options, cache))
-        .await
-        .map_err(|error| ApiError::internal(format!("scanner task failed: {error}")))?
-        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let output =
+        tokio::task::spawn_blocking(move || scan_project_cached(root, &options, cache.as_ref()))
+            .await
+            .map_err(|error| ApiError::internal(format!("scanner task failed: {error}")))?
+            .map_err(|error| ApiError::internal(error.to_string()))?;
 
     Ok(Json(ScanResponse {
         root: root_label,
@@ -808,49 +793,11 @@ async fn scan_graph(state: &AppState, requested: Option<&Path>) -> Result<CodeGr
     let root = resolve_scan_root(state, requested)?;
     let options = state.options.clone();
     let cache = state.cache.clone();
-    tokio::task::spawn_blocking(move || scan_project_with_cache(root, options, cache))
+    tokio::task::spawn_blocking(move || scan_project_cached(root, &options, cache.as_ref()))
         .await
         .map_err(|error| ApiError::internal(format!("scanner task failed: {error}")))?
         .map(|output| output.graph)
         .map_err(|error| ApiError::internal(error.to_string()))
-}
-
-fn scan_project_with_cache(
-    root: PathBuf,
-    options: IndexOptions,
-    cache: Option<GraphCache>,
-) -> Result<ScanOutput> {
-    let Some(cache) = cache else {
-        return Ok(ScanOutput {
-            graph: scan_project(root, &options)?,
-            cache: CacheInfo {
-                status: CacheStatus::Disabled,
-                dir: None,
-            },
-        });
-    };
-
-    let fingerprint = GraphCache::fingerprint_project(&root, &options)
-        .with_context(|| format!("failed to fingerprint {}", root.display()))?;
-    if let Ok(Some(graph)) = cache.load(&root, &options, &fingerprint) {
-        return Ok(ScanOutput {
-            graph,
-            cache: CacheInfo {
-                status: CacheStatus::Hit,
-                dir: Some(cache.dir().display().to_string()),
-            },
-        });
-    }
-
-    let graph = scan_project(&root, &options)?;
-    let _ = cache.store(&root, &options, fingerprint, &graph);
-    Ok(ScanOutput {
-        graph,
-        cache: CacheInfo {
-            status: CacheStatus::Miss,
-            dir: Some(cache.dir().display().to_string()),
-        },
-    })
 }
 
 fn resolve_scan_root(state: &AppState, requested: Option<&Path>) -> Result<PathBuf, ApiError> {

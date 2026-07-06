@@ -221,6 +221,7 @@ dependencies = [
  "codegraph-analysis",
  "codegraph-core",
  "codegraph-indexer",
+ "codegraph-storage",
  "serde",
  "serde_json",
 ]
