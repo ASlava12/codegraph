@@ -37,6 +37,7 @@ const statusEl = document.querySelector("#status");
 const rootLabel = document.querySelector("#rootLabel");
 const nodeCount = document.querySelector("#nodeCount");
 const edgeCount = document.querySelector("#edgeCount");
+const callCount = document.querySelector("#callCount");
 const entryCount = document.querySelector("#entryCount");
 const kindFilters = document.querySelector("#kindFilters");
 const selectionTitle = document.querySelector("#selectionTitle");
@@ -137,6 +138,9 @@ function applyFilters() {
 
   nodeCount.textContent = String(state.visibleNodes.length);
   edgeCount.textContent = String(state.visibleEdges.length);
+  callCount.textContent = String(
+    state.visibleEdges.filter((edge) => edge.kind === "calls").length,
+  );
   entryCount.textContent = String(
     state.graph.edges.filter((edge) => edge.kind === "entrypoint").length,
   );
@@ -279,7 +283,7 @@ function draw() {
     ctx.beginPath();
     ctx.moveTo(source.x, source.y);
     ctx.lineTo(target.x, target.y);
-    ctx.strokeStyle = edge.kind === "entrypoint" ? "#5cc8a7" : "rgba(170, 184, 190, 0.28)";
+    ctx.strokeStyle = edgeColor(edge);
     ctx.stroke();
   });
 
@@ -477,6 +481,19 @@ function nodeRadius(node) {
 
 function colorFor(kind) {
   return colors[kind] || colors.unknown;
+}
+
+function edgeColor(edge) {
+  switch (edge.kind) {
+    case "calls":
+      return "rgba(242, 193, 78, 0.72)";
+    case "entrypoint":
+      return "rgba(92, 200, 167, 0.82)";
+    case "imports":
+      return "rgba(184, 142, 230, 0.5)";
+    default:
+      return "rgba(170, 184, 190, 0.28)";
+  }
 }
 
 function formatKind(value) {

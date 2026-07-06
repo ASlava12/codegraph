@@ -15,12 +15,12 @@ Implemented now:
 - Filesystem scanner with default build/vendor ignore rules.
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, PHP, and Bash.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
+- Approximate `calls` edges between functions when syntax-level names can be resolved.
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
 
 Planned next:
 
-- Approximate call edges.
 - Config, environment, and error-flow extraction.
 - Graph query commands.
 - Better graph layout, source preview, and path-aware navigation.

@@ -28,7 +28,7 @@ Goal: extract language-independent structure from source files.
 - [x] Detect languages by extension and file name.
 - [x] Extract files, modules, imports, top-level declarations, functions, and classes/types.
 - [x] Support Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash at syntax level.
-- [ ] Extract approximate call sites.
+- [x] Extract approximate call sites.
 - [ ] Detect config and environment reads.
 - [ ] Detect basic error/exception constructs.
 - Add graph export formats:
@@ -41,6 +41,7 @@ Exit criteria:
 - A mixed-language repository produces a navigable graph.
 - CLI can show entrypoint candidates and symbol summaries.
 - Parser failures are reported without aborting the whole scan.
+- Function calls are represented as heuristic edges when syntactic resolution is possible.
 
 ## Phase 2: Semantic Enrichment
 

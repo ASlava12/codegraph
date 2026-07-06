@@ -1,4 +1,4 @@
-use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeKind};
+use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan};
 use codegraph_parser::{Language, ParsedItemKind, parse_source};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -24,6 +24,19 @@ pub struct IndexOptions {
     pub ignored_names: BTreeSet<String>,
 }
 
+struct IndexContext {
+    graph: CodeGraph,
+    function_symbols: BTreeMap<String, Vec<NodeId>>,
+    pending_calls: Vec<PendingCall>,
+}
+
+struct PendingCall {
+    caller: NodeId,
+    label: String,
+    span: SourceSpan,
+    language: String,
+}
+
 impl Default for IndexOptions {
     fn default() -> Self {
         Self {
@@ -44,7 +57,11 @@ pub fn scan_project(
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(".");
-    let mut graph = CodeGraph::new(root_label);
+    let mut context = IndexContext {
+        graph: CodeGraph::new(root_label),
+        function_symbols: BTreeMap::new(),
+        pending_calls: Vec::new(),
+    };
 
     for entry in WalkDir::new(root)
         .into_iter()
@@ -66,20 +83,27 @@ pub fn scan_project(
         let label = relative_path.to_string_lossy().replace('\\', "/");
 
         if entry.file_type().is_dir() {
-            let id = graph.add_node(NodeKind::Directory, label);
-            graph.add_edge(graph.root, id, EdgeKind::Contains, Confidence::Exact);
+            let id = context.graph.add_node(NodeKind::Directory, label);
+            context.graph.add_edge(
+                context.graph.root,
+                id,
+                EdgeKind::Contains,
+                Confidence::Exact,
+            );
             continue;
         }
 
         if entry.file_type().is_file() && is_probably_source_file(path, options.max_file_size) {
-            index_file(&mut graph, path, &label);
+            index_file(&mut context, path, &label);
         }
     }
 
-    Ok(graph)
+    resolve_pending_calls(&mut context);
+
+    Ok(context.graph)
 }
 
-fn index_file(graph: &mut CodeGraph, path: &Path, label: &str) {
+fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
     let language = Language::detect(path);
     let mut metadata = BTreeMap::new();
 
@@ -95,22 +119,35 @@ fn index_file(graph: &mut CodeGraph, path: &Path, label: &str) {
         }
     });
 
-    let file_id = graph.add_node_with_metadata(NodeKind::File, label, None, metadata);
-    graph.add_edge(graph.root, file_id, EdgeKind::Contains, Confidence::Exact);
+    let file_id = context
+        .graph
+        .add_node_with_metadata(NodeKind::File, label, None, metadata);
+    context.graph.add_edge(
+        context.graph.root,
+        file_id,
+        EdgeKind::Contains,
+        Confidence::Exact,
+    );
 
     if let Some((language, parse_result)) = parse_result {
         match parse_result {
             Ok(parsed) => {
                 if parsed.has_error_nodes {
-                    add_file_metadata(graph, file_id, "syntax_errors", "true");
+                    add_file_metadata(&mut context.graph, file_id, "syntax_errors", "true");
                 }
 
-                for item in parsed.items {
+                let mut local_functions = BTreeMap::new();
+                for item in parsed
+                    .items
+                    .iter()
+                    .filter(|item| item.kind != ParsedItemKind::Call)
+                {
                     let node_kind = match item.kind {
                         ParsedItemKind::Function | ParsedItemKind::Entrypoint => NodeKind::Function,
                         ParsedItemKind::Type => NodeKind::Type,
                         ParsedItemKind::Module => NodeKind::Module,
                         ParsedItemKind::Import => NodeKind::ExternalDependency,
+                        ParsedItemKind::Call => unreachable!("calls are processed after symbols"),
                     };
                     let mut item_metadata = BTreeMap::new();
                     item_metadata.insert("language".to_string(), language.to_string());
@@ -120,31 +157,179 @@ fn index_file(graph: &mut CodeGraph, path: &Path, label: &str) {
                         parsed_item_kind_name(item.kind).to_string(),
                     );
 
-                    let item_id = graph.add_node_with_metadata(
+                    let item_id = context.graph.add_node_with_metadata(
                         node_kind,
-                        item.label,
-                        Some(item.span),
+                        item.label.clone(),
+                        Some(item.span.clone()),
                         item_metadata,
                     );
                     let edge_kind = match item.kind {
                         ParsedItemKind::Import => EdgeKind::Imports,
                         _ => EdgeKind::Contains,
                     };
-                    graph.add_edge(file_id, item_id, edge_kind, Confidence::Syntactic);
+                    context
+                        .graph
+                        .add_edge(file_id, item_id, edge_kind, Confidence::Syntactic);
 
                     if item.kind == ParsedItemKind::Entrypoint {
-                        graph.add_edge(
-                            graph.root,
+                        context.graph.add_edge(
+                            context.graph.root,
                             item_id,
                             EdgeKind::Entrypoint,
                             Confidence::Syntactic,
                         );
                     }
+
+                    if matches!(
+                        item.kind,
+                        ParsedItemKind::Function | ParsedItemKind::Entrypoint
+                    ) {
+                        register_function_symbol(
+                            &mut context.function_symbols,
+                            &item.label,
+                            item_id,
+                        );
+                        register_local_function(&mut local_functions, &item.label, item_id);
+                    }
+                }
+
+                for item in parsed
+                    .items
+                    .iter()
+                    .filter(|item| item.kind == ParsedItemKind::Call)
+                {
+                    let Some(parent) = item.parent.as_deref() else {
+                        continue;
+                    };
+                    let Some(caller) = resolve_local_function(&local_functions, parent) else {
+                        continue;
+                    };
+                    context.pending_calls.push(PendingCall {
+                        caller,
+                        label: item.label.clone(),
+                        span: item.span.clone(),
+                        language: language.to_string(),
+                    });
                 }
             }
-            Err(error) => add_file_metadata(graph, file_id, "parse_error", error.to_string()),
+            Err(error) => add_file_metadata(
+                &mut context.graph,
+                file_id,
+                "parse_error",
+                error.to_string(),
+            ),
         }
     }
+}
+
+fn resolve_pending_calls(context: &mut IndexContext) {
+    let pending_calls = std::mem::take(&mut context.pending_calls);
+
+    for call in pending_calls {
+        let targets = resolve_function_targets(&context.function_symbols, &call.label);
+        if targets.is_empty() {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("language".to_string(), call.language);
+            metadata.insert("parser".to_string(), "tree-sitter".to_string());
+            metadata.insert("item_kind".to_string(), "call".to_string());
+            metadata.insert("resolution".to_string(), "unresolved".to_string());
+            let call_id = context.graph.add_node_with_metadata(
+                NodeKind::ExternalDependency,
+                call.label,
+                Some(call.span),
+                metadata,
+            );
+            add_edge_once(
+                &mut context.graph,
+                call.caller,
+                call_id,
+                EdgeKind::Calls,
+                Confidence::Heuristic,
+            );
+            continue;
+        }
+
+        for target in targets {
+            add_edge_once(
+                &mut context.graph,
+                call.caller,
+                target,
+                EdgeKind::Calls,
+                Confidence::Heuristic,
+            );
+        }
+    }
+}
+
+fn register_function_symbol(symbols: &mut BTreeMap<String, Vec<NodeId>>, label: &str, id: NodeId) {
+    for key in symbol_keys(label) {
+        let values = symbols.entry(key).or_default();
+        if !values.contains(&id) {
+            values.push(id);
+        }
+    }
+}
+
+fn register_local_function(symbols: &mut BTreeMap<String, NodeId>, label: &str, id: NodeId) {
+    for key in symbol_keys(label) {
+        symbols.entry(key).or_insert(id);
+    }
+}
+
+fn resolve_local_function(symbols: &BTreeMap<String, NodeId>, label: &str) -> Option<NodeId> {
+    symbol_keys(label)
+        .into_iter()
+        .find_map(|key| symbols.get(&key).copied())
+}
+
+fn resolve_function_targets(symbols: &BTreeMap<String, Vec<NodeId>>, label: &str) -> Vec<NodeId> {
+    let mut targets = Vec::new();
+    for key in symbol_keys(label) {
+        if let Some(ids) = symbols.get(&key) {
+            for id in ids {
+                if !targets.contains(id) {
+                    targets.push(*id);
+                }
+            }
+        }
+    }
+    targets
+}
+
+fn symbol_keys(label: &str) -> Vec<String> {
+    let compact = label.trim().trim_end_matches('!').to_string();
+    let simple = simple_symbol_name(&compact);
+    if compact == simple {
+        vec![compact]
+    } else {
+        vec![compact, simple]
+    }
+}
+
+fn simple_symbol_name(label: &str) -> String {
+    label
+        .rsplit([':', '.', '\\', '>'])
+        .find(|part| !part.is_empty() && *part != "-")
+        .unwrap_or(label)
+        .trim()
+        .to_string()
+}
+
+fn add_edge_once(
+    graph: &mut CodeGraph,
+    source: NodeId,
+    target: NodeId,
+    kind: EdgeKind,
+    confidence: Confidence,
+) {
+    if graph
+        .edges
+        .iter()
+        .any(|edge| edge.source == source && edge.target == target && edge.kind == kind)
+    {
+        return;
+    }
+    graph.add_edge(source, target, kind, confidence);
 }
 
 fn add_file_metadata(
@@ -165,6 +350,7 @@ fn parsed_item_kind_name(kind: ParsedItemKind) -> &'static str {
         ParsedItemKind::Module => "module",
         ParsedItemKind::Import => "import",
         ParsedItemKind::Entrypoint => "entrypoint",
+        ParsedItemKind::Call => "call",
     }
 }
 
@@ -267,6 +453,40 @@ mod tests {
                 .iter()
                 .any(|edge| edge.kind == EdgeKind::Entrypoint)
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_adds_approximate_call_edges() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() { helper(); }\nfn helper() {}\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let main_id = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == "main")
+            .map(|node| node.id)
+            .unwrap();
+        let helper_id = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == "helper")
+            .map(|node| node.id)
+            .unwrap();
+
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == main_id
+                && edge.target == helper_id
+                && edge.kind == EdgeKind::Calls
+                && edge.confidence == Confidence::Heuristic
+        }));
 
         fs::remove_dir_all(root).unwrap();
     }

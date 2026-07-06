@@ -100,6 +100,7 @@ pub struct ParsedItem {
     pub kind: ParsedItemKind,
     pub label: String,
     pub span: SourceSpan,
+    pub parent: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +110,7 @@ pub enum ParsedItemKind {
     Module,
     Import,
     Entrypoint,
+    Call,
 }
 
 pub fn parse_source(
@@ -136,6 +138,7 @@ pub fn parse_source(
         root,
         source_text.as_bytes(),
         &path.to_string_lossy(),
+        None,
         &mut items,
     );
     dedupe_items(&mut items);
@@ -152,15 +155,29 @@ fn collect_items(
     node: Node<'_>,
     source: &[u8],
     path: &str,
+    current_function: Option<String>,
     items: &mut Vec<ParsedItem>,
 ) {
+    if let Some(function_name) = current_function.as_deref() {
+        if let Some(call) = classify_call(language, node, source, path, function_name) {
+            items.push(call);
+        }
+    }
+
+    let mut next_function = current_function;
     if let Some(item) = classify_node(language, node, source, path) {
+        if matches!(
+            item.kind,
+            ParsedItemKind::Function | ParsedItemKind::Entrypoint
+        ) {
+            next_function = Some(item.label.clone());
+        }
         items.push(item);
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_items(language, child, source, path, items);
+        collect_items(language, child, source, path, next_function.clone(), items);
     }
 }
 
@@ -245,7 +262,67 @@ fn classify_node(
         kind: item_kind,
         label,
         span: span_for(path, node),
+        parent: None,
     })
+}
+
+fn classify_call(
+    language: Language,
+    node: Node<'_>,
+    source: &[u8],
+    path: &str,
+    function_name: &str,
+) -> Option<ParsedItem> {
+    if !is_call_node(language, node, source) {
+        return None;
+    }
+
+    let label = call_label(language, node, source)?;
+    if label.is_empty() {
+        return None;
+    }
+
+    Some(ParsedItem {
+        kind: ParsedItemKind::Call,
+        label,
+        span: span_for(path, node),
+        parent: Some(function_name.to_string()),
+    })
+}
+
+fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) -> bool {
+    match language {
+        Language::Rust => matches!(node.kind(), "call_expression" | "macro_invocation"),
+        Language::Python => node.kind() == "call",
+        Language::JavaScript | Language::TypeScript | Language::Tsx => {
+            matches!(node.kind(), "call_expression" | "new_expression")
+        }
+        Language::Go | Language::C | Language::Cpp => node.kind() == "call_expression",
+        Language::Php => matches!(
+            node.kind(),
+            "function_call_expression" | "scoped_call_expression" | "member_call_expression"
+        ),
+        Language::Bash => {
+            node.kind() == "command" && !command_text_starts_with(source, node, &["source", "."])
+        }
+    }
+}
+
+fn call_label(language: Language, node: Node<'_>, source: &[u8]) -> Option<String> {
+    if language == Language::Bash {
+        return node_text(node, source)
+            .and_then(|text| text.split_whitespace().next().map(ToString::to_string));
+    }
+
+    if let Some(function) = named_child_text(node, "function", source) {
+        return Some(clean_call_label(&function));
+    }
+
+    if let Some(name) = named_child_text(node, "name", source) {
+        return Some(clean_call_label(&name));
+    }
+
+    first_identifier(node, source).map(|name| clean_call_label(&name))
 }
 
 fn item_label(
@@ -312,6 +389,11 @@ fn node_text(node: Node<'_>, source: &[u8]) -> Option<String> {
 
 fn compact_label(value: String) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn clean_call_label(value: &str) -> String {
+    let compact = compact_label(value.to_string());
+    compact.trim_end_matches('!').to_string()
 }
 
 fn command_text_starts_with(source: &[u8], node: Node<'_>, prefixes: &[&str]) -> bool {
@@ -422,6 +504,22 @@ mod tests {
                 .iter()
                 .any(|item| item.label == "use std::fs;" && item.kind == ParsedItemKind::Import)
         );
+    }
+
+    #[test]
+    fn parses_rust_calls_with_parent_function() {
+        let parsed = parse_source(
+            "src/main.rs",
+            b"fn main() { helper(); println!(\"ok\"); }\nfn helper() {}\n",
+            Language::Rust,
+        )
+        .unwrap();
+
+        assert!(parsed.items.iter().any(|item| {
+            item.kind == ParsedItemKind::Call
+                && item.label == "helper"
+                && item.parent.as_deref() == Some("main")
+        }));
     }
 
     #[test]
