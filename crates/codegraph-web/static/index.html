@@ -100,6 +100,32 @@
           <div id="queryResult" class="query-result"></div>
         </section>
 
+        <section class="path-query" aria-label="Graph path">
+          <header>
+            <h2>Path</h2>
+          </header>
+          <div class="path-fields">
+            <label class="field compact">
+              <span>From</span>
+              <input id="pathFromInput" type="text" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span>To</span>
+              <input id="pathToInput" type="text" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span>Depth</span>
+              <input id="pathDepthInput" type="number" min="1" max="32" value="8" />
+            </label>
+            <label class="field compact">
+              <span>Edge</span>
+              <input id="pathEdgeKindInput" type="text" autocomplete="off" />
+            </label>
+          </div>
+          <button id="pathButton" type="button">Find Path</button>
+          <div id="pathResult" class="query-result"></div>
+        </section>
+
         <section class="insights" aria-label="Graph insights">
           <header>
             <h2>Insights</h2>

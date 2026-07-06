@@ -16,6 +16,7 @@ const state = {
   selectionRequest: 0,
   traceRequest: 0,
   queryRequest: 0,
+  pathRequest: 0,
   pageRequest: 0,
   overviewRequest: 0,
   insightRequest: 0,
@@ -84,6 +85,12 @@ const pageNextButton = document.querySelector("#pageNextButton");
 const queryInput = document.querySelector("#queryInput");
 const queryButton = document.querySelector("#queryButton");
 const queryResult = document.querySelector("#queryResult");
+const pathFromInput = document.querySelector("#pathFromInput");
+const pathToInput = document.querySelector("#pathToInput");
+const pathDepthInput = document.querySelector("#pathDepthInput");
+const pathEdgeKindInput = document.querySelector("#pathEdgeKindInput");
+const pathButton = document.querySelector("#pathButton");
+const pathResult = document.querySelector("#pathResult");
 const insightCount = document.querySelector("#insightCount");
 const insightList = document.querySelector("#insightList");
 const kindFilters = document.querySelector("#kindFilters");
@@ -103,6 +110,12 @@ queryButton.addEventListener("click", () => runGraphQuery());
 queryInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runGraphQuery();
 });
+pathButton.addEventListener("click", () => runPathQuery());
+for (const input of [pathFromInput, pathToInput, pathDepthInput, pathEdgeKindInput]) {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") runPathQuery();
+  });
+}
 pagePrevButton.addEventListener("click", () => shiftGraphPage(-1));
 pageNextButton.addEventListener("click", () => shiftGraphPage(1));
 pageReloadButton.addEventListener("click", () => loadGraphPage({ resetPage: true }));
@@ -322,6 +335,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     state.queryFocus = null;
     state.insightReport = null;
     queryResult.innerHTML = "";
+    pathResult.innerHTML = "";
     rootLabel.textContent = state.graphPage.root;
     initializeGraph({ preserveView: !resetLayout });
     loadProjectOverview();
@@ -561,6 +575,60 @@ async function runGraphQuery() {
   }
 }
 
+async function runPathQuery() {
+  const from = pathFromInput.value.trim();
+  const to = pathToInput.value.trim();
+  if (!from || !to) {
+    pathResult.innerHTML = '<p class="empty">Enter both path endpoints.</p>';
+    return;
+  }
+
+  const depth = clampNumber(Number(pathDepthInput.value || 8), 1, 32);
+  pathDepthInput.value = String(depth);
+  const edgeKind = pathEdgeKindInput.value.trim();
+  const expression = [
+    "path",
+    `from:${quoteQueryValue(from)}`,
+    `to:${quoteQueryValue(to)}`,
+    `depth:${depth}`,
+    edgeKind ? `edge_kind:${quoteQueryValue(edgeKind)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  state.pathRequest += 1;
+  const requestId = state.pathRequest;
+  pathButton.disabled = true;
+  pathResult.innerHTML = '<p class="empty">Finding path...</p>';
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    q: expression,
+  });
+
+  try {
+    const response = await fetch(`/api/query?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.pathRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "path query failed");
+    }
+    pathResult.innerHTML = renderQueryResult(body);
+    attachQueryNavigation(pathResult);
+    attachQueryFocusActions(pathResult, body);
+    if (body.nodes.length > 0 || body.edges.length > 0) {
+      focusQueryResult(body, pathResult);
+    }
+  } catch (error) {
+    if (requestId !== state.pathRequest) return;
+    pathResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.pathRequest) {
+      pathButton.disabled = false;
+    }
+  }
+}
+
 function renderQueryResult(result) {
   const nodeRows = result.nodes
     .slice(0, 40)
@@ -582,8 +650,8 @@ function renderQueryResult(result) {
       <span>${result.total_edges} edges</span>
     </div>
     <div class="query-actions">
-      <button id="queryFocusButton" type="button" ${hasResults ? "" : "disabled"}>Focus result</button>
-      <button id="queryClearButton" type="button" ${state.queryFocus ? "" : "disabled"}>Clear focus</button>
+      <button data-focus-result type="button" ${hasResults ? "" : "disabled"}>Focus result</button>
+      <button data-clear-focus type="button" ${state.queryFocus ? "" : "disabled"}>Clear focus</button>
     </div>
     ${nodeRows ? `<ul class="query-list">${nodeRows}</ul>` : ""}
     ${edgeRows ? `<ul class="query-list query-edge-list">${edgeRows}</ul>` : ""}
@@ -631,11 +699,11 @@ function attachQueryNavigation(container) {
 }
 
 function attachQueryFocusActions(container, result) {
-  const focusButton = container.querySelector("#queryFocusButton");
-  const clearButton = container.querySelector("#queryClearButton");
+  const focusButton = container.querySelector("[data-focus-result]");
+  const clearButton = container.querySelector("[data-clear-focus]");
   if (focusButton) {
     focusButton.addEventListener("click", () => {
-      focusQueryResult(result);
+      focusQueryResult(result, container);
     });
   }
   if (clearButton) {
@@ -645,7 +713,7 @@ function attachQueryFocusActions(container, result) {
   }
 }
 
-function focusQueryResult(result) {
+function focusQueryResult(result, container = queryResult) {
   const nodeIds = new Set(result.nodes.map((node) => node.id));
   const edgeKeys = new Set();
   result.edges.forEach((edge) => {
@@ -658,15 +726,23 @@ function focusQueryResult(result) {
 
   state.queryFocus = { nodeIds, edgeKeys };
   applyFilters();
-  const clearButton = queryResult.querySelector("#queryClearButton");
+  const clearButton = container.querySelector("[data-clear-focus]");
   if (clearButton) clearButton.disabled = false;
 }
 
 function clearQueryFocus() {
   state.queryFocus = null;
   applyFilters();
-  const clearButton = queryResult.querySelector("#queryClearButton");
-  if (clearButton) clearButton.disabled = true;
+  document.querySelectorAll("[data-clear-focus]").forEach((button) => {
+    button.disabled = true;
+  });
+}
+
+function quoteQueryValue(value) {
+  if (/^[A-Za-z0-9._/@:+-]+$/.test(value)) return value;
+  if (!value.includes('"')) return `"${value}"`;
+  if (!value.includes("'")) return `'${value}'`;
+  return `"${value.replaceAll('"', "'")}"`;
 }
 
 function sleep(ms) {
@@ -1416,6 +1492,10 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
     : "";
 
   selectionBody.innerHTML = `
+    <div class="selection-actions">
+      <button type="button" data-path-endpoint="from">From</button>
+      <button type="button" data-path-endpoint="to">To</button>
+    </div>
     <table class="detail-table">
       <tbody>
         ${rows
@@ -1457,6 +1537,14 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
     button.addEventListener("click", () => {
       state.selectedId = Number(button.dataset.nodeId);
       renderSelection();
+    });
+  });
+
+  selectionBody.querySelectorAll("[data-path-endpoint]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = button.dataset.pathEndpoint === "to" ? pathToInput : pathFromInput;
+      target.value = String(node.id);
+      target.focus();
     });
   });
 
