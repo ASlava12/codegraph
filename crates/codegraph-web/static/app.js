@@ -72,6 +72,7 @@ const pageInfo = document.querySelector("#pageInfo");
 const nodeLimitInput = document.querySelector("#nodeLimitInput");
 const edgeLimitInput = document.querySelector("#edgeLimitInput");
 const serverKindInput = document.querySelector("#serverKindInput");
+const serverLanguageInput = document.querySelector("#serverLanguageInput");
 const serverEdgeKindInput = document.querySelector("#serverEdgeKindInput");
 const pagePrevButton = document.querySelector("#pagePrevButton");
 const pageReloadButton = document.querySelector("#pageReloadButton");
@@ -101,7 +102,13 @@ queryInput.addEventListener("keydown", (event) => {
 pagePrevButton.addEventListener("click", () => shiftGraphPage(-1));
 pageNextButton.addEventListener("click", () => shiftGraphPage(1));
 pageReloadButton.addEventListener("click", () => loadGraphPage({ resetPage: true }));
-for (const input of [nodeLimitInput, edgeLimitInput, serverKindInput, serverEdgeKindInput]) {
+for (const input of [
+  nodeLimitInput,
+  edgeLimitInput,
+  serverKindInput,
+  serverLanguageInput,
+  serverEdgeKindInput,
+]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") loadGraphPage({ resetPage: true });
   });
@@ -275,8 +282,10 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     edge_limit: String(edgeLimit),
   });
   const kind = serverKindInput.value.trim();
+  const language = serverLanguageInput.value.trim();
   const edgeKind = serverEdgeKindInput.value.trim();
   if (kind) params.set("kind", kind);
+  if (language) params.set("language", language);
   if (edgeKind) params.set("edge_kind", edgeKind);
 
   try {
@@ -390,10 +399,11 @@ function renderOverview() {
   languageList.querySelectorAll("[data-language]").forEach((button) => {
     button.addEventListener("click", () => {
       serverKindInput.value = "";
+      serverLanguageInput.value = button.dataset.language || "";
       serverEdgeKindInput.value = "";
-      searchInput.value = button.dataset.language || "";
-      state.search = searchInput.value.trim().toLowerCase();
-      applyFilters();
+      searchInput.value = "";
+      state.search = "";
+      loadGraphPage({ resetPage: true, resetLayout: true });
     });
   });
 
