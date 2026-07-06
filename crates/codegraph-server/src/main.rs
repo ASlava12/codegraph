@@ -12,8 +12,8 @@ use codegraph_analysis::{
     ErrorTraceRequest, ErrorTraceResult, FocusRequest, GraphSlice, GraphSliceRequest,
     InsightFilter, InsightReport, InsightSeverity, NodeContext, TraceRequest, TraceStart,
     entrypoints, export_dot, export_ndjson, filter_insight_report, focus_subgraph, insights,
-    node_context, query_graph, slice_graph, summarize, trace, trace_config, trace_entrypoints,
-    trace_errors,
+    node_context, query_graph, slice_graph, summarize, trace, trace_config, trace_dependents,
+    trace_entrypoints, trace_errors,
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::IndexOptions;
@@ -325,6 +325,7 @@ async fn main() -> Result<()> {
         .route("/api/insights", get(insights_api))
         .route("/api/query", get(query_api))
         .route("/api/trace", get(trace_api))
+        .route("/api/dependents", get(dependents_api))
         .route("/api/trace-config", get(trace_config_api))
         .route("/api/trace-errors", get(trace_errors_api))
         .route("/api/source", get(source))
@@ -727,6 +728,29 @@ async fn trace_api(
         TraceRequest {
             start,
             max_depth: query.depth.unwrap_or(2).clamp(1, 8),
+        },
+    )))
+}
+
+async fn dependents_api(
+    State(state): State<AppState>,
+    Query(query): Query<TraceQuery>,
+) -> Result<Json<Option<codegraph_analysis::TraceResult>>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let start = match (query.node_id, query.label) {
+        (Some(id), _) => TraceStart::NodeId(codegraph_core::NodeId(id)),
+        (None, Some(label)) => TraceStart::Label(label),
+        (None, None) => {
+            return Err(ApiError::bad_request(
+                "dependents requires either node_id or label query parameter",
+            ));
+        }
+    };
+    Ok(Json(trace_dependents(
+        &graph,
+        TraceRequest {
+            start,
+            max_depth: query.depth.unwrap_or(3).clamp(1, 16),
         },
     )))
 }

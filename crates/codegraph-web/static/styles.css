@@ -872,7 +872,7 @@ button:disabled {
 
 .trace-controls {
   display: grid;
-  grid-template-columns: 82px minmax(0, 1fr);
+  grid-template-columns: 82px repeat(2, minmax(0, 1fr));
   gap: 8px;
   align-items: end;
 }

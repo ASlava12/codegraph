@@ -440,6 +440,18 @@ pub fn filter_insight_report(report: InsightReport, filter: &InsightFilter) -> I
 }
 
 pub fn trace(graph: &CodeGraph, request: TraceRequest) -> Option<TraceResult> {
+    trace_with_direction(graph, request, TraceDirection::Outgoing)
+}
+
+pub fn trace_dependents(graph: &CodeGraph, request: TraceRequest) -> Option<TraceResult> {
+    trace_with_direction(graph, request, TraceDirection::Incoming)
+}
+
+fn trace_with_direction(
+    graph: &CodeGraph,
+    request: TraceRequest,
+    direction: TraceDirection,
+) -> Option<TraceResult> {
     let start = match &request.start {
         TraceStart::NodeId(id) => graph.nodes.iter().find(|node| node.id == *id)?,
         TraceStart::Label(label) => graph.nodes.iter().find(|node| node.label == *label)?,
@@ -458,25 +470,18 @@ pub fn trace(graph: &CodeGraph, request: TraceRequest) -> Option<TraceResult> {
 
     while let Some((node_id, depth)) = queue.pop_front() {
         if depth >= request.max_depth {
-            if graph
-                .edges
-                .iter()
-                .any(|edge| edge.source == node_id && is_trace_edge(&edge.kind))
-            {
+            if trace_edges_from(graph, node_id, direction).next().is_some() {
                 truncated = true;
             }
             continue;
         }
 
-        for edge in graph
-            .edges
-            .iter()
-            .filter(|edge| edge.source == node_id && is_trace_edge(&edge.kind))
-        {
+        for edge in trace_edges_from(graph, node_id, direction) {
             edges.push(edge.clone());
-            if visited.insert(edge.target) {
-                depths.insert(edge.target, depth + 1);
-                queue.push_back((edge.target, depth + 1));
+            let next = trace_next_node(edge, node_id, direction);
+            if visited.insert(next) {
+                depths.insert(next, depth + 1);
+                queue.push_back((next, depth + 1));
             }
         }
     }
@@ -734,10 +739,11 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "calls" | "call" => query_edges(graph, spec, Some(EdgeKind::Calls)),
         "dependencies" | "depends" => query_edges(graph, spec, Some(EdgeKind::DependsOn)),
         "trace" => query_trace(graph, spec),
+        "dependents" | "impact" | "incoming" => query_dependents(graph, spec),
         "neighbors" | "neighbor" | "neighborhood" => query_neighbors(graph, spec),
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, neighbors, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, or path"
         ))),
     }
 }
@@ -1034,6 +1040,18 @@ fn query_edges(
 }
 
 fn query_trace(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    query_trace_with(graph, spec, trace)
+}
+
+fn query_dependents(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    query_trace_with(graph, spec, trace_dependents)
+}
+
+fn query_trace_with(
+    graph: &CodeGraph,
+    spec: QuerySpec,
+    trace_fn: fn(&CodeGraph, TraceRequest) -> Option<TraceResult>,
+) -> Result<QueryResult, QueryError> {
     let depth = spec
         .terms
         .get("depth")
@@ -1055,7 +1073,7 @@ fn query_trace(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryE
         ));
     };
 
-    let Some(result) = trace(
+    let Some(result) = trace_fn(
         graph,
         TraceRequest {
             start,
@@ -2777,6 +2795,36 @@ fn is_trace_edge(kind: &EdgeKind) -> bool {
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TraceDirection {
+    Outgoing,
+    Incoming,
+}
+
+fn trace_edges_from(
+    graph: &CodeGraph,
+    node_id: NodeId,
+    direction: TraceDirection,
+) -> impl Iterator<Item = &Edge> {
+    graph.edges.iter().filter(move |edge| {
+        is_trace_edge(&edge.kind)
+            && match direction {
+                TraceDirection::Outgoing => edge.source == node_id,
+                TraceDirection::Incoming => edge.target == node_id,
+            }
+    })
+}
+
+fn trace_next_node(edge: &Edge, node_id: NodeId, direction: TraceDirection) -> NodeId {
+    match direction {
+        TraceDirection::Outgoing => edge.target,
+        TraceDirection::Incoming => {
+            debug_assert_eq!(edge.target, node_id);
+            edge.source
+        }
+    }
+}
+
 fn entrypoint_reachable_nodes(graph: &CodeGraph) -> BTreeSet<NodeId> {
     let mut reachable = BTreeSet::new();
     let mut queue = VecDeque::new();
@@ -2932,6 +2980,45 @@ mod tests {
                 .unwrap()
                 .depth,
             1
+        );
+    }
+
+    #[test]
+    fn trace_dependents_follows_incoming_dependency_edges() {
+        let mut graph = CodeGraph::new("repo");
+        let caller = graph.add_node(NodeKind::Function, "caller");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let config = graph.add_node(NodeKind::Config, "settings.toml");
+        graph.add_edge(caller, main, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(helper, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
+
+        let result = trace_dependents(
+            &graph,
+            TraceRequest {
+                start: TraceStart::Label("settings.toml".to_string()),
+                max_depth: 3,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.nodes.len(), 4);
+        assert_eq!(result.edges.len(), 3);
+        assert_eq!(
+            result
+                .nodes
+                .iter()
+                .find(|node| node.node.id == caller)
+                .unwrap()
+                .depth,
+            3
+        );
+        assert!(
+            result
+                .edges
+                .iter()
+                .any(|edge| edge.source == helper && edge.target == config)
         );
     }
 
@@ -3100,6 +3187,28 @@ mod tests {
         assert_eq!(result.total_nodes, 3);
         assert_eq!(result.total_edges, 2);
         assert!(result.nodes.iter().any(|node| node.label == "serde"));
+    }
+
+    #[test]
+    fn query_dependents_returns_reverse_dependency_subgraph() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let config = graph.add_node(NodeKind::Config, "settings.toml");
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(helper, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
+
+        let result = query_graph(&graph, "dependents label:settings.toml depth:2").unwrap();
+
+        assert_eq!(result.total_nodes, 3);
+        assert_eq!(result.total_edges, 2);
+        assert!(result.nodes.iter().any(|node| node.id == main));
+        assert!(
+            result
+                .edges
+                .iter()
+                .any(|edge| edge.source == helper && edge.target == config)
+        );
     }
 
     #[test]

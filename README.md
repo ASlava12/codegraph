@@ -27,6 +27,7 @@ Implemented now:
 - SSE scan job status stream for live web progress updates.
 - Source preview API and UI panel for graph nodes with source spans.
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
+- Reverse dependency/dependent traces for impact analysis from CLI, API, query language, and web detail panels.
 - Entrypoint trace API, CLI command, and web panel for comparing startup flows from manifest/code entrypoints.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
@@ -114,6 +115,7 @@ cargo run -p codegraph-cli -- query 'edges kind:calls source:main' .
 cargo run -p codegraph-cli -- query 'edges confidence:heuristic' .
 cargo run -p codegraph-cli -- query 'calls(function:main)' .
 cargo run -p codegraph-cli -- query 'trace label:main depth:3' .
+cargo run -p codegraph-cli -- query 'dependents label:load_config depth:3' .
 cargo run -p codegraph-cli -- query 'neighbors label:main direction:out depth:2 edge_kind:calls' .
 cargo run -p codegraph-cli -- query 'path from:main to:load_config depth:6' .
 ```
@@ -122,6 +124,12 @@ Trace outgoing dependencies from a label:
 
 ```bash
 cargo run -p codegraph-cli -- trace main . --depth 3
+```
+
+Trace incoming dependents for impact analysis:
+
+```bash
+cargo run -p codegraph-cli -- trace-dependents load_config . --depth 3
 ```
 
 Trace startup flows from entrypoint candidates:
@@ -236,8 +244,12 @@ curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'q=neighbors label:main direction:out depth:2 edge_kind:calls'
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
+  --data-urlencode 'q=dependents label:load_config depth:3'
+curl --get 'http://127.0.0.1:3765/api/query' \
+  --data-urlencode 'path=.' \
   --data-urlencode 'q=path from:main to:load_config depth:6'
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
+curl 'http://127.0.0.1:3765/api/dependents?path=.&label=load_config&depth=3'
 curl 'http://127.0.0.1:3765/api/trace-config?path=.&target=DATABASE_URL&depth=6'
 curl --get 'http://127.0.0.1:3765/api/trace-errors' \
   --data-urlencode 'path=.' \

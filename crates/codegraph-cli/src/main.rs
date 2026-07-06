@@ -3,7 +3,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
     ConfigTraceRequest, EntrypointTraceRequest, ErrorTraceRequest, InsightFilter, InsightSeverity,
     TraceRequest, TraceStart, entrypoints, filter_insight_report, insights, query_graph, summarize,
-    trace, trace_config, trace_entrypoints, trace_errors,
+    trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{IndexOptions, scan_project};
@@ -89,6 +89,31 @@ enum Command {
 
         /// Maximum outgoing dependency depth.
         #[arg(long, default_value_t = 2)]
+        depth: usize,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Trace incoming dependents that can reach a node label.
+    TraceDependents {
+        /// Function/node label to trace back from.
+        label: String,
+
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Maximum incoming dependency depth.
+        #[arg(long, default_value_t = 3)]
         depth: usize,
 
         /// Include hidden files and directories.
@@ -374,6 +399,24 @@ fn main() -> Result<()> {
         } => {
             let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
             let result = trace(
+                &graph,
+                TraceRequest {
+                    start: TraceStart::Label(label),
+                    max_depth: depth,
+                },
+            );
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::TraceDependents {
+            label,
+            path,
+            depth,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
+            let result = trace_dependents(
                 &graph,
                 TraceRequest {
                     start: TraceStart::Label(label),

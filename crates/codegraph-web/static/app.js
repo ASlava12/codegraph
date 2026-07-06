@@ -15,6 +15,7 @@ const state = {
   animationFrame: null,
   selectionRequest: 0,
   traceRequest: 0,
+  dependentsRequest: 0,
   entryFlowRequest: 0,
   queryRequest: 0,
   pathRequest: 0,
@@ -2226,6 +2227,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
           <input id="traceDepthInput" type="number" min="1" max="8" value="3" />
         </label>
         <button id="traceButton" type="button">Trace</button>
+        <button id="dependentsButton" type="button">Dependents</button>
       </div>
       <div id="traceResult" class="trace-result"></div>
     </section>
@@ -2277,6 +2279,10 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
   if (traceButton) {
     traceButton.addEventListener("click", () => loadTrace(node));
   }
+  const dependentsButton = document.querySelector("#dependentsButton");
+  if (dependentsButton) {
+    dependentsButton.addEventListener("click", () => loadDependents(node));
+  }
 
   if (node.span) {
     loadSourcePreview(node, requestId);
@@ -2285,6 +2291,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
 
 async function loadTrace(node) {
   state.traceRequest += 1;
+  state.dependentsRequest += 1;
   const requestId = state.traceRequest;
   const target = document.querySelector("#traceResult");
   if (!target) return;
@@ -2314,12 +2321,44 @@ async function loadTrace(node) {
   }
 }
 
-function renderTrace(trace) {
+async function loadDependents(node) {
+  state.traceRequest += 1;
+  state.dependentsRequest += 1;
+  const requestId = state.dependentsRequest;
+  const target = document.querySelector("#traceResult");
+  if (!target) return;
+
+  target.innerHTML = '<p class="empty">Tracing dependents...</p>';
+  const depthInput = document.querySelector("#traceDepthInput");
+  const depth = clampNumber(Number(depthInput?.value || 3), 1, 16);
+  if (depthInput) depthInput.value = String(depth);
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    node_id: String(node.id),
+    depth: String(depth),
+  });
+
+  try {
+    const response = await fetch(`/api/dependents?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.dependentsRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "dependents trace failed");
+    }
+    target.innerHTML = renderTrace(body, { empty: "No incoming dependents.", label: "Dependents" });
+    attachTraceNavigation(target);
+  } catch (error) {
+    if (requestId !== state.dependentsRequest) return;
+    target.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderTrace(trace, options = {}) {
   if (!trace) {
     return '<p class="empty">No matching start node.</p>';
   }
   if (trace.nodes.length <= 1 && trace.edges.length === 0) {
-    return '<p class="empty">No outgoing dependency edges.</p>';
+    return `<p class="empty">${escapeHtml(options.empty || "No outgoing dependency edges.")}</p>`;
   }
 
   const nodes = [...trace.nodes]
@@ -2335,6 +2374,7 @@ function renderTrace(trace) {
   const suffix = trace.truncated ? '<p class="empty">Trace truncated by depth.</p>' : "";
   return `
     <div class="trace-summary">
+      ${options.label ? `<span>${escapeHtml(options.label)}</span>` : ""}
       <span>${trace.nodes.length} nodes</span>
       <span>${trace.edges.length} edges</span>
       <span>depth ${trace.max_depth}</span>
