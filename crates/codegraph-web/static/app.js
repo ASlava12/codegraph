@@ -758,7 +758,13 @@ function renderSelection() {
       ${neighbors.map((edge) => renderNeighbor(edge, node.id)).join("")}
     </div>
     <section class="trace-panel">
-      <button id="traceButton" type="button">Trace dependencies</button>
+      <div class="trace-controls">
+        <label class="field compact">
+          <span>Depth</span>
+          <input id="traceDepthInput" type="number" min="1" max="8" value="3" />
+        </label>
+        <button id="traceButton" type="button">Trace</button>
+      </div>
       <div id="traceResult" class="trace-result"></div>
     </section>
     ${
@@ -798,10 +804,13 @@ async function loadTrace(node) {
   if (!target) return;
 
   target.innerHTML = '<p class="empty">Tracing...</p>';
+  const depthInput = document.querySelector("#traceDepthInput");
+  const depth = clampNumber(Number(depthInput?.value || 3), 1, 8);
+  if (depthInput) depthInput.value = String(depth);
   const params = new URLSearchParams({
     path: pathInput.value.trim() || ".",
     node_id: String(node.id),
-    depth: "3",
+    depth: String(depth),
   });
 
   try {
@@ -812,6 +821,7 @@ async function loadTrace(node) {
       throw new Error(body.error || "trace failed");
     }
     target.innerHTML = renderTrace(body);
+    attachTraceNavigation(target);
   } catch (error) {
     if (requestId !== state.traceRequest) return;
     target.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
@@ -826,16 +836,71 @@ function renderTrace(trace) {
     return '<p class="empty">No outgoing dependency edges.</p>';
   }
 
-  const rows = trace.nodes
-    .sort((left, right) => left.depth - right.depth || left.node.label.localeCompare(right.node.label))
-    .map(({ node, depth }) => {
-      const indent = "&nbsp;".repeat(depth * 3);
-      return `<li>${indent}<span>${escapeHtml(formatKind(node.kind))}</span>${escapeHtml(node.label)}</li>`;
-    })
+  const nodes = [...trace.nodes]
+    .sort((left, right) => left.depth - right.depth || left.node.label.localeCompare(right.node.label));
+  const nodeMap = new Map(nodes.map(({ node }) => [node.id, node]));
+  const nodeRows = nodes
+    .map(({ node, depth }) => renderTraceNode(node, depth))
+    .join("");
+  const edgeRows = trace.edges
+    .map((edge) => renderTraceEdge(edge, nodeMap))
     .join("");
 
   const suffix = trace.truncated ? '<p class="empty">Trace truncated by depth.</p>' : "";
-  return `<ul class="trace-list">${rows}</ul>${suffix}`;
+  return `
+    <div class="trace-summary">
+      <span>${trace.nodes.length} nodes</span>
+      <span>${trace.edges.length} edges</span>
+      <span>depth ${trace.max_depth}</span>
+    </div>
+    <div class="trace-columns">
+      <section>
+        <h3>Nodes</h3>
+        <ul class="trace-list">${nodeRows}</ul>
+      </section>
+      <section>
+        <h3>Edges</h3>
+        <ul class="trace-list trace-edge-list">${edgeRows}</ul>
+      </section>
+    </div>
+    ${suffix}
+  `;
+}
+
+function renderTraceNode(node, depth) {
+  return `
+    <li>
+      <button class="trace-node" type="button" data-node-id="${node.id}" style="--depth:${depth}">
+        <span>${escapeHtml(formatKind(node.kind))}</span>
+        <strong>${escapeHtml(node.label)}</strong>
+      </button>
+    </li>
+  `;
+}
+
+function renderTraceEdge(edge, nodeMap) {
+  const source = nodeMap.get(edge.source);
+  const target = nodeMap.get(edge.target);
+  return `
+    <li>
+      <button class="trace-edge" type="button" data-node-id="${edge.target}">
+        <span>${escapeHtml(formatKind(edge.kind))}</span>
+        <strong>${escapeHtml(source?.label || String(edge.source))}</strong>
+        <em>${escapeHtml(target?.label || String(edge.target))}</em>
+      </button>
+    </li>
+  `;
+}
+
+function attachTraceNavigation(container) {
+  container.querySelectorAll("[data-node-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nodeId = Number(button.dataset.nodeId);
+      if (!nodeId) return;
+      state.selectedId = nodeId;
+      renderSelection();
+    });
+  });
 }
 
 async function loadSourcePreview(node, requestId) {
@@ -1005,6 +1070,11 @@ function formatKind(value) {
 function setStatus(text, className = "") {
   statusEl.textContent = text;
   statusEl.className = `status ${className}`.trim();
+}
+
+function clampNumber(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, Math.trunc(value)));
 }
 
 function roundRect(context, x, y, width, height, radius) {

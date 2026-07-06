@@ -113,6 +113,10 @@ input {
   min-width: 0;
 }
 
+.field.compact {
+  gap: 4px;
+}
+
 .field span {
   color: var(--muted);
   font-size: 12px;
@@ -387,18 +391,59 @@ button:disabled {
   border-top: 1px solid var(--line);
 }
 
-.trace-panel button {
+.trace-controls {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+
+.trace-controls input {
+  height: 34px;
+}
+
+.trace-controls button {
   width: 100%;
+  height: 34px;
 }
 
 .trace-result {
   min-height: 0;
 }
 
+.trace-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.trace-summary span {
+  padding: 4px 7px;
+  border-radius: 6px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.trace-columns {
+  display: grid;
+  gap: 10px;
+}
+
+.trace-columns h3 {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .trace-list {
   display: grid;
   gap: 4px;
-  max-height: 220px;
+  max-height: 180px;
   margin: 0;
   padding: 0;
   overflow: auto;
@@ -408,17 +453,63 @@ button:disabled {
 
 .trace-list li {
   display: block;
-  min-height: 24px;
-  padding: 5px 7px;
+  min-width: 0;
   border-radius: 5px;
   background: rgba(255, 255, 255, 0.04);
   overflow-wrap: anywhere;
 }
 
-.trace-list span {
-  margin-right: 7px;
+.trace-node,
+.trace-edge {
+  display: grid;
+  width: 100%;
+  height: auto;
+  min-height: 30px;
+  padding: 6px 8px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  text-align: left;
+}
+
+.trace-node {
+  grid-template-columns: minmax(68px, auto) minmax(0, 1fr);
+  column-gap: 8px;
+  padding-left: calc(8px + var(--depth, 0) * 12px);
+}
+
+.trace-edge {
+  grid-template-columns: minmax(68px, auto) minmax(0, 1fr);
+  gap: 3px 8px;
+}
+
+.trace-node:hover,
+.trace-edge:hover {
+  background: rgba(92, 200, 167, 0.1);
+}
+
+.trace-node span,
+.trace-edge span {
   color: var(--muted);
   font-weight: 700;
+}
+
+.trace-node strong,
+.trace-edge strong,
+.trace-edge em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-style: normal;
+}
+
+.trace-edge em {
+  grid-column: 2;
+  color: var(--muted);
+}
+
+.trace-edge em::before {
+  content: "-> ";
 }
 
 .source-preview {

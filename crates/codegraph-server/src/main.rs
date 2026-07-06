@@ -430,7 +430,7 @@ async fn trace_api(
         &graph,
         TraceRequest {
             start,
-            max_depth: query.depth.unwrap_or(2),
+            max_depth: query.depth.unwrap_or(2).clamp(1, 8),
         },
     )))
 }

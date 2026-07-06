@@ -109,7 +109,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [ ] Add WebSocket/SSE for live scan progress.
 - Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
 - [x] Add source preview.
-- [ ] Add trace panels.
+- [x] Add trace panels.
 - [ ] Support opening local repositories from a desktop shell.
 
 Exit criteria:

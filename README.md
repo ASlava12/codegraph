@@ -22,6 +22,7 @@ Implemented now:
 - HTTP API and embedded web UI for interactive graph exploration.
 - Async scan job API for long-running repository scans.
 - Source preview API and UI panel for graph nodes with source spans.
+- Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
