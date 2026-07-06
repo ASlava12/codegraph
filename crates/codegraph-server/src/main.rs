@@ -114,6 +114,7 @@ struct GraphSliceQuery {
     language: Option<String>,
     item_kind: Option<String>,
     edge_kind: Option<String>,
+    confidence: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -557,6 +558,7 @@ async fn graph_api(
             language: normalize_query_string(query.language),
             item_kind: normalize_query_string(query.item_kind),
             edge_kind: normalize_query_string(query.edge_kind),
+            confidence: normalize_query_string(query.confidence),
         },
     )))
 }

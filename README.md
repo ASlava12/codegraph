@@ -31,7 +31,7 @@ Implemented now:
 - Path queries for finding directed dependency paths between labels or node ids.
 - Confidence-aware edge queries and UI edge labels for fact provenance.
 - Server-side graph paging and filtering endpoint for large repository exploration.
-- Web graph page controls backed by server-side paging, search, kind, item, language, and edge filters.
+- Web graph page controls backed by server-side paging, search, kind, item, language, edge, and confidence filters.
 - Web project overview for language mix and entrypoint launch points.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
 - Server-backed web insights for project-wide findings while browsing paged graph slices.
@@ -176,7 +176,8 @@ curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
 ```
 
 `/api/graph` supports `node_offset`, `node_limit`, `edge_offset`,
-`edge_limit`, `kind`, `search`, `language`, `item_kind`, and `edge_kind`.
+`edge_limit`, `kind`, `search`, `language`, `item_kind`, `edge_kind`, and
+`confidence`.
 Returned edges connect nodes in the returned node page.
 
 Source preview API:

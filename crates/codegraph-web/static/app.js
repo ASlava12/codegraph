@@ -76,6 +76,7 @@ const serverItemKindInput = document.querySelector("#serverItemKindInput");
 const serverLanguageInput = document.querySelector("#serverLanguageInput");
 const serverSearchInput = document.querySelector("#serverSearchInput");
 const serverEdgeKindInput = document.querySelector("#serverEdgeKindInput");
+const serverConfidenceInput = document.querySelector("#serverConfidenceInput");
 const pagePrevButton = document.querySelector("#pagePrevButton");
 const pageReloadButton = document.querySelector("#pageReloadButton");
 const pageNextButton = document.querySelector("#pageNextButton");
@@ -112,6 +113,7 @@ for (const input of [
   serverLanguageInput,
   serverSearchInput,
   serverEdgeKindInput,
+  serverConfidenceInput,
 ]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") loadGraphPage({ resetPage: true });
@@ -290,11 +292,13 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
   const language = serverLanguageInput.value.trim();
   const serverSearch = serverSearchInput.value.trim();
   const edgeKind = serverEdgeKindInput.value.trim();
+  const confidence = serverConfidenceInput.value.trim();
   if (kind) params.set("kind", kind);
   if (itemKind) params.set("item_kind", itemKind);
   if (language) params.set("language", language);
   if (serverSearch) params.set("search", serverSearch);
   if (edgeKind) params.set("edge_kind", edgeKind);
+  if (confidence) params.set("confidence", confidence);
 
   try {
     const response = await fetch(`/api/graph?${params.toString()}`);
@@ -411,6 +415,7 @@ function renderOverview() {
       serverLanguageInput.value = button.dataset.language || "";
       serverSearchInput.value = "";
       serverEdgeKindInput.value = "";
+      serverConfidenceInput.value = "";
       searchInput.value = "";
       state.search = "";
       loadGraphPage({ resetPage: true, resetLayout: true });

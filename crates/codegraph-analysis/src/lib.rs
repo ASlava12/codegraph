@@ -70,6 +70,7 @@ pub struct GraphSliceRequest {
     pub language: Option<String>,
     pub item_kind: Option<String>,
     pub edge_kind: Option<String>,
+    pub confidence: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -428,6 +429,9 @@ pub fn slice_graph(graph: &CodeGraph, request: GraphSliceRequest) -> GraphSlice 
                     .edge_kind
                     .as_deref()
                     .is_none_or(|expected| text_matches(&edge_kind_name(&edge.kind), expected))
+                && request.confidence.as_deref().is_none_or(|expected| {
+                    text_matches(&confidence_name(edge.confidence), expected)
+                })
         })
         .cloned()
         .collect();
@@ -2020,6 +2024,7 @@ mod tests {
                 language: None,
                 item_kind: None,
                 edge_kind: None,
+                confidence: None,
             },
         );
 
@@ -2040,6 +2045,7 @@ mod tests {
                 language: Some("rust".to_string()),
                 item_kind: Some("function".to_string()),
                 edge_kind: None,
+                confidence: None,
             },
         );
 
@@ -2069,6 +2075,7 @@ mod tests {
                 language: None,
                 item_kind: None,
                 edge_kind: Some("calls".to_string()),
+                confidence: None,
             },
         );
 
@@ -2077,6 +2084,36 @@ mod tests {
         assert_eq!(result.edges.len(), 1);
         assert_eq!(result.edges[0].source, main);
         assert!(result.truncated_edges);
+    }
+
+    #[test]
+    fn graph_slice_filters_edges_by_confidence() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(entrypoint, main, EdgeKind::References, Confidence::Exact);
+
+        let result = slice_graph(
+            &graph,
+            GraphSliceRequest {
+                node_offset: 0,
+                node_limit: 10,
+                edge_offset: 0,
+                edge_limit: 10,
+                kind: None,
+                search: None,
+                language: None,
+                item_kind: None,
+                edge_kind: None,
+                confidence: Some("exact".to_string()),
+            },
+        );
+
+        assert_eq!(result.total_edges, 1);
+        assert_eq!(result.edges[0].source, entrypoint);
+        assert_eq!(result.edges[0].confidence, Confidence::Exact);
     }
 
     #[test]
