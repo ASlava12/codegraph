@@ -301,6 +301,81 @@ button:disabled {
   white-space: nowrap;
 }
 
+.source-preview {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.source-preview header {
+  display: grid;
+  gap: 3px;
+}
+
+.source-preview header span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.source-preview header strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.source-preview pre {
+  min-width: 0;
+  max-height: 280px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0d0f10;
+}
+
+.source-preview code {
+  display: block;
+  min-width: max-content;
+  padding: 8px 0;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.source-line {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  min-height: 18px;
+}
+
+.source-line.highlighted {
+  background: rgba(92, 200, 167, 0.16);
+}
+
+.line-number {
+  padding: 0 10px 0 8px;
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.line-text {
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.source-error {
+  display: block;
+  padding: 8px 10px;
+  color: #ffb4b4;
+}
+
 .graph-stage {
   position: relative;
   min-width: 0;

@@ -73,6 +73,7 @@ CLI output must remain machine-friendly. Human-oriented formatting can be added,
 Responsibilities:
 
 - provide health and scan endpoints
+- provide source preview endpoints for graph spans
 - constrain scan paths to a configured root by default
 - serve the static web application
 - keep UI and agent clients on the same JSON graph model

@@ -102,13 +102,13 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Implement first graph canvas, filters, search, stats, and detail panel.
 - [ ] Add WebSocket/SSE for scan progress.
 - Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
-- [ ] Add source preview.
+- [x] Add source preview.
 - [ ] Add trace panels.
 - [ ] Support opening local repositories from a desktop shell.
 
 Exit criteria:
 
-- The UI can load a project graph and navigate from nodes to source spans.
+- The UI can load a project graph and preview source spans.
 - CLI, API, and UI expose the same underlying graph.
 
 ## Phase 5: Scale And Incrementality

@@ -8,6 +8,7 @@ use clap::Parser;
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tokio::net::TcpListener;
@@ -53,6 +54,14 @@ struct ScanQuery {
     path: Option<PathBuf>,
 }
 
+#[derive(Debug, Deserialize)]
+struct SourceQuery {
+    path: PathBuf,
+    start_line: Option<u32>,
+    end_line: Option<u32>,
+    context: Option<u32>,
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     status: &'static str,
@@ -63,6 +72,21 @@ struct HealthResponse {
 struct ScanResponse {
     root: String,
     graph: CodeGraph,
+}
+
+#[derive(Debug, Serialize)]
+struct SourceResponse {
+    path: String,
+    start_line: u32,
+    end_line: u32,
+    lines: Vec<SourceLine>,
+}
+
+#[derive(Debug, Serialize)]
+struct SourceLine {
+    number: u32,
+    text: String,
+    highlight: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -97,6 +121,7 @@ async fn main() -> Result<()> {
         .route("/styles.css", get(styles_css))
         .route("/api/health", get(health))
         .route("/api/scan", get(scan))
+        .route("/api/source", get(source))
         .fallback(not_found)
         .with_state(state);
 
@@ -154,6 +179,63 @@ async fn scan(
     }))
 }
 
+async fn source(
+    State(state): State<AppState>,
+    Query(query): Query<SourceQuery>,
+) -> Result<Json<SourceResponse>, ApiError> {
+    let path = resolve_path(&state, &query.path)?;
+    if !path.is_file() {
+        return Err(ApiError::bad_request("path is not a file"));
+    }
+
+    let requested_start = query.start_line.unwrap_or(1).max(1);
+    let requested_end = query
+        .end_line
+        .unwrap_or(requested_start)
+        .max(requested_start);
+    let context = query.context.unwrap_or(4).min(40);
+    let visible_start = requested_start.saturating_sub(context).max(1);
+    let visible_end = requested_end.saturating_add(context);
+    let display_path = path
+        .strip_prefix(&state.root)
+        .unwrap_or(&path)
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    let response = tokio::task::spawn_blocking(move || {
+        let bytes = fs::read(&path)
+            .map_err(|error| ApiError::internal(format!("failed to read source: {error}")))?;
+        let text = String::from_utf8_lossy(&bytes);
+        let mut lines = Vec::new();
+
+        for (index, line) in text.lines().enumerate() {
+            let number = index as u32 + 1;
+            if number < visible_start {
+                continue;
+            }
+            if number > visible_end {
+                break;
+            }
+            lines.push(SourceLine {
+                number,
+                text: line.to_string(),
+                highlight: number >= requested_start && number <= requested_end,
+            });
+        }
+
+        Ok(SourceResponse {
+            path: display_path,
+            start_line: requested_start,
+            end_line: requested_end,
+            lines,
+        })
+    })
+    .await
+    .map_err(|error| ApiError::internal(format!("source task failed: {error}")))??;
+
+    Ok(Json(response))
+}
+
 fn resolve_scan_root(state: &AppState, requested: Option<&Path>) -> Result<PathBuf, ApiError> {
     let candidate = requested
         .map(|path| {
@@ -165,6 +247,19 @@ fn resolve_scan_root(state: &AppState, requested: Option<&Path>) -> Result<PathB
         })
         .unwrap_or_else(|| state.root.clone());
 
+    resolve_canonical_path(state, candidate)
+}
+
+fn resolve_path(state: &AppState, requested: &Path) -> Result<PathBuf, ApiError> {
+    let candidate = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        state.root.join(requested)
+    };
+    resolve_canonical_path(state, candidate)
+}
+
+fn resolve_canonical_path(state: &AppState, candidate: PathBuf) -> Result<PathBuf, ApiError> {
     let canonical = candidate
         .canonicalize()
         .map_err(|error| ApiError::bad_request(format!("invalid path: {error}")))?;

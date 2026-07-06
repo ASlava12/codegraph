@@ -13,6 +13,7 @@ const state = {
   enabledKinds: new Set(),
   search: "",
   animationFrame: null,
+  selectionRequest: 0,
 };
 
 const colors = {
@@ -341,6 +342,8 @@ function drawLabel(node, position, radius) {
 }
 
 function renderSelection() {
+  state.selectionRequest += 1;
+  const requestId = state.selectionRequest;
   const node = state.graph.nodes.find((candidate) => candidate.id === state.selectedId);
   if (!node) {
     selectionTitle.textContent = "Selection";
@@ -377,6 +380,17 @@ function renderSelection() {
     <div class="neighbors">
       ${neighbors.map((edge) => renderNeighbor(edge, node.id)).join("")}
     </div>
+    ${
+      node.span
+        ? `<section class="source-preview">
+            <header>
+              <span>Source</span>
+              <strong>${escapeHtml(node.span.path)}:${node.span.start_line}</strong>
+            </header>
+            <pre id="sourcePreview"><code>Loading...</code></pre>
+          </section>`
+        : ""
+    }
   `;
 
   selectionBody.querySelectorAll(".neighbor").forEach((button) => {
@@ -385,6 +399,41 @@ function renderSelection() {
       renderSelection();
     });
   });
+
+  if (node.span) {
+    loadSourcePreview(node, requestId);
+  }
+}
+
+async function loadSourcePreview(node, requestId) {
+  const preview = document.querySelector("#sourcePreview code");
+  if (!preview || !node.span) return;
+
+  const params = new URLSearchParams({
+    path: node.span.path,
+    start_line: String(node.span.start_line),
+    end_line: String(node.span.end_line),
+    context: "5",
+  });
+
+  try {
+    const response = await fetch(`/api/source?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.selectionRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "failed to load source");
+    }
+    preview.innerHTML = body.lines.map(renderSourceLine).join("");
+  } catch (error) {
+    if (requestId !== state.selectionRequest) return;
+    preview.innerHTML = `<span class="source-error">${escapeHtml(error.message)}</span>`;
+  }
+}
+
+function renderSourceLine(line) {
+  const number = String(line.number).padStart(4, " ");
+  const className = line.highlight ? "source-line highlighted" : "source-line";
+  return `<span class="${className}"><span class="line-number">${number}</span><span class="line-text">${escapeHtml(line.text || " ")}</span></span>`;
 }
 
 function renderNeighbor(edge, selectedId) {

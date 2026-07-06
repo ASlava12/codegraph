@@ -19,11 +19,12 @@ Implemented now:
 - Heuristic config reads, environment reads, and potential error/exception constructs.
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
+- Source preview API and UI panel for graph nodes with source spans.
 
 Planned next:
 
 - Graph query commands.
-- Better graph layout, source preview, and path-aware navigation.
+- Better graph layout and path-aware navigation.
 - Graph queries for humans and agents.
 - Production hardening for large repositories.
 
@@ -65,6 +66,12 @@ Scan API:
 
 ```bash
 curl 'http://127.0.0.1:3765/api/scan?path=.'
+```
+
+Source preview API:
+
+```bash
+curl 'http://127.0.0.1:3765/api/source?path=crates/codegraph-cli/src/main.rs&start_line=1&end_line=20'
 ```
 
 At the current stage, supported source languages are detected by extension:
