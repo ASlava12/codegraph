@@ -205,13 +205,13 @@ pub fn default_cache_dir() -> PathBuf {
     if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
         return PathBuf::from(path).join("codegraph");
     }
-    if cfg!(target_os = "macos") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home)
-                .join("Library")
-                .join("Caches")
-                .join("codegraph");
-        }
+    if cfg!(target_os = "macos")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home)
+            .join("Library")
+            .join("Caches")
+            .join("codegraph");
     }
     std::env::temp_dir().join("codegraph-cache")
 }

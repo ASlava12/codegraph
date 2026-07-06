@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Workspace checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run Rust tests
+        run: cargo test --workspace
+
+      - name: Check web JavaScript syntax
+        run: node --check crates/codegraph-web/static/app.js
+
+      - name: Smoke scan CLI
+        run: |
+          cargo run -p codegraph-cli -- scan . --format ndjson > /tmp/codegraph.ndjson
+          test -s /tmp/codegraph.ndjson
+          grep '"record_type":"graph"' /tmp/codegraph.ndjson
+
+      - name: Smoke server cache
+        run: |
+          cache_dir="$(mktemp -d)"
+          cargo run -p codegraph-server -- --root . --port 3765 --cache-dir "$cache_dir" &
+          server_pid="$!"
+          trap 'kill "$server_pid"' EXIT
+
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3765/api/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = "1"
+
+          first="$(curl -fsS 'http://127.0.0.1:3765/api/scan?path=.' | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(JSON.parse(input).cache.status));')"
+          second="$(curl -fsS 'http://127.0.0.1:3765/api/scan?path=.' | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(JSON.parse(input).cache.status));')"
+          test "$first" = "miss"
+          test "$second" = "hit"
+          find "$cache_dir" -maxdepth 1 -type f -name 'graph-*.json' | grep .

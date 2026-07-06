@@ -166,10 +166,10 @@ fn collect_items(
         items.push(effect);
     }
 
-    if let Some(function_name) = current_function.as_deref() {
-        if let Some(call) = classify_call(language, node, source, path, function_name) {
-            items.push(call);
-        }
+    if let Some(function_name) = current_function.as_deref()
+        && let Some(call) = classify_call(language, node, source, path, function_name)
+    {
+        items.push(call);
     }
 
     let mut next_function = current_function;

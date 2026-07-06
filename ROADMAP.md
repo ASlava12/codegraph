@@ -11,8 +11,8 @@ Status: mostly complete.
 - [x] Add basic project scanner.
 - [x] Add first CLI command.
 - [x] Add parser crate.
-- [ ] Add CI checks.
-- [ ] Add contribution and architecture docs.
+- [x] Add CI checks.
+- [x] Add contribution and architecture docs.
 
 Exit criteria:
 

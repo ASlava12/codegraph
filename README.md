@@ -31,6 +31,7 @@ Implemented now:
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Persistent server-side graph cache with project fingerprint invalidation.
+- CI checks for formatting, clippy, tests, UI syntax, CLI scan, and server cache smoke tests.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Dependency consistency insights for external imports that are not backed by declared manifest dependencies.
 
@@ -218,6 +219,12 @@ crates/
   codegraph-lsp/       optional LSP enrichment
   codegraph-ui/        optional Tauri desktop shell
 ```
+
+## Development
+
+Contribution guidance and local verification commands live in
+[`CONTRIBUTING.md`](CONTRIBUTING.md). The GitHub Actions workflow runs the same
+core checks for pushes and pull requests.
 
 ## Design Principles
 

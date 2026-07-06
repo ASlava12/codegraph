@@ -450,19 +450,17 @@ fn cargo_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
         .get("package")
         .and_then(|package| package.get("name"))
         .and_then(|name| name.as_str())
-    {
-        if path
+        && path
             .parent()
             .map(|parent| parent.join("src").join("main.rs").is_file())
             .unwrap_or(false)
-        {
-            entrypoints.push(manifest_entrypoint(
-                format!("cargo bin:{package_name}"),
-                "binary",
-                "cargo",
-                Some("src/main.rs".to_string()),
-            ));
-        }
+    {
+        entrypoints.push(manifest_entrypoint(
+            format!("cargo bin:{package_name}"),
+            "binary",
+            "cargo",
+            Some("src/main.rs".to_string()),
+        ));
     }
 
     collect_cargo_target_entrypoints(&value, "bin", "binary", &mut entrypoints);
