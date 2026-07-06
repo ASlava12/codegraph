@@ -127,6 +127,14 @@ pub struct InsightReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InsightFilter {
+    pub severity: Option<InsightSeverity>,
+    pub kind: Option<String>,
+    pub search: Option<String>,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Insight {
     pub kind: String,
     pub severity: InsightSeverity,
@@ -141,6 +149,17 @@ pub enum InsightSeverity {
     Info,
     Warning,
     Error,
+}
+
+impl Default for InsightFilter {
+    fn default() -> Self {
+        Self {
+            severity: None,
+            kind: None,
+            search: None,
+            limit: 50,
+        }
+    }
 }
 
 pub fn export_dot(graph: &CodeGraph) -> String {
@@ -273,6 +292,38 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
 
     InsightReport {
         total: insights.len(),
+        by_severity,
+        insights,
+    }
+}
+
+pub fn filter_insight_report(report: InsightReport, filter: &InsightFilter) -> InsightReport {
+    let kind = filter.kind.as_ref().map(|value| value.to_ascii_lowercase());
+    let search = filter
+        .search
+        .as_ref()
+        .map(|value| value.to_ascii_lowercase());
+    let by_severity = report.by_severity.clone();
+    let mut insights: Vec<_> = report
+        .insights
+        .into_iter()
+        .filter(|insight| {
+            filter
+                .severity
+                .is_none_or(|expected| insight.severity == expected)
+                && kind
+                    .as_deref()
+                    .is_none_or(|expected| insight.kind.to_ascii_lowercase().contains(expected))
+                && search
+                    .as_deref()
+                    .is_none_or(|expected| insight_search_matches(insight, expected))
+        })
+        .collect();
+    let total = insights.len();
+    insights.truncate(filter.limit.clamp(1, 500));
+
+    InsightReport {
+        total,
         by_severity,
         insights,
     }
@@ -1064,6 +1115,19 @@ fn add_parse_error_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
             });
         }
     }
+}
+
+fn insight_search_matches(insight: &Insight, expected: &str) -> bool {
+    insight.kind.to_ascii_lowercase().contains(expected)
+        || insight.message.to_ascii_lowercase().contains(expected)
+        || insight
+            .nodes
+            .iter()
+            .any(|node_id| node_id.0.to_string().contains(expected))
+        || insight
+            .edges
+            .iter()
+            .any(|edge_index| edge_index.to_string().contains(expected))
 }
 
 fn add_unresolved_call_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
@@ -2404,6 +2468,53 @@ mod tests {
         assert!(conflict.nodes.contains(&serde));
         assert!(!conflict.nodes.contains(&anyhow));
         assert_eq!(conflict.edges.len(), 2);
+    }
+
+    #[test]
+    fn filter_insight_report_filters_and_limits_results() {
+        let report = InsightReport {
+            total: 3,
+            by_severity: BTreeMap::from([("error".to_string(), 1), ("warning".to_string(), 2)]),
+            insights: vec![
+                Insight {
+                    kind: "dependency_cycle".to_string(),
+                    severity: InsightSeverity::Warning,
+                    message: "cycle through service".to_string(),
+                    nodes: vec![NodeId(1)],
+                    edges: vec![10],
+                },
+                Insight {
+                    kind: "undeclared_external_import".to_string(),
+                    severity: InsightSeverity::Warning,
+                    message: "imports express".to_string(),
+                    nodes: vec![NodeId(2)],
+                    edges: vec![11],
+                },
+                Insight {
+                    kind: "parse_error".to_string(),
+                    severity: InsightSeverity::Error,
+                    message: "broken file".to_string(),
+                    nodes: vec![NodeId(3)],
+                    edges: Vec::new(),
+                },
+            ],
+        };
+
+        let filtered = filter_insight_report(
+            report,
+            &InsightFilter {
+                severity: Some(InsightSeverity::Warning),
+                kind: Some("dependency".to_string()),
+                search: Some("cycle".to_string()),
+                limit: 1,
+            },
+        );
+
+        assert_eq!(filtered.total, 1);
+        assert_eq!(filtered.by_severity.get("error"), Some(&1));
+        assert_eq!(filtered.by_severity.get("warning"), Some(&2));
+        assert_eq!(filtered.insights.len(), 1);
+        assert_eq!(filtered.insights[0].kind, "dependency_cycle");
     }
 
     #[test]

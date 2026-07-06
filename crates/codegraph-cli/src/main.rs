@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
-    TraceRequest, TraceStart, entrypoints, insights, query_graph, summarize, trace,
+    InsightFilter, InsightSeverity, TraceRequest, TraceStart, entrypoints, filter_insight_report,
+    insights, query_graph, summarize, trace,
 };
 use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{IndexOptions, scan_project};
@@ -43,7 +44,7 @@ enum Command {
     Entrypoints(ScanArgs),
 
     /// Emit investigation insights such as unresolved calls and error flows.
-    Insights(ScanArgs),
+    Insights(InsightArgs),
 
     /// Query focused graph slices as JSON.
     Query {
@@ -101,11 +102,40 @@ struct ScanArgs {
     include_ignored: bool,
 }
 
+#[derive(Debug, Args)]
+struct InsightArgs {
+    #[command(flatten)]
+    scan: ScanArgs,
+
+    /// Filter insights by severity.
+    #[arg(long, value_enum)]
+    severity: Option<InsightSeverityArg>,
+
+    /// Filter insights by kind substring.
+    #[arg(long)]
+    kind: Option<String>,
+
+    /// Filter insights by kind, message, node id, or edge index substring.
+    #[arg(long)]
+    search: Option<String>,
+
+    /// Maximum insights to return.
+    #[arg(long, default_value_t = 50)]
+    limit: usize,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutputFormat {
     Json,
     Dot,
     Ndjson,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum InsightSeverityArg {
+    Info,
+    Warning,
+    Error,
 }
 
 fn main() -> Result<()> {
@@ -130,8 +160,21 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&entrypoints(&graph))?);
         }
         Command::Insights(args) => {
-            let graph = scan_with_options(args.path, args.include_hidden, args.include_ignored)?;
-            println!("{}", serde_json::to_string_pretty(&insights(&graph))?);
+            let graph = scan_with_options(
+                args.scan.path,
+                args.scan.include_hidden,
+                args.scan.include_ignored,
+            )?;
+            let report = filter_insight_report(
+                insights(&graph),
+                &InsightFilter {
+                    severity: args.severity.map(InsightSeverity::from),
+                    kind: args.kind,
+                    search: args.search,
+                    limit: args.limit,
+                },
+            );
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Query {
             expression,
@@ -165,6 +208,16 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+impl From<InsightSeverityArg> for InsightSeverity {
+    fn from(value: InsightSeverityArg) -> Self {
+        match value {
+            InsightSeverityArg::Info => Self::Info,
+            InsightSeverityArg::Warning => Self::Warning,
+            InsightSeverityArg::Error => Self::Error,
+        }
+    }
 }
 
 fn print_graph(graph: &codegraph_core::CodeGraph, format: OutputFormat) -> Result<()> {

@@ -8,9 +8,10 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
-    FocusRequest, GraphSlice, GraphSliceRequest, Insight, InsightReport, InsightSeverity,
-    NodeContext, TraceRequest, TraceStart, entrypoints, export_dot, export_ndjson, focus_subgraph,
-    insights, node_context, query_graph, slice_graph, summarize, trace,
+    FocusRequest, GraphSlice, GraphSliceRequest, InsightFilter, InsightReport, InsightSeverity,
+    NodeContext, TraceRequest, TraceStart, entrypoints, export_dot, export_ndjson,
+    filter_insight_report, focus_subgraph, insights, node_context, query_graph, slice_graph,
+    summarize, trace,
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
@@ -625,7 +626,10 @@ async fn insights_api(
 ) -> Result<Json<InsightReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let report = insights(&graph);
-    Ok(Json(filter_insights(report, query)?))
+    Ok(Json(filter_insight_report(
+        report,
+        &insight_filter_from_query(query)?,
+    )))
 }
 
 async fn query_api(
@@ -810,35 +814,14 @@ fn normalize_query_string(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn filter_insights(report: InsightReport, query: InsightQuery) -> Result<InsightReport, ApiError> {
-    let severity = normalize_query_string(query.severity)
-        .map(|value| parse_insight_severity(&value))
-        .transpose()?;
-    let kind = normalize_query_string(query.kind).map(|value| value.to_ascii_lowercase());
-    let search = normalize_query_string(query.search).map(|value| value.to_ascii_lowercase());
-    let limit = query.limit.unwrap_or(50).clamp(1, 500);
-    let by_severity = report.by_severity.clone();
-
-    let mut insights: Vec<Insight> = report
-        .insights
-        .into_iter()
-        .filter(|insight| {
-            severity.is_none_or(|expected| insight.severity == expected)
-                && kind
-                    .as_deref()
-                    .is_none_or(|expected| insight.kind.to_ascii_lowercase().contains(expected))
-                && search
-                    .as_deref()
-                    .is_none_or(|expected| insight_search_matches(insight, expected))
-        })
-        .collect();
-    let total = insights.len();
-    insights.truncate(limit);
-
-    Ok(InsightReport {
-        total,
-        by_severity,
-        insights,
+fn insight_filter_from_query(query: InsightQuery) -> Result<InsightFilter, ApiError> {
+    Ok(InsightFilter {
+        severity: normalize_query_string(query.severity)
+            .map(|value| parse_insight_severity(&value))
+            .transpose()?,
+        kind: normalize_query_string(query.kind),
+        search: normalize_query_string(query.search),
+        limit: query.limit.unwrap_or(50),
     })
 }
 
@@ -851,19 +834,6 @@ fn parse_insight_severity(value: &str) -> Result<InsightSeverity, ApiError> {
             "invalid severity `{other}`; expected info, warning, or error"
         ))),
     }
-}
-
-fn insight_search_matches(insight: &Insight, expected: &str) -> bool {
-    insight.kind.to_ascii_lowercase().contains(expected)
-        || insight.message.to_ascii_lowercase().contains(expected)
-        || insight
-            .nodes
-            .iter()
-            .any(|node_id| node_id.0.to_string().contains(expected))
-        || insight
-            .edges
-            .iter()
-            .any(|edge_index| edge_index.to_string().contains(expected))
 }
 
 fn parse_node_ids(value: Option<&str>) -> Result<Vec<codegraph_core::NodeId>, ApiError> {

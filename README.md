@@ -84,6 +84,7 @@ List investigation insights:
 
 ```bash
 cargo run -p codegraph-cli -- insights .
+cargo run -p codegraph-cli -- insights . --severity warning --kind dependency --limit 25
 ```
 
 Query focused graph slices:
