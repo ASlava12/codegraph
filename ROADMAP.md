@@ -83,6 +83,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect external imports that are missing declared manifest dependencies.
 - [x] Back web insights with server analysis during paged graph exploration.
 - [x] Add first graph query language for nodes, edges, calls, dependencies, and traces.
+- [x] Add directed path queries between graph labels or node ids.
 - Add richer query language.
 
 Example commands:

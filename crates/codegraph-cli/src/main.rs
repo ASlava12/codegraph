@@ -47,7 +47,7 @@ enum Command {
 
     /// Query focused graph slices as JSON.
     Query {
-        /// Query expression, for example: nodes kind:function label:main.
+        /// Query expression, for example: nodes kind:function label:main or path from:main to:init.
         expression: String,
 
         /// Project root to scan.

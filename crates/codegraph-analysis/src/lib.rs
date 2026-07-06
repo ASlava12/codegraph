@@ -332,8 +332,9 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "calls" | "call" => query_edges(graph, spec, Some(EdgeKind::Calls)),
         "dependencies" | "depends" => query_edges(graph, spec, Some(EdgeKind::DependsOn)),
         "trace" => query_trace(graph, spec),
+        "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, or trace"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, or path"
         ))),
     }
 }
@@ -624,6 +625,103 @@ fn query_trace(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryE
     })
 }
 
+fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    validate_path_terms(&spec)?;
+    let max_depth = spec
+        .terms
+        .get("depth")
+        .map(|value| parse_limit(value).map(|value| value.clamp(1, 32)))
+        .transpose()?
+        .unwrap_or(8);
+    let from = spec
+        .terms
+        .get("from")
+        .or_else(|| spec.terms.get("source"))
+        .or_else(|| spec.positional.first())
+        .ok_or_else(|| {
+            QueryError::new("path query requires `from:<label-or-id>` and `to:<label-or-id>`")
+        })?;
+    let to = spec
+        .terms
+        .get("to")
+        .or_else(|| spec.terms.get("target"))
+        .or_else(|| spec.positional.get(1))
+        .ok_or_else(|| {
+            QueryError::new("path query requires `from:<label-or-id>` and `to:<label-or-id>`")
+        })?;
+    let start = resolve_node_reference(graph, from)
+        .ok_or_else(|| QueryError::new(format!("path start `{from}` did not match a node")))?;
+    let target = resolve_node_reference(graph, to)
+        .ok_or_else(|| QueryError::new(format!("path target `{to}` did not match a node")))?;
+    let edge_kind = spec
+        .terms
+        .get("edge_kind")
+        .or_else(|| spec.terms.get("kind"));
+
+    if start == target {
+        let node = graph.nodes.iter().find(|node| node.id == start).cloned();
+        return Ok(QueryResult {
+            query: spec.original,
+            nodes: node.into_iter().collect(),
+            edges: Vec::new(),
+            total_nodes: 1,
+            total_edges: 0,
+            truncated: false,
+        });
+    }
+
+    let mut visited = BTreeSet::from([start]);
+    let mut parents: BTreeMap<NodeId, (NodeId, usize)> = BTreeMap::new();
+    let mut queue = VecDeque::from([(start, 0usize)]);
+    let mut truncated = false;
+
+    while let Some((node_id, depth)) = queue.pop_front() {
+        if depth >= max_depth {
+            if graph.edges.iter().any(|edge| {
+                edge.source == node_id && path_edge_matches(edge, edge_kind.map(String::as_str))
+            }) {
+                truncated = true;
+            }
+            continue;
+        }
+
+        for (edge_index, edge) in graph.edges.iter().enumerate().filter(|(_, edge)| {
+            edge.source == node_id && path_edge_matches(edge, edge_kind.map(String::as_str))
+        }) {
+            if !visited.insert(edge.target) {
+                continue;
+            }
+            parents.insert(edge.target, (node_id, edge_index));
+            if edge.target == target {
+                let edge_indexes = reconstruct_path_edges(start, target, &parents)?;
+                let edges: Vec<_> = edge_indexes
+                    .iter()
+                    .filter_map(|index| graph.edges.get(*index).cloned())
+                    .collect();
+                let nodes = path_nodes(graph, start, &edges);
+                return Ok(QueryResult {
+                    query: spec.original,
+                    total_nodes: nodes.len(),
+                    total_edges: edges.len(),
+                    truncated: false,
+                    nodes,
+                    edges,
+                });
+            }
+            queue.push_back((edge.target, depth + 1));
+        }
+    }
+
+    Ok(QueryResult {
+        query: spec.original,
+        nodes: Vec::new(),
+        edges: Vec::new(),
+        total_nodes: 0,
+        total_edges: 0,
+        truncated,
+    })
+}
+
 fn validate_node_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     for key in spec.terms.keys() {
         if is_node_term(key) {
@@ -643,6 +741,21 @@ fn validate_edge_terms(spec: &QuerySpec) -> Result<(), QueryError> {
         }
         return Err(QueryError::new(format!(
             "unsupported edge query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_path_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if matches!(
+            key.as_str(),
+            "from" | "to" | "source" | "target" | "depth" | "kind" | "edge_kind"
+        ) {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported path query term `{key}`"
         )));
     }
     Ok(())
@@ -743,6 +856,59 @@ fn endpoint_nodes(graph: &CodeGraph, edges: &[Edge]) -> Vec<Node> {
         .iter()
         .filter(|node| ids.contains(&node.id))
         .cloned()
+        .collect()
+}
+
+fn resolve_node_reference(graph: &CodeGraph, value: &str) -> Option<NodeId> {
+    if let Ok(id) = parse_node_id(value) {
+        return graph.nodes.iter().any(|node| node.id == id).then_some(id);
+    }
+
+    graph
+        .nodes
+        .iter()
+        .find(|node| node.label == value)
+        .or_else(|| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| text_matches(&node.label, value))
+        })
+        .map(|node| node.id)
+}
+
+fn path_edge_matches(edge: &Edge, edge_kind: Option<&str>) -> bool {
+    is_trace_edge(&edge.kind)
+        && edge_kind.is_none_or(|expected| text_matches(&edge_kind_name(&edge.kind), expected))
+}
+
+fn reconstruct_path_edges(
+    start: NodeId,
+    target: NodeId,
+    parents: &BTreeMap<NodeId, (NodeId, usize)>,
+) -> Result<Vec<usize>, QueryError> {
+    let mut current = target;
+    let mut edges = Vec::new();
+    while current != start {
+        let Some((previous, edge_index)) = parents.get(&current) else {
+            return Err(QueryError::new("failed to reconstruct graph path"));
+        };
+        edges.push(*edge_index);
+        current = *previous;
+    }
+    edges.reverse();
+    Ok(edges)
+}
+
+fn path_nodes(graph: &CodeGraph, start: NodeId, edges: &[Edge]) -> Vec<Node> {
+    let mut ids = Vec::with_capacity(edges.len() + 1);
+    ids.push(start);
+    for edge in edges {
+        ids.push(edge.target);
+    }
+
+    ids.into_iter()
+        .filter_map(|id| graph.nodes.iter().find(|node| node.id == id).cloned())
         .collect()
 }
 
@@ -1484,6 +1650,67 @@ mod tests {
         assert_eq!(result.total_nodes, 3);
         assert_eq!(result.total_edges, 2);
         assert!(result.nodes.iter().any(|node| node.label == "serde"));
+    }
+
+    #[test]
+    fn query_path_returns_shortest_dependency_path() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let service = graph.add_node(NodeKind::Function, "service");
+        let database_url = graph.add_node(NodeKind::Environment, "DATABASE_URL");
+        let unrelated = graph.add_node(NodeKind::Function, "unrelated");
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(helper, service, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(
+            service,
+            database_url,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            unrelated,
+            database_url,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+
+        let result = query_graph(&graph, "path from:main to:DATABASE_URL depth:4").unwrap();
+
+        assert_eq!(result.total_nodes, 4);
+        assert_eq!(result.total_edges, 3);
+        assert_eq!(
+            result
+                .nodes
+                .iter()
+                .map(|node| node.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["main", "helper", "service", "DATABASE_URL"]
+        );
+        assert_eq!(result.edges[0].source, main);
+        assert_eq!(result.edges[2].target, database_url);
+    }
+
+    #[test]
+    fn query_path_respects_depth_and_edge_kind() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let config = graph.add_node(NodeKind::Config, "settings.toml");
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(helper, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
+
+        let limited = query_graph(&graph, "path from:main to:settings.toml depth:1").unwrap();
+        assert!(limited.nodes.is_empty());
+        assert!(limited.truncated);
+
+        let calls_only = query_graph(
+            &graph,
+            "path from:main to:settings.toml depth:3 edge_kind:calls",
+        )
+        .unwrap();
+        assert!(calls_only.nodes.is_empty());
+        assert!(!calls_only.truncated);
     }
 
     #[test]

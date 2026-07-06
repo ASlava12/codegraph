@@ -28,6 +28,7 @@ Implemented now:
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
+- Path queries for finding directed dependency paths between labels or node ids.
 - Server-side graph paging and filtering endpoint for large repository exploration.
 - Web graph page controls backed by the server-side paging API.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
@@ -85,6 +86,7 @@ cargo run -p codegraph-cli -- query 'nodes kind:function label:main' .
 cargo run -p codegraph-cli -- query 'edges kind:calls source:main' .
 cargo run -p codegraph-cli -- query 'calls(function:main)' .
 cargo run -p codegraph-cli -- query 'trace label:main depth:3' .
+cargo run -p codegraph-cli -- query 'path from:main to:load_config depth:6' .
 ```
 
 Trace outgoing dependencies from a label:
@@ -161,6 +163,9 @@ curl 'http://127.0.0.1:3765/api/insights?path=.'
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=nodes kind:function label:main'
+curl --get 'http://127.0.0.1:3765/api/query' \
+  --data-urlencode 'path=.' \
+  --data-urlencode 'q=path from:main to:load_config depth:6'
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
 ```
 
