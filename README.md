@@ -21,6 +21,7 @@ Implemented now:
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
 - Async scan job API for long-running repository scans.
+- SSE scan job status stream for live web progress updates.
 - Source preview API and UI panel for graph nodes with source spans.
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
@@ -130,6 +131,7 @@ curl -X POST 'http://127.0.0.1:3765/api/scan-jobs' \
   -H 'content-type: application/json' \
   -d '{"path":"."}'
 curl 'http://127.0.0.1:3765/api/scan-jobs/scan-1'
+curl -N 'http://127.0.0.1:3765/api/scan-jobs/scan-1/events'
 curl 'http://127.0.0.1:3765/api/scan-jobs/scan-1/result'
 ```
 

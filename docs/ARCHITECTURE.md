@@ -88,7 +88,7 @@ Responsibilities:
 
 - provide health and scan endpoints
 - provide JSON, DOT, and NDJSON export endpoints
-- provide async scan job endpoints for long-running scans
+- provide async scan job endpoints and SSE status streams for long-running scans
 - provide summary, entrypoint, and trace endpoints
 - provide investigation insight endpoints
 - provide graph query endpoints

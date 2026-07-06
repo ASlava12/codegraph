@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
+use async_stream::stream;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -13,13 +15,16 @@ use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::convert::Infallible;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
+use tokio::time::sleep;
 
 #[derive(Debug, Parser)]
 #[command(name = "codegraph-server")]
@@ -196,6 +201,7 @@ async fn main() -> Result<()> {
         .route("/api/scan", get(scan))
         .route("/api/scan-jobs", post(start_scan_job))
         .route("/api/scan-jobs/{id}", get(scan_job_status))
+        .route("/api/scan-jobs/{id}/events", get(scan_job_events))
         .route("/api/scan-jobs/{id}/result", get(scan_job_result))
         .route("/api/export", get(export_api))
         .route("/api/summary", get(summary))
@@ -298,6 +304,52 @@ async fn scan_job_status(
         .cloned()
         .ok_or_else(|| ApiError::not_found("scan job not found"))?;
     Ok(Json(job_without_graph(job)))
+}
+
+async fn scan_job_events(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    {
+        let jobs = state.jobs.read().await;
+        if !jobs.contains_key(&id) {
+            return Err(ApiError::not_found("scan job not found"));
+        }
+    }
+
+    let jobs = Arc::clone(&state.jobs);
+    let stream = stream! {
+        loop {
+            let job = {
+                let jobs = jobs.read().await;
+                jobs.get(&id).cloned().map(job_without_graph)
+            };
+
+            let Some(job) = job else {
+                let data = serde_json::json!({ "error": "scan job not found" }).to_string();
+                yield Ok::<Event, Infallible>(Event::default().event("error").data(data));
+                break;
+            };
+
+            let is_terminal = matches!(job.status, ScanJobStatus::Complete | ScanJobStatus::Failed);
+            let data = serde_json::to_string(&job).unwrap_or_else(|error| {
+                serde_json::json!({ "error": error.to_string() }).to_string()
+            });
+            yield Ok::<Event, Infallible>(Event::default().event("status").data(data));
+
+            if is_terminal {
+                break;
+            }
+
+            sleep(Duration::from_millis(350)).await;
+        }
+    };
+
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(10))
+            .text("codegraph-scan"),
+    ))
 }
 
 async fn scan_job_result(

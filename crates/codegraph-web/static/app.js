@@ -18,6 +18,7 @@ const state = {
   queryRequest: 0,
   queryFocus: null,
   scanJobId: null,
+  scanEvents: null,
 };
 
 const colors = {
@@ -85,6 +86,10 @@ async function scan() {
   scanButton.disabled = true;
   selectionTitle.textContent = "Selection";
   selectionBody.innerHTML = "";
+  if (state.scanEvents) {
+    state.scanEvents.close();
+    state.scanEvents = null;
+  }
 
   try {
     const response = await fetch("/api/scan-jobs", {
@@ -98,7 +103,7 @@ async function scan() {
     }
 
     state.scanJobId = body.id;
-    await pollScanJob(body.id);
+    await watchScanJob(body.id);
   } catch (error) {
     setStatus("error", "error");
     selectionTitle.textContent = "Error";
@@ -106,6 +111,75 @@ async function scan() {
   } finally {
     scanButton.disabled = false;
   }
+}
+
+async function watchScanJob(jobId) {
+  if (!window.EventSource) {
+    return pollScanJob(jobId);
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const events = new EventSource(`/api/scan-jobs/${encodeURIComponent(jobId)}/events`);
+    state.scanEvents = events;
+
+    const finish = async () => {
+      if (settled) return;
+      settled = true;
+      events.close();
+      if (state.scanEvents === events) state.scanEvents = null;
+      try {
+        await loadScanJobResult(jobId);
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    events.addEventListener("status", (event) => {
+      if (state.scanJobId !== jobId) {
+        events.close();
+        if (!settled) resolve();
+        settled = true;
+        return;
+      }
+
+      let job;
+      try {
+        job = JSON.parse(event.data);
+      } catch (error) {
+        settled = true;
+        events.close();
+        if (state.scanEvents === events) state.scanEvents = null;
+        reject(new Error(`invalid scan event: ${error.message}`));
+        return;
+      }
+      if (job.status === "queued" || job.status === "running") {
+        setStatus(job.status === "queued" ? "queue" : "scan", "busy");
+        return;
+      }
+
+      if (job.status === "failed") {
+        settled = true;
+        events.close();
+        if (state.scanEvents === events) state.scanEvents = null;
+        reject(new Error(job.message || "scan failed"));
+        return;
+      }
+
+      if (job.status === "complete") {
+        finish();
+      }
+    });
+
+    events.onerror = () => {
+      if (settled) return;
+      settled = true;
+      events.close();
+      if (state.scanEvents === events) state.scanEvents = null;
+      pollScanJob(jobId).then(resolve, reject);
+    };
+  });
 }
 
 async function pollScanJob(jobId) {
@@ -126,25 +200,29 @@ async function pollScanJob(jobId) {
       throw new Error(body.message || "scan failed");
     }
 
-    const resultResponse = await fetch(`/api/scan-jobs/${encodeURIComponent(jobId)}/result`);
-    const result = await resultResponse.json();
-    if (!resultResponse.ok) {
-      throw new Error(result.error || "scan result failed");
-    }
-
-    setStatus("load", "busy");
-    state.graph = result.graph;
-    state.selectedId = null;
-    state.hoveredId = null;
-    state.queryFocus = null;
-    queryResult.innerHTML = "";
-    state.positions.clear();
-    state.velocities.clear();
-    rootLabel.textContent = result.root;
-    initializeGraph();
-    setStatus("ready");
+    await loadScanJobResult(jobId);
     return;
   }
+}
+
+async function loadScanJobResult(jobId) {
+  const resultResponse = await fetch(`/api/scan-jobs/${encodeURIComponent(jobId)}/result`);
+  const result = await resultResponse.json();
+  if (!resultResponse.ok) {
+    throw new Error(result.error || "scan result failed");
+  }
+
+  setStatus("load", "busy");
+  state.graph = result.graph;
+  state.selectedId = null;
+  state.hoveredId = null;
+  state.queryFocus = null;
+  queryResult.innerHTML = "";
+  state.positions.clear();
+  state.velocities.clear();
+  rootLabel.textContent = result.root;
+  initializeGraph();
+  setStatus("ready");
 }
 
 async function runGraphQuery() {
