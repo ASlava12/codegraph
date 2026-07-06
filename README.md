@@ -45,6 +45,7 @@ Implemented now:
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Persistent server-side graph cache with project fingerprint invalidation.
+- CLI scan benchmark reports with timing and graph-size metrics for regression tracking.
 - CI checks for formatting, clippy, tests, UI syntax, CLI scan, and server cache smoke tests.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Dependency consistency insights for external imports that are not backed by declared manifest dependencies.
@@ -77,6 +78,13 @@ Summarize a project:
 
 ```bash
 cargo run -p codegraph-cli -- summary .
+```
+
+Benchmark scanner performance:
+
+```bash
+cargo run -p codegraph-cli -- benchmark . --runs 5
+cargo run -p codegraph-cli -- bench . --runs 5
 ```
 
 List entrypoint candidates:

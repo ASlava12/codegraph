@@ -7,7 +7,9 @@ use codegraph_analysis::{
 };
 use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{IndexOptions, scan_project};
+use serde::Serialize;
 use std::path::PathBuf;
+use std::time::Instant;
 
 #[derive(Debug, Parser)]
 #[command(name = "codegraph")]
@@ -40,6 +42,10 @@ enum Command {
 
     /// Emit graph summary counts as JSON.
     Summary(ScanArgs),
+
+    /// Benchmark project scans and emit timing plus graph size metrics as JSON.
+    #[command(visible_alias = "bench")]
+    Benchmark(BenchmarkArgs),
 
     /// Emit entrypoint candidate nodes as JSON.
     Entrypoints(ScanArgs),
@@ -183,6 +189,25 @@ struct ScanArgs {
 }
 
 #[derive(Debug, Args)]
+struct BenchmarkArgs {
+    /// Project root to scan.
+    #[arg(default_value = ".")]
+    path: PathBuf,
+
+    /// Number of measured scan runs.
+    #[arg(long, default_value_t = 3)]
+    runs: usize,
+
+    /// Include hidden files and directories.
+    #[arg(long)]
+    include_hidden: bool,
+
+    /// Include default ignored directories such as target and node_modules.
+    #[arg(long)]
+    include_ignored: bool,
+}
+
+#[derive(Debug, Args)]
 struct InsightArgs {
     #[command(flatten)]
     scan: ScanArgs,
@@ -218,6 +243,27 @@ enum InsightSeverityArg {
     Error,
 }
 
+#[derive(Debug, Serialize)]
+struct BenchmarkReport {
+    path: String,
+    runs: usize,
+    include_hidden: bool,
+    include_ignored: bool,
+    fastest_ms: f64,
+    slowest_ms: f64,
+    average_ms: f64,
+    measurements: Vec<BenchmarkMeasurement>,
+    summary: codegraph_analysis::GraphSummary,
+}
+
+#[derive(Debug, Serialize)]
+struct BenchmarkMeasurement {
+    run: usize,
+    duration_ms: f64,
+    nodes: usize,
+    edges: usize,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -234,6 +280,10 @@ fn main() -> Result<()> {
         Command::Summary(args) => {
             let graph = scan_with_options(args.path, args.include_hidden, args.include_ignored)?;
             println!("{}", serde_json::to_string_pretty(&summarize(&graph))?);
+        }
+        Command::Benchmark(args) => {
+            let report = benchmark_scans(args)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Entrypoints(args) => {
             let graph = scan_with_options(args.path, args.include_hidden, args.include_ignored)?;
@@ -377,4 +427,55 @@ fn scan_with_options(
         ..IndexOptions::default()
     };
     Ok(scan_project(path, &options)?)
+}
+
+fn benchmark_scans(args: BenchmarkArgs) -> Result<BenchmarkReport> {
+    let runs = args.runs.clamp(1, 100);
+    let options = IndexOptions {
+        include_hidden: args.include_hidden,
+        include_ignored: args.include_ignored,
+        ..IndexOptions::default()
+    };
+    let mut measurements = Vec::with_capacity(runs);
+    let mut last_graph = None;
+
+    for run in 1..=runs {
+        let started = Instant::now();
+        let graph = scan_project(&args.path, &options)?;
+        let duration_ms = started.elapsed().as_secs_f64() * 1000.0;
+        measurements.push(BenchmarkMeasurement {
+            run,
+            duration_ms,
+            nodes: graph.nodes.len(),
+            edges: graph.edges.len(),
+        });
+        last_graph = Some(graph);
+    }
+
+    let fastest_ms = measurements
+        .iter()
+        .map(|measurement| measurement.duration_ms)
+        .fold(f64::INFINITY, f64::min);
+    let slowest_ms = measurements
+        .iter()
+        .map(|measurement| measurement.duration_ms)
+        .fold(0.0, f64::max);
+    let average_ms = measurements
+        .iter()
+        .map(|measurement| measurement.duration_ms)
+        .sum::<f64>()
+        / measurements.len() as f64;
+    let graph = last_graph.expect("runs is clamped to at least one");
+
+    Ok(BenchmarkReport {
+        path: args.path.display().to_string(),
+        runs,
+        include_hidden: args.include_hidden,
+        include_ignored: args.include_ignored,
+        fastest_ms,
+        slowest_ms,
+        average_ms,
+        measurements,
+        summary: summarize(&graph),
+    })
 }

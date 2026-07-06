@@ -152,7 +152,7 @@ Goal: handle real repositories efficiently.
 - Cache parser and LSP facts.
 - [x] Add first large graph filtering and paging endpoint.
 - [x] Support first UI-driven large graph paging.
-- Add benchmarks.
+- [x] Add first CLI scan benchmarks.
 
 Exit criteria:
 

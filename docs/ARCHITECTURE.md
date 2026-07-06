@@ -93,6 +93,7 @@ Responsibilities:
 `codegraph-cli` is the primary automation interface.
 
 CLI output must remain machine-friendly. Human-oriented formatting can be added, but JSON should stay stable.
+The CLI also owns local scan benchmark reports: it runs the same indexer path repeatedly and emits timing, graph size, and summary metrics without changing the graph schema.
 
 ### Server And Web UI
 
