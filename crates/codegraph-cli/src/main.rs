@@ -1,6 +1,7 @@
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{TraceRequest, TraceStart, entrypoints, insights, summarize, trace};
+use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{IndexOptions, scan_project};
 use std::path::PathBuf;
 
@@ -27,6 +28,10 @@ enum Command {
         /// Include default ignored directories such as target and node_modules.
         #[arg(long)]
         include_ignored: bool,
+
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+        format: OutputFormat,
     },
 
     /// Emit graph summary counts as JSON.
@@ -76,6 +81,13 @@ struct ScanArgs {
     include_ignored: bool,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum OutputFormat {
+    Json,
+    Dot,
+    Ndjson,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -84,9 +96,10 @@ fn main() -> Result<()> {
             path,
             include_hidden,
             include_ignored,
+            format,
         } => {
             let graph = scan_with_options(path, include_hidden, include_ignored)?;
-            println!("{}", serde_json::to_string_pretty(&graph)?);
+            print_graph(&graph, format)?;
         }
         Command::Summary(args) => {
             let graph = scan_with_options(args.path, args.include_hidden, args.include_ignored)?;
@@ -119,6 +132,15 @@ fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn print_graph(graph: &codegraph_core::CodeGraph, format: OutputFormat) -> Result<()> {
+    match format {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(graph)?),
+        OutputFormat::Dot => print!("{}", export_dot(graph)),
+        OutputFormat::Ndjson => print!("{}", export_ndjson(graph)?),
+    }
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 use codegraph_core::{CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +63,58 @@ pub enum InsightSeverity {
     Info,
     Warning,
     Error,
+}
+
+pub fn export_dot(graph: &CodeGraph) -> String {
+    let mut output = String::from(
+        "digraph CodeGraph {\n  rankdir=LR;\n  node [shape=box, style=\"rounded,filled\", fontname=\"Inter\"];\n  edge [fontname=\"Inter\"];\n",
+    );
+
+    for node in &graph.nodes {
+        output.push_str(&format!(
+            "  {} [label=\"{}\", fillcolor=\"{}\"];\n",
+            node.id,
+            dot_escape(&format!("{}\\n{}", node.label, kind_name(&node.kind))),
+            dot_color(&node.kind)
+        ));
+    }
+
+    for edge in &graph.edges {
+        output.push_str(&format!(
+            "  {} -> {} [label=\"{}\"];\n",
+            edge.source,
+            edge.target,
+            dot_escape(&edge_kind_name(&edge.kind))
+        ));
+    }
+
+    output.push_str("}\n");
+    output
+}
+
+pub fn export_ndjson(graph: &CodeGraph) -> Result<String, serde_json::Error> {
+    let mut lines = Vec::with_capacity(graph.nodes.len() + graph.edges.len() + 1);
+    lines.push(serde_json::to_string(&json!({
+        "record_type": "graph",
+        "schema_version": graph.schema_version,
+        "root": graph.root,
+    }))?);
+
+    for node in &graph.nodes {
+        lines.push(serde_json::to_string(&json!({
+            "record_type": "node",
+            "node": node,
+        }))?);
+    }
+
+    for edge in &graph.edges {
+        lines.push(serde_json::to_string(&json!({
+            "record_type": "edge",
+            "edge": edge,
+        }))?);
+    }
+
+    Ok(format!("{}\n", lines.join("\n")))
 }
 
 pub fn summarize(graph: &CodeGraph) -> GraphSummary {
@@ -373,6 +426,28 @@ fn severity_name(severity: InsightSeverity) -> &'static str {
     }
 }
 
+fn dot_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+fn dot_color(kind: &NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Repository => "#5cc8a7",
+        NodeKind::Directory => "#7f9cff",
+        NodeKind::File => "#67b7dc",
+        NodeKind::Module => "#8ccf7e",
+        NodeKind::Function => "#f2c14e",
+        NodeKind::Type => "#df7e7e",
+        NodeKind::Config => "#e5b454",
+        NodeKind::Environment => "#d8a657",
+        NodeKind::ExternalDependency => "#b88ee6",
+        NodeKind::Unknown => "#a5adb3",
+    }
+}
+
 fn serde_json_name<T: Serialize>(value: &T) -> Option<String> {
     serde_json::to_value(value)
         .ok()
@@ -401,6 +476,28 @@ mod tests {
         assert_eq!(summary.edges, 1);
         assert_eq!(summary.entrypoints, 1);
         assert_eq!(summary.node_kinds.get("function"), Some(&1));
+    }
+
+    #[test]
+    fn exports_dot_and_ndjson() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        graph.add_edge(graph.root, main, EdgeKind::Contains, Confidence::Exact);
+
+        let dot = export_dot(&graph);
+        assert!(dot.starts_with("digraph CodeGraph"));
+        assert!(dot.contains("main"));
+        assert!(dot.contains("contains"));
+
+        let ndjson = export_ndjson(&graph).unwrap();
+        let records: Vec<_> = ndjson
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect();
+        assert_eq!(records.len(), 4);
+        assert_eq!(records[0]["record_type"], "graph");
+        assert_eq!(records[1]["record_type"], "node");
+        assert_eq!(records[3]["record_type"], "edge");
     }
 
     #[test]

@@ -33,6 +33,7 @@ It currently builds file, symbol, import, call, config, environment, and error-f
 - entrypoint candidates
 - outgoing dependency traces
 - investigation insights
+- DOT and NDJSON exports
 
 This crate is shared by the CLI and server so humans, UI features, and agents receive the same structured answers.
 
@@ -84,6 +85,7 @@ CLI output must remain machine-friendly. Human-oriented formatting can be added,
 Responsibilities:
 
 - provide health and scan endpoints
+- provide JSON, DOT, and NDJSON export endpoints
 - provide async scan job endpoints for long-running scans
 - provide summary, entrypoint, and trace endpoints
 - provide investigation insight endpoints

@@ -1,11 +1,13 @@
 use anyhow::{Context, Result};
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
-use codegraph_analysis::{TraceRequest, TraceStart, entrypoints, insights, summarize, trace};
+use codegraph_analysis::{
+    TraceRequest, TraceStart, entrypoints, export_dot, export_ndjson, insights, summarize, trace,
+};
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
 use serde::{Deserialize, Serialize};
@@ -75,6 +77,20 @@ struct TraceQuery {
     label: Option<String>,
     node_id: Option<u64>,
     depth: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExportQuery {
+    path: Option<PathBuf>,
+    format: Option<ExportFormat>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ExportFormat {
+    Json,
+    Dot,
+    Ndjson,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,6 +190,7 @@ async fn main() -> Result<()> {
         .route("/api/scan-jobs", post(start_scan_job))
         .route("/api/scan-jobs/{id}", get(scan_job_status))
         .route("/api/scan-jobs/{id}/result", get(scan_job_result))
+        .route("/api/export", get(export_api))
         .route("/api/summary", get(summary))
         .route("/api/entrypoints", get(entrypoints_api))
         .route("/api/insights", get(insights_api))
@@ -344,6 +361,31 @@ async fn scan(
         root: root_label,
         graph,
     }))
+}
+
+async fn export_api(
+    State(state): State<AppState>,
+    Query(query): Query<ExportQuery>,
+) -> Result<Response, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let format = query.format.unwrap_or(ExportFormat::Json);
+    let (content_type, body) = match format {
+        ExportFormat::Json => (
+            "application/json; charset=utf-8",
+            serde_json::to_string_pretty(&graph)
+                .map_err(|error| ApiError::internal(error.to_string()))?,
+        ),
+        ExportFormat::Dot => ("text/vnd.graphviz; charset=utf-8", export_dot(&graph)),
+        ExportFormat::Ndjson => (
+            "application/x-ndjson; charset=utf-8",
+            export_ndjson(&graph).map_err(|error| ApiError::internal(error.to_string()))?,
+        ),
+    };
+    Ok((
+        [(header::CONTENT_TYPE, HeaderValue::from_static(content_type))],
+        body,
+    )
+        .into_response())
 }
 
 async fn summary(

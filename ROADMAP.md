@@ -34,8 +34,8 @@ Goal: extract language-independent structure from source files.
 - [x] Detect basic error/exception constructs.
 - Add graph export formats:
   - [x] JSON
-  - [ ] DOT/Graphviz
-  - [ ] NDJSON for streaming agent use
+  - [x] DOT/Graphviz
+  - [x] NDJSON for streaming agent use
 
 Exit criteria:
 

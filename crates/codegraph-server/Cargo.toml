@@ -13,4 +13,5 @@ codegraph-analysis.workspace = true
 codegraph-core.workspace = true
 codegraph-indexer.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true

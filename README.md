@@ -39,6 +39,13 @@ Run the initial scanner:
 cargo run -p codegraph-cli -- scan .
 ```
 
+Export for Graphviz or streaming agent use:
+
+```bash
+cargo run -p codegraph-cli -- scan . --format dot
+cargo run -p codegraph-cli -- scan . --format ndjson
+```
+
 Summarize a project:
 
 ```bash
@@ -93,6 +100,13 @@ Scan API:
 
 ```bash
 curl 'http://127.0.0.1:3765/api/scan?path=.'
+```
+
+Export API:
+
+```bash
+curl 'http://127.0.0.1:3765/api/export?path=.&format=dot'
+curl 'http://127.0.0.1:3765/api/export?path=.&format=ndjson'
 ```
 
 Async scan job API:
