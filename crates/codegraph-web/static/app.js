@@ -836,17 +836,20 @@ function renderInsights() {
   const insights = sourceInsights.slice(0, report ? 50 : 30);
   const total = report?.total ?? insights.length;
   const severitySummary = renderInsightSeveritySummary(report);
+  const kindSummary = renderInsightKindSummary(report);
 
   insightCount.textContent = String(total);
   if (insights.length === 0) {
     insightList.innerHTML = report
-      ? `${severitySummary}<p class="empty">No matching insights.</p>`
+      ? `${severitySummary}${kindSummary}<p class="empty">No matching insights.</p>`
       : '<p class="empty">No obvious issues in the visible graph.</p>';
+    attachInsightKindFilters();
     return;
   }
 
   insightList.innerHTML =
     severitySummary +
+    kindSummary +
     insights
       .map(
         (insight, index) => `
@@ -866,6 +869,7 @@ function renderInsights() {
       if (insight) focusInsight(insight);
     });
   });
+  attachInsightKindFilters();
 }
 
 function renderInsightSeveritySummary(report) {
@@ -877,6 +881,32 @@ function renderInsightSeveritySummary(report) {
     })
     .join("");
   return `<div class="insight-summary">${rows}</div>`;
+}
+
+function renderInsightKindSummary(report) {
+  if (!report?.by_kind) return "";
+  const rows = Object.entries(report.by_kind)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 6)
+    .map(
+      ([kind, count]) => `
+        <button class="insight-kind-chip" type="button" data-insight-kind="${escapeHtml(kind)}">
+          <span>${escapeHtml(formatKind(kind))}</span>
+          <strong>${count}</strong>
+        </button>
+      `,
+    )
+    .join("");
+  return rows ? `<div class="insight-kind-summary">${rows}</div>` : "";
+}
+
+function attachInsightKindFilters() {
+  insightList.querySelectorAll("[data-insight-kind]").forEach((button) => {
+    button.addEventListener("click", () => {
+      insightKindInput.value = button.dataset.insightKind || "";
+      loadInsights();
+    });
+  });
 }
 
 function insightNodeId(insight) {

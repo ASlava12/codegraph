@@ -39,6 +39,7 @@ The first implementation stores whole-graph JSON cache records keyed by root pat
 - entrypoint candidates
 - outgoing dependency traces
 - investigation insights
+- insight severity and kind summaries for triage
 - shared insight filtering for CLI, API, and web workflows
 - dependency consistency checks
 - conflicting manifest dependency constraint checks

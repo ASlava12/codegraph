@@ -123,6 +123,7 @@ impl std::error::Error for QueryError {}
 pub struct InsightReport {
     pub total: usize,
     pub by_severity: BTreeMap<String, usize>,
+    pub by_kind: BTreeMap<String, usize>,
     pub insights: Vec<Insight>,
 }
 
@@ -284,15 +285,18 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     });
 
     let mut by_severity = BTreeMap::new();
+    let mut by_kind = BTreeMap::new();
     for insight in &insights {
         *by_severity
             .entry(severity_name(insight.severity).to_string())
             .or_insert(0) += 1;
+        *by_kind.entry(insight.kind.clone()).or_insert(0) += 1;
     }
 
     InsightReport {
         total: insights.len(),
         by_severity,
+        by_kind,
         insights,
     }
 }
@@ -304,6 +308,7 @@ pub fn filter_insight_report(report: InsightReport, filter: &InsightFilter) -> I
         .as_ref()
         .map(|value| value.to_ascii_lowercase());
     let by_severity = report.by_severity.clone();
+    let by_kind = report.by_kind.clone();
     let mut insights: Vec<_> = report
         .insights
         .into_iter()
@@ -325,6 +330,7 @@ pub fn filter_insight_report(report: InsightReport, filter: &InsightFilter) -> I
     InsightReport {
         total,
         by_severity,
+        by_kind,
         insights,
     }
 }
@@ -2475,6 +2481,11 @@ mod tests {
         let report = InsightReport {
             total: 3,
             by_severity: BTreeMap::from([("error".to_string(), 1), ("warning".to_string(), 2)]),
+            by_kind: BTreeMap::from([
+                ("dependency_cycle".to_string(), 1),
+                ("parse_error".to_string(), 1),
+                ("undeclared_external_import".to_string(), 1),
+            ]),
             insights: vec![
                 Insight {
                     kind: "dependency_cycle".to_string(),
@@ -2513,6 +2524,8 @@ mod tests {
         assert_eq!(filtered.total, 1);
         assert_eq!(filtered.by_severity.get("error"), Some(&1));
         assert_eq!(filtered.by_severity.get("warning"), Some(&2));
+        assert_eq!(filtered.by_kind.get("dependency_cycle"), Some(&1));
+        assert_eq!(filtered.by_kind.get("parse_error"), Some(&1));
         assert_eq!(filtered.insights.len(), 1);
         assert_eq!(filtered.insights[0].kind, "dependency_cycle");
     }

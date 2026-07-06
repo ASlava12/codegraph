@@ -576,6 +576,43 @@ button:disabled {
   color: var(--warn);
 }
 
+.insight-kind-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.insight-kind-chip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  min-height: 30px;
+  padding: 6px 7px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  text-align: left;
+}
+
+.insight-kind-chip:hover {
+  border-color: rgba(92, 200, 167, 0.55);
+  background: rgba(92, 200, 167, 0.08);
+}
+
+.insight-kind-chip span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
+.insight-kind-chip strong {
+  font-size: 11px;
+}
+
 .insight {
   display: grid;
   grid-template-columns: 8px minmax(0, 1fr);
