@@ -445,6 +445,7 @@ fn manifest_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
     match path.file_name().and_then(|name| name.to_str()) {
         Some("Cargo.toml") => cargo_entrypoints(path, source),
         Some("package.json") => package_json_entrypoints(source),
+        Some("go.mod") => go_mod_entrypoints(path, source),
         Some("pyproject.toml") => pyproject_entrypoints(source),
         Some("composer.json") => composer_entrypoints(source),
         Some("CMakeLists.txt") => cmake_entrypoints(source),
@@ -528,6 +529,46 @@ fn package_json_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
             command.as_str().map(str::to_string),
         ));
     }
+    entrypoints
+}
+
+fn go_mod_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
+    let Some(module) = go_module_name(source) else {
+        return Vec::new();
+    };
+    let Some(root) = path.parent() else {
+        return Vec::new();
+    };
+
+    let mut entrypoints = Vec::new();
+    if root.join("main.go").is_file() {
+        entrypoints.push(manifest_entrypoint(
+            format!("go module:{module}"),
+            "module",
+            "go",
+            Some("main.go".to_string()),
+        ));
+    }
+
+    let cmd_dir = root.join("cmd");
+    if let Ok(commands) = fs::read_dir(&cmd_dir) {
+        for command in commands.flatten() {
+            let command_path = command.path();
+            if !command_path.join("main.go").is_file() {
+                continue;
+            }
+            let Some(name) = command_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            entrypoints.push(manifest_entrypoint(
+                format!("go command:{name}"),
+                "command",
+                "go",
+                Some(format!("cmd/{name}/main.go")),
+            ));
+        }
+    }
+
     entrypoints
 }
 
@@ -830,6 +871,16 @@ fn go_mod_dependencies(source: &str) -> Vec<ManifestDependency> {
         }
     }
     dependencies
+}
+
+fn go_module_name(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        let line = line.split("//").next().unwrap_or("").trim();
+        line.strip_prefix("module ")
+            .map(str::trim)
+            .filter(|module| !module.is_empty())
+            .map(str::to_string)
+    })
 }
 
 fn requirements_dependencies(source: &str) -> Vec<ManifestDependency> {
@@ -1145,6 +1196,16 @@ fn entrypoint_target_candidates(
         .into_iter()
         .collect(),
         "python" => python_entrypoint_candidates(pending),
+        "go" => manifest_path_candidate(
+            pending,
+            &pending.target,
+            Some("main".to_string()),
+            Confidence::Exact,
+            Confidence::Syntactic,
+            "manifest_path",
+        )
+        .into_iter()
+        .collect(),
         "cmake" => manifest_path_candidate(
             pending,
             &pending.target,
@@ -2040,6 +2101,7 @@ dependencies = ["pydantic>=2"]
         fs::create_dir_all(root.join("src").join("bin")).unwrap();
         fs::create_dir_all(root.join("codegraph")).unwrap();
         fs::create_dir_all(root.join("bin")).unwrap();
+        fs::create_dir_all(root.join("cmd").join("server")).unwrap();
         fs::write(
             root.join("src").join("main.rs"),
             "fn main() { helper(); }\nfn helper() {}\n",
@@ -2054,6 +2116,12 @@ dependencies = ["pydantic>=2"]
         fs::write(
             root.join("src").join("main.c"),
             "int main(void) { return 0; }\n",
+        )
+        .unwrap();
+        fs::write(root.join("main.go"), "package main\nfunc main() {}\n").unwrap();
+        fs::write(
+            root.join("cmd").join("server").join("main.go"),
+            "package main\nfunc main() {}\n",
         )
         .unwrap();
         fs::write(
@@ -2119,6 +2187,7 @@ add_executable(imported_tool IMPORTED)
 "#,
         )
         .unwrap();
+        fs::write(root.join("go.mod"), "module example.com/demo\n\ngo 1.23\n").unwrap();
 
         let graph = scan_project(&root, &IndexOptions::default()).unwrap();
         let entrypoints: BTreeSet<_> = graph
@@ -2137,6 +2206,8 @@ add_executable(imported_tool IMPORTED)
             "composer bin:bin/codegraph",
             "composer script:analyse",
             "cmake executable:demo_c",
+            "go module:example.com/demo",
+            "go command:server",
         ] {
             assert!(entrypoints.contains(expected), "missing {expected}");
         }
@@ -2167,6 +2238,13 @@ add_executable(imported_tool IMPORTED)
         let cmake_entrypoint = node_id(&graph, NodeKind::Entrypoint, "cmake executable:demo_c");
         let cmake_file = node_id(&graph, NodeKind::File, "src/main.c");
         let cmake_main = function_id_in_file(&graph, "main", "src/main.c");
+        let go_module_entrypoint =
+            node_id(&graph, NodeKind::Entrypoint, "go module:example.com/demo");
+        let go_module_file = node_id(&graph, NodeKind::File, "main.go");
+        let go_module_main = function_id_in_file(&graph, "main", "main.go");
+        let go_command_entrypoint = node_id(&graph, NodeKind::Entrypoint, "go command:server");
+        let go_command_file = node_id(&graph, NodeKind::File, "cmd/server/main.go");
+        let go_command_main = function_id_in_file(&graph, "main", "cmd/server/main.go");
 
         assert!(has_entrypoint_reference(
             &graph,
@@ -2214,6 +2292,34 @@ add_executable(imported_tool IMPORTED)
             &graph,
             cmake_entrypoint,
             cmake_main,
+            "entrypoint_function",
+            Confidence::Syntactic,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            go_module_entrypoint,
+            go_module_file,
+            "entrypoint_file",
+            Confidence::Exact,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            go_module_entrypoint,
+            go_module_main,
+            "entrypoint_function",
+            Confidence::Syntactic,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            go_command_entrypoint,
+            go_command_file,
+            "entrypoint_file",
+            Confidence::Exact,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            go_command_entrypoint,
+            go_command_main,
             "entrypoint_function",
             Confidence::Syntactic,
         ));
