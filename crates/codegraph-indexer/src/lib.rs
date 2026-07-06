@@ -29,6 +29,7 @@ struct IndexContext {
     function_symbols: BTreeMap<String, Vec<NodeId>>,
     file_nodes: BTreeMap<String, NodeId>,
     external_dependencies: BTreeMap<String, NodeId>,
+    cargo_workspace_dependencies: BTreeMap<String, Option<String>>,
     pending_calls: Vec<PendingCall>,
     pending_entrypoint_targets: Vec<PendingEntrypointTarget>,
 }
@@ -92,11 +93,13 @@ pub fn scan_project(
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(".");
+    let cargo_workspace_dependencies = cargo_workspace_dependencies(root);
     let mut context = IndexContext {
         graph: CodeGraph::new(root_label),
         function_symbols: BTreeMap::new(),
         file_nodes: BTreeMap::new(),
         external_dependencies: BTreeMap::new(),
+        cargo_workspace_dependencies,
         pending_calls: Vec::new(),
         pending_entrypoint_targets: Vec::new(),
     };
@@ -328,7 +331,7 @@ fn index_manifest_dependencies(
     path: &Path,
     source: &str,
 ) {
-    let dependencies = manifest_dependencies(path, source);
+    let dependencies = manifest_dependencies(path, source, &context.cargo_workspace_dependencies);
     for dependency in dependencies {
         let package_name = canonical_package_name(&dependency.ecosystem, &dependency.name);
         let package_id = package_id(&dependency.ecosystem, &package_name);
@@ -422,9 +425,13 @@ fn index_manifest_entrypoints(
     }
 }
 
-fn manifest_dependencies(path: &Path, source: &str) -> Vec<ManifestDependency> {
+fn manifest_dependencies(
+    path: &Path,
+    source: &str,
+    cargo_workspace_dependencies: &BTreeMap<String, Option<String>>,
+) -> Vec<ManifestDependency> {
     match path.file_name().and_then(|name| name.to_str()) {
-        Some("Cargo.toml") => cargo_dependencies(source),
+        Some("Cargo.toml") => cargo_dependencies(source, cargo_workspace_dependencies),
         Some("package.json") => package_json_dependencies(source),
         Some("go.mod") => go_mod_dependencies(source),
         Some("requirements.txt") => requirements_dependencies(source),
@@ -601,7 +608,10 @@ fn composer_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
     entrypoints
 }
 
-fn cargo_dependencies(source: &str) -> Vec<ManifestDependency> {
+fn cargo_dependencies(
+    source: &str,
+    cargo_workspace_dependencies: &BTreeMap<String, Option<String>>,
+) -> Vec<ManifestDependency> {
     let Ok(value) = toml::from_str::<toml::Value>(source) else {
         return Vec::new();
     };
@@ -612,6 +622,7 @@ fn cargo_dependencies(source: &str) -> Vec<ManifestDependency> {
         "runtime",
         "cargo",
         &mut dependencies,
+        Some(cargo_workspace_dependencies),
     );
     collect_toml_table_keys(
         &value,
@@ -619,6 +630,7 @@ fn cargo_dependencies(source: &str) -> Vec<ManifestDependency> {
         "dev",
         "cargo",
         &mut dependencies,
+        Some(cargo_workspace_dependencies),
     );
     collect_toml_table_keys(
         &value,
@@ -626,6 +638,7 @@ fn cargo_dependencies(source: &str) -> Vec<ManifestDependency> {
         "build",
         "cargo",
         &mut dependencies,
+        Some(cargo_workspace_dependencies),
     );
 
     if let Some(targets) = value.get("target").and_then(|value| value.as_table()) {
@@ -636,6 +649,7 @@ fn cargo_dependencies(source: &str) -> Vec<ManifestDependency> {
                 "runtime",
                 "cargo",
                 &mut dependencies,
+                Some(cargo_workspace_dependencies),
             );
             collect_toml_table_keys(
                 target,
@@ -643,6 +657,7 @@ fn cargo_dependencies(source: &str) -> Vec<ManifestDependency> {
                 "dev",
                 "cargo",
                 &mut dependencies,
+                Some(cargo_workspace_dependencies),
             );
             collect_toml_table_keys(
                 target,
@@ -650,6 +665,7 @@ fn cargo_dependencies(source: &str) -> Vec<ManifestDependency> {
                 "build",
                 "cargo",
                 &mut dependencies,
+                Some(cargo_workspace_dependencies),
             );
         }
     }
@@ -704,6 +720,7 @@ fn pyproject_dependencies(source: &str) -> Vec<ManifestDependency> {
             "runtime",
             "python",
             &mut dependencies,
+            None,
         );
         collect_toml_table_keys(
             poetry,
@@ -711,6 +728,7 @@ fn pyproject_dependencies(source: &str) -> Vec<ManifestDependency> {
             "dev",
             "python",
             &mut dependencies,
+            None,
         );
     }
 
@@ -803,6 +821,7 @@ fn collect_toml_table_keys(
     dependency_kind: &str,
     ecosystem: &str,
     dependencies: &mut Vec<ManifestDependency>,
+    cargo_workspace_dependencies: Option<&BTreeMap<String, Option<String>>>,
 ) {
     let Some(table) = value.get(table_name).and_then(|value| value.as_table()) else {
         return;
@@ -814,7 +833,12 @@ fn collect_toml_table_keys(
             .and_then(|value| value.as_str())
             .unwrap_or(name)
             .to_string();
-        let version = dependency_version_from_toml_value(value);
+        let version = dependency_version_from_toml_value(
+            name,
+            value,
+            ecosystem,
+            cargo_workspace_dependencies,
+        );
         dependencies.push(manifest_dependency(
             package_name,
             dependency_kind,
@@ -865,18 +889,53 @@ fn collect_json_object_keys(
     }
 }
 
-fn dependency_version_from_toml_value(value: &toml::Value) -> Option<String> {
+fn cargo_workspace_dependencies(root: &Path) -> BTreeMap<String, Option<String>> {
+    let Ok(source) = fs::read_to_string(root.join("Cargo.toml")) else {
+        return BTreeMap::new();
+    };
+    let Ok(value) = toml::from_str::<toml::Value>(&source) else {
+        return BTreeMap::new();
+    };
+    let Some(table) = value
+        .get("workspace")
+        .and_then(|workspace| workspace.get("dependencies"))
+        .and_then(|dependencies| dependencies.as_table())
+    else {
+        return BTreeMap::new();
+    };
+
+    table
+        .iter()
+        .map(|(name, value)| (name.clone(), direct_toml_dependency_version(value)))
+        .collect()
+}
+
+fn dependency_version_from_toml_value(
+    name: &str,
+    value: &toml::Value,
+    ecosystem: &str,
+    cargo_workspace_dependencies: Option<&BTreeMap<String, Option<String>>>,
+) -> Option<String> {
+    if ecosystem == "cargo"
+        && value
+            .as_table()
+            .and_then(|table| table.get("workspace"))
+            .and_then(|value| value.as_bool())
+            .is_some_and(|enabled| enabled)
+    {
+        return cargo_workspace_dependencies
+            .and_then(|dependencies| dependencies.get(name))
+            .cloned()
+            .flatten();
+    }
+    direct_toml_dependency_version(value)
+}
+
+fn direct_toml_dependency_version(value: &toml::Value) -> Option<String> {
     if let Some(version) = value.as_str() {
         return Some(version.to_string());
     }
     let table = value.as_table()?;
-    if table
-        .get("workspace")
-        .and_then(|value| value.as_bool())
-        .is_some_and(|enabled| enabled)
-    {
-        return Some("workspace".to_string());
-    }
     table
         .get("version")
         .and_then(|value| value.as_str())
@@ -1634,6 +1693,13 @@ mod tests {
 name = "demo"
 version = "0.1.0"
 
+[workspace]
+members = ["crates/app"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+local-util = { path = "crates/local-util" }
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 
@@ -1650,7 +1716,8 @@ name = "app"
 version = "0.1.0"
 
 [dependencies]
-serde = "1"
+serde = { workspace = true }
+local-util = { workspace = true }
 "#,
         )
         .unwrap();
@@ -1700,6 +1767,7 @@ dependencies = ["pydantic>=2"]
 
         for expected in [
             "serde",
+            "local-util",
             "anyhow",
             "react",
             "vite",
@@ -1740,6 +1808,21 @@ dependencies = ["pydantic>=2"]
                 .get("dependency_version")
                 .is_some_and(|value| value == "1")
         }));
+        let local_util = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "cargo:local-util")
+            })
+            .expect("missing local-util dependency");
+        let local_util_edge = graph
+            .edges
+            .iter()
+            .find(|edge| edge.kind == EdgeKind::DependsOn && edge.target == local_util.id)
+            .expect("missing local-util dependency edge");
+        assert!(!local_util_edge.metadata.contains_key("dependency_version"));
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == EdgeKind::DependsOn
                 && edge

@@ -213,7 +213,9 @@ Manifest dependencies are normalized into canonical package nodes with a stable
 manifest files connect to those package nodes with `depends_on` edges; the edge
 metadata records whether the declaration is runtime, dev, optional, peer, or
 build dependency data when the manifest format exposes that distinction, plus
-the raw `dependency_version` constraint when the manifest declares one.
+the raw `dependency_version` constraint when the manifest declares one. Cargo
+`workspace = true` dependencies resolve to the root workspace constraint when
+one exists; path-only workspace dependencies omit `dependency_version`.
 
 Manifest entrypoints are represented as `entrypoint` nodes linked from the
 repository root with exact `entrypoint` edges. Examples include Cargo binaries,
