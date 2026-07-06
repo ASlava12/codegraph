@@ -31,7 +31,7 @@ Implemented now:
 - Path queries for finding directed dependency paths between labels or node ids.
 - Confidence-aware edge queries and UI edge labels for fact provenance.
 - Server-side graph paging and filtering endpoint for large repository exploration.
-- Web graph page controls backed by server-side paging, kind, language, and edge filters.
+- Web graph page controls backed by server-side paging, search, kind, item, language, and edge filters.
 - Web project overview for language mix and entrypoint launch points.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
 - Server-backed web insights for project-wide findings while browsing paged graph slices.

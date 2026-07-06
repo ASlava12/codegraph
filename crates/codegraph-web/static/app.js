@@ -72,7 +72,9 @@ const pageInfo = document.querySelector("#pageInfo");
 const nodeLimitInput = document.querySelector("#nodeLimitInput");
 const edgeLimitInput = document.querySelector("#edgeLimitInput");
 const serverKindInput = document.querySelector("#serverKindInput");
+const serverItemKindInput = document.querySelector("#serverItemKindInput");
 const serverLanguageInput = document.querySelector("#serverLanguageInput");
+const serverSearchInput = document.querySelector("#serverSearchInput");
 const serverEdgeKindInput = document.querySelector("#serverEdgeKindInput");
 const pagePrevButton = document.querySelector("#pagePrevButton");
 const pageReloadButton = document.querySelector("#pageReloadButton");
@@ -106,7 +108,9 @@ for (const input of [
   nodeLimitInput,
   edgeLimitInput,
   serverKindInput,
+  serverItemKindInput,
   serverLanguageInput,
+  serverSearchInput,
   serverEdgeKindInput,
 ]) {
   input.addEventListener("keydown", (event) => {
@@ -282,10 +286,14 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     edge_limit: String(edgeLimit),
   });
   const kind = serverKindInput.value.trim();
+  const itemKind = serverItemKindInput.value.trim();
   const language = serverLanguageInput.value.trim();
+  const serverSearch = serverSearchInput.value.trim();
   const edgeKind = serverEdgeKindInput.value.trim();
   if (kind) params.set("kind", kind);
+  if (itemKind) params.set("item_kind", itemKind);
   if (language) params.set("language", language);
+  if (serverSearch) params.set("search", serverSearch);
   if (edgeKind) params.set("edge_kind", edgeKind);
 
   try {
@@ -399,7 +407,9 @@ function renderOverview() {
   languageList.querySelectorAll("[data-language]").forEach((button) => {
     button.addEventListener("click", () => {
       serverKindInput.value = "";
+      serverItemKindInput.value = "";
       serverLanguageInput.value = button.dataset.language || "";
+      serverSearchInput.value = "";
       serverEdgeKindInput.value = "";
       searchInput.value = "";
       state.search = "";
