@@ -31,6 +31,7 @@ Implemented now:
 - Server-side graph paging and filtering endpoint for large repository exploration.
 - Web graph page controls backed by the server-side paging API.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
+- Server-backed web insights for project-wide findings while browsing paged graph slices.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Persistent server-side graph cache with project fingerprint invalidation.

@@ -17,6 +17,8 @@ const state = {
   traceRequest: 0,
   queryRequest: 0,
   pageRequest: 0,
+  insightRequest: 0,
+  insightReport: null,
   queryFocus: null,
   scanJobId: null,
   scanEvents: null,
@@ -113,6 +115,9 @@ async function scan() {
   scanButton.disabled = true;
   selectionTitle.textContent = "Selection";
   selectionBody.innerHTML = "";
+  state.insightRequest += 1;
+  state.insightReport = null;
+  renderInsights();
   if (state.scanEvents) {
     state.scanEvents.close();
     state.scanEvents = null;
@@ -234,6 +239,7 @@ async function pollScanJob(jobId) {
 
 async function loadGraphPage({ root = null, resetPage = false, resetLayout = false } = {}) {
   state.pageRequest += 1;
+  state.insightRequest += 1;
   const requestId = state.pageRequest;
   setStatus("page", "busy");
   pageReloadButton.disabled = true;
@@ -281,9 +287,11 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     state.selectedId = null;
     state.hoveredId = null;
     state.queryFocus = null;
+    state.insightReport = null;
     queryResult.innerHTML = "";
     rootLabel.textContent = state.graphPage.root;
     initializeGraph({ preserveView: !resetLayout });
+    loadInsights();
     setStatus("ready");
   } catch (error) {
     if (requestId !== state.pageRequest) return;
@@ -313,6 +321,27 @@ function updateGraphPageControls() {
   pagePrevButton.disabled = state.graphPage.nodeOffset === 0;
   pageNextButton.disabled = !state.graphPage.truncatedNodes;
   pageReloadButton.disabled = false;
+}
+
+async function loadInsights() {
+  state.insightRequest += 1;
+  const requestId = state.insightRequest;
+  const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
+
+  try {
+    const response = await fetch(`/api/insights?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.insightRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "insights failed");
+    }
+    state.insightReport = body;
+    renderInsights();
+  } catch (error) {
+    if (requestId !== state.insightRequest) return;
+    state.insightReport = null;
+    renderInsights();
+  }
 }
 
 function initializeGraph(options = {}) {
@@ -542,17 +571,23 @@ function applyFilters() {
 }
 
 function renderInsights() {
-  const insights = buildClientInsights(state.graph).slice(0, 30);
-  insightCount.textContent = String(insights.length);
+  const report = state.insightReport;
+  const sourceInsights = report?.insights || buildClientInsights(state.graph);
+  const insights = sourceInsights.slice(0, report ? 50 : 30);
+  const total = report?.total ?? insights.length;
+
+  insightCount.textContent = String(total);
   if (insights.length === 0) {
-    insightList.innerHTML = '<p class="empty">No obvious issues in the visible graph.</p>';
+    insightList.innerHTML = report
+      ? '<p class="empty">No obvious issues in the project.</p>'
+      : '<p class="empty">No obvious issues in the visible graph.</p>';
     return;
   }
 
   insightList.innerHTML = insights
     .map(
       (insight) => `
-        <button class="insight ${escapeHtml(insight.severity)}" type="button" data-node-id="${insight.nodeId || ""}">
+        <button class="insight ${escapeHtml(insight.severity)}" type="button" data-node-id="${insightNodeId(insight) || ""}">
           <span>
             <strong>${escapeHtml(formatKind(insight.kind))}</strong>
             ${escapeHtml(insight.message)}
@@ -570,6 +605,12 @@ function renderInsights() {
       renderSelection();
     });
   });
+}
+
+function insightNodeId(insight) {
+  if (insight.nodeId) return insight.nodeId;
+  if (Array.isArray(insight.nodes) && insight.nodes.length > 0) return insight.nodes[0];
+  return null;
 }
 
 function buildClientInsights(graph) {
