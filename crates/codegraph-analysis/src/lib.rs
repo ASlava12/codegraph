@@ -10,6 +10,7 @@ pub struct GraphSummary {
     pub edges: usize,
     pub node_kinds: BTreeMap<String, usize>,
     pub edge_kinds: BTreeMap<String, usize>,
+    pub edge_confidences: BTreeMap<String, usize>,
     pub languages: BTreeMap<String, usize>,
     pub entrypoints: usize,
 }
@@ -197,6 +198,7 @@ pub fn export_ndjson(graph: &CodeGraph) -> Result<String, serde_json::Error> {
 pub fn summarize(graph: &CodeGraph) -> GraphSummary {
     let mut node_kinds = BTreeMap::new();
     let mut edge_kinds = BTreeMap::new();
+    let mut edge_confidences = BTreeMap::new();
     let mut languages = BTreeMap::new();
 
     for node in &graph.nodes {
@@ -208,6 +210,9 @@ pub fn summarize(graph: &CodeGraph) -> GraphSummary {
 
     for edge in &graph.edges {
         *edge_kinds.entry(edge_kind_name(&edge.kind)).or_insert(0) += 1;
+        *edge_confidences
+            .entry(confidence_name(edge.confidence))
+            .or_insert(0) += 1;
     }
 
     GraphSummary {
@@ -215,6 +220,7 @@ pub fn summarize(graph: &CodeGraph) -> GraphSummary {
         edges: graph.edges.len(),
         node_kinds,
         edge_kinds,
+        edge_confidences,
         languages,
         entrypoints: graph
             .edges
@@ -1734,6 +1740,7 @@ mod tests {
         assert_eq!(summary.edges, 1);
         assert_eq!(summary.entrypoints, 1);
         assert_eq!(summary.node_kinds.get("function"), Some(&1));
+        assert_eq!(summary.edge_confidences.get("syntactic"), Some(&1));
     }
 
     #[test]

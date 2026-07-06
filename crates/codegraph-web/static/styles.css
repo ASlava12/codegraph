@@ -214,13 +214,15 @@ button:disabled {
   text-align: right;
 }
 
-.language-list {
+.language-list,
+.confidence-list {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-.language-chip {
+.language-chip,
+.confidence-chip {
   display: inline-grid;
   grid-template-columns: minmax(0, auto) auto;
   align-items: center;
@@ -234,14 +236,16 @@ button:disabled {
   color: var(--text);
 }
 
-.language-chip span {
+.language-chip span,
+.confidence-chip span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.language-chip strong {
+.language-chip strong,
+.confidence-chip strong {
   color: var(--muted);
   font-size: 11px;
 }
@@ -266,6 +270,7 @@ button:disabled {
 }
 
 .language-chip:hover,
+.confidence-chip:hover,
 .entrypoint-item:hover {
   border-color: rgba(92, 200, 167, 0.55);
   background: rgba(92, 200, 167, 0.08);

@@ -67,6 +67,7 @@ const errorCount = document.querySelector("#errorCount");
 const entryCount = document.querySelector("#entryCount");
 const overviewTotals = document.querySelector("#overviewTotals");
 const languageList = document.querySelector("#languageList");
+const confidenceList = document.querySelector("#confidenceList");
 const entrypointList = document.querySelector("#entrypointList");
 const pageInfo = document.querySelector("#pageInfo");
 const nodeLimitInput = document.querySelector("#nodeLimitInput");
@@ -364,6 +365,7 @@ async function loadProjectOverview() {
     if (requestId !== state.overviewRequest) return;
     overviewTotals.textContent = "error";
     languageList.innerHTML = "";
+    confidenceList.innerHTML = "";
     entrypointList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   }
 }
@@ -393,6 +395,23 @@ function renderOverview() {
           .join("")
       : '<p class="empty">No languages.</p>';
 
+  const confidences = Object.entries(summary?.edge_confidences || {})
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 5);
+  confidenceList.innerHTML =
+    confidences.length > 0
+      ? confidences
+          .map(
+            ([confidence, count]) => `
+              <button class="confidence-chip" type="button" data-confidence="${escapeHtml(confidence)}">
+                <span>${escapeHtml(formatKind(confidence))}</span>
+                <strong>${count}</strong>
+              </button>
+            `,
+          )
+          .join("")
+      : '<p class="empty">No edge confidence.</p>';
+
   entrypointList.innerHTML =
     entrypoints.length > 0
       ? entrypoints
@@ -418,6 +437,13 @@ function renderOverview() {
       serverConfidenceInput.value = "";
       searchInput.value = "";
       state.search = "";
+      loadGraphPage({ resetPage: true, resetLayout: true });
+    });
+  });
+
+  confidenceList.querySelectorAll("[data-confidence]").forEach((button) => {
+    button.addEventListener("click", () => {
+      serverConfidenceInput.value = button.dataset.confidence || "";
       loadGraphPage({ resetPage: true, resetLayout: true });
     });
   });

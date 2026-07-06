@@ -32,7 +32,7 @@ Implemented now:
 - Confidence-aware edge queries and UI edge labels for fact provenance.
 - Server-side graph paging and filtering endpoint for large repository exploration.
 - Web graph page controls backed by server-side paging, search, kind, item, language, edge, and confidence filters.
-- Web project overview for language mix and entrypoint launch points.
+- Web project overview for language mix, edge confidence mix, and entrypoint launch points.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
 - Server-backed web insights for project-wide findings while browsing paged graph slices.
 - Insight focus API and web interaction for turning findings into focused graph views.
