@@ -274,6 +274,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
     add_undeclared_import_insights(graph, &mut insights);
+    add_unused_dependency_insights(graph, &mut insights);
     add_conflicting_dependency_insights(graph, &mut insights);
     add_dependency_cycle_insights(graph, &mut insights);
     insights.sort_by(|left, right| {
@@ -1297,6 +1298,64 @@ fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>
     }
 }
 
+fn add_unused_dependency_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let used_packages = dependency_usage_packages(graph);
+    let used_ecosystems: BTreeSet<_> = used_packages
+        .iter()
+        .map(|(_, import)| import.ecosystem.as_str())
+        .collect();
+    if used_ecosystems.is_empty() {
+        return;
+    }
+
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind != EdgeKind::DependsOn
+            || edge
+                .metadata
+                .get("dependency_kind")
+                .is_none_or(|kind| kind != "runtime")
+        {
+            continue;
+        }
+
+        let Some(dependency) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+            continue;
+        };
+        let Some(package_id) = dependency.metadata.get("package_id") else {
+            continue;
+        };
+        let Some((ecosystem, _)) = package_id.split_once(':') else {
+            continue;
+        };
+        if !used_ecosystems.contains(ecosystem) {
+            continue;
+        }
+        if used_packages
+            .iter()
+            .any(|(_, import)| import_matches_package_id(package_id, import))
+        {
+            continue;
+        }
+
+        let source = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == edge.source)
+            .map(|node| node.label.as_str())
+            .unwrap_or("unknown");
+        insights.push(Insight {
+            kind: "unused_declared_dependency".to_string(),
+            severity: InsightSeverity::Info,
+            message: format!(
+                "`{source}` declares `{}` but no matching import was found",
+                dependency.label
+            ),
+            nodes: vec![edge.source, edge.target],
+            edges: vec![index],
+        });
+    }
+}
+
 fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let mut groups: BTreeMap<NodeId, Vec<(usize, String)>> = BTreeMap::new();
     for (index, edge) in graph.edges.iter().enumerate() {
@@ -1511,6 +1570,49 @@ fn declared_package_ids(graph: &CodeGraph) -> BTreeSet<String> {
         .collect()
 }
 
+fn import_packages(graph: &CodeGraph) -> Vec<(usize, ImportPackage)> {
+    graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter_map(|(index, edge)| {
+            if edge.kind != EdgeKind::Imports {
+                return None;
+            }
+            let import_node = graph.nodes.iter().find(|node| node.id == edge.target)?;
+            let language = import_node.metadata.get("language")?;
+            import_package_candidate(language, &import_node.label).map(|import| (index, import))
+        })
+        .collect()
+}
+
+fn dependency_usage_packages(graph: &CodeGraph) -> Vec<(usize, ImportPackage)> {
+    let mut packages = import_packages(graph);
+    for (index, node) in graph.nodes.iter().enumerate() {
+        if node
+            .metadata
+            .get("item_kind")
+            .is_none_or(|kind| kind != "call")
+            || node
+                .metadata
+                .get("language")
+                .is_none_or(|language| language != "rust")
+        {
+            continue;
+        }
+        if let Some(package) = rust_path_package(&node.label) {
+            packages.push((
+                index,
+                ImportPackage {
+                    ecosystem: "cargo".to_string(),
+                    package,
+                },
+            ));
+        }
+    }
+    packages
+}
+
 fn import_package_candidate(language: &str, label: &str) -> Option<ImportPackage> {
     match language {
         "rust" => rust_import_package(label).map(|package| ImportPackage {
@@ -1535,6 +1637,28 @@ fn import_package_candidate(language: &str, label: &str) -> Option<ImportPackage
     }
 }
 
+fn import_matches_package_id(package_id: &str, import: &ImportPackage) -> bool {
+    let Some((ecosystem, package)) = package_id.split_once(':') else {
+        return false;
+    };
+    if ecosystem != import.ecosystem {
+        return false;
+    }
+
+    match ecosystem {
+        "go" => import.package == package || import.package.starts_with(&format!("{package}/")),
+        "cargo" => {
+            let canonical = import.package.to_ascii_lowercase();
+            let hyphenated = canonical.replace('_', "-");
+            let underscored = canonical.replace('-', "_");
+            package == canonical || package == hyphenated || package == underscored
+        }
+        "python" => package == canonical_python_package_name(&import.package),
+        "npm" => package == import.package.to_ascii_lowercase(),
+        _ => package == import.package,
+    }
+}
+
 fn rust_import_package(label: &str) -> Option<String> {
     let value = label.trim().strip_prefix("use ")?;
     let first = value
@@ -1543,6 +1667,22 @@ fn rust_import_package(label: &str) -> Option<String> {
         .split([':', ';', ',', '{', ' ', '\n', '\t'])
         .find(|part| !part.is_empty())?;
     if matches!(first, "std" | "core" | "alloc" | "crate" | "self" | "super") {
+        None
+    } else {
+        Some(first.to_ascii_lowercase())
+    }
+}
+
+fn rust_path_package(label: &str) -> Option<String> {
+    let first = label
+        .trim()
+        .trim_start_matches("::")
+        .split("::")
+        .next()
+        .map(str::trim)
+        .filter(|part| !part.is_empty())?;
+    if first.contains('.') || matches!(first, "std" | "core" | "alloc" | "crate" | "self" | "super")
+    {
         None
     } else {
         Some(first.to_ascii_lowercase())
@@ -2417,6 +2557,96 @@ mod tests {
         }));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "undeclared_external_import" && insight.message.contains("node:fs")
+        }));
+    }
+
+    #[test]
+    fn insights_report_unused_declared_runtime_dependencies() {
+        let mut graph = CodeGraph::new("repo");
+        let manifest = graph.add_node(NodeKind::File, "package.json");
+        let file = graph.add_node(NodeKind::File, "src/main.ts");
+        let react = dependency_node(&mut graph, "react", "npm:react");
+        let lodash = dependency_node(&mut graph, "lodash", "npm:lodash");
+        let vite = dependency_node(&mut graph, "vite", "npm:vite");
+        graph.add_edge_with_metadata(
+            manifest,
+            react,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            manifest,
+            lodash,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            manifest,
+            vite,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "dev".to_string())]),
+        );
+
+        let react_import = import_node(&mut graph, "import React from \"react\";", "typescript");
+        graph.add_edge(file, react_import, EdgeKind::Imports, Confidence::Syntactic);
+
+        let report = insights(&graph);
+        let unused = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unused_declared_dependency")
+            .expect("expected unused declared dependency insight");
+
+        assert_eq!(unused.severity, InsightSeverity::Info);
+        assert!(unused.message.contains("lodash"));
+        assert!(unused.nodes.contains(&manifest));
+        assert!(unused.nodes.contains(&lodash));
+        assert!(!unused.nodes.contains(&react));
+        assert!(!unused.nodes.contains(&vite));
+        assert_eq!(unused.edges.len(), 1);
+    }
+
+    #[test]
+    fn unused_dependency_insights_follow_rust_direct_crate_paths() {
+        let mut graph = CodeGraph::new("repo");
+        let manifest = graph.add_node(NodeKind::File, "Cargo.toml");
+        let function = graph.add_node(NodeKind::Function, "load_manifest");
+        let toml = dependency_node(&mut graph, "toml", "cargo:toml");
+        let serde = dependency_node(&mut graph, "serde", "cargo:serde");
+        let call = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "toml::from_str",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "call".to_string()),
+                ("language".to_string(), "rust".to_string()),
+            ]),
+        );
+        graph.add_edge(function, call, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge_with_metadata(
+            manifest,
+            toml,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            manifest,
+            serde,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+
+        let report = insights(&graph);
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&toml)
+        }));
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&serde)
         }));
     }
 

@@ -45,6 +45,7 @@ Implemented now:
 - CI checks for formatting, clippy, tests, UI syntax, CLI scan, and server cache smoke tests.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Dependency consistency insights for external imports that are not backed by declared manifest dependencies.
+- Dependency consistency insights for runtime manifest dependencies with no matching import.
 - Dependency consistency insights for package declarations with conflicting manifest constraints.
 - Dependency cycle insights for circular calls, imports, references, and manifest dependency edges.
 
