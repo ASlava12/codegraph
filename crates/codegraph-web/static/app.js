@@ -16,6 +16,7 @@ const state = {
   selectionRequest: 0,
   traceRequest: 0,
   queryRequest: 0,
+  queryFocus: null,
   scanJobId: null,
 };
 
@@ -135,6 +136,8 @@ async function pollScanJob(jobId) {
     state.graph = result.graph;
     state.selectedId = null;
     state.hoveredId = null;
+    state.queryFocus = null;
+    queryResult.innerHTML = "";
     state.positions.clear();
     state.velocities.clear();
     rootLabel.textContent = result.root;
@@ -170,6 +173,7 @@ async function runGraphQuery() {
     }
     queryResult.innerHTML = renderQueryResult(body);
     attachQueryNavigation(queryResult);
+    attachQueryFocusActions(queryResult, body);
   } catch (error) {
     if (requestId !== state.queryRequest) return;
     queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
@@ -193,11 +197,16 @@ function renderQueryResult(result) {
   const truncated = result.truncated
     ? '<p class="empty">Result truncated by query limit.</p>'
     : "";
+  const hasResults = result.nodes.length > 0 || result.edges.length > 0;
 
   return `
     <div class="query-summary">
       <span>${result.total_nodes} nodes</span>
       <span>${result.total_edges} edges</span>
+    </div>
+    <div class="query-actions">
+      <button id="queryFocusButton" type="button" ${hasResults ? "" : "disabled"}>Focus result</button>
+      <button id="queryClearButton" type="button" ${state.queryFocus ? "" : "disabled"}>Clear focus</button>
     </div>
     ${nodeRows ? `<ul class="query-list">${nodeRows}</ul>` : ""}
     ${edgeRows ? `<ul class="query-list query-edge-list">${edgeRows}</ul>` : ""}
@@ -242,6 +251,45 @@ function attachQueryNavigation(container) {
   });
 }
 
+function attachQueryFocusActions(container, result) {
+  const focusButton = container.querySelector("#queryFocusButton");
+  const clearButton = container.querySelector("#queryClearButton");
+  if (focusButton) {
+    focusButton.addEventListener("click", () => {
+      focusQueryResult(result);
+    });
+  }
+  if (clearButton) {
+    clearButton.addEventListener("click", () => {
+      clearQueryFocus();
+    });
+  }
+}
+
+function focusQueryResult(result) {
+  const nodeIds = new Set(result.nodes.map((node) => node.id));
+  const edgeKeys = new Set();
+  result.edges.forEach((edge) => {
+    nodeIds.add(edge.source);
+    nodeIds.add(edge.target);
+    edgeKeys.add(edgeKey(edge));
+  });
+
+  if (nodeIds.size === 0 && edgeKeys.size === 0) return;
+
+  state.queryFocus = { nodeIds, edgeKeys };
+  applyFilters();
+  const clearButton = queryResult.querySelector("#queryClearButton");
+  if (clearButton) clearButton.disabled = false;
+}
+
+function clearQueryFocus() {
+  state.queryFocus = null;
+  applyFilters();
+  const clearButton = queryResult.querySelector("#queryClearButton");
+  if (clearButton) clearButton.disabled = true;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -273,6 +321,7 @@ function applyFilters() {
   const visibleIds = new Set();
   state.visibleNodes = state.graph.nodes.filter((node) => {
     const kindEnabled = state.enabledKinds.has(node.kind);
+    const focusHit = !state.queryFocus || state.queryFocus.nodeIds.has(node.id);
     const searchHit =
       !query ||
       node.label.toLowerCase().includes(query) ||
@@ -280,13 +329,16 @@ function applyFilters() {
       Object.values(node.metadata || {}).some((value) =>
         String(value).toLowerCase().includes(query),
       );
-    if (kindEnabled && searchHit) visibleIds.add(node.id);
-    return kindEnabled && searchHit;
+    if (kindEnabled && focusHit && searchHit) visibleIds.add(node.id);
+    return kindEnabled && focusHit && searchHit;
   });
 
-  state.visibleEdges = state.graph.edges.filter(
-    (edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target),
-  );
+  state.visibleEdges = state.graph.edges.filter((edge) => {
+    if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) {
+      return false;
+    }
+    return !state.queryFocus || state.queryFocus.edgeKeys.size === 0 || state.queryFocus.edgeKeys.has(edgeKey(edge));
+  });
 
   nodeCount.textContent = String(state.visibleNodes.length);
   edgeCount.textContent = String(state.visibleEdges.length);
@@ -1050,6 +1102,10 @@ function renderNeighbor(edge, selectedId) {
       <span>${escapeHtml(other ? other.label : String(otherId))}</span>
     </button>
   `;
+}
+
+function edgeKey(edge) {
+  return `${edge.source}->${edge.target}:${edge.kind}`;
 }
 
 function onPointerDown(event) {
