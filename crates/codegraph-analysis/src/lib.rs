@@ -240,6 +240,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
     add_undeclared_import_insights(graph, &mut insights);
+    add_dependency_cycle_insights(graph, &mut insights);
     insights.sort_by(|left, right| {
         right
             .severity
@@ -1156,6 +1157,138 @@ fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>
     }
 }
 
+fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    const MAX_CYCLE_INSIGHTS: usize = 50;
+
+    let mut nodes = BTreeSet::new();
+    let mut adjacency: BTreeMap<NodeId, Vec<(NodeId, usize)>> = BTreeMap::new();
+    let mut reverse: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if !is_cycle_edge(&edge.kind) {
+            continue;
+        }
+        nodes.insert(edge.source);
+        nodes.insert(edge.target);
+        adjacency
+            .entry(edge.source)
+            .or_default()
+            .push((edge.target, index));
+        reverse.entry(edge.target).or_default().push(edge.source);
+    }
+
+    let mut visited = BTreeSet::new();
+    let mut order = Vec::new();
+    for node in &nodes {
+        if visited.contains(node) {
+            continue;
+        }
+        fill_finish_order(*node, &adjacency, &mut visited, &mut order);
+    }
+
+    let mut assigned = BTreeSet::new();
+    for node in order.into_iter().rev() {
+        if assigned.contains(&node) {
+            continue;
+        }
+        let component = reverse_component(node, &reverse, &mut assigned);
+        let component_nodes: BTreeSet<_> = component.iter().copied().collect();
+        let component_edges: Vec<_> = graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter_map(|(index, edge)| {
+                if is_cycle_edge(&edge.kind)
+                    && component_nodes.contains(&edge.source)
+                    && component_nodes.contains(&edge.target)
+                {
+                    Some(index)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if component.len() < 2 {
+            continue;
+        }
+
+        let labels = component
+            .iter()
+            .filter_map(|id| node_label(graph, *id))
+            .take(5)
+            .map(|label| format!("`{label}`"))
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        let suffix = if component.len() > 5 { " -> ..." } else { "" };
+        insights.push(Insight {
+            kind: "dependency_cycle".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!("Directed dependency cycle involving {labels}{suffix}"),
+            nodes: component,
+            edges: component_edges,
+        });
+
+        if insights
+            .iter()
+            .filter(|insight| insight.kind == "dependency_cycle")
+            .count()
+            >= MAX_CYCLE_INSIGHTS
+        {
+            return;
+        }
+    }
+}
+
+fn fill_finish_order(
+    start: NodeId,
+    adjacency: &BTreeMap<NodeId, Vec<(NodeId, usize)>>,
+    visited: &mut BTreeSet<NodeId>,
+    order: &mut Vec<NodeId>,
+) {
+    let mut stack = vec![(start, false)];
+    while let Some((node, finished)) = stack.pop() {
+        if finished {
+            order.push(node);
+            continue;
+        }
+        if !visited.insert(node) {
+            continue;
+        }
+        stack.push((node, true));
+        if let Some(edges) = adjacency.get(&node) {
+            for (target, _) in edges.iter().rev() {
+                if !visited.contains(target) {
+                    stack.push((*target, false));
+                }
+            }
+        }
+    }
+}
+
+fn reverse_component(
+    start: NodeId,
+    reverse: &BTreeMap<NodeId, Vec<NodeId>>,
+    assigned: &mut BTreeSet<NodeId>,
+) -> Vec<NodeId> {
+    let mut component = Vec::new();
+    let mut stack = vec![start];
+    while let Some(node) = stack.pop() {
+        if !assigned.insert(node) {
+            continue;
+        }
+        component.push(node);
+        if let Some(sources) = reverse.get(&node) {
+            for source in sources.iter().rev() {
+                if !assigned.contains(source) {
+                    stack.push(*source);
+                }
+            }
+        }
+    }
+    component.sort();
+    component
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ImportPackage {
     ecosystem: String,
@@ -1439,6 +1572,13 @@ fn incoming_edge_indexes(graph: &CodeGraph, target: NodeId, kind: EdgeKind) -> V
         .collect()
 }
 
+fn is_cycle_edge(kind: &EdgeKind) -> bool {
+    matches!(
+        kind,
+        EdgeKind::Calls | EdgeKind::References | EdgeKind::Imports | EdgeKind::DependsOn
+    )
+}
+
 fn is_trace_edge(kind: &EdgeKind) -> bool {
     matches!(
         kind,
@@ -1450,6 +1590,14 @@ fn is_trace_edge(kind: &EdgeKind) -> bool {
             | EdgeKind::MayError
             | EdgeKind::DependsOn
     )
+}
+
+fn node_label(graph: &CodeGraph, id: NodeId) -> Option<&str> {
+    graph
+        .nodes
+        .iter()
+        .find(|node| node.id == id)
+        .map(|node| node.label.as_str())
 }
 
 fn kind_name(kind: &codegraph_core::NodeKind) -> String {
@@ -1899,6 +2047,37 @@ mod tests {
                 .iter()
                 .any(|insight| insight.kind == "potential_error_flow")
         );
+    }
+
+    #[test]
+    fn insights_report_dependency_cycles() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let service = graph.add_node(NodeKind::Function, "service");
+        let repository = graph.add_node(NodeKind::Function, "repository");
+        let config = graph.add_node(NodeKind::Config, "settings.toml");
+        graph.add_edge(main, service, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(service, repository, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(repository, main, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(
+            service,
+            config,
+            EdgeKind::ReadsConfig,
+            Confidence::Heuristic,
+        );
+
+        let report = insights(&graph);
+        let cycle = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "dependency_cycle")
+            .expect("expected dependency cycle insight");
+
+        assert_eq!(cycle.severity, InsightSeverity::Warning);
+        assert_eq!(cycle.nodes, vec![main, service, repository]);
+        assert_eq!(cycle.edges.len(), 3);
+        assert!(cycle.message.contains("main"));
+        assert!(!cycle.nodes.contains(&config));
     }
 
     #[test]

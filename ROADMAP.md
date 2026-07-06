@@ -79,6 +79,7 @@ Goal: answer practical code investigation questions.
 - [x] Add structured summary, entrypoints, and trace commands.
 - [x] Expose structured summary, entrypoints, and trace APIs.
 - [x] Add investigation insights for unresolved calls, parse/syntax issues, duplicate labels, orphan functions, and error-flow facts.
+- [x] Detect directed dependency cycles across calls, imports, references, and dependency edges.
 - [x] Detect package manifest dependency boundaries.
 - [x] Detect external imports that are missing declared manifest dependencies.
 - [x] Back web insights with server analysis during paged graph exploration.

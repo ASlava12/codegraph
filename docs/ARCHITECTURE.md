@@ -40,6 +40,7 @@ The first implementation stores whole-graph JSON cache records keyed by root pat
 - outgoing dependency traces
 - investigation insights
 - dependency consistency checks
+- dependency cycle checks
 - graph query results and directed path searches for agent and API clients
 - graph slices for paged UI and agent loading
 - node context records for detail panels and focused agent reads
