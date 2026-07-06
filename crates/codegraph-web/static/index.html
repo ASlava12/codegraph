@@ -144,6 +144,24 @@
           <div id="configTraceResult" class="query-result"></div>
         </section>
 
+        <section class="error-trace" aria-label="Error trace">
+          <header>
+            <h2>Error Trace</h2>
+          </header>
+          <div class="error-trace-fields">
+            <label class="field compact">
+              <span>Target</span>
+              <input id="errorTraceTargetInput" type="text" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span>Depth</span>
+              <input id="errorTraceDepthInput" type="number" min="1" max="32" value="6" />
+            </label>
+          </div>
+          <button id="errorTraceButton" type="button">Trace Errors</button>
+          <div id="errorTraceResult" class="query-result"></div>
+        </section>
+
         <section class="insights" aria-label="Graph insights">
           <header>
             <h2>Insights</h2>

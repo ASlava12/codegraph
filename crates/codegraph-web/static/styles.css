@@ -339,7 +339,8 @@ button:disabled {
 
 .query,
 .path-query,
-.config-trace {
+.config-trace,
+.error-trace {
   display: grid;
   gap: 8px;
 }
@@ -350,14 +351,16 @@ button:disabled {
 }
 
 .path-query header,
-.config-trace header {
+.config-trace header,
+.error-trace header {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
 .path-query h2,
-.config-trace h2 {
+.config-trace h2,
+.error-trace h2 {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
@@ -366,19 +369,22 @@ button:disabled {
 }
 
 .path-fields,
-.config-trace-fields {
+.config-trace-fields,
+.error-trace-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
 .path-fields input,
-.config-trace-fields input {
+.config-trace-fields input,
+.error-trace-fields input {
   height: 34px;
 }
 
 .path-query > button,
-.config-trace > button {
+.config-trace > button,
+.error-trace > button {
   height: 34px;
   padding: 0 10px;
   font-size: 13px;

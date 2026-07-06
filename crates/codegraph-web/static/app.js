@@ -18,6 +18,7 @@ const state = {
   queryRequest: 0,
   pathRequest: 0,
   configTraceRequest: 0,
+  errorTraceRequest: 0,
   pageRequest: 0,
   overviewRequest: 0,
   insightRequest: 0,
@@ -96,6 +97,10 @@ const configTraceTargetInput = document.querySelector("#configTraceTargetInput")
 const configTraceDepthInput = document.querySelector("#configTraceDepthInput");
 const configTraceButton = document.querySelector("#configTraceButton");
 const configTraceResult = document.querySelector("#configTraceResult");
+const errorTraceTargetInput = document.querySelector("#errorTraceTargetInput");
+const errorTraceDepthInput = document.querySelector("#errorTraceDepthInput");
+const errorTraceButton = document.querySelector("#errorTraceButton");
+const errorTraceResult = document.querySelector("#errorTraceResult");
 const insightCount = document.querySelector("#insightCount");
 const insightList = document.querySelector("#insightList");
 const insightSeverityInput = document.querySelector("#insightSeverityInput");
@@ -129,6 +134,12 @@ configTraceButton.addEventListener("click", () => runConfigTrace());
 for (const input of [configTraceTargetInput, configTraceDepthInput]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") runConfigTrace();
+  });
+}
+errorTraceButton.addEventListener("click", () => runErrorTrace());
+for (const input of [errorTraceTargetInput, errorTraceDepthInput]) {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") runErrorTrace();
   });
 }
 insightFilterButton.addEventListener("click", () => loadInsights());
@@ -358,6 +369,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     queryResult.innerHTML = "";
     pathResult.innerHTML = "";
     configTraceResult.innerHTML = "";
+    errorTraceResult.innerHTML = "";
     rootLabel.textContent = state.graphPage.root;
     initializeGraph({ preserveView: !resetLayout });
     loadProjectOverview();
@@ -787,6 +799,134 @@ function attachConfigTraceActions(container, result) {
       };
       const selectedId = path.nodes[path.nodes.length - 1]?.id || null;
       showFocusedGraph(focused, `Config: ${match.target.label}`, selectedId);
+    });
+  });
+}
+
+async function runErrorTrace() {
+  const target = errorTraceTargetInput.value.trim();
+  if (!target) {
+    errorTraceResult.innerHTML = '<p class="empty">Enter an error or exception label.</p>';
+    return;
+  }
+
+  const depth = clampNumber(Number(errorTraceDepthInput.value || 6), 1, 32);
+  errorTraceDepthInput.value = String(depth);
+  state.errorTraceRequest += 1;
+  const requestId = state.errorTraceRequest;
+  errorTraceButton.disabled = true;
+  errorTraceResult.innerHTML = '<p class="empty">Tracing errors...</p>';
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    target,
+    depth: String(depth),
+    limit: "50",
+  });
+
+  try {
+    const response = await fetch(`/api/trace-errors?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.errorTraceRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "error trace failed");
+    }
+    errorTraceResult.innerHTML = renderErrorTrace(body);
+    attachErrorTraceActions(errorTraceResult, body);
+  } catch (error) {
+    if (requestId !== state.errorTraceRequest) return;
+    errorTraceResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.errorTraceRequest) {
+      errorTraceButton.disabled = false;
+    }
+  }
+}
+
+function renderErrorTrace(result) {
+  const summary = `
+    <div class="query-summary">
+      <span>${result.total_matches} errors</span>
+      <span>${result.total_sources} sources</span>
+      <span>${result.total_paths} paths</span>
+      <span>depth ${result.max_depth}</span>
+      <span class="query-expression">${escapeHtml(result.target)}</span>
+    </div>
+  `;
+
+  if (!result.matches.length) {
+    return `${summary}<p class="empty">No matching error nodes.</p>`;
+  }
+
+  const rows = result.matches
+    .map((match, matchIndex) => {
+      const sources = match.sources
+        .slice(0, 8)
+        .map(
+          (source) => `
+            <li>
+              <button class="query-item" type="button" data-node-id="${source.node.id}">
+                <span>${escapeHtml(formatKind(source.edge.kind))}</span>
+                <strong>${escapeHtml(source.node.label)}</strong>
+              </button>
+            </li>
+          `,
+        )
+        .join("");
+      const paths = match.paths
+        .slice(0, 8)
+        .map((path, pathIndex) => renderErrorTracePath(path, matchIndex, pathIndex))
+        .join("");
+      const truncated = match.truncated ? '<p class="empty">Trace truncated.</p>' : "";
+      return `
+        <section class="trace-columns">
+          <h3>${escapeHtml(match.error.label)}</h3>
+          <div class="trace-summary">
+            <span>${match.total_sources} sources</span>
+            <span>${match.total_paths} paths</span>
+            <span>${escapeHtml(formatKind(match.error.metadata?.language || match.error.kind))}</span>
+          </div>
+          ${sources ? `<ul class="trace-list">${sources}</ul>` : '<p class="empty">No direct sources.</p>'}
+          ${paths ? `<ul class="trace-list">${paths}</ul>` : ""}
+          ${truncated}
+        </section>
+      `;
+    })
+    .join("");
+  const truncated = result.truncated ? '<p class="empty">Result truncated by limit.</p>' : "";
+  return `${summary}${rows}${truncated}`;
+}
+
+function renderErrorTracePath(path, matchIndex, pathIndex) {
+  const labels = path.nodes.map((node) => node.label).join(" -> ");
+  const kind = path.reached_entrypoint ? "entrypoint path" : "source path";
+  return `
+    <li>
+      <button class="trace-edge" type="button" data-error-match="${matchIndex}" data-error-path="${pathIndex}">
+        <span>${escapeHtml(kind)}</span>
+        <strong>${escapeHtml(labels)}</strong>
+      </button>
+    </li>
+  `;
+}
+
+function attachErrorTraceActions(container, result) {
+  attachQueryNavigation(container);
+  container.querySelectorAll("[data-error-match][data-error-path]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const match = result.matches[Number(button.dataset.errorMatch)];
+      const path = match?.paths?.[Number(button.dataset.errorPath)];
+      if (!path) return;
+      const focused = {
+        query: `trace-errors ${result.target}`,
+        nodes: path.nodes,
+        edges: path.edges,
+        total_nodes: path.nodes.length,
+        total_edges: path.edges.length,
+        truncated: false,
+      };
+      const selectedId = path.nodes[path.nodes.length - 1]?.id || null;
+      showFocusedGraph(focused, `Error: ${match.error.label}`, selectedId);
     });
   });
 }
@@ -1787,6 +1927,11 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
           ? '<button type="button" data-config-trace-target>Config Trace</button>'
           : ""
       }
+      ${
+        node.metadata?.item_kind === "error"
+          ? '<button type="button" data-error-trace-target>Error Trace</button>'
+          : ""
+      }
     </div>
     <table class="detail-table">
       <tbody>
@@ -1845,6 +1990,14 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
     configTraceTarget.addEventListener("click", () => {
       configTraceTargetInput.value = node.label;
       runConfigTrace();
+    });
+  }
+
+  const errorTraceTarget = selectionBody.querySelector("[data-error-trace-target]");
+  if (errorTraceTarget) {
+    errorTraceTarget.addEventListener("click", () => {
+      errorTraceTargetInput.value = node.label;
+      runErrorTrace();
     });
   }
 

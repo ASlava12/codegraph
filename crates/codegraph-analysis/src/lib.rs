@@ -81,6 +81,49 @@ pub struct ConfigTracePath {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErrorTraceRequest {
+    pub target: String,
+    pub max_depth: usize,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErrorTraceResult {
+    pub target: String,
+    pub max_depth: usize,
+    pub matches: Vec<ErrorTraceMatch>,
+    pub total_matches: usize,
+    pub total_sources: usize,
+    pub total_paths: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErrorTraceMatch {
+    pub error: Node,
+    pub sources: Vec<ErrorSource>,
+    pub paths: Vec<ErrorTracePath>,
+    pub total_sources: usize,
+    pub total_paths: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErrorSource {
+    pub node: Node,
+    pub edge: Edge,
+    pub edge_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErrorTracePath {
+    pub nodes: Vec<Node>,
+    pub edges: Vec<Edge>,
+    pub edge_indexes: Vec<usize>,
+    pub reached_entrypoint: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceNode {
     pub node: Node,
     pub depth: usize,
@@ -530,6 +573,97 @@ pub fn trace_config(graph: &CodeGraph, request: ConfigTraceRequest) -> ConfigTra
         max_depth,
         total_matches: matched_targets.len(),
         total_readers,
+        total_paths,
+        matches,
+        truncated,
+    }
+}
+
+pub fn trace_errors(graph: &CodeGraph, request: ErrorTraceRequest) -> ErrorTraceResult {
+    let max_depth = request.max_depth.clamp(1, 32);
+    let limit = request.limit.clamp(1, 500);
+    let target = request.target.trim().to_string();
+    let matched_errors: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata
+                .get("item_kind")
+                .is_some_and(|kind| kind == "error")
+                && error_target_matches(node, &target)
+        })
+        .cloned()
+        .collect();
+
+    let mut matches = Vec::new();
+    let mut total_sources = 0;
+    let mut total_paths = 0;
+    let mut remaining_paths = limit;
+    let mut truncated = false;
+
+    for error_node in &matched_errors {
+        let source_edges: Vec<_> = graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| edge.target == error_node.id && edge.kind == EdgeKind::MayError)
+            .collect();
+        let total_match_sources = source_edges.len();
+        total_sources += total_match_sources;
+
+        let mut sources = Vec::new();
+        let mut paths = Vec::new();
+        let mut match_truncated = false;
+
+        for (edge_index, edge) in source_edges {
+            let Some(source_node) = graph.nodes.iter().find(|node| node.id == edge.source) else {
+                continue;
+            };
+            sources.push(ErrorSource {
+                node: source_node.clone(),
+                edge: edge.clone(),
+                edge_index,
+            });
+
+            let (mut source_paths, source_truncated) = error_source_paths(
+                graph,
+                source_node.id,
+                edge_index,
+                max_depth,
+                remaining_paths,
+            );
+            match_truncated |= source_truncated;
+            total_paths += source_paths.len();
+            remaining_paths = remaining_paths.saturating_sub(source_paths.len());
+            paths.append(&mut source_paths);
+            if remaining_paths == 0 {
+                match_truncated = true;
+                truncated = true;
+                break;
+            }
+        }
+
+        let total_match_paths = paths.len();
+        truncated |= match_truncated;
+        matches.push(ErrorTraceMatch {
+            error: error_node.clone(),
+            sources,
+            paths,
+            total_sources: total_match_sources,
+            total_paths: total_match_paths,
+            truncated: match_truncated,
+        });
+
+        if remaining_paths == 0 {
+            break;
+        }
+    }
+
+    ErrorTraceResult {
+        target,
+        max_depth,
+        total_matches: matched_errors.len(),
+        total_sources,
         total_paths,
         matches,
         truncated,
@@ -1222,7 +1356,7 @@ fn config_reader_paths(
             if graph
                 .edges
                 .iter()
-                .any(|edge| edge.target == node_id && is_config_upstream_edge(&edge.kind))
+                .any(|edge| edge.target == node_id && is_upstream_flow_edge(&edge.kind))
             {
                 truncated = true;
             }
@@ -1233,7 +1367,7 @@ fn config_reader_paths(
             .edges
             .iter()
             .enumerate()
-            .filter(|(_, edge)| edge.target == node_id && is_config_upstream_edge(&edge.kind))
+            .filter(|(_, edge)| edge.target == node_id && is_upstream_flow_edge(&edge.kind))
         {
             if !visited.insert(edge.source) {
                 continue;
@@ -1311,7 +1445,139 @@ fn build_config_path(
     })
 }
 
-fn is_config_upstream_edge(kind: &EdgeKind) -> bool {
+fn error_target_matches(node: &Node, target: &str) -> bool {
+    target.is_empty()
+        || text_matches(&node.label, target)
+        || node
+            .metadata
+            .iter()
+            .any(|(key, value)| text_matches(key, target) || text_matches(value, target))
+}
+
+fn error_source_paths(
+    graph: &CodeGraph,
+    source: NodeId,
+    target_edge_index: usize,
+    max_depth: usize,
+    limit: usize,
+) -> (Vec<ErrorTracePath>, bool) {
+    if limit == 0 {
+        return (Vec::new(), true);
+    }
+
+    let mut paths = Vec::new();
+    let mut visited = BTreeSet::from([source]);
+    let mut parents: BTreeMap<NodeId, (NodeId, usize)> = BTreeMap::new();
+    let mut queue = VecDeque::from([(source, 0usize)]);
+    let mut truncated = false;
+
+    if graph
+        .nodes
+        .iter()
+        .find(|node| node.id == source)
+        .is_some_and(|node| node.kind == NodeKind::Entrypoint)
+    {
+        if let Some(path) = build_error_path(graph, source, source, &parents, target_edge_index) {
+            paths.push(path);
+        }
+        return (paths, false);
+    }
+
+    while let Some((node_id, depth)) = queue.pop_front() {
+        if depth + 1 >= max_depth {
+            if graph
+                .edges
+                .iter()
+                .any(|edge| edge.target == node_id && is_upstream_flow_edge(&edge.kind))
+            {
+                truncated = true;
+            }
+            continue;
+        }
+
+        for (edge_index, edge) in graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| edge.target == node_id && is_upstream_flow_edge(&edge.kind))
+        {
+            if !visited.insert(edge.source) {
+                continue;
+            }
+            parents.insert(edge.source, (node_id, edge_index));
+            let Some(source_node) = graph.nodes.iter().find(|node| node.id == edge.source) else {
+                continue;
+            };
+            if source_node.kind == NodeKind::Entrypoint {
+                if let Some(path) =
+                    build_error_path(graph, edge.source, source, &parents, target_edge_index)
+                {
+                    paths.push(path);
+                }
+                if paths.len() >= limit {
+                    return (paths, true);
+                }
+                continue;
+            }
+            queue.push_back((edge.source, depth + 1));
+        }
+    }
+
+    if paths.is_empty()
+        && let Some(path) = build_error_path(graph, source, source, &parents, target_edge_index)
+    {
+        paths.push(path);
+    }
+
+    (paths, truncated)
+}
+
+fn build_error_path(
+    graph: &CodeGraph,
+    start: NodeId,
+    source: NodeId,
+    parents: &BTreeMap<NodeId, (NodeId, usize)>,
+    target_edge_index: usize,
+) -> Option<ErrorTracePath> {
+    let mut node_ids = vec![start];
+    let mut edge_indexes = Vec::new();
+    let mut current = start;
+    while current != source {
+        let (next, edge_index) = parents.get(&current)?;
+        edge_indexes.push(*edge_index);
+        node_ids.push(*next);
+        current = *next;
+    }
+    edge_indexes.push(target_edge_index);
+    let target_edge = graph.edges.get(target_edge_index)?;
+    if node_ids.last().copied() != Some(target_edge.source) {
+        node_ids.push(target_edge.source);
+    }
+    node_ids.push(target_edge.target);
+
+    let nodes = node_ids
+        .into_iter()
+        .filter_map(|id| graph.nodes.iter().find(|node| node.id == id).cloned())
+        .collect();
+    let edges = edge_indexes
+        .iter()
+        .filter_map(|index| graph.edges.get(*index).cloned())
+        .collect();
+    let reached_entrypoint = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == start)
+        .is_some_and(|node| node.kind == NodeKind::Entrypoint);
+
+    Some(ErrorTracePath {
+        nodes,
+        edges,
+        edge_indexes,
+        reached_entrypoint,
+    })
+}
+
+fn is_upstream_flow_edge(kind: &EdgeKind) -> bool {
     matches!(
         kind,
         EdgeKind::Calls | EdgeKind::References | EdgeKind::Entrypoint
@@ -2574,6 +2840,94 @@ mod tests {
                 .map(|node| node.label.as_str())
                 .collect::<Vec<_>>(),
             vec!["helper", "config/app.toml"]
+        );
+        assert!(!result.matches[0].paths[0].reached_entrypoint);
+    }
+
+    #[test]
+    fn trace_errors_returns_sources_and_entrypoint_paths() {
+        let mut graph = CodeGraph::new("repo");
+        let entrypoint = graph.add_node(NodeKind::Entrypoint, "npm script:start");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let load_data = graph.add_node(NodeKind::Function, "loadData");
+        let error = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "failed to load data",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "error".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            entrypoint,
+            main,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "entrypoint_function".to_string())]),
+        );
+        graph.add_edge(main, load_data, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(load_data, error, EdgeKind::MayError, Confidence::Heuristic);
+
+        let result = trace_errors(
+            &graph,
+            ErrorTraceRequest {
+                target: "load data".to_string(),
+                max_depth: 4,
+                limit: 10,
+            },
+        );
+
+        assert_eq!(result.total_matches, 1);
+        assert_eq!(result.total_sources, 1);
+        assert_eq!(result.total_paths, 1);
+        assert!(!result.truncated);
+        let matched = &result.matches[0];
+        assert_eq!(matched.error.id, error);
+        assert_eq!(matched.sources[0].node.id, load_data);
+        assert_eq!(
+            matched.paths[0]
+                .nodes
+                .iter()
+                .map(|node| node.label.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "npm script:start",
+                "main",
+                "loadData",
+                "failed to load data"
+            ]
+        );
+        assert!(matched.paths[0].reached_entrypoint);
+    }
+
+    #[test]
+    fn trace_errors_falls_back_to_direct_source_path() {
+        let mut graph = CodeGraph::new("repo");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let error = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "panic",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "error".to_string())]),
+        );
+        graph.add_edge(helper, error, EdgeKind::MayError, Confidence::Heuristic);
+
+        let result = trace_errors(
+            &graph,
+            ErrorTraceRequest {
+                target: "panic".to_string(),
+                max_depth: 2,
+                limit: 10,
+            },
+        );
+
+        assert_eq!(result.total_matches, 1);
+        assert_eq!(result.matches[0].paths.len(), 1);
+        assert_eq!(
+            result.matches[0].paths[0]
+                .nodes
+                .iter()
+                .map(|node| node.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["helper", "panic"]
         );
         assert!(!result.matches[0].paths[0].reached_entrypoint);
     }

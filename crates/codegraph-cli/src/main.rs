@@ -1,8 +1,9 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
-    ConfigTraceRequest, InsightFilter, InsightSeverity, TraceRequest, TraceStart, entrypoints,
-    filter_insight_report, insights, query_graph, summarize, trace, trace_config,
+    ConfigTraceRequest, ErrorTraceRequest, InsightFilter, InsightSeverity, TraceRequest,
+    TraceStart, entrypoints, filter_insight_report, insights, query_graph, summarize, trace,
+    trace_config, trace_errors,
 };
 use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{IndexOptions, scan_project};
@@ -96,6 +97,32 @@ enum Command {
         path: PathBuf,
 
         /// Maximum upstream dependency depth, including the final config read edge.
+        #[arg(long, default_value_t = 6)]
+        depth: usize,
+
+        /// Maximum trace paths to return.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+    },
+
+    /// Trace potential error/exception constructs back to sources and entrypoints.
+    TraceErrors {
+        /// Error label or metadata substring to trace.
+        target: String,
+
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Maximum upstream dependency depth, including the final error edge.
         #[arg(long, default_value_t = 6)]
         depth: usize,
 
@@ -243,6 +270,25 @@ fn main() -> Result<()> {
             let result = trace_config(
                 &graph,
                 ConfigTraceRequest {
+                    target,
+                    max_depth: depth,
+                    limit,
+                },
+            );
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::TraceErrors {
+            target,
+            path,
+            depth,
+            limit,
+            include_hidden,
+            include_ignored,
+        } => {
+            let graph = scan_with_options(path, include_hidden, include_ignored)?;
+            let result = trace_errors(
+                &graph,
+                ErrorTraceRequest {
                     target,
                     max_depth: depth,
                     limit,

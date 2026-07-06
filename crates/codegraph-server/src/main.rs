@@ -8,10 +8,11 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
-    ConfigTraceRequest, ConfigTraceResult, FocusRequest, GraphSlice, GraphSliceRequest,
-    InsightFilter, InsightReport, InsightSeverity, NodeContext, TraceRequest, TraceStart,
-    entrypoints, export_dot, export_ndjson, filter_insight_report, focus_subgraph, insights,
-    node_context, query_graph, slice_graph, summarize, trace, trace_config,
+    ConfigTraceRequest, ConfigTraceResult, ErrorTraceRequest, ErrorTraceResult, FocusRequest,
+    GraphSlice, GraphSliceRequest, InsightFilter, InsightReport, InsightSeverity, NodeContext,
+    TraceRequest, TraceStart, entrypoints, export_dot, export_ndjson, filter_insight_report,
+    focus_subgraph, insights, node_context, query_graph, slice_graph, summarize, trace,
+    trace_config, trace_errors,
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
@@ -99,6 +100,14 @@ struct TraceQuery {
 
 #[derive(Debug, Deserialize)]
 struct ConfigTraceQuery {
+    path: Option<PathBuf>,
+    target: String,
+    depth: Option<usize>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ErrorTraceQuery {
     path: Option<PathBuf>,
     target: String,
     depth: Option<usize>,
@@ -301,6 +310,7 @@ async fn main() -> Result<()> {
         .route("/api/query", get(query_api))
         .route("/api/trace", get(trace_api))
         .route("/api/trace-config", get(trace_config_api))
+        .route("/api/trace-errors", get(trace_errors_api))
         .route("/api/source", get(source))
         .fallback(not_found)
         .with_state(state);
@@ -686,6 +696,25 @@ async fn trace_config_api(
     Ok(Json(trace_config(
         &graph,
         ConfigTraceRequest {
+            target,
+            max_depth: query.depth.unwrap_or(6).clamp(1, 32),
+            limit: query.limit.unwrap_or(50).clamp(1, 500),
+        },
+    )))
+}
+
+async fn trace_errors_api(
+    State(state): State<AppState>,
+    Query(query): Query<ErrorTraceQuery>,
+) -> Result<Json<ErrorTraceResult>, ApiError> {
+    let target = query.target.trim().to_string();
+    if target.is_empty() {
+        return Err(ApiError::bad_request("trace-errors requires target"));
+    }
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    Ok(Json(trace_errors(
+        &graph,
+        ErrorTraceRequest {
             target,
             max_depth: query.depth.unwrap_or(6).clamp(1, 32),
             limit: query.limit.unwrap_or(50).clamp(1, 500),

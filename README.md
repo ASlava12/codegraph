@@ -27,6 +27,7 @@ Implemented now:
 - Source preview API and UI panel for graph nodes with source spans.
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
+- Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
 - Path queries for finding directed dependency paths between labels or node ids.
@@ -113,6 +114,12 @@ Trace config files and environment variables back to readers and entrypoints:
 cargo run -p codegraph-cli -- trace-config DATABASE_URL . --depth 6
 ```
 
+Trace potential error and exception constructs back to sources and entrypoints:
+
+```bash
+cargo run -p codegraph-cli -- trace-errors 'failed to load data' . --depth 6
+```
+
 Include hidden paths:
 
 ```bash
@@ -188,6 +195,10 @@ curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'q=path from:main to:load_config depth:6'
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
 curl 'http://127.0.0.1:3765/api/trace-config?path=.&target=DATABASE_URL&depth=6'
+curl --get 'http://127.0.0.1:3765/api/trace-errors' \
+  --data-urlencode 'path=.' \
+  --data-urlencode 'target=failed to load data' \
+  --data-urlencode 'depth=6'
 ```
 
 `/api/graph` supports `node_offset`, `node_limit`, `edge_offset`,
@@ -240,6 +251,9 @@ regular call, import, config, environment, dependency, and error-flow edges.
 Config traces specialize that graph traversal by matching `config` and
 `environment` nodes, listing direct readers, and returning shortest known paths
 from manifest entrypoints to the reader and final read edge.
+Error traces use the same upstream traversal for `may_error` edges, listing the
+function or construct that may produce an error and returning the shortest known
+entrypoint path to the final error edge.
 
 ## Workspace
 

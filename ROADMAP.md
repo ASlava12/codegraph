@@ -75,7 +75,7 @@ Goal: answer practical code investigation questions.
 
 - Trace from entrypoints.
 - [x] Trace config loading and environment variable reads.
-- Identify error and exception paths.
+- [x] Identify error and exception paths.
 - [x] Add structured summary, entrypoints, and trace commands.
 - [x] Expose structured summary, entrypoints, and trace APIs.
 - [x] Add investigation insights for unresolved calls, parse/syntax issues, duplicate labels, orphan functions, and error-flow facts.
@@ -99,6 +99,7 @@ Example commands:
 codegraph entrypoints
 codegraph trace main
 codegraph trace-config DATABASE_URL
+codegraph trace-errors "failed to load data"
 codegraph query 'calls(function:main)'
 ```
 
