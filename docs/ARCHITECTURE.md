@@ -23,7 +23,7 @@ This crate should stay small and dependency-light.
 
 `codegraph-indexer` walks project roots, applies ignore rules, invokes parsers, and assembles graph fragments.
 
-It currently builds file, symbol, import, call, config, environment, error-flow, and package dependency graph facts from syntax-level parser output and project manifests. Future implementations should merge stronger semantic facts from LSP and compiler layers.
+It currently builds file, symbol, import, call, config, environment, error-flow, and package dependency graph facts from syntax-level parser output and project manifests. Manifest dependencies are normalized by ecosystem-specific package identity, so multiple manifest files can point at the same external package node while preserving declaration details on each edge. Future implementations should merge stronger semantic facts from LSP and compiler layers.
 
 ### Analysis
 
@@ -111,4 +111,4 @@ Graph facts should declare how they were discovered:
 
 This is central to the project. A useful imperfect graph is acceptable when uncertainty is explicit.
 
-Current call, config, environment, and error-flow facts are `heuristic`: they are resolved by syntax patterns and simple-name matching. Package manifest dependencies are `exact` because they come from declared project metadata. Future LSP, framework, and compiler integrations should upgrade resolvable code edges to `semantic` or `exact`.
+Current call, config, environment, and error-flow facts are `heuristic`: they are resolved by syntax patterns and simple-name matching. Package manifest dependencies are `exact` because they come from declared project metadata; package nodes expose `package_id`, and `depends_on` edge metadata records the declaration kind. Future LSP, framework, and compiler integrations should upgrade resolvable code edges to `semantic` or `exact`.

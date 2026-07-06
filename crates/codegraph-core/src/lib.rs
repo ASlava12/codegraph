@@ -143,12 +143,23 @@ impl CodeGraph {
         kind: EdgeKind,
         confidence: Confidence,
     ) {
+        self.add_edge_with_metadata(source, target, kind, confidence, BTreeMap::new());
+    }
+
+    pub fn add_edge_with_metadata(
+        &mut self,
+        source: NodeId,
+        target: NodeId,
+        kind: EdgeKind,
+        confidence: Confidence,
+        metadata: BTreeMap<String, String>,
+    ) {
         self.edges.push(Edge {
             source,
             target,
             kind,
             confidence,
-            metadata: BTreeMap::new(),
+            metadata,
         });
     }
 }

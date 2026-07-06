@@ -27,6 +27,7 @@ pub struct IndexOptions {
 struct IndexContext {
     graph: CodeGraph,
     function_symbols: BTreeMap<String, Vec<NodeId>>,
+    external_dependencies: BTreeMap<String, NodeId>,
     pending_calls: Vec<PendingCall>,
 }
 
@@ -67,6 +68,7 @@ pub fn scan_project(
     let mut context = IndexContext {
         graph: CodeGraph::new(root_label),
         function_symbols: BTreeMap::new(),
+        external_dependencies: BTreeMap::new(),
         pending_calls: Vec::new(),
     };
 
@@ -286,23 +288,39 @@ fn index_manifest_dependencies(
 ) {
     let dependencies = manifest_dependencies(path, source);
     for dependency in dependencies {
-        let mut metadata = BTreeMap::new();
-        metadata.insert("item_kind".to_string(), "dependency".to_string());
-        metadata.insert("dependency_kind".to_string(), dependency.kind);
-        metadata.insert("ecosystem".to_string(), dependency.ecosystem);
-        metadata.insert("source".to_string(), "manifest".to_string());
-        let dependency_id = context.graph.add_node_with_metadata(
-            NodeKind::ExternalDependency,
-            dependency.name,
-            None,
-            metadata,
-        );
-        add_edge_once(
+        let package_name = canonical_package_name(&dependency.ecosystem, &dependency.name);
+        let package_id = package_id(&dependency.ecosystem, &package_name);
+        let dependency_id = if let Some(id) = context.external_dependencies.get(&package_id) {
+            *id
+        } else {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("item_kind".to_string(), "dependency".to_string());
+            metadata.insert("ecosystem".to_string(), dependency.ecosystem.clone());
+            metadata.insert("package_id".to_string(), package_id.clone());
+            metadata.insert("source".to_string(), "manifest".to_string());
+            if package_name != dependency.name {
+                metadata.insert("declared_name".to_string(), dependency.name.clone());
+            }
+            let id = context.graph.add_node_with_metadata(
+                NodeKind::ExternalDependency,
+                package_name,
+                None,
+                metadata,
+            );
+            context.external_dependencies.insert(package_id, id);
+            id
+        };
+
+        let mut edge_metadata = BTreeMap::new();
+        edge_metadata.insert("dependency_kind".to_string(), dependency.kind);
+        edge_metadata.insert("source".to_string(), "manifest".to_string());
+        add_edge_once_with_metadata(
             &mut context.graph,
             file_id,
             dependency_id,
             EdgeKind::DependsOn,
             Confidence::Exact,
+            edge_metadata,
         );
     }
 }
@@ -557,6 +575,35 @@ fn package_name_from_requirement(requirement: &str) -> Option<String> {
     }
 }
 
+fn package_id(ecosystem: &str, package_name: &str) -> String {
+    format!("{ecosystem}:{package_name}")
+}
+
+fn canonical_package_name(ecosystem: &str, name: &str) -> String {
+    let trimmed = name.trim();
+    match ecosystem {
+        "python" => {
+            let mut normalized = String::new();
+            let mut previous_separator = false;
+            for character in trimmed.chars() {
+                if matches!(character, '-' | '_' | '.') {
+                    if !previous_separator {
+                        normalized.push('-');
+                    }
+                    previous_separator = true;
+                } else {
+                    normalized.extend(character.to_lowercase());
+                    previous_separator = false;
+                }
+            }
+            normalized
+        }
+        "cargo" | "npm" | "composer" => trimmed.to_ascii_lowercase(),
+        "go" => trimmed.to_string(),
+        _ => trimmed.to_string(),
+    }
+}
+
 fn manifest_dependency(
     name: impl Into<String>,
     dependency_kind: impl Into<String>,
@@ -669,6 +716,17 @@ fn add_edge_once(
     kind: EdgeKind,
     confidence: Confidence,
 ) {
+    add_edge_once_with_metadata(graph, source, target, kind, confidence, BTreeMap::new());
+}
+
+fn add_edge_once_with_metadata(
+    graph: &mut CodeGraph,
+    source: NodeId,
+    target: NodeId,
+    kind: EdgeKind,
+    confidence: Confidence,
+    metadata: BTreeMap<String, String>,
+) {
     if graph
         .edges
         .iter()
@@ -676,7 +734,7 @@ fn add_edge_once(
     {
         return;
     }
-    graph.add_edge(source, target, kind, confidence);
+    graph.add_edge_with_metadata(source, target, kind, confidence, metadata);
 }
 
 fn add_file_metadata(
@@ -931,6 +989,18 @@ anyhow = "1"
 "#,
         )
         .unwrap();
+        fs::create_dir_all(root.join("crates").join("app")).unwrap();
+        fs::write(
+            root.join("crates").join("app").join("Cargo.toml"),
+            r#"[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+serde = "1"
+"#,
+        )
+        .unwrap();
         fs::write(
             root.join("package.json"),
             r#"{
@@ -990,6 +1060,27 @@ dependencies = ["pydantic>=2"]
         assert!(!dependency_labels.contains("php"));
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == EdgeKind::DependsOn && edge.confidence == Confidence::Exact
+        }));
+        let serde_nodes: Vec<_> = graph
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "cargo:serde")
+            })
+            .collect();
+        assert_eq!(serde_nodes.len(), 1);
+        let serde_incoming_edges: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == EdgeKind::DependsOn && edge.target == serde_nodes[0].id)
+            .collect();
+        assert_eq!(serde_incoming_edges.len(), 2);
+        assert!(serde_incoming_edges.iter().all(|edge| {
+            edge.metadata
+                .get("dependency_kind")
+                .is_some_and(|value| value == "runtime")
         }));
         assert!(graph.nodes.iter().any(|node| {
             node.metadata

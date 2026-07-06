@@ -156,6 +156,12 @@ Supported package manifests:
 - Python: `requirements.txt`, `pyproject.toml`
 - PHP/Composer: `composer.json`
 
+Manifest dependencies are normalized into canonical package nodes with a stable
+`package_id` metadata value such as `cargo:serde` or `python:fastapi`. Individual
+manifest files connect to those package nodes with `depends_on` edges; the edge
+metadata records whether the declaration is runtime, dev, optional, peer, or
+build dependency data when the manifest format exposes that distinction.
+
 ## Workspace
 
 ```text
