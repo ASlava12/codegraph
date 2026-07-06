@@ -53,6 +53,13 @@ pub struct QueryResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FocusRequest {
+    pub node_ids: Vec<NodeId>,
+    pub edge_indexes: Vec<usize>,
+    pub edge_limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphSliceRequest {
     pub node_offset: usize,
     pub node_limit: usize,
@@ -337,6 +344,58 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         other => Err(QueryError::new(format!(
             "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, or path"
         ))),
+    }
+}
+
+pub fn focus_subgraph(graph: &CodeGraph, request: FocusRequest) -> QueryResult {
+    let edge_limit = request.edge_limit.clamp(1, 1000);
+    let mut node_ids: BTreeSet<_> = request
+        .node_ids
+        .into_iter()
+        .filter(|id| graph.nodes.iter().any(|node| node.id == *id))
+        .collect();
+
+    let mut matched_edges = Vec::new();
+    if request.edge_indexes.is_empty() {
+        matched_edges.extend(graph.edges.iter().filter(|edge| {
+            !node_ids.is_empty()
+                && node_ids.contains(&edge.source)
+                && node_ids.contains(&edge.target)
+        }));
+    } else {
+        matched_edges.extend(
+            request
+                .edge_indexes
+                .iter()
+                .filter_map(|index| graph.edges.get(*index)),
+        );
+    }
+
+    let total_edges = matched_edges.len();
+    let edges: Vec<_> = matched_edges
+        .into_iter()
+        .take(edge_limit)
+        .cloned()
+        .collect();
+    for edge in &edges {
+        node_ids.insert(edge.source);
+        node_ids.insert(edge.target);
+    }
+
+    let nodes: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| node_ids.contains(&node.id))
+        .cloned()
+        .collect();
+
+    QueryResult {
+        query: "focus".to_string(),
+        total_nodes: nodes.len(),
+        total_edges,
+        truncated: total_edges > edges.len(),
+        nodes,
+        edges,
     }
 }
 
@@ -1859,6 +1918,33 @@ mod tests {
         .unwrap();
         assert!(calls_only.nodes.is_empty());
         assert!(!calls_only.truncated);
+    }
+
+    #[test]
+    fn focus_subgraph_returns_selected_nodes_and_edges() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let config = graph.add_node(NodeKind::Config, "settings.toml");
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(helper, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
+
+        let result = focus_subgraph(
+            &graph,
+            FocusRequest {
+                node_ids: vec![main],
+                edge_indexes: vec![1],
+                edge_limit: 10,
+            },
+        );
+
+        assert_eq!(result.query, "focus");
+        assert_eq!(result.total_edges, 1);
+        assert_eq!(result.edges[0].source, helper);
+        assert_eq!(result.edges[0].target, config);
+        assert!(result.nodes.iter().any(|node| node.id == main));
+        assert!(result.nodes.iter().any(|node| node.id == helper));
+        assert!(result.nodes.iter().any(|node| node.id == config));
     }
 
     #[test]

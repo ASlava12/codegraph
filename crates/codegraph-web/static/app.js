@@ -18,6 +18,7 @@ const state = {
   queryRequest: 0,
   pageRequest: 0,
   insightRequest: 0,
+  insightFocusRequest: 0,
   insightReport: null,
   queryFocus: null,
   scanJobId: null,
@@ -586,8 +587,8 @@ function renderInsights() {
 
   insightList.innerHTML = insights
     .map(
-      (insight) => `
-        <button class="insight ${escapeHtml(insight.severity)}" type="button" data-node-id="${insightNodeId(insight) || ""}">
+      (insight, index) => `
+        <button class="insight ${escapeHtml(insight.severity)}" type="button" data-insight-index="${index}">
           <span>
             <strong>${escapeHtml(formatKind(insight.kind))}</strong>
             ${escapeHtml(insight.message)}
@@ -599,18 +600,81 @@ function renderInsights() {
 
   insightList.querySelectorAll(".insight").forEach((button) => {
     button.addEventListener("click", () => {
-      const nodeId = Number(button.dataset.nodeId);
-      if (!nodeId) return;
-      state.selectedId = nodeId;
-      renderSelection();
+      const insight = insights[Number(button.dataset.insightIndex)];
+      if (insight) focusInsight(insight);
     });
   });
 }
 
 function insightNodeId(insight) {
-  if (insight.nodeId) return insight.nodeId;
-  if (Array.isArray(insight.nodes) && insight.nodes.length > 0) return insight.nodes[0];
-  return null;
+  return insightNodeIds(insight)[0] || null;
+}
+
+function insightNodeIds(insight) {
+  if (Array.isArray(insight.nodes) && insight.nodes.length > 0) return insight.nodes;
+  if (insight.nodeId) return [insight.nodeId];
+  return [];
+}
+
+function insightEdgeIndexes(insight) {
+  return Array.isArray(insight.edges) ? insight.edges : [];
+}
+
+async function focusInsight(insight) {
+  const nodeIds = insightNodeIds(insight);
+  const edgeIndexes = insightEdgeIndexes(insight);
+  const selectedId = nodeIds[0] || null;
+  if (nodeIds.length === 0 && edgeIndexes.length === 0) return;
+
+  if (selectedId) {
+    state.selectedId = selectedId;
+    renderSelection();
+  }
+
+  state.insightFocusRequest += 1;
+  const requestId = state.insightFocusRequest;
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    edge_limit: "300",
+  });
+  if (nodeIds.length > 0) params.set("node_ids", nodeIds.join(","));
+  if (edgeIndexes.length > 0) params.set("edge_indexes", edgeIndexes.join(","));
+
+  try {
+    const response = await fetch(`/api/focus?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.insightFocusRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "focus failed");
+    }
+    const label = `Focus: ${formatKind(insight.kind)}`;
+    showFocusedGraph(body, label, selectedId);
+  } catch (error) {
+    if (requestId !== state.insightFocusRequest) return;
+    queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function showFocusedGraph(result, label, selectedId = null) {
+  state.graph = { nodes: result.nodes, edges: result.edges };
+  state.graphPage.nodeOffset = 0;
+  state.graphPage.totalNodes = result.total_nodes;
+  state.graphPage.totalEdges = result.total_edges;
+  state.graphPage.truncatedNodes = false;
+  state.queryFocus = null;
+  queryResult.innerHTML = renderQueryResult(result);
+  attachQueryNavigation(queryResult);
+  attachQueryFocusActions(queryResult, result);
+  rootLabel.textContent = label;
+  initializeGraph({ preserveView: false });
+  pageInfo.textContent = `focus ${result.nodes.length} / ${result.total_nodes}`;
+  pagePrevButton.disabled = true;
+  pageNextButton.disabled = true;
+  pageReloadButton.disabled = false;
+  if (selectedId) {
+    state.selectedId = selectedId;
+    renderSelection();
+  }
 }
 
 function buildClientInsights(graph) {

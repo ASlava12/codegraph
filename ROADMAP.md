@@ -117,6 +117,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add first server-side graph paging and filtering API.
 - [x] Add web controls for server-side graph paging.
 - [x] Add node context API for paged graph detail panels.
+- [x] Add insight focus API and web interaction for opening findings as focused graph views.
 - Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
 - [x] Add source preview.
 - [x] Add trace panels.

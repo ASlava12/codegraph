@@ -8,8 +8,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
-    GraphSlice, GraphSliceRequest, NodeContext, TraceRequest, TraceStart, entrypoints, export_dot,
-    export_ndjson, insights, node_context, query_graph, slice_graph, summarize, trace,
+    FocusRequest, GraphSlice, GraphSliceRequest, NodeContext, TraceRequest, TraceStart,
+    entrypoints, export_dot, export_ndjson, focus_subgraph, insights, node_context, query_graph,
+    slice_graph, summarize, trace,
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
@@ -119,6 +120,14 @@ struct GraphSliceQuery {
 struct NodeContextQuery {
     path: Option<PathBuf>,
     node_id: u64,
+    edge_limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FocusQuery {
+    path: Option<PathBuf>,
+    node_ids: Option<String>,
+    edge_indexes: Option<String>,
     edge_limit: Option<usize>,
 }
 
@@ -266,6 +275,7 @@ async fn main() -> Result<()> {
         .route("/api/export", get(export_api))
         .route("/api/graph", get(graph_api))
         .route("/api/node-context", get(node_context_api))
+        .route("/api/focus", get(focus_api))
         .route("/api/summary", get(summary))
         .route("/api/entrypoints", get(entrypoints_api))
         .route("/api/insights", get(insights_api))
@@ -565,6 +575,23 @@ async fn node_context_api(
     Ok(Json(context))
 }
 
+async fn focus_api(
+    State(state): State<AppState>,
+    Query(query): Query<FocusQuery>,
+) -> Result<Json<codegraph_analysis::QueryResult>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let node_ids = parse_node_ids(query.node_ids.as_deref())?;
+    let edge_indexes = parse_edge_indexes(query.edge_indexes.as_deref())?;
+    Ok(Json(focus_subgraph(
+        &graph,
+        FocusRequest {
+            node_ids,
+            edge_indexes,
+            edge_limit: query.edge_limit.unwrap_or(200),
+        },
+    )))
+}
+
 async fn summary(
     State(state): State<AppState>,
     Query(query): Query<ScanQuery>,
@@ -769,6 +796,45 @@ fn normalize_query_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn parse_node_ids(value: Option<&str>) -> Result<Vec<codegraph_core::NodeId>, ApiError> {
+    parse_u64_list(value, "node_ids")
+        .map(|ids| ids.into_iter().map(codegraph_core::NodeId).collect())
+}
+
+fn parse_edge_indexes(value: Option<&str>) -> Result<Vec<usize>, ApiError> {
+    parse_usize_list(value, "edge_indexes")
+}
+
+fn parse_u64_list(value: Option<&str>, name: &str) -> Result<Vec<u64>, ApiError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            part.parse::<u64>()
+                .map_err(|_| ApiError::bad_request(format!("invalid {name} value `{part}`")))
+        })
+        .collect()
+}
+
+fn parse_usize_list(value: Option<&str>, name: &str) -> Result<Vec<usize>, ApiError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            part.parse::<usize>()
+                .map_err(|_| ApiError::bad_request(format!("invalid {name} value `{part}`")))
+        })
+        .collect()
 }
 
 async fn not_found() -> impl IntoResponse {
