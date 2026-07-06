@@ -16,9 +16,19 @@ const state = {
   selectionRequest: 0,
   traceRequest: 0,
   queryRequest: 0,
+  pageRequest: 0,
   queryFocus: null,
   scanJobId: null,
   scanEvents: null,
+  graphPage: {
+    nodeOffset: 0,
+    nodeLimit: 250,
+    edgeLimit: 500,
+    totalNodes: 0,
+    totalEdges: 0,
+    truncatedNodes: false,
+    root: "",
+  },
 };
 
 const colors = {
@@ -49,6 +59,14 @@ const envCount = document.querySelector("#envCount");
 const configCount = document.querySelector("#configCount");
 const errorCount = document.querySelector("#errorCount");
 const entryCount = document.querySelector("#entryCount");
+const pageInfo = document.querySelector("#pageInfo");
+const nodeLimitInput = document.querySelector("#nodeLimitInput");
+const edgeLimitInput = document.querySelector("#edgeLimitInput");
+const serverKindInput = document.querySelector("#serverKindInput");
+const serverEdgeKindInput = document.querySelector("#serverEdgeKindInput");
+const pagePrevButton = document.querySelector("#pagePrevButton");
+const pageReloadButton = document.querySelector("#pageReloadButton");
+const pageNextButton = document.querySelector("#pageNextButton");
 const queryInput = document.querySelector("#queryInput");
 const queryButton = document.querySelector("#queryButton");
 const queryResult = document.querySelector("#queryResult");
@@ -71,6 +89,14 @@ queryButton.addEventListener("click", () => runGraphQuery());
 queryInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runGraphQuery();
 });
+pagePrevButton.addEventListener("click", () => shiftGraphPage(-1));
+pageNextButton.addEventListener("click", () => shiftGraphPage(1));
+pageReloadButton.addEventListener("click", () => loadGraphPage({ resetPage: true }));
+for (const input of [nodeLimitInput, edgeLimitInput, serverKindInput, serverEdgeKindInput]) {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") loadGraphPage({ resetPage: true });
+  });
+}
 
 canvas.addEventListener("pointerdown", onPointerDown);
 canvas.addEventListener("pointermove", onPointerMove);
@@ -124,13 +150,13 @@ async function watchScanJob(jobId) {
     const events = new EventSource(`/api/scan-jobs/${encodeURIComponent(jobId)}/events`);
     state.scanEvents = events;
 
-    const finish = async () => {
+    const finish = async (job) => {
       if (settled) return;
       settled = true;
       events.close();
       if (state.scanEvents === events) state.scanEvents = null;
       try {
-        await loadScanJobResult(jobId);
+        await loadGraphPage({ root: job?.path, resetPage: true, resetLayout: true });
         resolve();
       } catch (error) {
         reject(error);
@@ -169,7 +195,7 @@ async function watchScanJob(jobId) {
       }
 
       if (job.status === "complete") {
-        finish();
+        finish(job);
       }
     });
 
@@ -201,29 +227,122 @@ async function pollScanJob(jobId) {
       throw new Error(body.message || "scan failed");
     }
 
-    await loadScanJobResult(jobId);
+    await loadGraphPage({ root: body.path, resetPage: true, resetLayout: true });
     return;
   }
 }
 
-async function loadScanJobResult(jobId) {
-  const resultResponse = await fetch(`/api/scan-jobs/${encodeURIComponent(jobId)}/result`);
-  const result = await resultResponse.json();
-  if (!resultResponse.ok) {
-    throw new Error(result.error || "scan result failed");
+async function loadGraphPage({ root = null, resetPage = false, resetLayout = false } = {}) {
+  state.pageRequest += 1;
+  const requestId = state.pageRequest;
+  setStatus("page", "busy");
+  pageReloadButton.disabled = true;
+  pagePrevButton.disabled = true;
+  pageNextButton.disabled = true;
+
+  if (resetPage) {
+    state.graphPage.nodeOffset = 0;
   }
 
-  setStatus("load", "busy");
-  state.graph = result.graph;
+  const nodeLimit = clampNumber(Number(nodeLimitInput.value || 250), 20, 1000);
+  const edgeLimit = clampNumber(Number(edgeLimitInput.value || 500), 1, 2000);
+  nodeLimitInput.value = String(nodeLimit);
+  edgeLimitInput.value = String(edgeLimit);
+  state.graphPage.nodeLimit = nodeLimit;
+  state.graphPage.edgeLimit = edgeLimit;
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    node_offset: String(state.graphPage.nodeOffset),
+    node_limit: String(nodeLimit),
+    edge_limit: String(edgeLimit),
+  });
+  const kind = serverKindInput.value.trim();
+  const edgeKind = serverEdgeKindInput.value.trim();
+  if (kind) params.set("kind", kind);
+  if (edgeKind) params.set("edge_kind", edgeKind);
+
+  try {
+    const response = await fetch(`/api/graph?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.pageRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "graph page failed");
+    }
+
+    state.graph = { nodes: body.nodes, edges: body.edges };
+    state.graphPage.totalNodes = body.total_nodes;
+    state.graphPage.totalEdges = body.total_edges;
+    state.graphPage.nodeOffset = body.node_offset;
+    state.graphPage.nodeLimit = body.node_limit;
+    state.graphPage.edgeLimit = body.edge_limit;
+    state.graphPage.truncatedNodes = body.truncated_nodes;
+    state.graphPage.root = root || state.graphPage.root || pathInput.value.trim() || ".";
+    state.selectedId = null;
+    state.hoveredId = null;
+    state.queryFocus = null;
+    queryResult.innerHTML = "";
+    rootLabel.textContent = state.graphPage.root;
+    initializeGraph({ preserveView: !resetLayout });
+    setStatus("ready");
+  } catch (error) {
+    if (requestId !== state.pageRequest) return;
+    setStatus("error", "error");
+    selectionTitle.textContent = "Error";
+    selectionBody.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.pageRequest) {
+      updateGraphPageControls();
+    }
+  }
+}
+
+function shiftGraphPage(direction) {
+  const nextOffset = state.graphPage.nodeOffset + direction * state.graphPage.nodeLimit;
+  state.graphPage.nodeOffset = Math.max(0, nextOffset);
+  loadGraphPage({ resetLayout: true });
+}
+
+function updateGraphPageControls() {
+  const start = state.graphPage.totalNodes === 0 ? 0 : state.graphPage.nodeOffset + 1;
+  const end = Math.min(
+    state.graphPage.totalNodes,
+    state.graphPage.nodeOffset + state.graphPage.nodeLimit,
+  );
+  pageInfo.textContent = `${start}-${end} / ${state.graphPage.totalNodes}`;
+  pagePrevButton.disabled = state.graphPage.nodeOffset === 0;
+  pageNextButton.disabled = !state.graphPage.truncatedNodes;
+  pageReloadButton.disabled = false;
+}
+
+function initializeGraph(options = {}) {
+  const preserveView = Boolean(options.preserveView);
+  const previousPan = { ...state.pan };
+  const previousZoom = state.zoom;
+
   state.selectedId = null;
   state.hoveredId = null;
-  state.queryFocus = null;
-  queryResult.innerHTML = "";
   state.positions.clear();
   state.velocities.clear();
-  rootLabel.textContent = result.root;
-  initializeGraph();
-  setStatus("ready");
+  const kinds = [...new Set(state.graph.nodes.map((node) => node.kind))].sort();
+  state.enabledKinds = new Set(kinds);
+  renderKindFilters(kinds);
+  renderLegend(kinds);
+
+  const radius = Math.max(180, Math.min(canvas.width, canvas.height) * 0.28);
+  state.graph.nodes.forEach((node, index) => {
+    const angle = (Math.PI * 2 * index) / Math.max(1, state.graph.nodes.length);
+    state.positions.set(node.id, {
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius,
+    });
+    state.velocities.set(node.id, { x: 0, y: 0 });
+  });
+
+  state.pan = preserveView ? previousPan : { x: canvas.width / 2, y: canvas.height / 2 };
+  state.zoom = preserveView ? previousZoom : 1;
+  applyFilters();
+  startAnimation();
 }
 
 async function runGraphQuery() {
@@ -371,28 +490,6 @@ function clearQueryFocus() {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function initializeGraph() {
-  const kinds = [...new Set(state.graph.nodes.map((node) => node.kind))].sort();
-  state.enabledKinds = new Set(kinds);
-  renderKindFilters(kinds);
-  renderLegend(kinds);
-
-  const radius = Math.max(180, Math.min(canvas.width, canvas.height) * 0.28);
-  state.graph.nodes.forEach((node, index) => {
-    const angle = (Math.PI * 2 * index) / Math.max(1, state.graph.nodes.length);
-    state.positions.set(node.id, {
-      x: Math.cos(angle) * radius,
-      y: Math.sin(angle) * radius,
-    });
-    state.velocities.set(node.id, { x: 0, y: 0 });
-  });
-
-  state.pan = { x: canvas.width / 2, y: canvas.height / 2 };
-  state.zoom = 1;
-  applyFilters();
-  startAnimation();
 }
 
 function applyFilters() {

@@ -112,6 +112,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add async scan job API for long-running scans.
 - [x] Add SSE for live scan status updates.
 - [x] Add first server-side graph paging and filtering API.
+- [x] Add web controls for server-side graph paging.
 - Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
 - [x] Add source preview.
 - [x] Add trace panels.
@@ -131,7 +132,7 @@ Goal: handle real repositories efficiently.
 - Incrementally update changed files.
 - Cache parser and LSP facts.
 - [x] Add first large graph filtering and paging endpoint.
-- Support UI-driven large graph paging.
+- [x] Support first UI-driven large graph paging.
 - Add benchmarks.
 
 Exit criteria:

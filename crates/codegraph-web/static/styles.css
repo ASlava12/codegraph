@@ -49,7 +49,7 @@ input {
 
 .sidebar {
   display: grid;
-  grid-template-rows: auto auto auto auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto auto auto auto minmax(0, 1fr);
   gap: 16px;
   min-width: 0;
   padding: 18px;
@@ -186,6 +186,54 @@ button:disabled {
 .stats span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.graph-page {
+  display: grid;
+  gap: 10px;
+}
+
+.graph-page header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.graph-page h2 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.graph-page header span {
+  min-width: 86px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.page-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.page-fields input {
+  height: 34px;
+}
+
+.page-actions {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  gap: 8px;
+}
+
+.page-actions button {
+  height: 34px;
+  padding: 0 8px;
+  font-size: 13px;
 }
 
 .query {

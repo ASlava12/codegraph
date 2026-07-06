@@ -29,6 +29,7 @@ Implemented now:
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
 - Server-side graph paging and filtering endpoint for large repository exploration.
+- Web graph page controls backed by the server-side paging API.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Persistent server-side graph cache with project fingerprint invalidation.

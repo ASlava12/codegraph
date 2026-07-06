@@ -35,6 +35,36 @@
           <div><strong id="entryCount">0</strong><span>Entrypoints</span></div>
         </section>
 
+        <section class="graph-page" aria-label="Graph page">
+          <header>
+            <h2>Graph Page</h2>
+            <span id="pageInfo">0 / 0</span>
+          </header>
+          <div class="page-fields">
+            <label class="field compact">
+              <span>Nodes</span>
+              <input id="nodeLimitInput" type="number" min="20" max="1000" value="250" />
+            </label>
+            <label class="field compact">
+              <span>Edges</span>
+              <input id="edgeLimitInput" type="number" min="1" max="2000" value="500" />
+            </label>
+            <label class="field compact">
+              <span>Kind</span>
+              <input id="serverKindInput" type="text" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span>Edge</span>
+              <input id="serverEdgeKindInput" type="text" autocomplete="off" />
+            </label>
+          </div>
+          <div class="page-actions">
+            <button id="pagePrevButton" type="button" aria-label="Previous graph page">&lt;</button>
+            <button id="pageReloadButton" type="button">Apply</button>
+            <button id="pageNextButton" type="button" aria-label="Next graph page">&gt;</button>
+          </div>
+        </section>
+
         <section class="query" aria-label="Graph query">
           <label class="field">
             <span>Query</span>
