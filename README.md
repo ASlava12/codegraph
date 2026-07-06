@@ -43,6 +43,7 @@ Implemented now:
 - CI checks for formatting, clippy, tests, UI syntax, CLI scan, and server cache smoke tests.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Dependency consistency insights for external imports that are not backed by declared manifest dependencies.
+- Dependency consistency insights for package declarations with conflicting manifest constraints.
 - Dependency cycle insights for circular calls, imports, references, and manifest dependency edges.
 
 Planned next:
@@ -211,7 +212,8 @@ Manifest dependencies are normalized into canonical package nodes with a stable
 `package_id` metadata value such as `cargo:serde` or `python:fastapi`. Individual
 manifest files connect to those package nodes with `depends_on` edges; the edge
 metadata records whether the declaration is runtime, dev, optional, peer, or
-build dependency data when the manifest format exposes that distinction.
+build dependency data when the manifest format exposes that distinction, plus
+the raw `dependency_version` constraint when the manifest declares one.
 
 Manifest entrypoints are represented as `entrypoint` nodes linked from the
 repository root with exact `entrypoint` edges. Examples include Cargo binaries,

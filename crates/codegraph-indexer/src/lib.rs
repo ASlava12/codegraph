@@ -61,6 +61,7 @@ struct ManifestDependency {
     name: String,
     kind: String,
     ecosystem: String,
+    version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -355,6 +356,9 @@ fn index_manifest_dependencies(
         let mut edge_metadata = BTreeMap::new();
         edge_metadata.insert("dependency_kind".to_string(), dependency.kind);
         edge_metadata.insert("source".to_string(), "manifest".to_string());
+        if let Some(version) = dependency.version {
+            edge_metadata.insert("dependency_version".to_string(), version);
+        }
         add_edge_once_with_metadata(
             &mut context.graph,
             file_id,
@@ -665,8 +669,11 @@ fn pyproject_dependencies(source: &str) -> Vec<ManifestDependency> {
             .and_then(|value| value.as_array())
         {
             for value in values {
-                if let Some(name) = value.as_str().and_then(package_name_from_requirement) {
-                    dependencies.push(manifest_dependency(name, "runtime", "python"));
+                if let Some((name, version)) = value
+                    .as_str()
+                    .and_then(package_name_and_version_from_requirement)
+                {
+                    dependencies.push(manifest_dependency(name, "runtime", "python", version));
                 }
             }
         }
@@ -677,8 +684,12 @@ fn pyproject_dependencies(source: &str) -> Vec<ManifestDependency> {
             for values in optional.values() {
                 if let Some(values) = values.as_array() {
                     for value in values {
-                        if let Some(name) = value.as_str().and_then(package_name_from_requirement) {
-                            dependencies.push(manifest_dependency(name, "optional", "python"));
+                        if let Some((name, version)) = value
+                            .as_str()
+                            .and_then(package_name_and_version_from_requirement)
+                        {
+                            dependencies
+                                .push(manifest_dependency(name, "optional", "python", version));
                         }
                     }
                 }
@@ -758,8 +769,15 @@ fn go_mod_dependencies(source: &str) -> Vec<ManifestDependency> {
         } else {
             continue;
         };
-        if let Some(name) = requirement.split_whitespace().next() {
-            dependencies.push(manifest_dependency(name.to_string(), "runtime", "go"));
+        let mut parts = requirement.split_whitespace();
+        if let Some(name) = parts.next() {
+            let version = parts.next().map(str::to_string);
+            dependencies.push(manifest_dependency(
+                name.to_string(),
+                "runtime",
+                "go",
+                version,
+            ));
         }
     }
     dependencies
@@ -773,8 +791,8 @@ fn requirements_dependencies(source: &str) -> Vec<ManifestDependency> {
             if line.is_empty() || line.starts_with('-') {
                 return None;
             }
-            package_name_from_requirement(line)
-                .map(|name| manifest_dependency(name, "runtime", "python"))
+            package_name_and_version_from_requirement(line)
+                .map(|(name, version)| manifest_dependency(name, "runtime", "python", version))
         })
         .collect()
 }
@@ -789,11 +807,19 @@ fn collect_toml_table_keys(
     let Some(table) = value.get(table_name).and_then(|value| value.as_table()) else {
         return;
     };
-    for name in table.keys() {
+    for (name, value) in table {
+        let package_name = value
+            .as_table()
+            .and_then(|table| table.get("package"))
+            .and_then(|value| value.as_str())
+            .unwrap_or(name)
+            .to_string();
+        let version = dependency_version_from_toml_value(value);
         dependencies.push(manifest_dependency(
-            name.clone(),
+            package_name,
             dependency_kind,
             ecosystem,
+            version,
         ));
     }
 }
@@ -828,16 +854,38 @@ fn collect_json_object_keys(
     let Some(object) = value.get(object_name).and_then(|value| value.as_object()) else {
         return;
     };
-    for name in object.keys() {
+    for (name, value) in object {
+        let version = value.as_str().map(str::to_string);
         dependencies.push(manifest_dependency(
             name.clone(),
             dependency_kind,
             ecosystem,
+            version,
         ));
     }
 }
 
-fn package_name_from_requirement(requirement: &str) -> Option<String> {
+fn dependency_version_from_toml_value(value: &toml::Value) -> Option<String> {
+    if let Some(version) = value.as_str() {
+        return Some(version.to_string());
+    }
+    let table = value.as_table()?;
+    if table
+        .get("workspace")
+        .and_then(|value| value.as_bool())
+        .is_some_and(|enabled| enabled)
+    {
+        return Some("workspace".to_string());
+    }
+    table
+        .get("version")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
+fn package_name_and_version_from_requirement(
+    requirement: &str,
+) -> Option<(String, Option<String>)> {
     let trimmed = requirement.trim();
     let end = trimmed
         .find(|character: char| {
@@ -851,7 +899,11 @@ fn package_name_from_requirement(requirement: &str) -> Option<String> {
     if name.is_empty() {
         None
     } else {
-        Some(name.to_string())
+        let version = trimmed[end..].trim();
+        Some((
+            name.to_string(),
+            (!version.is_empty()).then(|| version.to_string()),
+        ))
     }
 }
 
@@ -888,11 +940,13 @@ fn manifest_dependency(
     name: impl Into<String>,
     dependency_kind: impl Into<String>,
     ecosystem: impl Into<String>,
+    version: Option<String>,
 ) -> ManifestDependency {
     ManifestDependency {
         name: name.into(),
         kind: dependency_kind.into(),
         ecosystem: ecosystem.into(),
+        version,
     }
 }
 
@@ -1581,7 +1635,7 @@ name = "demo"
 version = "0.1.0"
 
 [dependencies]
-serde = "1"
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 anyhow = "1"
@@ -1680,6 +1734,39 @@ dependencies = ["pydantic>=2"]
             edge.metadata
                 .get("dependency_kind")
                 .is_some_and(|value| value == "runtime")
+        }));
+        assert!(serde_incoming_edges.iter().all(|edge| {
+            edge.metadata
+                .get("dependency_version")
+                .is_some_and(|value| value == "1")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "^19.0.0")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "v1.10.0")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == ">=2")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "^3.0")
         }));
         assert!(graph.nodes.iter().any(|node| {
             node.metadata

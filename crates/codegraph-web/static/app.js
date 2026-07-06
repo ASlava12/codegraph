@@ -1802,7 +1802,14 @@ function edgeFacts(edge) {
   const facts = [];
   if (edge.confidence) facts.push(formatKind(edge.confidence));
   const metadata = edge.metadata || {};
-  for (const key of ["source", "relation", "resolution", "dependency_kind", "target_symbol"]) {
+  for (const key of [
+    "source",
+    "relation",
+    "resolution",
+    "dependency_kind",
+    "dependency_version",
+    "target_symbol",
+  ]) {
     if (metadata[key]) facts.push(`${formatKind(key)}: ${metadata[key]}`);
   }
   return facts;

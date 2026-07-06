@@ -82,6 +82,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect directed dependency cycles across calls, imports, references, and dependency edges.
 - [x] Detect package manifest dependency boundaries.
 - [x] Detect external imports that are missing declared manifest dependencies.
+- [x] Detect conflicting manifest dependency constraints for the same package.
 - [x] Back web insights with server analysis during paged graph exploration.
 - [x] Add first graph query language for nodes, edges, calls, dependencies, and traces.
 - [x] Add directed path queries between graph labels or node ids.

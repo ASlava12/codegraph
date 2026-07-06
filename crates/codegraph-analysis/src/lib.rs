@@ -254,6 +254,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
     add_undeclared_import_insights(graph, &mut insights);
+    add_conflicting_dependency_insights(graph, &mut insights);
     add_dependency_cycle_insights(graph, &mut insights);
     insights.sort_by(|left, right| {
         right
@@ -1222,6 +1223,64 @@ fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>
             ),
             nodes: vec![edge.source, edge.target],
             edges: vec![index],
+        });
+    }
+}
+
+fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let mut groups: BTreeMap<NodeId, Vec<(usize, String)>> = BTreeMap::new();
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind != EdgeKind::DependsOn {
+            continue;
+        }
+        let Some(version) = edge
+            .metadata
+            .get("dependency_version")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        groups
+            .entry(edge.target)
+            .or_default()
+            .push((index, version.to_string()));
+    }
+
+    for (target, declarations) in groups {
+        let distinct_versions: BTreeSet<_> = declarations
+            .iter()
+            .map(|(_, version)| version.as_str())
+            .collect();
+        if distinct_versions.len() < 2 {
+            continue;
+        }
+
+        let mut nodes = BTreeSet::from([target]);
+        let edge_indexes: Vec<_> = declarations
+            .iter()
+            .map(|(index, _)| {
+                if let Some(edge) = graph.edges.get(*index) {
+                    nodes.insert(edge.source);
+                }
+                *index
+            })
+            .collect();
+        let versions = distinct_versions
+            .iter()
+            .take(4)
+            .map(|version| format!("`{version}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let package = node_label(graph, target).unwrap_or("unknown");
+        insights.push(Insight {
+            kind: "conflicting_dependency_declaration".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Dependency `{package}` is declared with multiple constraints: {versions}"
+            ),
+            nodes: nodes.into_iter().collect(),
+            edges: edge_indexes,
         });
     }
 }
@@ -2289,6 +2348,62 @@ mod tests {
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "undeclared_external_import" && insight.message.contains("node:fs")
         }));
+    }
+
+    #[test]
+    fn insights_report_conflicting_dependency_declarations() {
+        let mut graph = CodeGraph::new("repo");
+        let root_manifest = graph.add_node(NodeKind::File, "Cargo.toml");
+        let app_manifest = graph.add_node(NodeKind::File, "crates/app/Cargo.toml");
+        let serde = dependency_node(&mut graph, "serde", "cargo:serde");
+        let anyhow = dependency_node(&mut graph, "anyhow", "cargo:anyhow");
+        graph.add_edge_with_metadata(
+            root_manifest,
+            serde,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "runtime".to_string()),
+                ("dependency_version".to_string(), "1".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            app_manifest,
+            serde,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "runtime".to_string()),
+                ("dependency_version".to_string(), "2".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            app_manifest,
+            anyhow,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "runtime".to_string()),
+                ("dependency_version".to_string(), "1".to_string()),
+            ]),
+        );
+
+        let report = insights(&graph);
+        let conflict = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "conflicting_dependency_declaration")
+            .expect("expected conflicting dependency declaration insight");
+
+        assert_eq!(conflict.severity, InsightSeverity::Warning);
+        assert!(conflict.message.contains("serde"));
+        assert!(conflict.message.contains("`1`"));
+        assert!(conflict.message.contains("`2`"));
+        assert!(conflict.nodes.contains(&root_manifest));
+        assert!(conflict.nodes.contains(&app_manifest));
+        assert!(conflict.nodes.contains(&serde));
+        assert!(!conflict.nodes.contains(&anyhow));
+        assert_eq!(conflict.edges.len(), 2);
     }
 
     #[test]
