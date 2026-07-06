@@ -41,6 +41,10 @@ struct Args {
     #[arg(long, default_value = ".")]
     root: PathBuf,
 
+    /// Additional local project roots that may be opened from the web UI.
+    #[arg(long = "project")]
+    projects: Vec<PathBuf>,
+
     /// HTTP bind host.
     #[arg(long, default_value = "127.0.0.1")]
     host: String,
@@ -73,6 +77,7 @@ struct Args {
 #[derive(Clone)]
 struct AppState {
     root: PathBuf,
+    projects: Arc<Vec<ProjectRoot>>,
     options: IndexOptions,
     allow_any_path: bool,
     cache: Option<GraphCache>,
@@ -87,6 +92,7 @@ struct ScanQuery {
 
 #[derive(Debug, Deserialize)]
 struct SourceQuery {
+    root: Option<PathBuf>,
     path: PathBuf,
     start_line: Option<u32>,
     end_line: Option<u32>,
@@ -218,6 +224,20 @@ struct ScanJobResult {
     graph: CodeGraph,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ProjectRoot {
+    name: String,
+    path: PathBuf,
+    default: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ProjectResponse {
+    name: String,
+    path: String,
+    default: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     status: &'static str,
@@ -259,12 +279,14 @@ async fn main() -> Result<()> {
         .root
         .canonicalize()
         .with_context(|| format!("failed to canonicalize root {}", args.root.display()))?;
+    let projects = Arc::new(project_roots(&root, args.projects)?);
     let bind_addr: SocketAddr = format!("{}:{}", args.host, args.port)
         .parse()
         .with_context(|| format!("invalid bind address {}:{}", args.host, args.port))?;
 
     let state = AppState {
         root,
+        projects,
         options: IndexOptions {
             include_hidden: args.include_hidden,
             include_ignored: args.include_ignored,
@@ -287,6 +309,7 @@ async fn main() -> Result<()> {
         .route("/app.js", get(app_js))
         .route("/styles.css", get(styles_css))
         .route("/api/health", get(health))
+        .route("/api/projects", get(projects_api))
         .route("/api/scan", get(scan))
         .route("/api/scan-jobs", post(start_scan_job))
         .route("/api/scan-jobs/{id}", get(scan_job_status))
@@ -519,6 +542,20 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     })
 }
 
+async fn projects_api(State(state): State<AppState>) -> Json<Vec<ProjectResponse>> {
+    Json(
+        state
+            .projects
+            .iter()
+            .map(|project| ProjectResponse {
+                name: project.name.clone(),
+                path: project.path.display().to_string(),
+                default: project.default,
+            })
+            .collect(),
+    )
+}
+
 async fn scan(
     State(state): State<AppState>,
     Query(query): Query<ScanQuery>,
@@ -736,7 +773,8 @@ async fn source(
     State(state): State<AppState>,
     Query(query): Query<SourceQuery>,
 ) -> Result<Json<SourceResponse>, ApiError> {
-    let path = resolve_path(&state, &query.path)?;
+    let source_root = resolve_scan_root(&state, query.root.as_deref())?;
+    let path = resolve_path(&state, &source_root, &query.path)?;
     if !path.is_file() {
         return Err(ApiError::bad_request("path is not a file"));
     }
@@ -750,7 +788,7 @@ async fn source(
     let visible_start = requested_start.saturating_sub(context).max(1);
     let visible_end = requested_end.saturating_add(context);
     let display_path = path
-        .strip_prefix(&state.root)
+        .strip_prefix(&source_root)
         .unwrap_or(&path)
         .to_string_lossy()
         .replace('\\', "/");
@@ -814,11 +852,11 @@ fn resolve_scan_root(state: &AppState, requested: Option<&Path>) -> Result<PathB
     resolve_canonical_path(state, candidate)
 }
 
-fn resolve_path(state: &AppState, requested: &Path) -> Result<PathBuf, ApiError> {
+fn resolve_path(state: &AppState, base_root: &Path, requested: &Path) -> Result<PathBuf, ApiError> {
     let candidate = if requested.is_absolute() {
         requested.to_path_buf()
     } else {
-        state.root.join(requested)
+        base_root.join(requested)
     };
     resolve_canonical_path(state, candidate)
 }
@@ -828,13 +866,51 @@ fn resolve_canonical_path(state: &AppState, candidate: PathBuf) -> Result<PathBu
         .canonicalize()
         .map_err(|error| ApiError::bad_request(format!("invalid path: {error}")))?;
 
-    if !state.allow_any_path && !canonical.starts_with(&state.root) {
+    if !state.allow_any_path
+        && !state
+            .projects
+            .iter()
+            .any(|project| canonical.starts_with(&project.path))
+    {
         return Err(ApiError::bad_request(
-            "path is outside the configured root; restart with --allow-any-path to permit it",
+            "path is outside the configured project roots; restart with --project or --allow-any-path to permit it",
         ));
     }
 
     Ok(canonical)
+}
+
+fn project_roots(root: &Path, additional: Vec<PathBuf>) -> Result<Vec<ProjectRoot>> {
+    let mut projects = vec![ProjectRoot {
+        name: project_name(root, true),
+        path: root.to_path_buf(),
+        default: true,
+    }];
+
+    for project in additional {
+        let canonical = project
+            .canonicalize()
+            .with_context(|| format!("failed to canonicalize project {}", project.display()))?;
+        if projects.iter().any(|existing| existing.path == canonical) {
+            continue;
+        }
+        projects.push(ProjectRoot {
+            name: project_name(&canonical, false),
+            path: canonical,
+            default: false,
+        });
+    }
+
+    Ok(projects)
+}
+
+fn project_name(path: &Path, default: bool) -> String {
+    let fallback = if default { "Root" } else { "Project" };
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or(fallback)
+        .to_string()
 }
 
 fn normalize_query_string(value: Option<String>) -> Option<String> {
@@ -974,5 +1050,77 @@ impl IntoResponse for ApiError {
             }),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn resolve_scan_root_allows_configured_projects() {
+        let temp = temp_server_root();
+        let root = temp.join("root");
+        let sibling = temp.join("sibling");
+        let outside = temp.join("outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&sibling).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+
+        let root = root.canonicalize().unwrap();
+        let sibling = sibling.canonicalize().unwrap();
+        let outside = outside.canonicalize().unwrap();
+        let state = test_state(root.clone(), vec![sibling.clone()], false);
+
+        assert_eq!(resolve_scan_root(&state, None).unwrap(), root);
+        assert_eq!(
+            resolve_scan_root(&state, Some(sibling.as_path())).unwrap(),
+            sibling
+        );
+        assert!(resolve_scan_root(&state, Some(outside.as_path())).is_err());
+
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn resolve_source_path_uses_selected_project_root() {
+        let temp = temp_server_root();
+        let root = temp.join("root");
+        let sibling = temp.join("sibling");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(sibling.join("src")).unwrap();
+        fs::write(sibling.join("src").join("main.py"), "print('hi')\n").unwrap();
+
+        let root = root.canonicalize().unwrap();
+        let sibling = sibling.canonicalize().unwrap();
+        let state = test_state(root, vec![sibling.clone()], false);
+
+        assert_eq!(
+            resolve_path(&state, &sibling, Path::new("src/main.py")).unwrap(),
+            sibling.join("src").join("main.py").canonicalize().unwrap()
+        );
+
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    fn test_state(root: PathBuf, additional: Vec<PathBuf>, allow_any_path: bool) -> AppState {
+        AppState {
+            projects: Arc::new(project_roots(&root, additional).unwrap()),
+            root,
+            options: IndexOptions::default(),
+            allow_any_path,
+            cache: None,
+            jobs: Arc::new(RwLock::new(BTreeMap::new())),
+            next_job_id: Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    fn temp_server_root() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("codegraph-server-test-{nanos}"))
     }
 }

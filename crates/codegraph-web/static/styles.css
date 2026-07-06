@@ -36,7 +36,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -103,9 +104,13 @@ input {
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: end;
+}
+
+.project-field {
+  grid-column: 1 / -1;
 }
 
 .field {
@@ -125,7 +130,8 @@ input {
   text-transform: uppercase;
 }
 
-input {
+input,
+select {
   width: 100%;
   min-width: 0;
   height: 38px;
@@ -137,7 +143,23 @@ input {
   outline: none;
 }
 
-input:focus {
+select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) 16px,
+    calc(100% - 11px) 16px;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 28px;
+}
+
+input:focus,
+select:focus {
   border-color: var(--accent);
 }
 

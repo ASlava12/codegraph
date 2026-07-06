@@ -121,7 +121,8 @@ Responsibilities:
 - provide node context endpoints for paged detail exploration
 - provide source preview endpoints for graph spans
 - provide export endpoints for Graphviz DOT and NDJSON
-- constrain scan paths to a configured root by default
+- constrain scan paths to configured project roots by default
+- expose configured local project roots to the web UI for project switching
 - serve the static web application
 - keep UI graph pages, query focus, path navigation/highlighting, trace, entrypoint trace, config trace, error trace, source, insight, and agent clients on the same JSON graph model
 

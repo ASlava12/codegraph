@@ -27,6 +27,7 @@ const state = {
   summary: null,
   entrypoints: [],
   insightReport: null,
+  projects: [],
   queryFocus: null,
   scanJobId: null,
   scanEvents: null,
@@ -59,6 +60,7 @@ const colors = {
 const canvas = document.querySelector("#graphCanvas");
 const ctx = canvas.getContext("2d");
 const scanButton = document.querySelector("#scanButton");
+const projectSelect = document.querySelector("#projectSelect");
 const pathInput = document.querySelector("#pathInput");
 const searchInput = document.querySelector("#searchInput");
 const statusEl = document.querySelector("#status");
@@ -125,6 +127,13 @@ const toggleLayoutButton = document.querySelector("#toggleLayoutButton");
 const viewportInfo = document.querySelector("#viewportInfo");
 
 scanButton.addEventListener("click", () => scan());
+projectSelect.addEventListener("change", () => {
+  const selected = projectSelect.value;
+  if (selected) {
+    pathInput.value = selected;
+    scan();
+  }
+});
 pathInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") scan();
 });
@@ -197,7 +206,50 @@ canvas.addEventListener("wheel", onWheel, { passive: false });
 window.addEventListener("resize", resizeCanvas);
 
 resizeCanvas();
-scan();
+init();
+
+async function init() {
+  await loadProjects();
+  scan();
+}
+
+async function loadProjects() {
+  try {
+    const response = await fetch("/api/projects");
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.error || "projects failed");
+    }
+    state.projects = body;
+    renderProjects();
+  } catch (error) {
+    state.projects = [];
+    projectSelect.innerHTML = '<option value=".">Current root</option>';
+  }
+}
+
+function renderProjects() {
+  if (!state.projects.length) {
+    projectSelect.innerHTML = '<option value=".">Current root</option>';
+    return;
+  }
+
+  projectSelect.innerHTML = state.projects
+    .map(
+      (project) => `
+        <option value="${escapeHtml(project.path)}" ${project.default ? "selected" : ""}>
+          ${escapeHtml(project.name)}
+        </option>
+      `,
+    )
+    .join("");
+
+  const selected = state.projects.find((project) => project.default) || state.projects[0];
+  if (selected) {
+    projectSelect.value = selected.path;
+    pathInput.value = selected.path;
+  }
+}
 
 async function scan() {
   setStatus("queue", "busy");
@@ -2344,6 +2396,7 @@ async function loadSourcePreview(node, requestId) {
   if (!preview || !node.span) return;
 
   const params = new URLSearchParams({
+    root: pathInput.value.trim() || ".",
     path: node.span.path,
     start_line: String(node.span.start_line),
     end_line: String(node.span.end_line),

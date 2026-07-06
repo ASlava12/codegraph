@@ -45,6 +45,7 @@ Implemented now:
 - Server-side insight filters for severity, kind, search, and capped agent/UI reads.
 - Insight focus API and web interaction for turning findings into focused graph views.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
+- Web project selector backed by an explicit server-side allowlist for opening local repositories.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Persistent server-side graph cache with project fingerprint invalidation.
 - Persistent CLI graph cache using the same project fingerprinting and cache records as the server.
@@ -181,9 +182,18 @@ The server stores persistent graph cache records outside the project by default
 on macOS, or a temp fallback). Use `--cache-dir <path>` to choose a directory or
 `--no-cache` to force every request to rescan.
 
+Expose multiple local repositories to the web project selector by repeating
+`--project`. Requests remain constrained to the configured roots unless
+`--allow-any-path` is set explicitly:
+
+```bash
+cargo run -p codegraph-server -- --root . --project ../service-a --project ../tooling
+```
+
 Scan API:
 
 ```bash
+curl 'http://127.0.0.1:3765/api/projects'
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 ```
 
