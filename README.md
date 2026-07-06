@@ -25,6 +25,7 @@ Implemented now:
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
+- Web query panel for running focused graph queries and jumping to matching nodes.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Dependency consistency insights for external imports that are not backed by declared manifest dependencies.

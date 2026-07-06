@@ -15,6 +15,7 @@ const state = {
   animationFrame: null,
   selectionRequest: 0,
   traceRequest: 0,
+  queryRequest: 0,
   scanJobId: null,
 };
 
@@ -45,6 +46,9 @@ const envCount = document.querySelector("#envCount");
 const configCount = document.querySelector("#configCount");
 const errorCount = document.querySelector("#errorCount");
 const entryCount = document.querySelector("#entryCount");
+const queryInput = document.querySelector("#queryInput");
+const queryButton = document.querySelector("#queryButton");
+const queryResult = document.querySelector("#queryResult");
 const insightCount = document.querySelector("#insightCount");
 const insightList = document.querySelector("#insightList");
 const kindFilters = document.querySelector("#kindFilters");
@@ -59,6 +63,10 @@ pathInput.addEventListener("keydown", (event) => {
 searchInput.addEventListener("input", () => {
   state.search = searchInput.value.trim().toLowerCase();
   applyFilters();
+});
+queryButton.addEventListener("click", () => runGraphQuery());
+queryInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") runGraphQuery();
 });
 
 canvas.addEventListener("pointerdown", onPointerDown);
@@ -134,6 +142,104 @@ async function pollScanJob(jobId) {
     setStatus("ready");
     return;
   }
+}
+
+async function runGraphQuery() {
+  const expression = queryInput.value.trim();
+  if (!expression) {
+    queryResult.innerHTML = '<p class="empty">Enter a query expression.</p>';
+    return;
+  }
+
+  state.queryRequest += 1;
+  const requestId = state.queryRequest;
+  queryButton.disabled = true;
+  queryResult.innerHTML = '<p class="empty">Running query...</p>';
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    q: expression,
+  });
+
+  try {
+    const response = await fetch(`/api/query?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.queryRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "query failed");
+    }
+    queryResult.innerHTML = renderQueryResult(body);
+    attachQueryNavigation(queryResult);
+  } catch (error) {
+    if (requestId !== state.queryRequest) return;
+    queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.queryRequest) {
+      queryButton.disabled = false;
+    }
+  }
+}
+
+function renderQueryResult(result) {
+  const nodeRows = result.nodes
+    .slice(0, 40)
+    .map((node) => renderQueryNode(node))
+    .join("");
+  const nodeMap = new Map(result.nodes.map((node) => [node.id, node]));
+  const edgeRows = result.edges
+    .slice(0, 40)
+    .map((edge) => renderQueryEdge(edge, nodeMap))
+    .join("");
+  const truncated = result.truncated
+    ? '<p class="empty">Result truncated by query limit.</p>'
+    : "";
+
+  return `
+    <div class="query-summary">
+      <span>${result.total_nodes} nodes</span>
+      <span>${result.total_edges} edges</span>
+    </div>
+    ${nodeRows ? `<ul class="query-list">${nodeRows}</ul>` : ""}
+    ${edgeRows ? `<ul class="query-list query-edge-list">${edgeRows}</ul>` : ""}
+    ${!nodeRows && !edgeRows ? '<p class="empty">No query results.</p>' : ""}
+    ${truncated}
+  `;
+}
+
+function renderQueryNode(node) {
+  return `
+    <li>
+      <button class="query-item" type="button" data-node-id="${node.id}">
+        <span>${escapeHtml(formatKind(node.kind))}</span>
+        <strong>${escapeHtml(node.label)}</strong>
+      </button>
+    </li>
+  `;
+}
+
+function renderQueryEdge(edge, nodeMap) {
+  const source = nodeMap.get(edge.source) || state.graph.nodes.find((node) => node.id === edge.source);
+  const target = nodeMap.get(edge.target) || state.graph.nodes.find((node) => node.id === edge.target);
+  return `
+    <li>
+      <button class="query-item query-edge" type="button" data-node-id="${edge.target}">
+        <span>${escapeHtml(formatKind(edge.kind))}</span>
+        <strong>${escapeHtml(source?.label || String(edge.source))}</strong>
+        <em>${escapeHtml(target?.label || String(edge.target))}</em>
+      </button>
+    </li>
+  `;
+}
+
+function attachQueryNavigation(container) {
+  container.querySelectorAll("[data-node-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nodeId = Number(button.dataset.nodeId);
+      if (!nodeId) return;
+      state.selectedId = nodeId;
+      renderSelection();
+    });
+  });
 }
 
 function sleep(ms) {

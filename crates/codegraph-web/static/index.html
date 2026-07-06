@@ -35,6 +35,15 @@
           <div><strong id="entryCount">0</strong><span>Entrypoints</span></div>
         </section>
 
+        <section class="query" aria-label="Graph query">
+          <label class="field">
+            <span>Query</span>
+            <input id="queryInput" type="text" value="nodes kind:function label:main" autocomplete="off" />
+          </label>
+          <button id="queryButton" type="button">Run</button>
+          <div id="queryResult" class="query-result"></div>
+        </section>
+
         <section class="insights" aria-label="Graph insights">
           <header>
             <h2>Insights</h2>

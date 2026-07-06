@@ -106,6 +106,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Serve graph data over HTTP.
 - [x] Add `codegraph-web` for browser usage.
 - [x] Implement first graph canvas, filters, search, stats, and detail panel.
+- [x] Add web query panel for focused graph slices.
 - [x] Add async scan job API for long-running scans.
 - [ ] Add WebSocket/SSE for live scan progress.
 - Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
