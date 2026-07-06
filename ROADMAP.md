@@ -86,7 +86,7 @@ Goal: answer practical code investigation questions.
 - [x] Add first graph query language for nodes, edges, calls, dependencies, and traces.
 - [x] Add directed path queries between graph labels or node ids.
 - [x] Add confidence-aware edge queries and UI provenance labels.
-- [x] Add web path navigation for dependency paths between graph nodes.
+- [x] Add web path navigation with visual dependency-path highlighting.
 - Add richer query language.
 
 Example commands:
@@ -122,7 +122,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add web controls for server-side language filtering.
 - [x] Add web controls for server-side edge confidence filtering.
 - [x] Add web project overview for languages, edge confidence, and entrypoints.
-- [x] Add web path navigation and focused graph views for dependency paths.
+- [x] Add web path navigation, focused graph views, and visual highlighting for dependency paths.
 - [x] Add node context API for paged graph detail panels.
 - [x] Add insight focus API and web interaction for opening findings as focused graph views.
 - Add optional `codegraph-ui` with Tauri after the web UI stabilizes.

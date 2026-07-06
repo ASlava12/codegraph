@@ -613,11 +613,11 @@ async function runPathQuery() {
     if (!response.ok) {
       throw new Error(body.error || "path query failed");
     }
-    pathResult.innerHTML = renderQueryResult(body);
+    pathResult.innerHTML = renderQueryResult(body, { label: "Path" });
     attachQueryNavigation(pathResult);
     attachQueryFocusActions(pathResult, body);
     if (body.nodes.length > 0 || body.edges.length > 0) {
-      focusQueryResult(body, pathResult);
+      focusQueryResult(body, pathResult, { mode: "path" });
     }
   } catch (error) {
     if (requestId !== state.pathRequest) return;
@@ -629,7 +629,7 @@ async function runPathQuery() {
   }
 }
 
-function renderQueryResult(result) {
+function renderQueryResult(result, options = {}) {
   const nodeRows = result.nodes
     .slice(0, 40)
     .map((node) => renderQueryNode(node))
@@ -643,11 +643,17 @@ function renderQueryResult(result) {
     ? '<p class="empty">Result truncated by query limit.</p>'
     : "";
   const hasResults = result.nodes.length > 0 || result.edges.length > 0;
+  const resultLabel = options.label ? `<span>${escapeHtml(options.label)}</span>` : "";
+  const expression = result.query
+    ? `<span class="query-expression">${escapeHtml(result.query)}</span>`
+    : "";
 
   return `
     <div class="query-summary">
+      ${resultLabel}
       <span>${result.total_nodes} nodes</span>
       <span>${result.total_edges} edges</span>
+      ${expression}
     </div>
     <div class="query-actions">
       <button data-focus-result type="button" ${hasResults ? "" : "disabled"}>Focus result</button>
@@ -713,7 +719,7 @@ function attachQueryFocusActions(container, result) {
   }
 }
 
-function focusQueryResult(result, container = queryResult) {
+function focusQueryResult(result, container = queryResult, options = {}) {
   const nodeIds = new Set(result.nodes.map((node) => node.id));
   const edgeKeys = new Set();
   result.edges.forEach((edge) => {
@@ -724,7 +730,11 @@ function focusQueryResult(result, container = queryResult) {
 
   if (nodeIds.size === 0 && edgeKeys.size === 0) return;
 
-  state.queryFocus = { nodeIds, edgeKeys };
+  state.queryFocus = {
+    nodeIds,
+    edgeKeys,
+    mode: options.mode || (edgeKeys.size > 0 ? "query" : "nodes"),
+  };
   applyFilters();
   const clearButton = container.querySelector("[data-clear-focus]");
   if (clearButton) clearButton.disabled = false;
@@ -1364,43 +1374,114 @@ function draw() {
   ctx.scale(state.zoom, state.zoom);
 
   const visibleIds = new Set(state.visibleNodes.map((node) => node.id));
-  ctx.lineWidth = 1 / state.zoom;
+  const focusedEdges = [];
   state.visibleEdges.forEach((edge) => {
     if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) return;
+    if (edgeIsFocused(edge)) {
+      focusedEdges.push(edge);
+      return;
+    }
     const source = state.positions.get(edge.source);
     const target = state.positions.get(edge.target);
-    ctx.beginPath();
-    ctx.moveTo(source.x, source.y);
-    ctx.lineTo(target.x, target.y);
-    ctx.strokeStyle = edgeColor(edge);
-    ctx.stroke();
+    drawEdge(edge, source, target, false);
+  });
+
+  focusedEdges.forEach((edge) => {
+    const source = state.positions.get(edge.source);
+    const target = state.positions.get(edge.target);
+    drawEdge(edge, source, target, true);
   });
 
   state.visibleNodes.forEach((node) => {
     const position = state.positions.get(node.id);
     const selected = node.id === state.selectedId;
     const hovered = node.id === state.hoveredId;
+    const focused = nodeIsFocused(node);
     const radius = nodeRadius(node);
 
     ctx.beginPath();
-    ctx.arc(position.x, position.y, radius + (selected ? 5 : hovered ? 3 : 0), 0, Math.PI * 2);
-    ctx.fillStyle = selected ? "rgba(92, 200, 167, 0.24)" : hovered ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.22)";
+    ctx.arc(
+      position.x,
+      position.y,
+      radius + (selected ? 6 : focused ? 5 : hovered ? 3 : 0),
+      0,
+      Math.PI * 2,
+    );
+    ctx.fillStyle = selected
+      ? "rgba(92, 200, 167, 0.26)"
+      : focused
+        ? "rgba(237, 241, 242, 0.16)"
+        : hovered
+          ? "rgba(255,255,255,0.12)"
+          : "rgba(0,0,0,0.22)";
     ctx.fill();
 
     ctx.beginPath();
     ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
     ctx.fillStyle = colorFor(node.kind);
     ctx.fill();
-    ctx.lineWidth = selected ? 2.5 / state.zoom : 1 / state.zoom;
-    ctx.strokeStyle = selected ? "#ffffff" : "rgba(255,255,255,0.55)";
+    ctx.lineWidth = selected ? 2.6 / state.zoom : focused ? 2.2 / state.zoom : 1 / state.zoom;
+    ctx.strokeStyle = selected ? "#ffffff" : focused ? "rgba(237, 241, 242, 0.92)" : "rgba(255,255,255,0.55)";
     ctx.stroke();
 
-    if (state.zoom > 0.45 || selected || hovered) {
+    if (state.zoom > 0.45 || selected || hovered || focused) {
       drawLabel(node, position, radius);
     }
   });
 
   ctx.restore();
+}
+
+function drawEdge(edge, source, target, focused) {
+  if (!source || !target) return;
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+  const ux = dx / distance;
+  const uy = dy / distance;
+  const sourceRadius = nodeRadiusById(edge.source) + 2 / state.zoom;
+  const targetRadius = nodeRadiusById(edge.target) + (focused ? 8 : 3) / state.zoom;
+  const start = {
+    x: source.x + ux * Math.min(sourceRadius, distance * 0.35),
+    y: source.y + uy * Math.min(sourceRadius, distance * 0.35),
+  };
+  const end = {
+    x: target.x - ux * Math.min(targetRadius, distance * 0.35),
+    y: target.y - uy * Math.min(targetRadius, distance * 0.35),
+  };
+
+  if (focused) {
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.lineWidth = 6 / state.zoom;
+    ctx.strokeStyle = "rgba(13, 15, 16, 0.72)";
+    ctx.stroke();
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.lineWidth = (focused ? 3.2 : 1) / state.zoom;
+  ctx.strokeStyle = focused ? focusEdgeColor() : edgeColor(edge);
+  ctx.stroke();
+
+  if (focused) {
+    drawArrowHead(start, end, focusEdgeColor());
+  }
+}
+
+function drawArrowHead(start, end, color) {
+  const angle = Math.atan2(end.y - start.y, end.x - start.x);
+  const length = 11 / state.zoom;
+  const spread = Math.PI / 7;
+  ctx.beginPath();
+  ctx.moveTo(end.x, end.y);
+  ctx.lineTo(end.x - Math.cos(angle - spread) * length, end.y - Math.sin(angle - spread) * length);
+  ctx.lineTo(end.x - Math.cos(angle + spread) * length, end.y - Math.sin(angle + spread) * length);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
 }
 
 function drawLabel(node, position, radius) {
@@ -1825,8 +1906,25 @@ function nodeRadius(node) {
   }
 }
 
+function nodeRadiusById(nodeId) {
+  const node = state.graph.nodes.find((candidate) => candidate.id === nodeId);
+  return node ? nodeRadius(node) : 7;
+}
+
 function colorFor(kind) {
   return colors[kind] || colors.unknown;
+}
+
+function nodeIsFocused(node) {
+  return Boolean(state.queryFocus?.nodeIds?.has(node.id));
+}
+
+function edgeIsFocused(edge) {
+  return Boolean(state.queryFocus?.edgeKeys?.has(edgeKey(edge)));
+}
+
+function focusEdgeColor() {
+  return state.queryFocus?.mode === "path" ? "rgba(92, 200, 167, 0.98)" : "rgba(237, 241, 242, 0.9)";
 }
 
 function edgeColor(edge) {

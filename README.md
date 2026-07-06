@@ -33,7 +33,7 @@ Implemented now:
 - Server-side graph paging and filtering endpoint for large repository exploration.
 - Web graph page controls backed by server-side paging, search, kind, item, language, edge, and confidence filters.
 - Web project overview for language mix, edge confidence mix, and entrypoint launch points.
-- Web path navigation for finding and focusing dependency paths between graph nodes.
+- Web path navigation for finding, focusing, and visually highlighting dependency paths between graph nodes.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
 - Server-backed web insights for project-wide findings while browsing paged graph slices.
 - Insight focus API and web interaction for turning findings into focused graph views.
@@ -47,7 +47,7 @@ Implemented now:
 
 Planned next:
 
-- Better graph layout and visual path affordances.
+- Better graph layout and richer visual graph affordances.
 - Richer graph queries for humans and agents.
 - Production hardening for large repositories.
 

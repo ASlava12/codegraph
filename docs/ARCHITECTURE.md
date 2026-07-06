@@ -110,7 +110,7 @@ Responsibilities:
 - provide export endpoints for Graphviz DOT and NDJSON
 - constrain scan paths to a configured root by default
 - serve the static web application
-- keep UI graph pages, query focus, path navigation, trace, source, insight, and agent clients on the same JSON graph model
+- keep UI graph pages, query focus, path navigation/highlighting, trace, source, insight, and agent clients on the same JSON graph model
 
 Future crate: optionally `codegraph-ui`.
 
