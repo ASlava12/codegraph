@@ -768,6 +768,8 @@ function edgeColor(edge) {
       return "rgba(92, 200, 167, 0.82)";
     case "imports":
       return "rgba(184, 142, 230, 0.5)";
+    case "depends_on":
+      return "rgba(87, 178, 142, 0.68)";
     case "reads_environment":
       return "rgba(216, 166, 87, 0.72)";
     case "reads_config":

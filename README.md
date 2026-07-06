@@ -16,12 +16,14 @@ Implemented now:
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, PHP, and Bash.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
+- Manifest dependency extraction from Cargo, npm, Go, Python, and Composer projects.
 - Heuristic config reads, environment reads, and potential error/exception constructs.
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
 - Async scan job API for long-running repository scans.
 - Source preview API and UI panel for graph nodes with source spans.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
+- DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 
 Planned next:
@@ -145,6 +147,14 @@ At the current stage, supported source languages are detected by extension:
 - C++: `cc`, `cpp`, `cxx`, `hpp`, `hh`, `hxx`
 - PHP: `php`, `phtml`
 - Bash/shell: `sh`, `bash`, `zsh`, `ksh`, `Makefile`
+
+Supported package manifests:
+
+- Rust/Cargo: `Cargo.toml`
+- JavaScript/TypeScript/npm-compatible: `package.json`
+- Go modules: `go.mod`
+- Python: `requirements.txt`, `pyproject.toml`
+- PHP/Composer: `composer.json`
 
 ## Workspace
 

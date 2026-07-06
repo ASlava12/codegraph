@@ -23,7 +23,7 @@ This crate should stay small and dependency-light.
 
 `codegraph-indexer` walks project roots, applies ignore rules, invokes parsers, and assembles graph fragments.
 
-It currently builds file, symbol, import, call, config, environment, and error-flow graph facts from syntax-level parser output. Future implementations should merge stronger semantic facts from LSP and compiler layers.
+It currently builds file, symbol, import, call, config, environment, error-flow, and package dependency graph facts from syntax-level parser output and project manifests. Future implementations should merge stronger semantic facts from LSP and compiler layers.
 
 ### Analysis
 
@@ -90,6 +90,7 @@ Responsibilities:
 - provide summary, entrypoint, and trace endpoints
 - provide investigation insight endpoints
 - provide source preview endpoints for graph spans
+- provide export endpoints for Graphviz DOT and NDJSON
 - constrain scan paths to a configured root by default
 - serve the static web application
 - keep UI and agent clients on the same JSON graph model
@@ -110,4 +111,4 @@ Graph facts should declare how they were discovered:
 
 This is central to the project. A useful imperfect graph is acceptable when uncertainty is explicit.
 
-Current call, config, environment, and error-flow facts are `heuristic`: they are resolved by syntax patterns and simple-name matching. Future LSP, framework, and compiler integrations should upgrade resolvable edges to `semantic` or `exact`.
+Current call, config, environment, and error-flow facts are `heuristic`: they are resolved by syntax patterns and simple-name matching. Package manifest dependencies are `exact` because they come from declared project metadata. Future LSP, framework, and compiler integrations should upgrade resolvable code edges to `semantic` or `exact`.

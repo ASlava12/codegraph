@@ -37,6 +37,13 @@ struct PendingCall {
     language: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ManifestDependency {
+    name: String,
+    kind: String,
+    ecosystem: String,
+}
+
 impl Default for IndexOptions {
     fn default() -> Self {
         Self {
@@ -128,6 +135,10 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
         EdgeKind::Contains,
         Confidence::Exact,
     );
+
+    if let Ok(source) = fs::read_to_string(path) {
+        index_manifest_dependencies(context, file_id, path, &source);
+    }
 
     if let Some((language, parse_result)) = parse_result {
         match parse_result {
@@ -264,6 +275,297 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
                 error.to_string(),
             ),
         }
+    }
+}
+
+fn index_manifest_dependencies(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    source: &str,
+) {
+    let dependencies = manifest_dependencies(path, source);
+    for dependency in dependencies {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "dependency".to_string());
+        metadata.insert("dependency_kind".to_string(), dependency.kind);
+        metadata.insert("ecosystem".to_string(), dependency.ecosystem);
+        metadata.insert("source".to_string(), "manifest".to_string());
+        let dependency_id = context.graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            dependency.name,
+            None,
+            metadata,
+        );
+        add_edge_once(
+            &mut context.graph,
+            file_id,
+            dependency_id,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+        );
+    }
+}
+
+fn manifest_dependencies(path: &Path, source: &str) -> Vec<ManifestDependency> {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some("Cargo.toml") => cargo_dependencies(source),
+        Some("package.json") => package_json_dependencies(source),
+        Some("go.mod") => go_mod_dependencies(source),
+        Some("requirements.txt") => requirements_dependencies(source),
+        Some("pyproject.toml") => pyproject_dependencies(source),
+        Some("composer.json") => composer_dependencies(source),
+        _ => Vec::new(),
+    }
+}
+
+fn cargo_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = toml::from_str::<toml::Value>(source) else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+    collect_toml_table_keys(
+        &value,
+        "dependencies",
+        "runtime",
+        "cargo",
+        &mut dependencies,
+    );
+    collect_toml_table_keys(
+        &value,
+        "dev-dependencies",
+        "dev",
+        "cargo",
+        &mut dependencies,
+    );
+    collect_toml_table_keys(
+        &value,
+        "build-dependencies",
+        "build",
+        "cargo",
+        &mut dependencies,
+    );
+
+    if let Some(targets) = value.get("target").and_then(|value| value.as_table()) {
+        for target in targets.values() {
+            collect_toml_table_keys(
+                target,
+                "dependencies",
+                "runtime",
+                "cargo",
+                &mut dependencies,
+            );
+            collect_toml_table_keys(
+                target,
+                "dev-dependencies",
+                "dev",
+                "cargo",
+                &mut dependencies,
+            );
+            collect_toml_table_keys(
+                target,
+                "build-dependencies",
+                "build",
+                "cargo",
+                &mut dependencies,
+            );
+        }
+    }
+
+    dependencies
+}
+
+fn pyproject_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = toml::from_str::<toml::Value>(source) else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+
+    if let Some(project) = value.get("project") {
+        if let Some(values) = project
+            .get("dependencies")
+            .and_then(|value| value.as_array())
+        {
+            for value in values {
+                if let Some(name) = value.as_str().and_then(package_name_from_requirement) {
+                    dependencies.push(manifest_dependency(name, "runtime", "python"));
+                }
+            }
+        }
+        if let Some(optional) = project
+            .get("optional-dependencies")
+            .and_then(|value| value.as_table())
+        {
+            for values in optional.values() {
+                if let Some(values) = values.as_array() {
+                    for value in values {
+                        if let Some(name) = value.as_str().and_then(package_name_from_requirement) {
+                            dependencies.push(manifest_dependency(name, "optional", "python"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(poetry) = value.get("tool").and_then(|value| value.get("poetry")) {
+        collect_toml_table_keys(
+            poetry,
+            "dependencies",
+            "runtime",
+            "python",
+            &mut dependencies,
+        );
+        collect_toml_table_keys(
+            poetry,
+            "dev-dependencies",
+            "dev",
+            "python",
+            &mut dependencies,
+        );
+    }
+
+    dependencies
+}
+
+fn package_json_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+    collect_json_object_keys(&value, "dependencies", "runtime", "npm", &mut dependencies);
+    collect_json_object_keys(&value, "devDependencies", "dev", "npm", &mut dependencies);
+    collect_json_object_keys(&value, "peerDependencies", "peer", "npm", &mut dependencies);
+    collect_json_object_keys(
+        &value,
+        "optionalDependencies",
+        "optional",
+        "npm",
+        &mut dependencies,
+    );
+    dependencies
+}
+
+fn composer_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+    collect_json_object_keys(&value, "require", "runtime", "composer", &mut dependencies);
+    collect_json_object_keys(&value, "require-dev", "dev", "composer", &mut dependencies);
+    dependencies.retain(|dependency| dependency.name != "php");
+    dependencies
+}
+
+fn go_mod_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut in_require_block = false;
+    for raw_line in source.lines() {
+        let line = raw_line.split("//").next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line == "require (" {
+            in_require_block = true;
+            continue;
+        }
+        if in_require_block && line == ")" {
+            in_require_block = false;
+            continue;
+        }
+        let requirement = if in_require_block {
+            line
+        } else if let Some(rest) = line.strip_prefix("require ") {
+            rest.trim()
+        } else {
+            continue;
+        };
+        if let Some(name) = requirement.split_whitespace().next() {
+            dependencies.push(manifest_dependency(name.to_string(), "runtime", "go"));
+        }
+    }
+    dependencies
+}
+
+fn requirements_dependencies(source: &str) -> Vec<ManifestDependency> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let line = line.split('#').next().unwrap_or("").trim();
+            if line.is_empty() || line.starts_with('-') {
+                return None;
+            }
+            package_name_from_requirement(line)
+                .map(|name| manifest_dependency(name, "runtime", "python"))
+        })
+        .collect()
+}
+
+fn collect_toml_table_keys(
+    value: &toml::Value,
+    table_name: &str,
+    dependency_kind: &str,
+    ecosystem: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(table) = value.get(table_name).and_then(|value| value.as_table()) else {
+        return;
+    };
+    for name in table.keys() {
+        dependencies.push(manifest_dependency(
+            name.clone(),
+            dependency_kind,
+            ecosystem,
+        ));
+    }
+}
+
+fn collect_json_object_keys(
+    value: &serde_json::Value,
+    object_name: &str,
+    dependency_kind: &str,
+    ecosystem: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(object) = value.get(object_name).and_then(|value| value.as_object()) else {
+        return;
+    };
+    for name in object.keys() {
+        dependencies.push(manifest_dependency(
+            name.clone(),
+            dependency_kind,
+            ecosystem,
+        ));
+    }
+}
+
+fn package_name_from_requirement(requirement: &str) -> Option<String> {
+    let trimmed = requirement.trim();
+    let end = trimmed
+        .find(|character: char| {
+            matches!(
+                character,
+                '<' | '>' | '=' | '!' | '~' | '[' | ';' | ',' | ' '
+            )
+        })
+        .unwrap_or(trimmed.len());
+    let name = trimmed[..end].trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+fn manifest_dependency(
+    name: impl Into<String>,
+    dependency_kind: impl Into<String>,
+    ecosystem: impl Into<String>,
+) -> ManifestDependency {
+    ManifestDependency {
+        name: name.into(),
+        kind: dependency_kind.into(),
+        ecosystem: ecosystem.into(),
     }
 }
 
@@ -607,6 +909,98 @@ mod tests {
                 .iter()
                 .any(|edge| edge.kind == EdgeKind::MayError)
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_adds_manifest_dependency_edges() {
+        let root = temp_project_root();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "demo"
+version = "0.1.0"
+
+[dependencies]
+serde = "1"
+
+[dev-dependencies]
+anyhow = "1"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+  "dependencies": { "react": "^19.0.0" },
+  "devDependencies": { "vite": "^7.0.0" }
+}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("go.mod"),
+            "module example.com/demo\n\nrequire github.com/gin-gonic/gin v1.10.0\n",
+        )
+        .unwrap();
+        fs::write(root.join("requirements.txt"), "fastapi==0.115.0\n").unwrap();
+        fs::write(
+            root.join("pyproject.toml"),
+            r#"[project]
+dependencies = ["pydantic>=2"]
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("composer.json"),
+            r#"{
+  "require": {
+    "php": ">=8.2",
+    "monolog/monolog": "^3.0"
+  }
+}"#,
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let dependency_labels: BTreeSet<_> = graph
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.metadata
+                    .get("item_kind")
+                    .is_some_and(|kind| kind == "dependency")
+            })
+            .map(|node| node.label.as_str())
+            .collect();
+
+        for expected in [
+            "serde",
+            "anyhow",
+            "react",
+            "vite",
+            "github.com/gin-gonic/gin",
+            "fastapi",
+            "pydantic",
+            "monolog/monolog",
+        ] {
+            assert!(dependency_labels.contains(expected), "missing {expected}");
+        }
+        assert!(!dependency_labels.contains("php"));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn && edge.confidence == Confidence::Exact
+        }));
+        assert!(graph.nodes.iter().any(|node| {
+            node.metadata
+                .get("ecosystem")
+                .is_some_and(|value| value == "cargo")
+        }));
+        assert!(graph.nodes.iter().any(|node| {
+            node.metadata
+                .get("ecosystem")
+                .is_some_and(|value| value == "npm")
+        }));
 
         fs::remove_dir_all(root).unwrap();
     }
