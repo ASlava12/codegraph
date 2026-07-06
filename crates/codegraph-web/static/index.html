@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CodeGraph</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <header class="brand">
+          <div>
+            <h1>CodeGraph</h1>
+            <p id="rootLabel">No project loaded</p>
+          </div>
+          <span id="status" class="status">idle</span>
+        </header>
+
+        <section class="toolbar" aria-label="Scan controls">
+          <label class="field">
+            <span>Path</span>
+            <input id="pathInput" type="text" value="." autocomplete="off" />
+          </label>
+          <button id="scanButton" type="button">Scan</button>
+        </section>
+
+        <section class="stats" aria-label="Graph summary">
+          <div><strong id="nodeCount">0</strong><span>Nodes</span></div>
+          <div><strong id="edgeCount">0</strong><span>Edges</span></div>
+          <div><strong id="entryCount">0</strong><span>Entrypoints</span></div>
+        </section>
+
+        <section class="filters" aria-label="Graph filters">
+          <label class="field">
+            <span>Search</span>
+            <input id="searchInput" type="search" autocomplete="off" />
+          </label>
+          <div id="kindFilters" class="kind-filters"></div>
+        </section>
+
+        <section class="selection" aria-label="Selected node">
+          <h2 id="selectionTitle">Selection</h2>
+          <div id="selectionBody" class="selection-body"></div>
+        </section>
+      </aside>
+
+      <section class="graph-stage" aria-label="Code graph">
+        <canvas id="graphCanvas"></canvas>
+        <div class="legend" id="legend"></div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

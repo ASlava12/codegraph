@@ -16,15 +16,16 @@ Implemented now:
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, PHP, and Bash.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
 - CLI command that emits graph JSON.
+- HTTP API and embedded web UI for interactive graph exploration.
 
 Planned next:
 
 - Approximate call edges.
 - Config, environment, and error-flow extraction.
 - Graph query commands.
-- HTTP API for web usage.
+- Better graph layout, source preview, and path-aware navigation.
 - Graph queries for humans and agents.
-- Modern web interface built on top of the same graph API.
+- Production hardening for large repositories.
 
 ## Usage
 
@@ -48,6 +49,24 @@ cargo run -p codegraph-cli -- scan . --include-ignored
 
 The output is JSON using the shared graph schema from `codegraph-core`.
 
+Run the web application:
+
+```bash
+cargo run -p codegraph-server -- --root .
+```
+
+Open:
+
+```text
+http://127.0.0.1:3765
+```
+
+Scan API:
+
+```bash
+curl 'http://127.0.0.1:3765/api/scan?path=.'
+```
+
 At the current stage, supported source languages are detected by extension:
 
 - Rust: `rs`
@@ -68,6 +87,8 @@ crates/
   codegraph-parser/    Tree-sitter syntax extraction
   codegraph-indexer/   project scanning and graph construction
   codegraph-cli/       command-line interface
+  codegraph-server/    HTTP API and embedded static web app
+  codegraph-web/       browser UI assets
 ```
 
 Expected future crates:
@@ -75,8 +96,6 @@ Expected future crates:
 ```text
 crates/
   codegraph-lsp/       optional LSP enrichment
-  codegraph-server/    HTTP/WebSocket API for UI and agents
-  codegraph-web/       browser-based graph interface
   codegraph-ui/        optional Tauri desktop shell
 ```
 

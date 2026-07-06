@@ -90,14 +90,19 @@ Exit criteria:
 
 ## Phase 4: API And UI
 
+Status: in progress.
+
 Goal: make the graph explorable interactively in a modern web UI.
 
-- Add `codegraph-server`.
-- Serve graph data over HTTP and WebSocket/SSE.
-- Add `codegraph-web` for browser usage.
+- [x] Add `codegraph-server`.
+- [x] Serve graph data over HTTP.
+- [x] Add `codegraph-web` for browser usage.
+- [x] Implement first graph canvas, filters, search, stats, and detail panel.
+- [ ] Add WebSocket/SSE for scan progress.
 - Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
-- Implement graph view, source preview, search, filters, and trace panels.
-- Support opening local repositories.
+- [ ] Add source preview.
+- [ ] Add trace panels.
+- [ ] Support opening local repositories from a desktop shell.
 
 Exit criteria:
 

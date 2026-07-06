@@ -66,9 +66,18 @@ CLI output must remain machine-friendly. Human-oriented formatting can be added,
 
 ### Server And Web UI
 
-Future crates: `codegraph-server`, `codegraph-web`, and optionally `codegraph-ui`.
+`codegraph-server` exposes the graph over HTTP and serves the embedded browser UI from `codegraph-web`.
 
-The server should expose graph queries to the web UI and to agents. The UI should visualize the graph without owning analysis logic. A Tauri shell can wrap the web UI later for desktop distribution.
+Responsibilities:
+
+- provide health and scan endpoints
+- constrain scan paths to a configured root by default
+- serve the static web application
+- keep UI and agent clients on the same JSON graph model
+
+Future crate: optionally `codegraph-ui`.
+
+A Tauri shell can wrap the web UI later for desktop distribution. The UI should visualize the graph without owning analysis logic.
 
 ## Confidence Model
 

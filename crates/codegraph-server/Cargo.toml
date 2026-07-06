@@ -1,0 +1,15 @@
+[package]
+name = "codegraph-server"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+codegraph-core.workspace = true
+codegraph-indexer.workspace = true
+serde.workspace = true
+tokio.workspace = true
