@@ -32,6 +32,7 @@ It currently builds file, symbol, import, call, config, environment, and error-f
 - summary counts
 - entrypoint candidates
 - outgoing dependency traces
+- investigation insights
 
 This crate is shared by the CLI and server so humans, UI features, and agents receive the same structured answers.
 
@@ -85,6 +86,7 @@ Responsibilities:
 - provide health and scan endpoints
 - provide async scan job endpoints for long-running scans
 - provide summary, entrypoint, and trace endpoints
+- provide investigation insight endpoints
 - provide source preview endpoints for graph spans
 - constrain scan paths to a configured root by default
 - serve the static web application

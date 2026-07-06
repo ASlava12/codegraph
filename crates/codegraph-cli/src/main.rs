@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
-use codegraph_analysis::{TraceRequest, TraceStart, entrypoints, summarize, trace};
+use codegraph_analysis::{TraceRequest, TraceStart, entrypoints, insights, summarize, trace};
 use codegraph_indexer::{IndexOptions, scan_project};
 use std::path::PathBuf;
 
@@ -34,6 +34,9 @@ enum Command {
 
     /// Emit entrypoint candidate nodes as JSON.
     Entrypoints(ScanArgs),
+
+    /// Emit investigation insights such as unresolved calls and error flows.
+    Insights(ScanArgs),
 
     /// Trace outgoing code-flow dependencies from a node label.
     Trace {
@@ -92,6 +95,10 @@ fn main() -> Result<()> {
         Command::Entrypoints(args) => {
             let graph = scan_with_options(args.path, args.include_hidden, args.include_ignored)?;
             println!("{}", serde_json::to_string_pretty(&entrypoints(&graph))?);
+        }
+        Command::Insights(args) => {
+            let graph = scan_with_options(args.path, args.include_hidden, args.include_ignored)?;
+            println!("{}", serde_json::to_string_pretty(&insights(&graph))?);
         }
         Command::Trace {
             label,

@@ -1,4 +1,4 @@
-use codegraph_core::{CodeGraph, Edge, EdgeKind, Node, NodeId};
+use codegraph_core::{CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -38,6 +38,30 @@ pub struct TraceResult {
 pub struct TraceNode {
     pub node: Node,
     pub depth: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InsightReport {
+    pub total: usize,
+    pub by_severity: BTreeMap<String, usize>,
+    pub insights: Vec<Insight>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Insight {
+    pub kind: String,
+    pub severity: InsightSeverity,
+    pub message: String,
+    pub nodes: Vec<NodeId>,
+    pub edges: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InsightSeverity {
+    Info,
+    Warning,
+    Error,
 }
 
 pub fn summarize(graph: &CodeGraph) -> GraphSummary {
@@ -84,6 +108,35 @@ pub fn entrypoints(graph: &CodeGraph) -> Vec<Node> {
         .filter(|node| ids.contains(&node.id))
         .cloned()
         .collect()
+}
+
+pub fn insights(graph: &CodeGraph) -> InsightReport {
+    let mut insights = Vec::new();
+    add_parse_error_insights(graph, &mut insights);
+    add_unresolved_call_insights(graph, &mut insights);
+    add_duplicate_function_insights(graph, &mut insights);
+    add_orphan_function_insights(graph, &mut insights);
+    add_error_flow_insights(graph, &mut insights);
+    insights.sort_by(|left, right| {
+        right
+            .severity
+            .cmp(&left.severity)
+            .then_with(|| left.kind.cmp(&right.kind))
+            .then_with(|| left.message.cmp(&right.message))
+    });
+
+    let mut by_severity = BTreeMap::new();
+    for insight in &insights {
+        *by_severity
+            .entry(severity_name(insight.severity).to_string())
+            .or_insert(0) += 1;
+    }
+
+    InsightReport {
+        total: insights.len(),
+        by_severity,
+        insights,
+    }
 }
 
 pub fn trace(graph: &CodeGraph, request: TraceRequest) -> Option<TraceResult> {
@@ -148,6 +201,150 @@ pub fn trace(graph: &CodeGraph, request: TraceRequest) -> Option<TraceResult> {
     })
 }
 
+fn add_parse_error_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node.metadata.contains_key("parse_error") {
+            insights.push(Insight {
+                kind: "parse_error".to_string(),
+                severity: InsightSeverity::Error,
+                message: format!("{} failed to parse", node.label),
+                nodes: vec![node.id],
+                edges: Vec::new(),
+            });
+        } else if node
+            .metadata
+            .get("syntax_errors")
+            .is_some_and(|value| value == "true")
+        {
+            insights.push(Insight {
+                kind: "syntax_error".to_string(),
+                severity: InsightSeverity::Warning,
+                message: format!("{} contains syntax error nodes", node.label),
+                nodes: vec![node.id],
+                edges: Vec::new(),
+            });
+        }
+    }
+}
+
+fn add_unresolved_call_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node
+            .metadata
+            .get("item_kind")
+            .is_some_and(|value| value == "call")
+            && node
+                .metadata
+                .get("resolution")
+                .is_some_and(|value| value == "unresolved")
+        {
+            insights.push(Insight {
+                kind: "unresolved_call".to_string(),
+                severity: InsightSeverity::Warning,
+                message: format!(
+                    "Call target `{}` could not be resolved syntactically",
+                    node.label
+                ),
+                nodes: vec![node.id],
+                edges: incoming_edge_indexes(graph, node.id, EdgeKind::Calls),
+            });
+        }
+    }
+}
+
+fn add_duplicate_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let mut groups: BTreeMap<&str, Vec<NodeId>> = BTreeMap::new();
+    for node in &graph.nodes {
+        if node.kind == NodeKind::Function {
+            groups.entry(&node.label).or_default().push(node.id);
+        }
+    }
+
+    for (label, nodes) in groups {
+        if nodes.len() > 1 {
+            insights.push(Insight {
+                kind: "duplicate_function_label".to_string(),
+                severity: InsightSeverity::Info,
+                message: format!("Function label `{label}` appears {} times", nodes.len()),
+                nodes,
+                edges: Vec::new(),
+            });
+        }
+    }
+}
+
+fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let entrypoints: BTreeSet<NodeId> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Entrypoint)
+        .map(|edge| edge.target)
+        .collect();
+    let called: BTreeSet<NodeId> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Calls)
+        .map(|edge| edge.target)
+        .collect();
+
+    for node in &graph.nodes {
+        if node.kind == NodeKind::Function
+            && !entrypoints.contains(&node.id)
+            && !called.contains(&node.id)
+        {
+            insights.push(Insight {
+                kind: "orphan_function".to_string(),
+                severity: InsightSeverity::Info,
+                message: format!("Function `{}` has no incoming call edge", node.label),
+                nodes: vec![node.id],
+                edges: Vec::new(),
+            });
+        }
+    }
+}
+
+fn add_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind != EdgeKind::MayError {
+            continue;
+        }
+        let source = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == edge.source)
+            .map(|node| node.label.as_str())
+            .unwrap_or("unknown");
+        let target = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == edge.target)
+            .map(|node| node.label.as_str())
+            .unwrap_or("unknown");
+        insights.push(Insight {
+            kind: "potential_error_flow".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!("`{source}` may error via `{target}`"),
+            nodes: vec![edge.source, edge.target],
+            edges: vec![index],
+        });
+    }
+}
+
+fn incoming_edge_indexes(graph: &CodeGraph, target: NodeId, kind: EdgeKind) -> Vec<usize> {
+    graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter_map(|(index, edge)| {
+            if edge.target == target && edge.kind == kind {
+                Some(index)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 fn is_trace_edge(kind: &EdgeKind) -> bool {
     matches!(
         kind,
@@ -166,6 +363,14 @@ fn kind_name(kind: &codegraph_core::NodeKind) -> String {
 
 fn edge_kind_name(kind: &EdgeKind) -> String {
     serde_json_name(kind).unwrap_or_else(|| format!("{kind:?}").to_ascii_lowercase())
+}
+
+fn severity_name(severity: InsightSeverity) -> &'static str {
+    match severity {
+        InsightSeverity::Info => "info",
+        InsightSeverity::Warning => "warning",
+        InsightSeverity::Error => "error",
+    }
 }
 
 fn serde_json_name<T: Serialize>(value: &T) -> Option<String> {
@@ -224,6 +429,58 @@ mod tests {
                 .unwrap()
                 .depth,
             1
+        );
+    }
+
+    #[test]
+    fn insights_report_unresolved_calls_and_orphans() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let orphan = graph.add_node(NodeKind::Function, "orphan");
+        let unresolved = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "missing",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "call".to_string()),
+                ("resolution".to_string(), "unresolved".to_string()),
+            ]),
+        );
+        graph.add_edge(main, unresolved, EdgeKind::Calls, Confidence::Heuristic);
+
+        let report = insights(&graph);
+
+        assert!(
+            report
+                .insights
+                .iter()
+                .any(|insight| insight.kind == "unresolved_call")
+        );
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "orphan_function" && insight.nodes.contains(&orphan)
+        }));
+    }
+
+    #[test]
+    fn insights_report_duplicate_functions_and_error_flow() {
+        let mut graph = CodeGraph::new("repo");
+        let left = graph.add_node(NodeKind::Function, "parse");
+        let right = graph.add_node(NodeKind::Function, "parse");
+        let error = graph.add_node(NodeKind::Unknown, "panic");
+        graph.add_edge(left, error, EdgeKind::MayError, Confidence::Heuristic);
+
+        let report = insights(&graph);
+
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "duplicate_function_label"
+                && insight.nodes.contains(&left)
+                && insight.nodes.contains(&right)
+        }));
+        assert!(
+            report
+                .insights
+                .iter()
+                .any(|insight| insight.kind == "potential_error_flow")
         );
     }
 }

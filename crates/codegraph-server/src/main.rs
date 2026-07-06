@@ -5,7 +5,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
-use codegraph_analysis::{TraceRequest, TraceStart, entrypoints, summarize, trace};
+use codegraph_analysis::{TraceRequest, TraceStart, entrypoints, insights, summarize, trace};
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
 use serde::{Deserialize, Serialize};
@@ -176,6 +176,7 @@ async fn main() -> Result<()> {
         .route("/api/scan-jobs/{id}/result", get(scan_job_result))
         .route("/api/summary", get(summary))
         .route("/api/entrypoints", get(entrypoints_api))
+        .route("/api/insights", get(insights_api))
         .route("/api/trace", get(trace_api))
         .route("/api/source", get(source))
         .fallback(not_found)
@@ -359,6 +360,14 @@ async fn entrypoints_api(
 ) -> Result<Json<Vec<codegraph_core::Node>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(entrypoints(&graph)))
+}
+
+async fn insights_api(
+    State(state): State<AppState>,
+    Query(query): Query<ScanQuery>,
+) -> Result<Json<codegraph_analysis::InsightReport>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    Ok(Json(insights(&graph)))
 }
 
 async fn trace_api(

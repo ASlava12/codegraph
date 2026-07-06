@@ -22,6 +22,7 @@ Implemented now:
 - Async scan job API for long-running repository scans.
 - Source preview API and UI panel for graph nodes with source spans.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
+- Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 
 Planned next:
 
@@ -48,6 +49,12 @@ List entrypoint candidates:
 
 ```bash
 cargo run -p codegraph-cli -- entrypoints .
+```
+
+List investigation insights:
+
+```bash
+cargo run -p codegraph-cli -- insights .
 ```
 
 Trace outgoing dependencies from a label:
@@ -103,6 +110,7 @@ Analysis APIs:
 ```bash
 curl 'http://127.0.0.1:3765/api/summary?path=.'
 curl 'http://127.0.0.1:3765/api/entrypoints?path=.'
+curl 'http://127.0.0.1:3765/api/insights?path=.'
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
 ```
 

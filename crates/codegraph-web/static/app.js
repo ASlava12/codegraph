@@ -45,6 +45,8 @@ const envCount = document.querySelector("#envCount");
 const configCount = document.querySelector("#configCount");
 const errorCount = document.querySelector("#errorCount");
 const entryCount = document.querySelector("#entryCount");
+const insightCount = document.querySelector("#insightCount");
+const insightList = document.querySelector("#insightList");
 const kindFilters = document.querySelector("#kindFilters");
 const selectionTitle = document.querySelector("#selectionTitle");
 const selectionBody = document.querySelector("#selectionBody");
@@ -197,11 +199,129 @@ function applyFilters() {
   entryCount.textContent = String(
     state.graph.edges.filter((edge) => edge.kind === "entrypoint").length,
   );
+  renderInsights();
 
   if (state.selectedId && !visibleIds.has(state.selectedId)) {
     state.selectedId = null;
   }
   renderSelection();
+}
+
+function renderInsights() {
+  const insights = buildClientInsights(state.graph).slice(0, 30);
+  insightCount.textContent = String(insights.length);
+  if (insights.length === 0) {
+    insightList.innerHTML = '<p class="empty">No obvious issues in the visible graph.</p>';
+    return;
+  }
+
+  insightList.innerHTML = insights
+    .map(
+      (insight) => `
+        <button class="insight ${escapeHtml(insight.severity)}" type="button" data-node-id="${insight.nodeId || ""}">
+          <span>
+            <strong>${escapeHtml(formatKind(insight.kind))}</strong>
+            ${escapeHtml(insight.message)}
+          </span>
+        </button>
+      `,
+    )
+    .join("");
+
+  insightList.querySelectorAll(".insight").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nodeId = Number(button.dataset.nodeId);
+      if (!nodeId) return;
+      state.selectedId = nodeId;
+      renderSelection();
+    });
+  });
+}
+
+function buildClientInsights(graph) {
+  const insights = [];
+  const entrypointIds = new Set(
+    graph.edges.filter((edge) => edge.kind === "entrypoint").map((edge) => edge.target),
+  );
+  const calledIds = new Set(
+    graph.edges.filter((edge) => edge.kind === "calls").map((edge) => edge.target),
+  );
+
+  graph.nodes.forEach((node) => {
+    if (node.metadata?.parse_error) {
+      insights.push({
+        kind: "parse_error",
+        severity: "error",
+        message: `${node.label} failed to parse`,
+        nodeId: node.id,
+      });
+    } else if (node.metadata?.syntax_errors === "true") {
+      insights.push({
+        kind: "syntax_error",
+        severity: "warning",
+        message: `${node.label} contains syntax error nodes`,
+        nodeId: node.id,
+      });
+    }
+
+    if (node.metadata?.item_kind === "call" && node.metadata?.resolution === "unresolved") {
+      insights.push({
+        kind: "unresolved_call",
+        severity: "warning",
+        message: `Call target ${node.label} could not be resolved`,
+        nodeId: node.id,
+      });
+    }
+
+    if (node.kind === "function" && !entrypointIds.has(node.id) && !calledIds.has(node.id)) {
+      insights.push({
+        kind: "orphan_function",
+        severity: "info",
+        message: `${node.label} has no incoming call edge`,
+        nodeId: node.id,
+      });
+    }
+  });
+
+  const functionLabels = new Map();
+  graph.nodes
+    .filter((node) => node.kind === "function")
+    .forEach((node) => {
+      const list = functionLabels.get(node.label) || [];
+      list.push(node);
+      functionLabels.set(node.label, list);
+    });
+  functionLabels.forEach((nodes, label) => {
+    if (nodes.length > 1) {
+      insights.push({
+        kind: "duplicate_function_label",
+        severity: "info",
+        message: `${label} appears ${nodes.length} times`,
+        nodeId: nodes[0].id,
+      });
+    }
+  });
+
+  graph.edges
+    .filter((edge) => edge.kind === "may_error")
+    .forEach((edge) => {
+      const source = graph.nodes.find((node) => node.id === edge.source);
+      const target = graph.nodes.find((node) => node.id === edge.target);
+      insights.push({
+        kind: "potential_error_flow",
+        severity: "warning",
+        message: `${source?.label || edge.source} may error via ${target?.label || edge.target}`,
+        nodeId: source?.id || target?.id,
+      });
+    });
+
+  const severityOrder = { error: 0, warning: 1, info: 2 };
+  return insights.sort(
+    (left, right) =>
+      severityOrder[left.severity] - severityOrder[right.severity] ||
+      left.kind.localeCompare(right.kind) ||
+      left.message.localeCompare(right.message),
+  );
 }
 
 function renderKindFilters(kinds) {
