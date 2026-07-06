@@ -146,19 +146,27 @@ pub fn scan_project(
 }
 
 fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
-    let language = Language::detect(path);
     let mut metadata = BTreeMap::new();
+    let source_bytes = fs::read(path)
+        .map_err(|error| {
+            metadata.insert("read_error".to_string(), error.to_string());
+        })
+        .ok();
+    let language = Language::detect(path).or_else(|| {
+        source_bytes
+            .as_deref()
+            .and_then(|source| std::str::from_utf8(source).ok())
+            .and_then(shebang_language)
+    });
 
     if let Some(language) = language {
         metadata.insert("language".to_string(), language.to_string());
     }
 
-    let parse_result = language.and_then(|language| match fs::read(path) {
-        Ok(source) => Some((language, parse_source(label, &source, language))),
-        Err(error) => {
-            metadata.insert("read_error".to_string(), error.to_string());
-            None
-        }
+    let parse_result = language.and_then(|language| {
+        source_bytes
+            .as_ref()
+            .map(|source| (language, parse_source(label, source, language)))
     });
 
     let file_id = context
@@ -172,7 +180,9 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
         Confidence::Exact,
     );
 
+    let mut script_entrypoint = None;
     if let Ok(source) = fs::read_to_string(path) {
+        script_entrypoint = index_script_entrypoint(context, file_id, label, &source);
         index_manifest_facts(context, file_id, path, label, &source);
     }
 
@@ -239,6 +249,20 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
                         );
                         register_local_function(&mut local_functions, &item.label, item_id);
                     }
+                }
+
+                if let Some(entrypoint_id) = script_entrypoint
+                    && let Some(main_id) = resolve_local_function(&local_functions, "main")
+                {
+                    add_entrypoint_reference(
+                        &mut context.graph,
+                        entrypoint_id,
+                        main_id,
+                        "entrypoint_function",
+                        "shebang_main",
+                        Confidence::Syntactic,
+                        Some("main"),
+                    );
                 }
 
                 for item in parsed.items.iter().filter(|item| is_effect_item(item.kind)) {
@@ -323,6 +347,55 @@ fn index_manifest_facts(
 ) {
     index_manifest_dependencies(context, file_id, path, source);
     index_manifest_entrypoints(context, file_id, path, label, source);
+}
+
+fn index_script_entrypoint(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+) -> Option<NodeId> {
+    let (interpreter, language) = shebang_interpreter(source)?;
+    let mut metadata = BTreeMap::new();
+    metadata.insert("item_kind".to_string(), "script_entrypoint".to_string());
+    metadata.insert("entrypoint_kind".to_string(), "script".to_string());
+    metadata.insert("source".to_string(), "shebang".to_string());
+    metadata.insert("target".to_string(), label.to_string());
+    metadata.insert("interpreter".to_string(), interpreter.to_string());
+    metadata.insert("language".to_string(), language.to_string());
+
+    let entrypoint_id = context.graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        format!("script:{label}"),
+        None,
+        metadata,
+    );
+    add_edge_once(
+        &mut context.graph,
+        file_id,
+        entrypoint_id,
+        EdgeKind::Contains,
+        Confidence::Exact,
+    );
+    let root_id = context.graph.root;
+    add_edge_once(
+        &mut context.graph,
+        root_id,
+        entrypoint_id,
+        EdgeKind::Entrypoint,
+        Confidence::Exact,
+    );
+    add_entrypoint_reference(
+        &mut context.graph,
+        entrypoint_id,
+        file_id,
+        "entrypoint_file",
+        "shebang_path",
+        Confidence::Exact,
+        None,
+    );
+
+    Some(entrypoint_id)
 }
 
 fn index_manifest_dependencies(
@@ -881,6 +954,51 @@ fn go_module_name(source: &str) -> Option<String> {
             .filter(|module| !module.is_empty())
             .map(str::to_string)
     })
+}
+
+fn shebang_interpreter(source: &str) -> Option<(&'static str, &'static str)> {
+    let line = source.lines().next()?.trim();
+    let command = line.strip_prefix("#!")?.trim();
+    if command.is_empty() {
+        return None;
+    }
+
+    let mut parts = command.split_whitespace();
+    let executable = parts.next()?.rsplit('/').next().unwrap_or("");
+    let interpreter = if executable == "env" {
+        parts
+            .find(|part| !part.starts_with('-') && !part.contains('='))
+            .unwrap_or("")
+    } else {
+        executable
+    };
+    let interpreter = interpreter
+        .rsplit('/')
+        .next()
+        .unwrap_or(interpreter)
+        .split_once('.')
+        .map_or(interpreter, |(base, _)| base);
+
+    match interpreter {
+        "bash" => Some(("bash", "bash")),
+        "sh" => Some(("sh", "bash")),
+        "zsh" => Some(("zsh", "bash")),
+        "ksh" => Some(("ksh", "bash")),
+        "python" | "python2" | "python3" => Some(("python", "python")),
+        "node" | "nodejs" => Some(("node", "javascript")),
+        "php" => Some(("php", "php")),
+        _ => None,
+    }
+}
+
+fn shebang_language(source: &str) -> Option<Language> {
+    match shebang_interpreter(source)?.1 {
+        "bash" => Some(Language::Bash),
+        "python" => Some(Language::Python),
+        "javascript" => Some(Language::JavaScript),
+        "php" => Some(Language::Php),
+        _ => None,
+    }
 }
 
 fn requirements_dependencies(source: &str) -> Vec<ManifestDependency> {
@@ -1576,7 +1694,12 @@ fn add_entrypoint_reference(
 ) {
     let mut metadata = BTreeMap::new();
     metadata.insert("relation".to_string(), relation.to_string());
-    metadata.insert("source".to_string(), "manifest".to_string());
+    let fact_source = if resolution.starts_with("shebang") {
+        "shebang"
+    } else {
+        "manifest"
+    };
+    metadata.insert("source".to_string(), fact_source.to_string());
     metadata.insert("resolution".to_string(), resolution.to_string());
     if let Some(target_symbol) = target_symbol {
         metadata.insert("target_symbol".to_string(), target_symbol.to_string());
@@ -2320,6 +2443,52 @@ add_executable(imported_tool IMPORTED)
             &graph,
             go_command_entrypoint,
             go_command_main,
+            "entrypoint_function",
+            Confidence::Syntactic,
+        ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_adds_shebang_script_entrypoints() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("bin")).unwrap();
+        fs::write(
+            root.join("bin").join("deploy"),
+            "#!/usr/bin/env bash\nmain() { echo deploy; }\nmain \"$@\"\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let script_entrypoint = node_id(&graph, NodeKind::Entrypoint, "script:bin/deploy");
+        let script_file = node_id(&graph, NodeKind::File, "bin/deploy");
+        let script_main = function_id_in_file(&graph, "main", "bin/deploy");
+        let entrypoint = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == script_entrypoint)
+            .expect("missing script entrypoint");
+
+        assert_eq!(
+            entrypoint.metadata.get("item_kind").map(String::as_str),
+            Some("script_entrypoint")
+        );
+        assert_eq!(
+            entrypoint.metadata.get("interpreter").map(String::as_str),
+            Some("bash")
+        );
+        assert!(has_entrypoint_reference(
+            &graph,
+            script_entrypoint,
+            script_file,
+            "entrypoint_file",
+            Confidence::Exact,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            script_entrypoint,
+            script_main,
             "entrypoint_function",
             Confidence::Syntactic,
         ));
