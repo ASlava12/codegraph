@@ -8,8 +8,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
-    GraphSlice, GraphSliceRequest, TraceRequest, TraceStart, entrypoints, export_dot,
-    export_ndjson, insights, query_graph, slice_graph, summarize, trace,
+    GraphSlice, GraphSliceRequest, NodeContext, TraceRequest, TraceStart, entrypoints, export_dot,
+    export_ndjson, insights, node_context, query_graph, slice_graph, summarize, trace,
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
@@ -113,6 +113,13 @@ struct GraphSliceQuery {
     language: Option<String>,
     item_kind: Option<String>,
     edge_kind: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NodeContextQuery {
+    path: Option<PathBuf>,
+    node_id: u64,
+    edge_limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -258,6 +265,7 @@ async fn main() -> Result<()> {
         .route("/api/scan-jobs/{id}/result", get(scan_job_result))
         .route("/api/export", get(export_api))
         .route("/api/graph", get(graph_api))
+        .route("/api/node-context", get(node_context_api))
         .route("/api/summary", get(summary))
         .route("/api/entrypoints", get(entrypoints_api))
         .route("/api/insights", get(insights_api))
@@ -541,6 +549,20 @@ async fn graph_api(
             edge_kind: normalize_query_string(query.edge_kind),
         },
     )))
+}
+
+async fn node_context_api(
+    State(state): State<AppState>,
+    Query(query): Query<NodeContextQuery>,
+) -> Result<Json<NodeContext>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let context = node_context(
+        &graph,
+        codegraph_core::NodeId(query.node_id),
+        query.edge_limit.unwrap_or(80),
+    )
+    .ok_or_else(|| ApiError::not_found("node not found"))?;
+    Ok(Json(context))
 }
 
 async fn summary(

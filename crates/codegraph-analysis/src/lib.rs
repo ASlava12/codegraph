@@ -79,6 +79,16 @@ pub struct GraphSlice {
     pub truncated_edges: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeContext {
+    pub node: Node,
+    pub nodes: Vec<Node>,
+    pub edges: Vec<Edge>,
+    pub total_edges: usize,
+    pub edge_limit: usize,
+    pub truncated_edges: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryError {
     message: String,
@@ -380,6 +390,40 @@ pub fn slice_graph(graph: &CodeGraph, request: GraphSliceRequest) -> GraphSlice 
         truncated_nodes: node_offset.saturating_add(node_limit) < total_nodes,
         truncated_edges: edge_offset.saturating_add(edge_limit) < total_edges,
     }
+}
+
+pub fn node_context(graph: &CodeGraph, node_id: NodeId, edge_limit: usize) -> Option<NodeContext> {
+    let node = graph.nodes.iter().find(|node| node.id == node_id)?.clone();
+    let edge_limit = edge_limit.clamp(1, 500);
+    let matched_edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.source == node_id || edge.target == node_id)
+        .cloned()
+        .collect();
+    let total_edges = matched_edges.len();
+    let edges: Vec<_> = matched_edges.into_iter().take(edge_limit).collect();
+
+    let mut node_ids = BTreeSet::from([node_id]);
+    for edge in &edges {
+        node_ids.insert(edge.source);
+        node_ids.insert(edge.target);
+    }
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| node_ids.contains(&node.id))
+        .cloned()
+        .collect();
+
+    Some(NodeContext {
+        node,
+        nodes,
+        edges,
+        total_edges,
+        edge_limit,
+        truncated_edges: edge_limit < total_edges,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1523,6 +1567,35 @@ mod tests {
         assert_eq!(result.edges.len(), 1);
         assert_eq!(result.edges[0].source, main);
         assert!(result.truncated_edges);
+    }
+
+    #[test]
+    fn node_context_returns_limited_neighbor_edges() {
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node(NodeKind::File, "src/main.rs");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let config = graph.add_node(NodeKind::Config, "config/app.toml");
+        graph.add_edge(file, main, EdgeKind::Contains, Confidence::Syntactic);
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(main, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
+
+        let context = node_context(&graph, main, 2).unwrap();
+
+        assert_eq!(context.node.label, "main");
+        assert_eq!(context.total_edges, 3);
+        assert_eq!(context.edges.len(), 2);
+        assert!(context.truncated_edges);
+        assert!(context.nodes.iter().any(|node| node.id == main));
+        assert!(context.nodes.iter().any(|node| node.id == file));
+        assert!(context.nodes.iter().any(|node| node.id == helper));
+    }
+
+    #[test]
+    fn node_context_returns_none_for_missing_node() {
+        let graph = CodeGraph::new("repo");
+
+        assert!(node_context(&graph, NodeId(999), 10).is_none());
     }
 
     #[test]

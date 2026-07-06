@@ -1063,11 +1063,55 @@ function renderSelection() {
   const requestId = state.selectionRequest;
   const node = state.graph.nodes.find((candidate) => candidate.id === state.selectedId);
   if (!node) {
-    selectionTitle.textContent = "Selection";
-    selectionBody.innerHTML = '<p class="empty">No node selected.</p>';
+    if (state.selectedId) {
+      selectionTitle.textContent = `Node ${state.selectedId}`;
+      selectionBody.innerHTML = '<p class="empty">Loading node context...</p>';
+      loadNodeContext(state.selectedId, requestId);
+    } else {
+      selectionTitle.textContent = "Selection";
+      selectionBody.innerHTML = '<p class="empty">No node selected.</p>';
+    }
     return;
   }
 
+  renderSelectionPanel(node, [], new Map([[node.id, node]]), requestId, true);
+  loadNodeContext(node.id, requestId);
+}
+
+async function loadNodeContext(nodeId, requestId) {
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    node_id: String(nodeId),
+    edge_limit: "80",
+  });
+
+  try {
+    const response = await fetch(`/api/node-context?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.selectionRequest || state.selectedId !== nodeId) return;
+    if (!response.ok) {
+      throw new Error(body.error || "node context failed");
+    }
+    const nodeMap = new Map(body.nodes.map((node) => [node.id, node]));
+    nodeMap.set(body.node.id, body.node);
+    renderSelectionPanel(body.node, body.edges, nodeMap, requestId, false, body);
+  } catch (error) {
+    if (requestId !== state.selectionRequest || state.selectedId !== nodeId) return;
+    const node = state.graph.nodes.find((candidate) => candidate.id === nodeId);
+    if (node) {
+      renderSelectionPanel(node, [], new Map([[node.id, node]]), requestId, false);
+      const container = selectionBody.querySelector(".neighbors");
+      if (container) {
+        container.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+      }
+    } else {
+      selectionTitle.textContent = "Error";
+      selectionBody.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+    }
+  }
+}
+
+function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, context = null) {
   selectionTitle.textContent = node.label;
   const rows = [
     ["Kind", formatKind(node.kind)],
@@ -1079,9 +1123,14 @@ function renderSelection() {
   }
   Object.entries(node.metadata || {}).forEach(([key, value]) => rows.push([formatKind(key), value]));
 
-  const neighbors = state.graph.edges
-    .filter((edge) => edge.source === node.id || edge.target === node.id)
-    .slice(0, 40);
+  const neighborRows = loading
+    ? '<p class="empty">Loading node context...</p>'
+    : edges.length > 0
+      ? edges.map((edge) => renderNeighbor(edge, node.id, nodeMap)).join("")
+      : '<p class="empty">No neighboring edges.</p>';
+  const contextSummary = context
+    ? `<p class="neighbor-summary">${context.total_edges} edges${context.truncated_edges ? `, first ${context.edge_limit}` : ""}</p>`
+    : "";
 
   selectionBody.innerHTML = `
     <table class="detail-table">
@@ -1095,7 +1144,8 @@ function renderSelection() {
       </tbody>
     </table>
     <div class="neighbors">
-      ${neighbors.map((edge) => renderNeighbor(edge, node.id)).join("")}
+      ${contextSummary}
+      ${neighborRows}
     </div>
     <section class="trace-panel">
       <div class="trace-controls">
@@ -1274,9 +1324,9 @@ function renderSourceLine(line) {
   return `<span class="${className}"><span class="line-number">${number}</span><span class="line-text">${escapeHtml(line.text || " ")}</span></span>`;
 }
 
-function renderNeighbor(edge, selectedId) {
+function renderNeighbor(edge, selectedId, nodeMap = null) {
   const otherId = edge.source === selectedId ? edge.target : edge.source;
-  const other = state.graph.nodes.find((node) => node.id === otherId);
+  const other = nodeMap?.get(otherId) || state.graph.nodes.find((node) => node.id === otherId);
   const direction = edge.source === selectedId ? "out" : "in";
   return `
     <button type="button" class="neighbor" data-node-id="${otherId}">

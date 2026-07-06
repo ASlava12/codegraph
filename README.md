@@ -30,6 +30,7 @@ Implemented now:
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
 - Server-side graph paging and filtering endpoint for large repository exploration.
 - Web graph page controls backed by the server-side paging API.
+- Node context API and detail-panel neighbor loading for paged graph exploration.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Persistent server-side graph cache with project fingerprint invalidation.
@@ -152,6 +153,7 @@ Analysis APIs:
 
 ```bash
 curl 'http://127.0.0.1:3765/api/graph?path=.&node_limit=250&kind=function'
+curl 'http://127.0.0.1:3765/api/node-context?path=.&node_id=1&edge_limit=80'
 curl 'http://127.0.0.1:3765/api/summary?path=.'
 curl 'http://127.0.0.1:3765/api/entrypoints?path=.'
 curl 'http://127.0.0.1:3765/api/insights?path=.'

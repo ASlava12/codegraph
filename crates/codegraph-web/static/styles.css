@@ -514,6 +514,13 @@ button:disabled {
   padding: 10px;
 }
 
+.neighbor-summary {
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .neighbor {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
