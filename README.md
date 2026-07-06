@@ -26,6 +26,7 @@ Implemented now:
 - SSE scan job status stream for live web progress updates.
 - Source preview API and UI panel for graph nodes with source spans.
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
+- Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
 - Path queries for finding directed dependency paths between labels or node ids.
@@ -106,6 +107,12 @@ Trace outgoing dependencies from a label:
 cargo run -p codegraph-cli -- trace main . --depth 3
 ```
 
+Trace config files and environment variables back to readers and entrypoints:
+
+```bash
+cargo run -p codegraph-cli -- trace-config DATABASE_URL . --depth 6
+```
+
 Include hidden paths:
 
 ```bash
@@ -180,6 +187,7 @@ curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=path from:main to:load_config depth:6'
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
+curl 'http://127.0.0.1:3765/api/trace-config?path=.&target=DATABASE_URL&depth=6'
 ```
 
 `/api/graph` supports `node_offset`, `node_limit`, `edge_offset`,
@@ -229,6 +237,9 @@ When a manifest target can be mapped back to code, the entrypoint node also
 emits `references` edges with metadata such as `relation=entrypoint_file` or
 `relation=entrypoint_function`; traces follow these edges before continuing into
 regular call, import, config, environment, dependency, and error-flow edges.
+Config traces specialize that graph traversal by matching `config` and
+`environment` nodes, listing direct readers, and returning shortest known paths
+from manifest entrypoints to the reader and final read edge.
 
 ## Workspace
 

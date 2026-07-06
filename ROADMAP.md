@@ -74,7 +74,7 @@ Exit criteria:
 Goal: answer practical code investigation questions.
 
 - Trace from entrypoints.
-- Trace config loading and environment variable reads.
+- [x] Trace config loading and environment variable reads.
 - Identify error and exception paths.
 - [x] Add structured summary, entrypoints, and trace commands.
 - [x] Expose structured summary, entrypoints, and trace APIs.

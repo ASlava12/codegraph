@@ -338,7 +338,8 @@ button:disabled {
 }
 
 .query,
-.path-query {
+.path-query,
+.config-trace {
   display: grid;
   gap: 8px;
 }
@@ -348,13 +349,15 @@ button:disabled {
   align-items: end;
 }
 
-.path-query header {
+.path-query header,
+.config-trace header {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-.path-query h2 {
+.path-query h2,
+.config-trace h2 {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
@@ -362,17 +365,20 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.path-fields {
+.path-fields,
+.config-trace-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.path-fields input {
+.path-fields input,
+.config-trace-fields input {
   height: 34px;
 }
 
-.path-query > button {
+.path-query > button,
+.config-trace > button {
   height: 34px;
   padding: 0 10px;
   font-size: 13px;

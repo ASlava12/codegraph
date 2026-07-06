@@ -38,6 +38,49 @@ pub struct TraceResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigTraceRequest {
+    pub target: String,
+    pub max_depth: usize,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigTraceResult {
+    pub target: String,
+    pub max_depth: usize,
+    pub matches: Vec<ConfigTraceMatch>,
+    pub total_matches: usize,
+    pub total_readers: usize,
+    pub total_paths: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigTraceMatch {
+    pub target: Node,
+    pub readers: Vec<ConfigReader>,
+    pub paths: Vec<ConfigTracePath>,
+    pub total_readers: usize,
+    pub total_paths: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigReader {
+    pub node: Node,
+    pub edge: Edge,
+    pub edge_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigTracePath {
+    pub nodes: Vec<Node>,
+    pub edges: Vec<Edge>,
+    pub edge_indexes: Vec<usize>,
+    pub reached_entrypoint: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceNode {
     pub node: Node,
     pub depth: usize,
@@ -396,6 +439,101 @@ pub fn trace(graph: &CodeGraph, request: TraceRequest) -> Option<TraceResult> {
         edges,
         truncated,
     })
+}
+
+pub fn trace_config(graph: &CodeGraph, request: ConfigTraceRequest) -> ConfigTraceResult {
+    let max_depth = request.max_depth.clamp(1, 32);
+    let limit = request.limit.clamp(1, 500);
+    let target = request.target.trim().to_string();
+    let matched_targets: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            matches!(node.kind, NodeKind::Config | NodeKind::Environment)
+                && config_target_matches(node, &target)
+        })
+        .cloned()
+        .collect();
+
+    let mut matches = Vec::new();
+    let mut total_readers = 0;
+    let mut total_paths = 0;
+    let mut remaining_paths = limit;
+    let mut truncated = false;
+
+    for target_node in &matched_targets {
+        let reader_edges: Vec<_> = graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| {
+                edge.target == target_node.id
+                    && matches!(
+                        edge.kind,
+                        EdgeKind::ReadsConfig | EdgeKind::ReadsEnvironment
+                    )
+            })
+            .collect();
+        let total_match_readers = reader_edges.len();
+        total_readers += total_match_readers;
+
+        let mut readers = Vec::new();
+        let mut paths = Vec::new();
+        let mut match_truncated = false;
+
+        for (edge_index, edge) in reader_edges {
+            let Some(reader_node) = graph.nodes.iter().find(|node| node.id == edge.source) else {
+                continue;
+            };
+            readers.push(ConfigReader {
+                node: reader_node.clone(),
+                edge: edge.clone(),
+                edge_index,
+            });
+
+            let (mut reader_paths, reader_truncated) = config_reader_paths(
+                graph,
+                reader_node.id,
+                edge_index,
+                max_depth,
+                remaining_paths,
+            );
+            match_truncated |= reader_truncated;
+            total_paths += reader_paths.len();
+            remaining_paths = remaining_paths.saturating_sub(reader_paths.len());
+            paths.append(&mut reader_paths);
+            if remaining_paths == 0 {
+                match_truncated = true;
+                truncated = true;
+                break;
+            }
+        }
+
+        let total_match_paths = paths.len();
+        truncated |= match_truncated;
+        matches.push(ConfigTraceMatch {
+            target: target_node.clone(),
+            readers,
+            paths,
+            total_readers: total_match_readers,
+            total_paths: total_match_paths,
+            truncated: match_truncated,
+        });
+
+        if remaining_paths == 0 {
+            break;
+        }
+    }
+
+    ConfigTraceResult {
+        target,
+        max_depth,
+        total_matches: matched_targets.len(),
+        total_readers,
+        total_paths,
+        matches,
+        truncated,
+    }
 }
 
 pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, QueryError> {
@@ -1039,6 +1177,145 @@ fn path_nodes(graph: &CodeGraph, start: NodeId, edges: &[Edge]) -> Vec<Node> {
     ids.into_iter()
         .filter_map(|id| graph.nodes.iter().find(|node| node.id == id).cloned())
         .collect()
+}
+
+fn config_target_matches(node: &Node, target: &str) -> bool {
+    target.is_empty()
+        || text_matches(&node.label, target)
+        || node
+            .metadata
+            .iter()
+            .any(|(key, value)| text_matches(key, target) || text_matches(value, target))
+}
+
+fn config_reader_paths(
+    graph: &CodeGraph,
+    reader: NodeId,
+    target_edge_index: usize,
+    max_depth: usize,
+    limit: usize,
+) -> (Vec<ConfigTracePath>, bool) {
+    if limit == 0 {
+        return (Vec::new(), true);
+    }
+
+    let mut paths = Vec::new();
+    let mut visited = BTreeSet::from([reader]);
+    let mut parents: BTreeMap<NodeId, (NodeId, usize)> = BTreeMap::new();
+    let mut queue = VecDeque::from([(reader, 0usize)]);
+    let mut truncated = false;
+
+    if graph
+        .nodes
+        .iter()
+        .find(|node| node.id == reader)
+        .is_some_and(|node| node.kind == NodeKind::Entrypoint)
+    {
+        if let Some(path) = build_config_path(graph, reader, reader, &parents, target_edge_index) {
+            paths.push(path);
+        }
+        return (paths, false);
+    }
+
+    while let Some((node_id, depth)) = queue.pop_front() {
+        if depth + 1 >= max_depth {
+            if graph
+                .edges
+                .iter()
+                .any(|edge| edge.target == node_id && is_config_upstream_edge(&edge.kind))
+            {
+                truncated = true;
+            }
+            continue;
+        }
+
+        for (edge_index, edge) in graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| edge.target == node_id && is_config_upstream_edge(&edge.kind))
+        {
+            if !visited.insert(edge.source) {
+                continue;
+            }
+            parents.insert(edge.source, (node_id, edge_index));
+            let Some(source_node) = graph.nodes.iter().find(|node| node.id == edge.source) else {
+                continue;
+            };
+            if source_node.kind == NodeKind::Entrypoint {
+                if let Some(path) =
+                    build_config_path(graph, edge.source, reader, &parents, target_edge_index)
+                {
+                    paths.push(path);
+                }
+                if paths.len() >= limit {
+                    return (paths, true);
+                }
+                continue;
+            }
+            queue.push_back((edge.source, depth + 1));
+        }
+    }
+
+    if paths.is_empty()
+        && let Some(path) = build_config_path(graph, reader, reader, &parents, target_edge_index)
+    {
+        paths.push(path);
+    }
+
+    (paths, truncated)
+}
+
+fn build_config_path(
+    graph: &CodeGraph,
+    start: NodeId,
+    reader: NodeId,
+    parents: &BTreeMap<NodeId, (NodeId, usize)>,
+    target_edge_index: usize,
+) -> Option<ConfigTracePath> {
+    let mut node_ids = vec![start];
+    let mut edge_indexes = Vec::new();
+    let mut current = start;
+    while current != reader {
+        let (next, edge_index) = parents.get(&current)?;
+        edge_indexes.push(*edge_index);
+        node_ids.push(*next);
+        current = *next;
+    }
+    edge_indexes.push(target_edge_index);
+    let target_edge = graph.edges.get(target_edge_index)?;
+    if node_ids.last().copied() != Some(target_edge.source) {
+        node_ids.push(target_edge.source);
+    }
+    node_ids.push(target_edge.target);
+
+    let nodes = node_ids
+        .into_iter()
+        .filter_map(|id| graph.nodes.iter().find(|node| node.id == id).cloned())
+        .collect();
+    let edges = edge_indexes
+        .iter()
+        .filter_map(|index| graph.edges.get(*index).cloned())
+        .collect();
+    let reached_entrypoint = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == start)
+        .is_some_and(|node| node.kind == NodeKind::Entrypoint);
+
+    Some(ConfigTracePath {
+        nodes,
+        edges,
+        edge_indexes,
+        reached_entrypoint,
+    })
+}
+
+fn is_config_upstream_edge(kind: &EdgeKind) -> bool {
+    matches!(
+        kind,
+        EdgeKind::Calls | EdgeKind::References | EdgeKind::Entrypoint
+    )
 }
 
 fn text_matches(actual: &str, expected: &str) -> bool {
@@ -2221,6 +2498,84 @@ mod tests {
         .unwrap();
         assert!(calls_only.nodes.is_empty());
         assert!(!calls_only.truncated);
+    }
+
+    #[test]
+    fn trace_config_returns_readers_and_entrypoint_paths() {
+        let mut graph = CodeGraph::new("repo");
+        let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let load_config = graph.add_node(NodeKind::Function, "load_config");
+        let database_url = graph.add_node(NodeKind::Environment, "DATABASE_URL");
+        graph.add_edge_with_metadata(
+            entrypoint,
+            main,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "entrypoint_function".to_string())]),
+        );
+        graph.add_edge(main, load_config, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(
+            load_config,
+            database_url,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+
+        let result = trace_config(
+            &graph,
+            ConfigTraceRequest {
+                target: "DATABASE".to_string(),
+                max_depth: 4,
+                limit: 10,
+            },
+        );
+
+        assert_eq!(result.total_matches, 1);
+        assert_eq!(result.total_readers, 1);
+        assert_eq!(result.total_paths, 1);
+        assert!(!result.truncated);
+        let matched = &result.matches[0];
+        assert_eq!(matched.target.id, database_url);
+        assert_eq!(matched.readers[0].node.id, load_config);
+        assert_eq!(
+            matched.paths[0]
+                .nodes
+                .iter()
+                .map(|node| node.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cargo bin:demo", "main", "load_config", "DATABASE_URL"]
+        );
+        assert!(matched.paths[0].reached_entrypoint);
+    }
+
+    #[test]
+    fn trace_config_falls_back_to_direct_reader_path() {
+        let mut graph = CodeGraph::new("repo");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let config = graph.add_node(NodeKind::Config, "config/app.toml");
+        graph.add_edge(helper, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
+
+        let result = trace_config(
+            &graph,
+            ConfigTraceRequest {
+                target: "app.toml".to_string(),
+                max_depth: 2,
+                limit: 10,
+            },
+        );
+
+        assert_eq!(result.total_matches, 1);
+        assert_eq!(result.matches[0].paths.len(), 1);
+        assert_eq!(
+            result.matches[0].paths[0]
+                .nodes
+                .iter()
+                .map(|node| node.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["helper", "config/app.toml"]
+        );
+        assert!(!result.matches[0].paths[0].reached_entrypoint);
     }
 
     #[test]

@@ -17,6 +17,7 @@ const state = {
   traceRequest: 0,
   queryRequest: 0,
   pathRequest: 0,
+  configTraceRequest: 0,
   pageRequest: 0,
   overviewRequest: 0,
   insightRequest: 0,
@@ -91,6 +92,10 @@ const pathDepthInput = document.querySelector("#pathDepthInput");
 const pathEdgeKindInput = document.querySelector("#pathEdgeKindInput");
 const pathButton = document.querySelector("#pathButton");
 const pathResult = document.querySelector("#pathResult");
+const configTraceTargetInput = document.querySelector("#configTraceTargetInput");
+const configTraceDepthInput = document.querySelector("#configTraceDepthInput");
+const configTraceButton = document.querySelector("#configTraceButton");
+const configTraceResult = document.querySelector("#configTraceResult");
 const insightCount = document.querySelector("#insightCount");
 const insightList = document.querySelector("#insightList");
 const insightSeverityInput = document.querySelector("#insightSeverityInput");
@@ -118,6 +123,12 @@ pathButton.addEventListener("click", () => runPathQuery());
 for (const input of [pathFromInput, pathToInput, pathDepthInput, pathEdgeKindInput]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") runPathQuery();
+  });
+}
+configTraceButton.addEventListener("click", () => runConfigTrace());
+for (const input of [configTraceTargetInput, configTraceDepthInput]) {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") runConfigTrace();
   });
 }
 insightFilterButton.addEventListener("click", () => loadInsights());
@@ -346,6 +357,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     state.insightReport = null;
     queryResult.innerHTML = "";
     pathResult.innerHTML = "";
+    configTraceResult.innerHTML = "";
     rootLabel.textContent = state.graphPage.root;
     initializeGraph({ preserveView: !resetLayout });
     loadProjectOverview();
@@ -649,6 +661,134 @@ async function runPathQuery() {
       pathButton.disabled = false;
     }
   }
+}
+
+async function runConfigTrace() {
+  const target = configTraceTargetInput.value.trim();
+  if (!target) {
+    configTraceResult.innerHTML = '<p class="empty">Enter a config file or environment variable.</p>';
+    return;
+  }
+
+  const depth = clampNumber(Number(configTraceDepthInput.value || 6), 1, 32);
+  configTraceDepthInput.value = String(depth);
+  state.configTraceRequest += 1;
+  const requestId = state.configTraceRequest;
+  configTraceButton.disabled = true;
+  configTraceResult.innerHTML = '<p class="empty">Tracing config...</p>';
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    target,
+    depth: String(depth),
+    limit: "50",
+  });
+
+  try {
+    const response = await fetch(`/api/trace-config?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.configTraceRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "config trace failed");
+    }
+    configTraceResult.innerHTML = renderConfigTrace(body);
+    attachConfigTraceActions(configTraceResult, body);
+  } catch (error) {
+    if (requestId !== state.configTraceRequest) return;
+    configTraceResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.configTraceRequest) {
+      configTraceButton.disabled = false;
+    }
+  }
+}
+
+function renderConfigTrace(result) {
+  const summary = `
+    <div class="query-summary">
+      <span>${result.total_matches} targets</span>
+      <span>${result.total_readers} readers</span>
+      <span>${result.total_paths} paths</span>
+      <span>depth ${result.max_depth}</span>
+      <span class="query-expression">${escapeHtml(result.target)}</span>
+    </div>
+  `;
+
+  if (!result.matches.length) {
+    return `${summary}<p class="empty">No matching config or environment nodes.</p>`;
+  }
+
+  const rows = result.matches
+    .map((match, matchIndex) => {
+      const readers = match.readers
+        .slice(0, 8)
+        .map(
+          (reader) => `
+            <li>
+              <button class="query-item" type="button" data-node-id="${reader.node.id}">
+                <span>${escapeHtml(formatKind(reader.edge.kind))}</span>
+                <strong>${escapeHtml(reader.node.label)}</strong>
+              </button>
+            </li>
+          `,
+        )
+        .join("");
+      const paths = match.paths
+        .slice(0, 8)
+        .map((path, pathIndex) => renderConfigTracePath(path, matchIndex, pathIndex))
+        .join("");
+      const truncated = match.truncated ? '<p class="empty">Trace truncated.</p>' : "";
+      return `
+        <section class="trace-columns">
+          <h3>${escapeHtml(match.target.label)}</h3>
+          <div class="trace-summary">
+            <span>${match.total_readers} readers</span>
+            <span>${match.total_paths} paths</span>
+            <span>${escapeHtml(formatKind(match.target.kind))}</span>
+          </div>
+          ${readers ? `<ul class="trace-list">${readers}</ul>` : '<p class="empty">No direct readers.</p>'}
+          ${paths ? `<ul class="trace-list">${paths}</ul>` : ""}
+          ${truncated}
+        </section>
+      `;
+    })
+    .join("");
+  const truncated = result.truncated ? '<p class="empty">Result truncated by limit.</p>' : "";
+  return `${summary}${rows}${truncated}`;
+}
+
+function renderConfigTracePath(path, matchIndex, pathIndex) {
+  const labels = path.nodes.map((node) => node.label).join(" -> ");
+  const kind = path.reached_entrypoint ? "entrypoint path" : "reader path";
+  return `
+    <li>
+      <button class="trace-edge" type="button" data-config-match="${matchIndex}" data-config-path="${pathIndex}">
+        <span>${escapeHtml(kind)}</span>
+        <strong>${escapeHtml(labels)}</strong>
+      </button>
+    </li>
+  `;
+}
+
+function attachConfigTraceActions(container, result) {
+  attachQueryNavigation(container);
+  container.querySelectorAll("[data-config-match][data-config-path]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const match = result.matches[Number(button.dataset.configMatch)];
+      const path = match?.paths?.[Number(button.dataset.configPath)];
+      if (!path) return;
+      const focused = {
+        query: `trace-config ${result.target}`,
+        nodes: path.nodes,
+        edges: path.edges,
+        total_nodes: path.nodes.length,
+        total_edges: path.edges.length,
+        truncated: false,
+      };
+      const selectedId = path.nodes[path.nodes.length - 1]?.id || null;
+      showFocusedGraph(focused, `Config: ${match.target.label}`, selectedId);
+    });
+  });
 }
 
 function renderQueryResult(result, options = {}) {
@@ -1642,6 +1782,11 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
     <div class="selection-actions">
       <button type="button" data-path-endpoint="from">From</button>
       <button type="button" data-path-endpoint="to">To</button>
+      ${
+        node.kind === "config" || node.kind === "environment"
+          ? '<button type="button" data-config-trace-target>Config Trace</button>'
+          : ""
+      }
     </div>
     <table class="detail-table">
       <tbody>
@@ -1694,6 +1839,14 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
       target.focus();
     });
   });
+
+  const configTraceTarget = selectionBody.querySelector("[data-config-trace-target]");
+  if (configTraceTarget) {
+    configTraceTarget.addEventListener("click", () => {
+      configTraceTargetInput.value = node.label;
+      runConfigTrace();
+    });
+  }
 
   const traceButton = document.querySelector("#traceButton");
   if (traceButton) {

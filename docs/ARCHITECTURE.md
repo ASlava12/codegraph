@@ -105,6 +105,7 @@ Responsibilities:
 - provide JSON, DOT, and NDJSON export endpoints
 - provide async scan job endpoints and SSE status streams for long-running scans
 - provide summary, entrypoint, and trace endpoints
+- provide config trace endpoints for config/environment readers and upstream entrypoint paths
 - provide investigation insight endpoints with severity, kind, search, and limit filters
 - provide graph query endpoints
 - provide graph slice endpoints with server-side paging and filtering
@@ -113,7 +114,7 @@ Responsibilities:
 - provide export endpoints for Graphviz DOT and NDJSON
 - constrain scan paths to a configured root by default
 - serve the static web application
-- keep UI graph pages, query focus, path navigation/highlighting, trace, source, insight, and agent clients on the same JSON graph model
+- keep UI graph pages, query focus, path navigation/highlighting, trace, config trace, source, insight, and agent clients on the same JSON graph model
 
 Future crate: optionally `codegraph-ui`.
 
@@ -131,4 +132,4 @@ Graph facts should declare how they were discovered:
 
 This is central to the project. A useful imperfect graph is acceptable when uncertainty is explicit.
 
-Current call, config, environment, and error-flow facts are `heuristic`: they are resolved by syntax patterns and simple-name matching. Package manifest dependencies and manifest-defined entrypoints are `exact` because they come from declared project metadata; package nodes expose `package_id`, and `depends_on` edge metadata records the declaration kind and raw version constraint when available, including resolved Cargo workspace constraints. Entrypoint target `references` edges carry their own confidence: direct manifest paths such as Cargo target files and Composer binaries are exact, syntax-level function matches are syntactic, and command parsing or Python module-to-path mapping is heuristic. Edge queries can filter by confidence, and the web UI displays confidence and provenance metadata on edge rows. Dependency consistency insights compare syntactic external imports with declared package nodes, report likely undeclared package usage, flag runtime manifest dependencies with no matching import, and warn when the same manifest package is declared with conflicting constraints. The web UI loads insight reports from server analysis, so project-wide findings remain visible while the canvas displays a paged graph slice. Future LSP, framework, and compiler integrations should upgrade resolvable code edges to `semantic` or `exact`.
+Current call, config, environment, and error-flow facts are `heuristic`: they are resolved by syntax patterns and simple-name matching. Package manifest dependencies and manifest-defined entrypoints are `exact` because they come from declared project metadata; package nodes expose `package_id`, and `depends_on` edge metadata records the declaration kind and raw version constraint when available, including resolved Cargo workspace constraints. Entrypoint target `references` edges carry their own confidence: direct manifest paths such as Cargo target files and Composer binaries are exact, syntax-level function matches are syntactic, and command parsing or Python module-to-path mapping is heuristic. Config traces use those existing graph facts to match `config` and `environment` targets, list direct readers, and find shortest known upstream entrypoint paths before the final read edge. Edge queries can filter by confidence, and the web UI displays confidence and provenance metadata on edge rows. Dependency consistency insights compare syntactic external imports with declared package nodes, report likely undeclared package usage, flag runtime manifest dependencies with no matching import, and warn when the same manifest package is declared with conflicting constraints. The web UI loads insight reports from server analysis, so project-wide findings remain visible while the canvas displays a paged graph slice. Future LSP, framework, and compiler integrations should upgrade resolvable code edges to `semantic` or `exact`.

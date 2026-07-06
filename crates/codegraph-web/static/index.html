@@ -126,6 +126,24 @@
           <div id="pathResult" class="query-result"></div>
         </section>
 
+        <section class="config-trace" aria-label="Configuration trace">
+          <header>
+            <h2>Config Trace</h2>
+          </header>
+          <div class="config-trace-fields">
+            <label class="field compact">
+              <span>Target</span>
+              <input id="configTraceTargetInput" type="text" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span>Depth</span>
+              <input id="configTraceDepthInput" type="number" min="1" max="32" value="6" />
+            </label>
+          </div>
+          <button id="configTraceButton" type="button">Trace Config</button>
+          <div id="configTraceResult" class="query-result"></div>
+        </section>
+
         <section class="insights" aria-label="Graph insights">
           <header>
             <h2>Insights</h2>
