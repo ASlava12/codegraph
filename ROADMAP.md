@@ -1,0 +1,133 @@
+# Roadmap
+
+## Phase 0: Bootstrap
+
+Status: mostly complete.
+
+- [x] Initialize git repository.
+- [x] Create Rust workspace.
+- [x] Add core graph schema.
+- [x] Add basic project scanner.
+- [x] Add first CLI command.
+- [x] Add parser crate.
+- [ ] Add CI checks.
+- [ ] Add contribution and architecture docs.
+
+Exit criteria:
+
+- `cargo test --workspace` passes.
+- `cargo run -p codegraph-cli -- scan .` emits valid graph JSON.
+- The graph schema is stable enough for the first parser integration.
+
+## Phase 1: Universal Syntax Graph
+
+Goal: extract language-independent structure from source files.
+
+- [x] Add `codegraph-parser`.
+- [x] Integrate Tree-sitter.
+- [x] Detect languages by extension and file name.
+- [x] Extract files, modules, imports, top-level declarations, functions, and classes/types.
+- [x] Support Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash at syntax level.
+- [ ] Extract approximate call sites.
+- [ ] Detect config and environment reads.
+- [ ] Detect basic error/exception constructs.
+- Add graph export formats:
+  - [x] JSON
+  - [ ] DOT/Graphviz
+  - [ ] NDJSON for streaming agent use
+
+Exit criteria:
+
+- A mixed-language repository produces a navigable graph.
+- CLI can show entrypoint candidates and symbol summaries.
+- Parser failures are reported without aborting the whole scan.
+
+## Phase 2: Semantic Enrichment
+
+Goal: improve precision where language tooling exists.
+
+- Add `codegraph-lsp`.
+- Use LSP definitions, references, document symbols, workspace symbols, and diagnostics.
+- Add Rust enrichment through `rust-analyzer`.
+- Add TypeScript/JavaScript enrichment through tsserver-compatible tooling.
+- Add Go enrichment through `gopls`.
+- Mark facts by confidence:
+  - `exact`
+  - `semantic`
+  - `syntactic`
+  - `heuristic`
+  - `unknown`
+
+Exit criteria:
+
+- Function call edges can be resolved to definitions where LSP supports it.
+- Graph facts retain provenance and confidence.
+- CLI can explain why a relationship exists.
+
+## Phase 3: Code Flow Exploration
+
+Goal: answer practical code investigation questions.
+
+- Trace from entrypoints.
+- Trace config loading and environment variable reads.
+- Identify error and exception paths.
+- Detect dependency boundaries.
+- Add query language or structured query commands.
+
+Example commands:
+
+```bash
+codegraph entrypoints
+codegraph trace main
+codegraph trace-config DATABASE_URL
+codegraph query 'calls(function:main)'
+```
+
+Exit criteria:
+
+- A human can start from an entrypoint and follow meaningful execution paths.
+- An agent can request focused subgraphs instead of reading a whole repository.
+
+## Phase 4: API And UI
+
+Goal: make the graph explorable interactively in a modern web UI.
+
+- Add `codegraph-server`.
+- Serve graph data over HTTP and WebSocket/SSE.
+- Add `codegraph-web` for browser usage.
+- Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
+- Implement graph view, source preview, search, filters, and trace panels.
+- Support opening local repositories.
+
+Exit criteria:
+
+- The UI can load a project graph and navigate from nodes to source spans.
+- CLI, API, and UI expose the same underlying graph.
+
+## Phase 5: Scale And Incrementality
+
+Goal: handle real repositories efficiently.
+
+- Add persistent index storage.
+- Incrementally update changed files.
+- Cache parser and LSP facts.
+- Support large graph filtering and paging.
+- Add benchmarks.
+
+Exit criteria:
+
+- Medium-sized repositories are usable interactively.
+- Re-scanning after a small edit is fast.
+
+## Phase 6: Plugin System
+
+Goal: make language and framework knowledge extensible.
+
+- Add language adapter interface.
+- Add framework detectors for config and entrypoints.
+- Add custom rules for repositories.
+- Support user-defined graph annotations.
+
+Exit criteria:
+
+- New language or framework support can be added without rewriting core graph logic.

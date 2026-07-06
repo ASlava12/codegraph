@@ -1,0 +1,10 @@
+[package]
+name = "codegraph-indexer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+codegraph-core.workspace = true
+codegraph-parser.workspace = true
+thiserror.workspace = true
+walkdir.workspace = true
