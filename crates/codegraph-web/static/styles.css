@@ -188,6 +188,101 @@ button:disabled {
   font-size: 12px;
 }
 
+.overview {
+  display: grid;
+  gap: 9px;
+}
+
+.overview header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.overview h2 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.overview header span {
+  min-width: 94px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.language-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.language-chip {
+  display: inline-grid;
+  grid-template-columns: minmax(0, auto) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.language-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.language-chip strong {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.entrypoint-list {
+  display: grid;
+  gap: 6px;
+}
+
+.entrypoint-item {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.language-chip:hover,
+.entrypoint-item:hover {
+  border-color: rgba(92, 200, 167, 0.55);
+  background: rgba(92, 200, 167, 0.08);
+}
+
+.entrypoint-item span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.entrypoint-item strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
 .graph-page {
   display: grid;
   gap: 10px;

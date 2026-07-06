@@ -17,8 +17,11 @@ const state = {
   traceRequest: 0,
   queryRequest: 0,
   pageRequest: 0,
+  overviewRequest: 0,
   insightRequest: 0,
   insightFocusRequest: 0,
+  summary: null,
+  entrypoints: [],
   insightReport: null,
   queryFocus: null,
   scanJobId: null,
@@ -62,6 +65,9 @@ const envCount = document.querySelector("#envCount");
 const configCount = document.querySelector("#configCount");
 const errorCount = document.querySelector("#errorCount");
 const entryCount = document.querySelector("#entryCount");
+const overviewTotals = document.querySelector("#overviewTotals");
+const languageList = document.querySelector("#languageList");
+const entrypointList = document.querySelector("#entrypointList");
 const pageInfo = document.querySelector("#pageInfo");
 const nodeLimitInput = document.querySelector("#nodeLimitInput");
 const edgeLimitInput = document.querySelector("#edgeLimitInput");
@@ -117,6 +123,10 @@ async function scan() {
   selectionTitle.textContent = "Selection";
   selectionBody.innerHTML = "";
   state.insightRequest += 1;
+  state.overviewRequest += 1;
+  state.summary = null;
+  state.entrypoints = [];
+  renderOverview();
   state.insightReport = null;
   renderInsights();
   if (state.scanEvents) {
@@ -292,6 +302,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     queryResult.innerHTML = "";
     rootLabel.textContent = state.graphPage.root;
     initializeGraph({ preserveView: !resetLayout });
+    loadProjectOverview();
     loadInsights();
     setStatus("ready");
   } catch (error) {
@@ -304,6 +315,93 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
       updateGraphPageControls();
     }
   }
+}
+
+async function loadProjectOverview() {
+  state.overviewRequest += 1;
+  const requestId = state.overviewRequest;
+  const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
+
+  try {
+    const [summaryResponse, entrypointsResponse] = await Promise.all([
+      fetch(`/api/summary?${params.toString()}`),
+      fetch(`/api/entrypoints?${params.toString()}`),
+    ]);
+    const summary = await summaryResponse.json();
+    const entrypoints = await entrypointsResponse.json();
+    if (requestId !== state.overviewRequest) return;
+    if (!summaryResponse.ok) {
+      throw new Error(summary.error || "summary failed");
+    }
+    if (!entrypointsResponse.ok) {
+      throw new Error(entrypoints.error || "entrypoints failed");
+    }
+    state.summary = summary;
+    state.entrypoints = entrypoints;
+    renderOverview();
+  } catch (error) {
+    if (requestId !== state.overviewRequest) return;
+    overviewTotals.textContent = "error";
+    languageList.innerHTML = "";
+    entrypointList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderOverview() {
+  const summary = state.summary;
+  const entrypoints = state.entrypoints || [];
+
+  overviewTotals.textContent = summary
+    ? `${summary.nodes} nodes · ${summary.edges} edges`
+    : "0 nodes";
+
+  const languages = Object.entries(summary?.languages || {})
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 8);
+  languageList.innerHTML =
+    languages.length > 0
+      ? languages
+          .map(
+            ([language, count]) => `
+              <button class="language-chip" type="button" data-language="${escapeHtml(language)}">
+                <span>${escapeHtml(language)}</span>
+                <strong>${count}</strong>
+              </button>
+            `,
+          )
+          .join("")
+      : '<p class="empty">No languages.</p>';
+
+  entrypointList.innerHTML =
+    entrypoints.length > 0
+      ? entrypoints
+          .slice(0, 8)
+          .map(
+            (node) => `
+              <button class="entrypoint-item" type="button" data-node-id="${node.id}">
+                <span>${escapeHtml(formatKind(node.metadata?.entrypoint_kind || node.kind))}</span>
+                <strong>${escapeHtml(node.label)}</strong>
+              </button>
+            `,
+          )
+          .join("")
+      : '<p class="empty">No entrypoints.</p>';
+
+  languageList.querySelectorAll("[data-language]").forEach((button) => {
+    button.addEventListener("click", () => {
+      serverKindInput.value = "";
+      serverEdgeKindInput.value = "";
+      searchInput.value = button.dataset.language || "";
+      state.search = searchInput.value.trim().toLowerCase();
+      applyFilters();
+    });
+  });
+
+  entrypointList.querySelectorAll("[data-node-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      focusNodeId(Number(button.dataset.nodeId), "Focus: entrypoint");
+    });
+  });
 }
 
 function shiftGraphPage(direction) {
@@ -651,6 +749,33 @@ async function focusInsight(insight) {
     }
     const label = `Focus: ${formatKind(insight.kind)}`;
     showFocusedGraph(body, label, selectedId);
+  } catch (error) {
+    if (requestId !== state.insightFocusRequest) return;
+    queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function focusNodeId(nodeId, label) {
+  if (!nodeId) return;
+  state.selectedId = nodeId;
+  renderSelection();
+
+  state.insightFocusRequest += 1;
+  const requestId = state.insightFocusRequest;
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    node_ids: String(nodeId),
+    edge_limit: "300",
+  });
+
+  try {
+    const response = await fetch(`/api/focus?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.insightFocusRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "focus failed");
+    }
+    showFocusedGraph(body, label, nodeId);
   } catch (error) {
     if (requestId !== state.insightFocusRequest) return;
     queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;

@@ -359,8 +359,7 @@ pub fn focus_subgraph(graph: &CodeGraph, request: FocusRequest) -> QueryResult {
     if request.edge_indexes.is_empty() {
         matched_edges.extend(graph.edges.iter().filter(|edge| {
             !node_ids.is_empty()
-                && node_ids.contains(&edge.source)
-                && node_ids.contains(&edge.target)
+                && (node_ids.contains(&edge.source) || node_ids.contains(&edge.target))
         }));
     } else {
         matched_edges.extend(
@@ -1969,6 +1968,32 @@ mod tests {
         assert!(result.nodes.iter().any(|node| node.id == main));
         assert!(result.nodes.iter().any(|node| node.id == helper));
         assert!(result.nodes.iter().any(|node| node.id == config));
+    }
+
+    #[test]
+    fn focus_subgraph_expands_node_only_focus_to_incident_edges() {
+        let mut graph = CodeGraph::new("repo");
+        let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let unrelated = graph.add_node(NodeKind::Function, "unrelated");
+        graph.add_edge(entrypoint, main, EdgeKind::References, Confidence::Exact);
+        graph.add_edge(unrelated, main, EdgeKind::Calls, Confidence::Heuristic);
+
+        let result = focus_subgraph(
+            &graph,
+            FocusRequest {
+                node_ids: vec![entrypoint],
+                edge_indexes: Vec::new(),
+                edge_limit: 10,
+            },
+        );
+
+        assert_eq!(result.total_edges, 1);
+        assert_eq!(result.edges[0].source, entrypoint);
+        assert_eq!(result.edges[0].target, main);
+        assert!(result.nodes.iter().any(|node| node.id == entrypoint));
+        assert!(result.nodes.iter().any(|node| node.id == main));
+        assert!(!result.nodes.iter().any(|node| node.id == unrelated));
     }
 
     #[test]
