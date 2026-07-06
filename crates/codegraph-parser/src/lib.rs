@@ -111,6 +111,9 @@ pub enum ParsedItemKind {
     Import,
     Entrypoint,
     Call,
+    EnvironmentRead,
+    ConfigRead,
+    Error,
 }
 
 pub fn parse_source(
@@ -158,6 +161,11 @@ fn collect_items(
     current_function: Option<String>,
     items: &mut Vec<ParsedItem>,
 ) {
+    if let Some(effect) = classify_effect(language, node, source, path, current_function.as_deref())
+    {
+        items.push(effect);
+    }
+
     if let Some(function_name) = current_function.as_deref() {
         if let Some(call) = classify_call(language, node, source, path, function_name) {
             items.push(call);
@@ -290,6 +298,170 @@ fn classify_call(
     })
 }
 
+fn classify_effect(
+    language: Language,
+    node: Node<'_>,
+    source: &[u8],
+    path: &str,
+    function_name: Option<&str>,
+) -> Option<ParsedItem> {
+    let label = if is_environment_read(language, node, source) {
+        effect_label(node, source).map(|label| (ParsedItemKind::EnvironmentRead, label))
+    } else if is_config_read(language, node, source) {
+        effect_label(node, source).map(|label| (ParsedItemKind::ConfigRead, label))
+    } else if is_error_construct(language, node, source) {
+        effect_label(node, source).map(|label| (ParsedItemKind::Error, label))
+    } else {
+        None
+    }?;
+
+    Some(ParsedItem {
+        kind: label.0,
+        label: label.1,
+        span: span_for(path, node),
+        parent: function_name.map(ToString::to_string),
+    })
+}
+
+fn is_environment_read(language: Language, node: Node<'_>, source: &[u8]) -> bool {
+    let text = short_node_text(node, source);
+    let call = call_label(language, node, source);
+
+    match language {
+        Language::Rust => {
+            is_call_node(language, node, source)
+                && call
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "env::var" | "std::env::var" | "var"))
+        }
+        Language::Python => {
+            matches!(node.kind(), "call" | "subscript")
+                && text.as_deref().is_some_and(|value| {
+                    value.contains("os.getenv") || value.contains("os.environ")
+                })
+        }
+        Language::JavaScript | Language::TypeScript | Language::Tsx => {
+            matches!(
+                node.kind(),
+                "call_expression" | "member_expression" | "subscript_expression"
+            ) && text
+                .as_deref()
+                .is_some_and(|value| value.contains("process.env"))
+        }
+        Language::Go => {
+            is_call_node(language, node, source)
+                && call
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "os.Getenv" | "Getenv"))
+        }
+        Language::C | Language::Cpp | Language::Php => {
+            is_call_node(language, node, source)
+                && call
+                    .as_deref()
+                    .is_some_and(|value| matches!(simple_name(value), "getenv"))
+        }
+        Language::Bash => node.kind() == "variable_name",
+    }
+}
+
+fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) -> bool {
+    if language != Language::Bash && !is_call_node(language, node, source) {
+        return false;
+    }
+
+    let Some(text) = short_node_text(node, source) else {
+        return false;
+    };
+    if !looks_like_config_text(&text) {
+        return false;
+    }
+
+    let call = call_label(language, node, source);
+    match language {
+        Language::Rust => call.as_deref().is_some_and(|value| {
+            matches!(
+                simple_name(value),
+                "read_to_string" | "read" | "open" | "from_reader" | "from_str"
+            )
+        }),
+        Language::Python => call.as_deref().is_some_and(|value| {
+            matches!(
+                simple_name(value),
+                "open" | "load" | "safe_load" | "dotenv_values" | "load_dotenv"
+            )
+        }),
+        Language::JavaScript | Language::TypeScript | Language::Tsx => {
+            text.contains("readFile")
+                || text.contains("require(")
+                || call
+                    .as_deref()
+                    .is_some_and(|value| matches!(simple_name(value), "readFile" | "readFileSync"))
+        }
+        Language::Go => call
+            .as_deref()
+            .is_some_and(|value| matches!(simple_name(value), "ReadFile" | "Open" | "GetString")),
+        Language::C | Language::Cpp => call
+            .as_deref()
+            .is_some_and(|value| matches!(simple_name(value), "fopen" | "open")),
+        Language::Php => call.as_deref().is_some_and(|value| {
+            matches!(
+                simple_name(value),
+                "parse_ini_file" | "file_get_contents" | "include" | "require"
+            )
+        }),
+        Language::Bash => {
+            node.kind() == "command" && command_text_starts_with(source, node, &["source", "."])
+        }
+    }
+}
+
+fn is_error_construct(language: Language, node: Node<'_>, source: &[u8]) -> bool {
+    match language {
+        Language::Rust => {
+            node.kind() == "try_expression"
+                || (is_call_node(language, node, source)
+                    && call_label(language, node, source)
+                        .as_deref()
+                        .is_some_and(|value| {
+                            matches!(simple_name(value), "panic" | "unwrap" | "expect")
+                        }))
+        }
+        Language::Python => node.kind() == "raise_statement",
+        Language::JavaScript | Language::TypeScript | Language::Tsx => {
+            node.kind() == "throw_statement"
+        }
+        Language::Go => {
+            is_call_node(language, node, source)
+                && call_label(language, node, source)
+                    .as_deref()
+                    .is_some_and(|value| simple_name(value) == "panic")
+        }
+        Language::C => {
+            is_call_node(language, node, source)
+                && call_label(language, node, source)
+                    .as_deref()
+                    .is_some_and(|value| matches!(simple_name(value), "abort" | "exit"))
+        }
+        Language::Cpp => {
+            node.kind() == "throw_statement"
+                || (is_call_node(language, node, source)
+                    && call_label(language, node, source)
+                        .as_deref()
+                        .is_some_and(|value| matches!(simple_name(value), "abort" | "exit")))
+        }
+        Language::Php => node.kind() == "throw_expression",
+        Language::Bash => {
+            node.kind() == "command" && command_text_starts_with(source, node, &["exit"])
+        }
+    }
+}
+
+fn effect_label(node: Node<'_>, source: &[u8]) -> Option<String> {
+    first_string_literal(node, source)
+        .or_else(|| node_text(node, source).map(compact_label))
+        .map(|value| truncate_label(value, 120))
+}
+
 fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) -> bool {
     match language {
         Language::Rust => matches!(node.kind(), "call_expression" | "macro_invocation"),
@@ -383,17 +555,80 @@ fn first_identifier(node: Node<'_>, source: &[u8]) -> Option<String> {
     None
 }
 
+fn first_string_literal(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if node.kind().contains("string") || matches!(node.kind(), "raw_string_literal") {
+        return node_text(node, source).map(strip_quotes);
+    }
+
+    let mut cursor: TreeCursor<'_> = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(value) = first_string_literal(child, source) {
+            return Some(value);
+        }
+    }
+    None
+}
+
 fn node_text(node: Node<'_>, source: &[u8]) -> Option<String> {
     node.utf8_text(source).ok().map(|value| value.to_string())
+}
+
+fn short_node_text(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if node.end_byte().saturating_sub(node.start_byte()) > 240 {
+        return None;
+    }
+    node_text(node, source)
 }
 
 fn compact_label(value: String) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn strip_quotes(value: String) -> String {
+    value
+        .trim()
+        .trim_start_matches(['r', 'b', 'u'])
+        .trim_matches(['"', '\'', '`'])
+        .to_string()
+}
+
+fn truncate_label(value: String, max_len: usize) -> String {
+    if value.len() <= max_len {
+        value
+    } else {
+        format!("{}...", &value[..max_len])
+    }
+}
+
 fn clean_call_label(value: &str) -> String {
     let compact = compact_label(value.to_string());
     compact.trim_end_matches('!').to_string()
+}
+
+fn simple_name(value: &str) -> &str {
+    value
+        .rsplit([':', '.', '\\', '>'])
+        .find(|part| !part.is_empty() && *part != "-")
+        .unwrap_or(value)
+}
+
+fn looks_like_config_text(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    [
+        ".env",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".ini",
+        ".conf",
+        ".cfg",
+        ".properties",
+        "config",
+        "settings",
+    ]
+    .iter()
+    .any(|needle| value.contains(needle))
 }
 
 fn command_text_starts_with(source: &[u8], node: Node<'_>, prefixes: &[&str]) -> bool {
@@ -520,6 +755,34 @@ mod tests {
                 && item.label == "helper"
                 && item.parent.as_deref() == Some("main")
         }));
+    }
+
+    #[test]
+    fn parses_environment_config_and_error_facts() {
+        let parsed = parse_source(
+            "src/main.rs",
+            br#"fn main() {
+                let _ = std::env::var("DATABASE_URL");
+                let _ = std::fs::read_to_string("config/app.toml");
+                panic!("broken");
+            }
+            "#,
+            Language::Rust,
+        )
+        .unwrap();
+
+        assert!(parsed.items.iter().any(|item| {
+            item.kind == ParsedItemKind::EnvironmentRead && item.label == "DATABASE_URL"
+        }));
+        assert!(parsed.items.iter().any(|item| {
+            item.kind == ParsedItemKind::ConfigRead && item.label == "config/app.toml"
+        }));
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|item| item.kind == ParsedItemKind::Error)
+        );
     }
 
     #[test]

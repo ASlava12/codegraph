@@ -137,17 +137,18 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
                 }
 
                 let mut local_functions = BTreeMap::new();
-                for item in parsed
-                    .items
-                    .iter()
-                    .filter(|item| item.kind != ParsedItemKind::Call)
-                {
+                for item in parsed.items.iter().filter(|item| is_symbol_item(item.kind)) {
                     let node_kind = match item.kind {
                         ParsedItemKind::Function | ParsedItemKind::Entrypoint => NodeKind::Function,
                         ParsedItemKind::Type => NodeKind::Type,
                         ParsedItemKind::Module => NodeKind::Module,
                         ParsedItemKind::Import => NodeKind::ExternalDependency,
-                        ParsedItemKind::Call => unreachable!("calls are processed after symbols"),
+                        ParsedItemKind::Call
+                        | ParsedItemKind::EnvironmentRead
+                        | ParsedItemKind::ConfigRead
+                        | ParsedItemKind::Error => {
+                            unreachable!("non-symbol facts are processed separately")
+                        }
                     };
                     let mut item_metadata = BTreeMap::new();
                     item_metadata.insert("language".to_string(), language.to_string());
@@ -191,6 +192,50 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
                         );
                         register_local_function(&mut local_functions, &item.label, item_id);
                     }
+                }
+
+                for item in parsed.items.iter().filter(|item| is_effect_item(item.kind)) {
+                    let source_id = item
+                        .parent
+                        .as_deref()
+                        .and_then(|parent| resolve_local_function(&local_functions, parent))
+                        .unwrap_or(file_id);
+                    let node_kind = match item.kind {
+                        ParsedItemKind::EnvironmentRead => NodeKind::Environment,
+                        ParsedItemKind::ConfigRead => NodeKind::Config,
+                        ParsedItemKind::Error => NodeKind::Unknown,
+                        _ => unreachable!("only effect facts are processed here"),
+                    };
+                    let edge_kind = match item.kind {
+                        ParsedItemKind::EnvironmentRead => EdgeKind::ReadsEnvironment,
+                        ParsedItemKind::ConfigRead => EdgeKind::ReadsConfig,
+                        ParsedItemKind::Error => EdgeKind::MayError,
+                        _ => unreachable!("only effect facts are processed here"),
+                    };
+                    let mut item_metadata = BTreeMap::new();
+                    item_metadata.insert("language".to_string(), language.to_string());
+                    item_metadata.insert("parser".to_string(), "tree-sitter".to_string());
+                    item_metadata.insert(
+                        "item_kind".to_string(),
+                        parsed_item_kind_name(item.kind).to_string(),
+                    );
+                    if let Some(parent) = item.parent.as_deref() {
+                        item_metadata.insert("parent".to_string(), parent.to_string());
+                    }
+
+                    let item_id = context.graph.add_node_with_metadata(
+                        node_kind,
+                        item.label.clone(),
+                        Some(item.span.clone()),
+                        item_metadata,
+                    );
+                    add_edge_once(
+                        &mut context.graph,
+                        source_id,
+                        item_id,
+                        edge_kind,
+                        Confidence::Heuristic,
+                    );
                 }
 
                 for item in parsed
@@ -351,7 +396,28 @@ fn parsed_item_kind_name(kind: ParsedItemKind) -> &'static str {
         ParsedItemKind::Import => "import",
         ParsedItemKind::Entrypoint => "entrypoint",
         ParsedItemKind::Call => "call",
+        ParsedItemKind::EnvironmentRead => "environment_read",
+        ParsedItemKind::ConfigRead => "config_read",
+        ParsedItemKind::Error => "error",
     }
+}
+
+fn is_symbol_item(kind: ParsedItemKind) -> bool {
+    matches!(
+        kind,
+        ParsedItemKind::Function
+            | ParsedItemKind::Entrypoint
+            | ParsedItemKind::Type
+            | ParsedItemKind::Module
+            | ParsedItemKind::Import
+    )
+}
+
+fn is_effect_item(kind: ParsedItemKind) -> bool {
+    matches!(
+        kind,
+        ParsedItemKind::EnvironmentRead | ParsedItemKind::ConfigRead | ParsedItemKind::Error
+    )
 }
 
 fn should_enter(entry: &DirEntry, options: &IndexOptions) -> bool {
@@ -410,7 +476,10 @@ fn is_probably_source_file(path: &Path, max_file_size: u64) -> bool {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
 
     #[test]
     fn scan_project_skips_default_ignored_directories() {
@@ -491,11 +560,66 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn scan_project_adds_environment_config_and_error_edges() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            r#"fn main() {
+                let _ = std::env::var("DATABASE_URL");
+                let _ = std::fs::read_to_string("config/app.toml");
+                panic!("broken");
+            }
+            "#,
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| { node.kind == NodeKind::Environment && node.label == "DATABASE_URL" })
+        );
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| node.kind == NodeKind::Config && node.label == "config/app.toml")
+        );
+        assert!(
+            graph
+                .edges
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::ReadsEnvironment)
+        );
+        assert!(
+            graph
+                .edges
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::ReadsConfig)
+        );
+        assert!(
+            graph
+                .edges
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::MayError)
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn temp_project_root() -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("codegraph-indexer-test-{nanos}"))
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "codegraph-indexer-test-{}-{nanos}-{id}",
+            std::process::id()
+        ))
     }
 }

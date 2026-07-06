@@ -29,8 +29,8 @@ Goal: extract language-independent structure from source files.
 - [x] Extract files, modules, imports, top-level declarations, functions, and classes/types.
 - [x] Support Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash at syntax level.
 - [x] Extract approximate call sites.
-- [ ] Detect config and environment reads.
-- [ ] Detect basic error/exception constructs.
+- [x] Detect config and environment reads.
+- [x] Detect basic error/exception constructs.
 - Add graph export formats:
   - [x] JSON
   - [ ] DOT/Graphviz
@@ -42,6 +42,7 @@ Exit criteria:
 - CLI can show entrypoint candidates and symbol summaries.
 - Parser failures are reported without aborting the whole scan.
 - Function calls are represented as heuristic edges when syntactic resolution is possible.
+- Config reads, environment reads, and potential error constructs are represented as heuristic graph facts.
 
 ## Phase 2: Semantic Enrichment
 

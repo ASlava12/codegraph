@@ -35,6 +35,7 @@ Responsibilities:
 - Tree-sitter parser management
 - syntax-level graph extraction
 - approximate call-site extraction with parent function context
+- heuristic extraction of config reads, environment reads, and potential error constructs
 - parser error recovery
 
 Current language coverage:
@@ -92,4 +93,4 @@ Graph facts should declare how they were discovered:
 
 This is central to the project. A useful imperfect graph is acceptable when uncertainty is explicit.
 
-Current call edges are `heuristic`: they are resolved by syntactic function names and simple-name matching. Future LSP and compiler integrations should upgrade resolvable edges to `semantic` or `exact`.
+Current call, config, environment, and error-flow facts are `heuristic`: they are resolved by syntax patterns and simple-name matching. Future LSP, framework, and compiler integrations should upgrade resolvable edges to `semantic` or `exact`.

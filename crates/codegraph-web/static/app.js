@@ -38,6 +38,9 @@ const rootLabel = document.querySelector("#rootLabel");
 const nodeCount = document.querySelector("#nodeCount");
 const edgeCount = document.querySelector("#edgeCount");
 const callCount = document.querySelector("#callCount");
+const envCount = document.querySelector("#envCount");
+const configCount = document.querySelector("#configCount");
+const errorCount = document.querySelector("#errorCount");
 const entryCount = document.querySelector("#entryCount");
 const kindFilters = document.querySelector("#kindFilters");
 const selectionTitle = document.querySelector("#selectionTitle");
@@ -140,6 +143,15 @@ function applyFilters() {
   edgeCount.textContent = String(state.visibleEdges.length);
   callCount.textContent = String(
     state.visibleEdges.filter((edge) => edge.kind === "calls").length,
+  );
+  envCount.textContent = String(
+    state.visibleEdges.filter((edge) => edge.kind === "reads_environment").length,
+  );
+  configCount.textContent = String(
+    state.visibleEdges.filter((edge) => edge.kind === "reads_config").length,
+  );
+  errorCount.textContent = String(
+    state.visibleEdges.filter((edge) => edge.kind === "may_error").length,
   );
   entryCount.textContent = String(
     state.graph.edges.filter((edge) => edge.kind === "entrypoint").length,
@@ -491,6 +503,12 @@ function edgeColor(edge) {
       return "rgba(92, 200, 167, 0.82)";
     case "imports":
       return "rgba(184, 142, 230, 0.5)";
+    case "reads_environment":
+      return "rgba(216, 166, 87, 0.72)";
+    case "reads_config":
+      return "rgba(229, 180, 84, 0.78)";
+    case "may_error":
+      return "rgba(224, 108, 117, 0.78)";
     default:
       return "rgba(170, 184, 190, 0.28)";
   }

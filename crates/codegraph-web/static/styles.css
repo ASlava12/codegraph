@@ -154,7 +154,7 @@ button:disabled {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
@@ -167,6 +167,7 @@ button:disabled {
   padding: 12px;
   background: var(--panel-2);
   border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .stats div:last-child {
