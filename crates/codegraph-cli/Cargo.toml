@@ -6,5 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+codegraph-analysis.workspace = true
+codegraph-core.workspace = true
 codegraph-indexer.workspace = true
 serde_json.workspace = true

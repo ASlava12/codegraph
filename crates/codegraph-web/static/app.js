@@ -14,6 +14,7 @@ const state = {
   search: "",
   animationFrame: null,
   selectionRequest: 0,
+  traceRequest: 0,
 };
 
 const colors = {
@@ -380,6 +381,10 @@ function renderSelection() {
     <div class="neighbors">
       ${neighbors.map((edge) => renderNeighbor(edge, node.id)).join("")}
     </div>
+    <section class="trace-panel">
+      <button id="traceButton" type="button">Trace dependencies</button>
+      <div id="traceResult" class="trace-result"></div>
+    </section>
     ${
       node.span
         ? `<section class="source-preview">
@@ -400,9 +405,61 @@ function renderSelection() {
     });
   });
 
+  const traceButton = document.querySelector("#traceButton");
+  if (traceButton) {
+    traceButton.addEventListener("click", () => loadTrace(node));
+  }
+
   if (node.span) {
     loadSourcePreview(node, requestId);
   }
+}
+
+async function loadTrace(node) {
+  state.traceRequest += 1;
+  const requestId = state.traceRequest;
+  const target = document.querySelector("#traceResult");
+  if (!target) return;
+
+  target.innerHTML = '<p class="empty">Tracing...</p>';
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    node_id: String(node.id),
+    depth: "3",
+  });
+
+  try {
+    const response = await fetch(`/api/trace?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.traceRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "trace failed");
+    }
+    target.innerHTML = renderTrace(body);
+  } catch (error) {
+    if (requestId !== state.traceRequest) return;
+    target.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderTrace(trace) {
+  if (!trace) {
+    return '<p class="empty">No matching start node.</p>';
+  }
+  if (trace.nodes.length <= 1 && trace.edges.length === 0) {
+    return '<p class="empty">No outgoing dependency edges.</p>';
+  }
+
+  const rows = trace.nodes
+    .sort((left, right) => left.depth - right.depth || left.node.label.localeCompare(right.node.label))
+    .map(({ node, depth }) => {
+      const indent = "&nbsp;".repeat(depth * 3);
+      return `<li>${indent}<span>${escapeHtml(formatKind(node.kind))}</span>${escapeHtml(node.label)}</li>`;
+    })
+    .join("");
+
+  const suffix = trace.truncated ? '<p class="empty">Trace truncated by depth.</p>' : "";
+  return `<ul class="trace-list">${rows}</ul>${suffix}`;
 }
 
 async function loadSourcePreview(node, requestId) {

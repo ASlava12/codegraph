@@ -23,7 +23,17 @@ This crate should stay small and dependency-light.
 
 `codegraph-indexer` walks project roots, applies ignore rules, invokes parsers, and assembles graph fragments.
 
-The initial implementation only indexes directories and files. Future implementations should merge syntax and semantic facts from parser and LSP layers.
+It currently builds file, symbol, import, call, config, environment, and error-flow graph facts from syntax-level parser output. Future implementations should merge stronger semantic facts from LSP and compiler layers.
+
+### Analysis
+
+`codegraph-analysis` turns a full graph into focused artifacts:
+
+- summary counts
+- entrypoint candidates
+- outgoing dependency traces
+
+This crate is shared by the CLI and server so humans, UI features, and agents receive the same structured answers.
 
 ### Parser
 
@@ -73,6 +83,7 @@ CLI output must remain machine-friendly. Human-oriented formatting can be added,
 Responsibilities:
 
 - provide health and scan endpoints
+- provide summary, entrypoint, and trace endpoints
 - provide source preview endpoints for graph spans
 - constrain scan paths to a configured root by default
 - serve the static web application

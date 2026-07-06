@@ -9,6 +9,7 @@ repository.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
+codegraph-analysis.workspace = true
 codegraph-core.workspace = true
 codegraph-indexer.workspace = true
 serde.workspace = true

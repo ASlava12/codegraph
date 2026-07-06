@@ -5,6 +5,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use clap::Parser;
+use codegraph_analysis::{TraceRequest, TraceStart, entrypoints, summarize, trace};
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, scan_project};
 use serde::{Deserialize, Serialize};
@@ -60,6 +61,14 @@ struct SourceQuery {
     start_line: Option<u32>,
     end_line: Option<u32>,
     context: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TraceQuery {
+    path: Option<PathBuf>,
+    label: Option<String>,
+    node_id: Option<u64>,
+    depth: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -121,6 +130,9 @@ async fn main() -> Result<()> {
         .route("/styles.css", get(styles_css))
         .route("/api/health", get(health))
         .route("/api/scan", get(scan))
+        .route("/api/summary", get(summary))
+        .route("/api/entrypoints", get(entrypoints_api))
+        .route("/api/trace", get(trace_api))
         .route("/api/source", get(source))
         .fallback(not_found)
         .with_state(state);
@@ -179,6 +191,45 @@ async fn scan(
     }))
 }
 
+async fn summary(
+    State(state): State<AppState>,
+    Query(query): Query<ScanQuery>,
+) -> Result<Json<codegraph_analysis::GraphSummary>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    Ok(Json(summarize(&graph)))
+}
+
+async fn entrypoints_api(
+    State(state): State<AppState>,
+    Query(query): Query<ScanQuery>,
+) -> Result<Json<Vec<codegraph_core::Node>>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    Ok(Json(entrypoints(&graph)))
+}
+
+async fn trace_api(
+    State(state): State<AppState>,
+    Query(query): Query<TraceQuery>,
+) -> Result<Json<Option<codegraph_analysis::TraceResult>>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let start = match (query.node_id, query.label) {
+        (Some(id), _) => TraceStart::NodeId(codegraph_core::NodeId(id)),
+        (None, Some(label)) => TraceStart::Label(label),
+        (None, None) => {
+            return Err(ApiError::bad_request(
+                "trace requires either node_id or label query parameter",
+            ));
+        }
+    };
+    Ok(Json(trace(
+        &graph,
+        TraceRequest {
+            start,
+            max_depth: query.depth.unwrap_or(2),
+        },
+    )))
+}
+
 async fn source(
     State(state): State<AppState>,
     Query(query): Query<SourceQuery>,
@@ -234,6 +285,15 @@ async fn source(
     .map_err(|error| ApiError::internal(format!("source task failed: {error}")))??;
 
     Ok(Json(response))
+}
+
+async fn scan_graph(state: &AppState, requested: Option<&Path>) -> Result<CodeGraph, ApiError> {
+    let root = resolve_scan_root(state, requested)?;
+    let options = state.options.clone();
+    tokio::task::spawn_blocking(move || scan_project(root, &options))
+        .await
+        .map_err(|error| ApiError::internal(format!("scanner task failed: {error}")))?
+        .map_err(|error| ApiError::internal(error.to_string()))
 }
 
 fn resolve_scan_root(state: &AppState, requested: Option<&Path>) -> Result<PathBuf, ApiError> {

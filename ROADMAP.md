@@ -7,6 +7,7 @@ Status: mostly complete.
 - [x] Initialize git repository.
 - [x] Create Rust workspace.
 - [x] Add core graph schema.
+- [x] Add graph analysis crate.
 - [x] Add basic project scanner.
 - [x] Add first CLI command.
 - [x] Add parser crate.
@@ -73,8 +74,10 @@ Goal: answer practical code investigation questions.
 - Trace from entrypoints.
 - Trace config loading and environment variable reads.
 - Identify error and exception paths.
+- [x] Add structured summary, entrypoints, and trace commands.
+- [x] Expose structured summary, entrypoints, and trace APIs.
 - Detect dependency boundaries.
-- Add query language or structured query commands.
+- Add richer query language.
 
 Example commands:
 

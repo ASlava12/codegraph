@@ -20,6 +20,7 @@ Implemented now:
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
 - Source preview API and UI panel for graph nodes with source spans.
+- Agent-friendly summary, entrypoint, and trace commands/endpoints.
 
 Planned next:
 
@@ -34,6 +35,24 @@ Run the initial scanner:
 
 ```bash
 cargo run -p codegraph-cli -- scan .
+```
+
+Summarize a project:
+
+```bash
+cargo run -p codegraph-cli -- summary .
+```
+
+List entrypoint candidates:
+
+```bash
+cargo run -p codegraph-cli -- entrypoints .
+```
+
+Trace outgoing dependencies from a label:
+
+```bash
+cargo run -p codegraph-cli -- trace main . --depth 3
 ```
 
 Include hidden paths:
@@ -68,6 +87,14 @@ Scan API:
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 ```
 
+Analysis APIs:
+
+```bash
+curl 'http://127.0.0.1:3765/api/summary?path=.'
+curl 'http://127.0.0.1:3765/api/entrypoints?path=.'
+curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
+```
+
 Source preview API:
 
 ```bash
@@ -91,6 +118,7 @@ At the current stage, supported source languages are detected by extension:
 ```text
 crates/
   codegraph-core/      graph schema and shared domain types
+  codegraph-analysis/  summaries, entrypoints, and trace subgraphs
   codegraph-parser/    Tree-sitter syntax extraction
   codegraph-indexer/   project scanning and graph construction
   codegraph-cli/       command-line interface
