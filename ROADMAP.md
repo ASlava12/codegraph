@@ -179,6 +179,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add enriched node cards with summary, code preview, dependencies, and related risks.
 - [x] Add initial multi-language UI support with English and Russian.
 - [x] Reduce graph label clutter with zoom thresholds and collision-aware label drawing.
+- [x] Tighten graph label budgets and adaptive label placement so node captions do not cover dense graphs.
 - [x] Add bounded server retention for scan and semantic jobs with health counters.
 - [x] Add configurable server concurrency limits for scan and semantic jobs with health counters.
 - [x] Add cancelable scan and semantic jobs in API and web UI.

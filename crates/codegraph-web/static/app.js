@@ -3914,7 +3914,7 @@ function draw() {
         selected,
         hovered,
         focused,
-        forced: selected || hovered || focused,
+        forced: selected || hovered,
         priority: nodeLabelPriority(node),
       });
     }
@@ -3977,18 +3977,23 @@ function drawArrowHead(start, end, color) {
 }
 
 function shouldShowNodeLabel(node, selected, hovered, focused) {
-  if (selected || hovered || focused) return true;
-  if (state.labelMode === "focus") return false;
+  if (selected || hovered) return true;
+  if (state.labelMode === "focus") return focused && state.zoom >= 1.05;
+  if (focused) return true;
 
   const priority = nodeLabelPriority(node);
   const visibleCount = state.visibleNodes.length;
-  if (state.search && visibleCount <= 120 && state.zoom >= 0.82) return true;
-  if (state.zoom < 0.9) return false;
-  if (visibleCount > 220) return state.zoom >= 1.75 && priority <= 4;
-  if (visibleCount > 120) return state.zoom >= 1.45 && priority <= 6;
-  if (visibleCount > 60) return state.zoom >= 1.15 || priority <= 4;
-  if (priority >= 8) return state.zoom >= 1.7;
-  return true;
+  if (state.search) {
+    if (visibleCount <= 30) return state.zoom >= 1.0;
+    if (visibleCount <= 120) return state.zoom >= 1.45 && priority <= 6;
+  }
+  if (state.zoom < 1.15) return false;
+  if (visibleCount > 220) return state.zoom >= 2.2 && priority <= 3;
+  if (visibleCount > 120) return state.zoom >= 1.9 && priority <= 4;
+  if (visibleCount > 60) return state.zoom >= 1.55 && priority <= 4;
+  if (visibleCount > 25) return state.zoom >= 1.35 && priority <= 6;
+  if (priority >= 8) return state.zoom >= 1.85;
+  return state.zoom >= 1.15 || priority <= 3;
 }
 
 function drawNodeLabels(candidates) {
@@ -4009,33 +4014,80 @@ function drawNodeLabels(candidates) {
   ordered.forEach((candidate) => {
     const forced = candidate.forced;
     if (!forced && drawnAutoLabels >= budget) return;
-    const geometry = labelGeometry(candidate);
-    if (!forced && !boxIntersectsViewport(geometry)) return;
-    if (!forced && occupied.some((box) => boxesIntersect(box, geometry))) return;
-    if (
-      !forced &&
-      nodeBoxes.some((box) => box.nodeId !== candidate.node.id && boxesIntersect(box, geometry))
-    ) {
-      return;
-    }
+    const geometry = labelGeometry(candidate, occupied, nodeBoxes);
+    if (!geometry) return;
     drawLabelGeometry(geometry);
     occupied.push(geometry);
     if (!forced) drawnAutoLabels += 1;
   });
 }
 
-function labelGeometry(candidate) {
+function labelGeometry(candidate, occupied, nodeBoxes) {
   const { node, position, radius, forced } = candidate;
   const zoom = Math.max(0.18, state.zoom);
-  const maxLength = forced ? 46 : state.zoom >= 1.8 ? 30 : 22;
+  const maxLength = forced ? 42 : state.zoom >= 1.8 ? 26 : 18;
   const label = truncateGraphLabel(node.label, maxLength);
   const padX = (forced ? 7 : 5) / zoom;
   const height = (forced ? 23 : 20) / zoom;
-  ctx.font = `${(forced ? 12 : 11) / zoom}px Inter, sans-serif`;
+  const fontSize = (forced ? 12 : 11) / zoom;
+  ctx.font = `${fontSize}px Inter, sans-serif`;
   const metrics = ctx.measureText(label);
   const width = metrics.width + padX * 2;
-  const x = position.x - width / 2;
-  const y = position.y + radius + (forced ? 9 : 6) / zoom;
+  const gap = (forced ? 10 : 8) / zoom;
+  const placements = forced
+    ? ["right", "left", "top", "bottom"]
+    : ["top", "right", "left", "bottom"];
+  const geometries = placements.map((placement) =>
+    labelGeometryForPlacement({
+      node,
+      position,
+      radius,
+      label,
+      width,
+      height,
+      padX,
+      gap,
+      font: ctx.font,
+      forced,
+      placement,
+    }),
+  );
+  const usable = geometries.find(
+    (geometry) =>
+      boxIntersectsViewport(geometry) && !labelIntersectsScene(geometry, occupied, nodeBoxes),
+  );
+  if (usable) return usable;
+  if (!forced) return null;
+  return geometries.find((geometry) => boxIntersectsViewport(geometry)) || geometries[0];
+}
+
+function labelGeometryForPlacement(options) {
+  const {
+    node,
+    position,
+    radius,
+    label,
+    width,
+    height,
+    padX,
+    gap,
+    font,
+    forced,
+    placement,
+  } = options;
+  let x = position.x - width / 2;
+  let y = position.y + radius + gap;
+
+  if (placement === "top") {
+    y = position.y - radius - gap - height;
+  } else if (placement === "right") {
+    x = position.x + radius + gap;
+    y = position.y - height / 2;
+  } else if (placement === "left") {
+    x = position.x - radius - gap - width;
+    y = position.y - height / 2;
+  }
+
   return {
     nodeId: node.id,
     label,
@@ -4044,15 +4096,16 @@ function labelGeometry(candidate) {
     width,
     height,
     padX,
-    textY: y + (forced ? 15 : 14) / zoom,
-    radius: 5 / zoom,
-    font: ctx.font,
+    textY: y + height / 2,
+    radius: 5 / Math.max(0.18, state.zoom),
+    font,
     forced,
   };
 }
 
 function drawLabelGeometry(geometry) {
   ctx.font = geometry.font;
+  ctx.textBaseline = "middle";
   ctx.fillStyle = geometry.forced
     ? "rgba(13, 15, 16, 0.84)"
     : "rgba(13, 15, 16, 0.58)";
@@ -4092,20 +4145,24 @@ function nodeLabelPriority(node) {
 }
 
 function nodeLabelBudget() {
-  if (state.labelMode === "focus") return 0;
   const visibleCount = state.visibleNodes.length;
+  if (state.labelMode === "focus") {
+    if (state.zoom < 1.2) return 0;
+    return visibleCount <= 40 ? 8 : 5;
+  }
+  if (state.zoom < 1.25 && visibleCount > 60 && !state.search) return 0;
   let budget = visibleCount <= 25
-    ? visibleCount
+    ? 12
     : visibleCount <= 80
-      ? 28
+      ? 10
       : visibleCount <= 160
-        ? 20
-        : 12;
-  if (state.zoom >= 2.4) budget += 14;
-  else if (state.zoom >= 1.8) budget += 8;
-  else if (state.zoom < 1.1) budget -= 8;
-  if (state.search) budget += 8;
-  return Math.max(4, Math.min(64, budget));
+        ? 6
+        : 3;
+  if (state.zoom >= 2.4) budget += 12;
+  else if (state.zoom >= 1.8) budget += 6;
+  else if (state.zoom < 1.35 && visibleCount > 60) budget = Math.min(budget, 2);
+  if (state.search && visibleCount <= 80) budget += 4;
+  return Math.max(0, Math.min(36, budget));
 }
 
 function nodeOcclusionBoxes() {
@@ -4138,6 +4195,13 @@ function boxIntersectsViewport(box) {
   const bottom = (box.y + box.height) * state.zoom + state.pan.y;
   const margin = 24;
   return !(right < -margin || left > canvas.width + margin || bottom < -margin || top > canvas.height + margin);
+}
+
+function labelIntersectsScene(label, occupied, nodeBoxes) {
+  return (
+    occupied.some((box) => boxesIntersect(box, label)) ||
+    nodeBoxes.some((box) => box.nodeId !== label.nodeId && boxesIntersect(box, label))
+  );
 }
 
 function boxesIntersect(left, right) {
