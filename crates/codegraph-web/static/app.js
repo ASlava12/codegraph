@@ -120,6 +120,8 @@ const I18N = {
     "button.labelsAuto": "Auto",
     "button.labelsFocus": "Focus",
     "button.card": "Card",
+    "button.focusEdge": "Focus",
+    "button.queryEdge": "Query",
     "button.explain": "Explain",
     "option.any": "Any",
     "option.ready": "Ready",
@@ -359,6 +361,8 @@ const I18N = {
     "button.labelsAuto": "Авто",
     "button.labelsFocus": "Фокус",
     "button.card": "Карточка",
+    "button.focusEdge": "Фокус",
+    "button.queryEdge": "Запрос",
     "button.explain": "Пояснить",
     "option.any": "Любой",
     "option.ready": "Готово",
@@ -4379,6 +4383,40 @@ async function focusNodeId(nodeId, label) {
   }
 }
 
+async function focusEdgeIndex(edgeIndex) {
+  if (!Number.isInteger(edgeIndex) || edgeIndex < 0) return;
+  state.insightFocusRequest += 1;
+  const requestId = state.insightFocusRequest;
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    edge_indexes: String(edgeIndex),
+    edge_limit: "20",
+  });
+
+  try {
+    const response = await fetch(`/api/focus?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.insightFocusRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "focus edge failed");
+    }
+    showFocusedGraph(body, `Edge ${edgeIndex}`);
+    state.selectedEdgeKey = `edge:${edgeIndex}`;
+    renderSelection();
+    draw();
+  } catch (error) {
+    if (requestId !== state.insightFocusRequest) return;
+    queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function runEdgeIndexQuery(edgeIndex) {
+  if (!Number.isInteger(edgeIndex) || edgeIndex < 0) return;
+  queryInput.value = `edges edge_index:${edgeIndex}`;
+  await runGraphQuery({ focus: true });
+  queryResult.scrollIntoView({ block: "nearest" });
+}
+
 function showFocusedGraph(result, label, selectedId = null) {
   state.graph = { nodes: result.nodes, edges: result.edges };
   state.graphPage.nodeOffset = 0;
@@ -5389,6 +5427,12 @@ function renderEdgeSelectionPanel(edge, source = null, target = null) {
       <div class="selection-actions">
         <button type="button" data-node-id="${edge.source}">${escapeHtml(t("selection.openSource"))}</button>
         <button type="button" data-node-id="${edge.target}">${escapeHtml(t("selection.openTarget"))}</button>
+        ${
+          edgeIndex == null
+            ? ""
+            : `<button type="button" data-focus-edge-index="${edgeIndex}">${escapeHtml(t("button.focusEdge"))}</button>
+               <button type="button" data-query-edge-index="${edgeIndex}">${escapeHtml(t("button.queryEdge"))}</button>`
+        }
       </div>
       <section class="node-card-section">
         <h3>${escapeHtml(t("selection.summary"))}</h3>
@@ -5425,6 +5469,12 @@ function renderEdgeSelectionPanel(edge, source = null, target = null) {
   `;
   attachQueryNavigation(selectionBody);
   attachEdgeExplainActions(selectionBody);
+  selectionBody.querySelectorAll("[data-focus-edge-index]").forEach((button) => {
+    button.addEventListener("click", () => focusEdgeIndex(Number(button.dataset.focusEdgeIndex)));
+  });
+  selectionBody.querySelectorAll("[data-query-edge-index]").forEach((button) => {
+    button.addEventListener("click", () => runEdgeIndexQuery(Number(button.dataset.queryEdgeIndex)));
+  });
 }
 
 async function loadNodeContext(nodeId, requestId) {

@@ -64,6 +64,7 @@ Implemented now:
 - Web canvas edges can be selected directly to open dependency cards with source, target, confidence, metadata, and provenance explanation actions.
 - Edge explanations include related risk summaries and capped edge-scoped findings for dependency-level triage.
 - Dependency cards can be opened from graph edges, query results, traces, and node neighbor lists.
+- Dependency cards can focus or query their exact `edge_index` for fast canvas narrowing and agent handoff.
 - Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
 - Initial English/Russian web UI localization with a persistent language selector.
 - Minimal-by-default graph labels with collision-aware Auto/Focus modes so node cards stay readable without covering the graph.
