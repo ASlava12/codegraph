@@ -166,6 +166,7 @@ const I18N = {
     "job.semanticCanceled": "Semantic enrichment canceled.",
     "semantic.report": "Semantic enrichment",
     "semantic.responses": "responses",
+    "semantic.cache": "cache",
     "semantic.edges": "Semantic edges",
     "semantic.replaced": "Replaced",
     "semantic.added": "Added",
@@ -343,6 +344,7 @@ const I18N = {
     "job.semanticCanceled": "Семантическое обогащение отменено.",
     "semantic.report": "Семантическое обогащение",
     "semantic.responses": "ответов",
+    "semantic.cache": "кеш",
     "semantic.edges": "Семантические связи",
     "semantic.replaced": "Заменено",
     "semantic.added": "Добавлено",
@@ -1701,10 +1703,12 @@ function applySemanticEnrichResult(result, root) {
 
 function renderSemanticEnrichReport(result) {
   const report = result.report || {};
+  const semanticCache = result.semantic_cache || {};
   semanticWorkList.innerHTML = `
     <div class="semantic-work-summary">
       <strong>${escapeHtml(t("semantic.report"))}</strong>
       <span>${Number(result.responses || 0)} ${escapeHtml(t("semantic.responses"))}</span>
+      <span>${escapeHtml(t("semantic.cache"))}: ${escapeHtml(formatKind(semanticCache.status || "unknown"))}</span>
     </div>
     <div class="semantic-enrich-report">
       <div><span>${escapeHtml(t("semantic.edges"))}</span><strong>${Number(report.semantic_edges || 0)}</strong></div>

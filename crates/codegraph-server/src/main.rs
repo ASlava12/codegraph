@@ -24,11 +24,11 @@ use codegraph_indexer::{
 };
 use codegraph_lsp::{
     DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, LspDiscoveryReport, SemanticEnrichmentPlan,
-    SemanticGraphApplyReport, SemanticGraphApplyResult, SemanticGraphPatch, SemanticLspResponse,
-    SemanticLspRunOptions, SemanticReadinessReport, SemanticWorkItemFilter,
-    apply_semantic_graph_patch, discover_lsp_servers, run_semantic_execution_batch,
-    semantic_enrichment_plan_with_filter, semantic_execution_batch,
-    semantic_graph_patch_from_responses, semantic_readiness,
+    SemanticGraphApplyReport, SemanticGraphApplyResult, SemanticGraphPatch, SemanticLspCache,
+    SemanticLspCacheInfo, SemanticLspResponse, SemanticLspRunOptions, SemanticReadinessReport,
+    SemanticWorkItemFilter, apply_semantic_graph_patch, discover_lsp_servers,
+    run_semantic_execution_batch_cached, semantic_enrichment_plan_with_filter,
+    semantic_execution_batch, semantic_graph_patch_from_responses, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{
@@ -175,6 +175,7 @@ struct SemanticEnrichResponse {
     responses: usize,
     response_errors: usize,
     unmatched_locations: usize,
+    semantic_cache: SemanticLspCacheInfo,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1269,11 +1270,17 @@ async fn semantic_enrich_api(
 ) -> Result<Json<SemanticEnrichResponse>, ApiError> {
     let root = resolve_scan_root(&state, request.path.as_deref())?;
     let graph = scan_graph(&state, Some(root.as_path())).await?;
+    let semantic_cache = state
+        .cache
+        .as_ref()
+        .map(|cache| SemanticLspCache::new(cache.dir().join("semantic-lsp")));
 
-    let result = tokio::task::spawn_blocking(move || run_semantic_enrichment(root, graph, request))
-        .await
-        .map_err(|error| ApiError::internal(format!("semantic enrichment task failed: {error}")))?
-        .map_err(|error| ApiError::bad_request(format!("semantic enrichment failed: {error}")))?;
+    let result = tokio::task::spawn_blocking(move || {
+        run_semantic_enrichment(root, graph, request, semantic_cache)
+    })
+    .await
+    .map_err(|error| ApiError::internal(format!("semantic enrichment task failed: {error}")))?
+    .map_err(|error| ApiError::bad_request(format!("semantic enrichment failed: {error}")))?;
 
     Ok(Json(result))
 }
@@ -1308,6 +1315,9 @@ async fn start_semantic_job(
     let jobs = Arc::clone(&state.semantic_jobs);
     let options = scan_options(&state, &root)?;
     let cache = state.cache.clone();
+    let semantic_cache = cache
+        .as_ref()
+        .map(|cache| SemanticLspCache::new(cache.dir().join("semantic-lsp")));
     let max_jobs = state.max_semantic_jobs;
     let semantic_permits = Arc::clone(&state.semantic_permits);
     tokio::spawn(async move {
@@ -1350,7 +1360,7 @@ async fn start_semantic_job(
         let result = tokio::task::spawn_blocking(move || {
             let output = scan_project_cached(scan_root.clone(), &options, cache.as_ref())
                 .map_err(|error| error.to_string())?;
-            run_semantic_enrichment(scan_root, output.graph, request)
+            run_semantic_enrichment(scan_root, output.graph, request, semantic_cache)
                 .map_err(|error| error.to_string())
         })
         .await;
@@ -2473,6 +2483,7 @@ fn run_semantic_enrichment(
     root: PathBuf,
     graph: CodeGraph,
     request: SemanticEnrichRequest,
+    cache: Option<SemanticLspCache>,
 ) -> Result<SemanticEnrichResponse, codegraph_lsp::SemanticLspRunError> {
     let timeout = Duration::from_millis(
         request
@@ -2492,12 +2503,14 @@ fn run_semantic_enrichment(
             capability: request.work_capability,
         },
     );
-    let responses = run_semantic_execution_batch(
+    let cached_run = run_semantic_execution_batch_cached(
+        cache.as_ref(),
         &batch,
         &SemanticLspRunOptions {
             request_timeout: timeout,
         },
     )?;
+    let responses = cached_run.responses;
     let patch = semantic_graph_patch_from_responses(&root, &graph, &batch, &responses);
     let response_errors = patch.response_errors.len();
     let unmatched_locations = patch.unmatched_locations.len();
@@ -2510,6 +2523,7 @@ fn run_semantic_enrichment(
         responses: responses.len(),
         response_errors,
         unmatched_locations,
+        semantic_cache: cached_run.cache,
     })
 }
 
@@ -3695,6 +3709,7 @@ fn capability_features(cache_enabled: bool) -> Vec<&'static str> {
     if cache_enabled {
         features.push("persistent_graph_cache");
         features.push("persistent_graph_chunks");
+        features.push("semantic_lsp_cache");
     }
     features
 }
@@ -3941,8 +3956,10 @@ mod tests {
         assert!(without_cache.contains(&"node_cards"));
         assert!(!without_cache.contains(&"persistent_graph_cache"));
         assert!(!without_cache.contains(&"persistent_graph_chunks"));
+        assert!(!without_cache.contains(&"semantic_lsp_cache"));
         assert!(with_cache.contains(&"persistent_graph_cache"));
         assert!(with_cache.contains(&"persistent_graph_chunks"));
+        assert!(with_cache.contains(&"semantic_lsp_cache"));
     }
 
     #[test]

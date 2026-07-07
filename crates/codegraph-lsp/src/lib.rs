@@ -9,9 +9,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_SEMANTIC_WORK_ITEM_LIMIT: usize = 100;
+const SEMANTIC_CACHE_SCHEMA_VERSION: u32 = 1;
+const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+const FNV_PRIME: u64 = 0x100000001b3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LspDiscoveryReport {
@@ -117,6 +120,39 @@ pub struct SemanticLspResponse {
     pub error: Option<SemanticLspError>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SemanticLspCache {
+    dir: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SemanticCachedRun {
+    pub responses: Vec<SemanticLspResponse>,
+    pub cache: SemanticLspCacheInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SemanticLspCacheInfo {
+    pub status: SemanticLspCacheStatus,
+    pub dir: Option<String>,
+    pub key: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticLspCacheStatus {
+    Disabled,
+    Hit,
+    Miss,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct SemanticLspCacheRecord {
+    cache_schema_version: u32,
+    batch_hash: String,
+    responses: Vec<SemanticLspResponse>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticLspError {
     pub code: i64,
@@ -156,6 +192,91 @@ impl std::fmt::Display for SemanticLspRunError {
 }
 
 impl std::error::Error for SemanticLspRunError {}
+
+impl SemanticLspCache {
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Self { dir: dir.into() }
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    pub fn load(
+        &self,
+        batch: &SemanticExecutionBatch,
+    ) -> Result<Option<Vec<SemanticLspResponse>>, SemanticLspRunError> {
+        let batch_hash = semantic_batch_hash(batch)?;
+        let path = self.cache_path(&batch_hash);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(SemanticLspRunError::new(format!(
+                    "failed to read semantic LSP cache `{}`: {error}",
+                    path.display()
+                )));
+            }
+        };
+        let record: SemanticLspCacheRecord = serde_json::from_slice(&bytes).map_err(|error| {
+            SemanticLspRunError::new(format!("failed to decode semantic LSP cache: {error}"))
+        })?;
+        if record.cache_schema_version != SEMANTIC_CACHE_SCHEMA_VERSION
+            || record.batch_hash != batch_hash
+        {
+            return Ok(None);
+        }
+        Ok(Some(record.responses))
+    }
+
+    pub fn store(
+        &self,
+        batch: &SemanticExecutionBatch,
+        responses: &[SemanticLspResponse],
+    ) -> Result<String, SemanticLspRunError> {
+        fs::create_dir_all(&self.dir).map_err(|error| {
+            SemanticLspRunError::new(format!(
+                "failed to create semantic LSP cache `{}`: {error}",
+                self.dir.display()
+            ))
+        })?;
+        let batch_hash = semantic_batch_hash(batch)?;
+        let path = self.cache_path(&batch_hash);
+        let temporary_path = path.with_extension(format!(
+            "json.tmp-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        let record = SemanticLspCacheRecord {
+            cache_schema_version: SEMANTIC_CACHE_SCHEMA_VERSION,
+            batch_hash: batch_hash.clone(),
+            responses: responses.to_vec(),
+        };
+        let bytes = serde_json::to_vec_pretty(&record).map_err(|error| {
+            SemanticLspRunError::new(format!("failed to encode semantic LSP cache: {error}"))
+        })?;
+        fs::write(&temporary_path, bytes).map_err(|error| {
+            SemanticLspRunError::new(format!(
+                "failed to write semantic LSP cache `{}`: {error}",
+                temporary_path.display()
+            ))
+        })?;
+        fs::rename(&temporary_path, &path).map_err(|error| {
+            SemanticLspRunError::new(format!(
+                "failed to publish semantic LSP cache `{}`: {error}",
+                path.display()
+            ))
+        })?;
+        Ok(batch_hash)
+    }
+
+    fn cache_path(&self, batch_hash: &str) -> PathBuf {
+        self.dir.join(format!("semantic-lsp-{batch_hash}.json"))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SemanticGraphPatch {
@@ -489,6 +610,47 @@ pub fn run_semantic_execution_batch(
     }
 
     Ok(responses)
+}
+
+pub fn run_semantic_execution_batch_cached(
+    cache: Option<&SemanticLspCache>,
+    batch: &SemanticExecutionBatch,
+    options: &SemanticLspRunOptions,
+) -> Result<SemanticCachedRun, SemanticLspRunError> {
+    let Some(cache) = cache else {
+        let responses = run_semantic_execution_batch(batch, options)?;
+        return Ok(SemanticCachedRun {
+            responses,
+            cache: SemanticLspCacheInfo {
+                status: SemanticLspCacheStatus::Disabled,
+                dir: None,
+                key: None,
+            },
+        });
+    };
+
+    let key = semantic_batch_hash(batch)?;
+    if let Some(responses) = cache.load(batch)? {
+        return Ok(SemanticCachedRun {
+            responses,
+            cache: SemanticLspCacheInfo {
+                status: SemanticLspCacheStatus::Hit,
+                dir: Some(cache.dir().display().to_string()),
+                key: Some(key),
+            },
+        });
+    }
+
+    let responses = run_semantic_execution_batch(batch, options)?;
+    let stored_key = cache.store(batch, &responses)?;
+    Ok(SemanticCachedRun {
+        responses,
+        cache: SemanticLspCacheInfo {
+            status: SemanticLspCacheStatus::Miss,
+            dir: Some(cache.dir().display().to_string()),
+            key: Some(stored_key),
+        },
+    })
 }
 
 pub fn semantic_readiness_with_discovery(
@@ -1155,6 +1317,18 @@ fn wait_for_lsp_exit(
         }
         thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn semantic_batch_hash(batch: &SemanticExecutionBatch) -> Result<String, SemanticLspRunError> {
+    let bytes = serde_json::to_vec(batch).map_err(|error| {
+        SemanticLspRunError::new(format!("failed to hash semantic LSP batch: {error}"))
+    })?;
+    let mut hash = FNV_OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    Ok(format!("{hash:016x}"))
 }
 
 fn write_lsp_request<W: Write>(
@@ -2598,6 +2772,39 @@ mod tests {
         let found = find_executable_with_path("rust-analyzer", Some(path_var.as_os_str()));
 
         assert_eq!(found, Some(dir.join("rust-analyzer")));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn semantic_lsp_cache_returns_cached_responses_without_running_lsp() {
+        let dir = temp_dir();
+        let cache = SemanticLspCache::new(&dir);
+        let batch = SemanticExecutionBatch {
+            workspace_root: "/workspace".to_string(),
+            work_item_limit: 10,
+            work_item_filter: SemanticWorkItemFilter::default(),
+            total_work_items: 0,
+            truncated_work_items: false,
+            server_batches: Vec::new(),
+            blocked_items: Vec::new(),
+        };
+        let responses = vec![SemanticLspResponse {
+            request_id: "r1".to_string(),
+            method: "textDocument/definition".to_string(),
+            result: json!({"uri": "file:///workspace/src/main.rs"}),
+            error: None,
+        }];
+        cache.store(&batch, &responses).unwrap();
+
+        let run = run_semantic_execution_batch_cached(
+            Some(&cache),
+            &batch,
+            &SemanticLspRunOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(run.cache.status, SemanticLspCacheStatus::Hit);
+        assert_eq!(run.responses, responses);
         fs::remove_dir_all(dir).unwrap();
     }
 

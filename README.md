@@ -151,7 +151,7 @@ cargo run -p codegraph-cli -- semantic-patch . --work-status ready --work-capabi
 cargo run -p codegraph-cli -- semantic-apply . --work-status ready --work-capability definitions --responses responses.json
 ```
 
-`semantic-run` requires the matching language server to be installed and startable. `responses.json` for CLI commands is a JSON array of LSP response objects.
+`semantic-run` requires the matching language server to be installed and startable. `responses.json` for CLI commands is a JSON array of LSP response objects. Semantic LSP responses are cached under the shared cache directory by default; pass `--no-cache` to force a fresh language-server run.
 
 Limit per-file scan reads for very large repositories:
 

@@ -14,10 +14,10 @@ use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
 };
 use codegraph_lsp::{
-    DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, SemanticLspResponse, SemanticLspRunOptions,
+    DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, SemanticLspCache, SemanticLspResponse, SemanticLspRunOptions,
     SemanticWorkItemFilter, apply_semantic_graph_patch, discover_lsp_servers,
-    run_semantic_execution_batch, semantic_enrichment_plan_with_filter, semantic_execution_batch,
-    semantic_graph_patch_from_responses, semantic_readiness,
+    run_semantic_execution_batch_cached, semantic_enrichment_plan_with_filter,
+    semantic_execution_batch, semantic_graph_patch_from_responses, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
@@ -772,13 +772,15 @@ fn main() -> Result<()> {
                 args.plan.work_item_limit,
                 filter,
             );
-            let responses = run_semantic_execution_batch(
+            let semantic_cache = semantic_cache_from_args(&args.plan.scan.cache);
+            let run = run_semantic_execution_batch_cached(
+                semantic_cache.as_ref(),
                 &batch,
                 &SemanticLspRunOptions {
                     request_timeout: std::time::Duration::from_millis(args.request_timeout_ms),
                 },
             )?;
-            println!("{}", serde_json::to_string_pretty(&responses)?);
+            println!("{}", serde_json::to_string_pretty(&run.responses)?);
         }
         Command::SemanticPatch(args) => {
             let path = args.plan.scan.path;
@@ -1286,6 +1288,19 @@ fn scan_with_options(
         )
     });
     Ok(scan_project_cached(path, &options, cache.as_ref())?.graph)
+}
+
+fn semantic_cache_from_args(cache_args: &CacheArgs) -> Option<SemanticLspCache> {
+    if cache_args.no_cache {
+        return None;
+    }
+    Some(SemanticLspCache::new(
+        cache_args
+            .cache_dir
+            .clone()
+            .unwrap_or_else(default_cache_dir)
+            .join("semantic-lsp"),
+    ))
 }
 
 fn build_project_report_snapshot(
