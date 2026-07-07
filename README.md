@@ -380,6 +380,7 @@ single run or pin records to a specific directory:
 cargo run -p codegraph-cli -- summary . --no-cache
 cargo run -p codegraph-cli -- summary . --cache-dir /tmp/codegraph-cache
 cargo run -p codegraph-cli -- cache-diff . --cache-dir /tmp/codegraph-cache
+cargo run -p codegraph-cli -- cache-chunks . --cache-dir /tmp/codegraph-cache
 cargo run -p codegraph-cli -- incremental-plan . --cache-dir /tmp/codegraph-cache
 cargo run -p codegraph-cli -- incremental-scan . --cache-dir /tmp/codegraph-cache
 cargo run -p codegraph-cli -- incremental-merge-preview . --cache-dir /tmp/codegraph-cache
@@ -462,12 +463,14 @@ curl 'http://127.0.0.1:3765/api/report?path=.&fail_on=warning&insight_limit=100'
 curl 'http://127.0.0.1:3765/api/coverage?path=.'
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'
+curl 'http://127.0.0.1:3765/api/cache-chunks?path=.&limit=50'
 curl 'http://127.0.0.1:3765/api/incremental-plan?path=.&limit=50'
 curl 'http://127.0.0.1:3765/api/incremental-scan?path=.&limit=50'
 curl 'http://127.0.0.1:3765/api/incremental-merge-preview?path=.&limit=50'
 ```
 
 The scan response includes `cache.status` as `hit`, `miss`, or `disabled`. Cache diff responses and the web Cache Diff panel explain the previous and current project fingerprints without performing a full graph scan, including reuse strategy, changed file counts, reusable file/byte counts, and reuse ratios for incremental-scan planning. Incremental scan responses include the plan plus a focused graph for changed current files, while full-scan actions still return a complete graph. Merge preview responses use persistent impact and chunk indexes to remove cached scopes for changed or removed files, then add changed-file rescans; partial previews are intentionally marked incomplete until a full scan rebuilds cross-file incoming edges.
+Cache chunk responses list the persistent per-file node and edge scopes currently stored in the graph cache, including compact node/edge id previews for agent diagnostics.
 
 Export API:
 

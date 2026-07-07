@@ -13,6 +13,7 @@ use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
 
 const CACHE_SCHEMA_VERSION: u32 = 4;
+const CHUNK_ID_PREVIEW_LIMIT: usize = 20;
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
 
@@ -109,6 +110,31 @@ pub struct CacheDiffReport {
     pub modified: Vec<FingerprintChange>,
     pub unchanged: usize,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CacheChunkReport {
+    pub cache_dir: String,
+    pub cache_record: CacheRecordStatus,
+    pub previous_hash: Option<String>,
+    pub current_hash: String,
+    pub previous_files: Option<usize>,
+    pub current_files: usize,
+    pub total_chunks: usize,
+    pub total_chunk_nodes: usize,
+    pub total_chunk_edges: usize,
+    pub chunks: Vec<CacheChunkEntry>,
+    pub limit: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CacheChunkEntry {
+    pub path: String,
+    pub nodes: usize,
+    pub edges: usize,
+    pub node_ids: Vec<u64>,
+    pub edge_indexes: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -370,6 +396,46 @@ impl GraphCache {
         }
 
         Ok(diff_fingerprints(self, &record.fingerprint, current, limit))
+    }
+
+    pub fn chunks(
+        &self,
+        root: &Path,
+        options: &IndexOptions,
+        limit: usize,
+    ) -> Result<CacheChunkReport, CacheError> {
+        let current = Self::fingerprint_project(root, options)?;
+        let path = self.cache_path(root, options);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(chunk_report_without_record(
+                    self,
+                    current,
+                    None,
+                    CacheRecordStatus::Missing,
+                    limit,
+                ));
+            }
+            Err(source) => return Err(CacheError::Io { path, source }),
+        };
+        let record: CacheRecord = serde_json::from_slice(&bytes)?;
+        if record.cache_schema_version != CACHE_SCHEMA_VERSION
+            || record.graph_schema_version != record.graph.schema_version
+            || record.graph_schema_version != CODEGRAPH_SCHEMA_VERSION
+            || record.root != cache_root(root)
+            || record.options_hash != options_hash(options)
+        {
+            return Ok(chunk_report_without_record(
+                self,
+                current,
+                Some(&record),
+                CacheRecordStatus::Incompatible,
+                limit,
+            ));
+        }
+
+        Ok(chunk_report_from_record(self, &record, current, limit))
     }
 
     pub fn incremental_plan(
@@ -767,6 +833,86 @@ fn diff_fingerprints(
     }
 }
 
+fn chunk_report_without_record(
+    cache: &GraphCache,
+    current: ProjectFingerprint,
+    previous: Option<&CacheRecord>,
+    status: CacheRecordStatus,
+    limit: usize,
+) -> CacheChunkReport {
+    let limit = limit.clamp(1, 10_000);
+    CacheChunkReport {
+        cache_dir: cache.dir().display().to_string(),
+        cache_record: status,
+        previous_hash: previous.map(|record| record.fingerprint.hash.clone()),
+        current_hash: current.hash,
+        previous_files: previous.map(|record| record.fingerprint.files),
+        current_files: current.files,
+        total_chunks: 0,
+        total_chunk_nodes: 0,
+        total_chunk_edges: 0,
+        chunks: Vec::new(),
+        limit,
+        truncated: false,
+    }
+}
+
+fn chunk_report_from_record(
+    cache: &GraphCache,
+    record: &CacheRecord,
+    current: ProjectFingerprint,
+    limit: usize,
+) -> CacheChunkReport {
+    let limit = limit.clamp(1, 10_000);
+    let total_chunks = record.chunk_index.by_path.len();
+    let (total_chunk_nodes, total_chunk_edges) = chunk_index_totals(&record.chunk_index);
+    let mut chunks = record
+        .chunk_index
+        .by_path
+        .iter()
+        .map(|(path, scope)| CacheChunkEntry {
+            path: path.clone(),
+            nodes: scope.nodes,
+            edges: scope.edges,
+            node_ids: scope
+                .node_ids
+                .iter()
+                .copied()
+                .take(CHUNK_ID_PREVIEW_LIMIT)
+                .collect(),
+            edge_indexes: scope
+                .edge_indexes
+                .iter()
+                .copied()
+                .take(CHUNK_ID_PREVIEW_LIMIT)
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    chunks.sort_by(|left, right| {
+        right
+            .edges
+            .cmp(&left.edges)
+            .then_with(|| right.nodes.cmp(&left.nodes))
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    chunks.truncate(limit);
+
+    CacheChunkReport {
+        cache_dir: cache.dir().display().to_string(),
+        cache_record: CacheRecordStatus::Present,
+        previous_hash: Some(record.fingerprint.hash.clone()),
+        current_hash: current.hash,
+        previous_files: Some(record.fingerprint.files),
+        current_files: current.files,
+        total_chunks,
+        total_chunk_nodes,
+        total_chunk_edges,
+        chunks,
+        limit,
+        truncated: total_chunks > limit,
+    }
+}
+
 fn incremental_plan_without_record(
     cache: &GraphCache,
     current: ProjectFingerprint,
@@ -1044,6 +1190,16 @@ fn graph_chunk_counts_from_index(
     paths: &BTreeSet<String>,
 ) -> (usize, usize) {
     let (node_ids, edge_indexes) = graph_chunk_scope_from_index(index, paths);
+    (node_ids.len(), edge_indexes.len())
+}
+
+fn chunk_index_totals(index: &GraphChunkIndex) -> (usize, usize) {
+    let mut node_ids = BTreeSet::new();
+    let mut edge_indexes = BTreeSet::new();
+    for scope in index.by_path.values() {
+        node_ids.extend(scope.node_ids.iter().copied());
+        edge_indexes.extend(scope.edge_indexes.iter().copied());
+    }
     (node_ids.len(), edge_indexes.len())
 }
 
@@ -1615,6 +1771,52 @@ mod tests {
                 .is_some(),
             "graph cache misses should populate persistent per-file parse facts"
         );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn cache_chunks_report_lists_persistent_file_scopes() {
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() { helper(); }\nfn helper() {}\n",
+        )
+        .unwrap();
+        let options = IndexOptions::default();
+        let cache = GraphCache::new(&cache_dir);
+
+        let missing = cache.chunks(&root, &options, 10).unwrap();
+        assert_eq!(missing.cache_record, CacheRecordStatus::Missing);
+        assert_eq!(missing.total_chunks, 0);
+
+        let first = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(first.cache.status, CacheStatus::Miss);
+        let report = cache.chunks(&root, &options, 10).unwrap();
+
+        assert_eq!(report.cache_record, CacheRecordStatus::Present);
+        assert_eq!(report.previous_files, Some(1));
+        assert_eq!(report.current_files, 1);
+        assert!(report.total_chunks > 0);
+        assert!(report.total_chunk_nodes > 0);
+        assert!(report.total_chunk_edges > 0);
+        let main_chunk = report
+            .chunks
+            .iter()
+            .find(|chunk| chunk.path == "src/main.rs")
+            .expect("expected chunk report entry for src/main.rs");
+        assert!(main_chunk.nodes > 0);
+        assert!(main_chunk.edges > 0);
+        assert!(!main_chunk.node_ids.is_empty());
+        assert!(!main_chunk.edge_indexes.is_empty());
+
+        let limited = cache.chunks(&root, &options, 1).unwrap();
+        assert_eq!(limited.limit, 1);
+        assert!(limited.chunks.len() <= 1);
+        assert_eq!(limited.truncated, limited.total_chunks > 1);
+
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();
     }

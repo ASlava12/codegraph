@@ -109,6 +109,9 @@ enum Command {
     /// Explain graph cache fingerprint changes without scanning the full graph.
     CacheDiff(CacheDiffArgs),
 
+    /// List persistent per-file graph chunks from the graph cache.
+    CacheChunks(CacheDiffArgs),
+
     /// Plan incremental scan work from the persistent graph cache fingerprint.
     IncrementalPlan(CacheDiffArgs),
 
@@ -900,6 +903,15 @@ fn main() -> Result<()> {
             )?;
             let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
             let report = cache.diff(&args.path, &options, args.limit)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::CacheChunks(args) => {
+            let options = configured_index_options(
+                &args.path,
+                &scan_overrides(args.include_hidden, args.include_ignored, max_file_size),
+            )?;
+            let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
+            let report = cache.chunks(&args.path, &options, args.limit)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::IncrementalPlan(args) => {

@@ -3,7 +3,7 @@ const DEFAULT_LABEL_MODE = "minimal";
 const LABEL_MODES = new Set(["minimal", "focus", "auto"]);
 const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
-const LABEL_MODE_STORAGE_VERSION = "2";
+const LABEL_MODE_STORAGE_VERSION = "3";
 
 const I18N = {
   en: {
@@ -71,6 +71,7 @@ const I18N = {
     "button.run": "Run",
     "button.searchSource": "Search Source",
     "button.explainCache": "Explain Cache",
+    "button.cacheChunks": "Cache Chunks",
     "button.planIncremental": "Plan Incremental",
     "button.scanIncremental": "Scan Changed",
     "button.previewMerge": "Preview Merge",
@@ -245,6 +246,7 @@ const I18N = {
     "button.run": "Запустить",
     "button.searchSource": "Искать в коде",
     "button.explainCache": "Объяснить кеш",
+    "button.cacheChunks": "Фрагменты кеша",
     "button.planIncremental": "План инкремента",
     "button.scanIncremental": "Скан изменений",
     "button.previewMerge": "Предпросмотр merge",
@@ -424,6 +426,7 @@ const state = {
   queryRequest: 0,
   sourceSearchRequest: 0,
   cacheDiffRequest: 0,
+  cacheChunksRequest: 0,
   incrementalPlanRequest: 0,
   incrementalScanRequest: 0,
   incrementalMergeRequest: 0,
@@ -563,6 +566,7 @@ const sourceSearchResult = document.querySelector("#sourceSearchResult");
 const cacheDiffStatus = document.querySelector("#cacheDiffStatus");
 const cacheDiffLimitInput = document.querySelector("#cacheDiffLimitInput");
 const cacheDiffButton = document.querySelector("#cacheDiffButton");
+const cacheChunksButton = document.querySelector("#cacheChunksButton");
 const incrementalPlanButton = document.querySelector("#incrementalPlanButton");
 const incrementalScanButton = document.querySelector("#incrementalScanButton");
 const incrementalMergeButton = document.querySelector("#incrementalMergeButton");
@@ -638,6 +642,7 @@ for (const input of [sourceSearchInput, sourcePathFilterInput]) {
   });
 }
 cacheDiffButton.addEventListener("click", () => loadCacheDiff());
+cacheChunksButton.addEventListener("click", () => loadCacheChunks());
 incrementalPlanButton.addEventListener("click", () => loadIncrementalPlan());
 incrementalScanButton.addEventListener("click", () => loadIncrementalScan());
 incrementalMergeButton.addEventListener("click", () => loadIncrementalMergePreview());
@@ -2744,6 +2749,40 @@ async function loadCacheDiff() {
   }
 }
 
+async function loadCacheChunks() {
+  const limit = clampNumber(Number(cacheDiffLimitInput.value || 50), 1, 10000);
+  cacheDiffLimitInput.value = String(limit);
+  state.cacheChunksRequest += 1;
+  const requestId = state.cacheChunksRequest;
+  cacheChunksButton.disabled = true;
+  cacheDiffStatus.textContent = "chunks";
+  cacheDiffResult.innerHTML = '<p class="empty">Loading cache chunks...</p>';
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    limit: String(limit),
+  });
+
+  try {
+    const response = await fetch(`/api/cache-chunks?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.cacheChunksRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "cache chunks failed");
+    }
+    cacheDiffStatus.textContent = formatKind(body.cache_record || "unknown");
+    cacheDiffResult.innerHTML = renderCacheChunks(body);
+  } catch (error) {
+    if (requestId !== state.cacheChunksRequest) return;
+    cacheDiffStatus.textContent = "error";
+    cacheDiffResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.cacheChunksRequest) {
+      cacheChunksButton.disabled = false;
+    }
+  }
+}
+
 async function loadIncrementalPlan() {
   const limit = clampNumber(Number(cacheDiffLimitInput.value || 50), 1, 10000);
   cacheDiffLimitInput.value = String(limit);
@@ -2982,6 +3021,30 @@ function renderCacheDiff(report) {
   return `${summary}${groups}`;
 }
 
+function renderCacheChunks(report) {
+  const chunks = report.chunks || [];
+  const previousHash = report.previous_hash || "no previous fingerprint";
+  const listed = chunks.length;
+  const summary = `
+    <div class="query-summary">
+      <span>${escapeHtml(formatKind(report.cache_record || "unknown"))}</span>
+      <span>${Number(report.total_chunks || 0)} chunks</span>
+      <span>${Number(report.total_chunk_nodes || 0)} unique nodes</span>
+      <span>${Number(report.total_chunk_edges || 0)} unique edges</span>
+      <span>${listed}/${Number(report.total_chunks || 0)} listed</span>
+      <span>${report.previous_files ?? 0} -> ${report.current_files ?? 0} files</span>
+      ${report.truncated ? "<span>truncated</span>" : ""}
+      <span class="query-expression">previous ${escapeHtml(previousHash)}</span>
+      <span class="query-expression">current ${escapeHtml(report.current_hash || "unknown")}</span>
+    </div>
+  `;
+  const groups = renderCacheDiffGroup("Chunks", chunks, renderCacheChunkEntry);
+  if (!groups) {
+    return `${summary}<p class="empty">No cached graph chunks available.</p>`;
+  }
+  return `${summary}${groups}`;
+}
+
 function renderIncrementalPlan(plan) {
   const scanPaths = plan.scan_paths || [];
   const removedPaths = plan.removed_paths || [];
@@ -3115,6 +3178,21 @@ function renderPlanScalar(value) {
     <div class="query-item cache-diff-item">
       <span>id</span>
       <strong>${escapeHtml(String(value ?? ""))}</strong>
+    </div>
+  `;
+}
+
+function renderCacheChunkEntry(chunk) {
+  const nodePreview = (chunk.node_ids || []).slice(0, 6).join(", ");
+  const edgePreview = (chunk.edge_indexes || []).slice(0, 6).join(", ");
+  const preview = [nodePreview && `n ${nodePreview}`, edgePreview && `e ${edgePreview}`]
+    .filter(Boolean)
+    .join(" | ");
+  return `
+    <div class="query-item cache-diff-item">
+      <span>${Number(chunk.nodes || 0)} nodes / ${Number(chunk.edges || 0)} edges</span>
+      <strong>${escapeHtml(chunk.path || "")}</strong>
+      ${preview ? `<span>${escapeHtml(preview)}</span>` : ""}
     </div>
   `;
 }
@@ -4556,22 +4634,22 @@ function drawArrowHead(start, end, color) {
 function shouldShowNodeLabel(node, selected, hovered, focused) {
   if (selected || hovered) return true;
   if (state.labelMode === "minimal") return false;
-  if (state.labelMode === "focus") return focused && state.zoom >= 1.05;
-  if (focused) return true;
+  if (state.labelMode === "focus") return focused && state.zoom >= 1.35;
+  if (focused) return state.zoom >= 1.25;
 
   const priority = nodeLabelPriority(node);
   const visibleCount = state.visibleNodes.length;
   if (state.search) {
-    if (visibleCount <= 30) return state.zoom >= 1.15 && priority <= 6;
-    if (visibleCount <= 120) return state.zoom >= 1.65 && priority <= 4;
+    if (visibleCount <= 30) return state.zoom >= 1.35 && priority <= 5;
+    if (visibleCount <= 120) return state.zoom >= 1.95 && priority <= 3;
   }
-  if (state.zoom < 1.35) return false;
-  if (visibleCount > 220) return state.zoom >= 2.45 && priority <= 2;
-  if (visibleCount > 120) return state.zoom >= 2.1 && priority <= 3;
-  if (visibleCount > 60) return state.zoom >= 1.8 && priority <= 3;
-  if (visibleCount > 25) return state.zoom >= 1.55 && priority <= 4;
-  if (priority >= 8) return state.zoom >= 2.1;
-  return state.zoom >= 1.35 && priority <= 6;
+  if (state.zoom < 1.6) return false;
+  if (visibleCount > 220) return state.zoom >= 2.85 && priority <= 1;
+  if (visibleCount > 120) return state.zoom >= 2.55 && priority <= 2;
+  if (visibleCount > 60) return state.zoom >= 2.2 && priority <= 2;
+  if (visibleCount > 25) return state.zoom >= 1.85 && priority <= 3;
+  if (priority >= 8) return state.zoom >= 2.35;
+  return state.zoom >= 1.6 && priority <= 5;
 }
 
 function drawNodeLabels(candidates) {
@@ -4684,6 +4762,14 @@ function labelGeometryForPlacement(options) {
 function drawLabelGeometry(geometry) {
   ctx.font = geometry.font;
   ctx.textBaseline = "middle";
+  if (!geometry.forced) {
+    ctx.lineWidth = 3 / Math.max(0.18, state.zoom);
+    ctx.strokeStyle = "rgba(13, 15, 16, 0.78)";
+    ctx.strokeText(geometry.label, geometry.x + geometry.padX, geometry.textY);
+    ctx.fillStyle = "rgba(237, 241, 242, 0.84)";
+    ctx.fillText(geometry.label, geometry.x + geometry.padX, geometry.textY);
+    return;
+  }
   ctx.fillStyle = geometry.forced
     ? "rgba(13, 15, 16, 0.84)"
     : "rgba(13, 15, 16, 0.58)";
@@ -4726,22 +4812,22 @@ function nodeLabelBudget() {
   const visibleCount = state.visibleNodes.length;
   if (state.labelMode === "minimal") return 0;
   if (state.labelMode === "focus") {
-    if (state.zoom < 1.2) return 0;
-    return visibleCount <= 40 ? 5 : 3;
+    if (state.zoom < 1.35) return 0;
+    return visibleCount <= 40 ? 3 : 1;
   }
-  if (state.zoom < 1.45 && visibleCount > 25 && !state.search) return 0;
+  if (state.zoom < 1.6 && visibleCount > 25 && !state.search) return 0;
   let budget = visibleCount <= 25
-    ? 8
+    ? 5
     : visibleCount <= 80
-      ? 5
+      ? 3
       : visibleCount <= 160
-        ? 3
+        ? 1
         : 1;
-  if (state.zoom >= 2.5) budget += 6;
-  else if (state.zoom >= 1.9) budget += 3;
-  else if (state.zoom < 1.6 && visibleCount > 60) budget = Math.min(budget, 1);
-  if (state.search && visibleCount <= 80) budget += 2;
-  return Math.max(0, Math.min(18, budget));
+  if (state.zoom >= 2.7) budget += 3;
+  else if (state.zoom >= 2.1) budget += 1;
+  else if (state.zoom < 1.8 && visibleCount > 60) budget = Math.min(budget, 1);
+  if (state.search && visibleCount <= 80) budget += 1;
+  return Math.max(0, Math.min(8, budget));
 }
 
 function nodeOcclusionBoxes() {
