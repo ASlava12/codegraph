@@ -3918,10 +3918,11 @@ function renderInsights() {
       .map(
         (insight, index) => `
         <button class="insight ${escapeHtml(insight.severity)}" type="button" data-insight-index="${index}">
-          <span>
+          <span class="insight-message">
             <strong>${escapeHtml(formatKind(insight.kind))}</strong>
             ${escapeHtml(insight.message)}
           </span>
+          ${renderInsightEvidence(insight)}
         </button>
       `,
       )
@@ -3934,6 +3935,16 @@ function renderInsights() {
     });
   });
   attachInsightKindFilters();
+}
+
+function renderInsightEvidence(insight) {
+  const nodeCount = Array.isArray(insight.nodes) ? insight.nodes.length : 0;
+  const edgeCount = Array.isArray(insight.edges) ? insight.edges.length : 0;
+  if (nodeCount === 0 && edgeCount === 0) return "";
+  const chips = [];
+  if (nodeCount > 0) chips.push(`<span>${nodeCount} ${escapeHtml(t("stat.nodes").toLowerCase())}</span>`);
+  if (edgeCount > 0) chips.push(`<span>${edgeCount} ${escapeHtml(t("stat.edges").toLowerCase())}</span>`);
+  return `<span class="insight-meta">${chips.join("")}</span>`;
 }
 
 function renderInsightSeveritySummary(report) {
