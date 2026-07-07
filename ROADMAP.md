@@ -228,6 +228,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Publish bounded project report snapshot topology and risk list limits in API capabilities.
 - [x] Add machine-readable API schema endpoint for agents and integrations.
 - [x] Publish structured parameter bounds in the API schema for bounded agent requests.
+- [x] Publish structured POST body fields in the API schema for scan and semantic job requests.
 - [x] Clamp and publish semantic work item limits across CLI, API, schema, and web capabilities.
 - [x] Clamp and publish semantic LSP request timeout limits across CLI, API, and web capabilities.
 - [x] Publish known insight kinds in the API schema for agent discovery and web filter suggestions.

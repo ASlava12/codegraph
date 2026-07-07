@@ -613,8 +613,17 @@ struct ApiEndpointSpec {
     parameters: Vec<ApiParameterSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    body_fields: Vec<ApiParameterSpec>,
     response: &'static str,
     streaming: bool,
+}
+
+impl ApiEndpointSpec {
+    fn with_body_fields(mut self, body_fields: Vec<ApiParameterSpec>) -> Self {
+        self.body_fields = body_fields;
+        self
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -3710,7 +3719,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     Some("ScanJobRequest { path?: string }"),
                     "ScanJob",
                     false,
-                ),
+                )
+                .with_body_fields(scan_job_body_fields()),
                 api_get(
                     "/api/scan-jobs",
                     "List retained scan jobs, optionally filtered by status.",
@@ -3782,7 +3792,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     Some("SemanticPatchRequest"),
                     "SemanticGraphPatch",
                     false,
-                ),
+                )
+                .with_body_fields(semantic_patch_body_fields()),
                 api_post(
                     "/api/semantic-apply",
                     "Apply semantic LSP responses and return enriched graph plus report.",
@@ -3790,7 +3801,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     Some("SemanticPatchRequest"),
                     "SemanticGraphApplyResult",
                     false,
-                ),
+                )
+                .with_body_fields(semantic_patch_body_fields()),
                 api_post(
                     "/api/semantic-enrich",
                     "Run ready semantic LSP work synchronously and return enriched graph plus report.",
@@ -3798,7 +3810,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     Some("SemanticEnrichRequest"),
                     "SemanticEnrichResponse",
                     false,
-                ),
+                )
+                .with_body_fields(semantic_enrich_body_fields()),
                 api_post(
                     "/api/semantic-jobs",
                     "Queue semantic enrichment as a retained async job.",
@@ -3806,7 +3819,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     Some("SemanticEnrichRequest"),
                     "SemanticJob",
                     false,
-                ),
+                )
+                .with_body_fields(semantic_enrich_body_fields()),
                 api_get(
                     "/api/semantic-jobs",
                     "List retained semantic jobs, optionally filtered by status.",
@@ -4498,6 +4512,80 @@ fn semantic_filter_params() -> Vec<ApiParameterSpec> {
     ]
 }
 
+fn scan_job_body_fields() -> Vec<ApiParameterSpec> {
+    vec![body_field(
+        "path",
+        false,
+        "path",
+        Some("."),
+        "Project root path.",
+    )]
+}
+
+fn semantic_filter_body_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        body_field("path", false, "path", Some("."), "Project root path."),
+        body_field(
+            "work_item_limit",
+            false,
+            "usize",
+            Some("100"),
+            "Maximum semantic work items.",
+        )
+        .with_range(1, MAX_SEMANTIC_WORK_ITEM_LIMIT)
+        .with_capability_limit("max_semantic_work_item_limit"),
+        body_field(
+            "work_language",
+            false,
+            "string",
+            None,
+            "Restrict work items by language.",
+        ),
+        body_field(
+            "work_status",
+            false,
+            "semantic_work_status",
+            None,
+            "Restrict work items by status.",
+        ),
+        body_field(
+            "work_capability",
+            false,
+            "semantic_work_capability",
+            None,
+            "Restrict work items by capability.",
+        ),
+    ]
+}
+
+fn semantic_patch_body_fields() -> Vec<ApiParameterSpec> {
+    let mut fields = semantic_filter_body_fields();
+    fields.push(body_field(
+        "responses",
+        true,
+        "SemanticLspResponse[]",
+        None,
+        "Language-server responses to map into graph patches.",
+    ));
+    fields
+}
+
+fn semantic_enrich_body_fields() -> Vec<ApiParameterSpec> {
+    let mut fields = semantic_filter_body_fields();
+    fields.push(
+        body_field(
+            "request_timeout_ms",
+            false,
+            "u64",
+            Some("30000"),
+            "Milliseconds to wait for each language-server response.",
+        )
+        .with_range(1, MAX_SEMANTIC_REQUEST_TIMEOUT_MS as usize)
+        .with_capability_limit("max_semantic_request_timeout_ms"),
+    );
+    fields
+}
+
 fn api_get(
     path: &'static str,
     summary: &'static str,
@@ -4551,6 +4639,7 @@ fn api_endpoint(
         summary,
         parameters,
         body,
+        body_fields: Vec::new(),
         response,
         streaming,
     }
@@ -4577,6 +4666,27 @@ fn id_param() -> ApiParameterSpec {
 
 fn job_status_param() -> ApiParameterSpec {
     query_param("status", false, "job_status", None, "Filter by job status.")
+}
+
+fn body_field(
+    name: &'static str,
+    required: bool,
+    value_type: &'static str,
+    default: Option<&'static str>,
+    description: &'static str,
+) -> ApiParameterSpec {
+    ApiParameterSpec {
+        name,
+        location: "body",
+        required,
+        value_type,
+        default,
+        minimum: None,
+        maximum: None,
+        max_length: None,
+        capability_limit: None,
+        description,
+    }
 }
 
 fn query_param(
@@ -5429,6 +5539,40 @@ mod tests {
             semantic_work_item_limit.capability_limit,
             Some("max_semantic_work_item_limit")
         );
+        let semantic_enrich_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/semantic-enrich")
+            .expect("schema should list semantic-enrich endpoint");
+        assert_eq!(semantic_enrich_endpoint.body, Some("SemanticEnrichRequest"));
+        let enrich_timeout = semantic_enrich_endpoint
+            .body_fields
+            .iter()
+            .find(|field| field.name == "request_timeout_ms")
+            .expect("semantic enrich request_timeout_ms");
+        assert_eq!(enrich_timeout.location, "body");
+        assert_eq!(enrich_timeout.minimum, Some(1));
+        assert_eq!(
+            enrich_timeout.maximum,
+            Some(MAX_SEMANTIC_REQUEST_TIMEOUT_MS as usize)
+        );
+        assert_eq!(
+            enrich_timeout.capability_limit,
+            Some("max_semantic_request_timeout_ms")
+        );
+        let semantic_patch_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/semantic-patch")
+            .expect("schema should list semantic-patch endpoint");
+        assert!(semantic_patch_endpoint.body_fields.iter().any(|field| {
+            field.name == "responses"
+                && field.location == "body"
+                && field.required
+                && field.value_type == "SemanticLspResponse[]"
+        }));
         let query_endpoint = schema
             .groups
             .iter()
