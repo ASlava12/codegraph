@@ -88,6 +88,10 @@ const DEFAULT_SOURCE_SEARCH_CONTEXT: usize = 2;
 const MAX_SOURCE_SEARCH_CONTEXT: usize = 20;
 const STATIC_ASSET_CACHE_CONTROL: &str = "no-cache";
 const DYNAMIC_CACHE_CONTROL: &str = "no-store";
+const APP_JS: &str = include_str!("../../codegraph-web/static/app.js");
+const INDEX_HTML: &str = include_str!("../../codegraph-web/static/index.html");
+const LABEL_POLICY_JS: &str = include_str!("../../codegraph-web/static/label-policy.js");
+const STYLES_CSS: &str = include_str!("../../codegraph-web/static/styles.css");
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -1213,6 +1217,54 @@ fn is_static_asset_path(path: &str) -> bool {
     matches!(path, "/app.js" | "/label-policy.js" | "/styles.css")
 }
 
+fn static_asset_response(
+    request_headers: &HeaderMap,
+    content_type: &'static str,
+    body: &'static str,
+) -> Response {
+    let etag = static_asset_etag(body);
+    let etag_header = HeaderValue::from_str(&etag).expect("static asset etags are header-safe");
+    if request_headers
+        .get(header::IF_NONE_MATCH)
+        .is_some_and(|value| if_none_match_matches(value, &etag))
+    {
+        let mut response = StatusCode::NOT_MODIFIED.into_response();
+        response
+            .headers_mut()
+            .insert(header::ETAG, etag_header.clone());
+        response
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        return response;
+    }
+
+    let mut response = body.into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    response.headers_mut().insert(header::ETAG, etag_header);
+    response
+}
+
+fn static_asset_etag(body: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in body.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("\"codegraph-{}-{hash:016x}\"", body.len())
+}
+
+fn if_none_match_matches(value: &HeaderValue, etag: &str) -> bool {
+    let Ok(value) = value.to_str() else {
+        return false;
+    };
+    value.split(',').any(|candidate| {
+        let candidate = candidate.trim();
+        candidate == "*" || candidate == etag || candidate.strip_prefix("W/") == Some(etag)
+    })
+}
+
 async fn start_scan_job(
     State(state): State<AppState>,
     Json(request): Json<ScanJobRequest>,
@@ -1466,34 +1518,23 @@ async fn scan_job_result(
 }
 
 async fn index() -> Html<&'static str> {
-    Html(include_str!("../../codegraph-web/static/index.html"))
+    Html(INDEX_HTML)
 }
 
-async fn label_policy_js() -> impl IntoResponse {
-    (
-        [(
-            header::CONTENT_TYPE,
-            "application/javascript; charset=utf-8",
-        )],
-        include_str!("../../codegraph-web/static/label-policy.js"),
+async fn label_policy_js(headers: HeaderMap) -> Response {
+    static_asset_response(
+        &headers,
+        "application/javascript; charset=utf-8",
+        LABEL_POLICY_JS,
     )
 }
 
-async fn app_js() -> impl IntoResponse {
-    (
-        [(
-            header::CONTENT_TYPE,
-            "application/javascript; charset=utf-8",
-        )],
-        include_str!("../../codegraph-web/static/app.js"),
-    )
+async fn app_js(headers: HeaderMap) -> Response {
+    static_asset_response(&headers, "application/javascript; charset=utf-8", APP_JS)
 }
 
-async fn styles_css() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        include_str!("../../codegraph-web/static/styles.css"),
-    )
+async fn styles_css(headers: HeaderMap) -> Response {
+    static_asset_response(&headers, "text/css; charset=utf-8", STYLES_CSS)
 }
 
 async fn live_api(State(state): State<AppState>) -> Json<ProbeResponse> {
@@ -6067,6 +6108,46 @@ mod tests {
                 "{path} should be revalidated"
             );
         }
+    }
+
+    #[test]
+    fn static_asset_etags_are_stable_and_content_sensitive() {
+        let etag = static_asset_etag("asset-body");
+
+        assert_eq!(etag, static_asset_etag("asset-body"));
+        assert_ne!(etag, static_asset_etag("asset-body!"));
+        assert!(etag.starts_with("\"codegraph-"));
+        assert!(etag.ends_with('"'));
+    }
+
+    #[test]
+    fn static_asset_if_none_match_accepts_lists_and_weak_tags() {
+        let etag = static_asset_etag("asset-body");
+        let exact = HeaderValue::from_str(&format!("\"other\", {etag}")).unwrap();
+        let weak = HeaderValue::from_str(&format!("W/{etag}")).unwrap();
+        let miss = HeaderValue::from_static("\"other\"");
+
+        assert!(if_none_match_matches(&exact, &etag));
+        assert!(if_none_match_matches(&weak, &etag));
+        assert!(if_none_match_matches(&HeaderValue::from_static("*"), &etag));
+        assert!(!if_none_match_matches(&miss, &etag));
+    }
+
+    #[test]
+    fn static_asset_response_returns_not_modified_for_matching_etag() {
+        let body = "console.log('asset');\n";
+        let etag = static_asset_etag(body);
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_NONE_MATCH, HeaderValue::from_str(&etag).unwrap());
+
+        let response =
+            static_asset_response(&headers, "application/javascript; charset=utf-8", body);
+
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(
+            response.headers().get(header::ETAG),
+            Some(&HeaderValue::from_str(&etag).unwrap())
+        );
     }
 
     #[test]

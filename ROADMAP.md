@@ -259,6 +259,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Surface server capabilities in the web overview.
 - [x] Add server-wide security headers for embedded web and API responses.
 - [x] Add production cache-control headers for embedded web assets and runtime API responses.
+- [x] Add ETag-backed conditional responses for embedded web assets.
 - [x] Add optional API bearer-token protection with web UI token handling.
 - [x] Add project report snapshots across CLI, API, and web export.
 - [x] Add full-project risk summary and limit-independent quality gate evaluation to report snapshots.
