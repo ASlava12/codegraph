@@ -1604,6 +1604,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "dependents" | "impact" | "incoming" => query_dependents(graph, spec),
         "neighbors" | "neighbor" | "neighborhood" => query_neighbors(graph, spec),
         "entrypoints" | "entrypoint" | "starts" | "startup" => query_entrypoints(graph, spec),
+        "routes" | "route" | "endpoints" | "endpoint" => query_routes(graph, spec),
         "configs" | "config" | "environment" | "env" => query_configs(graph, spec),
         "errors" | "error" | "exceptions" | "exception" => query_errors(graph, spec),
         "cycles" | "cycle" => query_cycles(graph, spec),
@@ -1615,7 +1616,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         }
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, entrypoints, configs, errors, cycles, hotspots, unreachable, diagnostics, insights, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, entrypoints, routes, configs, errors, cycles, hotspots, unreachable, diagnostics, insights, or path"
         ))),
     }
 }
@@ -2293,6 +2294,111 @@ fn query_entrypoints(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResu
     })
 }
 
+fn query_routes(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    if let Some(first) = spec.positional.first() {
+        spec.terms
+            .entry("search".to_string())
+            .or_insert(first.clone());
+    }
+    validate_route_terms(&spec)?;
+    let depth = spec
+        .terms
+        .get("depth")
+        .map(|value| parse_limit(value).map(|value| value.clamp(1, 16)))
+        .transpose()?
+        .unwrap_or(2);
+    let edge_limit = spec
+        .terms
+        .get("edge_limit")
+        .map(|value| parse_limit(value).map(|value| value.clamp(1, 2_000)))
+        .transpose()?
+        .unwrap_or(500);
+    let path_index = node_path_index(graph);
+    let matched: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            is_framework_route_node(node) && route_query_matches(node, &spec, &path_index)
+        })
+        .cloned()
+        .collect();
+    let selected_ids: BTreeSet<_> = matched
+        .iter()
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let mut node_ids = selected_ids.clone();
+    let mut edge_indexes = BTreeSet::new();
+    let mut truncated = matched.len() > spec.limit;
+
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind == EdgeKind::Entrypoint && selected_ids.contains(&edge.target) {
+            edge_indexes.insert(index);
+            node_ids.insert(edge.source);
+            node_ids.insert(edge.target);
+        }
+    }
+
+    let mut queue = VecDeque::new();
+    let mut visited = BTreeSet::new();
+    for route_id in &selected_ids {
+        visited.insert(*route_id);
+        queue.push_back((*route_id, 0usize));
+    }
+
+    while let Some((node_id, current_depth)) = queue.pop_front() {
+        if current_depth >= depth {
+            if graph
+                .edges
+                .iter()
+                .any(|edge| edge.source == node_id && is_trace_edge(&edge.kind))
+            {
+                truncated = true;
+            }
+            continue;
+        }
+
+        for (edge_index, edge) in graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| edge.source == node_id && is_trace_edge(&edge.kind))
+        {
+            edge_indexes.insert(edge_index);
+            node_ids.insert(edge.source);
+            node_ids.insert(edge.target);
+            if route_trace_should_expand(edge) && visited.insert(edge.target) {
+                queue.push_back((edge.target, current_depth + 1));
+            }
+        }
+    }
+
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| node_ids.contains(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let total_edges = edge_indexes.len();
+    let edges = graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| edge_indexes.contains(index))
+        .take(edge_limit)
+        .map(|(_, edge)| edge.clone())
+        .collect::<Vec<_>>();
+
+    Ok(QueryResult {
+        query: spec.original,
+        total_nodes: nodes.len(),
+        total_edges,
+        truncated: truncated || total_edges > edge_limit,
+        nodes,
+        edges,
+    })
+}
+
 fn query_configs(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
     if let Some(first) = spec.positional.first() {
         spec.terms
@@ -2954,6 +3060,39 @@ fn validate_entrypoint_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     Ok(())
 }
 
+fn validate_route_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if matches!(
+            key.as_str(),
+            "id" | "node_id"
+                | "label"
+                | "search"
+                | "language"
+                | "framework"
+                | "method"
+                | "route_method"
+                | "http_method"
+                | "path"
+                | "route_path"
+                | "url"
+                | "handler"
+                | "source_path"
+                | "file"
+                | "file_path"
+                | "path_prefix"
+                | "depth"
+                | "edge_limit"
+        ) || key.starts_with("metadata.")
+        {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported routes query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_config_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     for key in spec.terms.keys() {
         if matches!(
@@ -3205,6 +3344,14 @@ fn diagnostic_source_nodes(graph: &CodeGraph, diagnostic_id: NodeId) -> Vec<Node
         .collect()
 }
 
+fn is_framework_route_node(node: &Node) -> bool {
+    node.kind == NodeKind::Entrypoint
+        && node
+            .metadata
+            .get("item_kind")
+            .is_some_and(|kind| kind == "framework_route")
+}
+
 fn insight_query_matches(
     graph: &CodeGraph,
     insight: &Insight,
@@ -3256,6 +3403,37 @@ fn entrypoint_query_matches(
             .is_some_and(|value| text_matches(value, expected)),
         _ => false,
     })
+}
+
+fn route_query_matches(
+    node: &Node,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
+    spec.terms.iter().all(|(key, expected)| match key.as_str() {
+        "id" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        "label" => text_matches(&node.label, expected),
+        "search" => node_search_matches(node, expected),
+        "language" | "framework" | "handler" => metadata_matches(node, key, expected),
+        "method" | "route_method" | "http_method" => metadata_matches(node, "method", expected),
+        "path" | "route_path" | "url" => metadata_matches(node, "path", expected),
+        "source_path" | "file" | "file_path" | "path_prefix" => {
+            node_path_matches(node, path_index, expected)
+        }
+        "depth" | "edge_limit" => true,
+        key if key.starts_with("metadata.") => node
+            .metadata
+            .get(key.trim_start_matches("metadata."))
+            .is_some_and(|value| text_matches(value, expected)),
+        _ => false,
+    })
+}
+
+fn route_trace_should_expand(edge: &Edge) -> bool {
+    !edge
+        .metadata
+        .values()
+        .any(|value| matches!(value.as_str(), "framework_route_file" | "entrypoint_file"))
 }
 
 fn config_query_matches(
@@ -3517,6 +3695,11 @@ fn node_path_matches(node: &Node, path_index: &BTreeMap<NodeId, String>, expecte
     path_index
         .get(&node.id)
         .is_some_and(|path| path == &expected || path.starts_with(&format!("{expected}/")))
+        || node
+            .span
+            .as_ref()
+            .map(|span| normalize_graph_path(&span.path))
+            .is_some_and(|path| path == expected || path.starts_with(&format!("{expected}/")))
 }
 
 fn normalize_path_prefix(value: &str) -> String {
@@ -7078,6 +7261,120 @@ mod tests {
                 .to_string()
                 .contains("unsupported entrypoints query term")
         );
+    }
+
+    #[test]
+    fn query_routes_returns_route_handler_context() {
+        let mut graph = CodeGraph::new("repo");
+        let route = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "route GET /users",
+            Some(SourceSpan {
+                path: "src/server.js".to_string(),
+                start_line: 7,
+                start_column: 1,
+                end_line: 7,
+                end_column: 30,
+            }),
+            BTreeMap::from([
+                ("language".to_string(), "javascript".to_string()),
+                ("item_kind".to_string(), "framework_route".to_string()),
+                ("entrypoint_kind".to_string(), "route".to_string()),
+                ("framework".to_string(), "express".to_string()),
+                ("method".to_string(), "GET".to_string()),
+                ("path".to_string(), "/users".to_string()),
+                ("handler".to_string(), "listUsers".to_string()),
+            ]),
+        );
+        let other_route = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "route POST /users",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "framework_route".to_string()),
+                ("framework".to_string(), "express".to_string()),
+                ("method".to_string(), "POST".to_string()),
+                ("path".to_string(), "/users".to_string()),
+                ("handler".to_string(), "createUser".to_string()),
+            ]),
+        );
+        let file = graph.add_node(NodeKind::File, "src/server.js");
+        let express_import = graph.add_node(NodeKind::ExternalDependency, "express");
+        let handler = graph.add_node(NodeKind::Function, "listUsers");
+        let load_config = graph.add_node(NodeKind::Function, "loadConfig");
+        let database_url = graph.add_node(NodeKind::Environment, "DATABASE_URL");
+        graph.add_edge(graph.root, route, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(
+            graph.root,
+            other_route,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge_with_metadata(
+            route,
+            file,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "framework_route_file".to_string())]),
+        );
+        graph.add_edge(
+            file,
+            express_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge_with_metadata(
+            route,
+            handler,
+            EdgeKind::References,
+            Confidence::Syntactic,
+            BTreeMap::from([(
+                "resolution".to_string(),
+                "framework_route_handler".to_string(),
+            )]),
+        );
+        graph.add_edge(handler, load_config, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(
+            load_config,
+            database_url,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+
+        let result = query_graph(
+            &graph,
+            "routes method:GET path:/users framework:express depth:3",
+        )
+        .unwrap();
+
+        assert!(result.nodes.iter().any(|node| node.id == route));
+        assert!(result.nodes.iter().any(|node| node.id == file));
+        assert!(!result.nodes.iter().any(|node| node.id == express_import));
+        assert!(result.nodes.iter().any(|node| node.id == handler));
+        assert!(result.nodes.iter().any(|node| node.id == database_url));
+        assert!(!result.nodes.iter().any(|node| node.id == other_route));
+        assert!(
+            result
+                .edges
+                .iter()
+                .any(|edge| edge.source == graph.root && edge.target == route)
+        );
+        assert!(
+            result
+                .edges
+                .iter()
+                .any(|edge| edge.source == route && edge.target == handler)
+        );
+
+        let by_handler = query_graph(&graph, "endpoint handler:listUsers").unwrap();
+        assert!(by_handler.nodes.iter().any(|node| node.id == route));
+
+        let by_source = query_graph(&graph, "routes source_path:src/server.js").unwrap();
+        assert!(by_source.nodes.iter().any(|node| node.id == route));
+
+        let error =
+            query_graph(&graph, "routes nope:value").expect_err("invalid routes term should fail");
+        assert!(error.to_string().contains("unsupported routes query term"));
     }
 
     #[test]

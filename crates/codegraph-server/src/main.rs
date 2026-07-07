@@ -2743,6 +2743,7 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "dependents",
                     "neighbors",
                     "entrypoints",
+                    "routes",
                     "configs",
                     "errors",
                     "cycles",
@@ -2840,6 +2841,31 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "entrypoint_kind",
                     "path",
                     "path_prefix",
+                    "metadata.*",
+                ],
+            ),
+            (
+                "graph_query_route_term",
+                vec![
+                    "id",
+                    "node_id",
+                    "label",
+                    "search",
+                    "language",
+                    "framework",
+                    "method",
+                    "route_method",
+                    "http_method",
+                    "path",
+                    "route_path",
+                    "url",
+                    "handler",
+                    "source_path",
+                    "file",
+                    "file_path",
+                    "path_prefix",
+                    "depth",
+                    "edge_limit",
                     "metadata.*",
                 ],
             ),
@@ -3302,7 +3328,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/query",
-                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, entrypoints, configs, errors, cycles, hotspots, unreachable, diagnostics, or insights.",
+                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, entrypoints, routes, configs, errors, cycles, hotspots, unreachable, diagnostics, or insights.",
                     vec![
                         path_param(),
                         query_param(
@@ -3310,7 +3336,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Graph query expression, for example `entrypoints language:rust`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable language:rust`, `diagnostics severity:error language:rust`, or `insights severity:error`.",
+                            "Graph query expression, for example `entrypoints language:rust`, `routes method:GET path:/users`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable language:rust`, `diagnostics severity:error language:rust`, or `insights severity:error`.",
                         ),
                     ],
                     "QueryResult",
@@ -4263,6 +4289,7 @@ mod tests {
                 .get("graph_query_command")
                 .is_some_and(|commands| {
                     commands.contains(&"entrypoints")
+                        && commands.contains(&"routes")
                         && commands.contains(&"configs")
                         && commands.contains(&"errors")
                         && commands.contains(&"cycles")
@@ -4276,6 +4303,12 @@ mod tests {
                 .enum_values
                 .get("graph_query_entrypoint_term")
                 .is_some_and(|terms| terms.contains(&"search") && terms.contains(&"language"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_route_term")
+                .is_some_and(|terms| terms.contains(&"method") && terms.contains(&"edge_limit"))
         );
         assert!(
             schema

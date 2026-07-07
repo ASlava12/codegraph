@@ -133,6 +133,7 @@ Goal: answer practical code investigation questions.
 - [x] Add semantic diagnostic query slices for focused LSP issue context.
 - [x] Add insight/risk query slices for focused investigation findings.
 - [x] Add entrypoint query slices for focused startup graph context.
+- [x] Add route query slices for focused HTTP/framework handler context.
 - [x] Add config query slices for focused configuration reader context.
 - [x] Add error query slices for focused exception/error source context.
 - [x] Add cycle query slices for focused circular dependency context.
