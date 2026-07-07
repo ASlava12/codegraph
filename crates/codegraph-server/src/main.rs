@@ -626,8 +626,17 @@ struct ApiSchemaResponse {
     api_version: u32,
     graph_schema_version: u32,
     description: &'static str,
+    common_response_headers: Vec<ApiHeaderSpec>,
     groups: Vec<ApiSchemaGroup>,
     enum_values: BTreeMap<&'static str, Vec<&'static str>>,
+}
+
+#[derive(Debug, Serialize)]
+struct ApiHeaderSpec {
+    name: &'static str,
+    value_type: &'static str,
+    required: bool,
+    description: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -3318,6 +3327,7 @@ fn api_schema_response() -> ApiSchemaResponse {
         api_version: 1,
         graph_schema_version: CODEGRAPH_SCHEMA_VERSION,
         description: "Machine-readable API contract for CodeGraph clients and agents.",
+        common_response_headers: api_schema_common_response_headers(),
         groups: api_schema_groups(),
         enum_values: BTreeMap::from([
             ("export_format", vec!["json", "dot", "ndjson"]),
@@ -3699,6 +3709,65 @@ fn api_schema_response() -> ApiSchemaResponse {
             ),
         ]),
     }
+}
+
+fn api_schema_common_response_headers() -> Vec<ApiHeaderSpec> {
+    vec![
+        ApiHeaderSpec {
+            name: "x-request-id",
+            value_type: "string",
+            required: true,
+            description: "Per-response request correlation id; safe client-provided x-request-id values are echoed.",
+        },
+        ApiHeaderSpec {
+            name: RESPONSE_TIME_HEADER,
+            value_type: "u64_ms",
+            required: true,
+            description: "Server-side response time in elapsed whole milliseconds.",
+        },
+        ApiHeaderSpec {
+            name: "cache-control",
+            value_type: "string",
+            required: true,
+            description: "Runtime/API responses use no-store; embedded unversioned static assets use no-cache revalidation.",
+        },
+        ApiHeaderSpec {
+            name: "content-security-policy",
+            value_type: "string",
+            required: true,
+            description: "Server-wide content security policy for the embedded web UI and API responses.",
+        },
+        ApiHeaderSpec {
+            name: "x-content-type-options",
+            value_type: "string",
+            required: true,
+            description: "Always nosniff.",
+        },
+        ApiHeaderSpec {
+            name: "x-frame-options",
+            value_type: "string",
+            required: true,
+            description: "Always DENY.",
+        },
+        ApiHeaderSpec {
+            name: "referrer-policy",
+            value_type: "string",
+            required: true,
+            description: "Always no-referrer.",
+        },
+        ApiHeaderSpec {
+            name: "permissions-policy",
+            value_type: "string",
+            required: true,
+            description: "Disables camera, microphone, geolocation, and payment APIs.",
+        },
+        ApiHeaderSpec {
+            name: "etag",
+            value_type: "http_etag",
+            required: false,
+            description: "Present on embedded static assets and supports If-None-Match revalidation.",
+        },
+    ]
 }
 
 fn api_schema_groups() -> Vec<ApiSchemaGroup> {
@@ -4882,6 +4951,12 @@ fn api_schema_response_fields() -> Vec<ApiParameterSpec> {
             "Serialized graph schema version.",
         ),
         response_field("description", true, "string", "API contract description."),
+        response_field(
+            "common_response_headers",
+            true,
+            "ApiHeaderSpec[]",
+            "HTTP response headers attached across CodeGraph web and API responses.",
+        ),
         response_field(
             "groups",
             true,
@@ -6807,6 +6882,15 @@ mod tests {
                     && params.contains(&"query")
                     && params.contains(&"query_focus"))
         );
+        assert!(schema.common_response_headers.iter().any(|header| {
+            header.name == "x-request-id" && header.value_type == "string" && header.required
+        }));
+        assert!(schema.common_response_headers.iter().any(|header| {
+            header.name == RESPONSE_TIME_HEADER && header.value_type == "u64_ms" && header.required
+        }));
+        assert!(schema.common_response_headers.iter().any(|header| {
+            header.name == "etag" && header.value_type == "http_etag" && !header.required
+        }));
         assert!(endpoints.contains(&("GET", "/api/schema")));
         let capabilities_endpoint = schema
             .groups
@@ -6825,6 +6909,9 @@ mod tests {
             .expect("schema should list schema endpoint");
         assert!(schema_endpoint.response_fields.iter().any(|field| {
             field.name == "enum_values" && field.value_type == "map<string,string[]>"
+        }));
+        assert!(schema_endpoint.response_fields.iter().any(|field| {
+            field.name == "common_response_headers" && field.value_type == "ApiHeaderSpec[]"
         }));
         assert!(endpoints.contains(&("GET", "/api/live")));
         assert!(endpoints.contains(&("GET", "/api/ready")));

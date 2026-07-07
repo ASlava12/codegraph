@@ -52,6 +52,7 @@ Implemented now:
 - API schema POST endpoints expose structured body fields for scan jobs and semantic enrichment requests.
 - API schema POST endpoints link to the published maximum API request body size enforced by the server.
 - API schema system endpoints expose structured response fields for probes, health, and runtime metrics.
+- API schema publishes common response headers for request correlation, latency diagnostics, cache policy, security policy, and static-asset ETags.
 - API schema graph investigation endpoints expose structured response fields for graph slices, node cards, queries, edge explanations, and reports.
 - API schema analysis and source endpoints expose structured response fields for topology, traces, insights, checks, source previews, and source search.
 - Semantic work queues clamp and publish maximum work item limits across CLI, API, schema, and web capabilities.
