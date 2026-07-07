@@ -70,6 +70,7 @@ Implemented now:
 - Language dependency matrix reports in CLI, API, and web overview for mixed-language coupling.
 - Architecture map reports in CLI, API, and web overview for top-level project areas and cross-area dependencies.
 - Web semantic work queue with filters for reviewing prioritized LSP enrichment tasks and focusing their graph evidence.
+- Web semantic overview counters for definitions, diagnostics, document symbols, references, workspace symbols, and queued work.
 - Architecture overview chips can focus the paged graph by project area path prefix.
 - Architecture dependency chips can focus the exact graph edges behind cross-area coupling.
 - Hotspot reports in CLI, API, and web overview for high-degree files, functions, entrypoints, and config nodes.

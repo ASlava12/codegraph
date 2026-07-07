@@ -176,6 +176,18 @@ const I18N = {
     "semantic.replaced": "Replaced",
     "semantic.added": "Added",
     "semantic.diagnostics": "Diagnostics",
+    "semantic.coverage": "Semantic",
+    "semantic.missing": "Missing semantic",
+    "semantic.candidates": "Candidate nodes",
+    "semantic.plan": "Semantic plan",
+    "semantic.definitions": "Definitions",
+    "semantic.symbols": "Symbols",
+    "semantic.workspace": "Раб. область",
+    "semantic.references": "References",
+    "semantic.workQueue": "Work queue",
+    "semantic.needed": "needed",
+    "semantic.ops": "ops",
+    "semantic.noServer": "no server",
     "semantic.errors": "Errors",
     "semantic.unmatched": "Unmatched",
     "status.idle": "idle",
@@ -360,6 +372,18 @@ const I18N = {
     "semantic.replaced": "Заменено",
     "semantic.added": "Добавлено",
     "semantic.diagnostics": "Диагностика",
+    "semantic.coverage": "Семантика",
+    "semantic.missing": "Нет семантики",
+    "semantic.candidates": "Узлы-кандидаты",
+    "semantic.plan": "План семантики",
+    "semantic.definitions": "Определения",
+    "semantic.symbols": "Символы",
+    "semantic.workspace": "Workspace",
+    "semantic.references": "Ссылки",
+    "semantic.workQueue": "Очередь работ",
+    "semantic.needed": "нужен",
+    "semantic.ops": "операций",
+    "semantic.noServer": "нет сервера",
     "semantic.errors": "Ошибки",
     "semantic.unmatched": "Без совпадения",
     "status.idle": "ожидание",
@@ -2022,7 +2046,7 @@ function renderLspStatus(report, readiness, plan) {
   );
   chips.unshift(`
     <div class="lsp-chip">
-      <span>Semantic</span>
+      <span>${escapeHtml(t("semantic.coverage"))}</span>
       <strong>${Number(readiness?.covered_languages ?? report?.available_servers ?? 0)}/${Number(readiness?.total_languages ?? report?.total_servers ?? 0)}</strong>
     </div>
   `);
@@ -2032,11 +2056,11 @@ function renderLspStatus(report, readiness, plan) {
       0,
       `
         <div class="lsp-chip ${Number(readiness.missing_languages || 0) === 0 ? "available" : "missing"}">
-          <span>Missing semantic</span>
+          <span>${escapeHtml(t("semantic.missing"))}</span>
           <strong>${Number(readiness.missing_languages || 0)}</strong>
         </div>
         <div class="lsp-chip">
-          <span>Candidate nodes</span>
+          <span>${escapeHtml(t("semantic.candidates"))}</span>
           <strong>${Number(readiness.semantic_candidate_nodes || 0)}</strong>
         </div>
       `,
@@ -2048,23 +2072,31 @@ function renderLspStatus(report, readiness, plan) {
       0,
       `
         <div class="lsp-chip ${Number(plan.blocked_languages || 0) === 0 ? "available" : "missing"}">
-          <span>Semantic plan</span>
+          <span>${escapeHtml(t("semantic.plan"))}</span>
           <strong>${Number(plan.ready_languages || 0)}/${Number(plan.total_languages || 0)}</strong>
         </div>
         <div class="lsp-chip">
-          <span>Definitions</span>
+          <span>${escapeHtml(t("semantic.definitions"))}</span>
           <strong>${Number(plan.planned_requests?.definitions || 0)}</strong>
         </div>
         <div class="lsp-chip">
-          <span>Symbols</span>
+          <span>${escapeHtml(t("semantic.diagnostics"))}</span>
+          <strong>${Number(plan.planned_requests?.diagnostics || 0)}</strong>
+        </div>
+        <div class="lsp-chip">
+          <span>${escapeHtml(t("semantic.symbols"))}</span>
           <strong>${Number(plan.planned_requests?.document_symbols || 0)}</strong>
         </div>
         <div class="lsp-chip">
-          <span>Workspace</span>
+          <span>${escapeHtml(t("semantic.references"))}</span>
+          <strong>${Number(plan.planned_requests?.references || 0)}</strong>
+        </div>
+        <div class="lsp-chip">
+          <span>${escapeHtml(t("semantic.workspace"))}</span>
           <strong>${Number(plan.planned_requests?.workspace_symbols || 0)}</strong>
         </div>
         <div class="lsp-chip">
-          <span>Work queue</span>
+          <span>${escapeHtml(t("semantic.workQueue"))}</span>
           <strong>${Number(plan.work_items?.length || 0)}/${Number(plan.total_work_items || 0)}</strong>
         </div>
       `,
@@ -2077,7 +2109,7 @@ function renderLspStatus(report, readiness, plan) {
     chips.push(`
       <div class="lsp-chip missing">
         <span>${escapeHtml(server)}</span>
-        <strong>needed</strong>
+        <strong>${escapeHtml(t("semantic.needed"))}</strong>
       </div>
     `);
   });
@@ -2088,7 +2120,7 @@ function renderLspStatus(report, readiness, plan) {
     chips.push(`
       <div class="lsp-chip missing">
         <span>${escapeHtml(language.language || "language")}</span>
-        <strong>no server</strong>
+        <strong>${escapeHtml(t("semantic.noServer"))}</strong>
       </div>
     `);
   });
@@ -2105,7 +2137,7 @@ function renderLspStatus(report, readiness, plan) {
     chips.push(`
       <div class="lsp-chip ${status}">
         <span>${escapeHtml(language.language || "language")}</span>
-        <strong>${language.status === "ready" ? `${requestCount} ops` : escapeHtml(formatKind(language.status || "blocked"))}</strong>
+        <strong>${language.status === "ready" ? `${requestCount} ${escapeHtml(t("semantic.ops"))}` : escapeHtml(formatKind(language.status || "blocked"))}</strong>
       </div>
     `);
   });

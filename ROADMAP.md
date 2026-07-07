@@ -73,7 +73,7 @@ Goal: improve precision where language tooling exists.
 - [x] Add semantic LSP response mapping into graph patch reports.
 - [x] Add semantic graph patch application into enriched graph reports.
 - [x] Add first CLI semantic LSP batch runner over stdio.
-- Use LSP definitions, references, document symbols, workspace symbols, and diagnostics.
+- [x] Use LSP definitions, references, document symbols, workspace symbols, and diagnostics.
 - Add Rust enrichment through `rust-analyzer`.
 - Add TypeScript/JavaScript enrichment through tsserver-compatible tooling.
 - Add Go enrichment through `gopls`.
@@ -170,6 +170,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add web project overview for languages, edge confidence, and entrypoints.
 - [x] Add web semantic work queue for prioritized LSP enrichment tasks.
 - [x] Add web filters for semantic work queue language, status, and capability.
+- [x] Surface full semantic work counters for definitions, diagnostics, symbols, references, and workspace symbols.
 - [x] Add API and web action for running ready semantic enrichment batches.
 - [x] Add async semantic enrichment jobs with status, SSE, and result retrieval.
 - [x] Add architecture map overview for top-level project areas and dependencies.
