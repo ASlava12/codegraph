@@ -1,5 +1,6 @@
 use codegraph_core::SourceSpan;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 use thiserror::Error;
@@ -237,6 +238,8 @@ pub struct ParsedItem {
     pub label: String,
     pub span: SourceSpan,
     pub parent: Option<String>,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -408,6 +411,7 @@ fn classify_node(
         label,
         span: span_for(path, node),
         parent: None,
+        metadata: BTreeMap::new(),
     })
 }
 
@@ -432,6 +436,7 @@ fn classify_call(
         label,
         span: span_for(path, node),
         parent: Some(function_name.to_string()),
+        metadata: BTreeMap::new(),
     })
 }
 
@@ -442,21 +447,40 @@ fn classify_effect(
     path: &str,
     function_name: Option<&str>,
 ) -> Option<ParsedItem> {
-    let label = if is_environment_read(language, node, source) {
-        effect_label(node, source).map(|label| (ParsedItemKind::EnvironmentRead, label))
+    let (kind, label, metadata) = if is_environment_read(language, node, source) {
+        effect_label(node, source).map(|label| {
+            (
+                ParsedItemKind::EnvironmentRead,
+                label,
+                effect_metadata(language, ParsedItemKind::EnvironmentRead, node, source),
+            )
+        })
     } else if is_config_read(language, node, source) {
-        effect_label(node, source).map(|label| (ParsedItemKind::ConfigRead, label))
+        effect_label(node, source).map(|label| {
+            (
+                ParsedItemKind::ConfigRead,
+                label,
+                effect_metadata(language, ParsedItemKind::ConfigRead, node, source),
+            )
+        })
     } else if is_error_construct(language, node, source) {
-        effect_label(node, source).map(|label| (ParsedItemKind::Error, label))
+        effect_label(node, source).map(|label| {
+            (
+                ParsedItemKind::Error,
+                label,
+                effect_metadata(language, ParsedItemKind::Error, node, source),
+            )
+        })
     } else {
         None
     }?;
 
     Some(ParsedItem {
-        kind: label.0,
-        label: label.1,
+        kind,
+        label,
         span: span_for(path, node),
         parent: function_name.map(ToString::to_string),
+        metadata,
     })
 }
 
@@ -599,6 +623,33 @@ fn effect_label(node: Node<'_>, source: &[u8]) -> Option<String> {
         .map(|value| truncate_label(value, 120))
 }
 
+fn effect_metadata(
+    language: Language,
+    kind: ParsedItemKind,
+    node: Node<'_>,
+    source: &[u8],
+) -> BTreeMap<String, String> {
+    let mut metadata = BTreeMap::new();
+    if kind == ParsedItemKind::EnvironmentRead
+        && language == Language::Python
+        && let Some(default_value) = python_env_default_value(node, source)
+    {
+        metadata.insert(
+            "default_value".to_string(),
+            truncate_label(default_value, 120),
+        );
+    }
+    metadata
+}
+
+fn python_env_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let text = short_node_text(node, source)?;
+    if !text.contains("os.getenv") {
+        return None;
+    }
+    all_string_literals(node, source).into_iter().nth(1)
+}
+
 fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) -> bool {
     match language {
         Language::Rust => matches!(node.kind(), "call_expression" | "macro_invocation"),
@@ -704,6 +755,26 @@ fn first_string_literal(node: Node<'_>, source: &[u8]) -> Option<String> {
         }
     }
     None
+}
+
+fn all_string_literals(node: Node<'_>, source: &[u8]) -> Vec<String> {
+    let mut values = Vec::new();
+    collect_string_literals(node, source, &mut values);
+    values
+}
+
+fn collect_string_literals(node: Node<'_>, source: &[u8], values: &mut Vec<String>) {
+    if node.kind().contains("string") || matches!(node.kind(), "raw_string_literal") {
+        if let Some(value) = node_text(node, source).map(strip_quotes) {
+            values.push(value);
+        }
+        return;
+    }
+
+    let mut cursor: TreeCursor<'_> = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_string_literals(child, source, values);
+    }
 }
 
 fn node_text(node: Node<'_>, source: &[u8]) -> Option<String> {
@@ -1002,6 +1073,33 @@ func main() {}
                 .iter()
                 .any(|item| item.kind == ParsedItemKind::Error)
         );
+    }
+
+    #[test]
+    fn parses_python_environment_default_values() {
+        let parsed = parse_source(
+            "app.py",
+            br#"import os
+PORT = os.getenv("PORT", "8000")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+"#,
+            Language::Python,
+        )
+        .unwrap();
+
+        let port = parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "PORT")
+            .expect("missing PORT env read");
+
+        assert_eq!(
+            port.metadata.get("default_value").map(String::as_str),
+            Some("8000")
+        );
+        assert!(parsed.items.iter().any(|item| {
+            item.kind == ParsedItemKind::EnvironmentRead && item.label == "DATABASE_URL"
+        }));
     }
 
     #[test]

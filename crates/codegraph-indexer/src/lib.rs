@@ -830,6 +830,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
                         }
                     };
                     let mut item_metadata = BTreeMap::new();
+                    item_metadata.extend(item.metadata.clone());
                     item_metadata.insert("language".to_string(), language.to_string());
                     item_metadata.insert("parser".to_string(), "tree-sitter".to_string());
                     item_metadata.insert(
@@ -954,6 +955,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
                         _ => unreachable!("only effect facts are processed here"),
                     };
                     let mut item_metadata = BTreeMap::new();
+                    item_metadata.extend(item.metadata.clone());
                     item_metadata.insert("language".to_string(), language.to_string());
                     item_metadata.insert("parser".to_string(), "tree-sitter".to_string());
                     item_metadata.insert(
@@ -5768,6 +5770,33 @@ mod tests {
                 .edges
                 .iter()
                 .any(|edge| edge.kind == EdgeKind::MayError)
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_preserves_environment_default_values() {
+        let root = temp_project_root();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("app.py"),
+            r#"import os
+PORT = os.getenv("PORT", "8000")
+"#,
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let port = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Environment && node.label == "PORT")
+            .expect("missing PORT environment node");
+
+        assert_eq!(
+            port.metadata.get("default_value").map(String::as_str),
+            Some("8000")
         );
 
         fs::remove_dir_all(root).unwrap();

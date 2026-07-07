@@ -1119,6 +1119,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_error_flow_insights(graph, &mut insights);
     add_unresolved_entrypoint_insights(graph, &mut insights);
     add_unreachable_config_read_insights(graph, &mut insights);
+    add_conflicting_config_default_insights(graph, &mut insights);
     add_undeclared_import_insights(graph, &mut insights);
     add_unused_dependency_insights(graph, &mut insights);
     add_conflicting_dependency_insights(graph, &mut insights);
@@ -3362,6 +3363,68 @@ fn add_unreachable_config_read_insights(graph: &CodeGraph, insights: &mut Vec<In
             ),
             nodes: vec![edge.source, edge.target],
             edges: vec![index],
+        });
+    }
+}
+
+fn add_conflicting_config_default_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let mut groups: BTreeMap<(String, String), Vec<(NodeId, String)>> = BTreeMap::new();
+    for node in &graph.nodes {
+        if !matches!(node.kind, NodeKind::Config | NodeKind::Environment) {
+            continue;
+        }
+        let Some(default_value) = node
+            .metadata
+            .get("default_value")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        groups
+            .entry((kind_name(&node.kind), node.label.clone()))
+            .or_default()
+            .push((node.id, default_value.to_string()));
+    }
+
+    for ((kind, label), node_defaults) in groups {
+        let mut default_values = BTreeMap::<String, Vec<NodeId>>::new();
+        for (node_id, default_value) in node_defaults {
+            default_values
+                .entry(default_value)
+                .or_default()
+                .push(node_id);
+        }
+        if default_values.len() < 2 {
+            continue;
+        }
+
+        let nodes: Vec<_> = default_values
+            .values()
+            .flat_map(|ids| ids.iter().copied())
+            .collect();
+        let edge_kind = if kind == "environment" {
+            EdgeKind::ReadsEnvironment
+        } else {
+            EdgeKind::ReadsConfig
+        };
+        let edges: Vec<_> = nodes
+            .iter()
+            .flat_map(|node_id| incoming_edge_indexes(graph, *node_id, edge_kind.clone()))
+            .collect();
+        let values = default_values
+            .keys()
+            .take(4)
+            .map(|value| format!("`{value}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        insights.push(Insight {
+            kind: "conflicting_config_default".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!("{kind} `{label}` is read with multiple fallback values: {values}"),
+            nodes,
+            edges,
         });
     }
 }
@@ -5963,6 +6026,65 @@ mod tests {
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unreachable_config_read" && insight.nodes.contains(&main)
         }));
+    }
+
+    #[test]
+    fn insights_report_conflicting_config_defaults() {
+        let mut graph = CodeGraph::new("repo");
+        let first_reader = graph.add_node(NodeKind::Function, "api_server");
+        let second_reader = graph.add_node(NodeKind::Function, "worker");
+        let first_env = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "PORT",
+            None,
+            BTreeMap::from([("default_value".to_string(), "8000".to_string())]),
+        );
+        let second_env = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "PORT",
+            None,
+            BTreeMap::from([("default_value".to_string(), "9000".to_string())]),
+        );
+        let stable_env = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "HOST",
+            None,
+            BTreeMap::from([("default_value".to_string(), "127.0.0.1".to_string())]),
+        );
+        graph.add_edge(
+            first_reader,
+            first_env,
+            EdgeKind::ReadsEnvironment,
+            codegraph_core::Confidence::Heuristic,
+        );
+        graph.add_edge(
+            second_reader,
+            second_env,
+            EdgeKind::ReadsEnvironment,
+            codegraph_core::Confidence::Heuristic,
+        );
+        graph.add_edge(
+            second_reader,
+            stable_env,
+            EdgeKind::ReadsEnvironment,
+            codegraph_core::Confidence::Heuristic,
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "conflicting_config_default")
+            .expect("expected conflicting config default insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.message.contains("PORT"));
+        assert!(insight.message.contains("8000"));
+        assert!(insight.message.contains("9000"));
+        assert!(insight.nodes.contains(&first_env));
+        assert!(insight.nodes.contains(&second_env));
+        assert_eq!(insight.edges.len(), 2);
+        assert!(!insight.nodes.contains(&stable_env));
     }
 
     #[test]
