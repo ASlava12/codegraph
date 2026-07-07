@@ -40,6 +40,7 @@ Implemented now:
 - HTTP API and embedded web UI for interactive graph exploration.
 - API capabilities endpoint for discovering supported languages, exports, features, limits, cache state, and route groups.
 - API capabilities limits include graph page, node-card, focus, query, report, source preview, and source-search ceilings for production clients.
+- API capabilities publish insight/check result limits and API schema parameters link overview/report limits to matching capability keys.
 - API capabilities publish bounded project report snapshot limits for architecture groups, architecture edges, language links, hotspots, and returned insights.
 - API and web UI enforce the published maximum graph query expression length before running repository scans.
 - API and web UI enforce the published maximum source-search text length before scanning source files.

@@ -77,6 +77,8 @@ const MAX_FOCUS_EDGE_LIMIT: usize = 1000;
 const DEFAULT_GRAPH_QUERY_LIMIT: usize = 100;
 const MAX_GRAPH_QUERY_LIMIT: usize = 1000;
 const MAX_GRAPH_QUERY_LENGTH: usize = 4096;
+const DEFAULT_INSIGHT_LIMIT: usize = 50;
+const MAX_INSIGHT_LIMIT: usize = 500;
 const DEFAULT_SOURCE_CONTEXT: u32 = 4;
 const MAX_SOURCE_CONTEXT: u32 = 40;
 const DEFAULT_SOURCE_SEARCH_LIMIT: usize = 50;
@@ -706,6 +708,8 @@ struct RuntimeLimitsResponse {
     default_graph_query_limit: usize,
     max_graph_query_limit: usize,
     max_graph_query_length: usize,
+    default_insight_limit: usize,
+    max_insight_limit: usize,
     default_report_architecture_group_limit: usize,
     max_report_architecture_group_limit: usize,
     default_report_architecture_edge_limit: usize,
@@ -1565,6 +1569,8 @@ async fn capabilities_api(
             default_graph_query_limit: DEFAULT_GRAPH_QUERY_LIMIT,
             max_graph_query_limit: MAX_GRAPH_QUERY_LIMIT,
             max_graph_query_length: MAX_GRAPH_QUERY_LENGTH,
+            default_insight_limit: DEFAULT_INSIGHT_LIMIT,
+            max_insight_limit: MAX_INSIGHT_LIMIT,
             default_report_architecture_group_limit: DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT,
             max_report_architecture_group_limit: MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
             default_report_architecture_edge_limit: DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
@@ -2400,7 +2406,7 @@ async fn check_api(
             severity: None,
             kind: normalize_query_string(query.kind),
             search: normalize_query_string(query.search),
-            limit: query.limit.unwrap_or(50),
+            limit: query.limit.unwrap_or(DEFAULT_INSIGHT_LIMIT),
         },
     );
     Ok(Json(check_insights(report, fail_on)))
@@ -2743,7 +2749,7 @@ fn insight_filter_from_query(query: InsightQuery) -> Result<InsightFilter, ApiEr
             .transpose()?,
         kind: normalize_query_string(query.kind),
         search: normalize_query_string(query.search),
-        limit: query.limit.unwrap_or(50),
+        limit: query.limit.unwrap_or(DEFAULT_INSIGHT_LIMIT),
     })
 }
 
@@ -4031,7 +4037,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     vec![
                         path_param(),
                         query_param("group_limit", false, "usize", Some("50"), "Maximum groups.")
-                            .with_range(1, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT),
+                            .with_range(1, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT)
+                            .with_capability_limit("max_report_architecture_group_limit"),
                         query_param(
                             "edge_limit",
                             false,
@@ -4039,7 +4046,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             Some("200"),
                             "Maximum inter-group edges.",
                         )
-                        .with_range(1, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT),
+                        .with_range(1, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT)
+                        .with_capability_limit("max_report_architecture_edge_limit"),
                     ],
                     "ArchitectureMap",
                 ),
@@ -4055,7 +4063,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             Some("50"),
                             "Maximum language links.",
                         )
-                        .with_range(1, MAX_REPORT_LANGUAGE_LINK_LIMIT),
+                        .with_range(1, MAX_REPORT_LANGUAGE_LINK_LIMIT)
+                        .with_capability_limit("max_report_language_link_limit"),
                     ],
                     "LanguageDependencyReport",
                 ),
@@ -4065,7 +4074,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     vec![
                         path_param(),
                         query_param("limit", false, "usize", Some("25"), "Maximum hotspots.")
-                            .with_range(1, MAX_REPORT_HOTSPOT_LIMIT),
+                            .with_range(1, MAX_REPORT_HOTSPOT_LIMIT)
+                            .with_capability_limit("max_report_hotspot_limit"),
                     ],
                     "HotspotReport",
                 ),
@@ -4437,7 +4447,8 @@ fn insight_params() -> Vec<ApiParameterSpec> {
             Some("50"),
             "Maximum returned insights.",
         )
-        .with_range(1, 500),
+        .with_range(1, MAX_INSIGHT_LIMIT)
+        .with_capability_limit("max_insight_limit"),
     ]
 }
 
@@ -4472,7 +4483,8 @@ fn check_params() -> Vec<ApiParameterSpec> {
             Some("50"),
             "Maximum insights in nested report.",
         )
-        .with_range(1, 500),
+        .with_range(1, MAX_INSIGHT_LIMIT)
+        .with_capability_limit("max_insight_limit"),
     ]
 }
 
@@ -5157,6 +5169,8 @@ mod tests {
         assert_eq!(response.limits.default_graph_query_limit, 100);
         assert_eq!(response.limits.max_graph_query_limit, 1000);
         assert_eq!(response.limits.max_graph_query_length, 4096);
+        assert_eq!(response.limits.default_insight_limit, 50);
+        assert_eq!(response.limits.max_insight_limit, 500);
         assert_eq!(response.limits.default_report_architecture_group_limit, 50);
         assert_eq!(response.limits.max_report_architecture_group_limit, 500);
         assert_eq!(response.limits.default_report_architecture_edge_limit, 200);
@@ -5605,6 +5619,77 @@ mod tests {
             report_insight_limit.capability_limit,
             Some("max_report_insight_limit")
         );
+        let architecture_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/architecture")
+            .expect("schema should list architecture endpoint");
+        let architecture_group_limit = architecture_endpoint
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "group_limit")
+            .expect("architecture group_limit");
+        assert_eq!(
+            architecture_group_limit.capability_limit,
+            Some("max_report_architecture_group_limit")
+        );
+        let language_dependencies_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/language-dependencies")
+            .expect("schema should list language-dependencies endpoint");
+        let language_link_limit = language_dependencies_endpoint
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "limit")
+            .expect("language dependencies limit");
+        assert_eq!(
+            language_link_limit.capability_limit,
+            Some("max_report_language_link_limit")
+        );
+        let hotspots_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/hotspots")
+            .expect("schema should list hotspots endpoint");
+        let hotspot_limit = hotspots_endpoint
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "limit")
+            .expect("hotspots limit");
+        assert_eq!(
+            hotspot_limit.capability_limit,
+            Some("max_report_hotspot_limit")
+        );
+        let insights_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/insights")
+            .expect("schema should list insights endpoint");
+        let insight_limit = insights_endpoint
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "limit")
+            .expect("insights limit");
+        assert_eq!(insight_limit.maximum, Some(MAX_INSIGHT_LIMIT));
+        assert_eq!(insight_limit.capability_limit, Some("max_insight_limit"));
+        let check_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/check")
+            .expect("schema should list check endpoint");
+        let check_limit = check_endpoint
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "limit")
+            .expect("check limit");
+        assert_eq!(check_limit.maximum, Some(MAX_INSIGHT_LIMIT));
+        assert_eq!(check_limit.capability_limit, Some("max_insight_limit"));
         let source_search_endpoint = schema
             .groups
             .iter()
