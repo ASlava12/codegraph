@@ -1023,6 +1023,21 @@ pub fn language_dependencies(graph: &CodeGraph, limit: usize) -> LanguageDepende
 
 pub fn hotspots(graph: &CodeGraph, limit: usize) -> HotspotReport {
     let limit = limit.clamp(1, 500);
+    let mut hotspots = hotspot_stats(graph, |_| true, NeighborDirection::Both);
+    let total_candidates = hotspots.len();
+    hotspots.truncate(limit);
+
+    HotspotReport {
+        hotspots,
+        total_candidates,
+        truncated: total_candidates > limit,
+    }
+}
+
+fn hotspot_stats<F>(graph: &CodeGraph, edge_filter: F, direction: NeighborDirection) -> Vec<Hotspot>
+where
+    F: Fn(&Edge) -> bool,
+{
     let candidate_ids: BTreeSet<_> = graph
         .nodes
         .iter()
@@ -1035,9 +1050,10 @@ pub fn hotspots(graph: &CodeGraph, limit: usize) -> HotspotReport {
     for edge in graph
         .edges
         .iter()
-        .filter(|edge| edge.kind != EdgeKind::Contains)
+        .filter(|edge| edge.kind != EdgeKind::Contains && edge_filter(edge))
     {
-        if candidate_ids.contains(&edge.source)
+        if direction != NeighborDirection::In
+            && candidate_ids.contains(&edge.source)
             && let Some(node) = nodes_by_id.get(&edge.source)
         {
             let hotspot = stats.entry(edge.source).or_insert_with(|| Hotspot {
@@ -1054,7 +1070,8 @@ pub fn hotspots(graph: &CodeGraph, limit: usize) -> HotspotReport {
                 .entry(edge_kind_name(&edge.kind))
                 .or_insert(0) += 1;
         }
-        if candidate_ids.contains(&edge.target)
+        if direction != NeighborDirection::Out
+            && candidate_ids.contains(&edge.target)
             && let Some(node) = nodes_by_id.get(&edge.target)
         {
             let hotspot = stats.entry(edge.target).or_insert_with(|| Hotspot {
@@ -1073,7 +1090,6 @@ pub fn hotspots(graph: &CodeGraph, limit: usize) -> HotspotReport {
         }
     }
 
-    let total_candidates = stats.len();
     let mut hotspots: Vec<_> = stats.into_values().collect();
     hotspots.sort_by(|left, right| {
         right
@@ -1083,13 +1099,7 @@ pub fn hotspots(graph: &CodeGraph, limit: usize) -> HotspotReport {
             .then_with(|| right.outgoing.cmp(&left.outgoing))
             .then_with(|| left.node.label.cmp(&right.node.label))
     });
-    hotspots.truncate(limit);
-
-    HotspotReport {
-        hotspots,
-        total_candidates,
-        truncated: total_candidates > limit,
-    }
+    hotspots
 }
 
 pub fn entrypoints(graph: &CodeGraph) -> Vec<Node> {
@@ -1596,6 +1606,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "configs" | "config" | "environment" | "env" => query_configs(graph, spec),
         "errors" | "error" | "exceptions" | "exception" => query_errors(graph, spec),
         "cycles" | "cycle" => query_cycles(graph, spec),
+        "hotspots" | "hotspot" | "central" | "hubs" => query_hotspots(graph, spec),
         "unreachable" | "dead" => query_unreachable(graph, spec),
         "diagnostics" | "diagnostic" => query_diagnostics(graph, spec),
         "insights" | "insight" | "risks" | "risk" | "findings" | "finding" => {
@@ -1603,7 +1614,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         }
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, entrypoints, configs, errors, cycles, unreachable, diagnostics, insights, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, entrypoints, configs, errors, cycles, hotspots, unreachable, diagnostics, insights, or path"
         ))),
     }
 }
@@ -2121,7 +2132,7 @@ fn query_neighbors(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, Qu
         .terms
         .get("direction")
         .or_else(|| spec.terms.get("dir"))
-        .map(|value| parse_neighbor_direction(value))
+        .map(|value| parse_neighbor_direction(value, "neighbors"))
         .transpose()?
         .unwrap_or(NeighborDirection::Both);
     let start = if let Some(id) = spec.terms.get("id").or_else(|| spec.terms.get("node_id")) {
@@ -2499,6 +2510,91 @@ fn query_cycles(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, Query
         total_nodes: nodes.len(),
         total_edges: edges.len(),
         truncated: total_matches > spec.limit,
+        nodes,
+        edges,
+    })
+}
+
+fn query_hotspots(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    validate_hotspot_terms(&spec)?;
+    let path_index = node_path_index(graph);
+    let edge_kind = spec.terms.get("edge_kind");
+    let confidence = spec.terms.get("confidence");
+    let direction = spec
+        .terms
+        .get("direction")
+        .or_else(|| spec.terms.get("dir"))
+        .map(|value| parse_neighbor_direction(value, "hotspots"))
+        .transpose()?
+        .unwrap_or(NeighborDirection::Both);
+    let edge_limit = spec
+        .terms
+        .get("edge_limit")
+        .map(|value| parse_limit(value).map(|value| value.clamp(1, 2_000)))
+        .transpose()?
+        .unwrap_or(300);
+    let min_score = spec
+        .terms
+        .get("min_score")
+        .or_else(|| spec.terms.get("min_degree"))
+        .or_else(|| spec.terms.get("score"))
+        .map(|value| parse_limit(value).map(|value| value.clamp(1, 10_000)))
+        .transpose()?
+        .unwrap_or(1);
+
+    let matched: Vec<_> = hotspot_stats(
+        graph,
+        |edge| {
+            edge_kind.is_none_or(|expected| text_matches(&edge_kind_name(&edge.kind), expected))
+                && confidence.is_none_or(|expected| {
+                    text_matches(&confidence_name(edge.confidence), expected)
+                })
+        },
+        direction,
+    )
+    .into_iter()
+    .filter(|hotspot| {
+        hotspot.score >= min_score && hotspot_query_matches(&hotspot.node, &spec, &path_index)
+    })
+    .collect();
+    let selected_ids: BTreeSet<_> = matched
+        .iter()
+        .take(spec.limit)
+        .map(|hotspot| hotspot.node.id)
+        .collect();
+    let matched_edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind != EdgeKind::Contains
+                && hotspot_edge_touches_selected(edge, &selected_ids, direction)
+                && edge_kind
+                    .is_none_or(|expected| text_matches(&edge_kind_name(&edge.kind), expected))
+                && confidence.is_none_or(|expected| {
+                    text_matches(&confidence_name(edge.confidence), expected)
+                })
+        })
+        .cloned()
+        .collect();
+    let total_edges = matched_edges.len();
+    let edges: Vec<_> = matched_edges.into_iter().take(edge_limit).collect();
+    let mut node_ids = selected_ids;
+    for edge in &edges {
+        node_ids.insert(edge.source);
+        node_ids.insert(edge.target);
+    }
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| node_ids.contains(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    Ok(QueryResult {
+        query: spec.original,
+        total_nodes: nodes.len(),
+        total_edges,
+        truncated: matched.len() > spec.limit || total_edges > edge_limit,
         nodes,
         edges,
     })
@@ -2930,6 +3026,39 @@ fn validate_cycle_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     Ok(())
 }
 
+fn validate_hotspot_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if matches!(
+            key.as_str(),
+            "id" | "node"
+                | "node_id"
+                | "label"
+                | "search"
+                | "language"
+                | "kind"
+                | "node_kind"
+                | "item_kind"
+                | "path"
+                | "path_prefix"
+                | "min_score"
+                | "min_degree"
+                | "score"
+                | "edge_kind"
+                | "confidence"
+                | "direction"
+                | "dir"
+                | "edge_limit"
+        ) || key.starts_with("metadata.")
+        {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported hotspots query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_unreachable_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     for key in spec.terms.keys() {
         if is_node_term(key) || matches!(key.as_str(), "path_prefix" | "scope") {
@@ -3209,6 +3338,42 @@ fn cycle_query_matches(
         }),
         _ => false,
     })
+}
+
+fn hotspot_query_matches(
+    node: &Node,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
+    spec.terms.iter().all(|(key, expected)| match key.as_str() {
+        "id" | "node" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        "label" => text_matches(&node.label, expected),
+        "search" => node_search_matches(node, expected),
+        "language" | "item_kind" => metadata_matches(node, key, expected),
+        "kind" | "node_kind" => text_matches(&kind_name(&node.kind), expected),
+        "path" | "path_prefix" => node_path_matches(node, path_index, expected),
+        "min_score" | "min_degree" | "score" | "edge_kind" | "confidence" | "direction" | "dir"
+        | "edge_limit" => true,
+        key if key.starts_with("metadata.") => node
+            .metadata
+            .get(key.trim_start_matches("metadata."))
+            .is_some_and(|value| text_matches(value, expected)),
+        _ => false,
+    })
+}
+
+fn hotspot_edge_touches_selected(
+    edge: &Edge,
+    selected_ids: &BTreeSet<NodeId>,
+    direction: NeighborDirection,
+) -> bool {
+    match direction {
+        NeighborDirection::In => selected_ids.contains(&edge.target),
+        NeighborDirection::Out => selected_ids.contains(&edge.source),
+        NeighborDirection::Both => {
+            selected_ids.contains(&edge.source) || selected_ids.contains(&edge.target)
+        }
+    }
 }
 
 fn insight_node_matches(graph: &CodeGraph, insight: &Insight, expected: &str) -> bool {
@@ -3546,13 +3711,13 @@ enum NeighborDirection {
     Both,
 }
 
-fn parse_neighbor_direction(value: &str) -> Result<NeighborDirection, QueryError> {
+fn parse_neighbor_direction(value: &str, query: &str) -> Result<NeighborDirection, QueryError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "in" | "incoming" => Ok(NeighborDirection::In),
         "out" | "outgoing" => Ok(NeighborDirection::Out),
         "both" | "any" | "all" => Ok(NeighborDirection::Both),
         other => Err(QueryError::new(format!(
-            "invalid neighbors direction `{other}`; expected in, out, or both"
+            "invalid {query} direction `{other}`; expected in, out, or both"
         ))),
     }
 }
@@ -7016,6 +7181,67 @@ mod tests {
         let error =
             query_graph(&graph, "cycles nope:value").expect_err("invalid cycles term should fail");
         assert!(error.to_string().contains("unsupported cycles query term"));
+    }
+
+    #[test]
+    fn query_hotspots_returns_high_degree_context() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "main",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let helper = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "helper",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let python_worker = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "worker",
+            None,
+            BTreeMap::from([("language".to_string(), "python".to_string())]),
+        );
+        let config = graph.add_node(NodeKind::Config, "settings.toml");
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(helper, main, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(python_worker, main, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(main, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
+
+        let result = query_graph(
+            &graph,
+            "hotspots language:rust min_score:3 limit:1 edge_limit:3",
+        )
+        .unwrap();
+
+        assert!(result.truncated);
+        assert_eq!(result.total_edges, 4);
+        assert_eq!(result.edges.len(), 3);
+        assert!(result.nodes.iter().any(|node| node.id == main));
+        assert!(result.nodes.iter().any(|node| node.id == python_worker));
+
+        let incoming = query_graph(&graph, "hotspots label:main direction:in").unwrap();
+        assert_eq!(incoming.total_edges, 2);
+        assert!(incoming.edges.iter().all(|edge| edge.target == main));
+
+        let by_edge_kind = query_graph(&graph, "hotspots edge_kind:reads_config").unwrap();
+        assert_eq!(by_edge_kind.total_edges, 1);
+        assert!(
+            by_edge_kind
+                .edges
+                .iter()
+                .all(|edge| edge.kind == EdgeKind::ReadsConfig)
+        );
+
+        let error = query_graph(&graph, "hotspots nope:value")
+            .expect_err("invalid hotspots term should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported hotspots query term")
+        );
     }
 
     #[test]

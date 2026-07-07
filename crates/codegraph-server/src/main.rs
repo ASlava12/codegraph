@@ -2746,6 +2746,7 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "configs",
                     "errors",
                     "cycles",
+                    "hotspots",
                     "unreachable",
                     "diagnostics",
                     "insights",
@@ -2781,6 +2782,31 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "path",
                     "path_prefix",
                     "depth",
+                    "metadata.*",
+                ],
+            ),
+            (
+                "graph_query_hotspot_term",
+                vec![
+                    "id",
+                    "node",
+                    "node_id",
+                    "label",
+                    "search",
+                    "language",
+                    "kind",
+                    "node_kind",
+                    "item_kind",
+                    "path",
+                    "path_prefix",
+                    "min_score",
+                    "min_degree",
+                    "score",
+                    "edge_kind",
+                    "confidence",
+                    "direction",
+                    "dir",
+                    "edge_limit",
                     "metadata.*",
                 ],
             ),
@@ -3276,7 +3302,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/query",
-                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, entrypoints, configs, errors, cycles, unreachable, diagnostics, or insights.",
+                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, entrypoints, configs, errors, cycles, hotspots, unreachable, diagnostics, or insights.",
                     vec![
                         path_param(),
                         query_param(
@@ -3284,7 +3310,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Graph query expression, for example `entrypoints language:rust`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `unreachable language:rust`, `diagnostics severity:error language:rust`, or `insights severity:error`.",
+                            "Graph query expression, for example `entrypoints language:rust`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable language:rust`, `diagnostics severity:error language:rust`, or `insights severity:error`.",
                         ),
                     ],
                     "QueryResult",
@@ -4240,6 +4266,7 @@ mod tests {
                         && commands.contains(&"configs")
                         && commands.contains(&"errors")
                         && commands.contains(&"cycles")
+                        && commands.contains(&"hotspots")
                         && commands.contains(&"diagnostics")
                         && commands.contains(&"insights")
                 })
@@ -4267,6 +4294,12 @@ mod tests {
                 .enum_values
                 .get("graph_query_cycle_term")
                 .is_some_and(|terms| terms.contains(&"edge_kind") && terms.contains(&"language"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_hotspot_term")
+                .is_some_and(|terms| terms.contains(&"min_score") && terms.contains(&"edge_limit"))
         );
         assert!(
             schema
