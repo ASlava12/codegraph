@@ -41,7 +41,7 @@ Implemented now:
 - Server-side graph paging and filtering endpoint for large repository exploration.
 - Web graph page controls backed by server-side paging, search, kind, item, language, edge, and confidence filters.
 - Web graph viewport controls for zooming, fitting visible nodes, restarting layout, and pausing layout simulation.
-- Web project overview for language mix, edge confidence mix, and entrypoint launch points.
+- Web project overview for language mix, edge confidence/source/relation mix, and entrypoint launch points.
 - Web path navigation for finding, focusing, and visually highlighting dependency paths between graph nodes.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
 - Server-backed web insights for project-wide findings while browsing paged graph slices.
@@ -67,6 +67,7 @@ Implemented now:
 - Framework config convention facts for common web/service stacks across mixed-language repositories.
 - Repository custom rule insights from `.codegraph/rules.toml`.
 - Project-wide web overview facets for user graph annotations from `.codegraph/annotations.toml`.
+- Project-wide web overview facets for edge provenance sources and relation metadata.
 - Dependency cycle insights for circular calls, imports, references, and manifest dependency edges.
 
 Planned next:

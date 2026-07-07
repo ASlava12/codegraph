@@ -239,6 +239,8 @@ button:disabled {
 
 .language-list,
 .confidence-list,
+.relation-list,
+.edge-source-list,
 .annotation-list {
   display: flex;
   flex-wrap: wrap;
@@ -247,6 +249,8 @@ button:disabled {
 
 .language-chip,
 .confidence-chip,
+.relation-chip,
+.edge-source-chip,
 .annotation-chip {
   display: inline-grid;
   grid-template-columns: minmax(0, auto) auto;
@@ -263,6 +267,8 @@ button:disabled {
 
 .language-chip span,
 .confidence-chip span,
+.relation-chip span,
+.edge-source-chip span,
 .annotation-chip span {
   min-width: 0;
   overflow: hidden;
@@ -272,6 +278,8 @@ button:disabled {
 
 .language-chip strong,
 .confidence-chip strong,
+.relation-chip strong,
+.edge-source-chip strong,
 .annotation-chip strong {
   color: var(--muted);
   font-size: 11px;
@@ -280,6 +288,12 @@ button:disabled {
 .annotation-chip {
   max-width: 100%;
   background: rgba(92, 200, 167, 0.08);
+}
+
+.relation-chip,
+.edge-source-chip {
+  max-width: 100%;
+  background: rgba(184, 142, 230, 0.1);
 }
 
 .entrypoint-list {

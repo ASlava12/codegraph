@@ -11,6 +11,8 @@ pub struct GraphSummary {
     pub node_kinds: BTreeMap<String, usize>,
     pub edge_kinds: BTreeMap<String, usize>,
     pub edge_confidences: BTreeMap<String, usize>,
+    pub edge_relations: BTreeMap<String, usize>,
+    pub edge_sources: BTreeMap<String, usize>,
     pub languages: BTreeMap<String, usize>,
     pub annotation_facets: BTreeMap<String, BTreeMap<String, usize>>,
     pub entrypoints: usize,
@@ -340,6 +342,8 @@ pub fn summarize(graph: &CodeGraph) -> GraphSummary {
     let mut node_kinds = BTreeMap::new();
     let mut edge_kinds = BTreeMap::new();
     let mut edge_confidences = BTreeMap::new();
+    let mut edge_relations = BTreeMap::new();
+    let mut edge_sources = BTreeMap::new();
     let mut languages = BTreeMap::new();
     let mut annotation_facets: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
 
@@ -365,6 +369,22 @@ pub fn summarize(graph: &CodeGraph) -> GraphSummary {
         *edge_confidences
             .entry(confidence_name(edge.confidence))
             .or_insert(0) += 1;
+        if let Some(relation) = edge
+            .metadata
+            .get("relation")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            *edge_relations.entry(relation.to_string()).or_insert(0) += 1;
+        }
+        if let Some(source) = edge
+            .metadata
+            .get("source")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            *edge_sources.entry(source.to_string()).or_insert(0) += 1;
+        }
     }
 
     GraphSummary {
@@ -373,6 +393,8 @@ pub fn summarize(graph: &CodeGraph) -> GraphSummary {
         node_kinds,
         edge_kinds,
         edge_confidences,
+        edge_relations,
+        edge_sources,
         languages,
         annotation_facets,
         entrypoints: graph
@@ -3354,11 +3376,15 @@ mod tests {
         metadata.insert("annotation.domain".to_string(), "payments".to_string());
         metadata.insert("annotation.owner".to_string(), "team-payments".to_string());
         graph.add_node_with_metadata(NodeKind::File, "src/payments.rs", None, metadata);
-        graph.add_edge(
+        graph.add_edge_with_metadata(
             graph.root,
             main,
             EdgeKind::Entrypoint,
             Confidence::Syntactic,
+            BTreeMap::from([
+                ("relation".to_string(), "entrypoint_function".to_string()),
+                ("source".to_string(), "manifest".to_string()),
+            ]),
         );
 
         let summary = summarize(&graph);
@@ -3368,6 +3394,8 @@ mod tests {
         assert_eq!(summary.entrypoints, 1);
         assert_eq!(summary.node_kinds.get("function"), Some(&1));
         assert_eq!(summary.edge_confidences.get("syntactic"), Some(&1));
+        assert_eq!(summary.edge_relations.get("entrypoint_function"), Some(&1));
+        assert_eq!(summary.edge_sources.get("manifest"), Some(&1));
         assert_eq!(
             summary
                 .annotation_facets

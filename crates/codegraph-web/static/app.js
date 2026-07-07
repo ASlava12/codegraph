@@ -77,6 +77,8 @@ const entryCount = document.querySelector("#entryCount");
 const overviewTotals = document.querySelector("#overviewTotals");
 const languageList = document.querySelector("#languageList");
 const confidenceList = document.querySelector("#confidenceList");
+const relationList = document.querySelector("#relationList");
+const edgeSourceList = document.querySelector("#edgeSourceList");
 const annotationList = document.querySelector("#annotationList");
 const entrypointList = document.querySelector("#entrypointList");
 const entryFlowSearchInput = document.querySelector("#entryFlowSearchInput");
@@ -493,6 +495,8 @@ async function loadProjectOverview() {
     overviewTotals.textContent = "error";
     languageList.innerHTML = "";
     confidenceList.innerHTML = "";
+    relationList.innerHTML = "";
+    edgeSourceList.innerHTML = "";
     annotationList.innerHTML = "";
     entrypointList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   }
@@ -539,6 +543,22 @@ function renderOverview() {
           )
           .join("")
       : '<p class="empty">No edge confidence.</p>';
+
+  const relations = Object.entries(summary?.edge_relations || {})
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 6);
+  relationList.innerHTML =
+    relations.length > 0
+      ? relations.map(([relation, count]) => renderOverviewChip("relation", relation, count)).join("")
+      : '<p class="empty">No edge relations.</p>';
+
+  const edgeSources = Object.entries(summary?.edge_sources || {})
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 6);
+  edgeSourceList.innerHTML =
+    edgeSources.length > 0
+      ? edgeSources.map(([source, count]) => renderOverviewChip("edge-source", source, count)).join("")
+      : '<p class="empty">No edge sources.</p>';
 
   const annotations = annotationFacets(summary, state.graph.nodes);
   annotationList.innerHTML =
@@ -601,11 +621,39 @@ function renderOverview() {
     });
   });
 
+  relationList.querySelectorAll("[data-relation]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const relation = button.dataset.relation || "";
+      if (!relation) return;
+      queryInput.value = `edges metadata.relation:${quoteQueryValue(relation)}`;
+      runGraphQuery();
+    });
+  });
+
+  edgeSourceList.querySelectorAll("[data-edge-source]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const source = button.dataset.edgeSource || "";
+      if (!source) return;
+      queryInput.value = `edges metadata.source:${quoteQueryValue(source)}`;
+      runGraphQuery();
+    });
+  });
+
   entrypointList.querySelectorAll("[data-node-id]").forEach((button) => {
     button.addEventListener("click", () => {
       focusNodeId(Number(button.dataset.nodeId), "Focus: entrypoint");
     });
   });
+}
+
+function renderOverviewChip(kind, value, count) {
+  const dataset = kind === "relation" ? "data-relation" : "data-edge-source";
+  return `
+    <button class="${kind}-chip" type="button" ${dataset}="${escapeHtml(value)}">
+      <span>${escapeHtml(formatKind(value))}</span>
+      <strong>${count}</strong>
+    </button>
+  `;
 }
 
 function annotationFacets(summary, nodes) {
