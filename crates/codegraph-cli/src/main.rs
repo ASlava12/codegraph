@@ -115,6 +115,9 @@ enum Command {
     /// Scan only the changed current files described by the incremental cache plan.
     IncrementalScan(CacheDiffArgs),
 
+    /// Preview a graph assembled from cached unchanged files plus changed-file rescans.
+    IncrementalMergePreview(CacheDiffArgs),
+
     /// Emit entrypoint candidate nodes as JSON.
     Entrypoints(ScanArgs),
 
@@ -916,6 +919,15 @@ fn main() -> Result<()> {
             let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
             let scan = cache.incremental_scan(&args.path, &options, args.limit)?;
             println!("{}", serde_json::to_string_pretty(&scan)?);
+        }
+        Command::IncrementalMergePreview(args) => {
+            let options = configured_index_options(
+                &args.path,
+                &scan_overrides(args.include_hidden, args.include_ignored, max_file_size),
+            )?;
+            let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
+            let preview = cache.incremental_merge_preview(&args.path, &options, args.limit)?;
+            println!("{}", serde_json::to_string_pretty(&preview)?);
         }
         Command::Entrypoints(args) => {
             let graph = scan_with_options(

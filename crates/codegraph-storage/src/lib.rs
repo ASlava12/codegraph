@@ -1,4 +1,4 @@
-use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph, NodeKind};
+use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph, Edge, Node, NodeId, NodeKind};
 use codegraph_indexer::{
     IndexError, IndexOptions, is_index_relevant_file, scan_project, scan_project_paths,
 };
@@ -31,6 +31,26 @@ pub struct CachedScan {
 pub struct IncrementalScan {
     pub plan: IncrementalScanPlan,
     pub graph: CodeGraph,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct IncrementalMergePreview {
+    pub plan: IncrementalScanPlan,
+    pub merge: IncrementalMergeReport,
+    pub graph: CodeGraph,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IncrementalMergeReport {
+    pub complete_graph: bool,
+    pub reused_nodes: usize,
+    pub reused_edges: usize,
+    pub replaced_paths: usize,
+    pub scanned_nodes: usize,
+    pub scanned_edges: usize,
+    pub merged_nodes: usize,
+    pub merged_edges: usize,
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -404,6 +424,80 @@ impl GraphCache {
         };
 
         Ok(IncrementalScan { plan, graph })
+    }
+
+    pub fn incremental_merge_preview(
+        &self,
+        root: &Path,
+        options: &IndexOptions,
+        limit: usize,
+    ) -> Result<IncrementalMergePreview, CacheError> {
+        let current = Self::fingerprint_project(root, options)?;
+        let path = self.cache_path(root, options);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let plan = incremental_plan_without_record(
+                    self,
+                    current,
+                    CacheRecordStatus::Missing,
+                    limit,
+                );
+                let graph = scan_project_cached(root, options, Some(self))?.graph;
+                let merge = complete_merge_report(&graph, &plan, 0, 0);
+                return Ok(IncrementalMergePreview { plan, merge, graph });
+            }
+            Err(source) => return Err(CacheError::Io { path, source }),
+        };
+        let record: CacheRecord = serde_json::from_slice(&bytes)?;
+        if record.cache_schema_version != CACHE_SCHEMA_VERSION
+            || record.graph_schema_version != record.graph.schema_version
+            || record.graph_schema_version != CODEGRAPH_SCHEMA_VERSION
+            || record.root != cache_root(root)
+            || record.options_hash != options_hash(options)
+        {
+            let plan = incremental_plan_without_record(
+                self,
+                current,
+                CacheRecordStatus::Incompatible,
+                limit,
+            );
+            let graph = scan_project_cached(root, options, Some(self))?.graph;
+            let merge = complete_merge_report(&graph, &plan, 0, 0);
+            return Ok(IncrementalMergePreview { plan, merge, graph });
+        }
+
+        let plan = incremental_plan_from_fingerprints(
+            self,
+            &record.fingerprint,
+            &record.impact_index,
+            current,
+            limit,
+        );
+        let (graph, merge) = match plan.action {
+            IncrementalPlanAction::Noop => {
+                let graph = record.graph;
+                let merge =
+                    complete_merge_report(&graph, &plan, graph.nodes.len(), graph.edges.len());
+                (graph, merge)
+            }
+            IncrementalPlanAction::FullScan => {
+                let graph = scan_project_cached(root, options, Some(self))?.graph;
+                let merge = complete_merge_report(&graph, &plan, 0, 0);
+                (graph, merge)
+            }
+            IncrementalPlanAction::PartialRescan => {
+                let scan_paths = plan.scan_paths.iter().cloned().collect::<BTreeSet<_>>();
+                let removed_paths = plan.removed_paths.iter().cloned().collect::<BTreeSet<_>>();
+                let scan_options = options
+                    .clone()
+                    .with_parse_cache_dir(self.dir().join("parse-facts"));
+                let changed_graph = scan_project_paths(root, &scan_options, &scan_paths)?;
+                merge_graph_preview(&record.graph, &changed_graph, &scan_paths, &removed_paths)
+            }
+        };
+
+        Ok(IncrementalMergePreview { plan, merge, graph })
     }
 
     pub fn store(
@@ -906,6 +1000,146 @@ fn graph_impact_from_index(
         impacted_edge_indexes,
         truncated,
     )
+}
+
+fn complete_merge_report(
+    graph: &CodeGraph,
+    plan: &IncrementalScanPlan,
+    reused_nodes: usize,
+    reused_edges: usize,
+) -> IncrementalMergeReport {
+    IncrementalMergeReport {
+        complete_graph: true,
+        reused_nodes,
+        reused_edges,
+        replaced_paths: plan.scan_paths.len() + plan.removed_paths.len(),
+        scanned_nodes: graph.nodes.len().saturating_sub(reused_nodes),
+        scanned_edges: graph.edges.len().saturating_sub(reused_edges),
+        merged_nodes: graph.nodes.len(),
+        merged_edges: graph.edges.len(),
+        warning: None,
+    }
+}
+
+fn merge_graph_preview(
+    cached: &CodeGraph,
+    changed: &CodeGraph,
+    scan_paths: &BTreeSet<String>,
+    removed_paths: &BTreeSet<String>,
+) -> (CodeGraph, IncrementalMergeReport) {
+    let mut replaced_paths = scan_paths.clone();
+    replaced_paths.extend(removed_paths.iter().cloned());
+    let removed_node_ids = cached
+        .nodes
+        .iter()
+        .filter(|node| node_matches_any_path(node, &replaced_paths))
+        .map(|node| node.id.0)
+        .collect::<BTreeSet<_>>();
+
+    let mut kept_node_ids = BTreeSet::new();
+    let mut merged = CodeGraph {
+        schema_version: cached.schema_version,
+        root: cached.root,
+        nodes: Vec::new(),
+        edges: Vec::new(),
+    };
+
+    for node in &cached.nodes {
+        if removed_node_ids.contains(&node.id.0) {
+            continue;
+        }
+        kept_node_ids.insert(node.id.0);
+        merged.nodes.push(node.clone());
+    }
+
+    for edge in &cached.edges {
+        if kept_node_ids.contains(&edge.source.0) && kept_node_ids.contains(&edge.target.0) {
+            merged.edges.push(edge.clone());
+        }
+    }
+
+    let reused_nodes = merged.nodes.len();
+    let reused_edges = merged.edges.len();
+    let mut next_id = merged.nodes.iter().map(|node| node.id.0).max().unwrap_or(0) + 1;
+    let mut id_map = BTreeMap::new();
+    id_map.insert(changed.root.0, merged.root);
+
+    for node in &changed.nodes {
+        if node.id == changed.root {
+            continue;
+        }
+        if matches!(node.kind, NodeKind::Directory)
+            && let Some(existing) = find_existing_directory(&merged, &node.label)
+        {
+            id_map.insert(node.id.0, existing);
+            continue;
+        }
+
+        let new_id = NodeId(next_id);
+        next_id += 1;
+        id_map.insert(node.id.0, new_id);
+        merged.nodes.push(remap_node(node, new_id));
+    }
+
+    for edge in &changed.edges {
+        let (Some(source), Some(target)) = (id_map.get(&edge.source.0), id_map.get(&edge.target.0))
+        else {
+            continue;
+        };
+        if merged.edges.iter().any(|existing| {
+            existing.source == *source && existing.target == *target && existing.kind == edge.kind
+        }) {
+            continue;
+        }
+        merged.edges.push(remap_edge(edge, *source, *target));
+    }
+
+    let merge = IncrementalMergeReport {
+        complete_graph: false,
+        reused_nodes,
+        reused_edges,
+        replaced_paths: replaced_paths.len(),
+        scanned_nodes: changed.nodes.len(),
+        scanned_edges: changed.edges.len(),
+        merged_nodes: merged.nodes.len(),
+        merged_edges: merged.edges.len(),
+        warning: Some(
+            "partial merge preview replaces changed file scopes but may omit cross-file incoming edges until a full scan runs"
+                .to_string(),
+        ),
+    };
+
+    (merged, merge)
+}
+
+fn node_matches_any_path(node: &Node, paths: &BTreeSet<String>) -> bool {
+    if matches!(node.kind, NodeKind::File) && paths.contains(&node.label) {
+        return true;
+    }
+    node.span
+        .as_ref()
+        .is_some_and(|span| paths.contains(&span.path))
+}
+
+fn find_existing_directory(graph: &CodeGraph, label: &str) -> Option<NodeId> {
+    graph
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, NodeKind::Directory) && node.label == label)
+        .map(|node| node.id)
+}
+
+fn remap_node(node: &Node, id: NodeId) -> Node {
+    let mut node = node.clone();
+    node.id = id;
+    node
+}
+
+fn remap_edge(edge: &Edge, source: NodeId, target: NodeId) -> Edge {
+    let mut edge = edge.clone();
+    edge.source = source;
+    edge.target = target;
+    edge
 }
 
 fn ratio_basis_points(part: u64, total: u64) -> u16 {
@@ -1443,6 +1677,50 @@ mod tests {
         assert!(labels.contains(&"changed"));
         assert!(!labels.contains(&"src/stable.rs"));
         assert!(!labels.contains(&"stable"));
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn incremental_merge_preview_reuses_cached_graph_and_replaces_changed_scope() {
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        fs::write(root.join("src").join("stable.rs"), "pub fn stable() {}\n").unwrap();
+        let options = IndexOptions::default();
+        let cache = GraphCache::new(&cache_dir);
+        let first = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(first.cache.status, CacheStatus::Miss);
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() {}\nfn changed() {}\n",
+        )
+        .unwrap();
+
+        let preview = cache
+            .incremental_merge_preview(&root, &options, 10)
+            .unwrap();
+        let labels = preview
+            .graph
+            .nodes
+            .iter()
+            .map(|node| node.label.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(preview.plan.action, IncrementalPlanAction::PartialRescan);
+        assert!(!preview.merge.complete_graph);
+        assert!(preview.merge.reused_nodes > 0);
+        assert!(preview.merge.reused_edges > 0);
+        assert_eq!(preview.merge.replaced_paths, 1);
+        assert!(preview.merge.warning.is_some());
+        assert!(labels.contains(&"src/main.rs"));
+        assert!(labels.contains(&"changed"));
+        assert!(labels.contains(&"src/stable.rs"));
+        assert!(labels.contains(&"stable"));
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();

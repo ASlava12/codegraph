@@ -92,6 +92,7 @@ Implemented now:
 - Cache reuse estimates in CLI, API, and web UI for planning incremental scans from unchanged files and bytes.
 - Incremental scan planning reports in CLI, API, and web UI with rescan, removed, reusable path sets, and cached impacted graph node/edge ids.
 - Changed-scope incremental scan graphs in CLI, API, and web UI for inspecting only files that need rescanning.
+- Incremental merge previews that combine cached unchanged graph nodes with changed-file rescans for fast review before a full scan.
 - Scan coverage reports in CLI, API, and web overview for indexed files, policy skips, large-file skips, and non-indexed files.
 - CLI scan benchmark reports with timing and graph-size metrics for regression tracking.
 - Configurable scan file-size budget for CLI/server scans, with skipped large source files kept visible in summaries, insights, and the web stats panel.
@@ -380,6 +381,7 @@ cargo run -p codegraph-cli -- summary . --cache-dir /tmp/codegraph-cache
 cargo run -p codegraph-cli -- cache-diff . --cache-dir /tmp/codegraph-cache
 cargo run -p codegraph-cli -- incremental-plan . --cache-dir /tmp/codegraph-cache
 cargo run -p codegraph-cli -- incremental-scan . --cache-dir /tmp/codegraph-cache
+cargo run -p codegraph-cli -- incremental-merge-preview . --cache-dir /tmp/codegraph-cache
 ```
 
 The output is JSON using the shared graph schema from `codegraph-core`.
@@ -461,9 +463,10 @@ curl 'http://127.0.0.1:3765/api/scan?path=.'
 curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'
 curl 'http://127.0.0.1:3765/api/incremental-plan?path=.&limit=50'
 curl 'http://127.0.0.1:3765/api/incremental-scan?path=.&limit=50'
+curl 'http://127.0.0.1:3765/api/incremental-merge-preview?path=.&limit=50'
 ```
 
-The scan response includes `cache.status` as `hit`, `miss`, or `disabled`. Cache diff responses and the web Cache Diff panel explain the previous and current project fingerprints without performing a full graph scan, including reuse strategy, changed file counts, reusable file/byte counts, and reuse ratios for incremental-scan planning. Incremental scan responses include the plan plus a focused graph for changed current files, while full-scan actions still return a complete graph.
+The scan response includes `cache.status` as `hit`, `miss`, or `disabled`. Cache diff responses and the web Cache Diff panel explain the previous and current project fingerprints without performing a full graph scan, including reuse strategy, changed file counts, reusable file/byte counts, and reuse ratios for incremental-scan planning. Incremental scan responses include the plan plus a focused graph for changed current files, while full-scan actions still return a complete graph. Merge preview responses return a graph assembled from cached unchanged nodes plus changed-file rescans; partial previews are intentionally marked incomplete until a full scan rebuilds cross-file incoming edges.
 
 Export API:
 

@@ -73,6 +73,7 @@ const I18N = {
     "button.explainCache": "Explain Cache",
     "button.planIncremental": "Plan Incremental",
     "button.scanIncremental": "Scan Changed",
+    "button.previewMerge": "Preview Merge",
     "button.downloadGraph": "Download Graph",
     "button.download": "Download",
     "button.findPath": "Find Path",
@@ -246,6 +247,7 @@ const I18N = {
     "button.explainCache": "Объяснить кеш",
     "button.planIncremental": "План инкремента",
     "button.scanIncremental": "Скан изменений",
+    "button.previewMerge": "Предпросмотр merge",
     "button.downloadGraph": "Скачать граф",
     "button.download": "Скачать",
     "button.findPath": "Найти путь",
@@ -424,6 +426,7 @@ const state = {
   cacheDiffRequest: 0,
   incrementalPlanRequest: 0,
   incrementalScanRequest: 0,
+  incrementalMergeRequest: 0,
   exportRequest: 0,
   pathRequest: 0,
   configTraceRequest: 0,
@@ -562,6 +565,7 @@ const cacheDiffLimitInput = document.querySelector("#cacheDiffLimitInput");
 const cacheDiffButton = document.querySelector("#cacheDiffButton");
 const incrementalPlanButton = document.querySelector("#incrementalPlanButton");
 const incrementalScanButton = document.querySelector("#incrementalScanButton");
+const incrementalMergeButton = document.querySelector("#incrementalMergeButton");
 const cacheDiffResult = document.querySelector("#cacheDiffResult");
 const exportFormatInput = document.querySelector("#exportFormatInput");
 const exportButton = document.querySelector("#exportButton");
@@ -636,6 +640,7 @@ for (const input of [sourceSearchInput, sourcePathFilterInput]) {
 cacheDiffButton.addEventListener("click", () => loadCacheDiff());
 incrementalPlanButton.addEventListener("click", () => loadIncrementalPlan());
 incrementalScanButton.addEventListener("click", () => loadIncrementalScan());
+incrementalMergeButton.addEventListener("click", () => loadIncrementalMergePreview());
 cacheDiffLimitInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") loadCacheDiff();
 });
@@ -2809,6 +2814,42 @@ async function loadIncrementalScan() {
   }
 }
 
+async function loadIncrementalMergePreview() {
+  const limit = clampNumber(Number(cacheDiffLimitInput.value || 50), 1, 10000);
+  cacheDiffLimitInput.value = String(limit);
+  state.incrementalMergeRequest += 1;
+  const requestId = state.incrementalMergeRequest;
+  incrementalMergeButton.disabled = true;
+  cacheDiffStatus.textContent = "merging";
+  cacheDiffResult.innerHTML = '<p class="empty">Building merge preview...</p>';
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    limit: String(limit),
+  });
+
+  try {
+    const response = await fetch(`/api/incremental-merge-preview?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.incrementalMergeRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "incremental merge preview failed");
+    }
+    const plan = body.plan || {};
+    cacheDiffStatus.textContent = formatKind(plan.action || "unknown");
+    cacheDiffResult.innerHTML = renderIncrementalMergePreview(body);
+    showIncrementalMergePreviewGraph(body);
+  } catch (error) {
+    if (requestId !== state.incrementalMergeRequest) return;
+    cacheDiffStatus.textContent = "error";
+    cacheDiffResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.incrementalMergeRequest) {
+      incrementalMergeButton.disabled = false;
+    }
+  }
+}
+
 async function runGraphExport() {
   const metadata = exportFormatMetadata(exportFormatInput.value);
   exportFormatInput.value = metadata.format;
@@ -2996,6 +3037,28 @@ function renderIncrementalScan(scan) {
   return `${graphSummary}${renderIncrementalPlan(plan)}`;
 }
 
+function renderIncrementalMergePreview(preview) {
+  const graph = preview.graph || { nodes: [], edges: [] };
+  const plan = preview.plan || {};
+  const merge = preview.merge || {};
+  const warning = merge.warning
+    ? `<p class="empty">${escapeHtml(merge.warning)}</p>`
+    : "";
+  const graphSummary = `
+    <div class="query-summary">
+      <span>${Number(graph.nodes?.length || 0)} preview nodes</span>
+      <span>${Number(graph.edges?.length || 0)} preview edges</span>
+      <span>${Number(merge.reused_nodes || 0)} reused nodes</span>
+      <span>${Number(merge.reused_edges || 0)} reused edges</span>
+      <span>${Number(merge.scanned_nodes || 0)} scanned nodes</span>
+      <span>${Number(merge.scanned_edges || 0)} scanned edges</span>
+      <span>${Number(merge.replaced_paths || 0)} replaced paths</span>
+      <span>${merge.complete_graph ? "complete" : "preview"}</span>
+    </div>
+  `;
+  return `${graphSummary}${warning}${renderIncrementalPlan(plan)}`;
+}
+
 function showIncrementalScanGraph(scan) {
   const graph = scan.graph || { nodes: [], edges: [] };
   const plan = scan.plan || {};
@@ -3010,6 +3073,25 @@ function showIncrementalScanGraph(scan) {
   rootLabel.textContent = `Changed: ${formatKind(plan.action || "scan")}`;
   initializeGraph({ preserveView: false });
   pageInfo.textContent = `changed ${state.graph.nodes.length} / ${Number(plan.rescan_files || 0)}`;
+  pagePrevButton.disabled = true;
+  pageNextButton.disabled = true;
+  pageReloadButton.disabled = false;
+}
+
+function showIncrementalMergePreviewGraph(preview) {
+  const graph = preview.graph || { nodes: [], edges: [] };
+  const merge = preview.merge || {};
+  state.graph = { nodes: graph.nodes || [], edges: graph.edges || [] };
+  state.graphPage.nodeOffset = 0;
+  state.graphPage.totalNodes = state.graph.nodes.length;
+  state.graphPage.totalEdges = state.graph.edges.length;
+  state.graphPage.truncatedNodes = false;
+  state.selectedId = null;
+  state.hoveredId = null;
+  state.queryFocus = null;
+  rootLabel.textContent = merge.complete_graph ? "Incremental: complete" : "Incremental: merge preview";
+  initializeGraph({ preserveView: false });
+  pageInfo.textContent = `preview ${state.graph.nodes.length} / ${Number(merge.reused_nodes || 0)} reused`;
   pagePrevButton.disabled = true;
   pageNextButton.disabled = true;
   pageReloadButton.disabled = false;
