@@ -109,6 +109,7 @@ Implemented now:
 - CI checks for formatting, clippy, tests, UI syntax, CLI scan, and server cache smoke tests.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Investigation insights for semantic LSP diagnostics, preserving language-server severity, source, code, file location, and the affected source node for node-card triage.
+- Investigation insights for duplicate entrypoint labels that can make label-based startup traces ambiguous.
 - Investigation insights for manifest entrypoints whose declared target cannot be resolved to a file or function.
 - Investigation insights for entrypoints that have no outgoing code/config/dependency/error flow.
 - Investigation insights for framework routes whose named handler cannot be linked to a scanned function.

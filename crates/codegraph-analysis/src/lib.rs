@@ -1116,6 +1116,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unresolved_local_import_insights(graph, &mut insights);
     add_cross_language_heuristic_edge_insights(graph, &mut insights);
     add_duplicate_function_insights(graph, &mut insights);
+    add_duplicate_entrypoint_insights(graph, &mut insights);
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
     add_unresolved_entrypoint_insights(graph, &mut insights);
@@ -3739,6 +3740,37 @@ fn add_duplicate_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight
                 edges: Vec::new(),
             });
         }
+    }
+}
+
+fn add_duplicate_entrypoint_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let mut groups: BTreeMap<&str, Vec<NodeId>> = BTreeMap::new();
+    for node in &graph.nodes {
+        if node.kind == NodeKind::Entrypoint {
+            groups.entry(&node.label).or_default().push(node.id);
+        }
+    }
+
+    for (label, nodes) in groups {
+        if nodes.len() <= 1 {
+            continue;
+        }
+
+        let edges = nodes
+            .iter()
+            .flat_map(|node_id| incoming_edge_indexes(graph, *node_id, EdgeKind::Entrypoint))
+            .collect();
+
+        insights.push(Insight {
+            kind: "duplicate_entrypoint_label".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Entrypoint label `{label}` appears {} times and may make label-based traces ambiguous",
+                nodes.len()
+            ),
+            nodes,
+            edges,
+        });
     }
 }
 
@@ -6801,6 +6833,30 @@ mod tests {
         assert!(report.insights.iter().any(|insight| {
             insight.kind == "orphan_function" && insight.nodes.contains(&orphan)
         }));
+    }
+
+    #[test]
+    fn insights_report_duplicate_entrypoints() {
+        let mut graph = CodeGraph::new("repo");
+        let left = graph.add_node(NodeKind::Entrypoint, "npm script:start");
+        let right = graph.add_node(NodeKind::Entrypoint, "npm script:start");
+        let unique = graph.add_node(NodeKind::Entrypoint, "cargo bin:api");
+        graph.add_edge(graph.root, left, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(graph.root, right, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(graph.root, unique, EdgeKind::Entrypoint, Confidence::Exact);
+
+        let report = insights(&graph);
+        let duplicate = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "duplicate_entrypoint_label")
+            .expect("expected duplicate entrypoint insight");
+
+        assert_eq!(duplicate.severity, InsightSeverity::Warning);
+        assert_eq!(duplicate.nodes, vec![left, right]);
+        assert!(duplicate.message.contains("npm script:start"));
+        assert_eq!(duplicate.edges.len(), 2);
+        assert!(!duplicate.nodes.contains(&unique));
     }
 
     #[test]

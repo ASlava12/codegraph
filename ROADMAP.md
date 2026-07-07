@@ -103,6 +103,7 @@ Goal: answer practical code investigation questions.
 - [x] Add investigation insights for semantic LSP diagnostics.
 - [x] Detect directed dependency cycles across calls, imports, references, and dependency edges.
 - [x] Detect package manifest dependency boundaries.
+- [x] Detect duplicate entrypoint labels that make startup traces ambiguous.
 - [x] Detect manifest entrypoints whose declared target cannot be resolved.
 - [x] Detect entrypoints that do not lead to any known code/config/dependency/error flow.
 - [x] Detect external imports that are missing declared manifest dependencies.

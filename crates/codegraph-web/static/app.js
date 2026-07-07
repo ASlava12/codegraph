@@ -4328,6 +4328,25 @@ function buildClientInsights(graph) {
     }
   });
 
+  const entrypointLabels = new Map();
+  graph.nodes
+    .filter((node) => node.kind === "entrypoint")
+    .forEach((node) => {
+      const list = entrypointLabels.get(node.label) || [];
+      list.push(node);
+      entrypointLabels.set(node.label, list);
+    });
+  entrypointLabels.forEach((nodes, label) => {
+    if (nodes.length > 1) {
+      insights.push({
+        kind: "duplicate_entrypoint_label",
+        severity: "warning",
+        message: `${label} appears ${nodes.length} times and may make label-based traces ambiguous`,
+        nodeId: nodes[0].id,
+      });
+    }
+  });
+
   graph.edges
     .filter((edge) => edge.kind === "may_error")
     .forEach((edge) => {
