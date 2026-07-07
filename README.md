@@ -45,6 +45,7 @@ Implemented now:
 - API schema enum values stay aligned with semantic work statuses and capabilities used by LSP work queues.
 - Runtime metrics endpoint for uptime, API/schema versions, roots, language/feature counts, cache state, job stores, and concurrency.
 - Built-in HTTP access logs with method, target, status, and latency for server operations.
+- Per-response `x-request-id` correlation headers that are mirrored in access logs.
 - Graceful HTTP server shutdown on Ctrl-C and SIGTERM.
 - Server-wide security headers for the embedded web UI and API responses.
 - Project report snapshots in CLI, API, and web export for summary, quality gate, insights, topology reports, cache, and scan coverage.

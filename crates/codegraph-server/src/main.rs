@@ -53,6 +53,7 @@ const DEFAULT_MAX_SCAN_CONCURRENCY: usize = 2;
 const DEFAULT_MAX_SEMANTIC_CONCURRENCY: usize = 1;
 const DEFAULT_JOB_LIST_LIMIT: usize = 50;
 const MAX_JOB_LIST_LIMIT: usize = 500;
+static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Parser)]
 #[command(name = "codegraph-server")]
@@ -781,6 +782,7 @@ async fn main() -> Result<()> {
     } else {
         app.layer(middleware::from_fn(access_log))
     };
+    let app = app.layer(middleware::from_fn(request_id_header));
 
     let listener = TcpListener::bind(bind_addr)
         .await
@@ -833,7 +835,29 @@ async fn security_headers(request: Request, next: Next) -> Response {
     response
 }
 
+#[derive(Debug, Clone)]
+struct RequestId(String);
+
+async fn request_id_header(mut request: Request, next: Next) -> Response {
+    let request_id = incoming_request_id(&request).unwrap_or_else(next_request_id);
+    request
+        .extensions_mut()
+        .insert(RequestId(request_id.clone()));
+    let mut response = next.run(request).await;
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static("x-request-id"), value);
+    }
+    response
+}
+
 async fn access_log(request: Request, next: Next) -> Response {
+    let request_id = request
+        .extensions()
+        .get::<RequestId>()
+        .map(|request_id| request_id.0.clone())
+        .unwrap_or_else(|| "-".to_string());
     let method = request.method().as_str().to_string();
     let target = request
         .uri()
@@ -845,14 +869,42 @@ async fn access_log(request: Request, next: Next) -> Response {
     let elapsed = started.elapsed();
     eprintln!(
         "{}",
-        access_log_line(&method, &target, response.status(), elapsed)
+        access_log_line(&request_id, &method, &target, response.status(), elapsed)
     );
     response
 }
 
-fn access_log_line(method: &str, target: &str, status: StatusCode, elapsed: Duration) -> String {
+fn incoming_request_id(request: &Request) -> Option<String> {
+    request
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| is_valid_request_id(value))
+        .map(ToOwned::to_owned)
+}
+
+fn next_request_id() -> String {
+    format!("req-{}", NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed))
+}
+
+fn is_valid_request_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+}
+
+fn access_log_line(
+    request_id: &str,
+    method: &str,
+    target: &str,
+    status: StatusCode,
+    elapsed: Duration,
+) -> String {
     format!(
-        "{method} {target} -> {} {}ms",
+        "{request_id} {method} {target} -> {} {}ms",
         status.as_u16(),
         elapsed.as_millis()
     )
@@ -4160,6 +4212,7 @@ fn capability_features(cache_enabled: bool, access_log_enabled: bool) -> Vec<&'s
         "job_cancellation",
         "runtime_metrics",
         "graceful_shutdown",
+        "request_ids",
         "sse_job_events",
         "semantic_lsp",
         "web_canvas",
@@ -4439,13 +4492,24 @@ mod tests {
     fn access_log_line_includes_method_target_status_and_latency() {
         assert_eq!(
             access_log_line(
+                "req-42",
                 "GET",
                 "/api/health?verbose=1",
                 StatusCode::OK,
                 Duration::from_millis(42),
             ),
-            "GET /api/health?verbose=1 -> 200 42ms"
+            "req-42 GET /api/health?verbose=1 -> 200 42ms"
         );
+    }
+
+    #[test]
+    fn request_ids_accept_safe_values_and_reject_header_injection() {
+        assert!(is_valid_request_id("req-123"));
+        assert!(is_valid_request_id("trace.root:span_1"));
+        assert!(!is_valid_request_id(""));
+        assert!(!is_valid_request_id("contains space"));
+        assert!(!is_valid_request_id("bad\nheader"));
+        assert!(!is_valid_request_id(&"x".repeat(129)));
     }
 
     #[test]
@@ -4463,6 +4527,7 @@ mod tests {
         assert!(without_cache.contains(&"job_cancellation"));
         assert!(without_cache.contains(&"runtime_metrics"));
         assert!(without_cache.contains(&"graceful_shutdown"));
+        assert!(without_cache.contains(&"request_ids"));
         assert!(without_cache.contains(&"access_log"));
         assert!(without_cache.contains(&"project_report"));
         assert!(without_cache.contains(&"semantic_lsp"));

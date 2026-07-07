@@ -224,6 +224,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add runtime metrics endpoint for uptime, cache, job stores, and concurrency.
 - [x] Surface runtime metrics in the web UI.
 - [x] Add built-in HTTP access logs with latency and quiet-mode control.
+- [x] Add `x-request-id` response headers and access-log correlation.
 - [x] Add graceful HTTP server shutdown for Ctrl-C and SIGTERM.
 - [x] Surface server capabilities in the web overview.
 - [x] Add server-wide security headers for embedded web and API responses.
