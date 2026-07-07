@@ -41,10 +41,13 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio::time::sleep;
+
+const DEFAULT_MAX_SCAN_JOBS: usize = 64;
+const DEFAULT_MAX_SEMANTIC_JOBS: usize = 64;
 
 #[derive(Debug, Parser)]
 #[command(name = "codegraph-server")]
@@ -89,6 +92,14 @@ struct Args {
     /// Directory for persistent graph cache records.
     #[arg(long)]
     cache_dir: Option<PathBuf>,
+
+    /// Maximum in-memory scan jobs retained after completion.
+    #[arg(long, default_value_t = DEFAULT_MAX_SCAN_JOBS)]
+    max_scan_jobs: usize,
+
+    /// Maximum in-memory semantic enrichment jobs retained after completion.
+    #[arg(long, default_value_t = DEFAULT_MAX_SEMANTIC_JOBS)]
+    max_semantic_jobs: usize,
 }
 
 #[derive(Clone)]
@@ -100,6 +111,8 @@ struct AppState {
     cache: Option<GraphCache>,
     jobs: Arc<RwLock<BTreeMap<String, ScanJob>>>,
     semantic_jobs: Arc<RwLock<BTreeMap<String, SemanticJob>>>,
+    max_scan_jobs: usize,
+    max_semantic_jobs: usize,
     next_job_id: Arc<AtomicU64>,
 }
 
@@ -153,6 +166,10 @@ struct SemanticJob {
     status: ScanJobStatus,
     path: String,
     message: String,
+    created_at_unix: u64,
+    updated_at_unix: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finished_at_unix: Option<u64>,
     responses: Option<usize>,
     response_errors: Option<usize>,
     unmatched_locations: Option<usize>,
@@ -340,6 +357,10 @@ struct ScanJob {
     status: ScanJobStatus,
     path: String,
     message: String,
+    created_at_unix: u64,
+    updated_at_unix: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finished_at_unix: Option<u64>,
     cache: Option<CacheInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     summary: Option<codegraph_analysis::GraphSummary>,
@@ -354,6 +375,12 @@ enum ScanJobStatus {
     Running,
     Complete,
     Failed,
+}
+
+impl ScanJobStatus {
+    fn is_terminal(self) -> bool {
+        matches!(self, ScanJobStatus::Complete | ScanJobStatus::Failed)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -383,6 +410,19 @@ struct HealthResponse {
     root: String,
     max_file_size: u64,
     cache_dir: Option<String>,
+    max_scan_jobs: usize,
+    scan_jobs: JobStoreHealth,
+    max_semantic_jobs: usize,
+    semantic_jobs: JobStoreHealth,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct JobStoreHealth {
+    total: usize,
+    queued: usize,
+    running: usize,
+    complete: usize,
+    failed: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -461,6 +501,8 @@ async fn main() -> Result<()> {
         },
         jobs: Arc::new(RwLock::new(BTreeMap::new())),
         semantic_jobs: Arc::new(RwLock::new(BTreeMap::new())),
+        max_scan_jobs: args.max_scan_jobs.max(1),
+        max_semantic_jobs: args.max_semantic_jobs.max(1),
         next_job_id: Arc::new(AtomicU64::new(1)),
     };
 
@@ -528,29 +570,37 @@ async fn start_scan_job(
     let root = resolve_scan_root(&state, request.path.as_deref())?;
     let id = format!("scan-{}", state.next_job_id.fetch_add(1, Ordering::Relaxed));
     let path = root.display().to_string();
+    let now = unix_seconds();
     let job = ScanJob {
         id: id.clone(),
         status: ScanJobStatus::Queued,
         path: path.clone(),
         message: "queued".to_string(),
+        created_at_unix: now,
+        updated_at_unix: now,
+        finished_at_unix: None,
         cache: None,
         summary: None,
         graph: None,
     };
-    state.jobs.write().await.insert(id.clone(), job.clone());
+    insert_scan_job(&state.jobs, job.clone(), state.max_scan_jobs).await;
 
     let jobs = Arc::clone(&state.jobs);
     let options = scan_options(&state, &root)?;
     let cache = state.cache.clone();
+    let max_jobs = state.max_scan_jobs;
     tokio::spawn(async move {
         update_scan_job(
             &jobs,
             &id,
-            ScanJobStatus::Running,
-            "scanning project".to_string(),
-            None,
-            None,
-            None,
+            ScanJobUpdate {
+                status: ScanJobStatus::Running,
+                message: "scanning project".to_string(),
+                cache: None,
+                summary: None,
+                graph: None,
+            },
+            max_jobs,
         )
         .await;
 
@@ -571,11 +621,14 @@ async fn start_scan_job(
                 update_scan_job(
                     &jobs,
                     &id,
-                    ScanJobStatus::Complete,
-                    message,
-                    Some(output.cache),
-                    Some(summary),
-                    Some(graph),
+                    ScanJobUpdate {
+                        status: ScanJobStatus::Complete,
+                        message,
+                        cache: Some(output.cache),
+                        summary: Some(summary),
+                        graph: Some(graph),
+                    },
+                    max_jobs,
                 )
                 .await;
             }
@@ -583,11 +636,14 @@ async fn start_scan_job(
                 update_scan_job(
                     &jobs,
                     &id,
-                    ScanJobStatus::Failed,
-                    error.to_string(),
-                    None,
-                    None,
-                    None,
+                    ScanJobUpdate {
+                        status: ScanJobStatus::Failed,
+                        message: error.to_string(),
+                        cache: None,
+                        summary: None,
+                        graph: None,
+                    },
+                    max_jobs,
                 )
                 .await;
             }
@@ -595,11 +651,14 @@ async fn start_scan_job(
                 update_scan_job(
                     &jobs,
                     &id,
-                    ScanJobStatus::Failed,
-                    format!("scanner task failed: {error}"),
-                    None,
-                    None,
-                    None,
+                    ScanJobUpdate {
+                        status: ScanJobStatus::Failed,
+                        message: format!("scanner task failed: {error}"),
+                        cache: None,
+                        summary: None,
+                        graph: None,
+                    },
+                    max_jobs,
                 )
                 .await;
             }
@@ -715,6 +774,14 @@ async fn styles_css() -> impl IntoResponse {
 
 async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, ApiError> {
     let options = scan_options(&state, &state.root)?;
+    let scan_jobs = {
+        let jobs = state.jobs.read().await;
+        job_store_health(jobs.values().map(|job| job.status))
+    };
+    let semantic_jobs = {
+        let jobs = state.semantic_jobs.read().await;
+        job_store_health(jobs.values().map(|job| job.status))
+    };
     Ok(Json(HealthResponse {
         status: "ok",
         root: state.root.display().to_string(),
@@ -723,6 +790,10 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, A
             .cache
             .as_ref()
             .map(|cache| cache.dir().display().to_string()),
+        max_scan_jobs: state.max_scan_jobs,
+        scan_jobs,
+        max_semantic_jobs: state.max_semantic_jobs,
+        semantic_jobs,
     }))
 }
 
@@ -867,33 +938,37 @@ async fn start_semantic_job(
         state.next_job_id.fetch_add(1, Ordering::Relaxed)
     );
     let path = root.display().to_string();
+    let now = unix_seconds();
     let job = SemanticJob {
         id: id.clone(),
         status: ScanJobStatus::Queued,
         path: path.clone(),
         message: "queued".to_string(),
+        created_at_unix: now,
+        updated_at_unix: now,
+        finished_at_unix: None,
         responses: None,
         response_errors: None,
         unmatched_locations: None,
         report: None,
         result: None,
     };
-    state
-        .semantic_jobs
-        .write()
-        .await
-        .insert(id.clone(), job.clone());
+    insert_semantic_job(&state.semantic_jobs, job.clone(), state.max_semantic_jobs).await;
 
     let jobs = Arc::clone(&state.semantic_jobs);
     let options = scan_options(&state, &root)?;
     let cache = state.cache.clone();
+    let max_jobs = state.max_semantic_jobs;
     tokio::spawn(async move {
         update_semantic_job(
             &jobs,
             &id,
-            ScanJobStatus::Running,
-            "running semantic enrichment".to_string(),
-            None,
+            SemanticJobUpdate {
+                status: ScanJobStatus::Running,
+                message: "running semantic enrichment".to_string(),
+                result: None,
+            },
+            max_jobs,
         )
         .await;
 
@@ -911,22 +986,38 @@ async fn start_semantic_job(
                 update_semantic_job(
                     &jobs,
                     &id,
-                    ScanJobStatus::Complete,
-                    "complete".to_string(),
-                    Some(result),
+                    SemanticJobUpdate {
+                        status: ScanJobStatus::Complete,
+                        message: "complete".to_string(),
+                        result: Some(result),
+                    },
+                    max_jobs,
                 )
                 .await;
             }
             Ok(Err(error)) => {
-                update_semantic_job(&jobs, &id, ScanJobStatus::Failed, error, None).await;
+                update_semantic_job(
+                    &jobs,
+                    &id,
+                    SemanticJobUpdate {
+                        status: ScanJobStatus::Failed,
+                        message: error,
+                        result: None,
+                    },
+                    max_jobs,
+                )
+                .await;
             }
             Err(error) => {
                 update_semantic_job(
                     &jobs,
                     &id,
-                    ScanJobStatus::Failed,
-                    format!("semantic enrichment task failed: {error}"),
-                    None,
+                    SemanticJobUpdate {
+                        status: ScanJobStatus::Failed,
+                        message: format!("semantic enrichment task failed: {error}"),
+                        result: None,
+                    },
+                    max_jobs,
                 )
                 .await;
             }
@@ -1676,21 +1767,69 @@ impl ApiError {
     }
 }
 
-async fn update_scan_job(
-    jobs: &RwLock<BTreeMap<String, ScanJob>>,
-    id: &str,
+#[derive(Debug)]
+struct ScanJobUpdate {
     status: ScanJobStatus,
     message: String,
     cache: Option<CacheInfo>,
     summary: Option<codegraph_analysis::GraphSummary>,
     graph: Option<CodeGraph>,
+}
+
+#[derive(Debug)]
+struct SemanticJobUpdate {
+    status: ScanJobStatus,
+    message: String,
+    result: Option<SemanticEnrichResponse>,
+}
+
+async fn insert_scan_job(jobs: &RwLock<BTreeMap<String, ScanJob>>, job: ScanJob, max_jobs: usize) {
+    let mut jobs = jobs.write().await;
+    jobs.insert(job.id.clone(), job);
+    prune_scan_jobs(&mut jobs, max_jobs);
+}
+
+async fn update_scan_job(
+    jobs: &RwLock<BTreeMap<String, ScanJob>>,
+    id: &str,
+    update: ScanJobUpdate,
+    max_jobs: usize,
 ) {
-    if let Some(job) = jobs.write().await.get_mut(id) {
-        job.status = status;
-        job.message = message;
-        job.cache = cache;
-        job.summary = summary;
-        job.graph = graph;
+    let mut jobs = jobs.write().await;
+    if let Some(job) = jobs.get_mut(id) {
+        let now = unix_seconds();
+        job.status = update.status;
+        job.message = update.message;
+        job.updated_at_unix = now;
+        if update.status.is_terminal() {
+            job.finished_at_unix = Some(now);
+        }
+        job.cache = update.cache;
+        job.summary = update.summary;
+        job.graph = update.graph;
+    }
+    prune_scan_jobs(&mut jobs, max_jobs);
+}
+
+fn prune_scan_jobs(jobs: &mut BTreeMap<String, ScanJob>, max_jobs: usize) {
+    let max_jobs = max_jobs.max(1);
+    while jobs.len() > max_jobs {
+        let remove_id = jobs
+            .iter()
+            .filter(|(_, job)| job.status.is_terminal())
+            .min_by_key(|(_, job)| {
+                (
+                    job.finished_at_unix.unwrap_or(job.updated_at_unix),
+                    job.updated_at_unix,
+                    job.created_at_unix,
+                )
+            })
+            .map(|(id, _)| id.clone());
+
+        let Some(remove_id) = remove_id else {
+            break;
+        };
+        jobs.remove(&remove_id);
     }
 }
 
@@ -1738,17 +1877,32 @@ fn run_semantic_enrichment(
     })
 }
 
+async fn insert_semantic_job(
+    jobs: &RwLock<BTreeMap<String, SemanticJob>>,
+    job: SemanticJob,
+    max_jobs: usize,
+) {
+    let mut jobs = jobs.write().await;
+    jobs.insert(job.id.clone(), job);
+    prune_semantic_jobs(&mut jobs, max_jobs);
+}
+
 async fn update_semantic_job(
     jobs: &RwLock<BTreeMap<String, SemanticJob>>,
     id: &str,
-    status: ScanJobStatus,
-    message: String,
-    result: Option<SemanticEnrichResponse>,
+    update: SemanticJobUpdate,
+    max_jobs: usize,
 ) {
-    if let Some(job) = jobs.write().await.get_mut(id) {
-        job.status = status;
-        job.message = message;
-        if let Some(result) = result {
+    let mut jobs = jobs.write().await;
+    if let Some(job) = jobs.get_mut(id) {
+        let now = unix_seconds();
+        job.status = update.status;
+        job.message = update.message;
+        job.updated_at_unix = now;
+        if update.status.is_terminal() {
+            job.finished_at_unix = Some(now);
+        }
+        if let Some(result) = update.result {
             job.responses = Some(result.responses);
             job.response_errors = Some(result.response_errors);
             job.unmatched_locations = Some(result.unmatched_locations);
@@ -1756,6 +1910,50 @@ async fn update_semantic_job(
             job.result = Some(result);
         }
     }
+    prune_semantic_jobs(&mut jobs, max_jobs);
+}
+
+fn prune_semantic_jobs(jobs: &mut BTreeMap<String, SemanticJob>, max_jobs: usize) {
+    let max_jobs = max_jobs.max(1);
+    while jobs.len() > max_jobs {
+        let remove_id = jobs
+            .iter()
+            .filter(|(_, job)| job.status.is_terminal())
+            .min_by_key(|(_, job)| {
+                (
+                    job.finished_at_unix.unwrap_or(job.updated_at_unix),
+                    job.updated_at_unix,
+                    job.created_at_unix,
+                )
+            })
+            .map(|(id, _)| id.clone());
+
+        let Some(remove_id) = remove_id else {
+            break;
+        };
+        jobs.remove(&remove_id);
+    }
+}
+
+fn job_store_health(statuses: impl IntoIterator<Item = ScanJobStatus>) -> JobStoreHealth {
+    let mut health = JobStoreHealth::default();
+    for status in statuses {
+        health.total += 1;
+        match status {
+            ScanJobStatus::Queued => health.queued += 1,
+            ScanJobStatus::Running => health.running += 1,
+            ScanJobStatus::Complete => health.complete += 1,
+            ScanJobStatus::Failed => health.failed += 1,
+        }
+    }
+    health
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn job_without_graph(mut job: ScanJob) -> ScanJob {
@@ -1833,6 +2031,70 @@ mod tests {
         fs::remove_dir_all(temp).unwrap();
     }
 
+    #[test]
+    fn prune_scan_jobs_removes_oldest_terminal_jobs_first() {
+        let mut jobs = BTreeMap::new();
+        jobs.insert(
+            "scan-1".to_string(),
+            test_scan_job("scan-1", ScanJobStatus::Complete, 10, Some(20)),
+        );
+        jobs.insert(
+            "scan-2".to_string(),
+            test_scan_job("scan-2", ScanJobStatus::Running, 11, None),
+        );
+        jobs.insert(
+            "scan-3".to_string(),
+            test_scan_job("scan-3", ScanJobStatus::Failed, 12, Some(30)),
+        );
+
+        prune_scan_jobs(&mut jobs, 2);
+
+        assert!(!jobs.contains_key("scan-1"));
+        assert!(jobs.contains_key("scan-2"));
+        assert!(jobs.contains_key("scan-3"));
+
+        prune_scan_jobs(&mut jobs, 1);
+
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs.contains_key("scan-2"));
+    }
+
+    #[test]
+    fn prune_semantic_jobs_keeps_active_jobs_when_over_limit() {
+        let mut jobs = BTreeMap::new();
+        jobs.insert(
+            "semantic-1".to_string(),
+            test_semantic_job("semantic-1", ScanJobStatus::Queued, 10, None),
+        );
+        jobs.insert(
+            "semantic-2".to_string(),
+            test_semantic_job("semantic-2", ScanJobStatus::Running, 11, None),
+        );
+
+        prune_semantic_jobs(&mut jobs, 1);
+
+        assert_eq!(jobs.len(), 2);
+        assert!(jobs.contains_key("semantic-1"));
+        assert!(jobs.contains_key("semantic-2"));
+    }
+
+    #[test]
+    fn job_store_health_counts_statuses() {
+        let health = job_store_health([
+            ScanJobStatus::Queued,
+            ScanJobStatus::Running,
+            ScanJobStatus::Complete,
+            ScanJobStatus::Complete,
+            ScanJobStatus::Failed,
+        ]);
+
+        assert_eq!(health.total, 5);
+        assert_eq!(health.queued, 1);
+        assert_eq!(health.running, 1);
+        assert_eq!(health.complete, 2);
+        assert_eq!(health.failed, 1);
+    }
+
     fn test_state(root: PathBuf, additional: Vec<PathBuf>, allow_any_path: bool) -> AppState {
         AppState {
             projects: Arc::new(project_roots(&root, additional).unwrap()),
@@ -1842,8 +2104,62 @@ mod tests {
             cache: None,
             jobs: Arc::new(RwLock::new(BTreeMap::new())),
             semantic_jobs: Arc::new(RwLock::new(BTreeMap::new())),
+            max_scan_jobs: DEFAULT_MAX_SCAN_JOBS,
+            max_semantic_jobs: DEFAULT_MAX_SEMANTIC_JOBS,
             next_job_id: Arc::new(AtomicU64::new(1)),
         }
+    }
+
+    fn test_scan_job(
+        id: &str,
+        status: ScanJobStatus,
+        created_at_unix: u64,
+        finished_at_unix: Option<u64>,
+    ) -> ScanJob {
+        ScanJob {
+            id: id.to_string(),
+            status,
+            path: ".".to_string(),
+            message: status_message(status),
+            created_at_unix,
+            updated_at_unix: finished_at_unix.unwrap_or(created_at_unix),
+            finished_at_unix,
+            cache: None,
+            summary: None,
+            graph: None,
+        }
+    }
+
+    fn test_semantic_job(
+        id: &str,
+        status: ScanJobStatus,
+        created_at_unix: u64,
+        finished_at_unix: Option<u64>,
+    ) -> SemanticJob {
+        SemanticJob {
+            id: id.to_string(),
+            status,
+            path: ".".to_string(),
+            message: status_message(status),
+            created_at_unix,
+            updated_at_unix: finished_at_unix.unwrap_or(created_at_unix),
+            finished_at_unix,
+            responses: None,
+            response_errors: None,
+            unmatched_locations: None,
+            report: None,
+            result: None,
+        }
+    }
+
+    fn status_message(status: ScanJobStatus) -> String {
+        match status {
+            ScanJobStatus::Queued => "queued",
+            ScanJobStatus::Running => "running",
+            ScanJobStatus::Complete => "complete",
+            ScanJobStatus::Failed => "failed",
+        }
+        .to_string()
     }
 
     fn temp_server_root() -> PathBuf {

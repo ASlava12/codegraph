@@ -20,6 +20,7 @@ Implemented now:
 - CLI semantic runner that executes ready LSP batches over stdio and emits reusable response JSON for graph patching or enrichment.
 - HTTP/API and web semantic enrichment action that can run ready LSP batches and render an enriched graph in the browser.
 - Async semantic enrichment job API with status, SSE events, and result retrieval for long-running LSP work.
+- Bounded in-memory scan and semantic job retention with job-store counters in the health API.
 - Semantic LSP response patch reports that map definitions, references, and diagnostics back onto graph nodes.
 - Semantic graph patch application that emits enriched graphs with semantic edges and diagnostic nodes.
 - Filesystem scanner with default build/vendor ignore rules.
@@ -380,6 +381,10 @@ Use `--max-file-size <bytes>` to cap per-file reads. Source/manifest files above
 the limit remain visible as skipped file nodes and produce `skipped_large_file`
 insights. When a selected project has `.codegraph/config.toml`, the server uses
 that repository-owned scan policy for API and web requests.
+Completed scan and semantic enrichment jobs are retained in bounded in-memory
+stores so large graph results do not accumulate without limit. Use
+`--max-scan-jobs <count>` and `--max-semantic-jobs <count>` to tune the retained
+history; active queued/running jobs are not pruned.
 
 Expose multiple local repositories to the web project selector by repeating
 `--project`. Requests remain constrained to the configured roots unless
@@ -393,6 +398,7 @@ Scan API:
 
 ```bash
 curl 'http://127.0.0.1:3765/api/projects'
+curl 'http://127.0.0.1:3765/api/health'
 curl 'http://127.0.0.1:3765/api/scan-options?path=.'
 curl 'http://127.0.0.1:3765/api/languages'
 curl 'http://127.0.0.1:3765/api/lsp'

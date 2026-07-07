@@ -134,6 +134,7 @@ Responsibilities:
 - accept semantic LSP response payloads and return graph patches or enriched graphs
 - run ready semantic enrichment batches for web/API users when local language servers are startable
 - expose semantic enrichment jobs with status polling, SSE events, and enriched graph results
+- retain bounded scan and semantic job history in memory and expose job-store counts through health checks
 - reuse persistent graph cache records when project fingerprints match
 - provide cache fingerprint diff endpoints and web controls for explaining cache invalidation
 - provide JSON, DOT, and NDJSON export endpoints
