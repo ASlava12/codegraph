@@ -4959,23 +4959,16 @@ function drawArrowHead(start, end, color) {
 }
 
 function shouldShowNodeLabel(node, selected, hovered, focused) {
-  if (selected || hovered) return true;
-  if (state.labelMode === "minimal") return false;
-  if (state.labelMode === "focus") return focused && state.zoom >= 2.1;
-  if (focused) return state.zoom >= 2.35;
-
-  const priority = nodeLabelPriority(node);
-  const visibleCount = state.visibleNodes.length;
-  if (state.search) {
-    if (visibleCount <= 20) return state.zoom >= 2.35 && priority <= 3;
-    if (visibleCount <= 80) return state.zoom >= 2.9 && priority <= 2;
-    return state.zoom >= 3.25 && priority <= 1;
-  }
-  if (state.zoom < 2.85) return false;
-  if (visibleCount > 120) return state.zoom >= 3.35 && priority <= 1;
-  if (visibleCount > 50) return state.zoom >= 3.2 && priority <= 1;
-  if (visibleCount > 20) return state.zoom >= 3.05 && priority <= 2;
-  return priority <= 3;
+  return CodeGraphLabelPolicy.shouldShowNodeLabel({
+    selected,
+    hovered,
+    focused,
+    labelMode: state.labelMode,
+    zoom: state.zoom,
+    visibleCount: state.visibleNodes.length,
+    hasSearch: Boolean(state.search),
+    priority: nodeLabelPriority(node),
+  });
 }
 
 function drawNodeLabels(candidates) {
@@ -5111,45 +5104,16 @@ function drawLabelGeometry(geometry) {
 }
 
 function nodeLabelPriority(node) {
-  if (node.metadata?.item_kind === "diagnostic") return 1;
-  switch (node.kind) {
-    case "entrypoint":
-      return 1;
-    case "repository":
-      return 2;
-    case "config":
-    case "environment":
-      return 3;
-    case "directory":
-    case "file":
-    case "module":
-    case "type":
-      return 5;
-    case "function":
-      return 7;
-    case "external_dependency":
-      return 9;
-    default:
-      return 8;
-  }
+  return CodeGraphLabelPolicy.nodeLabelPriority(node);
 }
 
 function nodeLabelBudget() {
-  const visibleCount = state.visibleNodes.length;
-  if (state.labelMode === "minimal") return 0;
-  if (state.labelMode === "focus") {
-    if (state.zoom < 2.1) return 0;
-    return visibleCount <= 40 ? 1 : 0;
-  }
-  if (state.zoom < 2.85 && !state.search) return 0;
-  let budget = visibleCount <= 25
-    ? 2
-    : visibleCount <= 50
-      ? 1
-      : 0;
-  if (state.zoom >= 3.3 && visibleCount <= 25) budget += 1;
-  if (state.search && visibleCount <= 30) budget += 1;
-  return Math.max(0, Math.min(3, budget));
+  return CodeGraphLabelPolicy.nodeLabelBudget({
+    labelMode: state.labelMode,
+    zoom: state.zoom,
+    visibleCount: state.visibleNodes.length,
+    hasSearch: Boolean(state.search),
+  });
 }
 
 function nodeOcclusionBoxes() {
@@ -5171,8 +5135,7 @@ function nodeOcclusionBoxes() {
 }
 
 function truncateGraphLabel(value, maxLength) {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+  return CodeGraphLabelPolicy.truncateGraphLabel(value, maxLength);
 }
 
 function boxIntersectsViewport(box) {

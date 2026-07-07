@@ -696,6 +696,7 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/", get(index))
+        .route("/label-policy.js", get(label_policy_js))
         .route("/app.js", get(app_js))
         .route("/styles.css", get(styles_css))
         .route("/api/capabilities", get(capabilities_api))
@@ -1030,6 +1031,16 @@ async fn scan_job_result(
 
 async fn index() -> Html<&'static str> {
     Html(include_str!("../../codegraph-web/static/index.html"))
+}
+
+async fn label_policy_js() -> impl IntoResponse {
+    (
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
+        include_str!("../../codegraph-web/static/label-policy.js"),
+    )
 }
 
 async fn app_js() -> impl IntoResponse {

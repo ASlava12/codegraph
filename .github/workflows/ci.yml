@@ -41,7 +41,12 @@ jobs:
         run: cargo test --workspace
 
       - name: Check web JavaScript syntax
-        run: node --check crates/codegraph-web/static/app.js
+        run: |
+          node --check crates/codegraph-web/static/label-policy.js
+          node --check crates/codegraph-web/static/app.js
+
+      - name: Run web JavaScript tests
+        run: node --test crates/codegraph-web/static/label-policy.test.js
 
       - name: Smoke scan CLI
         run: |
