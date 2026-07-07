@@ -3079,23 +3079,29 @@ fn js_framework_routes(source: &str) -> Vec<FrameworkRoute> {
 }
 
 fn rust_framework_routes(source: &str) -> Vec<FrameworkRoute> {
-    source
-        .lines()
+    let lines = source.lines().collect::<Vec<_>>();
+    lines
+        .iter()
         .enumerate()
         .filter_map(|(index, line)| {
             let line_number = index as u32 + 1;
             let trimmed = line.trim();
-            if !trimmed.contains(".route(") {
-                return None;
-            }
-            let path = first_quoted_value(trimmed)?;
+            find_unquoted(trimmed, ".route(")?;
+            let call = rust_route_call_window(&lines, index);
+            let route_index = find_unquoted(&call, ".route(")?;
+            let route_args = &call[route_index + ".route(".len()..];
+            let path = first_quoted_value(route_args)?;
+            let lower_args = route_args.to_ascii_lowercase();
             let method = route_methods()
                 .iter()
-                .find(|method| trimmed.contains(&format!("{}(", method.to_ascii_lowercase())))
+                .find(|method| {
+                    find_unquoted(&lower_args, &format!("{}(", method.to_ascii_lowercase()))
+                        .is_some()
+                })
                 .copied()
                 .unwrap_or("ROUTE")
                 .to_string();
-            let handler = handler_from_rust_route(trimmed);
+            let handler = handler_from_rust_route(route_args);
             Some(FrameworkRoute {
                 framework: "axum".to_string(),
                 method,
@@ -3221,7 +3227,7 @@ fn handler_from_rust_route(line: &str) -> Option<String> {
     let lower = line.to_ascii_lowercase();
     for method in route_methods() {
         let needle = format!("{}(", method.to_ascii_lowercase());
-        if let Some(start) = lower.find(&needle) {
+        if let Some(start) = find_unquoted(&lower, &needle) {
             let rest = &line[start + needle.len()..];
             let handler = rest
                 .split([',', ')'])
@@ -3232,6 +3238,62 @@ fn handler_from_rust_route(line: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn rust_route_call_window(lines: &[&str], start_index: usize) -> String {
+    let mut call = String::new();
+    for line in lines.iter().skip(start_index).take(12) {
+        if !call.is_empty() {
+            call.push(' ');
+        }
+        call.push_str(line.trim());
+        if rust_route_call_closed(&call) {
+            break;
+        }
+    }
+    call
+}
+
+fn rust_route_call_closed(value: &str) -> bool {
+    let Some(route_index) = find_unquoted(value, ".route(") else {
+        return false;
+    };
+    let mut quote = None;
+    let mut escaped = false;
+    let mut depth = 0_i32;
+    let mut started = false;
+
+    for (_, character) in value[route_index..].char_indices() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if character == '\\' {
+                escaped = true;
+                continue;
+            }
+            if character == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        if matches!(character, '"' | '\'' | '`') {
+            quote = Some(character);
+            continue;
+        }
+        if character == '(' {
+            depth += 1;
+            started = true;
+        } else if character == ')' && started {
+            depth -= 1;
+            if depth == 0 {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 fn handler_after_first_comma(line: &str) -> Option<String> {
@@ -3278,6 +3340,37 @@ fn first_quoted_value_after(value: &str, needle: &str) -> Option<String> {
     let lower_needle = needle.to_ascii_lowercase();
     let start = lower_value.find(&lower_needle)?;
     first_quoted_value(&value[start + needle.len()..])
+}
+
+fn find_unquoted(value: &str, needle: &str) -> Option<usize> {
+    let mut quote = None;
+    let mut escaped = false;
+
+    for (index, character) in value.char_indices() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if character == '\\' {
+                escaped = true;
+                continue;
+            }
+            if character == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        if matches!(character, '"' | '\'' | '`') {
+            quote = Some(character);
+            continue;
+        }
+        if value[index..].starts_with(needle) {
+            return Some(index);
+        }
+    }
+
+    None
 }
 
 fn route_methods() -> &'static [&'static str] {
@@ -6352,7 +6445,7 @@ add_executable(imported_tool IMPORTED)
         .unwrap();
         fs::write(
             root.join("router.rs"),
-            "use axum::{routing::get, Router};\nasync fn status() {}\nfn app() -> Router { Router::new().route(\"/status\", get(status)) }\n",
+            "use axum::{routing::{get, post}, Router};\nasync fn status() {}\nasync fn create_account() {}\nfn app() -> Router {\n    let literal = \".route(\";\n    Router::new()\n        .route(\n            \"/status\",\n            get(status),\n        )\n        .route(\"/accounts\", post(create_account))\n}\n",
         )
         .unwrap();
         fs::write(
@@ -6367,6 +6460,12 @@ add_executable(imported_tool IMPORTED)
             ("route POST /users", "listUsers", "server.js", "express"),
             ("route ROUTE /ready", "health", "main.go", "net/http"),
             ("route GET /status", "status", "router.rs", "axum"),
+            (
+                "route POST /accounts",
+                "create_account",
+                "router.rs",
+                "axum",
+            ),
             (
                 "route GET /admin",
                 "admin",
@@ -6414,6 +6513,12 @@ add_executable(imported_tool IMPORTED)
                 Confidence::Syntactic,
             ));
         }
+        assert!(
+            !graph.nodes.iter().any(|node| {
+                node.kind == NodeKind::Entrypoint && node.label == "route ROUTE .route("
+            }),
+            "string literal route marker should not become a route entrypoint"
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

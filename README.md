@@ -30,6 +30,7 @@ Implemented now:
 - Manifest-defined entrypoints from Cargo, npm, Go, Python, Composer, and CMake project metadata.
 - Shebang-defined script entrypoints for Bash, Python, Node.js, and PHP scripts, including extensionless CLI files.
 - Framework route entrypoints for common Python, JavaScript/TypeScript, Rust, Go, and PHP web route declarations.
+- Rust/Axum route entrypoints handle multiline `.route(...)` calls and ignore string literal route markers.
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
 - Local import/include resolution for relative JavaScript/TypeScript imports and CommonJS requires, Python relative/absolute project imports, Go module-local imports, quoted C/C++ includes with CMake and compile database include directories, PHP include/require paths, Bash source paths, and common Rust module paths.

@@ -111,6 +111,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect conflicting manifest dependency constraints for the same package.
 - [x] Detect duplicate framework route method/path declarations.
 - [x] Detect framework routes whose named handler cannot be resolved.
+- [x] Improve Rust/Axum route entrypoint labels for multiline routes and string literal false positives.
 - [x] Detect local imports/includes whose target file cannot be resolved.
 - [x] Detect custom architectural boundary violations on graph edges.
 - [x] Detect config and environment reads that are not reachable from entrypoints.
