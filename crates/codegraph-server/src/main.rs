@@ -20,6 +20,7 @@ use codegraph_core::CodeGraph;
 use codegraph_indexer::{
     IndexOptionOverrides, IndexOptions, configured_index_options, scan_coverage,
 };
+use codegraph_lsp::{LspDiscoveryReport, discover_lsp_servers};
 use codegraph_parser::language_adapters;
 use codegraph_storage::{
     CacheInfo, CacheStatus, GraphCache, default_cache_dir, scan_project_cached,
@@ -393,6 +394,7 @@ async fn main() -> Result<()> {
         .route("/styles.css", get(styles_css))
         .route("/api/health", get(health))
         .route("/api/languages", get(languages_api))
+        .route("/api/lsp", get(lsp_api))
         .route("/api/projects", get(projects_api))
         .route("/api/scan-options", get(scan_options_api))
         .route("/api/coverage", get(coverage_api))
@@ -652,6 +654,10 @@ async fn languages_api() -> Json<Vec<LanguageResponse>> {
             })
             .collect(),
     )
+}
+
+async fn lsp_api() -> Json<LspDiscoveryReport> {
+    Json(discover_lsp_servers())
 }
 
 async fn projects_api(State(state): State<AppState>) -> Json<Vec<ProjectResponse>> {

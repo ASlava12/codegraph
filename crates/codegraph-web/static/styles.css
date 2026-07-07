@@ -243,6 +243,7 @@ button:disabled {
 .edge-source-list,
 .scan-policy-list,
 .coverage-list,
+.lsp-list,
 .architecture-list,
 .hotspot-list,
 .annotation-list {
@@ -257,6 +258,7 @@ button:disabled {
 .edge-source-chip,
 .scan-policy-chip,
 .coverage-chip,
+.lsp-chip,
 .architecture-chip,
 .architecture-edge-chip,
 .hotspot-chip,
@@ -280,6 +282,7 @@ button:disabled {
 .edge-source-chip span,
 .scan-policy-chip span,
 .coverage-chip span,
+.lsp-chip span,
 .architecture-chip span,
 .architecture-edge-chip span,
 .hotspot-chip span,
@@ -296,6 +299,7 @@ button:disabled {
 .edge-source-chip strong,
 .scan-policy-chip strong,
 .coverage-chip strong,
+.lsp-chip strong,
 .architecture-chip strong,
 .architecture-edge-chip strong,
 .hotspot-chip strong,
@@ -312,6 +316,19 @@ button:disabled {
 .coverage-chip {
   max-width: 100%;
   background: rgba(229, 180, 84, 0.09);
+}
+
+.lsp-chip {
+  max-width: 100%;
+  background: rgba(103, 183, 220, 0.08);
+}
+
+.lsp-chip.available {
+  background: rgba(92, 200, 167, 0.08);
+}
+
+.lsp-chip.missing {
+  background: rgba(223, 126, 126, 0.08);
 }
 
 .architecture-chip {

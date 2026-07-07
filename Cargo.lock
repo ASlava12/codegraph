@@ -233,6 +233,7 @@ dependencies = [
  "codegraph-analysis",
  "codegraph-core",
  "codegraph-indexer",
+ "codegraph-lsp",
  "codegraph-parser",
  "codegraph-storage",
  "serde",
@@ -258,6 +259,13 @@ dependencies = [
  "thiserror",
  "toml",
  "walkdir",
+]
+
+[[package]]
+name = "codegraph-lsp"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -290,6 +298,7 @@ dependencies = [
  "codegraph-analysis",
  "codegraph-core",
  "codegraph-indexer",
+ "codegraph-lsp",
  "codegraph-parser",
  "codegraph-storage",
  "serde",

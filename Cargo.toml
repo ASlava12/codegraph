@@ -5,6 +5,7 @@ members = [
     "crates/codegraph-cli",
     "crates/codegraph-core",
     "crates/codegraph-indexer",
+    "crates/codegraph-lsp",
     "crates/codegraph-parser",
     "crates/codegraph-server",
     "crates/codegraph-storage",
@@ -23,6 +24,7 @@ clap = { version = "4.5", features = ["derive"] }
 codegraph-analysis = { path = "crates/codegraph-analysis" }
 codegraph-core = { path = "crates/codegraph-core" }
 codegraph-indexer = { path = "crates/codegraph-indexer" }
+codegraph-lsp = { path = "crates/codegraph-lsp" }
 codegraph-parser = { path = "crates/codegraph-parser" }
 codegraph-storage = { path = "crates/codegraph-storage" }
 globset = "0.4"

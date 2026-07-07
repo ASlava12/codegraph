@@ -9,6 +9,7 @@ clap.workspace = true
 codegraph-analysis.workspace = true
 codegraph-core.workspace = true
 codegraph-indexer.workspace = true
+codegraph-lsp.workspace = true
 codegraph-parser.workspace = true
 codegraph-storage.workspace = true
 serde.workspace = true

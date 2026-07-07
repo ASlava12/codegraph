@@ -11,6 +11,7 @@ use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
 };
+use codegraph_lsp::discover_lsp_servers;
 use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
 use serde::Serialize;
@@ -33,6 +34,9 @@ struct Cli {
 enum Command {
     /// List built-in language adapters and detection patterns as JSON.
     Languages,
+
+    /// Report available semantic language servers for LSP enrichment.
+    Lsp,
 
     /// Scan a project and emit the initial graph as JSON.
     Scan {
@@ -520,6 +524,9 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Languages => {
             println!("{}", serde_json::to_string_pretty(&language_report())?);
+        }
+        Command::Lsp => {
+            println!("{}", serde_json::to_string_pretty(&discover_lsp_servers())?);
         }
         Command::Scan {
             path,

@@ -32,6 +32,7 @@ const state = {
   summary: null,
   scanOptions: null,
   coverage: null,
+  lsp: null,
   architecture: null,
   hotspots: null,
   architecturePathPrefix: "",
@@ -90,6 +91,7 @@ const relationList = document.querySelector("#relationList");
 const edgeSourceList = document.querySelector("#edgeSourceList");
 const scanPolicyList = document.querySelector("#scanPolicyList");
 const coverageList = document.querySelector("#coverageList");
+const lspList = document.querySelector("#lspList");
 const architectureList = document.querySelector("#architectureList");
 const hotspotList = document.querySelector("#hotspotList");
 const annotationList = document.querySelector("#annotationList");
@@ -308,6 +310,7 @@ async function scan() {
   state.summary = null;
   state.scanOptions = null;
   state.coverage = null;
+  state.lsp = null;
   state.architecture = null;
   state.hotspots = null;
   state.architecturePathPrefix = "";
@@ -533,6 +536,7 @@ async function loadProjectOverview() {
       entrypointsResponse,
       scanOptionsResponse,
       coverageResponse,
+      lspResponse,
       architectureResponse,
       hotspotsResponse,
     ] = await Promise.all([
@@ -540,6 +544,7 @@ async function loadProjectOverview() {
       fetch(`/api/entrypoints?${params.toString()}`),
       fetch(`/api/scan-options?${params.toString()}`),
       fetch(`/api/coverage?${params.toString()}`),
+      fetch("/api/lsp"),
       fetch(`/api/architecture?${params.toString()}&group_limit=8&edge_limit=40`),
       fetch(`/api/hotspots?${params.toString()}&limit=8`),
     ]);
@@ -547,6 +552,7 @@ async function loadProjectOverview() {
     const entrypoints = await entrypointsResponse.json();
     const scanOptions = await scanOptionsResponse.json();
     const coverage = await coverageResponse.json();
+    const lsp = await lspResponse.json();
     const architecture = await architectureResponse.json();
     const hotspots = await hotspotsResponse.json();
     if (requestId !== state.overviewRequest) return;
@@ -562,6 +568,9 @@ async function loadProjectOverview() {
     if (!coverageResponse.ok) {
       throw new Error(coverage.error || "coverage failed");
     }
+    if (!lspResponse.ok) {
+      throw new Error(lsp.error || "lsp status failed");
+    }
     if (!architectureResponse.ok) {
       throw new Error(architecture.error || "architecture failed");
     }
@@ -571,6 +580,7 @@ async function loadProjectOverview() {
     state.summary = summary;
     state.scanOptions = scanOptions;
     state.coverage = coverage;
+    state.lsp = lsp;
     state.architecture = architecture;
     state.hotspots = hotspots;
     state.entrypoints = entrypoints;
@@ -584,6 +594,7 @@ async function loadProjectOverview() {
     edgeSourceList.innerHTML = "";
     scanPolicyList.innerHTML = "";
     coverageList.innerHTML = "";
+    lspList.innerHTML = "";
     architectureList.innerHTML = "";
     hotspotList.innerHTML = "";
     annotationList.innerHTML = "";
@@ -652,6 +663,7 @@ function renderOverview() {
 
   renderScanPolicy(state.scanOptions);
   renderCoverage(state.coverage);
+  renderLspStatus(state.lsp);
   renderArchitecture(state.architecture);
   renderHotspots(state.hotspots);
 
@@ -808,6 +820,30 @@ function renderCoverage(coverage) {
       `,
     )
     .join("");
+}
+
+function renderLspStatus(report) {
+  if (!report) {
+    lspList.innerHTML = '<p class="empty">No LSP status.</p>';
+    return;
+  }
+
+  const servers = Array.isArray(report.servers) ? report.servers : [];
+  const chips = servers.slice(0, 8).map(
+    (server) => `
+      <div class="lsp-chip ${server.installed ? "available" : "missing"}">
+        <span>${escapeHtml(server.id || "lsp")}</span>
+        <strong>${server.installed ? "ready" : "missing"}</strong>
+      </div>
+    `,
+  );
+  chips.unshift(`
+    <div class="lsp-chip">
+      <span>Semantic</span>
+      <strong>${Number(report.available_servers || 0)}/${Number(report.total_servers || 0)}</strong>
+    </div>
+  `);
+  lspList.innerHTML = chips.join("");
 }
 
 function renderArchitecture(architecture) {

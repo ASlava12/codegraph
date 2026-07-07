@@ -13,6 +13,7 @@ Implemented now:
 - Rust workspace layout.
 - Core graph model.
 - Built-in language adapter registry for Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash parser support.
+- LSP server discovery for semantic enrichment readiness across Rust, Go, JavaScript/TypeScript, Python, C/C++, PHP, and Bash.
 - Filesystem scanner with default build/vendor ignore rules.
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, PHP, and Bash.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
@@ -101,6 +102,12 @@ List built-in language adapters and detection patterns:
 
 ```bash
 cargo run -p codegraph-cli -- languages
+```
+
+Report available semantic language servers:
+
+```bash
+cargo run -p codegraph-cli -- lsp
 ```
 
 Limit per-file scan reads for very large repositories:
@@ -357,6 +364,7 @@ Scan API:
 curl 'http://127.0.0.1:3765/api/projects'
 curl 'http://127.0.0.1:3765/api/scan-options?path=.'
 curl 'http://127.0.0.1:3765/api/languages'
+curl 'http://127.0.0.1:3765/api/lsp'
 curl 'http://127.0.0.1:3765/api/coverage?path=.'
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'
@@ -489,6 +497,7 @@ crates/
   codegraph-core/      graph schema and shared domain types
   codegraph-analysis/  summaries, entrypoints, and trace subgraphs
   codegraph-parser/    Tree-sitter syntax extraction
+  codegraph-lsp/       LSP server discovery and semantic enrichment foundation
   codegraph-indexer/   project scanning and graph construction
   codegraph-storage/   persistent graph cache and project fingerprints
   codegraph-cli/       command-line interface
@@ -500,7 +509,6 @@ Expected future crates:
 
 ```text
 crates/
-  codegraph-lsp/       optional LSP enrichment
   codegraph-ui/        optional Tauri desktop shell
 ```
 

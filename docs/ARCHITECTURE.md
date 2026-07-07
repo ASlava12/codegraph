@@ -97,10 +97,11 @@ Current language coverage:
 
 ### LSP
 
-Future crate: `codegraph-lsp`.
+`codegraph-lsp` owns language-server integration.
 
 Responsibilities:
 
+- report installed language servers for semantic enrichment readiness
 - launch and manage language servers
 - request definitions, references, symbols, and diagnostics
 - convert language-server facts into graph edges
