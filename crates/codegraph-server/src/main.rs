@@ -54,6 +54,28 @@ const DEFAULT_MAX_SCAN_CONCURRENCY: usize = 2;
 const DEFAULT_MAX_SEMANTIC_CONCURRENCY: usize = 1;
 const DEFAULT_JOB_LIST_LIMIT: usize = 50;
 const MAX_JOB_LIST_LIMIT: usize = 500;
+const DEFAULT_GRAPH_NODE_LIMIT: usize = 250;
+const MAX_GRAPH_NODE_LIMIT: usize = 1000;
+const DEFAULT_GRAPH_EDGE_LIMIT: usize = 500;
+const MAX_GRAPH_EDGE_LIMIT: usize = 2000;
+const DEFAULT_NODE_CONTEXT_EDGE_LIMIT: usize = 80;
+const MAX_NODE_CONTEXT_EDGE_LIMIT: usize = 500;
+const DEFAULT_NODE_CARD_SOURCE_CONTEXT: u32 = 5;
+const MAX_NODE_CARD_SOURCE_CONTEXT: u32 = 40;
+const DEFAULT_NODE_CARD_INSIGHT_LIMIT: usize = 8;
+const MAX_NODE_CARD_INSIGHT_LIMIT: usize = 500;
+const DEFAULT_FOCUS_EDGE_LIMIT: usize = 200;
+const MAX_FOCUS_EDGE_LIMIT: usize = 1000;
+const DEFAULT_GRAPH_QUERY_LIMIT: usize = 100;
+const MAX_GRAPH_QUERY_LIMIT: usize = 1000;
+const DEFAULT_REPORT_INSIGHT_LIMIT: usize = 50;
+const MAX_REPORT_INSIGHT_LIMIT: usize = 500;
+const DEFAULT_SOURCE_CONTEXT: u32 = 4;
+const MAX_SOURCE_CONTEXT: u32 = 40;
+const DEFAULT_SOURCE_SEARCH_LIMIT: usize = 50;
+const MAX_SOURCE_SEARCH_LIMIT: usize = 1000;
+const DEFAULT_SOURCE_SEARCH_CONTEXT: usize = 2;
+const MAX_SOURCE_SEARCH_CONTEXT: usize = 20;
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 tokio::task_local! {
@@ -620,6 +642,28 @@ struct RuntimeLimitsResponse {
     max_semantic_concurrency: usize,
     default_job_list_limit: usize,
     max_job_list_limit: usize,
+    default_graph_node_limit: usize,
+    max_graph_node_limit: usize,
+    default_graph_edge_limit: usize,
+    max_graph_edge_limit: usize,
+    default_node_context_edge_limit: usize,
+    max_node_context_edge_limit: usize,
+    default_node_card_source_context: u32,
+    max_node_card_source_context: u32,
+    default_node_card_insight_limit: usize,
+    max_node_card_insight_limit: usize,
+    default_focus_edge_limit: usize,
+    max_focus_edge_limit: usize,
+    default_graph_query_limit: usize,
+    max_graph_query_limit: usize,
+    default_report_insight_limit: usize,
+    max_report_insight_limit: usize,
+    default_source_context: u32,
+    max_source_context: u32,
+    default_source_search_limit: usize,
+    max_source_search_limit: usize,
+    default_source_search_context: usize,
+    max_source_search_context: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -1441,6 +1485,28 @@ async fn capabilities_api(
             max_semantic_concurrency: state.max_semantic_concurrency,
             default_job_list_limit: DEFAULT_JOB_LIST_LIMIT,
             max_job_list_limit: MAX_JOB_LIST_LIMIT,
+            default_graph_node_limit: DEFAULT_GRAPH_NODE_LIMIT,
+            max_graph_node_limit: MAX_GRAPH_NODE_LIMIT,
+            default_graph_edge_limit: DEFAULT_GRAPH_EDGE_LIMIT,
+            max_graph_edge_limit: MAX_GRAPH_EDGE_LIMIT,
+            default_node_context_edge_limit: DEFAULT_NODE_CONTEXT_EDGE_LIMIT,
+            max_node_context_edge_limit: MAX_NODE_CONTEXT_EDGE_LIMIT,
+            default_node_card_source_context: DEFAULT_NODE_CARD_SOURCE_CONTEXT,
+            max_node_card_source_context: MAX_NODE_CARD_SOURCE_CONTEXT,
+            default_node_card_insight_limit: DEFAULT_NODE_CARD_INSIGHT_LIMIT,
+            max_node_card_insight_limit: MAX_NODE_CARD_INSIGHT_LIMIT,
+            default_focus_edge_limit: DEFAULT_FOCUS_EDGE_LIMIT,
+            max_focus_edge_limit: MAX_FOCUS_EDGE_LIMIT,
+            default_graph_query_limit: DEFAULT_GRAPH_QUERY_LIMIT,
+            max_graph_query_limit: MAX_GRAPH_QUERY_LIMIT,
+            default_report_insight_limit: DEFAULT_REPORT_INSIGHT_LIMIT,
+            max_report_insight_limit: MAX_REPORT_INSIGHT_LIMIT,
+            default_source_context: DEFAULT_SOURCE_CONTEXT,
+            max_source_context: MAX_SOURCE_CONTEXT,
+            default_source_search_limit: DEFAULT_SOURCE_SEARCH_LIMIT,
+            max_source_search_limit: MAX_SOURCE_SEARCH_LIMIT,
+            default_source_search_context: DEFAULT_SOURCE_SEARCH_CONTEXT,
+            max_source_search_context: MAX_SOURCE_SEARCH_CONTEXT,
         },
         cache: CacheCapabilityResponse {
             enabled: state.cache.is_some(),
@@ -2026,9 +2092,9 @@ async fn graph_api(
         &graph,
         GraphSliceRequest {
             node_offset: query.node_offset.unwrap_or(0),
-            node_limit: query.node_limit.unwrap_or(250),
+            node_limit: query.node_limit.unwrap_or(DEFAULT_GRAPH_NODE_LIMIT),
             edge_offset: query.edge_offset.unwrap_or(0),
-            edge_limit: query.edge_limit.unwrap_or(500),
+            edge_limit: query.edge_limit.unwrap_or(DEFAULT_GRAPH_EDGE_LIMIT),
             path_prefix: normalize_query_string(query.path_prefix),
             kind: normalize_query_string(query.kind),
             search: normalize_query_string(query.search),
@@ -2050,7 +2116,7 @@ async fn node_context_api(
     let context = node_context(
         &graph,
         codegraph_core::NodeId(query.node_id),
-        query.edge_limit.unwrap_or(80),
+        query.edge_limit.unwrap_or(DEFAULT_NODE_CONTEXT_EDGE_LIMIT),
     )
     .ok_or_else(|| ApiError::not_found("node not found"))?;
     Ok(Json(context))
@@ -2063,9 +2129,14 @@ async fn node_card_api(
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let options = scan_options(&state, &root)?;
     let cache = state.cache.clone();
-    let edge_limit = query.edge_limit.unwrap_or(80);
-    let source_context = query.source_context.unwrap_or(5).min(40);
-    let insight_limit = query.insight_limit.unwrap_or(8);
+    let edge_limit = query.edge_limit.unwrap_or(DEFAULT_NODE_CONTEXT_EDGE_LIMIT);
+    let source_context = query
+        .source_context
+        .unwrap_or(DEFAULT_NODE_CARD_SOURCE_CONTEXT)
+        .min(MAX_NODE_CARD_SOURCE_CONTEXT);
+    let insight_limit = query
+        .insight_limit
+        .unwrap_or(DEFAULT_NODE_CARD_INSIGHT_LIMIT);
     let node_id = codegraph_core::NodeId(query.node_id);
     let card = tokio::task::spawn_blocking(move || {
         let output = scan_project_cached(root.clone(), &options, cache.as_ref())
@@ -2099,7 +2170,7 @@ async fn focus_api(
         FocusRequest {
             node_ids,
             edge_indexes,
-            edge_limit: query.edge_limit.unwrap_or(200),
+            edge_limit: query.edge_limit.unwrap_or(DEFAULT_FOCUS_EDGE_LIMIT),
         },
     )))
 }
@@ -2369,7 +2440,10 @@ async fn source(
         .end_line
         .unwrap_or(requested_start)
         .max(requested_start);
-    let context = query.context.unwrap_or(4).min(40);
+    let context = query
+        .context
+        .unwrap_or(DEFAULT_SOURCE_CONTEXT)
+        .min(MAX_SOURCE_CONTEXT);
 
     let response = tokio::task::spawn_blocking(move || {
         read_source_preview(&source_root, &path, requested_start, requested_end, context)
@@ -2395,8 +2469,14 @@ async fn source_search_api(
         query: search_text,
         path_filter: normalize_query_string(query.path_filter),
         case_sensitive: query.case_sensitive.unwrap_or(false),
-        limit: query.limit.unwrap_or(50).clamp(1, 1_000),
-        context: query.context.unwrap_or(2).min(20),
+        limit: query
+            .limit
+            .unwrap_or(DEFAULT_SOURCE_SEARCH_LIMIT)
+            .clamp(1, MAX_SOURCE_SEARCH_LIMIT),
+        context: query
+            .context
+            .unwrap_or(DEFAULT_SOURCE_SEARCH_CONTEXT)
+            .min(MAX_SOURCE_SEARCH_CONTEXT),
         include_hidden: options.include_hidden,
         include_ignored: options.include_ignored,
         max_file_size: options.max_file_size,
@@ -2572,7 +2652,7 @@ fn project_report_limits_from_query(
         architecture_edge_limit: query.architecture_edge_limit.unwrap_or(200),
         language_link_limit: query.language_link_limit.unwrap_or(50),
         hotspot_limit: query.hotspot_limit.unwrap_or(25),
-        insight_limit: query.insight_limit.unwrap_or(50),
+        insight_limit: query.insight_limit.unwrap_or(DEFAULT_REPORT_INSIGHT_LIMIT),
         fail_on: normalize_query_string(query.fail_on.clone())
             .map(|value| parse_insight_severity(&value))
             .transpose()?
@@ -4752,6 +4832,33 @@ mod tests {
         assert!(with_cache.contains(&"persistent_graph_chunks"));
         assert!(with_cache.contains(&"semantic_lsp_cache"));
         assert!(!quiet.contains(&"access_log"));
+    }
+
+    #[tokio::test]
+    async fn capabilities_publish_runtime_graph_and_query_limits() {
+        let root = temp_server_root();
+        fs::create_dir_all(&root).unwrap();
+        let Json(response) = capabilities_api(State(test_state(root.clone(), vec![], false)))
+            .await
+            .expect("capabilities response");
+
+        assert_eq!(response.limits.default_graph_node_limit, 250);
+        assert_eq!(response.limits.max_graph_node_limit, 1000);
+        assert_eq!(response.limits.default_graph_edge_limit, 500);
+        assert_eq!(response.limits.max_graph_edge_limit, 2000);
+        assert_eq!(response.limits.default_node_context_edge_limit, 80);
+        assert_eq!(response.limits.max_node_context_edge_limit, 500);
+        assert_eq!(response.limits.default_node_card_source_context, 5);
+        assert_eq!(response.limits.max_node_card_source_context, 40);
+        assert_eq!(response.limits.default_node_card_insight_limit, 8);
+        assert_eq!(response.limits.max_node_card_insight_limit, 500);
+        assert_eq!(response.limits.default_focus_edge_limit, 200);
+        assert_eq!(response.limits.max_focus_edge_limit, 1000);
+        assert_eq!(response.limits.default_graph_query_limit, 100);
+        assert_eq!(response.limits.max_graph_query_limit, 1000);
+        assert_eq!(response.limits.default_report_insight_limit, 50);
+        assert_eq!(response.limits.max_report_insight_limit, 500);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

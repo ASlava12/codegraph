@@ -39,6 +39,7 @@ Implemented now:
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
 - API capabilities endpoint for discovering supported languages, exports, features, limits, cache state, and route groups.
+- API capabilities limits include graph page, node-card, focus, query, report, source preview, and source-search ceilings for production clients.
 - Machine-readable API schema endpoint for agents and integrations.
 - API schema enum values document supported graph query commands and query terms, including exact edge index lookups.
 - API schema enum values document graph node kinds, edge kinds, insight kinds, and confidence levels used by graph filters.
