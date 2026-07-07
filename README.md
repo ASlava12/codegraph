@@ -54,6 +54,7 @@ Implemented now:
 - Web job monitor for retained scan and semantic jobs with refresh, status summaries, and cancellation actions.
 - Source preview API and UI panel for parsed symbols plus framework route/config facts with source spans.
 - Enriched selected-node cards with summary metadata, source snippets, neighboring dependencies, trace actions, and related risks.
+- Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
 - Initial English/Russian web UI localization with a persistent language selector.
 - Minimal-by-default graph labels with collision-aware Auto/Focus modes so node cards stay readable without covering the graph.
 - Dependency-free web label policy tests guard graph caption density and interaction label behavior.

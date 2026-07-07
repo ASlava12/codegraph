@@ -35,6 +35,7 @@ const I18N = {
     "selection.to": "To",
     "selection.configTrace": "Config Trace",
     "selection.errorTrace": "Error Trace",
+    "selection.packageGraph": "Packages",
     "selection.trace": "Trace",
     "selection.dependents": "Dependents",
     "selection.traceDepth": "Depth",
@@ -242,6 +243,7 @@ const I18N = {
     "selection.to": "Сюда",
     "selection.configTrace": "Трасса конфига",
     "selection.errorTrace": "Трасса ошибок",
+    "selection.packageGraph": "Пакеты",
     "selection.trace": "Трассировать",
     "selection.dependents": "Зависимые",
     "selection.traceDepth": "Глубина",
@@ -2772,11 +2774,11 @@ function seedGraphLayout() {
   });
 }
 
-async function runGraphQuery() {
+async function runGraphQuery(options = {}) {
   const expression = queryInput.value.trim();
   if (!expression) {
     queryResult.innerHTML = '<p class="empty">Enter a query expression.</p>';
-    return;
+    return null;
   }
 
   state.queryRequest += 1;
@@ -2800,9 +2802,15 @@ async function runGraphQuery() {
     attachQueryNavigation(queryResult);
     attachEdgeExplainActions(queryResult);
     attachQueryFocusActions(queryResult, body);
+    if (options.focus) {
+      focusQueryResult(body, queryResult);
+      fitVisibleGraph();
+    }
+    return body;
   } catch (error) {
     if (requestId !== state.queryRequest) return;
     queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+    return null;
   } finally {
     if (requestId === state.queryRequest) {
       queryButton.disabled = false;
@@ -5239,6 +5247,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
   const metadataRows = renderNodeMetadataRows(node);
   const nodeIssues = (card?.insights || nodeInsightsForNode(node.id)).slice(0, 8);
   const sourceLines = card?.source?.lines || null;
+  const packageGraphQuery = packageGraphQueryForNode(node);
   const neighborRows = loading
     ? `<p class="empty">${escapeHtml(t("selection.loading"))}</p>`
     : edges.length > 0
@@ -5277,6 +5286,11 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
         ${
           node.metadata?.item_kind === "error"
             ? `<button type="button" data-error-trace-target>${escapeHtml(t("selection.errorTrace"))}</button>`
+            : ""
+        }
+        ${
+          packageGraphQuery
+            ? `<button type="button" data-package-graph-query>${escapeHtml(t("selection.packageGraph"))}</button>`
             : ""
         }
       </div>
@@ -5380,6 +5394,11 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
     });
   }
 
+  const packageGraphTarget = selectionBody.querySelector("[data-package-graph-query]");
+  if (packageGraphTarget && packageGraphQuery) {
+    packageGraphTarget.addEventListener("click", () => runPackageGraphQuery(packageGraphQuery));
+  }
+
   const traceButton = document.querySelector("#traceButton");
   if (traceButton) {
     traceButton.addEventListener("click", () => loadTrace(node));
@@ -5451,6 +5470,28 @@ function renderNodeIssue(insight, index) {
       <em>${escapeHtml(t("selection.issueHint"))}</em>
     </button>
   `;
+}
+
+function packageGraphQueryForNode(node) {
+  if (node.kind !== "external_dependency") return null;
+  const packageId = node.metadata?.package_id || "";
+  if (packageId.includes(":")) {
+    const [ecosystem, ...packageParts] = packageId.split(":");
+    const packageName = packageParts.join(":");
+    if (ecosystem && packageName) {
+      return `packages package:${quoteQueryValue(packageName)} ecosystem:${quoteQueryValue(ecosystem)} edge_limit:300`;
+    }
+  }
+
+  const candidate = importPackageCandidate(node.metadata?.language, node.label);
+  if (!candidate) return null;
+  return `packages package:${quoteQueryValue(candidate.package)} ecosystem:${quoteQueryValue(candidate.ecosystem)} edge_limit:300`;
+}
+
+async function runPackageGraphQuery(expression) {
+  queryInput.value = expression;
+  await runGraphQuery({ focus: true });
+  queryResult.scrollIntoView({ block: "nearest" });
 }
 
 async function loadTrace(node) {
