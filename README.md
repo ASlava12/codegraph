@@ -14,6 +14,7 @@ Implemented now:
 - Core graph model.
 - Built-in language adapter registry for Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash parser support.
 - LSP server discovery for semantic enrichment readiness across Rust, Go, JavaScript/TypeScript, Python, C/C++, PHP, and Bash.
+- Semantic enrichment server contracts cover `rust-analyzer`, `gopls`, and `typescript-language-server --stdio` for primary Rust, Go, JavaScript, TypeScript, and TSX workflows.
 - Project semantic readiness reports showing which scanned languages are covered by installed LSP servers.
 - Semantic enrichment plans showing ready, blocked, and unsupported LSP work by language, including capped concrete work queues with stable ids and priorities for agents.
 - Semantic execution batch reports that group filtered LSP work by language server command and include executable LSP request descriptors for semantic runners.

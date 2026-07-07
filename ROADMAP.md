@@ -74,9 +74,9 @@ Goal: improve precision where language tooling exists.
 - [x] Add semantic graph patch application into enriched graph reports.
 - [x] Add first CLI semantic LSP batch runner over stdio.
 - [x] Use LSP definitions, references, document symbols, workspace symbols, and diagnostics.
-- Add Rust enrichment through `rust-analyzer`.
-- Add TypeScript/JavaScript enrichment through tsserver-compatible tooling.
-- Add Go enrichment through `gopls`.
+- [x] Add Rust enrichment through `rust-analyzer`.
+- [x] Add TypeScript/JavaScript enrichment through tsserver-compatible tooling.
+- [x] Add Go enrichment through `gopls`.
 - Mark facts by confidence:
   - `exact`
   - `semantic`

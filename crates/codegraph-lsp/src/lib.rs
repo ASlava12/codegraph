@@ -2775,6 +2775,43 @@ mod tests {
     }
 
     #[test]
+    fn discovery_report_preserves_primary_semantic_server_contracts() {
+        let report = discover_lsp_servers();
+        let required_capabilities = [
+            "definitions",
+            "references",
+            "document_symbols",
+            "workspace_symbols",
+            "diagnostics",
+        ];
+
+        assert_lsp_server_contract(
+            &report,
+            "rust-analyzer",
+            &["rust"],
+            "rust-analyzer",
+            &[],
+            &required_capabilities,
+        );
+        assert_lsp_server_contract(
+            &report,
+            "gopls",
+            &["go"],
+            "gopls",
+            &[],
+            &required_capabilities,
+        );
+        assert_lsp_server_contract(
+            &report,
+            "typescript-language-server",
+            &["javascript", "typescript", "tsx"],
+            "typescript-language-server",
+            &["--stdio"],
+            &required_capabilities,
+        );
+    }
+
+    #[test]
     fn executable_lookup_uses_path_entries() {
         let dir = temp_dir();
         fs::create_dir_all(&dir).unwrap();
@@ -3534,6 +3571,31 @@ mod tests {
         graph.add_edge(file, caller, EdgeKind::Defines, Confidence::Syntactic);
         graph.add_edge(caller, helper, EdgeKind::Calls, Confidence::Heuristic);
         (graph, caller, helper)
+    }
+
+    fn assert_lsp_server_contract(
+        report: &LspDiscoveryReport,
+        id: &str,
+        languages: &[&str],
+        command: &str,
+        args: &[&str],
+        capabilities: &[&str],
+    ) {
+        let server = report
+            .servers
+            .iter()
+            .find(|server| server.id == id)
+            .unwrap_or_else(|| panic!("missing LSP server `{id}`"));
+
+        assert_eq!(server.languages, languages);
+        assert_eq!(server.command, command);
+        assert_eq!(server.args, args);
+        for capability in capabilities {
+            assert!(
+                server.capabilities.contains(capability),
+                "server `{id}` should expose `{capability}`"
+            );
+        }
     }
 
     fn semantic_patch_discovery(capabilities: &'static [&'static str]) -> LspDiscoveryReport {
