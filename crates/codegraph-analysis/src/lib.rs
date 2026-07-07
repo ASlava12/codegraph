@@ -758,6 +758,34 @@ pub struct InsightFilter {
     pub limit: usize,
 }
 
+pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
+    "conflicting_config_default",
+    "conflicting_dependency_declaration",
+    "cross_language_heuristic_edge",
+    "custom_rule_*",
+    "dependency_cycle",
+    "duplicate_entrypoint_label",
+    "duplicate_framework_route",
+    "duplicate_function_label",
+    "entrypoint_dead_end",
+    "mixed_config_requirement",
+    "orphan_function",
+    "parse_error",
+    "potential_error_flow",
+    "semantic_diagnostic",
+    "sensitive_config_default",
+    "skipped_large_file",
+    "syntax_error",
+    "undeclared_external_import",
+    "unreachable_config_read",
+    "unreachable_source_file",
+    "unresolved_call",
+    "unresolved_entrypoint_target",
+    "unresolved_framework_route_handler",
+    "unresolved_local_import",
+    "unused_declared_dependency",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Insight {
     pub kind: String,

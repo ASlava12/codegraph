@@ -938,6 +938,7 @@ const nodeKindOptions = document.querySelector("#nodeKindOptions");
 const edgeKindOptions = document.querySelector("#edgeKindOptions");
 const confidenceOptions = document.querySelector("#confidenceOptions");
 const severityOptions = document.querySelector("#severityOptions");
+const insightKindOptions = document.querySelector("#insightKindOptions");
 
 localeSelect.value = state.locale;
 localeSelect.addEventListener("change", () => setLocale(localeSelect.value));
@@ -1192,6 +1193,7 @@ function renderApiSchemaOptions() {
   renderDatalist(edgeKindOptions, enums.graph_edge_kind || []);
   renderDatalist(confidenceOptions, enums.graph_confidence || []);
   renderDatalist(severityOptions, enums.insight_severity || []);
+  renderDatalist(insightKindOptions, enums.insight_kind || []);
 }
 
 function renderDatalist(element, values) {

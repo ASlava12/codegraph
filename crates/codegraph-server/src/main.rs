@@ -12,12 +12,12 @@ use codegraph_analysis::{
     CheckReport, ConfigTraceRequest, ConfigTraceResult, EntrypointTraceReport,
     EntrypointTraceRequest, ErrorTraceRequest, ErrorTraceResult, ExplainEdgeRequest, FocusRequest,
     GraphSlice, GraphSliceRequest, GraphSummary, InsightFilter, InsightReport, InsightSeverity,
-    NodeCard, NodeContext, ProjectReport, ProjectReportLimits, SourcePreview, SourceSearchRequest,
-    SourceSearchResult, TraceRequest, TraceStart, architecture_map, check_insights, entrypoints,
-    explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots,
-    insights, language_dependencies, node_card, node_context, project_report, query_graph,
-    read_source_preview, search_source, slice_graph, summarize, trace, trace_config,
-    trace_dependents, trace_entrypoints, trace_errors,
+    KNOWN_INSIGHT_KINDS, NodeCard, NodeContext, ProjectReport, ProjectReportLimits, SourcePreview,
+    SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, architecture_map,
+    check_insights, entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report,
+    focus_subgraph, hotspots, insights, language_dependencies, node_card, node_context,
+    project_report, query_graph, read_source_preview, search_source, slice_graph, summarize, trace,
+    trace_config, trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -2888,6 +2888,7 @@ fn api_schema_response() -> ApiSchemaResponse {
                 vec!["queued", "running", "complete", "failed", "canceled"],
             ),
             ("insight_severity", vec!["info", "warning", "error"]),
+            ("insight_kind", KNOWN_INSIGHT_KINDS.to_vec()),
             (
                 "semantic_work_status",
                 vec!["ready", "missing_server", "unsupported_language"],
@@ -4011,7 +4012,7 @@ fn insight_params() -> Vec<ApiParameterSpec> {
         query_param(
             "kind",
             false,
-            "string",
+            "insight_kind",
             None,
             "Filter insight kind by substring.",
         ),
@@ -4045,7 +4046,7 @@ fn check_params() -> Vec<ApiParameterSpec> {
         query_param(
             "kind",
             false,
-            "string",
+            "insight_kind",
             None,
             "Restrict insight kinds by substring.",
         ),
@@ -4623,6 +4624,11 @@ mod tests {
                 .is_some_and(|confidences| confidences.contains(&"semantic")
                     && confidences.contains(&"heuristic"))
         );
+        assert!(schema.enum_values.get("insight_kind").is_some_and(|kinds| {
+            kinds.contains(&"sensitive_config_default")
+                && kinds.contains(&"dependency_cycle")
+                && kinds.contains(&"custom_rule_*")
+        }));
         assert!(
             schema
                 .enum_values
