@@ -2372,7 +2372,7 @@ function renderRiskSummary(risk, qualityGate = null) {
       ? `${Number(gate.failing_insights || 0)} ${formatKind(gate.fail_on || "error")}`
       : formatKind(gate.fail_on || "error");
   const chips = [
-    riskChip(t("risk.gate"), gateValue, gateStatus),
+    riskGateChip(t("risk.gate"), gateValue, gateStatus, gate.fail_on || "error"),
     riskChip(t("risk.score"), formatCompactNumber(risk.score), `grade-${grade}`),
     riskChip(t("risk.grade"), formatKind(grade), `grade-${grade}`),
     riskChip(t("risk.errors"), Number(risk.errors || 0), "error", "error"),
@@ -2403,6 +2403,13 @@ function renderRiskSummary(risk, qualityGate = null) {
       loadInsights();
     });
   });
+  riskSummaryList.querySelectorAll("[data-risk-gate]").forEach((button) => {
+    button.addEventListener("click", () => {
+      checkFailOnInput.value = button.dataset.riskGate || "error";
+      runCheck();
+      checkResult.scrollIntoView({ block: "nearest" });
+    });
+  });
 }
 
 function riskChip(label, value, status, severity = "") {
@@ -2414,6 +2421,15 @@ function riskChip(label, value, status, severity = "") {
       <span>${escapeHtml(label)}</span>
       <strong>${escapeHtml(String(value))}</strong>
     </${tag}>
+  `;
+}
+
+function riskGateChip(label, value, status, failOn) {
+  return `
+    <button class="risk-summary-chip ${escapeHtml(status || "")}" type="button" data-risk-gate="${escapeHtml(failOn)}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(String(value))}</strong>
+    </button>
   `;
 }
 
