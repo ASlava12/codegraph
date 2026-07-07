@@ -2136,6 +2136,11 @@ button.cancel-action:hover:not(:disabled) {
   height: 100%;
 }
 
+#graphCanvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -4px;
+}
+
 .graph-controls {
   position: absolute;
   top: 16px;

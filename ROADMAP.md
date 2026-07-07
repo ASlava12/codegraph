@@ -217,6 +217,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Reset saved web label mode and make Auto labels sparse enough for dense graph exploration.
 - [x] Keep hover labels lightweight and gate selected-node label cards by zoom and graph density.
 - [x] Add a graph viewport HUD for visible size, zoom, and layout state.
+- [x] Add keyboard-accessible graph canvas navigation.
 - [x] Add web label policy regression tests for caption density and interaction labels.
 - [x] Add embedded web asset smoke checks for script order, content types, and static JS validity.
 - [x] Add embedded web asset smoke coverage for shareable card and query investigation links.

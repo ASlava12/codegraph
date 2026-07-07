@@ -82,6 +82,16 @@ const I18N = {
     "graph.layout": "Layout",
     "graph.running": "Running",
     "graph.paused": "Paused",
+    "aria.graphStage": "Code graph",
+    "aria.graphControls": "Graph viewport controls",
+    "aria.graphCanvas": "Interactive code graph. Use arrow keys to pan, plus and minus to zoom, Home to fit, 0 to reset, and Space to pause or resume layout.",
+    "aria.zoomOut": "Zoom out",
+    "aria.zoomIn": "Zoom in",
+    "aria.fitGraph": "Fit visible graph",
+    "aria.restartLayout": "Restart graph layout",
+    "aria.pauseLayout": "Pause graph layout",
+    "aria.resumeLayout": "Resume graph layout",
+    "aria.nodeLabels": "Node labels",
     "label.kind": "Kind",
     "label.item": "Item",
     "label.language": "Language",
@@ -440,6 +450,16 @@ const I18N = {
     "graph.layout": "Раскладка",
     "graph.running": "Идет",
     "graph.paused": "Пауза",
+    "aria.graphStage": "Граф кода",
+    "aria.graphControls": "Управление областью графа",
+    "aria.graphCanvas": "Интерактивный граф кода. Используйте стрелки для сдвига, плюс и минус для масштаба, Home чтобы вписать граф, 0 для сброса и пробел для паузы или продолжения раскладки.",
+    "aria.zoomOut": "Уменьшить масштаб",
+    "aria.zoomIn": "Увеличить масштаб",
+    "aria.fitGraph": "Вписать видимый граф",
+    "aria.restartLayout": "Перезапустить раскладку графа",
+    "aria.pauseLayout": "Поставить раскладку графа на паузу",
+    "aria.resumeLayout": "Продолжить раскладку графа",
+    "aria.nodeLabels": "Подписи узлов",
     "label.kind": "Тип",
     "label.item": "Элемент",
     "label.language": "Язык",
@@ -1119,6 +1139,7 @@ canvas.addEventListener("pointerdown", onPointerDown);
 canvas.addEventListener("pointermove", onPointerMove);
 canvas.addEventListener("pointerup", onPointerUp);
 canvas.addEventListener("pointerleave", onPointerLeave);
+canvas.addEventListener("keydown", onCanvasKeyDown);
 canvas.addEventListener("wheel", onWheel, { passive: false });
 window.addEventListener("resize", resizeCanvas);
 
@@ -1169,6 +1190,10 @@ function applyLocale() {
   document.querySelectorAll("[data-i18n]").forEach((element) => {
     const key = element.dataset.i18n;
     if (key) element.textContent = t(key);
+  });
+  document.querySelectorAll("[data-i18n-aria-label]").forEach((element) => {
+    const key = element.dataset.i18nAriaLabel;
+    if (key) element.setAttribute("aria-label", t(key));
   });
   if (!state.graphPage.root && !state.graph.nodes.length) {
     rootLabel.textContent = t("root.empty");
@@ -5563,7 +5588,7 @@ function renderViewportControls() {
   toggleLayoutButton.textContent = state.layoutPaused ? t("button.resume") : t("button.pause");
   toggleLayoutButton.setAttribute(
     "aria-label",
-    state.layoutPaused ? "Resume graph layout" : "Pause graph layout",
+    state.layoutPaused ? t("aria.resumeLayout") : t("aria.pauseLayout"),
   );
   fitGraphButton.disabled = state.visibleNodes.length === 0;
   resetLayoutButton.disabled = state.graph.nodes.length === 0;
@@ -5661,6 +5686,12 @@ function toggleLayout() {
   if (state.graph.nodes.length === 0) return;
   state.layoutPaused = !state.layoutPaused;
   renderViewportControls();
+  draw();
+}
+
+function panGraphBy(dx, dy) {
+  state.pan.x += dx;
+  state.pan.y += dy;
   draw();
 }
 
@@ -7178,6 +7209,53 @@ function onWheel(event) {
   event.preventDefault();
   const delta = event.deltaY > 0 ? 0.9 : 1.1;
   zoomAt(event.offsetX, event.offsetY, delta);
+}
+
+function onCanvasKeyDown(event) {
+  if (state.graph.nodes.length === 0) return;
+  const panStep = event.shiftKey ? 120 : 48;
+  switch (event.key) {
+    case "ArrowLeft":
+      event.preventDefault();
+      panGraphBy(panStep, 0);
+      break;
+    case "ArrowRight":
+      event.preventDefault();
+      panGraphBy(-panStep, 0);
+      break;
+    case "ArrowUp":
+      event.preventDefault();
+      panGraphBy(0, panStep);
+      break;
+    case "ArrowDown":
+      event.preventDefault();
+      panGraphBy(0, -panStep);
+      break;
+    case "+":
+    case "=":
+      event.preventDefault();
+      zoomAtCanvasCenter(1.12);
+      break;
+    case "-":
+    case "_":
+      event.preventDefault();
+      zoomAtCanvasCenter(0.88);
+      break;
+    case "Home":
+      event.preventDefault();
+      fitVisibleGraph();
+      break;
+    case "0":
+      event.preventDefault();
+      resetGraphLayout();
+      break;
+    case " ":
+      event.preventDefault();
+      toggleLayout();
+      break;
+    default:
+      break;
+  }
 }
 
 function screenToWorld(x, y) {

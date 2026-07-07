@@ -430,25 +430,25 @@
         </section>
       </aside>
 
-      <section class="graph-stage" aria-label="Code graph">
-        <div class="graph-controls" aria-label="Graph viewport controls">
+      <section class="graph-stage" aria-label="Code graph" data-i18n-aria-label="aria.graphStage">
+        <div class="graph-controls" aria-label="Graph viewport controls" data-i18n-aria-label="aria.graphControls">
           <div class="graph-control-group">
-            <button id="zoomOutButton" type="button" aria-label="Zoom out">-</button>
-            <button id="zoomInButton" type="button" aria-label="Zoom in">+</button>
-            <button id="fitGraphButton" type="button" aria-label="Fit visible graph" data-i18n="button.fit">Fit</button>
+            <button id="zoomOutButton" type="button" aria-label="Zoom out" data-i18n-aria-label="aria.zoomOut">-</button>
+            <button id="zoomInButton" type="button" aria-label="Zoom in" data-i18n-aria-label="aria.zoomIn">+</button>
+            <button id="fitGraphButton" type="button" aria-label="Fit visible graph" data-i18n="button.fit" data-i18n-aria-label="aria.fitGraph">Fit</button>
           </div>
           <div class="graph-control-group">
-            <button id="resetLayoutButton" type="button" aria-label="Restart graph layout" data-i18n="button.reset">Reset</button>
-            <button id="toggleLayoutButton" type="button" aria-label="Pause graph layout">Pause</button>
+            <button id="resetLayoutButton" type="button" aria-label="Restart graph layout" data-i18n="button.reset" data-i18n-aria-label="aria.restartLayout">Reset</button>
+            <button id="toggleLayoutButton" type="button" aria-label="Pause graph layout" data-i18n-aria-label="aria.pauseLayout">Pause</button>
           </div>
-          <div class="graph-label-modes" role="group" aria-label="Node labels">
+          <div class="graph-label-modes" role="group" aria-label="Node labels" data-i18n-aria-label="aria.nodeLabels">
             <button type="button" data-label-mode="minimal" aria-pressed="true" data-i18n="button.labelsMinimal">Min</button>
             <button type="button" data-label-mode="focus" aria-pressed="false" data-i18n="button.labelsFocus">Focus</button>
             <button type="button" data-label-mode="auto" aria-pressed="false" data-i18n="button.labelsAuto">Auto</button>
           </div>
           <span id="viewportInfo" class="viewport-info">0 nodes</span>
         </div>
-        <canvas id="graphCanvas"></canvas>
+        <canvas id="graphCanvas" tabindex="0" role="application" aria-label="Interactive code graph" data-i18n-aria-label="aria.graphCanvas"></canvas>
         <div id="graphHud" class="graph-hud" aria-live="polite"></div>
         <div class="legend" id="legend"></div>
       </section>

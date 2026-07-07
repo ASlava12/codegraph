@@ -6420,6 +6420,21 @@ mod tests {
     }
 
     #[test]
+    fn embedded_web_assets_support_keyboard_graph_navigation() {
+        let index = include_str!("../../codegraph-web/static/index.html");
+        let app = include_str!("../../codegraph-web/static/app.js");
+        let styles = include_str!("../../codegraph-web/static/styles.css");
+
+        assert!(index.contains("id=\"graphCanvas\" tabindex=\"0\""));
+        assert!(index.contains("data-i18n-aria-label=\"aria.graphCanvas\""));
+        assert!(app.contains("onCanvasKeyDown"));
+        assert!(app.contains("panGraphBy"));
+        assert!(app.contains("\"aria.graphCanvas\""));
+        assert!(app.contains("data-i18n-aria-label"));
+        assert!(styles.contains("#graphCanvas:focus-visible"));
+    }
+
+    #[test]
     fn api_schema_lists_agent_contracts() {
         let schema = api_schema_response();
         let endpoints: Vec<_> = schema
