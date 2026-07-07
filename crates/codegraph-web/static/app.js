@@ -257,6 +257,7 @@ const I18N = {
     "empty.noCapabilities": "No server capabilities.",
     "empty.noMetrics": "No runtime metrics.",
     "empty.loadingSource": "Loading...",
+    "cap.server": "Server",
     "cap.api": "API",
     "cap.graph": "Graph",
     "cap.cache": "Cache",
@@ -610,6 +611,7 @@ const I18N = {
     "empty.noCapabilities": "Нет данных о сервере.",
     "empty.noMetrics": "Нет runtime-метрик.",
     "empty.loadingSource": "Загружаю...",
+    "cap.server": "Сервер",
     "cap.api": "API",
     "cap.graph": "Граф",
     "cap.cache": "Кеш",
@@ -2557,6 +2559,7 @@ function renderCapabilities(capabilities) {
     sourceSearchInput.maxLength = String(Number(limits.max_source_search_query_length));
   }
   const chips = [
+    [t("cap.server"), capabilities.server_version || "unknown"],
     [t("cap.api"), `v${Number(capabilities.api_version || 0)}`],
     [t("cap.graph"), `v${Number(capabilities.graph_schema_version || 0)}`],
     [t("cap.cache"), cache.enabled ? t("cap.on") : t("cap.off")],

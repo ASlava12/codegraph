@@ -6304,6 +6304,8 @@ mod tests {
         assert!(app.contains("apiFetch(`/api/report?${reportParams.toString()}`)"));
         assert!(app.contains("state.report?.quality_gate"));
         assert!(app.contains("\"risk.gate\""));
+        assert!(app.contains("capabilities.server_version"));
+        assert!(app.contains("\"cap.server\""));
         assert!(app.contains("data-risk-gate"));
         assert!(app.contains("checkFailOnInput.value"));
         for endpoint in [
