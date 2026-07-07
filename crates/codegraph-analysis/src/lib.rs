@@ -433,6 +433,8 @@ pub struct NodeCard {
     pub context: NodeContext,
     #[serde(default)]
     pub dependency_summary: NodeDependencySummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_summary: Option<FileNodeSummary>,
     pub source: Option<SourcePreview>,
     pub insights: Vec<Insight>,
     pub total_insights: usize,
@@ -459,6 +461,25 @@ pub struct NodeDependencySummary {
     pub confidences: BTreeMap<String, usize>,
     pub neighbor_kinds: BTreeMap<String, usize>,
     pub neighbor_languages: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct FileNodeSummary {
+    pub contained_nodes: usize,
+    pub code_symbols: usize,
+    pub imports: usize,
+    pub direct_dependencies: usize,
+    pub trace_edges: usize,
+    pub calls: usize,
+    pub config_reads: usize,
+    pub environment_reads: usize,
+    pub error_facts: usize,
+    pub unresolved_calls: usize,
+    pub contained_kinds: BTreeMap<String, usize>,
+    pub contained_item_kinds: BTreeMap<String, usize>,
+    pub trace_edge_kinds: BTreeMap<String, usize>,
+    pub trace_confidences: BTreeMap<String, usize>,
+    pub trace_target_kinds: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1944,6 +1965,7 @@ pub fn node_card(
     Ok(Some(NodeCard {
         actions: node_card_actions(&context.node),
         dependency_summary: node_dependency_summary(graph, node_id),
+        file_summary: file_node_summary(graph, &context.node),
         context,
         source,
         insights,
@@ -1951,6 +1973,82 @@ pub fn node_card(
         insight_limit,
         truncated_insights: insight_limit < total_insights,
     }))
+}
+
+fn file_node_summary(graph: &CodeGraph, node: &Node) -> Option<FileNodeSummary> {
+    if node.kind != NodeKind::File {
+        return None;
+    }
+
+    let nodes_by_id: BTreeMap<NodeId, &Node> =
+        graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let mut summary = FileNodeSummary::default();
+    let mut contained_code_ids = BTreeSet::new();
+
+    for edge in graph.edges.iter().filter(|edge| edge.source == node.id) {
+        match edge.kind {
+            EdgeKind::Contains => {
+                summary.contained_nodes += 1;
+                if let Some(target) = nodes_by_id.get(&edge.target) {
+                    increment_facet(&mut summary.contained_kinds, kind_name(&target.kind));
+                    if let Some(item_kind) = target.metadata.get("item_kind") {
+                        increment_facet(&mut summary.contained_item_kinds, item_kind.clone());
+                    }
+                    if is_code_symbol(&target.kind) {
+                        summary.code_symbols += 1;
+                        contained_code_ids.insert(edge.target);
+                    }
+                }
+            }
+            EdgeKind::Imports => {
+                summary.imports += 1;
+            }
+            EdgeKind::DependsOn => {
+                summary.direct_dependencies += 1;
+            }
+            _ => {}
+        }
+    }
+
+    for edge in graph
+        .edges
+        .iter()
+        .filter(|edge| contained_code_ids.contains(&edge.source) && is_trace_edge(&edge.kind))
+    {
+        summary.trace_edges += 1;
+        increment_facet(&mut summary.trace_edge_kinds, edge_kind_name(&edge.kind));
+        increment_facet(
+            &mut summary.trace_confidences,
+            confidence_name(edge.confidence),
+        );
+        if let Some(target) = nodes_by_id.get(&edge.target) {
+            increment_facet(&mut summary.trace_target_kinds, kind_name(&target.kind));
+        }
+
+        match edge.kind {
+            EdgeKind::Calls => {
+                summary.calls += 1;
+                if nodes_by_id.get(&edge.target).is_some_and(|target| {
+                    target
+                        .metadata
+                        .get("unresolved")
+                        .is_some_and(|value| value == "true")
+                        || target
+                            .metadata
+                            .get("resolution")
+                            .is_some_and(|value| value == "unresolved")
+                }) {
+                    summary.unresolved_calls += 1;
+                }
+            }
+            EdgeKind::ReadsConfig => summary.config_reads += 1,
+            EdgeKind::ReadsEnvironment => summary.environment_reads += 1,
+            EdgeKind::MayError => summary.error_facts += 1,
+            _ => {}
+        }
+    }
+
+    Some(summary)
 }
 
 fn node_dependency_summary(graph: &CodeGraph, node_id: NodeId) -> NodeDependencySummary {
@@ -7392,27 +7490,50 @@ mod tests {
         metadata.insert("item_kind".to_string(), "call".to_string());
         metadata.insert("unresolved".to_string(), "true".to_string());
         let call = graph.add_node_with_metadata(NodeKind::Unknown, "missing", None, metadata);
+        let env = graph.add_node(NodeKind::Environment, "DATABASE_URL");
+        let mut error_metadata = BTreeMap::new();
+        error_metadata.insert("item_kind".to_string(), "error".to_string());
+        let error = graph.add_node_with_metadata(NodeKind::Unknown, "panic", None, error_metadata);
         graph.add_edge(file, function, EdgeKind::Contains, Confidence::Exact);
         graph.add_edge(function, call, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(
+            function,
+            env,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(function, error, EdgeKind::MayError, Confidence::Heuristic);
 
         let card = node_card(&graph, Some(&root), function, 10, 1, 10)
             .unwrap()
             .expect("expected node card");
 
         assert_eq!(card.context.node.id, function);
-        assert_eq!(card.context.edges.len(), 2);
+        assert_eq!(card.context.edges.len(), 4);
         assert_eq!(card.dependency_summary.incoming, 1);
-        assert_eq!(card.dependency_summary.outgoing, 1);
+        assert_eq!(card.dependency_summary.outgoing, 3);
         assert_eq!(card.dependency_summary.edge_kinds.get("contains"), Some(&1));
         assert_eq!(card.dependency_summary.edge_kinds.get("calls"), Some(&1));
+        assert_eq!(
+            card.dependency_summary.edge_kinds.get("reads_environment"),
+            Some(&1)
+        );
+        assert_eq!(
+            card.dependency_summary.edge_kinds.get("may_error"),
+            Some(&1)
+        );
         assert_eq!(card.dependency_summary.confidences.get("exact"), Some(&1));
         assert_eq!(
             card.dependency_summary.confidences.get("heuristic"),
-            Some(&1)
+            Some(&3)
         );
         assert_eq!(card.dependency_summary.neighbor_kinds.get("file"), Some(&1));
         assert_eq!(
             card.dependency_summary.neighbor_kinds.get("unknown"),
+            Some(&2)
+        );
+        assert_eq!(
+            card.dependency_summary.neighbor_kinds.get("environment"),
             Some(&1)
         );
         assert_eq!(
@@ -7427,11 +7548,16 @@ mod tests {
                 .iter()
                 .any(|line| line.highlight && line.text.contains("missing"))
         );
-        assert_eq!(card.total_insights, 1);
+        assert_eq!(card.total_insights, 2);
         assert!(
             card.insights
                 .iter()
                 .any(|insight| insight.kind == "orphan_function")
+        );
+        assert!(
+            card.insights
+                .iter()
+                .any(|insight| insight.kind == "potential_error_flow")
         );
         assert!(card.actions.iter().any(|action| {
             action.kind == "symbol_graph"
@@ -7463,6 +7589,24 @@ mod tests {
             action.kind == "file_graph"
                 && action.query == "files path:src/main.rs direction:out edge_limit:300"
         }));
+        let file_summary = file_card
+            .file_summary
+            .as_ref()
+            .expect("expected file summary");
+        assert_eq!(file_summary.contained_nodes, 1);
+        assert_eq!(file_summary.code_symbols, 1);
+        assert_eq!(file_summary.trace_edges, 3);
+        assert_eq!(file_summary.calls, 1);
+        assert_eq!(file_summary.unresolved_calls, 1);
+        assert_eq!(file_summary.environment_reads, 1);
+        assert_eq!(file_summary.error_facts, 1);
+        assert_eq!(file_summary.contained_kinds.get("function"), Some(&1));
+        assert_eq!(file_summary.trace_edge_kinds.get("calls"), Some(&1));
+        assert_eq!(
+            file_summary.trace_edge_kinds.get("reads_environment"),
+            Some(&1)
+        );
+        assert_eq!(file_summary.trace_edge_kinds.get("may_error"), Some(&1));
 
         std::fs::remove_dir_all(root).unwrap();
     }

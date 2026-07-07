@@ -20,6 +20,7 @@ const I18N = {
     "selection.summary": "Summary",
     "selection.dependencies": "Dependencies",
     "selection.dependencySummary": "Dependency Summary",
+    "selection.fileSummary": "File Summary",
     "selection.risks": "Risks",
     "selection.source": "Source",
     "selection.metadata": "Metadata",
@@ -36,6 +37,17 @@ const I18N = {
     "selection.confidences": "confidence",
     "selection.neighborKinds": "neighbor kinds",
     "selection.neighborLanguages": "neighbor languages",
+    "selection.contained": "contained",
+    "selection.symbols": "symbols",
+    "selection.imports": "imports",
+    "selection.calls": "calls",
+    "selection.configReads": "config",
+    "selection.environmentReads": "env",
+    "selection.errorFacts": "errors",
+    "selection.unresolvedCalls": "unresolved",
+    "selection.containedKinds": "contained kinds",
+    "selection.traceFacts": "trace facts",
+    "selection.traceTargets": "trace targets",
     "selection.from": "From",
     "selection.to": "To",
     "selection.configTrace": "Config Trace",
@@ -239,6 +251,7 @@ const I18N = {
     "selection.summary": "Сводка",
     "selection.dependencies": "Связи",
     "selection.dependencySummary": "Сводка связей",
+    "selection.fileSummary": "Сводка файла",
     "selection.risks": "Риски",
     "selection.source": "Код",
     "selection.metadata": "Метаданные",
@@ -255,6 +268,17 @@ const I18N = {
     "selection.confidences": "уверенность",
     "selection.neighborKinds": "типы соседей",
     "selection.neighborLanguages": "языки соседей",
+    "selection.contained": "внутри",
+    "selection.symbols": "символы",
+    "selection.imports": "импорты",
+    "selection.calls": "вызовы",
+    "selection.configReads": "конфиг",
+    "selection.environmentReads": "env",
+    "selection.errorFacts": "ошибки",
+    "selection.unresolvedCalls": "не разрешено",
+    "selection.containedKinds": "типы внутри",
+    "selection.traceFacts": "факты потока",
+    "selection.traceTargets": "цели потока",
     "selection.from": "Отсюда",
     "selection.to": "Сюда",
     "selection.configTrace": "Трасса конфига",
@@ -5311,6 +5335,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
   const sourcePath = card?.source?.path || node.span?.path || "";
   const sourceLineSuffix = node.span ? `:${node.span.start_line}` : "";
   const cardActions = nodeCardActions(card, node);
+  const fileSummary = renderFileSummary(card?.file_summary);
   const dependencySummary = renderDependencySummary(card?.dependency_summary);
   const neighborRows = loading
     ? `<p class="empty">${escapeHtml(t("selection.loading"))}</p>`
@@ -5364,6 +5389,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
         <dl class="node-summary">
           ${summaryRows.map(renderDefinitionRow).join("")}
         </dl>
+        ${fileSummary}
       </section>
       ${
         metadataRows.length > 0
@@ -5515,6 +5541,47 @@ function renderNodeMetadataRows(node) {
 
 function renderDefinitionRow([key, value]) {
   return `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd>`;
+}
+
+function renderFileSummary(summary) {
+  if (!summary) return "";
+  const total =
+    Number(summary.contained_nodes || 0) +
+    Number(summary.imports || 0) +
+    Number(summary.trace_edges || 0);
+  if (total === 0) return "";
+  const totals = [
+    [t("selection.contained"), summary.contained_nodes],
+    [t("selection.symbols"), summary.code_symbols],
+    [t("selection.imports"), summary.imports],
+    [t("selection.calls"), summary.calls],
+    [t("selection.configReads"), summary.config_reads],
+    [t("selection.environmentReads"), summary.environment_reads],
+    [t("selection.errorFacts"), summary.error_facts],
+    [t("selection.unresolvedCalls"), summary.unresolved_calls],
+  ]
+    .filter(([, count]) => Number(count || 0) > 0)
+    .map(
+      ([label, count]) =>
+        `<span>${escapeHtml(label)} <strong>${Number(count || 0)}</strong></span>`,
+    )
+    .join("");
+  const groups = [
+    [t("selection.containedKinds"), summary.contained_kinds],
+    [t("label.item"), summary.contained_item_kinds],
+    [t("selection.traceFacts"), summary.trace_edge_kinds],
+    [t("selection.traceTargets"), summary.trace_target_kinds],
+  ]
+    .map(([label, values]) => renderDependencyFacetGroup(label, values))
+    .filter(Boolean)
+    .join("");
+
+  return `
+    <div class="file-summary" aria-label="${escapeHtml(t("selection.fileSummary"))}">
+      <div class="dependency-totals">${totals}</div>
+      ${groups}
+    </div>
+  `;
 }
 
 function renderDependencySummary(summary) {

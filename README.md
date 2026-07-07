@@ -56,6 +56,7 @@ Implemented now:
 - File node cards include source previews and can jump into focused file graph slices.
 - Node cards return suggested focused graph actions for files, symbols, packages, configs, and error facts.
 - Node cards include dependency summaries with incoming/outgoing counts, edge kinds, confidence, and neighbor facets.
+- File node cards include contained-symbol and in-file trace fact summaries for quick file-level triage.
 - Enriched selected-node cards with summary metadata, source snippets, neighboring dependencies, trace actions, and related risks.
 - Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
 - Initial English/Russian web UI localization with a persistent language selector.

@@ -1606,7 +1606,8 @@ button.cancel-action:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
-.dependency-summary {
+.dependency-summary,
+.file-summary {
   display: grid;
   gap: 8px;
   padding: 8px;
@@ -1621,8 +1622,13 @@ button.cancel-action:hover:not(:disabled) {
   gap: 6px;
 }
 
+.file-summary .dependency-totals {
+  grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
+}
+
 .dependency-totals span,
-.dependency-summary section span {
+.dependency-summary section span,
+.file-summary section span {
   display: inline-flex;
   min-width: 0;
   align-items: center;
@@ -1637,16 +1643,19 @@ button.cancel-action:hover:not(:disabled) {
 }
 
 .dependency-totals strong,
-.dependency-summary section strong {
+.dependency-summary section strong,
+.file-summary section strong {
   color: var(--text);
 }
 
-.dependency-summary section {
+.dependency-summary section,
+.file-summary section {
   display: grid;
   gap: 5px;
 }
 
-.dependency-summary h4 {
+.dependency-summary h4,
+.file-summary h4 {
   margin: 0;
   color: var(--muted);
   font-size: 10px;
@@ -1655,13 +1664,15 @@ button.cancel-action:hover:not(:disabled) {
   text-transform: uppercase;
 }
 
-.dependency-summary section div {
+.dependency-summary section div,
+.file-summary section div {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
 }
 
-.dependency-summary section em {
+.dependency-summary section em,
+.file-summary section em {
   min-width: 0;
   overflow: hidden;
   font-style: normal;
