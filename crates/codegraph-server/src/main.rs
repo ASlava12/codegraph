@@ -3316,6 +3316,10 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "language",
                 ],
             ),
+            (
+                "web_deep_link_param",
+                vec!["path", "node", "edge", "query", "query_focus"],
+            ),
         ]),
     }
 }
@@ -4980,6 +4984,15 @@ mod tests {
                 .enum_values
                 .get("graph_query_insight_term")
                 .is_some_and(|terms| terms.contains(&"severity") && terms.contains(&"kind"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("web_deep_link_param")
+                .is_some_and(|params| params.contains(&"node")
+                    && params.contains(&"edge")
+                    && params.contains(&"query")
+                    && params.contains(&"query_focus"))
         );
         assert!(endpoints.contains(&("GET", "/api/schema")));
         assert!(endpoints.contains(&("GET", "/api/report")));

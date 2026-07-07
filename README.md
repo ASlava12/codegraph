@@ -43,6 +43,7 @@ Implemented now:
 - API schema enum values document supported graph query commands and query terms, including exact edge index lookups.
 - API schema enum values document graph node kinds, edge kinds, insight kinds, and confidence levels used by graph filters.
 - API schema enum values document project report sections and risk grades used by report consumers.
+- API schema enum values document web deep-link parameters used for shareable node, dependency, and query investigations.
 - API schema enum values stay aligned with semantic work statuses and capabilities used by LSP work queues.
 - Runtime metrics endpoint for uptime, API/schema versions, roots, language/feature counts, cache state, job stores, and concurrency.
 - Built-in HTTP access logs with method, target, status, and latency for server operations.
