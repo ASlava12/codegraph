@@ -1607,7 +1607,8 @@ button.cancel-action:hover:not(:disabled) {
 }
 
 .dependency-summary,
-.file-summary {
+.file-summary,
+.risk-summary {
   display: grid;
   gap: 8px;
   padding: 8px;
@@ -1628,7 +1629,9 @@ button.cancel-action:hover:not(:disabled) {
 
 .dependency-totals span,
 .dependency-summary section span,
-.file-summary section span {
+.file-summary section span,
+.risk-summary span,
+.risk-summary section span {
   display: inline-flex;
   min-width: 0;
   align-items: center;
@@ -1644,18 +1647,21 @@ button.cancel-action:hover:not(:disabled) {
 
 .dependency-totals strong,
 .dependency-summary section strong,
-.file-summary section strong {
+.file-summary section strong,
+.risk-summary strong {
   color: var(--text);
 }
 
 .dependency-summary section,
-.file-summary section {
+.file-summary section,
+.risk-summary section {
   display: grid;
   gap: 5px;
 }
 
 .dependency-summary h4,
-.file-summary h4 {
+.file-summary h4,
+.risk-summary h4 {
   margin: 0;
   color: var(--muted);
   font-size: 10px;
@@ -1665,19 +1671,34 @@ button.cancel-action:hover:not(:disabled) {
 }
 
 .dependency-summary section div,
-.file-summary section div {
+.file-summary section div,
+.risk-summary section div,
+.risk-severities {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
 }
 
 .dependency-summary section em,
-.file-summary section em {
+.file-summary section em,
+.risk-summary em {
   min-width: 0;
   overflow: hidden;
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.risk-summary .error {
+  border-color: rgba(255, 107, 107, 0.45);
+}
+
+.risk-summary .warning {
+  border-color: rgba(229, 180, 84, 0.45);
+}
+
+.risk-summary .info {
+  border-color: rgba(103, 183, 220, 0.45);
 }
 
 .empty,

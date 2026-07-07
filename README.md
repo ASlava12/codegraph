@@ -58,6 +58,7 @@ Implemented now:
 - Node cards include dependency summaries with incoming/outgoing counts, edge kinds, confidence, and neighbor facets.
 - File node cards include contained-symbol and in-file trace fact summaries for quick file-level triage.
 - File node cards surface risks from contained symbols and facts, not only risks attached directly to the file node.
+- Node cards include risk summaries by severity and insight kind alongside capped related risk lists.
 - Enriched selected-node cards with summary metadata, source snippets, neighboring dependencies, trace actions, and related risks.
 - Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
 - Initial English/Russian web UI localization with a persistent language selector.

@@ -433,6 +433,8 @@ pub struct NodeCard {
     pub context: NodeContext,
     #[serde(default)]
     pub dependency_summary: NodeDependencySummary,
+    #[serde(default)]
+    pub insight_summary: NodeInsightSummary,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_summary: Option<FileNodeSummary>,
     pub source: Option<SourcePreview>,
@@ -480,6 +482,12 @@ pub struct FileNodeSummary {
     pub trace_edge_kinds: BTreeMap<String, usize>,
     pub trace_confidences: BTreeMap<String, usize>,
     pub trace_target_kinds: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct NodeInsightSummary {
+    pub by_severity: BTreeMap<String, usize>,
+    pub by_kind: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1955,12 +1963,14 @@ pub fn node_card(
     };
     let insight_limit = insight_limit.clamp(1, 500);
     let related_insights = node_card_related_insights(graph, &context.node);
+    let insight_summary = node_insight_summary(&related_insights);
     let total_insights = related_insights.len();
     let insights = related_insights.into_iter().take(insight_limit).collect();
 
     Ok(Some(NodeCard {
         actions: node_card_actions(&context.node),
         dependency_summary: node_dependency_summary(graph, node_id),
+        insight_summary,
         file_summary: file_node_summary(graph, &context.node),
         context,
         source,
@@ -1969,6 +1979,18 @@ pub fn node_card(
         insight_limit,
         truncated_insights: insight_limit < total_insights,
     }))
+}
+
+fn node_insight_summary(insights: &[Insight]) -> NodeInsightSummary {
+    let mut summary = NodeInsightSummary::default();
+    for insight in insights {
+        increment_facet(
+            &mut summary.by_severity,
+            severity_name(insight.severity).to_string(),
+        );
+        increment_facet(&mut summary.by_kind, insight.kind.clone());
+    }
+    summary
 }
 
 fn node_card_related_insights(graph: &CodeGraph, node: &Node) -> Vec<Insight> {
@@ -7579,6 +7601,16 @@ mod tests {
                 .any(|line| line.highlight && line.text.contains("missing"))
         );
         assert_eq!(card.total_insights, 2);
+        assert_eq!(card.insight_summary.by_severity.get("warning"), Some(&1));
+        assert_eq!(card.insight_summary.by_severity.get("info"), Some(&1));
+        assert_eq!(
+            card.insight_summary.by_kind.get("orphan_function"),
+            Some(&1)
+        );
+        assert_eq!(
+            card.insight_summary.by_kind.get("potential_error_flow"),
+            Some(&1)
+        );
         assert!(
             card.insights
                 .iter()
@@ -7603,6 +7635,17 @@ mod tests {
             .expect("expected file node card");
         assert_eq!(file_card.context.node.id, file);
         assert_eq!(file_card.total_insights, 2);
+        assert_eq!(
+            file_card.insight_summary.by_kind.get("orphan_function"),
+            Some(&1)
+        );
+        assert_eq!(
+            file_card
+                .insight_summary
+                .by_kind
+                .get("potential_error_flow"),
+            Some(&1)
+        );
         assert!(
             file_card
                 .insights

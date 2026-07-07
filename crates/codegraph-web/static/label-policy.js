@@ -76,7 +76,7 @@
     }
     if (zoom < 3.25) return 0;
     if (visibleCount > 25) return 0;
-    if (visibleCount <= 12 && zoom >= 4) return 2;
+    if (visibleCount <= 12 && zoom >= 4) return 1;
     return 1;
   }
 
@@ -86,7 +86,49 @@
     return `${label.slice(0, Math.max(0, maxLength - 3))}...`;
   }
 
+  function compactGraphLabelLines(value, maxLength = 24, maxLines = 2) {
+    const label = String(value || "").trim();
+    if (!label) return [""];
+    const lineLength = Math.max(4, Number(maxLength) || 24);
+    const lineCount = Math.max(1, Number(maxLines) || 2);
+    if (label.length <= lineLength) return [label];
+
+    const lines = [];
+    let remaining = label;
+    while (remaining && lines.length < lineCount) {
+      const lastLine = lines.length === lineCount - 1;
+      if (remaining.length <= lineLength) {
+        lines.push(remaining);
+        break;
+      }
+      if (lastLine) {
+        lines.push(truncateGraphLabel(remaining, lineLength));
+        break;
+      }
+
+      const breakIndex = preferredLabelBreakIndex(remaining, lineLength);
+      const splitAt = breakIndex > 0 ? breakIndex : lineLength;
+      const chunk = remaining
+        .slice(0, splitAt)
+        .replace(/[\\/._:\-\s]+$/g, "");
+      lines.push(chunk || remaining.slice(0, lineLength));
+      remaining = remaining.slice(splitAt).replace(/^[\\/._:\-\s]+/g, "");
+    }
+
+    return lines.length ? lines : [truncateGraphLabel(label, lineLength)];
+  }
+
+  function preferredLabelBreakIndex(value, maxLength) {
+    const segment = value.slice(0, maxLength + 1);
+    let best = -1;
+    ["/", "\\", ".", "_", "-", ":", " "].forEach((boundary) => {
+      best = Math.max(best, segment.lastIndexOf(boundary));
+    });
+    return best >= Math.floor(maxLength * 0.45) ? best + 1 : -1;
+  }
+
   return {
+    compactGraphLabelLines,
     nodeLabelBudget,
     nodeLabelPriority,
     shouldShowNodeLabel,

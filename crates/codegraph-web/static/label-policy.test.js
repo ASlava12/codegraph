@@ -28,7 +28,7 @@ test("minimal mode keeps labels hidden except direct interaction", () => {
 
 test("auto mode only allows a tiny label budget in dense graphs", () => {
   assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 3.5, visibleCount: 20 }), 1);
-  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 4.1, visibleCount: 10 }), 2);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 4.1, visibleCount: 10 }), 1);
   assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 3.5, visibleCount: 60 }), 0);
   assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 2.4, visibleCount: 15 }), 0);
 });
@@ -84,4 +84,12 @@ test("focus mode only labels focused nodes at high zoom", () => {
 test("graph labels are truncated to stable compact text", () => {
   assert.equal(policy.truncateGraphLabel("short", 10), "short");
   assert.equal(policy.truncateGraphLabel("a-very-long-node-label", 10), "a-very-...");
+});
+
+test("forced graph labels wrap into compact side cards", () => {
+  assert.deepEqual(policy.compactGraphLabelLines("src/crates/codegraph-analysis/src/lib.rs", 16, 2), [
+    "src/crates",
+    "codegraph-ana...",
+  ]);
+  assert.deepEqual(policy.compactGraphLabelLines("main", 16, 2), ["main"]);
 });

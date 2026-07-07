@@ -3,7 +3,7 @@ const DEFAULT_LABEL_MODE = "minimal";
 const LABEL_MODES = new Set(["minimal", "focus", "auto"]);
 const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
-const LABEL_MODE_STORAGE_VERSION = "6";
+const LABEL_MODE_STORAGE_VERSION = "7";
 
 const I18N = {
   en: {
@@ -22,6 +22,7 @@ const I18N = {
     "selection.dependencySummary": "Dependency Summary",
     "selection.fileSummary": "File Summary",
     "selection.risks": "Risks",
+    "selection.riskSummary": "Risk Summary",
     "selection.source": "Source",
     "selection.metadata": "Metadata",
     "selection.noDependencies": "No neighboring edges.",
@@ -48,6 +49,7 @@ const I18N = {
     "selection.containedKinds": "contained kinds",
     "selection.traceFacts": "trace facts",
     "selection.traceTargets": "trace targets",
+    "selection.riskKinds": "risk kinds",
     "selection.from": "From",
     "selection.to": "To",
     "selection.configTrace": "Config Trace",
@@ -253,6 +255,7 @@ const I18N = {
     "selection.dependencySummary": "Сводка связей",
     "selection.fileSummary": "Сводка файла",
     "selection.risks": "Риски",
+    "selection.riskSummary": "Сводка рисков",
     "selection.source": "Код",
     "selection.metadata": "Метаданные",
     "selection.noDependencies": "Соседних связей нет.",
@@ -279,6 +282,7 @@ const I18N = {
     "selection.containedKinds": "типы внутри",
     "selection.traceFacts": "факты потока",
     "selection.traceTargets": "цели потока",
+    "selection.riskKinds": "типы рисков",
     "selection.from": "Отсюда",
     "selection.to": "Сюда",
     "selection.configTrace": "Трасса конфига",
@@ -4994,7 +4998,7 @@ function draw() {
         selected,
         hovered,
         focused,
-        forced: hovered,
+        forced: selected || hovered,
         priority: nodeLabelPriority(node),
       });
     }
@@ -5107,28 +5111,29 @@ function drawNodeLabels(candidates) {
 function labelGeometry(candidate, occupied, nodeBoxes) {
   const { node, position, radius, forced } = candidate;
   const zoom = Math.max(0.18, state.zoom);
-  const maxLength = forced ? 36 : state.zoom >= 3.2 ? 16 : 10;
-  const label = truncateGraphLabel(node.label, maxLength);
+  const lines = forced
+    ? compactGraphLabelLines(node.label, 24, 2)
+    : [truncateGraphLabel(node.label, state.zoom >= 3.2 ? 14 : 9)];
   const padX = (forced ? 7 : 4) / zoom;
-  const height = (forced ? 23 : 16) / zoom;
+  const padY = (forced ? 5 : 0) / zoom;
   const fontSize = (forced ? 12 : 10) / zoom;
+  const lineHeight = (forced ? 13 : 11) / zoom;
   ctx.font = `${fontSize}px Inter, sans-serif`;
-  const metrics = ctx.measureText(label);
-  const width = metrics.width + padX * 2;
-  const gap = (forced ? 10 : 12) / zoom;
-  const placements = forced
-    ? ["right", "left", "top", "bottom"]
-    : ["right", "left", "top"];
+  const width = Math.max(...lines.map((line) => ctx.measureText(line).width)) + padX * 2;
+  const height = forced ? lines.length * lineHeight + padY * 2 : 16 / zoom;
+  const gap = (forced ? 11 : 13) / zoom;
+  const placements = ["right", "left", "top"];
   const geometries = placements.map((placement) =>
     labelGeometryForPlacement({
       node,
       position,
       radius,
-      label,
+      lines,
       width,
       height,
       padX,
       gap,
+      lineHeight,
       font: ctx.font,
       forced,
       placement,
@@ -5147,11 +5152,12 @@ function labelGeometryForPlacement(options) {
     node,
     position,
     radius,
-    label,
+    lines,
     width,
     height,
     padX,
     gap,
+    lineHeight,
     font,
     forced,
     placement,
@@ -5171,13 +5177,14 @@ function labelGeometryForPlacement(options) {
 
   return {
     nodeId: node.id,
-    label,
+    lines,
     x,
     y,
     width,
     height,
     padX,
     textY: y + height / 2,
+    lineHeight,
     radius: 5 / Math.max(0.18, state.zoom),
     font,
     forced,
@@ -5190,9 +5197,9 @@ function drawLabelGeometry(geometry) {
   if (!geometry.forced) {
     ctx.lineWidth = 3 / Math.max(0.18, state.zoom);
     ctx.strokeStyle = "rgba(13, 15, 16, 0.78)";
-    ctx.strokeText(geometry.label, geometry.x + geometry.padX, geometry.textY);
+    drawLabelText(geometry, (line, x, y) => ctx.strokeText(line, x, y));
     ctx.fillStyle = "rgba(237, 241, 242, 0.84)";
-    ctx.fillText(geometry.label, geometry.x + geometry.padX, geometry.textY);
+    drawLabelText(geometry, (line, x, y) => ctx.fillText(line, x, y));
     return;
   }
   ctx.fillStyle = geometry.forced
@@ -5206,7 +5213,14 @@ function drawLabelGeometry(geometry) {
     ctx.stroke();
   }
   ctx.fillStyle = "#edf1f2";
-  ctx.fillText(geometry.label, geometry.x + geometry.padX, geometry.textY);
+  drawLabelText(geometry, (line, x, y) => ctx.fillText(line, x, y));
+}
+
+function drawLabelText(geometry, drawLine) {
+  const firstY = geometry.textY - ((geometry.lines.length - 1) * geometry.lineHeight) / 2;
+  geometry.lines.forEach((line, index) => {
+    drawLine(line, geometry.x + geometry.padX, firstY + index * geometry.lineHeight);
+  });
 }
 
 function nodeLabelPriority(node) {
@@ -5242,6 +5256,10 @@ function nodeOcclusionBoxes() {
 
 function truncateGraphLabel(value, maxLength) {
   return CodeGraphLabelPolicy.truncateGraphLabel(value, maxLength);
+}
+
+function compactGraphLabelLines(value, maxLength, maxLines) {
+  return CodeGraphLabelPolicy.compactGraphLabelLines(value, maxLength, maxLines);
 }
 
 function boxIntersectsViewport(box) {
@@ -5337,6 +5355,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
   const cardActions = nodeCardActions(card, node);
   const fileSummary = renderFileSummary(card?.file_summary);
   const dependencySummary = renderDependencySummary(card?.dependency_summary);
+  const riskSummary = renderNodeRiskSummary(card?.insight_summary);
   const neighborRows = loading
     ? `<p class="empty">${escapeHtml(t("selection.loading"))}</p>`
     : edges.length > 0
@@ -5412,8 +5431,9 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
       <section class="node-card-section">
         <div class="node-card-section-header">
           <h3>${escapeHtml(t("selection.risks"))}</h3>
-          <span>${nodeIssues.length}</span>
+          <span>${Number(card?.total_insights ?? nodeIssues.length)}</span>
         </div>
+        ${riskSummary}
         <div class="node-issues">
           ${
             nodeIssues.length > 0
@@ -5625,6 +5645,33 @@ function renderDependencyFacetGroup(label, values) {
         )
         .join("")}</div>
     </section>
+  `;
+}
+
+function renderNodeRiskSummary(summary) {
+  if (!summary) return "";
+  const severityTotal = Object.values(summary.by_severity || {}).reduce(
+    (total, count) => total + Number(count || 0),
+    0,
+  );
+  const kindTotal = Object.values(summary.by_kind || {}).reduce(
+    (total, count) => total + Number(count || 0),
+    0,
+  );
+  if (severityTotal + kindTotal === 0) return "";
+  const severities = ["error", "warning", "info"]
+    .filter((severity) => Number(summary.by_severity?.[severity] || 0) > 0)
+    .map(
+      (severity) =>
+        `<span class="${escapeHtml(severity)}"><em>${escapeHtml(formatKind(severity))}</em><strong>${Number(summary.by_severity[severity] || 0)}</strong></span>`,
+    )
+    .join("");
+  const kinds = renderDependencyFacetGroup(t("selection.riskKinds"), summary.by_kind);
+  return `
+    <div class="risk-summary" aria-label="${escapeHtml(t("selection.riskSummary"))}">
+      ${severities ? `<div class="risk-severities">${severities}</div>` : ""}
+      ${kinds}
+    </div>
   `;
 }
 
