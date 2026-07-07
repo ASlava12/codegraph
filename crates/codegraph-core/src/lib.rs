@@ -166,3 +166,27 @@ impl CodeGraph {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn confidence_levels_round_trip_as_stable_snake_case_values() {
+        let cases = [
+            (Confidence::Exact, "exact"),
+            (Confidence::Semantic, "semantic"),
+            (Confidence::Syntactic, "syntactic"),
+            (Confidence::Heuristic, "heuristic"),
+            (Confidence::Unknown, "unknown"),
+        ];
+
+        for (confidence, expected) in cases {
+            let encoded = serde_json::to_value(confidence).expect("serialize confidence");
+            assert_eq!(encoded, serde_json::json!(expected));
+            let decoded: Confidence =
+                serde_json::from_value(encoded).expect("deserialize confidence");
+            assert_eq!(decoded, confidence);
+        }
+    }
+}

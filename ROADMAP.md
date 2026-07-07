@@ -77,12 +77,12 @@ Goal: improve precision where language tooling exists.
 - [x] Add Rust enrichment through `rust-analyzer`.
 - [x] Add TypeScript/JavaScript enrichment through tsserver-compatible tooling.
 - [x] Add Go enrichment through `gopls`.
-- Mark facts by confidence:
-  - `exact`
-  - `semantic`
-  - `syntactic`
-  - `heuristic`
-  - `unknown`
+- [x] Mark facts by confidence:
+  - [x] `exact`
+  - [x] `semantic`
+  - [x] `syntactic`
+  - [x] `heuristic`
+  - [x] `unknown`
 
 Exit criteria:
 

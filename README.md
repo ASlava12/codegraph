@@ -12,6 +12,7 @@ Implemented now:
 
 - Rust workspace layout.
 - Core graph model.
+- Stable graph confidence taxonomy for `exact`, `semantic`, `syntactic`, `heuristic`, and `unknown` facts with JSON round-trip coverage.
 - Built-in language adapter registry for Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash parser support.
 - LSP server discovery for semantic enrichment readiness across Rust, Go, JavaScript/TypeScript, Python, C/C++, PHP, and Bash.
 - Semantic enrichment server contracts cover `rust-analyzer`, `gopls`, and `typescript-language-server --stdio` for primary Rust, Go, JavaScript, TypeScript, and TSX workflows.
