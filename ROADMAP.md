@@ -126,6 +126,7 @@ Goal: answer practical code investigation questions.
 - [x] Add web path navigation with visual dependency-path highlighting.
 - [x] Add richer query language with neighborhood expansion.
 - [x] Add reachability-aware query slices for unreachable source files and nodes.
+- [x] Add semantic diagnostic query slices for focused LSP issue context.
 - [x] Add reverse dependent traces for impact analysis.
 - [x] Add source text search across CLI, API, and web for focused code snippets.
 - [x] Add edge explanation for confidence and provenance evidence across CLI, API, and web.

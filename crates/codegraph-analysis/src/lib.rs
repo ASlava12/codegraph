@@ -1591,9 +1591,10 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "dependents" | "impact" | "incoming" => query_dependents(graph, spec),
         "neighbors" | "neighbor" | "neighborhood" => query_neighbors(graph, spec),
         "unreachable" | "dead" => query_unreachable(graph, spec),
+        "diagnostics" | "diagnostic" => query_diagnostics(graph, spec),
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, unreachable, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, unreachable, diagnostics, or path"
         ))),
     }
 }
@@ -2291,6 +2292,56 @@ fn query_unreachable(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, 
     })
 }
 
+fn query_diagnostics(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    validate_diagnostic_terms(&spec)?;
+    let path_index = node_path_index(graph);
+    let diagnostic_nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| is_lsp_diagnostic_node(node))
+        .filter(|node| diagnostic_query_matches(graph, node, &spec, &path_index))
+        .map(|node| node.id)
+        .collect::<Vec<_>>();
+    let total_matches = diagnostic_nodes.len();
+    let selected: BTreeSet<_> = diagnostic_nodes.iter().take(spec.limit).copied().collect();
+    let edge_limit = spec.limit.saturating_mul(4).clamp(1, 1000);
+    let mut result_node_ids = selected.clone();
+    let mut matched_edges = Vec::new();
+    let mut total_edges = 0usize;
+
+    for edge in graph.edges.iter().filter(|edge| {
+        selected.contains(&edge.target)
+            && edge
+                .metadata
+                .get("relation")
+                .is_some_and(|relation| relation == "diagnostic")
+    }) {
+        total_edges += 1;
+        result_node_ids.insert(edge.source);
+        result_node_ids.insert(edge.target);
+        if matched_edges.len() < edge_limit {
+            matched_edges.push(edge.clone());
+        }
+    }
+
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| result_node_ids.contains(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let truncated = total_matches > spec.limit || total_edges > edge_limit;
+
+    Ok(QueryResult {
+        query: spec.original,
+        total_nodes: nodes.len(),
+        total_edges,
+        truncated,
+        nodes,
+        edges: matched_edges,
+    })
+}
+
 fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
     validate_path_terms(&spec)?;
     let max_depth = spec
@@ -2463,6 +2514,31 @@ fn validate_unreachable_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     Ok(())
 }
 
+fn validate_diagnostic_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if matches!(
+            key.as_str(),
+            "id" | "label"
+                | "message"
+                | "severity"
+                | "source"
+                | "diagnostic_source"
+                | "code"
+                | "diagnostic_code"
+                | "path"
+                | "path_prefix"
+                | "language"
+        ) || key.starts_with("metadata.")
+        {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported diagnostics query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 fn is_node_term(key: &str) -> bool {
     matches!(
         key,
@@ -2472,6 +2548,93 @@ fn is_node_term(key: &str) -> bool {
 
 fn is_edge_term(key: &str) -> bool {
     matches!(key, "kind" | "source" | "target" | "confidence") || key.starts_with("metadata.")
+}
+
+fn is_lsp_diagnostic_node(node: &Node) -> bool {
+    node.metadata
+        .get("item_kind")
+        .is_some_and(|kind| kind == "diagnostic")
+        && node
+            .metadata
+            .get("source")
+            .is_some_and(|source| source == "lsp")
+}
+
+fn diagnostic_query_matches(
+    graph: &CodeGraph,
+    node: &Node,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
+    let source_nodes = diagnostic_source_nodes(graph, node.id);
+    spec.terms.iter().all(|(key, expected)| match key.as_str() {
+        "id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        "label" => text_matches(&node.label, expected),
+        "message" => node
+            .metadata
+            .get("message")
+            .is_some_and(|value| text_matches(value, expected)),
+        "severity" => node
+            .metadata
+            .get("severity")
+            .is_some_and(|value| text_matches(value, expected)),
+        "source" | "diagnostic_source" => node
+            .metadata
+            .get("diagnostic_source")
+            .or_else(|| node.metadata.get("source"))
+            .is_some_and(|value| text_matches(value, expected)),
+        "code" | "diagnostic_code" => node
+            .metadata
+            .get("diagnostic_code")
+            .is_some_and(|value| text_matches(value, expected)),
+        "path" | "path_prefix" => {
+            diagnostic_path_matches(node, expected)
+                || source_nodes
+                    .iter()
+                    .filter_map(|id| graph.nodes.iter().find(|source| source.id == *id))
+                    .any(|source| node_path_matches(source, path_index, expected))
+        }
+        "language" => source_nodes
+            .iter()
+            .filter_map(|id| graph.nodes.iter().find(|source| source.id == *id))
+            .any(|source| metadata_matches(source, "language", expected)),
+        key if key.starts_with("metadata.") => node
+            .metadata
+            .get(key.trim_start_matches("metadata."))
+            .is_some_and(|value| text_matches(value, expected)),
+        _ => false,
+    })
+}
+
+fn diagnostic_source_nodes(graph: &CodeGraph, diagnostic_id: NodeId) -> Vec<NodeId> {
+    graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.target == diagnostic_id
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "diagnostic")
+        })
+        .map(|edge| edge.source)
+        .collect()
+}
+
+fn diagnostic_path_matches(node: &Node, expected: &str) -> bool {
+    let expected = normalize_path_prefix(expected);
+    if expected.is_empty() {
+        return true;
+    }
+    node.metadata
+        .get("path")
+        .map(|path| normalize_graph_path(path))
+        .or_else(|| {
+            node.span
+                .as_ref()
+                .map(|span| normalize_graph_path(&span.path))
+        })
+        .is_some_and(|path| path == expected || path.starts_with(&format!("{expected}/")))
 }
 
 fn unreachable_node_terms(spec: &QuerySpec) -> BTreeMap<String, String> {
@@ -5787,6 +5950,85 @@ mod tests {
         let error =
             query_graph(&graph, "unreachable scope:maybe").expect_err("invalid scope should fail");
         assert!(error.to_string().contains("invalid unreachable scope"));
+    }
+
+    #[test]
+    fn query_diagnostics_returns_diagnostic_context() {
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/main.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let diagnostic = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "error: semantic mismatch",
+            Some(SourceSpan {
+                path: "src/main.rs".to_string(),
+                start_line: 3,
+                start_column: 9,
+                end_line: 3,
+                end_column: 10,
+            }),
+            BTreeMap::from([
+                ("item_kind".to_string(), "diagnostic".to_string()),
+                ("source".to_string(), "lsp".to_string()),
+                ("severity".to_string(), "error".to_string()),
+                ("diagnostic_source".to_string(), "rustc".to_string()),
+                ("diagnostic_code".to_string(), "E0001".to_string()),
+                ("message".to_string(), "semantic mismatch".to_string()),
+                ("path".to_string(), "src/main.rs".to_string()),
+            ]),
+        );
+        let warning = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "warning: style issue",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "diagnostic".to_string()),
+                ("source".to_string(), "lsp".to_string()),
+                ("severity".to_string(), "warning".to_string()),
+                ("diagnostic_source".to_string(), "rustc".to_string()),
+                ("message".to_string(), "style issue".to_string()),
+                ("path".to_string(), "src/main.rs".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            file,
+            diagnostic,
+            EdgeKind::MayError,
+            Confidence::Semantic,
+            BTreeMap::from([("relation".to_string(), "diagnostic".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            file,
+            warning,
+            EdgeKind::MayError,
+            Confidence::Semantic,
+            BTreeMap::from([("relation".to_string(), "diagnostic".to_string())]),
+        );
+
+        let result = query_graph(
+            &graph,
+            "diagnostics severity:error language:rust code:E0001",
+        )
+        .unwrap();
+
+        assert_eq!(result.total_edges, 1);
+        assert!(result.nodes.iter().any(|node| node.id == file));
+        assert!(result.nodes.iter().any(|node| node.id == diagnostic));
+        assert!(!result.nodes.iter().any(|node| node.id == warning));
+        assert_eq!(result.edges[0].source, file);
+        assert_eq!(result.edges[0].target, diagnostic);
+
+        let error = query_graph(&graph, "diagnostics nope:value")
+            .expect_err("invalid diagnostics term should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported diagnostics query term")
+        );
     }
 
     #[test]
