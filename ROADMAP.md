@@ -230,6 +230,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add machine-readable API schema endpoint for agents and integrations.
 - [x] Publish structured parameter bounds in the API schema for bounded agent requests.
 - [x] Publish structured POST body fields in the API schema for scan and semantic job requests.
+- [x] Publish structured system response fields in the API schema for runtime clients.
 - [x] Publish insight/check limits and link overview/report API schema parameters to capability keys.
 - [x] Clamp and publish semantic work item limits across CLI, API, schema, and web capabilities.
 - [x] Clamp and publish semantic LSP request timeout limits across CLI, API, and web capabilities.

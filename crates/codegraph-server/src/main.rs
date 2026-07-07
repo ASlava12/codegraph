@@ -627,12 +627,19 @@ struct ApiEndpointSpec {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     body_fields: Vec<ApiParameterSpec>,
     response: &'static str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    response_fields: Vec<ApiParameterSpec>,
     streaming: bool,
 }
 
 impl ApiEndpointSpec {
     fn with_body_fields(mut self, body_fields: Vec<ApiParameterSpec>) -> Self {
         self.body_fields = body_fields;
+        self
+    }
+
+    fn with_response_fields(mut self, response_fields: Vec<ApiParameterSpec>) -> Self {
+        self.response_fields = response_fields;
         self
     }
 }
@@ -3601,25 +3608,29 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Read a lightweight liveness probe for process supervision.",
                     vec![],
                     "ProbeResponse",
-                ),
+                )
+                .with_response_fields(probe_response_fields()),
                 api_get(
                     "/api/ready",
                     "Read a lightweight readiness probe that validates server scan configuration.",
                     vec![],
                     "ProbeResponse",
-                ),
+                )
+                .with_response_fields(probe_response_fields()),
                 api_get(
                     "/api/health",
                     "Read runtime health, retained job-store counts, and concurrency slots.",
                     vec![],
                     "HealthResponse",
-                ),
+                )
+                .with_response_fields(health_response_fields()),
                 api_get(
                     "/api/metrics",
                     "Read runtime metrics including versions, cache state, job stores, and concurrency.",
                     vec![],
                     "MetricsResponse",
-                ),
+                )
+                .with_response_fields(metrics_response_fields()),
                 api_get(
                     "/api/projects",
                     "List configured project roots available to the server.",
@@ -4662,6 +4673,148 @@ fn semantic_enrich_body_fields() -> Vec<ApiParameterSpec> {
     fields
 }
 
+fn probe_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "status",
+            true,
+            "string",
+            "Probe status: ok for liveness and ready for readiness.",
+        ),
+        response_field("api_version", true, "u32", "HTTP API contract version."),
+        response_field(
+            "graph_schema_version",
+            true,
+            "u32",
+            "Serialized graph schema version.",
+        ),
+        response_field("root", true, "path", "Resolved primary project root."),
+        response_field(
+            "cache_enabled",
+            true,
+            "bool",
+            "Whether the server persistent graph cache is enabled.",
+        ),
+    ]
+}
+
+fn health_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("status", true, "string", "Runtime health status."),
+        response_field("root", true, "path", "Resolved primary project root."),
+        response_field(
+            "max_file_size",
+            true,
+            "u64?",
+            "Effective maximum indexed source file size in bytes.",
+        ),
+        response_field(
+            "cache_dir",
+            true,
+            "path?",
+            "Persistent graph cache directory when cache is enabled.",
+        ),
+        response_field(
+            "max_scan_jobs",
+            true,
+            "usize",
+            "Maximum retained scan jobs.",
+        ),
+        response_field(
+            "scan_jobs",
+            true,
+            "JobStoreHealth",
+            "Retained scan job counters by status.",
+        ),
+        response_field(
+            "scan_concurrency",
+            true,
+            "ConcurrencyHealth",
+            "Scan concurrency limit, active slots, and available slots.",
+        ),
+        response_field(
+            "max_semantic_jobs",
+            true,
+            "usize",
+            "Maximum retained semantic jobs.",
+        ),
+        response_field(
+            "semantic_jobs",
+            true,
+            "JobStoreHealth",
+            "Retained semantic job counters by status.",
+        ),
+        response_field(
+            "semantic_concurrency",
+            true,
+            "ConcurrencyHealth",
+            "Semantic job concurrency limit, active slots, and available slots.",
+        ),
+    ]
+}
+
+fn metrics_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("status", true, "string", "Runtime metrics status."),
+        response_field("api_version", true, "u32", "HTTP API contract version."),
+        response_field(
+            "graph_schema_version",
+            true,
+            "u32",
+            "Serialized graph schema version.",
+        ),
+        response_field(
+            "uptime_seconds",
+            true,
+            "u64",
+            "Seconds since this server process started.",
+        ),
+        response_field("root", true, "path", "Resolved primary project root."),
+        response_field(
+            "projects",
+            true,
+            "usize",
+            "Number of configured project roots.",
+        ),
+        response_field(
+            "languages",
+            true,
+            "usize",
+            "Number of built-in language adapters.",
+        ),
+        response_field(
+            "features",
+            true,
+            "usize",
+            "Number of advertised runtime capability features.",
+        ),
+        response_field(
+            "max_file_size",
+            true,
+            "u64?",
+            "Effective maximum indexed source file size in bytes.",
+        ),
+        response_field(
+            "cache",
+            true,
+            "CacheCapabilityResponse",
+            "Persistent graph cache status and directory.",
+        ),
+        response_field(
+            "scan_jobs",
+            true,
+            "JobPoolMetricsResponse",
+            "Scan job retention and concurrency metrics.",
+        ),
+        response_field(
+            "semantic_jobs",
+            true,
+            "JobPoolMetricsResponse",
+            "Semantic job retention and concurrency metrics.",
+        ),
+    ]
+}
+
 fn api_get(
     path: &'static str,
     summary: &'static str,
@@ -4717,6 +4870,7 @@ fn api_endpoint(
         body,
         body_fields: Vec::new(),
         response,
+        response_fields: Vec::new(),
         streaming,
     }
 }
@@ -4757,6 +4911,26 @@ fn body_field(
         required,
         value_type,
         default,
+        minimum: None,
+        maximum: None,
+        max_length: None,
+        capability_limit: None,
+        description,
+    }
+}
+
+fn response_field(
+    name: &'static str,
+    required: bool,
+    value_type: &'static str,
+    description: &'static str,
+) -> ApiParameterSpec {
+    ApiParameterSpec {
+        name,
+        location: "response",
+        required,
+        value_type,
+        default: None,
         minimum: None,
         maximum: None,
         max_length: None,
@@ -5630,6 +5804,30 @@ mod tests {
         assert!(endpoints.contains(&("GET", "/api/schema")));
         assert!(endpoints.contains(&("GET", "/api/live")));
         assert!(endpoints.contains(&("GET", "/api/ready")));
+        let live_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/live")
+            .expect("schema should list live endpoint");
+        assert!(live_endpoint.response_fields.iter().any(|field| {
+            field.name == "status" && field.location == "response" && field.required
+        }));
+        assert!(live_endpoint.response_fields.iter().any(|field| {
+            field.name == "cache_enabled" && field.value_type == "bool" && field.required
+        }));
+        let metrics_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/metrics")
+            .expect("schema should list metrics endpoint");
+        assert!(metrics_endpoint.response_fields.iter().any(|field| {
+            field.name == "uptime_seconds" && field.value_type == "u64" && field.required
+        }));
+        assert!(metrics_endpoint.response_fields.iter().any(|field| {
+            field.name == "scan_jobs" && field.value_type == "JobPoolMetricsResponse"
+        }));
         assert!(endpoints.contains(&("GET", "/api/report")));
         assert!(endpoints.contains(&("GET", "/api/cache-diff")));
         assert!(endpoints.contains(&("GET", "/api/cache-chunks")));
