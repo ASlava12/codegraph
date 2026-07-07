@@ -1134,6 +1134,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unreachable_config_read_insights(graph, &mut insights);
     add_unreachable_source_file_insights(graph, &mut insights);
     add_conflicting_config_default_insights(graph, &mut insights);
+    add_mixed_config_requirement_insights(graph, &mut insights);
     add_undeclared_import_insights(graph, &mut insights);
     add_unused_dependency_insights(graph, &mut insights);
     add_conflicting_dependency_insights(graph, &mut insights);
@@ -4724,6 +4725,81 @@ fn add_conflicting_config_default_insights(graph: &CodeGraph, insights: &mut Vec
     }
 }
 
+fn add_mixed_config_requirement_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    #[derive(Default)]
+    struct ConfigRequirementGroup {
+        required_nodes: Vec<NodeId>,
+        default_nodes: BTreeMap<String, Vec<NodeId>>,
+    }
+
+    let mut groups: BTreeMap<(String, String), ConfigRequirementGroup> = BTreeMap::new();
+    for node in &graph.nodes {
+        if !matches!(node.kind, NodeKind::Config | NodeKind::Environment) {
+            continue;
+        }
+        let edge_kind = if node.kind == NodeKind::Environment {
+            EdgeKind::ReadsEnvironment
+        } else {
+            EdgeKind::ReadsConfig
+        };
+        if incoming_edge_indexes(graph, node.id, edge_kind).is_empty() {
+            continue;
+        }
+
+        let entry = groups
+            .entry((kind_name(&node.kind), node.label.clone()))
+            .or_default();
+        if let Some(default_value) = node
+            .metadata
+            .get("default_value")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            entry
+                .default_nodes
+                .entry(default_value.to_string())
+                .or_default()
+                .push(node.id);
+        } else {
+            entry.required_nodes.push(node.id);
+        }
+    }
+
+    for ((kind, label), group) in groups {
+        if group.required_nodes.is_empty() || group.default_nodes.is_empty() {
+            continue;
+        }
+
+        let edge_kind = if kind == "environment" {
+            EdgeKind::ReadsEnvironment
+        } else {
+            EdgeKind::ReadsConfig
+        };
+        let mut nodes = group.required_nodes.clone();
+        nodes.extend(
+            group
+                .default_nodes
+                .values()
+                .flat_map(|ids| ids.iter().copied()),
+        );
+        let edges: Vec<_> = nodes
+            .iter()
+            .flat_map(|node_id| incoming_edge_indexes(graph, *node_id, edge_kind.clone()))
+            .collect();
+        let values = format_backtick_list(group.default_nodes.keys().map(String::as_str), 8);
+
+        insights.push(Insight {
+            kind: "mixed_config_requirement".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "{kind} `{label}` is read both as required and with fallback values: {values}"
+            ),
+            nodes,
+            edges,
+        });
+    }
+}
+
 fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let declared = declared_package_ids(graph);
     let declared_ecosystems: BTreeSet<_> = declared
@@ -8150,6 +8226,63 @@ mod tests {
         assert!(extra_envs.iter().all(|env| insight.nodes.contains(env)));
         assert_eq!(insight.edges.len(), 9);
         assert!(!insight.nodes.contains(&stable_env));
+    }
+
+    #[test]
+    fn insights_report_mixed_config_requirement_defaults() {
+        let mut graph = CodeGraph::new("repo");
+        let api = graph.add_node(NodeKind::Function, "api_server");
+        let worker = graph.add_node(NodeKind::Function, "worker");
+        let required_port = graph.add_node(NodeKind::Environment, "PORT");
+        let default_port = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "PORT",
+            None,
+            BTreeMap::from([("default_value".to_string(), "8080".to_string())]),
+        );
+        let stable_host = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "HOST",
+            None,
+            BTreeMap::from([("default_value".to_string(), "127.0.0.1".to_string())]),
+        );
+        let unused_required_port = graph.add_node(NodeKind::Environment, "PORT");
+        graph.add_edge(
+            api,
+            required_port,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            worker,
+            default_port,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            api,
+            stable_host,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "mixed_config_requirement")
+            .expect("expected mixed config requirement insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.message.contains("PORT"));
+        assert!(insight.message.contains("required"));
+        assert!(insight.message.contains("8080"));
+        assert!(insight.nodes.contains(&required_port));
+        assert!(insight.nodes.contains(&default_port));
+        assert!(!insight.nodes.contains(&stable_host));
+        assert!(!insight.nodes.contains(&unused_required_port));
+        assert_eq!(insight.edges.len(), 2);
+        assert_eq!(report.by_kind.get("mixed_config_requirement"), Some(&1));
     }
 
     #[test]
