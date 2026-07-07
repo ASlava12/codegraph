@@ -155,6 +155,25 @@ pub struct QueryResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExplainEdgeRequest {
+    pub edge_index: Option<usize>,
+    pub source: Option<String>,
+    pub target: Option<String>,
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EdgeExplanation {
+    pub edge_index: usize,
+    pub total_matches: usize,
+    pub source: Node,
+    pub target: Node,
+    pub edge: Edge,
+    pub summary: String,
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FocusRequest {
     pub node_ids: Vec<NodeId>,
     pub edge_indexes: Vec<usize>,
@@ -797,6 +816,51 @@ pub fn focus_subgraph(graph: &CodeGraph, request: FocusRequest) -> QueryResult {
         nodes,
         edges,
     }
+}
+
+pub fn explain_edge(
+    graph: &CodeGraph,
+    request: ExplainEdgeRequest,
+) -> Result<Option<EdgeExplanation>, QueryError> {
+    let matches = matching_edge_indexes(graph, &request)?;
+    let Some(edge_index) = matches.first().copied() else {
+        return Ok(None);
+    };
+    let edge = graph
+        .edges
+        .get(edge_index)
+        .cloned()
+        .ok_or_else(|| QueryError::new(format!("edge index {edge_index} is out of range")))?;
+    let source = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == edge.source)
+        .cloned()
+        .ok_or_else(|| QueryError::new(format!("edge source {} was not found", edge.source)))?;
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == edge.target)
+        .cloned()
+        .ok_or_else(|| QueryError::new(format!("edge target {} was not found", edge.target)))?;
+    let summary = format!(
+        "{} {} {} with {} confidence",
+        source.label,
+        edge_kind_name(&edge.kind),
+        target.label,
+        confidence_name(edge.confidence)
+    );
+    let evidence = edge_evidence(edge_index, &source, &target, &edge);
+
+    Ok(Some(EdgeExplanation {
+        edge_index,
+        total_matches: matches.len(),
+        source,
+        target,
+        edge,
+        summary,
+        evidence,
+    }))
 }
 
 pub fn slice_graph(graph: &CodeGraph, request: GraphSliceRequest) -> GraphSlice {
@@ -1450,6 +1514,94 @@ fn edge_matches(graph: &CodeGraph, edge: &Edge, terms: &BTreeMap<String, String>
             .is_some_and(|value| text_matches(value, expected)),
         _ => false,
     })
+}
+
+fn matching_edge_indexes(
+    graph: &CodeGraph,
+    request: &ExplainEdgeRequest,
+) -> Result<Vec<usize>, QueryError> {
+    if let Some(index) = request.edge_index {
+        return Ok((index < graph.edges.len())
+            .then_some(index)
+            .into_iter()
+            .collect());
+    }
+
+    if request.source.is_none() && request.target.is_none() && request.kind.is_none() {
+        return Err(QueryError::new(
+            "explain edge requires `edge_index` or at least one of `source`, `target`, or `kind`",
+        ));
+    }
+
+    Ok(graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| {
+            request
+                .source
+                .as_deref()
+                .is_none_or(|source| endpoint_matches(graph, edge.source, source))
+                && request
+                    .target
+                    .as_deref()
+                    .is_none_or(|target| endpoint_matches(graph, edge.target, target))
+                && request
+                    .kind
+                    .as_deref()
+                    .is_none_or(|kind| text_matches(&edge_kind_name(&edge.kind), kind))
+        })
+        .map(|(index, _)| index)
+        .collect())
+}
+
+fn edge_evidence(edge_index: usize, source: &Node, target: &Node, edge: &Edge) -> Vec<String> {
+    let mut evidence = vec![
+        format!("edge_index={edge_index}"),
+        format!("edge_kind={}", edge_kind_name(&edge.kind)),
+        format!("confidence={}", confidence_name(edge.confidence)),
+        format!(
+            "source={} {} ({})",
+            source.id,
+            source.label,
+            kind_name(&source.kind)
+        ),
+        format!(
+            "target={} {} ({})",
+            target.id,
+            target.label,
+            kind_name(&target.kind)
+        ),
+        confidence_evidence(edge.confidence).to_string(),
+    ];
+
+    if let Some(span) = &source.span {
+        evidence.push(format!(
+            "source_span={}:{}:{}-{}:{}",
+            span.path, span.start_line, span.start_column, span.end_line, span.end_column
+        ));
+    }
+    if let Some(span) = &target.span {
+        evidence.push(format!(
+            "target_span={}:{}:{}-{}:{}",
+            span.path, span.start_line, span.start_column, span.end_line, span.end_column
+        ));
+    }
+    for (key, value) in &edge.metadata {
+        evidence.push(format!("metadata.{key}={value}"));
+    }
+
+    evidence
+}
+
+fn confidence_evidence(confidence: codegraph_core::Confidence) -> &'static str {
+    match confidence {
+        codegraph_core::Confidence::Exact => "confidence_note=declared or directly resolved fact",
+        codegraph_core::Confidence::Semantic => "confidence_note=semantic tooling fact",
+        codegraph_core::Confidence::Syntactic => "confidence_note=syntax-level fact",
+        codegraph_core::Confidence::Heuristic => "confidence_note=pattern or name based inference",
+        codegraph_core::Confidence::Unknown => "confidence_note=unknown provenance",
+    }
 }
 
 fn endpoint_matches(graph: &CodeGraph, id: NodeId, expected: &str) -> bool {
@@ -3171,6 +3323,79 @@ mod tests {
             query_graph(&graph, "edges kind:references confidence:exact").unwrap();
         assert_eq!(exact_reference.total_edges, 1);
         assert_eq!(exact_reference.edges[0].source, manifest);
+    }
+
+    #[test]
+    fn explain_edge_returns_provenance_for_matching_edge() {
+        let mut graph = CodeGraph::new("repo");
+        let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        graph.add_edge_with_metadata(
+            entrypoint,
+            main,
+            EdgeKind::References,
+            Confidence::Syntactic,
+            BTreeMap::from([
+                ("relation".to_string(), "entrypoint_function".to_string()),
+                ("resolution".to_string(), "manifest_path".to_string()),
+            ]),
+        );
+
+        let explanation = explain_edge(
+            &graph,
+            ExplainEdgeRequest {
+                edge_index: None,
+                source: Some("cargo bin".to_string()),
+                target: Some("main".to_string()),
+                kind: Some("references".to_string()),
+            },
+        )
+        .unwrap()
+        .expect("missing explanation");
+
+        assert_eq!(explanation.edge_index, 0);
+        assert_eq!(explanation.total_matches, 1);
+        assert_eq!(explanation.source.id, entrypoint);
+        assert_eq!(explanation.target.id, main);
+        assert!(explanation.summary.contains("references"));
+        assert!(
+            explanation
+                .evidence
+                .iter()
+                .any(|item| item == "metadata.relation=entrypoint_function")
+        );
+        assert!(
+            explanation
+                .evidence
+                .iter()
+                .any(|item| item == "confidence=syntactic")
+        );
+    }
+
+    #[test]
+    fn explain_edge_supports_edge_index_lookup() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let config = graph.add_node(NodeKind::Config, "settings.toml");
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(helper, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
+
+        let explanation = explain_edge(
+            &graph,
+            ExplainEdgeRequest {
+                edge_index: Some(1),
+                source: None,
+                target: None,
+                kind: None,
+            },
+        )
+        .unwrap()
+        .expect("missing explanation");
+
+        assert_eq!(explanation.edge_index, 1);
+        assert_eq!(explanation.edge.kind, EdgeKind::ReadsConfig);
+        assert_eq!(explanation.target.label, "settings.toml");
     }
 
     #[test]

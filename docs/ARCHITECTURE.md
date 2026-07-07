@@ -42,6 +42,7 @@ The first implementation stores whole-graph JSON cache records keyed by root pat
 - investigation insights
 - insight severity and kind summaries for triage
 - shared insight filtering for CLI, API, and web workflows
+- edge explanations for confidence and provenance evidence
 - manifest entrypoint target resolution checks
 - dependency consistency checks
 - conflicting manifest dependency constraint checks
@@ -117,6 +118,7 @@ Responsibilities:
 - provide error trace endpoints for potential error/exception sources and upstream entrypoint paths
 - provide investigation insight endpoints with severity, kind, search, and limit filters
 - provide graph query endpoints
+- provide edge explanation endpoints for confidence and provenance evidence
 - provide neighborhood query expansion for local incoming/outgoing graph context
 - provide graph slice endpoints with server-side paging and filtering
 - provide node context endpoints for paged detail exploration

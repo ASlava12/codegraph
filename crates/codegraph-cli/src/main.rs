@@ -1,9 +1,10 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
-    ConfigTraceRequest, EntrypointTraceRequest, ErrorTraceRequest, InsightFilter, InsightSeverity,
-    TraceRequest, TraceStart, entrypoints, filter_insight_report, insights, query_graph, summarize,
-    trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    ConfigTraceRequest, EntrypointTraceRequest, ErrorTraceRequest, ExplainEdgeRequest,
+    InsightFilter, InsightSeverity, TraceRequest, TraceStart, entrypoints, explain_edge,
+    filter_insight_report, insights, query_graph, summarize, trace, trace_config, trace_dependents,
+    trace_entrypoints, trace_errors,
 };
 use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{IndexOptions, scan_project};
@@ -65,6 +66,40 @@ enum Command {
         /// Project root to scan.
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Explain why an edge exists and show confidence/provenance evidence.
+    ExplainEdge {
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Exact edge index from graph/query/focus results.
+        #[arg(long)]
+        edge_index: Option<usize>,
+
+        /// Source node id or label substring.
+        #[arg(long)]
+        source: Option<String>,
+
+        /// Target node id or label substring.
+        #[arg(long)]
+        target: Option<String>,
+
+        /// Edge kind substring such as calls, imports, or references.
+        #[arg(long)]
+        kind: Option<String>,
 
         /// Include hidden files and directories.
         #[arg(long)]
@@ -388,6 +423,28 @@ fn main() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&query_graph(&graph, &expression)?)?
             );
+        }
+        Command::ExplainEdge {
+            path,
+            edge_index,
+            source,
+            target,
+            kind,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
+            let result = explain_edge(
+                &graph,
+                ExplainEdgeRequest {
+                    edge_index,
+                    source,
+                    target,
+                    kind,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Command::Trace {
             label,

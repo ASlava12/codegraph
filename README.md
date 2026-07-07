@@ -33,6 +33,7 @@ Implemented now:
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
+- Edge explanation command and API for confidence/provenance evidence.
 - Path queries for finding directed dependency paths between labels or node ids.
 - Confidence-aware edge queries and UI edge labels for fact provenance.
 - Server-side graph paging and filtering endpoint for large repository exploration.
@@ -130,6 +131,13 @@ Trace incoming dependents for impact analysis:
 
 ```bash
 cargo run -p codegraph-cli -- trace-dependents load_config . --depth 3
+```
+
+Explain why a graph edge exists:
+
+```bash
+cargo run -p codegraph-cli -- explain-edge . --source main --target load_config --kind calls
+cargo run -p codegraph-cli -- explain-edge . --edge-index 12
 ```
 
 Trace startup flows from entrypoint candidates:
@@ -248,6 +256,11 @@ curl --get 'http://127.0.0.1:3765/api/query' \
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=path from:main to:load_config depth:6'
+curl --get 'http://127.0.0.1:3765/api/explain-edge' \
+  --data-urlencode 'path=.' \
+  --data-urlencode 'source=main' \
+  --data-urlencode 'target=load_config' \
+  --data-urlencode 'kind=calls'
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
 curl 'http://127.0.0.1:3765/api/dependents?path=.&label=load_config&depth=3'
 curl 'http://127.0.0.1:3765/api/trace-config?path=.&target=DATABASE_URL&depth=6'

@@ -9,11 +9,11 @@ use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
     ConfigTraceRequest, ConfigTraceResult, EntrypointTraceReport, EntrypointTraceRequest,
-    ErrorTraceRequest, ErrorTraceResult, FocusRequest, GraphSlice, GraphSliceRequest,
-    InsightFilter, InsightReport, InsightSeverity, NodeContext, TraceRequest, TraceStart,
-    entrypoints, export_dot, export_ndjson, filter_insight_report, focus_subgraph, insights,
-    node_context, query_graph, slice_graph, summarize, trace, trace_config, trace_dependents,
-    trace_entrypoints, trace_errors,
+    ErrorTraceRequest, ErrorTraceResult, ExplainEdgeRequest, FocusRequest, GraphSlice,
+    GraphSliceRequest, InsightFilter, InsightReport, InsightSeverity, NodeContext, TraceRequest,
+    TraceStart, entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report,
+    focus_subgraph, insights, node_context, query_graph, slice_graph, summarize, trace,
+    trace_config, trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::IndexOptions;
@@ -135,6 +135,15 @@ struct ErrorTraceQuery {
 struct GraphQuery {
     path: Option<PathBuf>,
     q: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExplainEdgeQuery {
+    path: Option<PathBuf>,
+    edge_index: Option<usize>,
+    source: Option<String>,
+    target: Option<String>,
+    kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -324,6 +333,7 @@ async fn main() -> Result<()> {
         .route("/api/entrypoint-traces", get(entrypoint_traces_api))
         .route("/api/insights", get(insights_api))
         .route("/api/query", get(query_api))
+        .route("/api/explain-edge", get(explain_edge_api))
         .route("/api/trace", get(trace_api))
         .route("/api/dependents", get(dependents_api))
         .route("/api/trace-config", get(trace_config_api))
@@ -706,6 +716,24 @@ async fn query_api(
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let result =
         query_graph(&graph, &query.q).map_err(|error| ApiError::bad_request(error.to_string()))?;
+    Ok(Json(result))
+}
+
+async fn explain_edge_api(
+    State(state): State<AppState>,
+    Query(query): Query<ExplainEdgeQuery>,
+) -> Result<Json<Option<codegraph_analysis::EdgeExplanation>>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let result = explain_edge(
+        &graph,
+        ExplainEdgeRequest {
+            edge_index: query.edge_index,
+            source: normalize_query_string(query.source),
+            target: normalize_query_string(query.target),
+            kind: normalize_query_string(query.kind),
+        },
+    )
+    .map_err(|error| ApiError::bad_request(error.to_string()))?;
     Ok(Json(result))
 }
 
