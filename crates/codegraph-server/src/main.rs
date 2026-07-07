@@ -2667,6 +2667,41 @@ fn api_schema_response() -> ApiSchemaResponse {
         enum_values: BTreeMap::from([
             ("export_format", vec!["json", "dot", "ndjson"]),
             (
+                "graph_node_kind",
+                vec![
+                    "repository",
+                    "directory",
+                    "file",
+                    "module",
+                    "function",
+                    "entrypoint",
+                    "type",
+                    "config",
+                    "environment",
+                    "external_dependency",
+                    "unknown",
+                ],
+            ),
+            (
+                "graph_edge_kind",
+                vec![
+                    "contains",
+                    "imports",
+                    "calls",
+                    "defines",
+                    "references",
+                    "reads_config",
+                    "reads_environment",
+                    "may_error",
+                    "entrypoint",
+                    "depends_on",
+                ],
+            ),
+            (
+                "graph_confidence",
+                vec!["exact", "semantic", "syntactic", "heuristic", "unknown"],
+            ),
+            (
                 "job_status",
                 vec!["queued", "running", "complete", "failed", "canceled"],
             ),
@@ -3430,7 +3465,13 @@ fn graph_slice_params() -> Vec<ApiParameterSpec> {
             None,
             "Restrict nodes by path prefix.",
         ),
-        query_param("kind", false, "string", None, "Restrict nodes by kind."),
+        query_param(
+            "kind",
+            false,
+            "graph_node_kind",
+            None,
+            "Restrict nodes by kind.",
+        ),
         query_param(
             "search",
             false,
@@ -3455,14 +3496,14 @@ fn graph_slice_params() -> Vec<ApiParameterSpec> {
         query_param(
             "edge_kind",
             false,
-            "string",
+            "graph_edge_kind",
             None,
             "Restrict edges by kind.",
         ),
         query_param(
             "confidence",
             false,
-            "string",
+            "graph_confidence",
             None,
             "Restrict edges by confidence.",
         ),
@@ -4060,6 +4101,25 @@ mod tests {
         assert!(
             schema
                 .enum_values
+                .get("graph_node_kind")
+                .is_some_and(|kinds| kinds.contains(&"function") && kinds.contains(&"environment"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_edge_kind")
+                .is_some_and(|kinds| kinds.contains(&"calls") && kinds.contains(&"depends_on"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_confidence")
+                .is_some_and(|confidences| confidences.contains(&"semantic")
+                    && confidences.contains(&"heuristic"))
+        );
+        assert!(
+            schema
+                .enum_values
                 .get("graph_query_command")
                 .is_some_and(|commands| commands.contains(&"diagnostics"))
         );
@@ -4082,6 +4142,21 @@ mod tests {
         assert!(endpoints.contains(&("GET", "/api/query")));
         assert!(endpoints.contains(&("POST", "/api/scan-jobs")));
         assert!(endpoints.contains(&("GET", "/api/scan-jobs/{id}/events")));
+        let graph_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/graph")
+            .expect("schema should list graph endpoint");
+        assert!(graph_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "kind" && parameter.value_type == "graph_node_kind"
+        }));
+        assert!(graph_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "edge_kind" && parameter.value_type == "graph_edge_kind"
+        }));
+        assert!(graph_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "confidence" && parameter.value_type == "graph_confidence"
+        }));
         assert!(
             schema
                 .groups
