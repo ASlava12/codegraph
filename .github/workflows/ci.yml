@@ -51,6 +51,36 @@ jobs:
       - name: Build Docker image
         run: docker build -t codegraph:ci .
 
+      - name: Smoke Docker image
+        run: |
+          docker volume rm codegraph-ci-cache >/dev/null 2>&1 || true
+          docker run --rm -d \
+            --name codegraph-ci \
+            -p 127.0.0.1:3766:3765 \
+            -v "$PWD:/workspace:ro" \
+            -v codegraph-ci-cache:/cache \
+            codegraph:ci
+          cleanup() {
+            docker rm -f codegraph-ci >/dev/null 2>&1 || true
+            docker volume rm codegraph-ci-cache >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3766/api/ready >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = "1"
+
+          curl -fsS http://127.0.0.1:3766/api/live | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const body = JSON.parse(input); if (body.status !== "ok" || body.cache_enabled !== true) process.exit(1); });'
+          curl -fsS http://127.0.0.1:3766/api/ready | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const body = JSON.parse(input); if (body.status !== "ready" || body.root !== "/workspace") process.exit(1); });'
+          curl -fsS http://127.0.0.1:3766/api/schema | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const body = JSON.parse(input); const endpoints = body.groups.flatMap(group => group.endpoints); if (!endpoints.some(endpoint => endpoint.path === "/api/graph")) process.exit(1); });'
+          curl -fsS 'http://127.0.0.1:3766/api/summary?path=.' | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const body = JSON.parse(input); if (typeof body.nodes !== "number" || typeof body.edges !== "number") process.exit(1); });'
+
       - name: Smoke scan CLI
         run: |
           cargo run -p codegraph-cli -- scan . --format ndjson > /tmp/codegraph.ndjson

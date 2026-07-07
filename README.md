@@ -160,7 +160,7 @@ Implemented now:
 - Configurable scan file-size budget for CLI/server scans, with skipped large source files kept visible in summaries, insights, and the web stats panel.
 - Repository-owned scan policy from `.codegraph/config.toml` for file-size budgets plus ignored names and globs.
 - Effective scan policy API and web overview chips for explaining the active file-size, hidden-file, ignored-file, ignored-name, and ignored-glob rules.
-- CI checks for formatting, clippy, tests, UI syntax, web label policy, embedded web assets, CLI scan, server cache, and safe incremental update smoke tests.
+- CI checks for formatting, clippy, tests, UI syntax, web label policy, Docker build and container smoke, embedded web assets, CLI scan, server cache, and safe incremental update smoke tests.
 - Embedded web asset smoke checks cover shareable node, dependency, and query investigation links.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Investigation insights for semantic LSP diagnostics, preserving language-server severity, source, code, file location, and the affected source node for node-card triage.
