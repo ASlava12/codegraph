@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
 
-const CACHE_SCHEMA_VERSION: u32 = 3;
+const CACHE_SCHEMA_VERSION: u32 = 4;
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
 
@@ -47,6 +47,8 @@ pub struct IncrementalMergeReport {
     pub reused_edges: usize,
     pub removed_cached_nodes: usize,
     pub removed_cached_edges: usize,
+    pub chunk_removed_nodes: usize,
+    pub chunk_removed_edges: usize,
     pub replaced_paths: usize,
     pub scanned_nodes: usize,
     pub scanned_edges: usize,
@@ -180,6 +182,8 @@ struct CacheRecord {
     fingerprint: ProjectFingerprint,
     #[serde(default)]
     impact_index: GraphImpactIndex,
+    #[serde(default)]
+    chunk_index: GraphChunkIndex,
     graph: CodeGraph,
 }
 
@@ -192,6 +196,19 @@ struct GraphImpactIndex {
 struct GraphImpactScope {
     node_ids: Vec<u64>,
     edge_indexes: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct GraphChunkIndex {
+    by_path: BTreeMap<String, GraphChunkScope>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct GraphChunkScope {
+    node_ids: Vec<u64>,
+    edge_indexes: Vec<usize>,
+    nodes: usize,
+    edges: usize,
 }
 
 #[derive(Debug, Error)]
@@ -498,6 +515,7 @@ impl GraphCache {
                 merge_graph_preview(
                     &record.graph,
                     &record.impact_index,
+                    &record.chunk_index,
                     &changed_graph,
                     &scan_paths,
                     &removed_paths,
@@ -528,13 +546,15 @@ impl GraphCache {
                 .map(|duration| duration.as_nanos())
                 .unwrap_or(0)
         ));
+        let graph_indexes = build_graph_indexes(graph);
         let record = CacheRecord {
             cache_schema_version: CACHE_SCHEMA_VERSION,
             graph_schema_version: graph.schema_version,
             root: cache_root(root),
             options_hash: options_hash(options),
             fingerprint,
-            impact_index: build_graph_impact_index(graph),
+            impact_index: graph_indexes.impact,
+            chunk_index: graph_indexes.chunks,
             graph: graph.clone(),
         };
         let bytes = serde_json::to_vec_pretty(&record)?;
@@ -925,7 +945,12 @@ fn incremental_plan_from_fingerprints(
     }
 }
 
-fn build_graph_impact_index(graph: &CodeGraph) -> GraphImpactIndex {
+struct GraphIndexes {
+    impact: GraphImpactIndex,
+    chunks: GraphChunkIndex,
+}
+
+fn build_graph_indexes(graph: &CodeGraph) -> GraphIndexes {
     let mut scopes: BTreeMap<String, (BTreeSet<u64>, BTreeSet<usize>)> = BTreeMap::new();
     let mut node_paths: BTreeMap<u64, BTreeSet<String>> = BTreeMap::new();
 
@@ -960,20 +985,66 @@ fn build_graph_impact_index(graph: &CodeGraph) -> GraphImpactIndex {
         }
     }
 
-    GraphImpactIndex {
-        by_path: scopes
-            .into_iter()
-            .map(|(path, (node_ids, edge_indexes))| {
+    let by_path = scopes
+        .into_iter()
+        .map(|(path, (node_ids, edge_indexes))| {
+            let node_ids = node_ids.into_iter().collect::<Vec<_>>();
+            let edge_indexes = edge_indexes.into_iter().collect::<Vec<_>>();
+            let nodes = node_ids.len();
+            let edges = edge_indexes.len();
+            (
+                path,
+                GraphChunkScope {
+                    node_ids,
+                    edge_indexes,
+                    nodes,
+                    edges,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let impact = GraphImpactIndex {
+        by_path: by_path
+            .iter()
+            .map(|(path, scope)| {
                 (
-                    path,
+                    path.clone(),
                     GraphImpactScope {
-                        node_ids: node_ids.into_iter().collect(),
-                        edge_indexes: edge_indexes.into_iter().collect(),
+                        node_ids: scope.node_ids.clone(),
+                        edge_indexes: scope.edge_indexes.clone(),
                     },
                 )
             })
             .collect(),
+    };
+    GraphIndexes {
+        impact,
+        chunks: GraphChunkIndex { by_path },
     }
+}
+
+fn graph_chunk_scope_from_index(
+    index: &GraphChunkIndex,
+    paths: &BTreeSet<String>,
+) -> (BTreeSet<u64>, BTreeSet<usize>) {
+    let mut node_ids = BTreeSet::new();
+    let mut edge_indexes = BTreeSet::new();
+    for path in paths {
+        let Some(scope) = index.by_path.get(path) else {
+            continue;
+        };
+        node_ids.extend(scope.node_ids.iter().copied());
+        edge_indexes.extend(scope.edge_indexes.iter().copied());
+    }
+    (node_ids, edge_indexes)
+}
+
+fn graph_chunk_counts_from_index(
+    index: &GraphChunkIndex,
+    paths: &BTreeSet<String>,
+) -> (usize, usize) {
+    let (node_ids, edge_indexes) = graph_chunk_scope_from_index(index, paths);
+    (node_ids.len(), edge_indexes.len())
 }
 
 fn graph_impact_from_index(
@@ -1030,6 +1101,8 @@ fn complete_merge_report(
         reused_edges,
         removed_cached_nodes: 0,
         removed_cached_edges: 0,
+        chunk_removed_nodes: 0,
+        chunk_removed_edges: 0,
         replaced_paths: plan.scan_paths.len() + plan.removed_paths.len(),
         scanned_nodes: graph.nodes.len().saturating_sub(reused_nodes),
         scanned_edges: graph.edges.len().saturating_sub(reused_edges),
@@ -1042,6 +1115,7 @@ fn complete_merge_report(
 fn merge_graph_preview(
     cached: &CodeGraph,
     index: &GraphImpactIndex,
+    chunks: &GraphChunkIndex,
     changed: &CodeGraph,
     scan_paths: &BTreeSet<String>,
     removed_paths: &BTreeSet<String>,
@@ -1049,6 +1123,8 @@ fn merge_graph_preview(
     let mut replaced_paths = scan_paths.clone();
     replaced_paths.extend(removed_paths.iter().cloned());
     let (removed_node_ids, removed_edge_indexes) = graph_scope_from_index(index, &replaced_paths);
+    let (chunk_removed_nodes, chunk_removed_edges) =
+        graph_chunk_counts_from_index(chunks, &replaced_paths);
 
     let mut kept_node_ids = BTreeSet::new();
     let mut merged = CodeGraph {
@@ -1117,6 +1193,8 @@ fn merge_graph_preview(
         reused_edges,
         removed_cached_nodes: removed_node_ids.len(),
         removed_cached_edges: removed_edge_indexes.len(),
+        chunk_removed_nodes,
+        chunk_removed_edges,
         replaced_paths: replaced_paths.len(),
         scanned_nodes: changed.nodes.len(),
         scanned_edges: changed.edges.len(),
@@ -1356,7 +1434,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_impact_index_maps_file_spans_to_edges() {
+    fn graph_indexes_map_file_spans_to_edges() {
         let mut graph = CodeGraph::new("demo");
         let file = graph.add_node(NodeKind::File, "src/main.rs");
         let function = graph.add_node_with_span(
@@ -1372,14 +1450,24 @@ mod tests {
         );
         graph.add_edge(file, function, EdgeKind::Contains, Confidence::Exact);
 
-        let index = build_graph_impact_index(&graph);
-        let scope = index
+        let indexes = build_graph_indexes(&graph);
+        let impact_scope = indexes
+            .impact
             .by_path
             .get("src/main.rs")
             .expect("expected impact scope for source file");
+        let chunk_scope = indexes
+            .chunks
+            .by_path
+            .get("src/main.rs")
+            .expect("expected graph chunk scope for source file");
 
-        assert_eq!(scope.node_ids, vec![file.0, function.0]);
-        assert_eq!(scope.edge_indexes, vec![0]);
+        assert_eq!(impact_scope.node_ids, vec![file.0, function.0]);
+        assert_eq!(impact_scope.edge_indexes, vec![0]);
+        assert_eq!(chunk_scope.node_ids, vec![file.0, function.0]);
+        assert_eq!(chunk_scope.edge_indexes, vec![0]);
+        assert_eq!(chunk_scope.nodes, 2);
+        assert_eq!(chunk_scope.edges, 1);
     }
 
     #[test]
@@ -1437,7 +1525,7 @@ mod tests {
     }
 
     #[test]
-    fn older_cache_record_without_impact_index_is_incompatible_not_invalid() {
+    fn older_cache_record_without_chunk_index_is_incompatible_not_invalid() {
         let root = temp_project_root();
         let cache_dir = temp_project_root();
         fs::create_dir_all(root.join("src")).unwrap();
@@ -1727,6 +1815,14 @@ mod tests {
         assert!(preview.merge.reused_edges > 0);
         assert!(preview.merge.removed_cached_nodes > 0);
         assert!(preview.merge.removed_cached_edges > 0);
+        assert_eq!(
+            preview.merge.chunk_removed_nodes,
+            preview.merge.removed_cached_nodes
+        );
+        assert_eq!(
+            preview.merge.chunk_removed_edges,
+            preview.merge.removed_cached_edges
+        );
         assert_eq!(preview.merge.replaced_paths, 1);
         assert!(preview.merge.warning.is_some());
         assert!(labels.contains(&"src/main.rs"));

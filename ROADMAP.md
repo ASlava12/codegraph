@@ -221,6 +221,7 @@ Goal: handle real repositories efficiently.
 - [x] Add changed-scope incremental scan graphs across CLI, API, and web UI.
 - [x] Add first partial graph merge preview from cached graph plus changed-file rescans.
 - [x] Drive partial graph merge previews from the persistent graph impact index.
+- [x] Add persistent file graph chunk index storage for per-file node and edge scopes.
 - Add persistent index storage with partial graph reuse.
 - Incrementally update changed files.
 - [x] Cache parser facts.

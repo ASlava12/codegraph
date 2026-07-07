@@ -3052,6 +3052,8 @@ function renderIncrementalMergePreview(preview) {
       <span>${Number(merge.reused_edges || 0)} reused edges</span>
       <span>${Number(merge.removed_cached_nodes || 0)} removed cached nodes</span>
       <span>${Number(merge.removed_cached_edges || 0)} removed cached edges</span>
+      <span>${Number(merge.chunk_removed_nodes || 0)} chunk nodes</span>
+      <span>${Number(merge.chunk_removed_edges || 0)} chunk edges</span>
       <span>${Number(merge.scanned_nodes || 0)} scanned nodes</span>
       <span>${Number(merge.scanned_edges || 0)} scanned edges</span>
       <span>${Number(merge.replaced_paths || 0)} replaced paths</span>
