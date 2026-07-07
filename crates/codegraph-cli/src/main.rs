@@ -13,8 +13,8 @@ use codegraph_indexer::{
 };
 use codegraph_lsp::{
     DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, SemanticLspResponse, SemanticWorkItemFilter,
-    discover_lsp_servers, semantic_enrichment_plan_with_filter, semantic_execution_batch,
-    semantic_graph_patch_from_responses, semantic_readiness,
+    apply_semantic_graph_patch, discover_lsp_servers, semantic_enrichment_plan_with_filter,
+    semantic_execution_batch, semantic_graph_patch_from_responses, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
@@ -53,6 +53,9 @@ enum Command {
 
     /// Convert semantic LSP responses into a graph patch.
     SemanticPatch(SemanticPatchArgs),
+
+    /// Apply semantic LSP responses and emit an enriched graph plus report.
+    SemanticApply(SemanticPatchArgs),
 
     /// Scan a project and emit the initial graph as JSON.
     Scan {
@@ -681,6 +684,36 @@ fn main() -> Result<()> {
                     &batch,
                     &responses
                 ))?
+            );
+        }
+        Command::SemanticApply(args) => {
+            let path = args.plan.scan.path;
+            let workspace_root = canonical_workspace_root(&path);
+            let filter = SemanticWorkItemFilter {
+                language: args.plan.work_language,
+                status: args.plan.work_status,
+                capability: args.plan.work_capability,
+            };
+            let graph = scan_with_options(
+                path,
+                args.plan.scan.include_hidden,
+                args.plan.scan.include_ignored,
+                max_file_size,
+                &args.plan.scan.cache,
+            )?;
+            let batch = semantic_execution_batch(
+                &workspace_root,
+                &graph,
+                args.plan.work_item_limit,
+                filter,
+            );
+            let response_text = std::fs::read_to_string(&args.responses)?;
+            let responses: Vec<SemanticLspResponse> = serde_json::from_str(&response_text)?;
+            let patch =
+                semantic_graph_patch_from_responses(&workspace_root, &graph, &batch, &responses);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&apply_semantic_graph_patch(&graph, &patch))?
             );
         }
         Command::Scan {

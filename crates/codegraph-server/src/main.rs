@@ -23,8 +23,9 @@ use codegraph_indexer::{
 };
 use codegraph_lsp::{
     DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, LspDiscoveryReport, SemanticEnrichmentPlan,
-    SemanticGraphPatch, SemanticLspResponse, SemanticReadinessReport, SemanticWorkItemFilter,
-    discover_lsp_servers, semantic_enrichment_plan_with_filter, semantic_execution_batch,
+    SemanticGraphApplyResult, SemanticGraphPatch, SemanticLspResponse, SemanticReadinessReport,
+    SemanticWorkItemFilter, apply_semantic_graph_patch, discover_lsp_servers,
+    semantic_enrichment_plan_with_filter, semantic_execution_batch,
     semantic_graph_patch_from_responses, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
@@ -430,6 +431,7 @@ async fn main() -> Result<()> {
         .route("/api/semantic-plan", get(semantic_plan_api))
         .route("/api/semantic-batch", get(semantic_batch_api))
         .route("/api/semantic-patch", post(semantic_patch_api))
+        .route("/api/semantic-apply", post(semantic_apply_api))
         .route("/api/projects", get(projects_api))
         .route("/api/scan-options", get(scan_options_api))
         .route("/api/coverage", get(coverage_api))
@@ -767,6 +769,28 @@ async fn semantic_patch_api(
         &batch,
         &request.responses,
     )))
+}
+
+async fn semantic_apply_api(
+    State(state): State<AppState>,
+    Json(request): Json<SemanticPatchRequest>,
+) -> Result<Json<SemanticGraphApplyResult>, ApiError> {
+    let root = resolve_scan_root(&state, request.path.as_deref())?;
+    let graph = scan_graph(&state, Some(root.as_path())).await?;
+    let batch = semantic_execution_batch(
+        &root,
+        &graph,
+        request
+            .work_item_limit
+            .unwrap_or(DEFAULT_SEMANTIC_WORK_ITEM_LIMIT),
+        SemanticWorkItemFilter {
+            language: request.work_language,
+            status: request.work_status,
+            capability: request.work_capability,
+        },
+    );
+    let patch = semantic_graph_patch_from_responses(&root, &graph, &batch, &request.responses);
+    Ok(Json(apply_semantic_graph_patch(&graph, &patch)))
 }
 
 async fn projects_api(State(state): State<AppState>) -> Json<Vec<ProjectResponse>> {

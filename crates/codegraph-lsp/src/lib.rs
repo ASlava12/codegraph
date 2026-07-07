@@ -178,6 +178,22 @@ pub struct SemanticResponseError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SemanticGraphApplyResult {
+    pub graph: CodeGraph,
+    pub report: SemanticGraphApplyReport,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct SemanticGraphApplyReport {
+    pub semantic_edges: usize,
+    pub replaced_edges: usize,
+    pub added_edges: usize,
+    pub skipped_edges: usize,
+    pub diagnostic_nodes: usize,
+    pub diagnostic_edges: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LanguageEnrichmentPlan {
     pub language: String,
     pub status: &'static str,
@@ -792,6 +808,185 @@ pub fn semantic_graph_patch_from_responses(
         unmatched_locations,
         response_errors,
     }
+}
+
+pub fn apply_semantic_graph_patch(
+    graph: &CodeGraph,
+    patch: &SemanticGraphPatch,
+) -> SemanticGraphApplyResult {
+    let mut graph = graph.clone();
+    let mut report = SemanticGraphApplyReport::default();
+    let mut replaced_indexes = BTreeSet::new();
+
+    for edge_patch in &patch.semantic_edges {
+        report.semantic_edges += 1;
+        let edge = semantic_edge_from_patch(edge_patch);
+        if let Some(index) = edge_patch.replaced_edge_index
+            && index < graph.edges.len()
+            && replaced_indexes.insert(index)
+        {
+            graph.edges[index] = edge;
+            report.replaced_edges += 1;
+            continue;
+        }
+
+        if graph
+            .edges
+            .iter()
+            .any(|existing| semantic_edge_matches(existing, &edge))
+        {
+            report.skipped_edges += 1;
+        } else {
+            graph.edges.push(edge);
+            report.added_edges += 1;
+        }
+    }
+
+    for diagnostic in &patch.diagnostics {
+        let source = node_at_location(
+            &graph,
+            &diagnostic.path,
+            Some(diagnostic.line),
+            Some(diagnostic.column),
+        )
+        .map(|node| node.id);
+        let diagnostic_id = add_diagnostic_node(&mut graph, diagnostic);
+        report.diagnostic_nodes += 1;
+        if let Some(source) = source {
+            graph.add_edge_with_metadata(
+                source,
+                diagnostic_id,
+                EdgeKind::MayError,
+                Confidence::Semantic,
+                diagnostic_edge_metadata(diagnostic),
+            );
+            report.diagnostic_edges += 1;
+        }
+    }
+
+    SemanticGraphApplyResult { graph, report }
+}
+
+fn semantic_edge_from_patch(edge_patch: &SemanticEdgePatch) -> Edge {
+    Edge {
+        source: edge_patch.source,
+        target: edge_patch.target,
+        kind: edge_patch.kind.clone(),
+        confidence: Confidence::Semantic,
+        metadata: semantic_edge_metadata(edge_patch),
+    }
+}
+
+fn semantic_edge_matches(left: &Edge, right: &Edge) -> bool {
+    left.source == right.source
+        && left.target == right.target
+        && left.kind == right.kind
+        && left.confidence == right.confidence
+}
+
+fn semantic_edge_metadata(edge_patch: &SemanticEdgePatch) -> BTreeMap<String, String> {
+    let mut metadata = BTreeMap::from([
+        ("source".to_string(), "lsp".to_string()),
+        ("relation".to_string(), "semantic_resolution".to_string()),
+        ("request_id".to_string(), edge_patch.request_id.clone()),
+        ("work_item_id".to_string(), edge_patch.work_item_id.clone()),
+        ("evidence".to_string(), edge_patch.evidence.to_string()),
+        ("path".to_string(), edge_patch.path.clone()),
+        ("line".to_string(), edge_patch.line.to_string()),
+        ("column".to_string(), edge_patch.column.to_string()),
+    ]);
+    if let Some(index) = edge_patch.replaced_edge_index {
+        metadata.insert("replaced_edge_index".to_string(), index.to_string());
+    }
+    if let Some(target) = edge_patch.original_target {
+        metadata.insert("original_target".to_string(), target.to_string());
+    }
+    metadata
+}
+
+fn add_diagnostic_node(graph: &mut CodeGraph, diagnostic: &SemanticDiagnosticPatch) -> NodeId {
+    let severity = diagnostic
+        .severity
+        .map(diagnostic_severity_label)
+        .unwrap_or("unknown");
+    let label = format!("{}: {}", severity, truncate_label(&diagnostic.message, 96));
+    graph.add_node_with_metadata(
+        NodeKind::Unknown,
+        label,
+        Some(SourceSpan {
+            path: diagnostic.path.clone(),
+            start_line: diagnostic.line,
+            start_column: diagnostic.column,
+            end_line: diagnostic.line,
+            end_column: diagnostic.column.saturating_add(1),
+        }),
+        diagnostic_node_metadata(diagnostic),
+    )
+}
+
+fn diagnostic_node_metadata(diagnostic: &SemanticDiagnosticPatch) -> BTreeMap<String, String> {
+    let mut metadata = BTreeMap::from([
+        ("item_kind".to_string(), "diagnostic".to_string()),
+        ("source".to_string(), "lsp".to_string()),
+        ("request_id".to_string(), diagnostic.request_id.clone()),
+        ("work_item_id".to_string(), diagnostic.work_item_id.clone()),
+        ("message".to_string(), diagnostic.message.clone()),
+        ("path".to_string(), diagnostic.path.clone()),
+        ("line".to_string(), diagnostic.line.to_string()),
+        ("column".to_string(), diagnostic.column.to_string()),
+    ]);
+    if let Some(severity) = diagnostic.severity {
+        metadata.insert(
+            "severity".to_string(),
+            diagnostic_severity_label(severity).to_string(),
+        );
+        metadata.insert("severity_code".to_string(), severity.to_string());
+    }
+    if let Some(code) = &diagnostic.code {
+        metadata.insert("diagnostic_code".to_string(), code.clone());
+    }
+    if let Some(source) = &diagnostic.source {
+        metadata.insert("diagnostic_source".to_string(), source.clone());
+    }
+    metadata
+}
+
+fn diagnostic_edge_metadata(diagnostic: &SemanticDiagnosticPatch) -> BTreeMap<String, String> {
+    let mut metadata = BTreeMap::from([
+        ("source".to_string(), "lsp".to_string()),
+        ("relation".to_string(), "diagnostic".to_string()),
+        ("request_id".to_string(), diagnostic.request_id.clone()),
+        ("work_item_id".to_string(), diagnostic.work_item_id.clone()),
+        ("path".to_string(), diagnostic.path.clone()),
+        ("line".to_string(), diagnostic.line.to_string()),
+        ("column".to_string(), diagnostic.column.to_string()),
+    ]);
+    if let Some(severity) = diagnostic.severity {
+        metadata.insert(
+            "severity".to_string(),
+            diagnostic_severity_label(severity).to_string(),
+        );
+    }
+    metadata
+}
+
+fn diagnostic_severity_label(severity: u64) -> &'static str {
+    match severity {
+        1 => "error",
+        2 => "warning",
+        3 => "info",
+        4 => "hint",
+        _ => "unknown",
+    }
+}
+
+fn truncate_label(value: &str, limit: usize) -> String {
+    if value.chars().count() <= limit {
+        return value.to_string();
+    }
+    let mut truncated: String = value.chars().take(limit.saturating_sub(3)).collect();
+    truncated.push_str("...");
+    truncated
 }
 
 fn collect_definition_edges(
@@ -2426,6 +2621,83 @@ mod tests {
         assert_eq!(patch.diagnostics[0].code.as_deref(), Some("E0001"));
         assert_eq!(patch.diagnostics[0].source.as_deref(), Some("rustc"));
         assert_eq!(patch.diagnostics[0].message, "semantic mismatch");
+    }
+
+    #[test]
+    fn apply_semantic_graph_patch_replaces_edges_and_adds_diagnostics() {
+        let (graph, caller, helper) = semantic_patch_graph();
+        let patch = SemanticGraphPatch {
+            workspace_root: "/workspace/repo".to_string(),
+            responses: 2,
+            matched_responses: 2,
+            semantic_edges: vec![SemanticEdgePatch {
+                request_id: "lsp:rust-analyzer:definitions:rust:edge:1".to_string(),
+                work_item_id: "definitions:rust:edge:1".to_string(),
+                source: caller,
+                target: helper,
+                kind: EdgeKind::Calls,
+                confidence: Confidence::Semantic,
+                replaced_edge_index: Some(1),
+                original_target: Some(helper),
+                path: "src/main.rs".to_string(),
+                line: 10,
+                column: 5,
+                evidence: "lsp_definition",
+            }],
+            diagnostics: vec![SemanticDiagnosticPatch {
+                request_id: "lsp:rust-analyzer:diagnostics:rust:node:2".to_string(),
+                work_item_id: "diagnostics:rust:node:2".to_string(),
+                path: "src/main.rs".to_string(),
+                line: 3,
+                column: 9,
+                severity: Some(1),
+                code: Some("E0001".to_string()),
+                source: Some("rustc".to_string()),
+                message: "semantic mismatch".to_string(),
+            }],
+            unmatched_locations: Vec::new(),
+            response_errors: Vec::new(),
+        };
+
+        let result = apply_semantic_graph_patch(&graph, &patch);
+
+        assert_eq!(result.report.semantic_edges, 1);
+        assert_eq!(result.report.replaced_edges, 1);
+        assert_eq!(result.report.added_edges, 0);
+        assert_eq!(result.report.diagnostic_nodes, 1);
+        assert_eq!(result.report.diagnostic_edges, 1);
+        assert_eq!(result.graph.edges[1].source, caller);
+        assert_eq!(result.graph.edges[1].target, helper);
+        assert_eq!(result.graph.edges[1].confidence, Confidence::Semantic);
+        assert_eq!(
+            result.graph.edges[1]
+                .metadata
+                .get("evidence")
+                .map(String::as_str),
+            Some("lsp_definition")
+        );
+        let diagnostic_node = result.graph.nodes.last().expect("diagnostic node");
+        assert_eq!(diagnostic_node.kind, NodeKind::Unknown);
+        assert_eq!(
+            diagnostic_node
+                .metadata
+                .get("item_kind")
+                .map(String::as_str),
+            Some("diagnostic")
+        );
+        assert_eq!(
+            diagnostic_node.metadata.get("severity").map(String::as_str),
+            Some("error")
+        );
+        let diagnostic_edge = result.graph.edges.last().expect("diagnostic edge");
+        assert_eq!(diagnostic_edge.source, caller);
+        assert_eq!(diagnostic_edge.target, diagnostic_node.id);
+        assert_eq!(diagnostic_edge.kind, EdgeKind::MayError);
+        assert_eq!(diagnostic_edge.confidence, Confidence::Semantic);
+        assert_eq!(
+            diagnostic_edge.metadata.get("relation").map(String::as_str),
+            Some("diagnostic")
+        );
     }
 
     fn semantic_patch_graph() -> (CodeGraph, NodeId, NodeId) {
