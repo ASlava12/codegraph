@@ -104,6 +104,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect directed dependency cycles across calls, imports, references, and dependency edges.
 - [x] Detect package manifest dependency boundaries.
 - [x] Detect manifest entrypoints whose declared target cannot be resolved.
+- [x] Detect entrypoints that do not lead to any known code/config/dependency/error flow.
 - [x] Detect external imports that are missing declared manifest dependencies.
 - [x] Detect runtime manifest dependencies with no matching import.
 - [x] Detect conflicting manifest dependency constraints for the same package.

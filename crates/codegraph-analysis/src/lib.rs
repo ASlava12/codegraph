@@ -1119,6 +1119,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
     add_unresolved_entrypoint_insights(graph, &mut insights);
+    add_entrypoint_dead_end_insights(graph, &mut insights);
     add_unreachable_config_read_insights(graph, &mut insights);
     add_unreachable_source_file_insights(graph, &mut insights);
     add_conflicting_config_default_insights(graph, &mut insights);
@@ -3845,6 +3846,83 @@ fn add_unresolved_entrypoint_insights(graph: &CodeGraph, insights: &mut Vec<Insi
             edges: incoming_edge_indexes(graph, node.id, EdgeKind::Entrypoint),
         });
     }
+}
+
+fn add_entrypoint_dead_end_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Entrypoint
+            || entrypoint_has_outgoing_trace_edge(graph, node.id)
+            || unresolved_manifest_entrypoint_target(graph, node)
+            || unresolved_framework_route_handler_target(graph, node)
+        {
+            continue;
+        }
+
+        insights.push(Insight {
+            kind: "entrypoint_dead_end".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Entrypoint `{}` has no outgoing code, config, dependency, or error flow",
+                node.label
+            ),
+            nodes: vec![node.id],
+            edges: incoming_edge_indexes(graph, node.id, EdgeKind::Entrypoint),
+        });
+    }
+}
+
+fn entrypoint_has_outgoing_trace_edge(graph: &CodeGraph, node_id: NodeId) -> bool {
+    graph
+        .edges
+        .iter()
+        .any(|edge| edge.source == node_id && is_trace_edge(&edge.kind))
+}
+
+fn unresolved_manifest_entrypoint_target(graph: &CodeGraph, node: &Node) -> bool {
+    if node
+        .metadata
+        .get("item_kind")
+        .is_none_or(|kind| kind != "manifest_entrypoint")
+        || node
+            .metadata
+            .get("target")
+            .map(|target| target.trim())
+            .is_none_or(str::is_empty)
+    {
+        return false;
+    }
+
+    !graph.edges.iter().any(|edge| {
+        edge.source == node.id
+            && edge.kind == EdgeKind::References
+            && edge.metadata.get("relation").is_some_and(|relation| {
+                matches!(relation.as_str(), "entrypoint_file" | "entrypoint_function")
+            })
+    })
+}
+
+fn unresolved_framework_route_handler_target(graph: &CodeGraph, node: &Node) -> bool {
+    if node
+        .metadata
+        .get("item_kind")
+        .is_none_or(|kind| kind != "framework_route")
+        || node
+            .metadata
+            .get("handler")
+            .map(|handler| handler.trim())
+            .is_none_or(str::is_empty)
+    {
+        return false;
+    }
+
+    !graph.edges.iter().any(|edge| {
+        edge.source == node.id
+            && edge.kind == EdgeKind::References
+            && edge
+                .metadata
+                .get("resolution")
+                .is_some_and(|resolution| resolution == "framework_route_handler")
+    })
 }
 
 fn add_unreachable_config_read_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
@@ -6810,6 +6888,62 @@ mod tests {
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unresolved_entrypoint_target"
                 && (insight.nodes.contains(&resolved) || insight.nodes.contains(&targetless))
+        }));
+    }
+
+    #[test]
+    fn insights_report_entrypoint_dead_ends() {
+        let mut graph = CodeGraph::new("repo");
+        let dead = graph.add_node(NodeKind::Entrypoint, "npm script:preview");
+        let live = graph.add_node(NodeKind::Entrypoint, "cargo bin:api");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let unresolved_manifest = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "cargo bin:missing",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "manifest_entrypoint".to_string()),
+                ("target".to_string(), "src/missing.rs".to_string()),
+            ]),
+        );
+        graph.add_edge(graph.root, dead, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(graph.root, live, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(
+            graph.root,
+            unresolved_manifest,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge_with_metadata(
+            live,
+            main,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "entrypoint_function".to_string())]),
+        );
+
+        let report = insights(&graph);
+        let dead_end = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "entrypoint_dead_end")
+            .expect("expected dead-end entrypoint insight");
+
+        assert_eq!(dead_end.severity, InsightSeverity::Warning);
+        assert_eq!(dead_end.nodes, vec![dead]);
+        assert!(dead_end.edges.iter().any(|index| {
+            graph
+                .edges
+                .get(*index)
+                .is_some_and(|edge| edge.source == graph.root && edge.target == dead)
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "entrypoint_dead_end"
+                && (insight.nodes.contains(&live) || insight.nodes.contains(&unresolved_manifest))
+        }));
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_entrypoint_target"
+                && insight.nodes.contains(&unresolved_manifest)
         }));
     }
 
