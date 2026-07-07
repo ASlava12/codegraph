@@ -35,6 +35,9 @@
             <input id="pathInput" type="text" value="." autocomplete="off" />
           </label>
           <button id="scanButton" type="button" data-i18n="button.scan">Scan</button>
+          <button id="scanCancelButton" class="cancel-action" type="button" data-i18n="button.cancel" disabled>
+            Cancel
+          </button>
         </section>
 
         <section class="stats" aria-label="Graph summary">
@@ -90,6 +93,9 @@
             </label>
             <button id="semanticWorkFilterButton" type="button" data-i18n="button.apply">Apply</button>
             <button id="semanticEnrichButton" type="button" data-i18n="button.semanticEnrich">Enrich</button>
+            <button id="semanticCancelButton" class="cancel-action" type="button" data-i18n="button.cancel" disabled>
+              Cancel
+            </button>
           </div>
           <div id="semanticWorkList" class="semantic-work-list"></div>
           <div id="architectureList" class="architecture-list"></div>

@@ -122,7 +122,7 @@ select {
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: end;
 }
@@ -195,6 +195,16 @@ button {
 button:disabled {
   cursor: wait;
   opacity: 0.7;
+}
+
+button.cancel-action {
+  color: #f6d8d8;
+  background: rgba(223, 126, 126, 0.18);
+  border: 1px solid rgba(223, 126, 126, 0.34);
+}
+
+button.cancel-action:hover:not(:disabled) {
+  background: rgba(223, 126, 126, 0.26);
 }
 
 .stats {
@@ -360,7 +370,7 @@ button:disabled {
 
 .semantic-work-filters {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto auto;
   gap: 6px;
   align-items: end;
 }

@@ -4,7 +4,7 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
@@ -389,11 +389,15 @@ enum ScanJobStatus {
     Running,
     Complete,
     Failed,
+    Canceled,
 }
 
 impl ScanJobStatus {
     fn is_terminal(self) -> bool {
-        matches!(self, ScanJobStatus::Complete | ScanJobStatus::Failed)
+        matches!(
+            self,
+            ScanJobStatus::Complete | ScanJobStatus::Failed | ScanJobStatus::Canceled
+        )
     }
 }
 
@@ -439,6 +443,7 @@ struct JobStoreHealth {
     running: usize,
     complete: usize,
     failed: usize,
+    canceled: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -550,6 +555,7 @@ async fn main() -> Result<()> {
         .route("/api/semantic-enrich", post(semantic_enrich_api))
         .route("/api/semantic-jobs", post(start_semantic_job))
         .route("/api/semantic-jobs/{id}", get(semantic_job_status))
+        .route("/api/semantic-jobs/{id}", delete(cancel_semantic_job))
         .route("/api/semantic-jobs/{id}/events", get(semantic_job_events))
         .route("/api/semantic-jobs/{id}/result", get(semantic_job_result))
         .route("/api/projects", get(projects_api))
@@ -559,6 +565,7 @@ async fn main() -> Result<()> {
         .route("/api/cache-diff", get(cache_diff_api))
         .route("/api/scan-jobs", post(start_scan_job))
         .route("/api/scan-jobs/{id}", get(scan_job_status))
+        .route("/api/scan-jobs/{id}", delete(cancel_scan_job))
         .route("/api/scan-jobs/{id}/events", get(scan_job_events))
         .route("/api/scan-jobs/{id}/result", get(scan_job_result))
         .route("/api/export", get(export_api))
@@ -620,6 +627,10 @@ async fn start_scan_job(
     let max_jobs = state.max_scan_jobs;
     let scan_permits = Arc::clone(&state.scan_permits);
     tokio::spawn(async move {
+        if scan_job_is_canceled(&jobs, &id).await {
+            return;
+        }
+
         let Ok(permit) = scan_permits.acquire_owned().await else {
             update_scan_job(
                 &jobs,
@@ -636,6 +647,10 @@ async fn start_scan_job(
             .await;
             return;
         };
+
+        if scan_job_is_canceled(&jobs, &id).await {
+            return;
+        }
 
         update_scan_job(
             &jobs,
@@ -728,6 +743,14 @@ async fn scan_job_status(
     Ok(Json(job_without_graph(job)))
 }
 
+async fn cancel_scan_job(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<ScanJob>, ApiError> {
+    let job = cancel_scan_job_in_store(&state.jobs, &id, state.max_scan_jobs).await?;
+    Ok(Json(job_without_graph(job)))
+}
+
 async fn scan_job_events(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
@@ -753,7 +776,7 @@ async fn scan_job_events(
                 break;
             };
 
-            let is_terminal = matches!(job.status, ScanJobStatus::Complete | ScanJobStatus::Failed);
+            let is_terminal = job.status.is_terminal();
             let data = serde_json::to_string(&job).unwrap_or_else(|error| {
                 serde_json::json!({ "error": error.to_string() }).to_string()
             });
@@ -795,6 +818,7 @@ async fn scan_job_result(
             }))
         }
         ScanJobStatus::Failed => Err(ApiError::internal(job.message)),
+        ScanJobStatus::Canceled => Err(ApiError::bad_request("scan job was canceled")),
         _ => Err(ApiError::bad_request("scan job is not complete")),
     }
 }
@@ -1014,6 +1038,10 @@ async fn start_semantic_job(
     let max_jobs = state.max_semantic_jobs;
     let semantic_permits = Arc::clone(&state.semantic_permits);
     tokio::spawn(async move {
+        if semantic_job_is_canceled(&jobs, &id).await {
+            return;
+        }
+
         let Ok(permit) = semantic_permits.acquire_owned().await else {
             update_semantic_job(
                 &jobs,
@@ -1028,6 +1056,10 @@ async fn start_semantic_job(
             .await;
             return;
         };
+
+        if semantic_job_is_canceled(&jobs, &id).await {
+            return;
+        }
 
         update_semantic_job(
             &jobs,
@@ -1109,6 +1141,15 @@ async fn semantic_job_status(
     Ok(Json(semantic_job_without_result(job)))
 }
 
+async fn cancel_semantic_job(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<SemanticJob>, ApiError> {
+    let job =
+        cancel_semantic_job_in_store(&state.semantic_jobs, &id, state.max_semantic_jobs).await?;
+    Ok(Json(semantic_job_without_result(job)))
+}
+
 async fn semantic_job_events(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
@@ -1134,7 +1175,7 @@ async fn semantic_job_events(
                 break;
             };
 
-            let is_terminal = matches!(job.status, ScanJobStatus::Complete | ScanJobStatus::Failed);
+            let is_terminal = job.status.is_terminal();
             let data = serde_json::to_string(&job).unwrap_or_else(|error| {
                 serde_json::json!({ "error": error.to_string() }).to_string()
             });
@@ -1176,6 +1217,7 @@ async fn semantic_job_result(
             }))
         }
         ScanJobStatus::Failed => Err(ApiError::internal(job.message)),
+        ScanJobStatus::Canceled => Err(ApiError::bad_request("semantic job was canceled")),
         _ => Err(ApiError::bad_request("semantic job is not complete")),
     }
 }
@@ -1867,6 +1909,9 @@ async fn update_scan_job(
 ) {
     let mut jobs = jobs.write().await;
     if let Some(job) = jobs.get_mut(id) {
+        if job.status == ScanJobStatus::Canceled && update.status != ScanJobStatus::Canceled {
+            return;
+        }
         let now = unix_seconds();
         job.status = update.status;
         job.message = update.message;
@@ -1879,6 +1924,43 @@ async fn update_scan_job(
         job.graph = update.graph;
     }
     prune_scan_jobs(&mut jobs, max_jobs);
+}
+
+async fn cancel_scan_job_in_store(
+    jobs: &RwLock<BTreeMap<String, ScanJob>>,
+    id: &str,
+    max_jobs: usize,
+) -> Result<ScanJob, ApiError> {
+    let mut jobs = jobs.write().await;
+    let job = jobs
+        .get_mut(id)
+        .ok_or_else(|| ApiError::not_found("scan job not found"))?;
+    match job.status {
+        ScanJobStatus::Queued | ScanJobStatus::Running => {
+            let now = unix_seconds();
+            job.status = ScanJobStatus::Canceled;
+            job.message = "canceled".to_string();
+            job.updated_at_unix = now;
+            job.finished_at_unix = Some(now);
+            job.cache = None;
+            job.summary = None;
+            job.graph = None;
+        }
+        ScanJobStatus::Canceled => {}
+        ScanJobStatus::Complete | ScanJobStatus::Failed => {
+            return Err(ApiError::bad_request("scan job is already complete"));
+        }
+    }
+    let job = job.clone();
+    prune_scan_jobs(&mut jobs, max_jobs);
+    Ok(job)
+}
+
+async fn scan_job_is_canceled(jobs: &RwLock<BTreeMap<String, ScanJob>>, id: &str) -> bool {
+    jobs.read()
+        .await
+        .get(id)
+        .is_some_and(|job| job.status == ScanJobStatus::Canceled)
 }
 
 fn prune_scan_jobs(jobs: &mut BTreeMap<String, ScanJob>, max_jobs: usize) {
@@ -1965,6 +2047,9 @@ async fn update_semantic_job(
 ) {
     let mut jobs = jobs.write().await;
     if let Some(job) = jobs.get_mut(id) {
+        if job.status == ScanJobStatus::Canceled && update.status != ScanJobStatus::Canceled {
+            return;
+        }
         let now = unix_seconds();
         job.status = update.status;
         job.message = update.message;
@@ -1981,6 +2066,45 @@ async fn update_semantic_job(
         }
     }
     prune_semantic_jobs(&mut jobs, max_jobs);
+}
+
+async fn cancel_semantic_job_in_store(
+    jobs: &RwLock<BTreeMap<String, SemanticJob>>,
+    id: &str,
+    max_jobs: usize,
+) -> Result<SemanticJob, ApiError> {
+    let mut jobs = jobs.write().await;
+    let job = jobs
+        .get_mut(id)
+        .ok_or_else(|| ApiError::not_found("semantic job not found"))?;
+    match job.status {
+        ScanJobStatus::Queued | ScanJobStatus::Running => {
+            let now = unix_seconds();
+            job.status = ScanJobStatus::Canceled;
+            job.message = "canceled".to_string();
+            job.updated_at_unix = now;
+            job.finished_at_unix = Some(now);
+            job.responses = None;
+            job.response_errors = None;
+            job.unmatched_locations = None;
+            job.report = None;
+            job.result = None;
+        }
+        ScanJobStatus::Canceled => {}
+        ScanJobStatus::Complete | ScanJobStatus::Failed => {
+            return Err(ApiError::bad_request("semantic job is already complete"));
+        }
+    }
+    let job = job.clone();
+    prune_semantic_jobs(&mut jobs, max_jobs);
+    Ok(job)
+}
+
+async fn semantic_job_is_canceled(jobs: &RwLock<BTreeMap<String, SemanticJob>>, id: &str) -> bool {
+    jobs.read()
+        .await
+        .get(id)
+        .is_some_and(|job| job.status == ScanJobStatus::Canceled)
 }
 
 fn prune_semantic_jobs(jobs: &mut BTreeMap<String, SemanticJob>, max_jobs: usize) {
@@ -2014,6 +2138,7 @@ fn job_store_health(statuses: impl IntoIterator<Item = ScanJobStatus>) -> JobSto
             ScanJobStatus::Running => health.running += 1,
             ScanJobStatus::Complete => health.complete += 1,
             ScanJobStatus::Failed => health.failed += 1,
+            ScanJobStatus::Canceled => health.canceled += 1,
         }
     }
     health
@@ -2166,13 +2291,15 @@ mod tests {
             ScanJobStatus::Complete,
             ScanJobStatus::Complete,
             ScanJobStatus::Failed,
+            ScanJobStatus::Canceled,
         ]);
 
-        assert_eq!(health.total, 5);
+        assert_eq!(health.total, 6);
         assert_eq!(health.queued, 1);
         assert_eq!(health.running, 1);
         assert_eq!(health.complete, 2);
         assert_eq!(health.failed, 1);
+        assert_eq!(health.canceled, 1);
     }
 
     #[test]
@@ -2185,6 +2312,72 @@ mod tests {
         assert_eq!(health.limit, 3);
         assert_eq!(health.active, 1);
         assert_eq!(health.available, 2);
+    }
+
+    #[tokio::test]
+    async fn cancel_scan_job_marks_queued_job_terminal() {
+        let jobs = RwLock::new(BTreeMap::new());
+        insert_scan_job(
+            &jobs,
+            test_scan_job("scan-1", ScanJobStatus::Queued, 10, None),
+            4,
+        )
+        .await;
+
+        let job = cancel_scan_job_in_store(&jobs, "scan-1", 4).await.unwrap();
+
+        assert_eq!(job.status, ScanJobStatus::Canceled);
+        assert!(job.finished_at_unix.is_some());
+        assert!(scan_job_is_canceled(&jobs, "scan-1").await);
+    }
+
+    #[tokio::test]
+    async fn canceled_scan_job_is_not_overwritten_by_worker_update() {
+        let jobs = RwLock::new(BTreeMap::new());
+        insert_scan_job(
+            &jobs,
+            test_scan_job("scan-1", ScanJobStatus::Running, 10, None),
+            4,
+        )
+        .await;
+        cancel_scan_job_in_store(&jobs, "scan-1", 4).await.unwrap();
+
+        update_scan_job(
+            &jobs,
+            "scan-1",
+            ScanJobUpdate {
+                status: ScanJobStatus::Complete,
+                message: "complete".to_string(),
+                cache: None,
+                summary: None,
+                graph: None,
+            },
+            4,
+        )
+        .await;
+
+        let job = jobs.read().await.get("scan-1").cloned().unwrap();
+        assert_eq!(job.status, ScanJobStatus::Canceled);
+        assert_eq!(job.message, "canceled");
+    }
+
+    #[tokio::test]
+    async fn cancel_semantic_job_marks_queued_job_terminal() {
+        let jobs = RwLock::new(BTreeMap::new());
+        insert_semantic_job(
+            &jobs,
+            test_semantic_job("semantic-1", ScanJobStatus::Queued, 10, None),
+            4,
+        )
+        .await;
+
+        let job = cancel_semantic_job_in_store(&jobs, "semantic-1", 4)
+            .await
+            .unwrap();
+
+        assert_eq!(job.status, ScanJobStatus::Canceled);
+        assert!(job.finished_at_unix.is_some());
+        assert!(semantic_job_is_canceled(&jobs, "semantic-1").await);
     }
 
     fn test_state(root: PathBuf, additional: Vec<PathBuf>, allow_any_path: bool) -> AppState {
@@ -2254,6 +2447,7 @@ mod tests {
             ScanJobStatus::Running => "running",
             ScanJobStatus::Complete => "complete",
             ScanJobStatus::Failed => "failed",
+            ScanJobStatus::Canceled => "canceled",
         }
         .to_string()
     }

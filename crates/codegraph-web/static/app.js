@@ -60,6 +60,7 @@ const I18N = {
     "label.severity": "Severity",
     "label.failOn": "Fail On",
     "button.scan": "Scan",
+    "button.cancel": "Cancel",
     "button.apply": "Apply",
     "button.semanticEnrich": "Enrich",
     "button.traceEntrypoints": "Trace Entrypoints",
@@ -116,6 +117,8 @@ const I18N = {
     "trace.noDependents": "No incoming dependents.",
     "trace.dependents": "Dependents",
     "semantic.running": "Running semantic enrichment...",
+    "job.scanCanceled": "Scan canceled.",
+    "job.semanticCanceled": "Semantic enrichment canceled.",
     "semantic.report": "Semantic enrichment",
     "semantic.responses": "responses",
     "semantic.edges": "Semantic edges",
@@ -191,6 +194,7 @@ const I18N = {
     "label.severity": "Важность",
     "label.failOn": "Порог",
     "button.scan": "Сканировать",
+    "button.cancel": "Отменить",
     "button.apply": "Применить",
     "button.semanticEnrich": "Обогатить",
     "button.traceEntrypoints": "Трассировать входы",
@@ -247,6 +251,8 @@ const I18N = {
     "trace.noDependents": "Входящих зависимых нет.",
     "trace.dependents": "Зависимые",
     "semantic.running": "Запускаю семантическое обогащение...",
+    "job.scanCanceled": "Сканирование отменено.",
+    "job.semanticCanceled": "Семантическое обогащение отменено.",
     "semantic.report": "Семантическое обогащение",
     "semantic.responses": "ответов",
     "semantic.edges": "Семантические связи",
@@ -393,6 +399,7 @@ const colors = {
 const canvas = document.querySelector("#graphCanvas");
 const ctx = canvas.getContext("2d");
 const scanButton = document.querySelector("#scanButton");
+const scanCancelButton = document.querySelector("#scanCancelButton");
 const projectSelect = document.querySelector("#projectSelect");
 const pathInput = document.querySelector("#pathInput");
 const localeSelect = document.querySelector("#localeSelect");
@@ -420,6 +427,7 @@ const semanticWorkStatusInput = document.querySelector("#semanticWorkStatusInput
 const semanticWorkCapabilityInput = document.querySelector("#semanticWorkCapabilityInput");
 const semanticWorkFilterButton = document.querySelector("#semanticWorkFilterButton");
 const semanticEnrichButton = document.querySelector("#semanticEnrichButton");
+const semanticCancelButton = document.querySelector("#semanticCancelButton");
 const semanticWorkList = document.querySelector("#semanticWorkList");
 const architectureList = document.querySelector("#architectureList");
 const languageDependencyList = document.querySelector("#languageDependencyList");
@@ -493,6 +501,7 @@ const labelModeButtons = Array.from(document.querySelectorAll("[data-label-mode]
 localeSelect.value = state.locale;
 localeSelect.addEventListener("change", () => setLocale(localeSelect.value));
 scanButton.addEventListener("click", () => scan());
+scanCancelButton.addEventListener("click", () => cancelScanJob());
 projectSelect.addEventListener("change", () => {
   const selected = projectSelect.value;
   if (selected) {
@@ -557,6 +566,7 @@ checkFailOnInput.addEventListener("keydown", (event) => {
 });
 semanticWorkFilterButton.addEventListener("click", () => loadProjectOverview());
 semanticEnrichButton.addEventListener("click", () => runSemanticEnrich());
+semanticCancelButton.addEventListener("click", () => cancelSemanticJob());
 for (const input of [semanticWorkLanguageInput, semanticWorkStatusInput, semanticWorkCapabilityInput]) {
   input.addEventListener("change", () => loadProjectOverview());
 }
@@ -706,6 +716,7 @@ function renderProjects() {
 async function scan() {
   setStatus("queue", "busy");
   scanButton.disabled = true;
+  scanCancelButton.disabled = true;
   selectionTitle.textContent = t("selection.title");
   selectionBody.innerHTML = "";
   state.insightRequest += 1;
@@ -746,6 +757,7 @@ async function scan() {
     }
 
     state.scanJobId = body.id;
+    scanCancelButton.disabled = false;
     await watchScanJob(body.id);
   } catch (error) {
     setStatus("error", "error");
@@ -753,6 +765,34 @@ async function scan() {
     selectionBody.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   } finally {
     scanButton.disabled = false;
+    scanCancelButton.disabled = true;
+  }
+}
+
+async function cancelScanJob() {
+  const jobId = state.scanJobId;
+  if (!jobId) return;
+
+  scanCancelButton.disabled = true;
+  try {
+    const response = await fetch(`/api/scan-jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.error || "failed to cancel scan");
+    }
+    state.scanJobId = null;
+    if (state.scanEvents) {
+      state.scanEvents.close();
+      state.scanEvents = null;
+    }
+    setStatus("ready");
+    selectionTitle.textContent = t("status.ready");
+    selectionBody.innerHTML = `<p class="empty">${escapeHtml(t("job.scanCanceled"))}</p>`;
+  } catch (error) {
+    setStatus("error", "error");
+    selectionTitle.textContent = t("status.error");
+    selectionBody.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+    scanCancelButton.disabled = false;
   }
 }
 
@@ -810,6 +850,18 @@ async function watchScanJob(jobId) {
         return;
       }
 
+      if (job.status === "canceled") {
+        settled = true;
+        events.close();
+        if (state.scanEvents === events) state.scanEvents = null;
+        if (state.scanJobId === jobId) state.scanJobId = null;
+        setStatus("ready");
+        selectionTitle.textContent = t("status.ready");
+        selectionBody.innerHTML = `<p class="empty">${escapeHtml(t("job.scanCanceled"))}</p>`;
+        resolve();
+        return;
+      }
+
       if (job.status === "complete") {
         finish(job);
       }
@@ -841,6 +893,14 @@ async function pollScanJob(jobId) {
 
     if (body.status === "failed") {
       throw new Error(body.message || "scan failed");
+    }
+
+    if (body.status === "canceled") {
+      if (state.scanJobId === jobId) state.scanJobId = null;
+      setStatus("ready");
+      selectionTitle.textContent = t("status.ready");
+      selectionBody.innerHTML = `<p class="empty">${escapeHtml(t("job.scanCanceled"))}</p>`;
+      return;
     }
 
     await loadGraphPage({ root: body.path, resetPage: true, resetLayout: true });
@@ -1059,6 +1119,7 @@ async function runSemanticEnrich() {
 
   setStatus("semantic", "busy");
   semanticEnrichButton.disabled = true;
+  semanticCancelButton.disabled = true;
   semanticWorkFilterButton.disabled = true;
   semanticWorkList.innerHTML = `<p class="empty">${escapeHtml(t("semantic.running"))}</p>`;
   if (state.semanticEvents) {
@@ -1079,6 +1140,7 @@ async function runSemanticEnrich() {
     }
 
     state.semanticJobId = job.id;
+    semanticCancelButton.disabled = false;
     await watchSemanticJob(job.id, requestId);
   } catch (error) {
     if (requestId !== state.semanticEnrichRequest) return;
@@ -1087,8 +1149,36 @@ async function runSemanticEnrich() {
   } finally {
     if (requestId === state.semanticEnrichRequest) {
       semanticEnrichButton.disabled = false;
+      semanticCancelButton.disabled = true;
       semanticWorkFilterButton.disabled = false;
     }
+  }
+}
+
+async function cancelSemanticJob() {
+  const jobId = state.semanticJobId;
+  if (!jobId) return;
+
+  semanticCancelButton.disabled = true;
+  try {
+    const response = await fetch(`/api/semantic-jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.error || "failed to cancel semantic enrichment");
+    }
+    state.semanticJobId = null;
+    if (state.semanticEvents) {
+      state.semanticEvents.close();
+      state.semanticEvents = null;
+    }
+    setStatus("ready");
+    semanticWorkList.innerHTML = `<p class="empty">${escapeHtml(t("job.semanticCanceled"))}</p>`;
+    semanticEnrichButton.disabled = false;
+    semanticWorkFilterButton.disabled = false;
+  } catch (error) {
+    setStatus("error", "error");
+    semanticWorkList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+    semanticCancelButton.disabled = false;
   }
 }
 
@@ -1145,6 +1235,16 @@ async function watchSemanticJob(jobId, requestId) {
         reject(new Error(job.message || "semantic enrichment failed"));
         return;
       }
+      if (job.status === "canceled") {
+        settled = true;
+        events.close();
+        if (state.semanticEvents === events) state.semanticEvents = null;
+        if (state.semanticJobId === jobId) state.semanticJobId = null;
+        setStatus("ready");
+        semanticWorkList.innerHTML = `<p class="empty">${escapeHtml(t("job.semanticCanceled"))}</p>`;
+        resolve();
+        return;
+      }
       if (job.status === "complete") {
         finish();
       }
@@ -1175,6 +1275,12 @@ async function pollSemanticJob(jobId, requestId) {
     }
     if (job.status === "failed") {
       throw new Error(job.message || "semantic enrichment failed");
+    }
+    if (job.status === "canceled") {
+      if (state.semanticJobId === jobId) state.semanticJobId = null;
+      setStatus("ready");
+      semanticWorkList.innerHTML = `<p class="empty">${escapeHtml(t("job.semanticCanceled"))}</p>`;
+      return;
     }
     await loadSemanticJobResult(jobId, requestId);
     return;

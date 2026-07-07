@@ -39,6 +39,7 @@ Implemented now:
 - HTTP API and embedded web UI for interactive graph exploration.
 - Async scan job API for long-running repository scans.
 - SSE scan job status stream for live web progress updates.
+- Cancelable scan and semantic enrichment jobs for stopping queued or running long work.
 - Source preview API and UI panel for parsed symbols plus framework route/config facts with source spans.
 - Enriched selected-node cards with summary metadata, source snippets, neighboring dependencies, trace actions, and related risks.
 - Initial English/Russian web UI localization with a persistent language selector.
@@ -428,6 +429,7 @@ curl -X POST 'http://127.0.0.1:3765/api/semantic-jobs' \
   --data '{"path":".","work_item_limit":25,"work_status":"ready","work_capability":"definitions"}'
 curl 'http://127.0.0.1:3765/api/semantic-jobs/semantic-1/events'
 curl 'http://127.0.0.1:3765/api/semantic-jobs/semantic-1/result'
+curl -X DELETE 'http://127.0.0.1:3765/api/semantic-jobs/semantic-1'
 curl 'http://127.0.0.1:3765/api/coverage?path=.'
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'
@@ -451,6 +453,7 @@ curl -X POST 'http://127.0.0.1:3765/api/scan-jobs' \
 curl 'http://127.0.0.1:3765/api/scan-jobs/scan-1'
 curl -N 'http://127.0.0.1:3765/api/scan-jobs/scan-1/events'
 curl 'http://127.0.0.1:3765/api/scan-jobs/scan-1/result'
+curl -X DELETE 'http://127.0.0.1:3765/api/scan-jobs/scan-1'
 ```
 
 Analysis APIs:
