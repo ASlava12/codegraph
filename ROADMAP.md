@@ -254,6 +254,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add a multi-stage Docker image for web/API server deployment.
 - [x] Add CI smoke coverage for the Docker web/API server image.
 - [x] Surface runtime metrics in the web UI.
+- [x] Surface last API response latency in the web runtime panel.
 - [x] Add built-in HTTP access logs with latency and quiet-mode control.
 - [x] Add `x-request-id` response headers, JSON error fields, and access-log correlation.
 - [x] Add `x-response-time-ms` response headers for client-side latency diagnostics.

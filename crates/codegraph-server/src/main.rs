@@ -6595,6 +6595,9 @@ mod tests {
         assert!(app.contains("\"cap.apiBody\""));
         assert!(app.contains("\"cap.headers\""));
         assert!(app.contains("common_response_headers"));
+        assert!(app.contains("\"runtime.lastApi\""));
+        assert!(app.contains("lastApiResponse"));
+        assert!(app.contains("x-response-time-ms"));
         assert!(app.contains("limits.max_api_body_bytes"));
         assert!(app.contains("data-risk-gate"));
         assert!(app.contains("checkFailOnInput.value"));

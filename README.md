@@ -80,6 +80,7 @@ Implemented now:
 - Web overview risk summary chips for report quality gate, grade, weighted score, severity counts, and top finding kinds with quick insight filtering plus one-click quality checks.
 - Web overview reuses the project report snapshot for summary, coverage, topology, hotspots, and risks to avoid duplicate heavy scans.
 - Web runtime panel for uptime, cache state, scan/semantic slots, and retained job-store totals.
+- Web runtime panel surfaces the last API response latency from `x-response-time-ms` for quick slow-endpoint diagnosis.
 - Async scan job API for long-running repository scans.
 - SSE scan job status stream for live web progress updates.
 - Cancelable scan and semantic enrichment jobs for stopping queued or running long work.

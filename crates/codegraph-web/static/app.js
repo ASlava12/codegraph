@@ -300,6 +300,7 @@ const I18N = {
     "runtime.semanticSlots": "Semantic Slots",
     "runtime.scanJobs": "Scan Jobs",
     "runtime.semanticJobs": "Semantic Jobs",
+    "runtime.lastApi": "Last API",
     "risk.score": "Risk Score",
     "risk.grade": "Grade",
     "risk.errors": "Errors",
@@ -670,6 +671,7 @@ const I18N = {
     "runtime.semanticSlots": "Слоты сем.",
     "runtime.scanJobs": "Скан-задачи",
     "runtime.semanticJobs": "Сем. задачи",
+    "runtime.lastApi": "Последний API",
     "risk.score": "Риск",
     "risk.grade": "Оценка",
     "risk.errors": "Ошибки",
@@ -866,6 +868,7 @@ const state = {
   semanticEvents: null,
   semanticJobs: null,
   metrics: null,
+  lastApiResponse: null,
   layoutPaused: false,
   graphPage: {
     nodeOffset: 0,
@@ -1649,6 +1652,13 @@ function renderRuntimeMetrics() {
       jobStoreBusyClass(metrics.semantic_jobs?.store),
     ],
   ];
+  if (state.lastApiResponse) {
+    chips.push([
+      t("runtime.lastApi"),
+      formatLastApiResponse(state.lastApiResponse),
+      lastApiResponseClass(state.lastApiResponse),
+    ]);
+  }
 
   runtimeMetricsList.innerHTML = chips
     .map(
@@ -1674,6 +1684,20 @@ function jobStoreValue(store) {
 
 function jobStoreBusyClass(store) {
   return Number(store?.queued || 0) + Number(store?.running || 0) > 0 ? "busy" : "";
+}
+
+function formatLastApiResponse(apiResponse) {
+  const elapsed = Number(apiResponse?.elapsedMs);
+  const status = Number(apiResponse?.status || 0);
+  const latency = Number.isFinite(elapsed) ? `${elapsed} ms` : "? ms";
+  return status > 0 ? `${latency} / ${status}` : latency;
+}
+
+function lastApiResponseClass(apiResponse) {
+  const elapsed = Number(apiResponse?.elapsedMs);
+  const status = Number(apiResponse?.status || 0);
+  if (status >= 500) return "missing";
+  return Number.isFinite(elapsed) && elapsed >= 1000 ? "busy" : "";
 }
 
 function renderJobSummary(target, list) {
@@ -3836,15 +3860,41 @@ async function responseErrorMessage(response, fallback) {
 async function apiFetch(input, init = {}) {
   let response = await window.fetch(input, withApiAuth(init));
   if (response.status !== 401 || !isApiRequest(input)) {
+    recordApiResponse(input, response);
     return response;
   }
 
   const token = requestApiToken();
   if (!token) {
+    recordApiResponse(input, response);
     return response;
   }
   response = await window.fetch(input, withApiAuth(init));
+  recordApiResponse(input, response);
   return response;
+}
+
+function recordApiResponse(input, response) {
+  if (!isApiRequest(input)) return;
+  const elapsedHeader = response.headers.get("x-response-time-ms");
+  const elapsedMs = elapsedHeader == null ? null : Number(elapsedHeader);
+  state.lastApiResponse = {
+    elapsedMs: Number.isFinite(elapsedMs) ? elapsedMs : null,
+    requestId: response.headers.get("x-request-id") || "",
+    path: apiRequestPath(input),
+    status: response.status,
+  };
+  if (state.metrics) renderRuntimeMetrics();
+}
+
+function apiRequestPath(input) {
+  const url = typeof input === "string" ? input : input?.url || "";
+  try {
+    const parsed = new URL(url, window.location.href);
+    return `${parsed.pathname}${parsed.search}`;
+  } catch (error) {
+    return String(url || "");
+  }
 }
 
 function withApiAuth(init = {}) {
