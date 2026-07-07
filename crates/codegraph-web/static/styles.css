@@ -1557,6 +1557,23 @@ button.cancel-action:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+.edge-card .node-card-title {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.edge-card .node-card-title em {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.edge-card .node-card-title em::before {
+  content: "-> ";
+}
+
 .node-card-id {
   max-width: 80px;
   overflow: hidden;

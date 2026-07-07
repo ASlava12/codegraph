@@ -3327,13 +3327,13 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/graph",
-                    "Read a server-side paged and filtered graph slice.",
+                    "Read a server-side paged and filtered graph slice. Returned edges include metadata.edge_index for exact edge explanation and UI selection.",
                     graph_slice_params(),
                     "GraphSlice",
                 ),
                 api_get(
                     "/api/node-context",
-                    "Read selected node context with neighboring edges.",
+                    "Read selected node context with neighboring edges. Returned edges include metadata.edge_index for exact edge explanation and UI selection.",
                     vec![
                         path_param(),
                         query_param("node_id", true, "u64", None, "Node numeric id."),
@@ -3349,7 +3349,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/node-card",
-                    "Read selected node investigation card with neighboring edges, dependency summary facets, file-level summaries, source preview, related risks including file-scoped contained-node risks, risk summaries, and suggested focused graph query actions.",
+                    "Read selected node investigation card with neighboring edges, dependency summary facets, file-level summaries, source preview, related risks including file-scoped contained-node risks, risk summaries, exact edge indexes, and suggested focused graph query actions.",
                     vec![
                         path_param(),
                         query_param("node_id", true, "u64", None, "Node numeric id."),
@@ -3379,7 +3379,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/focus",
-                    "Build a focused subgraph from node ids and edge indexes.",
+                    "Build a focused subgraph from node ids and edge indexes. Returned edges include metadata.edge_index for exact edge explanation and UI selection.",
                     vec![
                         path_param(),
                         query_param("node_ids", false, "csv<u64>", None, "Node ids to include."),
@@ -3408,7 +3408,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/query",
-                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, symbols, files, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, or insights. QueryResult includes returned counts and facets for node kinds, edge kinds, languages, item kinds, and confidence.",
+                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, symbols, files, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, or insights. QueryResult includes returned counts, edge metadata.edge_index values, and facets for node kinds, edge kinds, languages, item kinds, and confidence.",
                     vec![
                         path_param(),
                         query_param(

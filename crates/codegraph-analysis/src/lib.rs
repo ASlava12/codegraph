@@ -288,6 +288,7 @@ pub struct QueryFacets {
 
 impl QueryResult {
     fn new(
+        graph: &CodeGraph,
         query: impl Into<String>,
         nodes: Vec<Node>,
         edges: Vec<Edge>,
@@ -295,6 +296,7 @@ impl QueryResult {
         total_edges: usize,
         truncated: bool,
     ) -> Self {
+        let edges = edges_with_indexes(graph, edges);
         let returned_nodes = nodes.len();
         let returned_edges = edges.len();
         let facets = QueryFacets::from_graph_parts(&nodes, &edges);
@@ -311,6 +313,8 @@ impl QueryResult {
         }
     }
 }
+
+const EDGE_INDEX_METADATA_KEY: &str = "edge_index";
 
 impl QueryFacets {
     fn from_graph_parts(nodes: &[Node], edges: &[Edge]) -> Self {
@@ -1792,6 +1796,7 @@ pub fn focus_subgraph(graph: &CodeGraph, request: FocusRequest) -> QueryResult {
         .collect();
 
     QueryResult::new(
+        graph,
         "focus",
         nodes,
         edges,
@@ -1846,6 +1851,38 @@ pub fn explain_edge(
     }))
 }
 
+fn edge_with_index(edge_index: usize, edge: &Edge) -> Edge {
+    let mut indexed = edge.clone();
+    indexed
+        .metadata
+        .insert(EDGE_INDEX_METADATA_KEY.to_string(), edge_index.to_string());
+    indexed
+}
+
+fn edges_with_indexes(graph: &CodeGraph, edges: Vec<Edge>) -> Vec<Edge> {
+    let mut used = BTreeSet::new();
+    edges
+        .into_iter()
+        .map(|edge| {
+            if edge.metadata.contains_key(EDGE_INDEX_METADATA_KEY) {
+                return edge;
+            }
+            let edge_index = graph
+                .edges
+                .iter()
+                .enumerate()
+                .find(|(index, candidate)| !used.contains(index) && *candidate == &edge)
+                .map(|(index, _)| index);
+            if let Some(edge_index) = edge_index {
+                used.insert(edge_index);
+                edge_with_index(edge_index, &edge)
+            } else {
+                edge
+            }
+        })
+        .collect()
+}
+
 pub fn slice_graph(graph: &CodeGraph, request: GraphSliceRequest) -> GraphSlice {
     let node_offset = request.node_offset;
     let node_limit = request.node_limit.clamp(1, 1000);
@@ -1870,7 +1907,9 @@ pub fn slice_graph(graph: &CodeGraph, request: GraphSliceRequest) -> GraphSlice 
     let matched_edges: Vec<_> = graph
         .edges
         .iter()
+        .enumerate()
         .filter(|edge| {
+            let edge = edge.1;
             page_node_ids.contains(&edge.source)
                 && page_node_ids.contains(&edge.target)
                 && request
@@ -1889,13 +1928,13 @@ pub fn slice_graph(graph: &CodeGraph, request: GraphSliceRequest) -> GraphSlice 
                     .as_deref()
                     .is_none_or(|expected| edge_metadata_matches(edge, "source", expected))
         })
-        .cloned()
         .collect();
     let total_edges = matched_edges.len();
     let edges = matched_edges
         .into_iter()
         .skip(edge_offset)
         .take(edge_limit)
+        .map(|(edge_index, edge)| edge_with_index(edge_index, edge))
         .collect();
 
     GraphSlice {
@@ -1918,11 +1957,15 @@ pub fn node_context(graph: &CodeGraph, node_id: NodeId, edge_limit: usize) -> Op
     let matched_edges: Vec<_> = graph
         .edges
         .iter()
-        .filter(|edge| edge.source == node_id || edge.target == node_id)
-        .cloned()
+        .enumerate()
+        .filter(|(_, edge)| edge.source == node_id || edge.target == node_id)
         .collect();
     let total_edges = matched_edges.len();
-    let edges: Vec<_> = matched_edges.into_iter().take(edge_limit).collect();
+    let edges: Vec<_> = matched_edges
+        .into_iter()
+        .take(edge_limit)
+        .map(|(edge_index, edge)| edge_with_index(edge_index, edge))
+        .collect();
 
     let mut node_ids = BTreeSet::from([node_id]);
     for edge in &edges {
@@ -2392,6 +2435,7 @@ fn query_nodes(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryE
     let nodes = matched.into_iter().take(spec.limit).collect();
 
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         Vec::new(),
@@ -2437,6 +2481,7 @@ fn query_edges(
     let total_nodes = nodes.len();
 
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         edges,
@@ -2488,6 +2533,7 @@ fn query_trace_with(
         },
     ) else {
         return Ok(QueryResult::new(
+            graph,
             spec.original,
             Vec::new(),
             Vec::new(),
@@ -2501,6 +2547,7 @@ fn query_trace_with(
     let total_edges = result.edges.len();
     let nodes = result.nodes.into_iter().map(|node| node.node).collect();
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         result.edges,
@@ -2617,6 +2664,7 @@ fn query_neighbors(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, Qu
         .collect();
 
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         edges,
@@ -2712,6 +2760,7 @@ fn query_symbols(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, 
         .collect::<Vec<_>>();
 
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         edges,
@@ -2820,6 +2869,7 @@ fn query_files(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, Qu
         .collect::<Vec<_>>();
 
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         edges,
@@ -2877,6 +2927,7 @@ fn query_entrypoints(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResu
 
     let total_nodes = nodes.len();
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         edges,
@@ -2983,6 +3034,7 @@ fn query_routes(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, Q
 
     let total_nodes = nodes.len();
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         edges,
@@ -3071,6 +3123,7 @@ fn query_packages(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult,
 
     let total_nodes = nodes.len();
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         edges,
@@ -3166,6 +3219,7 @@ fn query_configs(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, 
     let total_nodes = nodes.len();
     let total_edges = edges.len();
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         edges,
@@ -3257,6 +3311,7 @@ fn query_errors(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, Q
     let total_nodes = nodes.len();
     let total_edges = edges.len();
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         edges,
@@ -3300,6 +3355,7 @@ fn query_cycles(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, Query
     let total_nodes = nodes.len();
     let total_edges = edges.len();
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         edges,
@@ -3386,6 +3442,7 @@ fn query_hotspots(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, Que
 
     let total_nodes = nodes.len();
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         edges,
@@ -3400,6 +3457,7 @@ fn query_unreachable(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, 
     let reachable = entrypoint_reachable_nodes(graph);
     if reachable.is_empty() {
         return Ok(QueryResult::new(
+            graph,
             spec.original,
             Vec::new(),
             Vec::new(),
@@ -3463,6 +3521,7 @@ fn query_unreachable(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, 
 
     let total_nodes = nodes.len();
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         matched_edges,
@@ -3514,6 +3573,7 @@ fn query_diagnostics(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, 
 
     let total_nodes = nodes.len();
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         matched_edges,
@@ -3559,6 +3619,7 @@ fn query_insights(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, Que
     let total_nodes = nodes.len();
     let total_edges = edges.len();
     Ok(QueryResult::new(
+        graph,
         spec.original,
         nodes,
         edges,
@@ -3604,6 +3665,7 @@ fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryEr
     if start == target {
         let node = graph.nodes.iter().find(|node| node.id == start).cloned();
         return Ok(QueryResult::new(
+            graph,
             spec.original,
             node.into_iter().collect(),
             Vec::new(),
@@ -3645,6 +3707,7 @@ fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryEr
                 let total_nodes = nodes.len();
                 let total_edges = edges.len();
                 return Ok(QueryResult::new(
+                    graph,
                     spec.original,
                     nodes,
                     edges,
@@ -3658,6 +3721,7 @@ fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryEr
     }
 
     Ok(QueryResult::new(
+        graph,
         spec.original,
         Vec::new(),
         Vec::new(),
@@ -9313,6 +9377,10 @@ mod tests {
         assert_eq!(result.total_edges, 1);
         assert_eq!(result.edges[0].source, helper);
         assert_eq!(result.edges[0].target, config);
+        assert_eq!(
+            result.edges[0].metadata.get("edge_index"),
+            Some(&"1".to_string())
+        );
         assert!(result.nodes.iter().any(|node| node.id == main));
         assert!(result.nodes.iter().any(|node| node.id == helper));
         assert!(result.nodes.iter().any(|node| node.id == config));
@@ -9445,6 +9513,10 @@ mod tests {
         assert_eq!(result.total_edges, 2);
         assert_eq!(result.edges.len(), 1);
         assert_eq!(result.edges[0].source, main);
+        assert_eq!(
+            result.edges[0].metadata.get("edge_index"),
+            Some(&"0".to_string())
+        );
         assert!(result.truncated_edges);
     }
 
@@ -9557,6 +9629,14 @@ mod tests {
         assert_eq!(context.node.label, "main");
         assert_eq!(context.total_edges, 3);
         assert_eq!(context.edges.len(), 2);
+        assert_eq!(
+            context.edges[0].metadata.get("edge_index"),
+            Some(&"0".to_string())
+        );
+        assert_eq!(
+            context.edges[1].metadata.get("edge_index"),
+            Some(&"1".to_string())
+        );
         assert!(context.truncated_edges);
         assert!(context.nodes.iter().any(|node| node.id == main));
         assert!(context.nodes.iter().any(|node| node.id == file));

@@ -11,6 +11,8 @@ const I18N = {
     "project.currentRoot": "Current root",
     "selection.title": "Selection",
     "selection.noNode": "No node selected.",
+    "selection.edge": "Dependency",
+    "selection.noEdge": "Selected edge is no longer visible.",
     "selection.loading": "Loading node context...",
     "selection.node": "Node",
     "selection.kind": "Kind",
@@ -62,6 +64,9 @@ const I18N = {
     "selection.trace": "Trace",
     "selection.dependents": "Dependents",
     "selection.traceDepth": "Depth",
+    "selection.openSource": "Open Source",
+    "selection.openTarget": "Open Target",
+    "selection.edgeIndex": "Edge Index",
     "label.project": "Project",
     "label.path": "Path",
     "label.workLang": "Work Lang",
@@ -244,6 +249,8 @@ const I18N = {
     "project.currentRoot": "Текущий каталог",
     "selection.title": "Выбор",
     "selection.noNode": "Узел не выбран.",
+    "selection.edge": "Зависимость",
+    "selection.noEdge": "Выбранная связь больше не видна.",
     "selection.loading": "Загружаю контекст узла...",
     "selection.node": "Узел",
     "selection.kind": "Тип",
@@ -295,6 +302,9 @@ const I18N = {
     "selection.trace": "Трассировать",
     "selection.dependents": "Зависимые",
     "selection.traceDepth": "Глубина",
+    "selection.openSource": "Открыть источник",
+    "selection.openTarget": "Открыть цель",
+    "selection.edgeIndex": "Индекс связи",
     "label.project": "Проект",
     "label.path": "Путь",
     "label.workLang": "Язык задач",
@@ -526,6 +536,7 @@ const state = {
   positions: new Map(),
   velocities: new Map(),
   selectedId: null,
+  selectedEdgeKey: null,
   draggingId: null,
   hoveredId: null,
   pan: { x: 0, y: 0 },
@@ -1254,6 +1265,7 @@ async function scan() {
   scanCancelButton.disabled = true;
   selectionTitle.textContent = t("selection.title");
   selectionBody.innerHTML = "";
+  state.selectedEdgeKey = null;
   state.insightRequest += 1;
   state.overviewRequest += 1;
   state.summary = null;
@@ -1508,6 +1520,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     state.graphPage.truncatedNodes = body.truncated_nodes;
     state.graphPage.root = root || state.graphPage.root || pathInput.value.trim() || ".";
     state.selectedId = null;
+    state.selectedEdgeKey = null;
     state.hoveredId = null;
     state.queryFocus = null;
     state.insightReport = null;
@@ -1850,6 +1863,7 @@ function applySemanticEnrichResult(result, root) {
   state.graphPage.totalEdges = state.graph.edges.length;
   state.graphPage.truncatedNodes = false;
   state.selectedId = null;
+  state.selectedEdgeKey = null;
   state.hoveredId = null;
   state.queryFocus = null;
   state.insightReport = null;
@@ -2793,6 +2807,7 @@ function initializeGraph(options = {}) {
   const previousZoom = state.zoom;
 
   state.selectedId = null;
+  state.selectedEdgeKey = null;
   state.hoveredId = null;
   state.positions.clear();
   state.velocities.clear();
@@ -3387,6 +3402,7 @@ function showIncrementalScanGraph(scan) {
   state.graphPage.totalEdges = state.graph.edges.length;
   state.graphPage.truncatedNodes = false;
   state.selectedId = null;
+  state.selectedEdgeKey = null;
   state.hoveredId = null;
   state.queryFocus = null;
   rootLabel.textContent = `Changed: ${formatKind(plan.action || "scan")}`;
@@ -3406,6 +3422,7 @@ function showIncrementalMergePreviewGraph(preview) {
   state.graphPage.totalEdges = state.graph.edges.length;
   state.graphPage.truncatedNodes = false;
   state.selectedId = null;
+  state.selectedEdgeKey = null;
   state.hoveredId = null;
   state.queryFocus = null;
   rootLabel.textContent = merge.complete_graph ? "Incremental: complete" : "Incremental: merge preview";
@@ -3848,6 +3865,7 @@ async function openSourceSearchMatch(match) {
   state.selectionRequest += 1;
   const requestId = state.selectionRequest;
   state.selectedId = null;
+  state.selectedEdgeKey = null;
   selectionTitle.textContent = "Source Match";
   selectionBody.innerHTML = `
     <section class="source-preview">
@@ -3993,6 +4011,7 @@ function attachQueryNavigation(container) {
     button.addEventListener("click", () => {
       const nodeId = Number(button.dataset.nodeId);
       if (!nodeId) return;
+      state.selectedEdgeKey = null;
       state.selectedId = nodeId;
       renderSelection();
     });
@@ -4113,6 +4132,9 @@ function applyFilters() {
 
   if (state.selectedId && !visibleIds.has(state.selectedId)) {
     state.selectedId = null;
+  }
+  if (state.selectedEdgeKey && !state.visibleEdges.some((edge) => edgeSelectionKey(edge) === state.selectedEdgeKey)) {
+    state.selectedEdgeKey = null;
   }
   renderSelection();
 }
@@ -4352,6 +4374,7 @@ function showFocusedGraph(result, label, selectedId = null) {
   state.graphPage.totalNodes = result.total_nodes;
   state.graphPage.totalEdges = result.total_edges;
   state.graphPage.truncatedNodes = false;
+  state.selectedEdgeKey = null;
   state.queryFocus = null;
   queryResult.innerHTML = renderQueryResult(result);
   attachQueryNavigation(queryResult);
@@ -5291,6 +5314,16 @@ function boxesIntersect(left, right) {
 function renderSelection() {
   state.selectionRequest += 1;
   const requestId = state.selectionRequest;
+  if (state.selectedEdgeKey) {
+    const edge = selectedEdge();
+    if (edge) {
+      renderEdgeSelectionPanel(edge);
+    } else {
+      selectionTitle.textContent = t("selection.edge");
+      selectionBody.innerHTML = `<p class="empty">${escapeHtml(t("selection.noEdge"))}</p>`;
+    }
+    return;
+  }
   const node = state.graph.nodes.find((candidate) => candidate.id === state.selectedId);
   if (!node) {
     if (state.selectedId) {
@@ -5306,6 +5339,76 @@ function renderSelection() {
 
   renderSelectionPanel(node, [], new Map([[node.id, node]]), requestId, true);
   loadNodeContext(node.id, requestId);
+}
+
+function selectedEdge() {
+  const key = state.selectedEdgeKey;
+  if (!key) return null;
+  return (
+    state.visibleEdges.find((edge) => edgeSelectionKey(edge) === key) ||
+    state.graph.edges.find((edge) => edgeSelectionKey(edge) === key) ||
+    null
+  );
+}
+
+function renderEdgeSelectionPanel(edge) {
+  const source = state.graph.nodes.find((node) => node.id === edge.source);
+  const target = state.graph.nodes.find((node) => node.id === edge.target);
+  const edgeIndex = edgeIndexOf(edge);
+  const metadataRows = Object.entries(edge.metadata || {})
+    .filter(([key]) => key !== "edge_index")
+    .map(([key, value]) => [formatKind(key), value]);
+
+  selectionTitle.textContent = t("selection.edge");
+  selectionBody.innerHTML = `
+    <div class="node-card edge-card">
+      <header class="node-card-header">
+        <div class="node-card-title">
+          <span>${escapeHtml(formatKind(edge.kind))}</span>
+          <strong>${escapeHtml(source?.label || String(edge.source))}</strong>
+          <em>${escapeHtml(target?.label || String(edge.target))}</em>
+        </div>
+        ${edgeIndex == null ? "" : `<span class="node-card-id">#${edgeIndex}</span>`}
+      </header>
+      <div class="selection-actions">
+        <button type="button" data-node-id="${edge.source}">${escapeHtml(t("selection.openSource"))}</button>
+        <button type="button" data-node-id="${edge.target}">${escapeHtml(t("selection.openTarget"))}</button>
+      </div>
+      <section class="node-card-section">
+        <h3>${escapeHtml(t("selection.summary"))}</h3>
+        <dl class="node-summary">
+          ${[
+            [t("selection.edgeIndex"), edgeIndex == null ? "" : String(edgeIndex)],
+            [t("selection.kind"), formatKind(edge.kind)],
+            [t("label.confidence"), formatKind(edge.confidence || "unknown")],
+            [t("label.from"), source?.label || String(edge.source)],
+            [t("label.to"), target?.label || String(edge.target)],
+          ]
+            .filter(([, value]) => value)
+            .map(renderDefinitionRow)
+            .join("")}
+        </dl>
+      </section>
+      ${
+        metadataRows.length > 0
+          ? `<section class="node-card-section">
+              <h3>${escapeHtml(t("selection.metadata"))}</h3>
+              <dl class="node-summary">
+                ${metadataRows.map(renderDefinitionRow).join("")}
+              </dl>
+            </section>`
+          : ""
+      }
+      <section class="node-card-section">
+        <div class="edge-row">
+          ${renderExplainEdgeButton(edge)}
+        </div>
+        <div class="edge-explanation" data-edge-explanation hidden></div>
+      </section>
+    </div>
+  `;
+  attachQueryNavigation(selectionBody);
+  attachEdgeExplainActions(selectionBody);
 }
 
 async function loadNodeContext(nodeId, requestId) {
@@ -5935,6 +6038,7 @@ function attachTraceNavigation(container) {
     button.addEventListener("click", () => {
       const nodeId = Number(button.dataset.nodeId);
       if (!nodeId) return;
+      state.selectedEdgeKey = null;
       state.selectedId = nodeId;
       renderSelection();
     });
@@ -6000,11 +6104,13 @@ function renderEdgeFacts(edge) {
 }
 
 function renderExplainEdgeButton(edge) {
+  const edgeIndex = edgeIndexOf(edge);
   return `
     <button
       class="edge-explain-button"
       type="button"
       data-explain-edge
+      ${edgeIndex == null ? "" : `data-edge-index="${edgeIndex}"`}
       data-edge-source="n${edge.source}"
       data-edge-target="n${edge.target}"
       data-edge-kind="${escapeHtml(edge.kind)}"
@@ -6024,12 +6130,14 @@ async function explainEdge(button) {
   target.innerHTML = '<p class="empty">Explaining edge...</p>';
   button.disabled = true;
 
-  const params = new URLSearchParams({
-    path: pathInput.value.trim() || ".",
-    source: button.dataset.edgeSource || "",
-    target: button.dataset.edgeTarget || "",
-    kind: button.dataset.edgeKind || "",
-  });
+  const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
+  if (button.dataset.edgeIndex) {
+    params.set("edge_index", button.dataset.edgeIndex);
+  } else {
+    params.set("source", button.dataset.edgeSource || "");
+    params.set("target", button.dataset.edgeTarget || "");
+    params.set("kind", button.dataset.edgeKind || "");
+  }
 
   try {
     const response = await fetch(`/api/explain-edge?${params.toString()}`);
@@ -6093,16 +6201,36 @@ function edgeKey(edge) {
   return `${edge.source}->${edge.target}:${edge.kind}`;
 }
 
+function edgeIndexOf(edge) {
+  const value = edge?.metadata?.edge_index;
+  if (value == null || value === "") return null;
+  const index = Number(value);
+  return Number.isInteger(index) && index >= 0 ? index : null;
+}
+
+function edgeSelectionKey(edge) {
+  const index = edgeIndexOf(edge);
+  return index == null ? edgeKey(edge) : `edge:${index}`;
+}
+
 function onPointerDown(event) {
   canvas.setPointerCapture(event.pointerId);
   const world = screenToWorld(event.offsetX, event.offsetY);
   const hit = findNodeAt(world);
   state.lastPointer = { x: event.offsetX, y: event.offsetY };
   if (hit) {
+    state.selectedEdgeKey = null;
     state.selectedId = hit.id;
     state.draggingId = hit.id;
     renderSelection();
   } else {
+    const edgeHit = findEdgeAt(world);
+    if (edgeHit) {
+      state.selectedId = null;
+      state.selectedEdgeKey = edgeSelectionKey(edgeHit);
+      renderSelection();
+      draw();
+    }
     state.draggingId = null;
   }
 }
@@ -6111,6 +6239,7 @@ function onPointerMove(event) {
   const world = screenToWorld(event.offsetX, event.offsetY);
   const hit = findNodeAt(world);
   state.hoveredId = hit ? hit.id : null;
+  canvas.style.cursor = hit || findEdgeAt(world) ? "pointer" : event.buttons === 1 ? "grabbing" : "";
 
   if (!state.lastPointer) return;
 
@@ -6157,6 +6286,40 @@ function findNodeAt(point) {
     if (dx * dx + dy * dy <= radius * radius) return node;
   }
   return null;
+}
+
+function findEdgeAt(point) {
+  const tolerance = Math.max(7, 12 / Math.max(0.18, state.zoom));
+  let best = null;
+  let bestDistance = tolerance;
+  for (const edge of state.visibleEdges) {
+    const source = state.positions.get(edge.source);
+    const target = state.positions.get(edge.target);
+    if (!source || !target) continue;
+    const distance = distanceToSegment(point, source, target);
+    if (distance <= bestDistance) {
+      best = edge;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+function distanceToSegment(point, start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq === 0) {
+    const px = point.x - start.x;
+    const py = point.y - start.y;
+    return Math.sqrt(px * px + py * py);
+  }
+  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq));
+  const x = start.x + t * dx;
+  const y = start.y + t * dy;
+  const px = point.x - x;
+  const py = point.y - y;
+  return Math.sqrt(px * px + py * py);
 }
 
 function resizeCanvas() {
@@ -6218,10 +6381,14 @@ function nodeIsFocused(node) {
 }
 
 function edgeIsFocused(edge) {
-  return Boolean(state.queryFocus?.edgeKeys?.has(edgeKey(edge)));
+  return (
+    edgeSelectionKey(edge) === state.selectedEdgeKey ||
+    Boolean(state.queryFocus?.edgeKeys?.has(edgeKey(edge)))
+  );
 }
 
 function focusEdgeColor() {
+  if (state.selectedEdgeKey) return "rgba(92, 200, 167, 0.98)";
   return state.queryFocus?.mode === "path" ? "rgba(92, 200, 167, 0.98)" : "rgba(237, 241, 242, 0.9)";
 }
 

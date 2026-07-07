@@ -60,6 +60,8 @@ Implemented now:
 - File node cards surface risks from contained symbols and facts, not only risks attached directly to the file node.
 - Node cards include risk summaries by severity and insight kind alongside capped related risk lists.
 - Enriched selected-node cards with summary metadata, source snippets, neighboring dependencies, trace actions, and related risks.
+- Graph, query, focus, and node-card edges include stable `metadata.edge_index` values for exact dependency explanation and UI edge selection.
+- Web canvas edges can be selected directly to open dependency cards with source, target, confidence, metadata, and provenance explanation actions.
 - Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
 - Initial English/Russian web UI localization with a persistent language selector.
 - Minimal-by-default graph labels with collision-aware Auto/Focus modes so node cards stay readable without covering the graph.
