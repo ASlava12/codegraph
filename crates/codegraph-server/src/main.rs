@@ -552,6 +552,15 @@ struct HealthResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct ProbeResponse {
+    status: &'static str,
+    api_version: u32,
+    graph_schema_version: u32,
+    root: String,
+    cache_enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
 struct MetricsResponse {
     status: &'static str,
     api_version: u32,
@@ -845,6 +854,8 @@ async fn main() -> Result<()> {
         .route("/styles.css", get(styles_css))
         .route("/api/capabilities", get(capabilities_api))
         .route("/api/schema", get(api_schema_api))
+        .route("/api/live", get(live_api))
+        .route("/api/ready", get(ready_api))
         .route("/api/health", get(health))
         .route("/api/metrics", get(metrics_api))
         .route("/api/languages", get(languages_api))
@@ -1448,6 +1459,15 @@ async fn styles_css() -> impl IntoResponse {
     )
 }
 
+async fn live_api(State(state): State<AppState>) -> Json<ProbeResponse> {
+    Json(probe_response(&state, "ok"))
+}
+
+async fn ready_api(State(state): State<AppState>) -> Result<Json<ProbeResponse>, ApiError> {
+    let _ = scan_options(&state, &state.root)?;
+    Ok(Json(probe_response(&state, "ready")))
+}
+
 async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, ApiError> {
     let options = scan_options(&state, &state.root)?;
     let scan_jobs = {
@@ -1476,6 +1496,16 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, A
             state.max_semantic_concurrency,
         ),
     }))
+}
+
+fn probe_response(state: &AppState, status: &'static str) -> ProbeResponse {
+    ProbeResponse {
+        status,
+        api_version: 1,
+        graph_schema_version: CODEGRAPH_SCHEMA_VERSION,
+        root: state.root.display().to_string(),
+        cache_enabled: state.cache.is_some(),
+    }
 }
 
 async fn metrics_api(State(state): State<AppState>) -> Result<Json<MetricsResponse>, ApiError> {
@@ -3567,6 +3597,18 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "ApiSchemaResponse",
                 ),
                 api_get(
+                    "/api/live",
+                    "Read a lightweight liveness probe for process supervision.",
+                    vec![],
+                    "ProbeResponse",
+                ),
+                api_get(
+                    "/api/ready",
+                    "Read a lightweight readiness probe that validates server scan configuration.",
+                    vec![],
+                    "ProbeResponse",
+                ),
+                api_get(
                     "/api/health",
                     "Read runtime health, retained job-store counts, and concurrency slots.",
                     vec![],
@@ -4774,6 +4816,7 @@ fn capability_features(cache_enabled: bool, access_log_enabled: bool) -> Vec<&'s
         "job_listing",
         "job_cancellation",
         "runtime_metrics",
+        "runtime_probes",
         "graceful_shutdown",
         "request_ids",
         "sse_job_events",
@@ -4801,6 +4844,8 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
             endpoints: vec![
                 "GET /api/capabilities",
                 "GET /api/schema",
+                "GET /api/live",
+                "GET /api/ready",
                 "GET /api/health",
                 "GET /api/metrics",
                 "GET /api/projects",
@@ -5147,6 +5192,7 @@ mod tests {
         assert!(without_cache.contains(&"async_scan_jobs"));
         assert!(without_cache.contains(&"job_cancellation"));
         assert!(without_cache.contains(&"runtime_metrics"));
+        assert!(without_cache.contains(&"runtime_probes"));
         assert!(without_cache.contains(&"graceful_shutdown"));
         assert!(without_cache.contains(&"request_ids"));
         assert!(without_cache.contains(&"access_log"));
@@ -5204,6 +5250,30 @@ mod tests {
         assert_eq!(response.limits.default_report_insight_limit, 50);
         assert_eq!(response.limits.max_report_insight_limit, 500);
         assert_eq!(response.limits.max_source_search_query_length, 4096);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn probes_return_lightweight_runtime_status() {
+        let root = temp_server_root();
+        fs::create_dir_all(&root).unwrap();
+
+        let Json(live) = live_api(State(test_state(root.clone(), vec![], false))).await;
+        assert_eq!(live.status, "ok");
+        assert_eq!(live.api_version, 1);
+        assert_eq!(live.graph_schema_version, CODEGRAPH_SCHEMA_VERSION);
+        assert_eq!(live.root, root.display().to_string());
+        assert!(!live.cache_enabled);
+
+        let Json(ready) = ready_api(State(test_state(root.clone(), vec![], false)))
+            .await
+            .expect("ready probe");
+        assert_eq!(ready.status, "ready");
+        assert_eq!(ready.api_version, 1);
+        assert_eq!(ready.graph_schema_version, CODEGRAPH_SCHEMA_VERSION);
+        assert_eq!(ready.root, root.display().to_string());
+        assert!(!ready.cache_enabled);
+
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -5284,6 +5354,8 @@ mod tests {
 
         assert!(endpoints.contains(&"GET /api/capabilities"));
         assert!(endpoints.contains(&"GET /api/schema"));
+        assert!(endpoints.contains(&"GET /api/live"));
+        assert!(endpoints.contains(&"GET /api/ready"));
         assert!(endpoints.contains(&"GET /api/metrics"));
         assert!(endpoints.contains(&"GET /api/report"));
         assert!(endpoints.contains(&"GET /api/incremental-plan"));
@@ -5556,6 +5628,8 @@ mod tests {
                     && params.contains(&"query_focus"))
         );
         assert!(endpoints.contains(&("GET", "/api/schema")));
+        assert!(endpoints.contains(&("GET", "/api/live")));
+        assert!(endpoints.contains(&("GET", "/api/ready")));
         assert!(endpoints.contains(&("GET", "/api/report")));
         assert!(endpoints.contains(&("GET", "/api/cache-diff")));
         assert!(endpoints.contains(&("GET", "/api/cache-chunks")));

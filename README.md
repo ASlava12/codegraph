@@ -57,6 +57,7 @@ Implemented now:
 - API schema enum values document web deep-link parameters used for shareable node, dependency, and query investigations.
 - API schema enum values stay aligned with semantic work statuses and capabilities used by LSP work queues.
 - Runtime metrics endpoint for uptime, API/schema versions, roots, language/feature counts, cache state, job stores, and concurrency.
+- Lightweight liveness and readiness probe endpoints for deployment health checks.
 - Built-in HTTP access logs with method, target, status, and latency for server operations.
 - Per-response `x-request-id` correlation headers mirrored in access logs and JSON error bodies.
 - Graceful HTTP server shutdown on Ctrl-C and SIGTERM.
