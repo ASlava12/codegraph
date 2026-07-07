@@ -1,4 +1,4 @@
-use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph, Edge, Node, NodeId, NodeKind};
+use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind};
 use codegraph_indexer::{
     IndexError, IndexOptions, is_index_relevant_file, scan_project, scan_project_paths,
 };
@@ -1338,6 +1338,13 @@ fn merge_graph_preview(
     let (removed_node_ids, removed_edge_indexes) = graph_scope_from_index(index, &replaced_paths);
     let (chunk_removed_nodes, chunk_removed_edges) =
         graph_chunk_counts_from_index(chunks, &replaced_paths);
+    let incoming_blockers =
+        cross_scope_incoming_edges(cached, &removed_node_ids, &removed_edge_indexes);
+    let cached_signatures = graph_signatures_for_node_ids(cached, &removed_node_ids);
+    let changed_signatures = graph_signatures_for_paths(changed, scan_paths);
+    let complete_graph = removed_paths.is_empty()
+        && incoming_blockers == 0
+        && cached_signatures == changed_signatures;
 
     let mut kept_node_ids = BTreeSet::new();
     let mut merged = CodeGraph {
@@ -1401,7 +1408,7 @@ fn merge_graph_preview(
     }
 
     let merge = IncrementalMergeReport {
-        complete_graph: false,
+        complete_graph,
         reused_nodes,
         reused_edges,
         removed_cached_nodes: removed_node_ids.len(),
@@ -1413,13 +1420,123 @@ fn merge_graph_preview(
         scanned_edges: changed.edges.len(),
         merged_nodes: merged.nodes.len(),
         merged_edges: merged.edges.len(),
-        warning: Some(
-            "partial merge preview replaces changed file scopes but may omit cross-file incoming edges until a full scan runs"
-                .to_string(),
-        ),
+        warning: partial_merge_warning(complete_graph, removed_paths, incoming_blockers),
     };
 
     (merged, merge)
+}
+
+fn cross_scope_incoming_edges(
+    graph: &CodeGraph,
+    removed_node_ids: &BTreeSet<u64>,
+    removed_edge_indexes: &BTreeSet<usize>,
+) -> usize {
+    graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(edge_index, edge)| {
+            removed_edge_indexes.contains(edge_index)
+                && removed_node_ids.contains(&edge.target.0)
+                && !removed_node_ids.contains(&edge.source.0)
+                && edge.source != graph.root
+                && edge.kind != EdgeKind::Contains
+        })
+        .count()
+}
+
+fn graph_signatures_for_node_ids(
+    graph: &CodeGraph,
+    node_ids: &BTreeSet<u64>,
+) -> BTreeSet<GraphSignature> {
+    graph
+        .nodes
+        .iter()
+        .filter(|node| node_ids.contains(&node.id.0))
+        .filter_map(graph_signature)
+        .collect()
+}
+
+fn graph_signatures_for_paths(
+    graph: &CodeGraph,
+    paths: &BTreeSet<String>,
+) -> BTreeSet<GraphSignature> {
+    graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node_source_paths(node)
+                .iter()
+                .any(|path| paths.contains(path))
+        })
+        .filter_map(graph_signature)
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct GraphSignature {
+    kind: String,
+    label: String,
+    path: String,
+    item_kind: String,
+}
+
+fn graph_signature(node: &Node) -> Option<GraphSignature> {
+    if matches!(node.kind, NodeKind::Repository | NodeKind::Directory) {
+        return None;
+    }
+    Some(GraphSignature {
+        kind: format!("{:?}", node.kind),
+        label: node.label.clone(),
+        path: node
+            .span
+            .as_ref()
+            .map(|span| span.path.clone())
+            .unwrap_or_else(|| {
+                if matches!(node.kind, NodeKind::File) {
+                    node.label.clone()
+                } else {
+                    String::new()
+                }
+            }),
+        item_kind: node.metadata.get("item_kind").cloned().unwrap_or_default(),
+    })
+}
+
+fn node_source_paths(node: &Node) -> BTreeSet<String> {
+    let mut paths = BTreeSet::new();
+    if matches!(node.kind, NodeKind::File) && is_index_relevant_file(Path::new(&node.label)) {
+        paths.insert(node.label.clone());
+    }
+    if let Some(span) = &node.span {
+        paths.insert(span.path.clone());
+    }
+    paths
+}
+
+fn partial_merge_warning(
+    complete_graph: bool,
+    removed_paths: &BTreeSet<String>,
+    incoming_blockers: usize,
+) -> Option<String> {
+    if complete_graph {
+        return None;
+    }
+    if !removed_paths.is_empty() {
+        return Some(
+            "partial merge preview includes removed files; run a full scan before storing the graph cache"
+                .to_string(),
+        );
+    }
+    if incoming_blockers > 0 {
+        return Some(format!(
+            "partial merge preview would drop {incoming_blockers} incoming cross-file edge(s); run a full scan before storing the graph cache"
+        ));
+    }
+    Some(
+        "partial merge preview changes the file graph surface; run a full scan before storing the graph cache"
+            .to_string(),
+    )
 }
 
 fn find_existing_directory(graph: &CodeGraph, label: &str) -> Option<NodeId> {
@@ -2115,6 +2232,45 @@ mod tests {
     }
 
     #[test]
+    fn incremental_update_stores_body_only_partial_merge() {
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() { let value = 1; }\n",
+        )
+        .unwrap();
+        fs::write(root.join("src").join("stable.rs"), "pub fn stable() {}\n").unwrap();
+        let options = IndexOptions::default();
+        let cache = GraphCache::new(&cache_dir);
+        let first = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(first.cache.status, CacheStatus::Miss);
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() { let value = 2; }\n",
+        )
+        .unwrap();
+
+        let update = cache.incremental_update(&root, &options, 10).unwrap();
+
+        assert_eq!(
+            update.preview.plan.action,
+            IncrementalPlanAction::PartialRescan
+        );
+        assert!(update.preview.merge.complete_graph);
+        assert!(update.cache.stored);
+        assert!(update.preview.merge.warning.is_none());
+        let hit = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(hit.cache.status, CacheStatus::Hit);
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
     fn incremental_update_does_not_store_incomplete_partial_merge() {
         let root = temp_project_root();
         let cache_dir = temp_project_root();
@@ -2142,7 +2298,7 @@ mod tests {
         );
         assert!(!update.preview.merge.complete_graph);
         assert!(!update.cache.stored);
-        assert!(update.cache.reason.contains("partial merge"));
+        assert!(update.cache.reason.contains("file graph surface"));
         assert!(cache.load(&root, &options, &current).unwrap().is_none());
 
         fs::remove_dir_all(root).unwrap();
