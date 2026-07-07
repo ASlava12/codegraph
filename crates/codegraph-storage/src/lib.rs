@@ -59,17 +59,32 @@ pub struct FingerprintEntry {
 pub struct CacheDiffReport {
     pub cache_dir: String,
     pub cache_record: CacheRecordStatus,
+    pub reuse_strategy: CacheReuseStrategy,
     pub previous_hash: Option<String>,
     pub current_hash: String,
     pub previous_files: Option<usize>,
     pub current_files: usize,
     pub previous_bytes: Option<u64>,
     pub current_bytes: u64,
+    pub changed_files: usize,
+    pub reusable_files: usize,
+    pub changed_current_bytes: u64,
+    pub reusable_bytes: u64,
+    pub reuse_file_ratio_basis_points: u16,
+    pub reuse_byte_ratio_basis_points: u16,
     pub added: Vec<FingerprintEntry>,
     pub removed: Vec<FingerprintEntry>,
     pub modified: Vec<FingerprintChange>,
     pub unchanged: usize,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheReuseStrategy {
+    FullScan,
+    PartialReuse,
+    NoChanges,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -379,12 +394,19 @@ fn diff_without_record(
     CacheDiffReport {
         cache_dir: cache.dir().display().to_string(),
         cache_record: status,
+        reuse_strategy: CacheReuseStrategy::FullScan,
         previous_hash: None,
         current_hash: current.hash,
         previous_files: None,
         current_files: current.files,
         previous_bytes: None,
         current_bytes: current.bytes,
+        changed_files: current.files,
+        reusable_files: 0,
+        changed_current_bytes: current.bytes,
+        reusable_bytes: 0,
+        reuse_file_ratio_basis_points: 0,
+        reuse_byte_ratio_basis_points: 0,
         added: current.entries.into_iter().take(limit).collect(),
         removed: Vec::new(),
         modified: Vec::new(),
@@ -415,6 +437,8 @@ fn diff_fingerprints(
     let mut removed = Vec::new();
     let mut modified = Vec::new();
     let mut unchanged = 0usize;
+    let mut reusable_bytes = 0u64;
+    let mut changed_current_bytes = 0u64;
     let mut total_changes = 0usize;
 
     for (path, current_entry) in &current_entries {
@@ -424,9 +448,11 @@ fn diff_fingerprints(
                     && previous_entry.modified_unix_nanos == current_entry.modified_unix_nanos =>
             {
                 unchanged += 1;
+                reusable_bytes = reusable_bytes.saturating_add(current_entry.bytes);
             }
             Some(previous_entry) => {
                 total_changes += 1;
+                changed_current_bytes = changed_current_bytes.saturating_add(current_entry.bytes);
                 if modified.len() < limit {
                     modified.push(FingerprintChange {
                         path: (*path).to_string(),
@@ -439,6 +465,7 @@ fn diff_fingerprints(
             }
             None => {
                 total_changes += 1;
+                changed_current_bytes = changed_current_bytes.saturating_add(current_entry.bytes);
                 if added.len() < limit {
                     added.push((*current_entry).clone());
                 }
@@ -454,22 +481,43 @@ fn diff_fingerprints(
             }
         }
     }
+    let reuse_strategy = if total_changes == 0 {
+        CacheReuseStrategy::NoChanges
+    } else if unchanged > 0 {
+        CacheReuseStrategy::PartialReuse
+    } else {
+        CacheReuseStrategy::FullScan
+    };
 
     CacheDiffReport {
         cache_dir: cache.dir().display().to_string(),
         cache_record: CacheRecordStatus::Present,
+        reuse_strategy,
         previous_hash: Some(previous.hash.clone()),
         current_hash: current.hash,
         previous_files: Some(previous.files),
         current_files: current.files,
         previous_bytes: Some(previous.bytes),
         current_bytes: current.bytes,
+        changed_files: total_changes,
+        reusable_files: unchanged,
+        changed_current_bytes,
+        reusable_bytes,
+        reuse_file_ratio_basis_points: ratio_basis_points(unchanged as u64, current.files as u64),
+        reuse_byte_ratio_basis_points: ratio_basis_points(reusable_bytes, current.bytes),
         added,
         removed,
         modified,
         unchanged,
         truncated: total_changes > limit,
     }
+}
+
+fn ratio_basis_points(part: u64, total: u64) -> u16 {
+    if total == 0 {
+        return 10_000;
+    }
+    ((part.saturating_mul(10_000)) / total).min(10_000) as u16
 }
 
 fn should_enter(
@@ -797,6 +845,10 @@ mod tests {
 
         let missing = cache.diff(&root, &options, 10).unwrap();
         assert_eq!(missing.cache_record, CacheRecordStatus::Missing);
+        assert_eq!(missing.reuse_strategy, CacheReuseStrategy::FullScan);
+        assert_eq!(missing.changed_files, 2);
+        assert_eq!(missing.reusable_files, 0);
+        assert_eq!(missing.reuse_file_ratio_basis_points, 0);
         assert_eq!(missing.added.len(), 2);
 
         let first = scan_project_cached(&root, &options, Some(&cache)).unwrap();
@@ -810,12 +862,17 @@ mod tests {
         .unwrap();
         fs::write(root.join("src").join("new.rs"), "pub fn new() {}\n").unwrap();
         fs::remove_file(root.join("src").join("old.rs")).unwrap();
+        fs::write(root.join("src").join("stable.rs"), "pub fn stable() {}\n").unwrap();
 
         let diff = cache.diff(&root, &options, 10).unwrap();
         assert_eq!(diff.cache_record, CacheRecordStatus::Present);
         assert_eq!(diff.previous_files, Some(2));
-        assert_eq!(diff.current_files, 2);
+        assert_eq!(diff.current_files, 3);
+        assert_eq!(diff.changed_files, 4);
+        assert_eq!(diff.reusable_files, 0);
+        assert_eq!(diff.reuse_strategy, CacheReuseStrategy::FullScan);
         assert!(diff.added.iter().any(|entry| entry.path == "src/new.rs"));
+        assert!(diff.added.iter().any(|entry| entry.path == "src/stable.rs"));
         assert!(diff.removed.iter().any(|entry| entry.path == "src/old.rs"));
         assert!(
             diff.modified
@@ -823,6 +880,27 @@ mod tests {
                 .any(|entry| entry.path == "src/main.rs")
         );
         assert!(!diff.truncated);
+
+        let second = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(second.cache.status, CacheStatus::Miss);
+
+        let clean = cache.diff(&root, &options, 10).unwrap();
+        assert_eq!(clean.reuse_strategy, CacheReuseStrategy::NoChanges);
+        assert_eq!(clean.changed_files, 0);
+        assert_eq!(clean.reusable_files, 3);
+        assert_eq!(clean.reuse_file_ratio_basis_points, 10_000);
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        fs::write(root.join("src").join("new.rs"), "pub fn newer() {}\n").unwrap();
+
+        let reuse = cache.diff(&root, &options, 10).unwrap();
+        assert_eq!(reuse.cache_record, CacheRecordStatus::Present);
+        assert_eq!(reuse.reuse_strategy, CacheReuseStrategy::PartialReuse);
+        assert_eq!(reuse.changed_files, 1);
+        assert_eq!(reuse.reusable_files, 2);
+        assert_eq!(reuse.reuse_file_ratio_basis_points, 6666);
+        assert!(reuse.reusable_bytes > 0);
+        assert!(reuse.changed_current_bytes > 0);
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();

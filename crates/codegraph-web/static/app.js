@@ -2818,12 +2818,22 @@ function renderCacheDiff(report) {
   const removed = report.removed || [];
   const previousHash = report.previous_hash || "no previous fingerprint";
   const changedCount = added.length + modified.length + removed.length;
+  const totalChanged = Number(report.changed_files ?? changedCount);
+  const reusableFiles = Number(report.reusable_files ?? report.unchanged ?? 0);
+  const currentFiles = Number(report.current_files ?? 0);
   const summary = `
     <div class="query-summary">
       <span>${escapeHtml(formatKind(report.cache_record || "unknown"))}</span>
+      <span>${escapeHtml(formatKind(report.reuse_strategy || "unknown"))}</span>
       <span>${report.previous_files ?? 0} -> ${report.current_files ?? 0} files</span>
       <span>${formatBytes(report.previous_bytes)} -> ${formatBytes(report.current_bytes)}</span>
-      <span>${changedCount} shown</span>
+      <span>${totalChanged} changed</span>
+      <span>${reusableFiles}/${currentFiles} reusable</span>
+      <span>${formatBasisPoints(report.reuse_file_ratio_basis_points)} file reuse</span>
+      <span>${formatBasisPoints(report.reuse_byte_ratio_basis_points)} byte reuse</span>
+      <span>${formatBytes(report.changed_current_bytes)} changed current</span>
+      <span>${formatBytes(report.reusable_bytes)} reusable</span>
+      <span>${changedCount} listed</span>
       ${report.truncated ? "<span>truncated</span>" : ""}
       <span class="query-expression">previous ${escapeHtml(previousHash)}</span>
       <span class="query-expression">current ${escapeHtml(report.current_hash || "unknown")}</span>
@@ -2843,6 +2853,12 @@ function renderCacheDiff(report) {
   }
 
   return `${summary}${groups}`;
+}
+
+function formatBasisPoints(value) {
+  const points = Number(value);
+  if (!Number.isFinite(points)) return "0%";
+  return `${(Math.max(0, Math.min(10000, points)) / 100).toFixed(1)}%`;
 }
 
 function renderCacheDiffGroup(label, items, renderItem) {

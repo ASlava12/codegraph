@@ -87,6 +87,7 @@ Implemented now:
 - Persistent CLI graph cache using the same project fingerprinting and cache records as the server.
 - Persistent per-file parser fact cache reused during graph-cache misses.
 - Cache fingerprint diff diagnostics in CLI, API, and web UI for explaining cache misses by added, removed, and modified files.
+- Cache reuse estimates in CLI, API, and web UI for planning incremental scans from unchanged files and bytes.
 - Scan coverage reports in CLI, API, and web overview for indexed files, policy skips, large-file skips, and non-indexed files.
 - CLI scan benchmark reports with timing and graph-size metrics for regression tracking.
 - Configurable scan file-size budget for CLI/server scans, with skipped large source files kept visible in summaries, insights, and the web stats panel.
@@ -453,7 +454,7 @@ curl 'http://127.0.0.1:3765/api/scan?path=.'
 curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'
 ```
 
-The scan response includes `cache.status` as `hit`, `miss`, or `disabled`. Cache diff responses and the web Cache Diff panel explain the previous and current project fingerprints without performing a full graph scan.
+The scan response includes `cache.status` as `hit`, `miss`, or `disabled`. Cache diff responses and the web Cache Diff panel explain the previous and current project fingerprints without performing a full graph scan, including reuse strategy, changed file counts, reusable file/byte counts, and reuse ratios for incremental-scan planning.
 
 Export API:
 
