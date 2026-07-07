@@ -419,6 +419,7 @@ button:disabled {
 
 .query,
 .source-search,
+.cache-diff,
 .path-query,
 .config-trace,
 .error-trace {
@@ -432,6 +433,7 @@ button:disabled {
 }
 
 .source-search header,
+.cache-diff header,
 .path-query header,
 .config-trace header,
 .error-trace header {
@@ -441,6 +443,7 @@ button:disabled {
 }
 
 .source-search h2,
+.cache-diff h2,
 .path-query h2,
 .config-trace h2,
 .error-trace h2 {
@@ -451,7 +454,16 @@ button:disabled {
   text-transform: uppercase;
 }
 
+.cache-diff header span {
+  min-width: 58px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+}
+
 .source-search-fields,
+.cache-diff-fields,
 .path-fields,
 .config-trace-fields,
 .error-trace-fields {
@@ -461,6 +473,7 @@ button:disabled {
 }
 
 .source-search-fields input,
+.cache-diff-fields input,
 .path-fields input,
 .config-trace-fields input,
 .error-trace-fields input {
@@ -468,12 +481,17 @@ button:disabled {
 }
 
 .source-search > button,
+.cache-diff > button,
 .path-query > button,
 .config-trace > button,
 .error-trace > button {
   height: 34px;
   padding: 0 10px;
   font-size: 13px;
+}
+
+.cache-diff-fields {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .query-result {
@@ -530,6 +548,23 @@ button:disabled {
   min-width: 0;
   border-radius: 6px;
   background: var(--panel-2);
+}
+
+.cache-diff-group {
+  display: grid;
+  gap: 5px;
+}
+
+.cache-diff-group h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.cache-diff-item {
+  grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
 }
 
 .source-match {

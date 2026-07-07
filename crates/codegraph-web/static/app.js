@@ -20,6 +20,7 @@ const state = {
   entryFlowRequest: 0,
   queryRequest: 0,
   sourceSearchRequest: 0,
+  cacheDiffRequest: 0,
   pathRequest: 0,
   configTraceRequest: 0,
   errorTraceRequest: 0,
@@ -107,6 +108,10 @@ const sourceSearchInput = document.querySelector("#sourceSearchInput");
 const sourcePathFilterInput = document.querySelector("#sourcePathFilterInput");
 const sourceSearchButton = document.querySelector("#sourceSearchButton");
 const sourceSearchResult = document.querySelector("#sourceSearchResult");
+const cacheDiffStatus = document.querySelector("#cacheDiffStatus");
+const cacheDiffLimitInput = document.querySelector("#cacheDiffLimitInput");
+const cacheDiffButton = document.querySelector("#cacheDiffButton");
+const cacheDiffResult = document.querySelector("#cacheDiffResult");
 const pathFromInput = document.querySelector("#pathFromInput");
 const pathToInput = document.querySelector("#pathToInput");
 const pathDepthInput = document.querySelector("#pathDepthInput");
@@ -163,6 +168,10 @@ for (const input of [sourceSearchInput, sourcePathFilterInput]) {
     if (event.key === "Enter") runSourceSearch();
   });
 }
+cacheDiffButton.addEventListener("click", () => loadCacheDiff());
+cacheDiffLimitInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") loadCacheDiff();
+});
 entryFlowButton.addEventListener("click", () => runEntryFlowTrace());
 for (const input of [entryFlowSearchInput, entryFlowDepthInput]) {
   input.addEventListener("keydown", (event) => {
@@ -992,6 +1001,102 @@ async function runSourceSearch() {
       sourceSearchButton.disabled = false;
     }
   }
+}
+
+async function loadCacheDiff() {
+  const limit = clampNumber(Number(cacheDiffLimitInput.value || 50), 1, 10000);
+  cacheDiffLimitInput.value = String(limit);
+  state.cacheDiffRequest += 1;
+  const requestId = state.cacheDiffRequest;
+  cacheDiffButton.disabled = true;
+  cacheDiffStatus.textContent = "loading";
+  cacheDiffResult.innerHTML = '<p class="empty">Loading cache diagnostics...</p>';
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    limit: String(limit),
+  });
+
+  try {
+    const response = await fetch(`/api/cache-diff?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.cacheDiffRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "cache diff failed");
+    }
+    cacheDiffStatus.textContent = formatKind(body.cache_record || "unknown");
+    cacheDiffResult.innerHTML = renderCacheDiff(body);
+  } catch (error) {
+    if (requestId !== state.cacheDiffRequest) return;
+    cacheDiffStatus.textContent = "error";
+    cacheDiffResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.cacheDiffRequest) {
+      cacheDiffButton.disabled = false;
+    }
+  }
+}
+
+function renderCacheDiff(report) {
+  const added = report.added || [];
+  const modified = report.modified || [];
+  const removed = report.removed || [];
+  const previousHash = report.previous_hash || "no previous fingerprint";
+  const changedCount = added.length + modified.length + removed.length;
+  const summary = `
+    <div class="query-summary">
+      <span>${escapeHtml(formatKind(report.cache_record || "unknown"))}</span>
+      <span>${report.previous_files ?? 0} -> ${report.current_files ?? 0} files</span>
+      <span>${formatBytes(report.previous_bytes)} -> ${formatBytes(report.current_bytes)}</span>
+      <span>${changedCount} shown</span>
+      ${report.truncated ? "<span>truncated</span>" : ""}
+      <span class="query-expression">previous ${escapeHtml(previousHash)}</span>
+      <span class="query-expression">current ${escapeHtml(report.current_hash || "unknown")}</span>
+    </div>
+  `;
+
+  const groups = [
+    renderCacheDiffGroup("Added", added, renderCacheDiffEntry),
+    renderCacheDiffGroup("Modified", modified, renderCacheDiffChange),
+    renderCacheDiffGroup("Removed", removed, renderCacheDiffEntry),
+  ]
+    .filter(Boolean)
+    .join("");
+
+  if (!groups) {
+    return `${summary}<p class="empty">No file fingerprint changes detected.</p>`;
+  }
+
+  return `${summary}${groups}`;
+}
+
+function renderCacheDiffGroup(label, items, renderItem) {
+  if (!items.length) return "";
+  const rows = items.map((item) => `<li>${renderItem(item)}</li>`).join("");
+  return `
+    <section class="cache-diff-group">
+      <h3>${escapeHtml(label)}</h3>
+      <ul class="query-list">${rows}</ul>
+    </section>
+  `;
+}
+
+function renderCacheDiffEntry(entry) {
+  return `
+    <div class="query-item cache-diff-item">
+      <span>${formatBytes(entry.bytes)}</span>
+      <strong>${escapeHtml(entry.path || "")}</strong>
+    </div>
+  `;
+}
+
+function renderCacheDiffChange(change) {
+  return `
+    <div class="query-item cache-diff-item">
+      <span>${formatBytes(change.previous_bytes)} -> ${formatBytes(change.current_bytes)}</span>
+      <strong>${escapeHtml(change.path || "")}</strong>
+    </div>
+  `;
 }
 
 async function runPathQuery() {
@@ -3008,6 +3113,20 @@ function edgeColor(edge) {
 
 function formatKind(value) {
   return String(value).replaceAll("_", " ");
+}
+
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let unitIndex = 0;
+  let size = bytes;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const digits = unitIndex === 0 || size >= 10 ? 0 : 1;
+  return `${size.toFixed(digits)} ${units[unitIndex]}`;
 }
 
 function setStatus(text, className = "") {

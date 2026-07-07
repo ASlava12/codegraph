@@ -151,6 +151,21 @@
           <div id="sourceSearchResult" class="query-result"></div>
         </section>
 
+        <section class="cache-diff" aria-label="Cache diagnostics">
+          <header>
+            <h2>Cache Diff</h2>
+            <span id="cacheDiffStatus">idle</span>
+          </header>
+          <div class="cache-diff-fields">
+            <label class="field compact">
+              <span>Limit</span>
+              <input id="cacheDiffLimitInput" type="number" min="1" max="10000" value="50" />
+            </label>
+          </div>
+          <button id="cacheDiffButton" type="button">Explain Cache</button>
+          <div id="cacheDiffResult" class="query-result"></div>
+        </section>
+
         <section class="path-query" aria-label="Graph path">
           <header>
             <h2>Path</h2>

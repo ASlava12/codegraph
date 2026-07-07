@@ -29,7 +29,7 @@ It currently builds file, symbol, import, local import resolution, call, config,
 
 `codegraph-storage` owns persistent graph cache records and project fingerprints.
 
-The first implementation stores whole-graph JSON cache records keyed by root path and scan options. A fingerprint records scanned relative paths, file sizes, and modification times; a cache hit is only used when the current fingerprint matches the stored record. Cache diff reports compare the stored and current fingerprints so CLI/API users can see added, removed, and modified files behind a miss. This is deliberately conservative: it accelerates repeated API and UI scans without yet promising partial graph reuse.
+The first implementation stores whole-graph JSON cache records keyed by root path and scan options. A fingerprint records scanned relative paths, file sizes, and modification times; a cache hit is only used when the current fingerprint matches the stored record. Cache diff reports compare the stored and current fingerprints so CLI, API, and web users can see added, removed, and modified files behind a miss. This is deliberately conservative: it accelerates repeated API and UI scans without yet promising partial graph reuse.
 
 ### Analysis
 
@@ -117,7 +117,7 @@ Responsibilities:
 
 - provide health and scan endpoints
 - reuse persistent graph cache records when project fingerprints match
-- provide cache fingerprint diff endpoints for explaining cache invalidation
+- provide cache fingerprint diff endpoints and web controls for explaining cache invalidation
 - provide JSON, DOT, and NDJSON export endpoints
 - provide async scan job endpoints and SSE status streams for long-running scans
 - provide summary, entrypoint, and trace endpoints
@@ -136,7 +136,7 @@ Responsibilities:
 - constrain scan paths to configured project roots by default
 - expose configured local project roots to the web UI for project switching
 - serve the static web application
-- keep UI graph pages, query focus, path navigation/highlighting, trace, entrypoint trace, config trace, error trace, source search, insight, and agent clients on the same JSON graph model
+- keep UI graph pages, query focus, path navigation/highlighting, trace, entrypoint trace, config trace, error trace, source search, cache diagnostics, insight, and agent clients on the same JSON graph model
 
 Future crate: optionally `codegraph-ui`.
 
