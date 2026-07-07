@@ -218,6 +218,7 @@ Goal: handle real repositories efficiently.
 - [x] Add cache reuse estimates for incremental scan planning.
 - [x] Add explicit incremental scan planning reports with cached graph impact scopes.
 - [x] Add persistent graph impact index storage for incremental planning.
+- [x] Add changed-scope incremental scan graphs across CLI, API, and web UI.
 - Add persistent index storage with partial graph reuse.
 - Incrementally update changed files.
 - [x] Cache parser facts.

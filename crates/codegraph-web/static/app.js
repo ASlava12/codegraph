@@ -72,6 +72,7 @@ const I18N = {
     "button.searchSource": "Search Source",
     "button.explainCache": "Explain Cache",
     "button.planIncremental": "Plan Incremental",
+    "button.scanIncremental": "Scan Changed",
     "button.downloadGraph": "Download Graph",
     "button.download": "Download",
     "button.findPath": "Find Path",
@@ -244,6 +245,7 @@ const I18N = {
     "button.searchSource": "Искать в коде",
     "button.explainCache": "Объяснить кеш",
     "button.planIncremental": "План инкремента",
+    "button.scanIncremental": "Скан изменений",
     "button.downloadGraph": "Скачать граф",
     "button.download": "Скачать",
     "button.findPath": "Найти путь",
@@ -421,6 +423,7 @@ const state = {
   sourceSearchRequest: 0,
   cacheDiffRequest: 0,
   incrementalPlanRequest: 0,
+  incrementalScanRequest: 0,
   exportRequest: 0,
   pathRequest: 0,
   configTraceRequest: 0,
@@ -558,6 +561,7 @@ const cacheDiffStatus = document.querySelector("#cacheDiffStatus");
 const cacheDiffLimitInput = document.querySelector("#cacheDiffLimitInput");
 const cacheDiffButton = document.querySelector("#cacheDiffButton");
 const incrementalPlanButton = document.querySelector("#incrementalPlanButton");
+const incrementalScanButton = document.querySelector("#incrementalScanButton");
 const cacheDiffResult = document.querySelector("#cacheDiffResult");
 const exportFormatInput = document.querySelector("#exportFormatInput");
 const exportButton = document.querySelector("#exportButton");
@@ -631,6 +635,7 @@ for (const input of [sourceSearchInput, sourcePathFilterInput]) {
 }
 cacheDiffButton.addEventListener("click", () => loadCacheDiff());
 incrementalPlanButton.addEventListener("click", () => loadIncrementalPlan());
+incrementalScanButton.addEventListener("click", () => loadIncrementalScan());
 cacheDiffLimitInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") loadCacheDiff();
 });
@@ -2768,6 +2773,42 @@ async function loadIncrementalPlan() {
   }
 }
 
+async function loadIncrementalScan() {
+  const limit = clampNumber(Number(cacheDiffLimitInput.value || 50), 1, 10000);
+  cacheDiffLimitInput.value = String(limit);
+  state.incrementalScanRequest += 1;
+  const requestId = state.incrementalScanRequest;
+  incrementalScanButton.disabled = true;
+  cacheDiffStatus.textContent = "scanning";
+  cacheDiffResult.innerHTML = '<p class="empty">Scanning changed files...</p>';
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    limit: String(limit),
+  });
+
+  try {
+    const response = await fetch(`/api/incremental-scan?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.incrementalScanRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "incremental scan failed");
+    }
+    const plan = body.plan || {};
+    cacheDiffStatus.textContent = formatKind(plan.action || "unknown");
+    cacheDiffResult.innerHTML = renderIncrementalScan(body);
+    showIncrementalScanGraph(body);
+  } catch (error) {
+    if (requestId !== state.incrementalScanRequest) return;
+    cacheDiffStatus.textContent = "error";
+    cacheDiffResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.incrementalScanRequest) {
+      incrementalScanButton.disabled = false;
+    }
+  }
+}
+
 async function runGraphExport() {
   const metadata = exportFormatMetadata(exportFormatInput.value);
   exportFormatInput.value = metadata.format;
@@ -2939,6 +2980,39 @@ function renderIncrementalPlan(plan) {
   }
 
   return `${summary}${groups}`;
+}
+
+function renderIncrementalScan(scan) {
+  const graph = scan.graph || { nodes: [], edges: [] };
+  const plan = scan.plan || {};
+  const graphSummary = `
+    <div class="query-summary">
+      <span>${Number(graph.nodes?.length || 0)} scanned nodes</span>
+      <span>${Number(graph.edges?.length || 0)} scanned edges</span>
+      <span>${Number(plan.scan_paths?.length || 0)} listed paths</span>
+      ${plan.truncated ? "<span>limited scope</span>" : ""}
+    </div>
+  `;
+  return `${graphSummary}${renderIncrementalPlan(plan)}`;
+}
+
+function showIncrementalScanGraph(scan) {
+  const graph = scan.graph || { nodes: [], edges: [] };
+  const plan = scan.plan || {};
+  state.graph = { nodes: graph.nodes || [], edges: graph.edges || [] };
+  state.graphPage.nodeOffset = 0;
+  state.graphPage.totalNodes = state.graph.nodes.length;
+  state.graphPage.totalEdges = state.graph.edges.length;
+  state.graphPage.truncatedNodes = false;
+  state.selectedId = null;
+  state.hoveredId = null;
+  state.queryFocus = null;
+  rootLabel.textContent = `Changed: ${formatKind(plan.action || "scan")}`;
+  initializeGraph({ preserveView: false });
+  pageInfo.textContent = `changed ${state.graph.nodes.length} / ${Number(plan.rescan_files || 0)}`;
+  pagePrevButton.disabled = true;
+  pageNextButton.disabled = true;
+  pageReloadButton.disabled = false;
 }
 
 function renderPlanPath(path) {

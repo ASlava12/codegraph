@@ -1,5 +1,7 @@
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph, NodeKind};
-use codegraph_indexer::{IndexError, IndexOptions, is_index_relevant_file, scan_project};
+use codegraph_indexer::{
+    IndexError, IndexOptions, is_index_relevant_file, scan_project, scan_project_paths,
+};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,6 +25,12 @@ pub struct GraphCache {
 pub struct CachedScan {
     pub graph: CodeGraph,
     pub cache: CacheInfo,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct IncrementalScan {
+    pub plan: IncrementalScanPlan,
+    pub graph: CodeGraph,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -367,6 +375,35 @@ impl GraphCache {
             current,
             limit,
         ))
+    }
+
+    pub fn incremental_scan(
+        &self,
+        root: &Path,
+        options: &IndexOptions,
+        limit: usize,
+    ) -> Result<IncrementalScan, CacheError> {
+        let plan = self.incremental_plan(root, options, limit)?;
+        let graph = match plan.action {
+            IncrementalPlanAction::FullScan => {
+                scan_project_cached(root, options, Some(self))?.graph
+            }
+            IncrementalPlanAction::PartialRescan => {
+                let scan_paths = plan.scan_paths.iter().cloned().collect::<BTreeSet<_>>();
+                let scan_options = options
+                    .clone()
+                    .with_parse_cache_dir(self.dir().join("parse-facts"));
+                scan_project_paths(root, &scan_options, &scan_paths)?
+            }
+            IncrementalPlanAction::Noop => {
+                let scan_options = options
+                    .clone()
+                    .with_parse_cache_dir(self.dir().join("parse-facts"));
+                scan_project_paths(root, &scan_options, &BTreeSet::new())?
+            }
+        };
+
+        Ok(IncrementalScan { plan, graph })
     }
 
     pub fn store(
@@ -1364,6 +1401,48 @@ mod tests {
         assert!(partial_plan.reusable_paths.len() >= 2);
         assert!(partial_plan.impacted_nodes > 0);
         assert!(partial_plan.impacted_edges > 0);
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn incremental_scan_returns_changed_scope_graph_for_partial_rescan() {
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        fs::write(root.join("src").join("stable.rs"), "pub fn stable() {}\n").unwrap();
+        let options = IndexOptions::default();
+        let cache = GraphCache::new(&cache_dir);
+        let first = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(first.cache.status, CacheStatus::Miss);
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() {}\nfn changed() {}\n",
+        )
+        .unwrap();
+
+        let incremental = cache.incremental_scan(&root, &options, 10).unwrap();
+        let labels = incremental
+            .graph
+            .nodes
+            .iter()
+            .map(|node| node.label.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            incremental.plan.action,
+            IncrementalPlanAction::PartialRescan
+        );
+        assert_eq!(incremental.plan.scan_paths, vec!["src/main.rs".to_string()]);
+        assert!(labels.contains(&"src"));
+        assert!(labels.contains(&"src/main.rs"));
+        assert!(labels.contains(&"changed"));
+        assert!(!labels.contains(&"src/stable.rs"));
+        assert!(!labels.contains(&"stable"));
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();

@@ -112,6 +112,9 @@ enum Command {
     /// Plan incremental scan work from the persistent graph cache fingerprint.
     IncrementalPlan(CacheDiffArgs),
 
+    /// Scan only the changed current files described by the incremental cache plan.
+    IncrementalScan(CacheDiffArgs),
+
     /// Emit entrypoint candidate nodes as JSON.
     Entrypoints(ScanArgs),
 
@@ -904,6 +907,15 @@ fn main() -> Result<()> {
             let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
             let plan = cache.incremental_plan(&args.path, &options, args.limit)?;
             println!("{}", serde_json::to_string_pretty(&plan)?);
+        }
+        Command::IncrementalScan(args) => {
+            let options = configured_index_options(
+                &args.path,
+                &scan_overrides(args.include_hidden, args.include_ignored, max_file_size),
+            )?;
+            let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
+            let scan = cache.incremental_scan(&args.path, &options, args.limit)?;
+            println!("{}", serde_json::to_string_pretty(&scan)?);
         }
         Command::Entrypoints(args) => {
             let graph = scan_with_options(

@@ -493,7 +493,23 @@ pub fn scan_project(
     root: impl AsRef<Path>,
     options: &IndexOptions,
 ) -> Result<CodeGraph, IndexError> {
-    let root = root.as_ref();
+    scan_project_with_scope(root.as_ref(), options, None)
+}
+
+pub fn scan_project_paths(
+    root: impl AsRef<Path>,
+    options: &IndexOptions,
+    paths: &BTreeSet<String>,
+) -> Result<CodeGraph, IndexError> {
+    let scope = ScanScope::new(paths);
+    scan_project_with_scope(root.as_ref(), options, Some(&scope))
+}
+
+fn scan_project_with_scope(
+    root: &Path,
+    options: &IndexOptions,
+    scope: Option<&ScanScope>,
+) -> Result<CodeGraph, IndexError> {
     let ignored_globs = compile_ignored_globs(&options.ignored_globs)?;
     let root_label = root
         .file_name()
@@ -539,6 +555,9 @@ pub fn scan_project(
         let label = relative_path.to_string_lossy().replace('\\', "/");
 
         if entry.file_type().is_dir() {
+            if !scope.is_none_or(|scope| scope.includes_directory(&label)) {
+                continue;
+            }
             let id = context.graph.add_node(NodeKind::Directory, label);
             context.graph.add_edge(
                 context.graph.root,
@@ -550,6 +569,9 @@ pub fn scan_project(
         }
 
         if entry.file_type().is_file() {
+            if !scope.is_none_or(|scope| scope.includes_file(&label)) {
+                continue;
+            }
             match entry.metadata() {
                 Ok(metadata) if metadata.len() > options.max_file_size => {
                     if is_index_relevant_file(path) {
@@ -568,6 +590,54 @@ pub fn scan_project(
     apply_custom_rules(&mut context);
 
     Ok(context.graph)
+}
+
+#[derive(Debug)]
+struct ScanScope {
+    files: BTreeSet<String>,
+    directories: BTreeSet<String>,
+}
+
+impl ScanScope {
+    fn new(paths: &BTreeSet<String>) -> Self {
+        let mut files = BTreeSet::new();
+        let mut directories = BTreeSet::new();
+        for path in paths {
+            let normalized = normalize_scan_scope_path(path);
+            if normalized.is_empty() {
+                continue;
+            }
+            files.insert(normalized.clone());
+            let mut prefix = String::new();
+            for segment in normalized.split('/').take(normalized.matches('/').count()) {
+                if !prefix.is_empty() {
+                    prefix.push('/');
+                }
+                prefix.push_str(segment);
+                directories.insert(prefix.clone());
+            }
+        }
+        Self { files, directories }
+    }
+
+    fn includes_file(&self, path: &str) -> bool {
+        self.files.contains(path)
+    }
+
+    fn includes_directory(&self, path: &str) -> bool {
+        self.directories.contains(path)
+    }
+}
+
+fn normalize_scan_scope_path(path: &str) -> String {
+    let mut normalized = path.trim().replace('\\', "/");
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_string();
+    }
+    while let Some(stripped) = normalized.strip_prefix('/') {
+        normalized = stripped.to_string();
+    }
+    normalized
 }
 
 pub fn scan_coverage(
@@ -4974,6 +5044,26 @@ mod tests {
         assert!(!labels.contains(&"target/debug.log"));
         assert!(!labels.contains(&".codegraph"));
         assert!(!labels.contains(&".codegraph/graph.json"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_paths_indexes_only_selected_files() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        fs::write(root.join("src").join("other.rs"), "pub fn other() {}\n").unwrap();
+
+        let paths = BTreeSet::from(["src/main.rs".to_string()]);
+        let graph = scan_project_paths(&root, &IndexOptions::default(), &paths).unwrap();
+        let labels: Vec<_> = graph.nodes.iter().map(|node| node.label.as_str()).collect();
+
+        assert!(labels.contains(&"src"));
+        assert!(labels.contains(&"src/main.rs"));
+        assert!(labels.contains(&"main"));
+        assert!(!labels.contains(&"src/other.rs"));
+        assert!(!labels.contains(&"other"));
 
         fs::remove_dir_all(root).unwrap();
     }
