@@ -605,6 +605,41 @@ pub struct CheckReport {
     pub report: InsightReport,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectReportLimits {
+    pub architecture_group_limit: usize,
+    pub architecture_edge_limit: usize,
+    pub language_link_limit: usize,
+    pub hotspot_limit: usize,
+    pub insight_limit: usize,
+    pub fail_on: InsightSeverity,
+}
+
+impl Default for ProjectReportLimits {
+    fn default() -> Self {
+        Self {
+            architecture_group_limit: 50,
+            architecture_edge_limit: 200,
+            language_link_limit: 50,
+            hotspot_limit: 25,
+            insight_limit: 50,
+            fail_on: InsightSeverity::Error,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectReport {
+    pub graph_schema_version: u32,
+    pub summary: GraphSummary,
+    pub entrypoints: Vec<Node>,
+    pub insights: InsightReport,
+    pub quality_gate: CheckReport,
+    pub architecture: ArchitectureMap,
+    pub language_dependencies: LanguageDependencyReport,
+    pub hotspots: HotspotReport,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InsightSeverity {
@@ -1127,6 +1162,46 @@ pub fn check_insights(report: InsightReport, fail_on: InsightSeverity) -> CheckR
         fail_on: severity_name(fail_on).to_string(),
         failing_insights,
         report,
+    }
+}
+
+pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> ProjectReport {
+    let limits = normalize_project_report_limits(limits);
+    let insight_report = filter_insight_report(
+        insights(graph),
+        &InsightFilter {
+            severity: None,
+            kind: None,
+            search: None,
+            limit: limits.insight_limit,
+        },
+    );
+    let quality_gate = check_insights(insight_report.clone(), limits.fail_on);
+
+    ProjectReport {
+        graph_schema_version: graph.schema_version,
+        summary: summarize(graph),
+        entrypoints: entrypoints(graph),
+        insights: insight_report,
+        quality_gate,
+        architecture: architecture_map(
+            graph,
+            limits.architecture_group_limit,
+            limits.architecture_edge_limit,
+        ),
+        language_dependencies: language_dependencies(graph, limits.language_link_limit),
+        hotspots: hotspots(graph, limits.hotspot_limit),
+    }
+}
+
+fn normalize_project_report_limits(limits: ProjectReportLimits) -> ProjectReportLimits {
+    ProjectReportLimits {
+        architecture_group_limit: limits.architecture_group_limit.clamp(1, 500),
+        architecture_edge_limit: limits.architecture_edge_limit.clamp(1, 2_000),
+        language_link_limit: limits.language_link_limit.clamp(1, 500),
+        hotspot_limit: limits.hotspot_limit.clamp(1, 500),
+        insight_limit: limits.insight_limit.clamp(1, 500),
+        fail_on: limits.fail_on,
     }
 }
 
@@ -4284,6 +4359,36 @@ mod tests {
                 .and_then(|values| values.get("team-payments")),
             Some(&1)
         );
+    }
+
+    #[test]
+    fn project_report_combines_summary_quality_and_limited_views() {
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node(NodeKind::File, "src/main.rs");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let config = graph.add_node(NodeKind::Config, "DATABASE_URL");
+        graph.add_edge(file, main, EdgeKind::Defines, Confidence::Exact);
+        graph.add_edge(file, main, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(main, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
+
+        let report = project_report(
+            &graph,
+            ProjectReportLimits {
+                architecture_group_limit: 5,
+                architecture_edge_limit: 5,
+                language_link_limit: 5,
+                hotspot_limit: 1,
+                insight_limit: 10,
+                fail_on: InsightSeverity::Warning,
+            },
+        );
+
+        assert_eq!(report.graph_schema_version, graph.schema_version);
+        assert_eq!(report.summary.nodes, graph.nodes.len());
+        assert_eq!(report.entrypoints.len(), 1);
+        assert_eq!(report.hotspots.hotspots.len(), 1);
+        assert_eq!(report.quality_gate.fail_on, "warning");
+        assert_eq!(report.insights.total, report.quality_gate.report.total);
     }
 
     #[test]

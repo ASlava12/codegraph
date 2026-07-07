@@ -190,6 +190,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add runtime metrics endpoint for uptime, cache, job stores, and concurrency.
 - [x] Surface runtime metrics in the web UI.
 - [x] Surface server capabilities in the web overview.
+- [x] Add project report snapshots across CLI, API, and web export.
 - Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
 - [x] Add source preview.
 - [x] Add trace panels.

@@ -11,11 +11,11 @@ use codegraph_analysis::{
     CheckReport, ConfigTraceRequest, ConfigTraceResult, EntrypointTraceReport,
     EntrypointTraceRequest, ErrorTraceRequest, ErrorTraceResult, ExplainEdgeRequest, FocusRequest,
     GraphSlice, GraphSliceRequest, GraphSummary, InsightFilter, InsightReport, InsightSeverity,
-    NodeContext, SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart,
-    architecture_map, check_insights, entrypoints, explain_edge, export_dot, export_ndjson,
-    filter_insight_report, focus_subgraph, hotspots, insights, language_dependencies, node_context,
-    query_graph, search_source, slice_graph, summarize, trace, trace_config, trace_dependents,
-    trace_entrypoints, trace_errors,
+    NodeContext, ProjectReport, ProjectReportLimits, SourceSearchRequest, SourceSearchResult,
+    TraceRequest, TraceStart, architecture_map, check_insights, entrypoints, explain_edge,
+    export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots, insights,
+    language_dependencies, node_context, project_report, query_graph, search_source, slice_graph,
+    summarize, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -327,6 +327,17 @@ struct CheckQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct ProjectReportQuery {
+    path: Option<PathBuf>,
+    architecture_group_limit: Option<usize>,
+    architecture_edge_limit: Option<usize>,
+    language_link_limit: Option<usize>,
+    hotspot_limit: Option<usize>,
+    insight_limit: Option<usize>,
+    fail_on: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct GraphSliceQuery {
     path: Option<PathBuf>,
     node_offset: Option<usize>,
@@ -578,6 +589,15 @@ struct ScanResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct ProjectReportResponse {
+    root: String,
+    generated_at_unix: u64,
+    cache: CacheInfo,
+    coverage: codegraph_indexer::ScanCoverageReport,
+    report: ProjectReport,
+}
+
+#[derive(Debug, Serialize)]
 struct SourceResponse {
     path: String,
     start_line: u32,
@@ -680,6 +700,7 @@ async fn main() -> Result<()> {
         .route("/api/graph", get(graph_api))
         .route("/api/node-context", get(node_context_api))
         .route("/api/focus", get(focus_api))
+        .route("/api/report", get(report_api))
         .route("/api/summary", get(summary))
         .route("/api/architecture", get(architecture_api))
         .route("/api/language-dependencies", get(language_dependencies_api))
@@ -1599,6 +1620,36 @@ async fn focus_api(
     )))
 }
 
+async fn report_api(
+    State(state): State<AppState>,
+    Query(query): Query<ProjectReportQuery>,
+) -> Result<Json<ProjectReportResponse>, ApiError> {
+    let limits = project_report_limits_from_query(&query)?;
+    let root = resolve_scan_root(&state, query.path.as_deref())?;
+    let root_label = root.display().to_string();
+    let options = scan_options(&state, &root)?;
+    let cache = state.cache.clone();
+    let response = tokio::task::spawn_blocking(move || -> Result<ProjectReportResponse, String> {
+        let output = scan_project_cached(root.clone(), &options, cache.as_ref())
+            .map_err(|error| error.to_string())?;
+        let coverage = scan_coverage(&root, &options).map_err(|error| error.to_string())?;
+        let report = project_report(&output.graph, limits);
+
+        Ok(ProjectReportResponse {
+            root: root_label,
+            generated_at_unix: unix_seconds(),
+            cache: output.cache,
+            coverage,
+            report,
+        })
+    })
+    .await
+    .map_err(|error| ApiError::internal(format!("project report task failed: {error}")))?
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(response))
+}
+
 async fn summary(
     State(state): State<AppState>,
     Query(query): Query<ScanQuery>,
@@ -2060,6 +2111,22 @@ fn insight_filter_from_query(query: InsightQuery) -> Result<InsightFilter, ApiEr
     })
 }
 
+fn project_report_limits_from_query(
+    query: &ProjectReportQuery,
+) -> Result<ProjectReportLimits, ApiError> {
+    Ok(ProjectReportLimits {
+        architecture_group_limit: query.architecture_group_limit.unwrap_or(50),
+        architecture_edge_limit: query.architecture_edge_limit.unwrap_or(200),
+        language_link_limit: query.language_link_limit.unwrap_or(50),
+        hotspot_limit: query.hotspot_limit.unwrap_or(25),
+        insight_limit: query.insight_limit.unwrap_or(50),
+        fail_on: normalize_query_string(query.fail_on.clone())
+            .map(|value| parse_insight_severity(&value))
+            .transpose()?
+            .unwrap_or(InsightSeverity::Error),
+    })
+}
+
 fn parse_insight_severity(value: &str) -> Result<InsightSeverity, ApiError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "info" => Ok(InsightSeverity::Info),
@@ -2441,6 +2508,7 @@ fn capability_features(cache_enabled: bool) -> Vec<&'static str> {
         "reverse_dependents",
         "insights",
         "quality_checks",
+        "project_report",
         "edge_explanations",
         "source_search",
         "async_scan_jobs",
@@ -2520,6 +2588,7 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
         EndpointGroupResponse {
             group: "analysis",
             endpoints: vec![
+                "GET /api/report",
                 "GET /api/architecture",
                 "GET /api/language-dependencies",
                 "GET /api/hotspots",
@@ -2684,6 +2753,7 @@ mod tests {
         assert!(without_cache.contains(&"async_scan_jobs"));
         assert!(without_cache.contains(&"job_cancellation"));
         assert!(without_cache.contains(&"runtime_metrics"));
+        assert!(without_cache.contains(&"project_report"));
         assert!(without_cache.contains(&"semantic_lsp"));
         assert!(!without_cache.contains(&"persistent_graph_cache"));
         assert!(with_cache.contains(&"persistent_graph_cache"));
@@ -2698,6 +2768,7 @@ mod tests {
 
         assert!(endpoints.contains(&"GET /api/capabilities"));
         assert!(endpoints.contains(&"GET /api/metrics"));
+        assert!(endpoints.contains(&"GET /api/report"));
         assert!(endpoints.contains(&"GET /api/query"));
         assert!(endpoints.contains(&"GET /api/node-context"));
         assert!(endpoints.contains(&"POST /api/scan-jobs"));

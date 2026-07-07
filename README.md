@@ -39,6 +39,7 @@ Implemented now:
 - HTTP API and embedded web UI for interactive graph exploration.
 - API capabilities endpoint for discovering supported languages, exports, features, limits, cache state, and route groups.
 - Runtime metrics endpoint for uptime, API/schema versions, roots, language/feature counts, cache state, job stores, and concurrency.
+- Project report snapshots in CLI, API, and web export for summary, quality gate, insights, topology reports, cache, and scan coverage.
 - Web overview chips for server capabilities, API/schema versions, cache state, supported language/export counts, job limits, and route groups.
 - Web runtime panel for uptime, cache state, scan/semantic slots, and retained job-store totals.
 - Async scan job API for long-running repository scans.
@@ -180,6 +181,12 @@ Find high-degree graph hotspots:
 
 ```bash
 cargo run -p codegraph-cli -- hotspots .
+```
+
+Create a production-oriented project report snapshot:
+
+```bash
+cargo run -p codegraph-cli -- report . --fail-on warning --insight-limit 100
 ```
 
 Explain scan coverage before or after a full graph scan:
@@ -440,6 +447,7 @@ curl 'http://127.0.0.1:3765/api/semantic-jobs?status=running&limit=20'
 curl 'http://127.0.0.1:3765/api/semantic-jobs/semantic-1/events'
 curl 'http://127.0.0.1:3765/api/semantic-jobs/semantic-1/result'
 curl -X DELETE 'http://127.0.0.1:3765/api/semantic-jobs/semantic-1'
+curl 'http://127.0.0.1:3765/api/report?path=.&fail_on=warning&insight_limit=100'
 curl 'http://127.0.0.1:3765/api/coverage?path=.'
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'
@@ -453,6 +461,9 @@ Export API:
 curl 'http://127.0.0.1:3765/api/export?path=.&format=dot'
 curl 'http://127.0.0.1:3765/api/export?path=.&format=ndjson'
 ```
+
+The web Export panel can also download `Report JSON`, which uses `/api/report`
+instead of the raw graph export route.
 
 Async scan job API:
 

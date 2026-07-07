@@ -2,10 +2,11 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
     ConfigTraceRequest, EntrypointTraceRequest, ErrorTraceRequest, ExplainEdgeRequest,
-    InsightFilter, InsightSeverity, SourceSearchRequest, TraceRequest, TraceStart,
-    architecture_map, check_insights, entrypoints, explain_edge, filter_insight_report, hotspots,
-    insights, language_dependencies, query_graph, search_source, summarize, trace, trace_config,
-    trace_dependents, trace_entrypoints, trace_errors,
+    InsightFilter, InsightSeverity, ProjectReport, ProjectReportLimits, SourceSearchRequest,
+    TraceRequest, TraceStart, architecture_map, check_insights, entrypoints, explain_edge,
+    filter_insight_report, hotspots, insights, language_dependencies, project_report, query_graph,
+    search_source, summarize, trace, trace_config, trace_dependents, trace_entrypoints,
+    trace_errors,
 };
 use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{
@@ -21,7 +22,7 @@ use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Parser)]
 #[command(name = "codegraph")]
@@ -85,6 +86,9 @@ enum Command {
 
     /// Emit graph summary counts as JSON.
     Summary(ScanArgs),
+
+    /// Emit a production-oriented project report snapshot as JSON.
+    Report(ReportArgs),
 
     /// Emit a top-level architecture map grouped by project area.
     Architecture(ArchitectureArgs),
@@ -327,6 +331,36 @@ struct ScanArgs {
 
     #[command(flatten)]
     cache: CacheArgs,
+}
+
+#[derive(Debug, Args)]
+struct ReportArgs {
+    #[command(flatten)]
+    scan: ScanArgs,
+
+    /// Maximum architecture groups to include.
+    #[arg(long, default_value_t = 50)]
+    architecture_group_limit: usize,
+
+    /// Maximum architecture edges to include.
+    #[arg(long, default_value_t = 200)]
+    architecture_edge_limit: usize,
+
+    /// Maximum language dependency links to include.
+    #[arg(long, default_value_t = 50)]
+    language_link_limit: usize,
+
+    /// Maximum hotspots to include.
+    #[arg(long, default_value_t = 25)]
+    hotspot_limit: usize,
+
+    /// Maximum insights to include while keeping full insight counts.
+    #[arg(long, default_value_t = 50)]
+    insight_limit: usize,
+
+    /// Mark the quality gate as failed when an insight has this severity or higher.
+    #[arg(long, value_enum, default_value = "error")]
+    fail_on: InsightSeverityArg,
 }
 
 #[derive(Debug, Args)]
@@ -588,6 +622,15 @@ struct BenchmarkMeasurement {
 }
 
 #[derive(Debug, Serialize)]
+struct ProjectReportSnapshot {
+    root: String,
+    generated_at_unix: u64,
+    cache: codegraph_storage::CacheInfo,
+    coverage: codegraph_indexer::ScanCoverageReport,
+    report: ProjectReport,
+}
+
+#[derive(Debug, Serialize)]
 struct LanguageInfo {
     language: &'static str,
     parser: &'static str,
@@ -779,6 +822,10 @@ fn main() -> Result<()> {
                 &args.cache,
             )?;
             println!("{}", serde_json::to_string_pretty(&summarize(&graph))?);
+        }
+        Command::Report(args) => {
+            let snapshot = build_project_report_snapshot(args, max_file_size)?;
+            println!("{}", serde_json::to_string_pretty(&snapshot)?);
         }
         Command::Coverage(args) => {
             let options = configured_index_options(
@@ -1136,6 +1183,51 @@ fn scan_with_options(
     Ok(scan_project_cached(path, &options, cache.as_ref())?.graph)
 }
 
+fn build_project_report_snapshot(
+    args: ReportArgs,
+    max_file_size: Option<u64>,
+) -> Result<ProjectReportSnapshot> {
+    let options = configured_index_options(
+        &args.scan.path,
+        &scan_overrides(
+            args.scan.include_hidden,
+            args.scan.include_ignored,
+            max_file_size,
+        ),
+    )?;
+    let cache = (!args.scan.cache.no_cache).then(|| {
+        GraphCache::new(
+            args.scan
+                .cache
+                .cache_dir
+                .clone()
+                .unwrap_or_else(default_cache_dir),
+        )
+    });
+    let output = scan_project_cached(args.scan.path.clone(), &options, cache.as_ref())?;
+    let coverage = scan_coverage(&args.scan.path, &options)?;
+    let report = project_report(&output.graph, report_limits_from_args(&args));
+
+    Ok(ProjectReportSnapshot {
+        root: args.scan.path.display().to_string(),
+        generated_at_unix: unix_seconds(),
+        cache: output.cache,
+        coverage,
+        report,
+    })
+}
+
+fn report_limits_from_args(args: &ReportArgs) -> ProjectReportLimits {
+    ProjectReportLimits {
+        architecture_group_limit: args.architecture_group_limit,
+        architecture_edge_limit: args.architecture_edge_limit,
+        language_link_limit: args.language_link_limit,
+        hotspot_limit: args.hotspot_limit,
+        insight_limit: args.insight_limit,
+        fail_on: InsightSeverity::from(args.fail_on),
+    }
+}
+
 fn benchmark_scans(args: BenchmarkArgs, max_file_size: Option<u64>) -> Result<BenchmarkReport> {
     let runs = args.runs.clamp(1, 100);
     let options = configured_index_options(
@@ -1185,4 +1277,11 @@ fn benchmark_scans(args: BenchmarkArgs, max_file_size: Option<u64>) -> Result<Be
         measurements,
         summary: summarize(&graph),
     })
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }

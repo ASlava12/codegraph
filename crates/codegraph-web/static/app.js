@@ -70,6 +70,7 @@ const I18N = {
     "button.searchSource": "Search Source",
     "button.explainCache": "Explain Cache",
     "button.downloadGraph": "Download Graph",
+    "button.download": "Download",
     "button.findPath": "Find Path",
     "button.traceConfig": "Trace Config",
     "button.traceErrors": "Trace Errors",
@@ -137,6 +138,7 @@ const I18N = {
     "runtime.semanticSlots": "Semantic Slots",
     "runtime.scanJobs": "Scan Jobs",
     "runtime.semanticJobs": "Semantic Jobs",
+    "export.report": "Report JSON",
     "trace.tracing": "Tracing...",
     "trace.tracingDependents": "Tracing dependents...",
     "trace.noDependents": "No incoming dependents.",
@@ -238,6 +240,7 @@ const I18N = {
     "button.searchSource": "Искать в коде",
     "button.explainCache": "Объяснить кеш",
     "button.downloadGraph": "Скачать граф",
+    "button.download": "Скачать",
     "button.findPath": "Найти путь",
     "button.traceConfig": "Трассировать конфиг",
     "button.traceErrors": "Трассировать ошибки",
@@ -305,6 +308,7 @@ const I18N = {
     "runtime.semanticSlots": "Слоты сем.",
     "runtime.scanJobs": "Скан-задачи",
     "runtime.semanticJobs": "Сем. задачи",
+    "export.report": "JSON-отчёт",
     "trace.tracing": "Трассирую...",
     "trace.tracingDependents": "Трассирую зависимые узлы...",
     "trace.noDependents": "Входящих зависимых нет.",
@@ -2725,15 +2729,15 @@ async function runGraphExport() {
   state.exportRequest += 1;
   const requestId = state.exportRequest;
   exportButton.disabled = true;
-  exportResult.innerHTML = '<p class="empty">Exporting graph...</p>';
+  exportResult.innerHTML = '<p class="empty">Exporting...</p>';
 
-  const params = new URLSearchParams({
-    path: pathInput.value.trim() || ".",
-    format: metadata.format,
-  });
+  const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
+  if (metadata.endpoint === "/api/export") {
+    params.set("format", metadata.format);
+  }
 
   try {
-    const response = await fetch(`/api/export?${params.toString()}`);
+    const response = await fetch(`${metadata.endpoint}?${params.toString()}`);
     if (requestId !== state.exportRequest) return;
     if (!response.ok) {
       throw new Error(await responseErrorMessage(response, "export failed"));
@@ -2777,12 +2781,14 @@ async function responseErrorMessage(response, fallback) {
 function exportFormatMetadata(format) {
   switch (format) {
     case "dot":
-      return { format: "dot", extension: "dot", label: "DOT" };
+      return { format: "dot", extension: "dot", label: "DOT", endpoint: "/api/export" };
     case "ndjson":
-      return { format: "ndjson", extension: "ndjson", label: "NDJSON" };
+      return { format: "ndjson", extension: "ndjson", label: "NDJSON", endpoint: "/api/export" };
+    case "report":
+      return { format: "report", extension: "report.json", label: t("export.report"), endpoint: "/api/report" };
     case "json":
     default:
-      return { format: "json", extension: "json", label: "JSON" };
+      return { format: "json", extension: "json", label: "JSON", endpoint: "/api/export" };
   }
 }
 
