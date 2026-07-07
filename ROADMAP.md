@@ -151,6 +151,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add graph viewport controls for zoom, fit, layout reset, and layout pause.
 - [x] Add web project overview for languages, edge confidence, and entrypoints.
 - [x] Add architecture map overview for top-level project areas and dependencies.
+- [x] Add UI graph focusing from architecture overview areas.
 - [x] Add web project overview facets for edge relation and provenance sources.
 - [x] Add web path navigation, focused graph views, and visual highlighting for dependency paths.
 - [x] Add node context API for paged graph detail panels.

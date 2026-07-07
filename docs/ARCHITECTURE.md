@@ -138,6 +138,7 @@ Responsibilities:
 - provide neighborhood query expansion for local incoming/outgoing graph context
 - provide source search endpoints for compact text matches and source-preview handoff
 - provide graph slice endpoints with server-side paging and filtering
+- support path-prefix graph slices for architecture-area focus
 - provide node context endpoints for paged detail exploration
 - provide source preview endpoints for graph spans
 - provide export endpoints for Graphviz DOT and NDJSON

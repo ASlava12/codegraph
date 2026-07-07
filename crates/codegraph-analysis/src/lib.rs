@@ -264,6 +264,7 @@ pub struct GraphSliceRequest {
     pub node_limit: usize,
     pub edge_offset: usize,
     pub edge_limit: usize,
+    pub path_prefix: Option<String>,
     pub kind: Option<String>,
     pub search: Option<String>,
     pub language: Option<String>,
@@ -1394,11 +1395,12 @@ pub fn slice_graph(graph: &CodeGraph, request: GraphSliceRequest) -> GraphSlice 
     let node_limit = request.node_limit.clamp(1, 1000);
     let edge_offset = request.edge_offset;
     let edge_limit = request.edge_limit.clamp(1, 2000);
+    let path_index = node_path_index(graph);
 
     let matched_nodes: Vec<_> = graph
         .nodes
         .iter()
-        .filter(|node| slice_node_matches(node, &request))
+        .filter(|node| slice_node_matches(node, &request, &path_index))
         .cloned()
         .collect();
     let total_nodes = matched_nodes.len();
@@ -2002,11 +2004,19 @@ fn node_matches(node: &Node, terms: &BTreeMap<String, String>) -> bool {
     })
 }
 
-fn slice_node_matches(node: &Node, request: &GraphSliceRequest) -> bool {
+fn slice_node_matches(
+    node: &Node,
+    request: &GraphSliceRequest,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
     request
-        .kind
+        .path_prefix
         .as_deref()
-        .is_none_or(|expected| text_matches(&kind_name(&node.kind), expected))
+        .is_none_or(|expected| node_path_matches(node, path_index, expected))
+        && request
+            .kind
+            .as_deref()
+            .is_none_or(|expected| text_matches(&kind_name(&node.kind), expected))
         && request
             .language
             .as_deref()
@@ -2019,6 +2029,66 @@ fn slice_node_matches(node: &Node, request: &GraphSliceRequest) -> bool {
             .search
             .as_deref()
             .is_none_or(|expected| node_search_matches(node, expected))
+}
+
+fn node_path_index(graph: &CodeGraph) -> BTreeMap<NodeId, String> {
+    let nodes_by_id: BTreeMap<NodeId, &Node> =
+        graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let mut paths = BTreeMap::new();
+    for node in &graph.nodes {
+        if node.kind == NodeKind::File {
+            paths.insert(node.id, normalize_graph_path(&node.label));
+        }
+    }
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for edge in &graph.edges {
+            if edge.kind != EdgeKind::Contains {
+                continue;
+            }
+            if paths.contains_key(&edge.target) {
+                continue;
+            }
+            let Some(source_path) = paths.get(&edge.source).cloned() else {
+                continue;
+            };
+            if !nodes_by_id.contains_key(&edge.target) {
+                continue;
+            }
+            paths.insert(edge.target, source_path);
+            changed = true;
+        }
+    }
+    paths
+}
+
+fn node_path_matches(node: &Node, path_index: &BTreeMap<NodeId, String>, expected: &str) -> bool {
+    let expected = normalize_path_prefix(expected);
+    if expected.is_empty() {
+        return true;
+    }
+    path_index
+        .get(&node.id)
+        .is_some_and(|path| path == &expected || path.starts_with(&format!("{expected}/")))
+}
+
+fn normalize_path_prefix(value: &str) -> String {
+    normalize_graph_path(value)
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn normalize_graph_path(value: &str) -> String {
+    let mut normalized = value.trim().replace('\\', "/");
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_string();
+    }
+    while let Some(stripped) = normalized.strip_prefix('/') {
+        normalized = stripped.to_string();
+    }
+    normalized
 }
 
 fn metadata_matches(node: &Node, key: &str, expected: &str) -> bool {
@@ -4808,6 +4878,7 @@ mod tests {
                 node_limit: 1,
                 edge_offset: 0,
                 edge_limit: 10,
+                path_prefix: None,
                 kind: Some("function".to_string()),
                 search: None,
                 language: None,
@@ -4831,6 +4902,7 @@ mod tests {
                 node_limit: 10,
                 edge_offset: 0,
                 edge_limit: 10,
+                path_prefix: None,
                 kind: Some("function".to_string()),
                 search: Some("rust".to_string()),
                 language: Some("rust".to_string()),
@@ -4863,6 +4935,7 @@ mod tests {
                 node_limit: 10,
                 edge_offset: 0,
                 edge_limit: 1,
+                path_prefix: None,
                 kind: Some("function".to_string()),
                 search: None,
                 language: None,
@@ -4879,6 +4952,57 @@ mod tests {
         assert_eq!(result.edges.len(), 1);
         assert_eq!(result.edges[0].source, main);
         assert!(result.truncated_edges);
+    }
+
+    #[test]
+    fn graph_slice_filters_nodes_by_path_prefix() {
+        let mut graph = CodeGraph::new("repo");
+        let api_file = graph.add_node(NodeKind::File, "api/main.rs");
+        let core_file = graph.add_node(NodeKind::File, "core/lib.rs");
+        let api_main = graph.add_node(NodeKind::Function, "main");
+        let core_helper = graph.add_node(NodeKind::Function, "helper");
+        graph.add_edge(
+            api_file,
+            api_main,
+            EdgeKind::Contains,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            core_file,
+            core_helper,
+            EdgeKind::Contains,
+            Confidence::Syntactic,
+        );
+
+        let result = slice_graph(
+            &graph,
+            GraphSliceRequest {
+                node_offset: 0,
+                node_limit: 10,
+                edge_offset: 0,
+                edge_limit: 10,
+                path_prefix: Some("api".to_string()),
+                kind: None,
+                search: None,
+                language: None,
+                item_kind: None,
+                edge_kind: None,
+                confidence: None,
+                edge_relation: None,
+                edge_source: None,
+            },
+        );
+
+        let labels: BTreeSet<_> = result
+            .nodes
+            .iter()
+            .map(|node| node.label.as_str())
+            .collect();
+        assert_eq!(result.total_nodes, 2);
+        assert!(labels.contains("api/main.rs"));
+        assert!(labels.contains("main"));
+        assert!(!labels.contains("core/lib.rs"));
+        assert!(!labels.contains("helper"));
     }
 
     #[test]
@@ -4906,6 +5030,7 @@ mod tests {
                 node_limit: 10,
                 edge_offset: 0,
                 edge_limit: 10,
+                path_prefix: None,
                 kind: None,
                 search: None,
                 language: None,

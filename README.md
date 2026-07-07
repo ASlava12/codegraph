@@ -44,6 +44,7 @@ Implemented now:
 - Web graph viewport controls for zooming, fitting visible nodes, restarting layout, and pausing layout simulation.
 - Web project overview for language mix, edge confidence/source/relation mix, and entrypoint launch points.
 - Architecture map reports in CLI, API, and web overview for top-level project areas and cross-area dependencies.
+- Architecture overview chips can focus the paged graph by project area path prefix.
 - Web path navigation for finding, focusing, and visually highlighting dependency paths between graph nodes.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
 - Server-backed web insights for project-wide findings while browsing paged graph slices.
@@ -408,8 +409,8 @@ curl --get 'http://127.0.0.1:3765/api/trace-errors' \
 ```
 
 `/api/graph` supports `node_offset`, `node_limit`, `edge_offset`,
-`edge_limit`, `kind`, `search`, `language`, `item_kind`, `edge_kind`,
-`confidence`, `edge_relation`, and `edge_source`.
+`edge_limit`, `path_prefix`, `kind`, `search`, `language`, `item_kind`,
+`edge_kind`, `confidence`, `edge_relation`, and `edge_source`.
 Returned edges connect nodes in the returned node page.
 
 Source preview API:

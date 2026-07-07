@@ -33,6 +33,7 @@ const state = {
   scanOptions: null,
   coverage: null,
   architecture: null,
+  architecturePathPrefix: "",
   entrypoints: [],
   insightReport: null,
   projects: [],
@@ -306,6 +307,7 @@ async function scan() {
   state.scanOptions = null;
   state.coverage = null;
   state.architecture = null;
+  state.architecturePathPrefix = "";
   state.entrypoints = [];
   renderOverview();
   state.insightReport = null;
@@ -464,6 +466,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
   const confidence = serverConfidenceInput.value.trim();
   const edgeRelation = serverEdgeRelationInput.value.trim();
   const edgeSource = serverEdgeSourceInput.value.trim();
+  if (state.architecturePathPrefix) params.set("path_prefix", state.architecturePathPrefix);
   if (kind) params.set("kind", kind);
   if (itemKind) params.set("item_kind", itemKind);
   if (language) params.set("language", language);
@@ -804,12 +807,20 @@ function renderArchitecture(architecture) {
   const groups = Array.isArray(architecture.groups) ? architecture.groups.slice(0, 8) : [];
   const groupChips = groups.map(
     (group) => `
-      <div class="architecture-chip">
+      <button class="architecture-chip" type="button" data-architecture-prefix="${escapeHtml(group.id || "")}">
         <span>${escapeHtml(group.label || group.id || "root")}</span>
         <strong>${Number(group.files || 0)}f/${Number(group.symbols || 0)}s</strong>
-      </div>
+      </button>
     `,
   );
+  if (state.architecturePathPrefix) {
+    groupChips.unshift(`
+      <button class="architecture-chip" type="button" data-architecture-prefix="">
+        <span>All areas</span>
+        <strong>reset</strong>
+      </button>
+    `);
+  }
   groupChips.push(`
     <div class="architecture-chip">
       <span>Area edges</span>
@@ -817,6 +828,12 @@ function renderArchitecture(architecture) {
     </div>
   `);
   architectureList.innerHTML = groupChips.join("");
+  architectureList.querySelectorAll("[data-architecture-prefix]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.architecturePathPrefix = button.dataset.architecturePrefix || "";
+      loadGraphPage({ resetPage: true, resetLayout: true });
+    });
+  });
 }
 
 function annotationFacets(summary, nodes) {
