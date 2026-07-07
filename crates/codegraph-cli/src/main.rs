@@ -12,13 +12,14 @@ use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
 };
 use codegraph_lsp::{
-    DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, SemanticWorkItemFilter, discover_lsp_servers,
-    semantic_enrichment_plan_with_filter, semantic_execution_batch, semantic_readiness,
+    DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, SemanticLspResponse, SemanticWorkItemFilter,
+    discover_lsp_servers, semantic_enrichment_plan_with_filter, semantic_execution_batch,
+    semantic_graph_patch_from_responses, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[derive(Debug, Parser)]
@@ -49,6 +50,9 @@ enum Command {
 
     /// Group semantic LSP work into executable server batches.
     SemanticBatch(SemanticPlanArgs),
+
+    /// Convert semantic LSP responses into a graph patch.
+    SemanticPatch(SemanticPatchArgs),
 
     /// Scan a project and emit the initial graph as JSON.
     Scan {
@@ -341,6 +345,16 @@ struct SemanticPlanArgs {
 }
 
 #[derive(Debug, Args)]
+struct SemanticPatchArgs {
+    #[command(flatten)]
+    plan: SemanticPlanArgs,
+
+    /// JSON file containing an array of semantic LSP responses.
+    #[arg(long)]
+    responses: PathBuf,
+}
+
+#[derive(Debug, Args)]
 struct CoverageArgs {
     /// Project root to inspect.
     #[arg(default_value = ".")]
@@ -613,6 +627,7 @@ fn main() -> Result<()> {
         }
         Command::SemanticBatch(args) => {
             let path = args.scan.path;
+            let workspace_root = canonical_workspace_root(&path);
             let filter = SemanticWorkItemFilter {
                 language: args.work_language,
                 status: args.work_status,
@@ -628,10 +643,43 @@ fn main() -> Result<()> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&semantic_execution_batch(
-                    &path,
+                    &workspace_root,
                     &graph,
                     args.work_item_limit,
                     filter
+                ))?
+            );
+        }
+        Command::SemanticPatch(args) => {
+            let path = args.plan.scan.path;
+            let workspace_root = canonical_workspace_root(&path);
+            let filter = SemanticWorkItemFilter {
+                language: args.plan.work_language,
+                status: args.plan.work_status,
+                capability: args.plan.work_capability,
+            };
+            let graph = scan_with_options(
+                path,
+                args.plan.scan.include_hidden,
+                args.plan.scan.include_ignored,
+                max_file_size,
+                &args.plan.scan.cache,
+            )?;
+            let batch = semantic_execution_batch(
+                &workspace_root,
+                &graph,
+                args.plan.work_item_limit,
+                filter,
+            );
+            let response_text = std::fs::read_to_string(&args.responses)?;
+            let responses: Vec<SemanticLspResponse> = serde_json::from_str(&response_text)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&semantic_graph_patch_from_responses(
+                    &workspace_root,
+                    &graph,
+                    &batch,
+                    &responses
                 ))?
             );
         }
@@ -984,6 +1032,10 @@ fn language_report() -> Vec<LanguageInfo> {
             }
         })
         .collect()
+}
+
+fn canonical_workspace_root(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn scan_with_options(

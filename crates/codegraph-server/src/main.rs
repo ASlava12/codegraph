@@ -23,8 +23,9 @@ use codegraph_indexer::{
 };
 use codegraph_lsp::{
     DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, LspDiscoveryReport, SemanticEnrichmentPlan,
-    SemanticReadinessReport, SemanticWorkItemFilter, discover_lsp_servers,
-    semantic_enrichment_plan_with_filter, semantic_execution_batch, semantic_readiness,
+    SemanticGraphPatch, SemanticLspResponse, SemanticReadinessReport, SemanticWorkItemFilter,
+    discover_lsp_servers, semantic_enrichment_plan_with_filter, semantic_execution_batch,
+    semantic_graph_patch_from_responses, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{
@@ -111,6 +112,16 @@ struct SemanticPlanQuery {
     work_language: Option<String>,
     work_status: Option<String>,
     work_capability: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SemanticPatchRequest {
+    path: Option<PathBuf>,
+    work_item_limit: Option<usize>,
+    work_language: Option<String>,
+    work_status: Option<String>,
+    work_capability: Option<String>,
+    responses: Vec<SemanticLspResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -418,6 +429,7 @@ async fn main() -> Result<()> {
         .route("/api/semantic-readiness", get(semantic_readiness_api))
         .route("/api/semantic-plan", get(semantic_plan_api))
         .route("/api/semantic-batch", get(semantic_batch_api))
+        .route("/api/semantic-patch", post(semantic_patch_api))
         .route("/api/projects", get(projects_api))
         .route("/api/scan-options", get(scan_options_api))
         .route("/api/coverage", get(coverage_api))
@@ -728,6 +740,32 @@ async fn semantic_batch_api(
             status: query.work_status,
             capability: query.work_capability,
         },
+    )))
+}
+
+async fn semantic_patch_api(
+    State(state): State<AppState>,
+    Json(request): Json<SemanticPatchRequest>,
+) -> Result<Json<SemanticGraphPatch>, ApiError> {
+    let root = resolve_scan_root(&state, request.path.as_deref())?;
+    let graph = scan_graph(&state, Some(root.as_path())).await?;
+    let batch = semantic_execution_batch(
+        &root,
+        &graph,
+        request
+            .work_item_limit
+            .unwrap_or(DEFAULT_SEMANTIC_WORK_ITEM_LIMIT),
+        SemanticWorkItemFilter {
+            language: request.work_language,
+            status: request.work_status,
+            capability: request.work_capability,
+        },
+    );
+    Ok(Json(semantic_graph_patch_from_responses(
+        &root,
+        &graph,
+        &batch,
+        &request.responses,
     )))
 }
 

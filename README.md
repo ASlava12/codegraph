@@ -17,6 +17,7 @@ Implemented now:
 - Project semantic readiness reports showing which scanned languages are covered by installed LSP servers.
 - Semantic enrichment plans showing ready, blocked, and unsupported LSP work by language, including capped concrete work queues with stable ids and priorities for agents.
 - Semantic execution batch reports that group filtered LSP work by language server command and include executable LSP request descriptors for semantic runners.
+- Semantic LSP response patch reports that map definitions, references, and diagnostics back onto graph nodes.
 - Filesystem scanner with default build/vendor ignore rules.
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, PHP, and Bash.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
@@ -123,6 +124,7 @@ cargo run -p codegraph-cli -- semantic-plan . --work-item-limit 25
 cargo run -p codegraph-cli -- semantic-plan . --work-status ready --work-capability definitions
 cargo run -p codegraph-cli -- semantic-batch . --work-status ready --work-capability definitions
 cargo run -p codegraph-cli -- semantic-batch . --work-status ready --work-capability workspace_symbols
+cargo run -p codegraph-cli -- semantic-patch . --work-status ready --work-capability definitions --responses responses.json
 ```
 
 Limit per-file scan reads for very large repositories:
@@ -392,6 +394,9 @@ curl 'http://127.0.0.1:3765/api/semantic-plan?path=.&work_item_limit=25'
 curl 'http://127.0.0.1:3765/api/semantic-plan?path=.&work_status=ready&work_capability=definitions'
 curl 'http://127.0.0.1:3765/api/semantic-batch?path=.&work_status=ready&work_capability=definitions'
 curl 'http://127.0.0.1:3765/api/semantic-batch?path=.&work_status=ready&work_capability=workspace_symbols'
+curl -X POST 'http://127.0.0.1:3765/api/semantic-patch' \
+  -H 'content-type: application/json' \
+  --data @semantic-responses.json
 curl 'http://127.0.0.1:3765/api/coverage?path=.'
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'

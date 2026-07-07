@@ -1,5 +1,5 @@
 use codegraph_core::{CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind, SourceSpan};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -99,6 +99,82 @@ pub struct SemanticLspRequest {
     pub line: Option<u32>,
     pub column: Option<u32>,
     pub expected_result: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SemanticLspResponse {
+    pub request_id: String,
+    pub method: String,
+    #[serde(default)]
+    pub result: Value,
+    #[serde(default)]
+    pub error: Option<SemanticLspError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticLspError {
+    pub code: i64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SemanticGraphPatch {
+    pub workspace_root: String,
+    pub responses: usize,
+    pub matched_responses: usize,
+    pub semantic_edges: Vec<SemanticEdgePatch>,
+    pub diagnostics: Vec<SemanticDiagnosticPatch>,
+    pub unmatched_locations: Vec<SemanticUnmatchedLocation>,
+    pub response_errors: Vec<SemanticResponseError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SemanticEdgePatch {
+    pub request_id: String,
+    pub work_item_id: String,
+    pub source: NodeId,
+    pub target: NodeId,
+    pub kind: EdgeKind,
+    pub confidence: Confidence,
+    pub replaced_edge_index: Option<usize>,
+    pub original_target: Option<NodeId>,
+    pub path: String,
+    pub line: u32,
+    pub column: u32,
+    pub evidence: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SemanticDiagnosticPatch {
+    pub request_id: String,
+    pub work_item_id: String,
+    pub path: String,
+    pub line: u32,
+    pub column: u32,
+    pub severity: Option<u64>,
+    pub code: Option<String>,
+    pub source: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SemanticUnmatchedLocation {
+    pub request_id: String,
+    pub work_item_id: Option<String>,
+    pub method: String,
+    pub uri: String,
+    pub path: Option<String>,
+    pub line: Option<u32>,
+    pub column: Option<u32>,
+    pub reason: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SemanticResponseError {
+    pub request_id: String,
+    pub method: String,
+    pub code: i64,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -607,6 +683,495 @@ pub fn semantic_execution_batch_with_discovery(
         truncated_work_items: plan.truncated_work_items,
         server_batches,
         blocked_items,
+    }
+}
+
+pub fn semantic_graph_patch_from_responses(
+    workspace_root: &Path,
+    graph: &CodeGraph,
+    batch: &SemanticExecutionBatch,
+    responses: &[SemanticLspResponse],
+) -> SemanticGraphPatch {
+    let mut request_by_id = BTreeMap::new();
+    let mut work_item_by_id = BTreeMap::new();
+    for server_batch in &batch.server_batches {
+        for request in &server_batch.requests {
+            request_by_id.insert(request.id.as_str(), request);
+        }
+        for item in &server_batch.work_items {
+            work_item_by_id.insert(item.id.as_str(), item);
+        }
+    }
+
+    let mut matched_responses = 0;
+    let mut semantic_edges = Vec::new();
+    let mut diagnostics = Vec::new();
+    let mut unmatched_locations = Vec::new();
+    let mut response_errors = Vec::new();
+
+    for response in responses {
+        let Some(request) = request_by_id.get(response.request_id.as_str()).copied() else {
+            unmatched_locations.push(SemanticUnmatchedLocation {
+                request_id: response.request_id.clone(),
+                work_item_id: None,
+                method: response.method.clone(),
+                uri: String::new(),
+                path: None,
+                line: None,
+                column: None,
+                reason: "unknown_request",
+            });
+            continue;
+        };
+        matched_responses += 1;
+
+        if let Some(error) = &response.error {
+            response_errors.push(SemanticResponseError {
+                request_id: response.request_id.clone(),
+                method: request.method.to_string(),
+                code: error.code,
+                message: error.message.clone(),
+            });
+            continue;
+        }
+
+        let Some(work_item_id) = request.work_item_id.as_deref() else {
+            continue;
+        };
+        let Some(work_item) = work_item_by_id.get(work_item_id).copied() else {
+            unmatched_locations.push(SemanticUnmatchedLocation {
+                request_id: response.request_id.clone(),
+                work_item_id: Some(work_item_id.to_string()),
+                method: request.method.to_string(),
+                uri: request.document_uri.clone().unwrap_or_default(),
+                path: request.path.clone(),
+                line: request.line,
+                column: request.column,
+                reason: "unknown_work_item",
+            });
+            continue;
+        };
+
+        match request.method {
+            "textDocument/definition" => collect_definition_edges(
+                workspace_root,
+                graph,
+                request,
+                work_item,
+                &response.result,
+                &mut semantic_edges,
+                &mut unmatched_locations,
+            ),
+            "textDocument/references" => collect_reference_edges(
+                workspace_root,
+                graph,
+                request,
+                work_item,
+                &response.result,
+                &mut semantic_edges,
+                &mut unmatched_locations,
+            ),
+            "textDocument/diagnostic" => collect_diagnostics(
+                workspace_root,
+                request,
+                work_item,
+                &response.result,
+                &mut diagnostics,
+                &mut unmatched_locations,
+            ),
+            _ => {}
+        }
+    }
+
+    SemanticGraphPatch {
+        workspace_root: workspace_root.display().to_string(),
+        responses: responses.len(),
+        matched_responses,
+        semantic_edges,
+        diagnostics,
+        unmatched_locations,
+        response_errors,
+    }
+}
+
+fn collect_definition_edges(
+    workspace_root: &Path,
+    graph: &CodeGraph,
+    request: &SemanticLspRequest,
+    work_item: &SemanticWorkItem,
+    result: &Value,
+    semantic_edges: &mut Vec<SemanticEdgePatch>,
+    unmatched_locations: &mut Vec<SemanticUnmatchedLocation>,
+) {
+    let Some(source) = work_item.node.as_ref() else {
+        return;
+    };
+    let edge_kind = work_item
+        .edge_index
+        .and_then(|index| graph.edges.get(index))
+        .map(|edge| edge.kind.clone())
+        .unwrap_or(EdgeKind::References);
+    let original_target = work_item.target.as_ref().map(|target| target.id);
+
+    for location in lsp_locations(result) {
+        match graph_node_for_location(workspace_root, graph, &location) {
+            Some((path, target)) => semantic_edges.push(SemanticEdgePatch {
+                request_id: request.id.clone(),
+                work_item_id: work_item.id.clone(),
+                source: source.id,
+                target: target.id,
+                kind: edge_kind.clone(),
+                confidence: Confidence::Semantic,
+                replaced_edge_index: work_item.edge_index,
+                original_target,
+                path,
+                line: location.line.unwrap_or(1),
+                column: location.column.unwrap_or(1),
+                evidence: "lsp_definition",
+            }),
+            None => unmatched_locations.push(unmatched_location(
+                request,
+                work_item,
+                &location,
+                workspace_root,
+                "no_graph_node_at_lsp_location",
+            )),
+        }
+    }
+}
+
+fn collect_reference_edges(
+    workspace_root: &Path,
+    graph: &CodeGraph,
+    request: &SemanticLspRequest,
+    work_item: &SemanticWorkItem,
+    result: &Value,
+    semantic_edges: &mut Vec<SemanticEdgePatch>,
+    unmatched_locations: &mut Vec<SemanticUnmatchedLocation>,
+) {
+    let Some(target) = work_item.node.as_ref() else {
+        return;
+    };
+
+    for location in lsp_locations(result) {
+        match graph_node_for_location(workspace_root, graph, &location) {
+            Some((path, source)) => {
+                if source.id == target.id {
+                    continue;
+                }
+                semantic_edges.push(SemanticEdgePatch {
+                    request_id: request.id.clone(),
+                    work_item_id: work_item.id.clone(),
+                    source: source.id,
+                    target: target.id,
+                    kind: EdgeKind::References,
+                    confidence: Confidence::Semantic,
+                    replaced_edge_index: None,
+                    original_target: None,
+                    path,
+                    line: location.line.unwrap_or(1),
+                    column: location.column.unwrap_or(1),
+                    evidence: "lsp_references",
+                });
+            }
+            None => unmatched_locations.push(unmatched_location(
+                request,
+                work_item,
+                &location,
+                workspace_root,
+                "no_graph_node_at_lsp_location",
+            )),
+        }
+    }
+}
+
+fn collect_diagnostics(
+    workspace_root: &Path,
+    request: &SemanticLspRequest,
+    work_item: &SemanticWorkItem,
+    result: &Value,
+    diagnostics: &mut Vec<SemanticDiagnosticPatch>,
+    unmatched_locations: &mut Vec<SemanticUnmatchedLocation>,
+) {
+    for diagnostic in lsp_diagnostics(result) {
+        let path =
+            path_from_file_uri(workspace_root, &diagnostic.uri).or_else(|| request.path.clone());
+        let Some(path) = path else {
+            unmatched_locations.push(SemanticUnmatchedLocation {
+                request_id: request.id.clone(),
+                work_item_id: Some(work_item.id.clone()),
+                method: request.method.to_string(),
+                uri: diagnostic.uri,
+                path: None,
+                line: diagnostic.line,
+                column: diagnostic.column,
+                reason: "diagnostic_path_not_in_workspace",
+            });
+            continue;
+        };
+        diagnostics.push(SemanticDiagnosticPatch {
+            request_id: request.id.clone(),
+            work_item_id: work_item.id.clone(),
+            path,
+            line: diagnostic.line.unwrap_or(1),
+            column: diagnostic.column.unwrap_or(1),
+            severity: diagnostic.severity,
+            code: diagnostic.code,
+            source: diagnostic.source,
+            message: diagnostic.message,
+        });
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LspLocation {
+    uri: String,
+    line: Option<u32>,
+    column: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LspDiagnostic {
+    uri: String,
+    line: Option<u32>,
+    column: Option<u32>,
+    severity: Option<u64>,
+    code: Option<String>,
+    source: Option<String>,
+    message: String,
+}
+
+fn lsp_locations(result: &Value) -> Vec<LspLocation> {
+    if result.is_null() {
+        return Vec::new();
+    }
+    if let Some(items) = result.as_array() {
+        return items.iter().filter_map(lsp_location).collect();
+    }
+    lsp_location(result).into_iter().collect()
+}
+
+fn lsp_location(value: &Value) -> Option<LspLocation> {
+    let uri = value
+        .get("targetUri")
+        .or_else(|| value.get("uri"))?
+        .as_str()?
+        .to_string();
+    let range = value
+        .get("targetSelectionRange")
+        .or_else(|| value.get("targetRange"))
+        .or_else(|| value.get("range"));
+    let (line, column) = range
+        .and_then(|range| range.get("start"))
+        .map(lsp_position)
+        .unwrap_or((None, None));
+    Some(LspLocation { uri, line, column })
+}
+
+fn lsp_diagnostics(result: &Value) -> Vec<LspDiagnostic> {
+    let items = result
+        .get("items")
+        .or_else(|| result.get("diagnostics"))
+        .unwrap_or(result);
+    let Some(items) = items.as_array() else {
+        return Vec::new();
+    };
+
+    items.iter().filter_map(lsp_diagnostic).collect()
+}
+
+fn lsp_diagnostic(value: &Value) -> Option<LspDiagnostic> {
+    let message = value.get("message")?.as_str()?.to_string();
+    let uri = value
+        .get("uri")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_default();
+    let (line, column) = value
+        .get("range")
+        .and_then(|range| range.get("start"))
+        .map(lsp_position)
+        .unwrap_or((None, None));
+    Some(LspDiagnostic {
+        uri,
+        line,
+        column,
+        severity: value.get("severity").and_then(Value::as_u64),
+        code: diagnostic_code(value.get("code")),
+        source: value
+            .get("source")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        message,
+    })
+}
+
+fn lsp_position(value: &Value) -> (Option<u32>, Option<u32>) {
+    let line = value
+        .get("line")
+        .and_then(Value::as_u64)
+        .and_then(|line| u32::try_from(line + 1).ok());
+    let column = value
+        .get("character")
+        .and_then(Value::as_u64)
+        .and_then(|column| u32::try_from(column + 1).ok());
+    (line, column)
+}
+
+fn diagnostic_code(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Object(object) => object
+            .get("value")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        _ => None,
+    }
+}
+
+fn graph_node_for_location<'a>(
+    workspace_root: &Path,
+    graph: &'a CodeGraph,
+    location: &LspLocation,
+) -> Option<(String, &'a Node)> {
+    let path = path_from_file_uri(workspace_root, &location.uri)?;
+    let node = node_at_location(graph, &path, location.line, location.column)?;
+    Some((path, node))
+}
+
+fn node_at_location<'a>(
+    graph: &'a CodeGraph,
+    path: &str,
+    line: Option<u32>,
+    column: Option<u32>,
+) -> Option<&'a Node> {
+    let normalized_path = normalize_graph_path(path);
+    let mut candidates: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.span.as_ref().is_some_and(|span| {
+                normalize_graph_path(&span.path) == normalized_path
+                    && span_contains(span, line, column)
+            })
+        })
+        .collect();
+    candidates.sort_by_key(|node| {
+        (
+            node_span_size(node.span.as_ref()),
+            node_kind_rank(&node.kind),
+            node.id.0,
+        )
+    });
+    candidates.into_iter().next().or_else(|| {
+        graph.nodes.iter().find(|node| {
+            node.kind == NodeKind::File && normalize_graph_path(&node.label) == normalized_path
+        })
+    })
+}
+
+fn span_contains(span: &SourceSpan, line: Option<u32>, column: Option<u32>) -> bool {
+    let Some(line) = line else {
+        return true;
+    };
+    if line < span.start_line || line > span.end_line {
+        return false;
+    }
+    let Some(column) = column else {
+        return true;
+    };
+    if line == span.start_line && column < span.start_column {
+        return false;
+    }
+    if line == span.end_line && column > span.end_column {
+        return false;
+    }
+    true
+}
+
+fn node_span_size(span: Option<&SourceSpan>) -> u32 {
+    span.map(|span| {
+        span.end_line
+            .saturating_sub(span.start_line)
+            .saturating_mul(100_000)
+            + span.end_column.saturating_sub(span.start_column)
+    })
+    .unwrap_or(u32::MAX)
+}
+
+fn node_kind_rank(kind: &NodeKind) -> usize {
+    match kind {
+        NodeKind::Function | NodeKind::Entrypoint => 0,
+        NodeKind::Type | NodeKind::Module => 1,
+        NodeKind::Config | NodeKind::Environment => 2,
+        NodeKind::File => 3,
+        _ => 4,
+    }
+}
+
+fn unmatched_location(
+    request: &SemanticLspRequest,
+    work_item: &SemanticWorkItem,
+    location: &LspLocation,
+    workspace_root: &Path,
+    reason: &'static str,
+) -> SemanticUnmatchedLocation {
+    SemanticUnmatchedLocation {
+        request_id: request.id.clone(),
+        work_item_id: Some(work_item.id.clone()),
+        method: request.method.to_string(),
+        uri: location.uri.clone(),
+        path: path_from_file_uri(workspace_root, &location.uri),
+        line: location.line,
+        column: location.column,
+        reason,
+    }
+}
+
+fn path_from_file_uri(workspace_root: &Path, uri: &str) -> Option<String> {
+    let encoded = uri.strip_prefix("file://")?;
+    let decoded = percent_decode_path(encoded)?;
+    let absolute = PathBuf::from(decoded);
+    let relative = absolute.strip_prefix(workspace_root).unwrap_or(&absolute);
+    Some(path_to_graph_path(relative))
+}
+
+fn path_to_graph_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn normalize_graph_path(path: &str) -> String {
+    path.replace('\\', "/")
+        .trim_start_matches("./")
+        .trim_start_matches('/')
+        .to_string()
+}
+
+fn percent_decode_path(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = *bytes.get(index + 1)?;
+            let low = *bytes.get(index + 2)?;
+            decoded.push(hex_value(high)? * 16 + hex_value(low)?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -1704,6 +2269,224 @@ mod tests {
             blocked_batch.blocked_items[0].id,
             "language_support:markdown"
         );
+    }
+
+    #[test]
+    fn semantic_graph_patch_maps_lsp_location_definitions_to_graph_edges() {
+        let (graph, caller, helper) = semantic_patch_graph();
+        let discovery = semantic_patch_discovery(&["definitions"]);
+        let batch = semantic_execution_batch_with_discovery(
+            Path::new("/workspace/repo"),
+            &graph,
+            &discovery,
+            DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+            SemanticWorkItemFilter {
+                language: Some("rust".to_string()),
+                status: Some("ready".to_string()),
+                capability: Some("definitions".to_string()),
+            },
+        );
+        let request = definition_request(&batch);
+
+        let patch = semantic_graph_patch_from_responses(
+            Path::new("/workspace/repo"),
+            &graph,
+            &batch,
+            &[SemanticLspResponse {
+                request_id: request.id.clone(),
+                method: request.method.to_string(),
+                result: json!({
+                    "uri": "file:///workspace/repo/src/main.rs",
+                    "range": {
+                        "start": { "line": 9, "character": 4 },
+                        "end": { "line": 9, "character": 10 }
+                    }
+                }),
+                error: None,
+            }],
+        );
+
+        assert_eq!(patch.workspace_root, "/workspace/repo");
+        assert_eq!(patch.responses, 1);
+        assert_eq!(patch.matched_responses, 1);
+        assert!(patch.unmatched_locations.is_empty());
+        assert!(patch.response_errors.is_empty());
+        assert_eq!(patch.semantic_edges.len(), 1);
+        assert_eq!(patch.semantic_edges[0].source, caller);
+        assert_eq!(patch.semantic_edges[0].target, helper);
+        assert_eq!(patch.semantic_edges[0].kind, EdgeKind::Calls);
+        assert_eq!(patch.semantic_edges[0].confidence, Confidence::Semantic);
+        assert_eq!(patch.semantic_edges[0].path, "src/main.rs");
+        assert_eq!(patch.semantic_edges[0].line, 10);
+        assert_eq!(patch.semantic_edges[0].column, 5);
+        assert_eq!(patch.semantic_edges[0].evidence, "lsp_definition");
+    }
+
+    #[test]
+    fn semantic_graph_patch_maps_lsp_location_links_to_graph_edges() {
+        let (graph, caller, helper) = semantic_patch_graph();
+        let discovery = semantic_patch_discovery(&["definitions"]);
+        let batch = semantic_execution_batch_with_discovery(
+            Path::new("/workspace/repo"),
+            &graph,
+            &discovery,
+            DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+            SemanticWorkItemFilter {
+                language: Some("rust".to_string()),
+                status: Some("ready".to_string()),
+                capability: Some("definitions".to_string()),
+            },
+        );
+        let request = definition_request(&batch);
+
+        let patch = semantic_graph_patch_from_responses(
+            Path::new("/workspace/repo"),
+            &graph,
+            &batch,
+            &[SemanticLspResponse {
+                request_id: request.id.clone(),
+                method: request.method.to_string(),
+                result: json!([
+                    {
+                        "targetUri": "file:///workspace/repo/src/main.rs",
+                        "targetSelectionRange": {
+                            "start": { "line": 9, "character": 4 },
+                            "end": { "line": 9, "character": 10 }
+                        },
+                        "targetRange": {
+                            "start": { "line": 8, "character": 0 },
+                            "end": { "line": 11, "character": 1 }
+                        }
+                    }
+                ]),
+                error: None,
+            }],
+        );
+
+        assert_eq!(patch.semantic_edges.len(), 1);
+        assert_eq!(patch.semantic_edges[0].source, caller);
+        assert_eq!(patch.semantic_edges[0].target, helper);
+        assert_eq!(patch.semantic_edges[0].replaced_edge_index, Some(1));
+        assert_eq!(patch.semantic_edges[0].original_target, Some(helper));
+    }
+
+    #[test]
+    fn semantic_graph_patch_collects_lsp_diagnostics() {
+        let (graph, _, _) = semantic_patch_graph();
+        let discovery = semantic_patch_discovery(&["diagnostics"]);
+        let batch = semantic_execution_batch_with_discovery(
+            Path::new("/workspace/repo"),
+            &graph,
+            &discovery,
+            DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+            SemanticWorkItemFilter {
+                language: Some("rust".to_string()),
+                status: Some("ready".to_string()),
+                capability: Some("diagnostics".to_string()),
+            },
+        );
+        let request = batch.server_batches[0]
+            .requests
+            .iter()
+            .find(|request| request.method == "textDocument/diagnostic")
+            .expect("diagnostic request");
+
+        let patch = semantic_graph_patch_from_responses(
+            Path::new("/workspace/repo"),
+            &graph,
+            &batch,
+            &[SemanticLspResponse {
+                request_id: request.id.clone(),
+                method: request.method.to_string(),
+                result: json!({
+                    "kind": "full",
+                    "items": [
+                        {
+                            "range": {
+                                "start": { "line": 2, "character": 8 },
+                                "end": { "line": 2, "character": 14 }
+                            },
+                            "severity": 1,
+                            "code": "E0001",
+                            "source": "rustc",
+                            "message": "semantic mismatch"
+                        }
+                    ]
+                }),
+                error: None,
+            }],
+        );
+
+        assert!(patch.semantic_edges.is_empty());
+        assert_eq!(patch.diagnostics.len(), 1);
+        assert_eq!(patch.diagnostics[0].path, "src/main.rs");
+        assert_eq!(patch.diagnostics[0].line, 3);
+        assert_eq!(patch.diagnostics[0].column, 9);
+        assert_eq!(patch.diagnostics[0].severity, Some(1));
+        assert_eq!(patch.diagnostics[0].code.as_deref(), Some("E0001"));
+        assert_eq!(patch.diagnostics[0].source.as_deref(), Some("rustc"));
+        assert_eq!(patch.diagnostics[0].message, "semantic mismatch");
+    }
+
+    fn semantic_patch_graph() -> (CodeGraph, NodeId, NodeId) {
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/main.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let caller = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "caller",
+            Some(SourceSpan {
+                path: "src/main.rs".to_string(),
+                start_line: 2,
+                start_column: 1,
+                end_line: 4,
+                end_column: 1,
+            }),
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let helper = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "helper",
+            Some(SourceSpan {
+                path: "src/main.rs".to_string(),
+                start_line: 9,
+                start_column: 1,
+                end_line: 12,
+                end_column: 1,
+            }),
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        graph.add_edge(file, caller, EdgeKind::Defines, Confidence::Syntactic);
+        graph.add_edge(caller, helper, EdgeKind::Calls, Confidence::Heuristic);
+        (graph, caller, helper)
+    }
+
+    fn semantic_patch_discovery(capabilities: &'static [&'static str]) -> LspDiscoveryReport {
+        LspDiscoveryReport {
+            total_servers: 1,
+            available_servers: 1,
+            servers: vec![LspServerStatus {
+                id: "rust-analyzer",
+                languages: &["rust"],
+                command: "rust-analyzer",
+                args: &[],
+                capabilities,
+                installed: true,
+                path: Some("/bin/rust-analyzer".to_string()),
+            }],
+        }
+    }
+
+    fn definition_request(batch: &SemanticExecutionBatch) -> &SemanticLspRequest {
+        batch.server_batches[0]
+            .requests
+            .iter()
+            .find(|request| request.method == "textDocument/definition")
+            .expect("definition request")
     }
 
     fn temp_dir() -> PathBuf {

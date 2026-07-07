@@ -70,6 +70,7 @@ Goal: improve precision where language tooling exists.
 - [x] Add semantic execution batch reports grouped by language server command.
 - [x] Add executable LSP request descriptors for semantic batch runners.
 - [x] Add workspace symbol work items and request planning.
+- [x] Add semantic LSP response mapping into graph patch reports.
 - Use LSP definitions, references, document symbols, workspace symbols, and diagnostics.
 - Add Rust enrichment through `rust-analyzer`.
 - Add TypeScript/JavaScript enrichment through tsserver-compatible tooling.
