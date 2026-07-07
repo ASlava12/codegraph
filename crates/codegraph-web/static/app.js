@@ -33,6 +33,7 @@ const state = {
   scanOptions: null,
   coverage: null,
   architecture: null,
+  hotspots: null,
   architecturePathPrefix: "",
   entrypoints: [],
   insightReport: null,
@@ -90,6 +91,7 @@ const edgeSourceList = document.querySelector("#edgeSourceList");
 const scanPolicyList = document.querySelector("#scanPolicyList");
 const coverageList = document.querySelector("#coverageList");
 const architectureList = document.querySelector("#architectureList");
+const hotspotList = document.querySelector("#hotspotList");
 const annotationList = document.querySelector("#annotationList");
 const entrypointList = document.querySelector("#entrypointList");
 const entryFlowSearchInput = document.querySelector("#entryFlowSearchInput");
@@ -307,6 +309,7 @@ async function scan() {
   state.scanOptions = null;
   state.coverage = null;
   state.architecture = null;
+  state.hotspots = null;
   state.architecturePathPrefix = "";
   state.entrypoints = [];
   renderOverview();
@@ -531,18 +534,21 @@ async function loadProjectOverview() {
       scanOptionsResponse,
       coverageResponse,
       architectureResponse,
+      hotspotsResponse,
     ] = await Promise.all([
       fetch(`/api/summary?${params.toString()}`),
       fetch(`/api/entrypoints?${params.toString()}`),
       fetch(`/api/scan-options?${params.toString()}`),
       fetch(`/api/coverage?${params.toString()}`),
       fetch(`/api/architecture?${params.toString()}&group_limit=8&edge_limit=40`),
+      fetch(`/api/hotspots?${params.toString()}&limit=8`),
     ]);
     const summary = await summaryResponse.json();
     const entrypoints = await entrypointsResponse.json();
     const scanOptions = await scanOptionsResponse.json();
     const coverage = await coverageResponse.json();
     const architecture = await architectureResponse.json();
+    const hotspots = await hotspotsResponse.json();
     if (requestId !== state.overviewRequest) return;
     if (!summaryResponse.ok) {
       throw new Error(summary.error || "summary failed");
@@ -559,10 +565,14 @@ async function loadProjectOverview() {
     if (!architectureResponse.ok) {
       throw new Error(architecture.error || "architecture failed");
     }
+    if (!hotspotsResponse.ok) {
+      throw new Error(hotspots.error || "hotspots failed");
+    }
     state.summary = summary;
     state.scanOptions = scanOptions;
     state.coverage = coverage;
     state.architecture = architecture;
+    state.hotspots = hotspots;
     state.entrypoints = entrypoints;
     renderOverview();
   } catch (error) {
@@ -575,6 +585,7 @@ async function loadProjectOverview() {
     scanPolicyList.innerHTML = "";
     coverageList.innerHTML = "";
     architectureList.innerHTML = "";
+    hotspotList.innerHTML = "";
     annotationList.innerHTML = "";
     entrypointList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   }
@@ -642,6 +653,7 @@ function renderOverview() {
   renderScanPolicy(state.scanOptions);
   renderCoverage(state.coverage);
   renderArchitecture(state.architecture);
+  renderHotspots(state.hotspots);
 
   const annotations = annotationFacets(summary, state.graph.nodes);
   annotationList.innerHTML =
@@ -880,6 +892,33 @@ async function focusArchitectureEdge(edge) {
     if (requestId !== state.insightFocusRequest) return;
     queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   }
+}
+
+function renderHotspots(report) {
+  if (!report) {
+    hotspotList.innerHTML = '<p class="empty">No hotspots.</p>';
+    return;
+  }
+
+  const hotspots = Array.isArray(report.hotspots) ? report.hotspots.slice(0, 8) : [];
+  hotspotList.innerHTML =
+    hotspots.length > 0
+      ? hotspots
+          .map(
+            (hotspot) => `
+              <button class="hotspot-chip" type="button" data-hotspot-node-id="${hotspot.node?.id || ""}">
+                <span>${escapeHtml(hotspot.node?.label || "unknown")}</span>
+                <strong>${Number(hotspot.score || 0)}</strong>
+              </button>
+            `,
+          )
+          .join("")
+      : '<p class="empty">No hotspots.</p>';
+  hotspotList.querySelectorAll("[data-hotspot-node-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      focusNodeId(Number(button.dataset.hotspotNodeId), "Focus: hotspot");
+    });
+  });
 }
 
 function annotationFacets(summary, nodes) {

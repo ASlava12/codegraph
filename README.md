@@ -46,6 +46,7 @@ Implemented now:
 - Architecture map reports in CLI, API, and web overview for top-level project areas and cross-area dependencies.
 - Architecture overview chips can focus the paged graph by project area path prefix.
 - Architecture dependency chips can focus the exact graph edges behind cross-area coupling.
+- Hotspot reports in CLI, API, and web overview for high-degree files, functions, entrypoints, and config nodes.
 - Web path navigation for finding, focusing, and visually highlighting dependency paths between graph nodes.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
 - Server-backed web insights for project-wide findings while browsing paged graph slices.
@@ -117,6 +118,12 @@ Show an architecture map grouped by top-level project area:
 
 ```bash
 cargo run -p codegraph-cli -- architecture .
+```
+
+Find high-degree graph hotspots:
+
+```bash
+cargo run -p codegraph-cli -- hotspots .
 ```
 
 Explain scan coverage before or after a full graph scan:
@@ -374,6 +381,7 @@ curl 'http://127.0.0.1:3765/api/node-context?path=.&node_id=1&edge_limit=80'
 curl 'http://127.0.0.1:3765/api/focus?path=.&node_ids=1,2&edge_indexes=0&edge_limit=200'
 curl 'http://127.0.0.1:3765/api/summary?path=.'
 curl 'http://127.0.0.1:3765/api/architecture?path=.&group_limit=50&edge_limit=200'
+curl 'http://127.0.0.1:3765/api/hotspots?path=.&limit=25'
 curl 'http://127.0.0.1:3765/api/entrypoints?path=.'
 curl 'http://127.0.0.1:3765/api/entrypoint-traces?path=.&search=server&depth=4'
 curl 'http://127.0.0.1:3765/api/check?path=.&fail_on=warning&kind=dependency'

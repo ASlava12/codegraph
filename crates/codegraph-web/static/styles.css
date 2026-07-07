@@ -244,6 +244,7 @@ button:disabled {
 .scan-policy-list,
 .coverage-list,
 .architecture-list,
+.hotspot-list,
 .annotation-list {
   display: flex;
   flex-wrap: wrap;
@@ -258,6 +259,7 @@ button:disabled {
 .coverage-chip,
 .architecture-chip,
 .architecture-edge-chip,
+.hotspot-chip,
 .annotation-chip {
   display: inline-grid;
   grid-template-columns: minmax(0, auto) auto;
@@ -280,6 +282,7 @@ button:disabled {
 .coverage-chip span,
 .architecture-chip span,
 .architecture-edge-chip span,
+.hotspot-chip span,
 .annotation-chip span {
   min-width: 0;
   overflow: hidden;
@@ -295,6 +298,7 @@ button:disabled {
 .coverage-chip strong,
 .architecture-chip strong,
 .architecture-edge-chip strong,
+.hotspot-chip strong,
 .annotation-chip strong {
   color: var(--muted);
   font-size: 11px;
@@ -318,6 +322,11 @@ button:disabled {
 .architecture-edge-chip {
   max-width: 100%;
   background: rgba(223, 126, 126, 0.1);
+}
+
+.hotspot-chip {
+  max-width: 100%;
+  background: rgba(242, 193, 78, 0.1);
 }
 
 .annotation-chip {
@@ -354,6 +363,7 @@ button:disabled {
 .confidence-chip:hover,
 .architecture-chip:hover,
 .architecture-edge-chip:hover,
+.hotspot-chip:hover,
 .entrypoint-item:hover {
   border-color: rgba(92, 200, 167, 0.55);
   background: rgba(92, 200, 167, 0.08);

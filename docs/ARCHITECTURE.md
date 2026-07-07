@@ -38,6 +38,7 @@ The first implementation stores whole-graph JSON cache records keyed by root pat
 - summary counts
 - architecture maps that group files and dependency edges by top-level project area
 - architecture dependency records preserve edge indexes so UI and agents can focus exact coupling evidence
+- hotspot reports for finding high-degree files, functions, entrypoints, and config nodes
 - scan coverage reports for indexed files, policy skips, large-file skips, and non-indexed files
 - entrypoint candidates
 - outgoing dependency traces

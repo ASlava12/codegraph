@@ -3,8 +3,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
     ConfigTraceRequest, EntrypointTraceRequest, ErrorTraceRequest, ExplainEdgeRequest,
     InsightFilter, InsightSeverity, SourceSearchRequest, TraceRequest, TraceStart,
-    architecture_map, check_insights, entrypoints, explain_edge, filter_insight_report, insights,
-    query_graph, search_source, summarize, trace, trace_config, trace_dependents,
+    architecture_map, check_insights, entrypoints, explain_edge, filter_insight_report, hotspots,
+    insights, query_graph, search_source, summarize, trace, trace_config, trace_dependents,
     trace_entrypoints, trace_errors,
 };
 use codegraph_analysis::{export_dot, export_ndjson};
@@ -57,6 +57,9 @@ enum Command {
 
     /// Emit a top-level architecture map grouped by project area.
     Architecture(ArchitectureArgs),
+
+    /// Emit high-degree graph hotspots as JSON.
+    Hotspots(HotspotArgs),
 
     /// Explain scan coverage, ignored paths, and file-size skips as JSON.
     Coverage(CoverageArgs),
@@ -321,6 +324,16 @@ struct ArchitectureArgs {
     edge_limit: usize,
 }
 
+#[derive(Debug, Args)]
+struct HotspotArgs {
+    #[command(flatten)]
+    scan: ScanArgs,
+
+    /// Maximum hotspots to include.
+    #[arg(long, default_value_t = 25)]
+    limit: usize,
+}
+
 #[derive(Debug, Clone, Args)]
 struct CacheArgs {
     /// Disable persistent graph cache for this command.
@@ -539,6 +552,19 @@ fn main() -> Result<()> {
                     args.group_limit,
                     args.edge_limit,
                 ))?
+            );
+        }
+        Command::Hotspots(args) => {
+            let graph = scan_with_options(
+                args.scan.path,
+                args.scan.include_hidden,
+                args.scan.include_ignored,
+                max_file_size,
+                &args.scan.cache,
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&hotspots(&graph, args.limit))?
             );
         }
         Command::Benchmark(args) => {

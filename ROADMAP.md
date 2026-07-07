@@ -153,6 +153,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add architecture map overview for top-level project areas and dependencies.
 - [x] Add UI graph focusing from architecture overview areas.
 - [x] Add focused graph views for architecture cross-area dependency edges.
+- [x] Add hotspot reports for high-degree graph nodes.
 - [x] Add web project overview facets for edge relation and provenance sources.
 - [x] Add web path navigation, focused graph views, and visual highlighting for dependency paths.
 - [x] Add node context API for paged graph detail panels.

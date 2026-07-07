@@ -54,6 +54,22 @@ pub struct ArchitectureEdge {
     pub edge_indexes: Vec<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HotspotReport {
+    pub hotspots: Vec<Hotspot>,
+    pub total_candidates: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hotspot {
+    pub node: Node,
+    pub score: usize,
+    pub incoming: usize,
+    pub outgoing: usize,
+    pub edge_kinds: BTreeMap<String, usize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceSearchRequest {
     pub query: String,
@@ -853,6 +869,77 @@ pub fn architecture_map(
         total_edges,
         truncated_groups: total_groups > group_limit,
         truncated_edges: total_edges > edge_limit,
+    }
+}
+
+pub fn hotspots(graph: &CodeGraph, limit: usize) -> HotspotReport {
+    let limit = limit.clamp(1, 500);
+    let candidate_ids: BTreeSet<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| is_hotspot_candidate(&node.kind))
+        .map(|node| node.id)
+        .collect();
+    let nodes_by_id: BTreeMap<_, _> = graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let mut stats: BTreeMap<NodeId, Hotspot> = BTreeMap::new();
+
+    for edge in graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind != EdgeKind::Contains)
+    {
+        if candidate_ids.contains(&edge.source)
+            && let Some(node) = nodes_by_id.get(&edge.source)
+        {
+            let hotspot = stats.entry(edge.source).or_insert_with(|| Hotspot {
+                node: (*node).clone(),
+                score: 0,
+                incoming: 0,
+                outgoing: 0,
+                edge_kinds: BTreeMap::new(),
+            });
+            hotspot.outgoing += 1;
+            hotspot.score += 1;
+            *hotspot
+                .edge_kinds
+                .entry(edge_kind_name(&edge.kind))
+                .or_insert(0) += 1;
+        }
+        if candidate_ids.contains(&edge.target)
+            && let Some(node) = nodes_by_id.get(&edge.target)
+        {
+            let hotspot = stats.entry(edge.target).or_insert_with(|| Hotspot {
+                node: (*node).clone(),
+                score: 0,
+                incoming: 0,
+                outgoing: 0,
+                edge_kinds: BTreeMap::new(),
+            });
+            hotspot.incoming += 1;
+            hotspot.score += 1;
+            *hotspot
+                .edge_kinds
+                .entry(edge_kind_name(&edge.kind))
+                .or_insert(0) += 1;
+        }
+    }
+
+    let total_candidates = stats.len();
+    let mut hotspots: Vec<_> = stats.into_values().collect();
+    hotspots.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| right.incoming.cmp(&left.incoming))
+            .then_with(|| right.outgoing.cmp(&left.outgoing))
+            .then_with(|| left.node.label.cmp(&right.node.label))
+    });
+    hotspots.truncate(limit);
+
+    HotspotReport {
+        hotspots,
+        total_candidates,
+        truncated: total_candidates > limit,
     }
 }
 
@@ -3954,6 +4041,19 @@ fn is_architecture_dependency_edge(kind: &EdgeKind) -> bool {
     )
 }
 
+fn is_hotspot_candidate(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::File
+            | NodeKind::Module
+            | NodeKind::Function
+            | NodeKind::Entrypoint
+            | NodeKind::Type
+            | NodeKind::Config
+            | NodeKind::Environment
+    )
+}
+
 fn edge_kind_name(kind: &EdgeKind) -> String {
     serde_json_name(kind).unwrap_or_else(|| format!("{kind:?}").to_ascii_lowercase())
 }
@@ -4085,6 +4185,34 @@ mod tests {
         assert_eq!(map.edges[0].target, "core");
         assert_eq!(map.edges[0].edge_kinds.get("calls"), Some(&1));
         assert_eq!(map.edges[0].edge_indexes, vec![4]);
+    }
+
+    #[test]
+    fn hotspots_rank_nodes_by_dependency_degree() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let load_config = graph.add_node(NodeKind::Function, "load_config");
+        let settings = graph.add_node(NodeKind::Config, "settings.toml");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        graph.add_edge(main, load_config, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(helper, load_config, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(
+            load_config,
+            settings,
+            EdgeKind::ReadsConfig,
+            Confidence::Heuristic,
+        );
+
+        let report = hotspots(&graph, 2);
+
+        assert_eq!(report.total_candidates, 4);
+        assert!(report.truncated);
+        assert_eq!(report.hotspots[0].node.label, "load_config");
+        assert_eq!(report.hotspots[0].score, 3);
+        assert_eq!(report.hotspots[0].incoming, 2);
+        assert_eq!(report.hotspots[0].outgoing, 1);
+        assert_eq!(report.hotspots[0].edge_kinds.get("calls"), Some(&2));
+        assert_eq!(report.hotspots[0].edge_kinds.get("reads_config"), Some(&1));
     }
 
     #[test]
