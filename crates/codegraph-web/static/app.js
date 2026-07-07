@@ -19,6 +19,7 @@ const I18N = {
     "selection.lines": "Lines",
     "selection.summary": "Summary",
     "selection.dependencies": "Dependencies",
+    "selection.dependencySummary": "Dependency Summary",
     "selection.risks": "Risks",
     "selection.source": "Source",
     "selection.metadata": "Metadata",
@@ -31,6 +32,10 @@ const I18N = {
     "selection.sourceTruncated": "preview truncated",
     "selection.incoming": "incoming",
     "selection.outgoing": "outgoing",
+    "selection.edgeKinds": "edge kinds",
+    "selection.confidences": "confidence",
+    "selection.neighborKinds": "neighbor kinds",
+    "selection.neighborLanguages": "neighbor languages",
     "selection.from": "From",
     "selection.to": "To",
     "selection.configTrace": "Config Trace",
@@ -233,6 +238,7 @@ const I18N = {
     "selection.lines": "Строки",
     "selection.summary": "Сводка",
     "selection.dependencies": "Связи",
+    "selection.dependencySummary": "Сводка связей",
     "selection.risks": "Риски",
     "selection.source": "Код",
     "selection.metadata": "Метаданные",
@@ -245,6 +251,10 @@ const I18N = {
     "selection.sourceTruncated": "фрагмент обрезан",
     "selection.incoming": "входящая",
     "selection.outgoing": "исходящая",
+    "selection.edgeKinds": "типы связей",
+    "selection.confidences": "уверенность",
+    "selection.neighborKinds": "типы соседей",
+    "selection.neighborLanguages": "языки соседей",
     "selection.from": "Отсюда",
     "selection.to": "Сюда",
     "selection.configTrace": "Трасса конфига",
@@ -5301,6 +5311,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
   const sourcePath = card?.source?.path || node.span?.path || "";
   const sourceLineSuffix = node.span ? `:${node.span.start_line}` : "";
   const cardActions = nodeCardActions(card, node);
+  const dependencySummary = renderDependencySummary(card?.dependency_summary);
   const neighborRows = loading
     ? `<p class="empty">${escapeHtml(t("selection.loading"))}</p>`
     : edges.length > 0
@@ -5369,6 +5380,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
           <h3>${escapeHtml(t("selection.dependencies"))}</h3>
           ${contextSummary}
         </div>
+        ${dependencySummary}
         <div class="neighbors">${neighborRows}</div>
       </section>
       <section class="node-card-section">
@@ -5503,6 +5515,50 @@ function renderNodeMetadataRows(node) {
 
 function renderDefinitionRow([key, value]) {
   return `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd>`;
+}
+
+function renderDependencySummary(summary) {
+  if (!summary) return "";
+  const total = Number(summary.incoming || 0) + Number(summary.outgoing || 0);
+  if (total === 0) return "";
+  const groups = [
+    [t("selection.edgeKinds"), summary.edge_kinds],
+    [t("selection.confidences"), summary.confidences],
+    [t("selection.neighborKinds"), summary.neighbor_kinds],
+    [t("selection.neighborLanguages"), summary.neighbor_languages],
+  ]
+    .map(([label, values]) => renderDependencyFacetGroup(label, values))
+    .filter(Boolean)
+    .join("");
+
+  return `
+    <div class="dependency-summary" aria-label="${escapeHtml(t("selection.dependencySummary"))}">
+      <div class="dependency-totals">
+        <span>${escapeHtml(t("selection.incoming"))}: <strong>${Number(summary.incoming || 0)}</strong></span>
+        <span>${escapeHtml(t("selection.outgoing"))}: <strong>${Number(summary.outgoing || 0)}</strong></span>
+      </div>
+      ${groups}
+    </div>
+  `;
+}
+
+function renderDependencyFacetGroup(label, values) {
+  const entries = Object.entries(values || {})
+    .filter(([, count]) => Number(count) > 0)
+    .sort((left, right) => Number(right[1]) - Number(left[1]) || left[0].localeCompare(right[0]))
+    .slice(0, 4);
+  if (entries.length === 0) return "";
+  return `
+    <section>
+      <h4>${escapeHtml(label)}</h4>
+      <div>${entries
+        .map(
+          ([key, count]) =>
+            `<span><em>${escapeHtml(formatKind(key))}</em><strong>${Number(count)}</strong></span>`,
+        )
+        .join("")}</div>
+    </section>
+  `;
 }
 
 function nodeInsightsForNode(nodeId) {

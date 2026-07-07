@@ -431,6 +431,8 @@ pub struct SourcePreviewLine {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeCard {
     pub context: NodeContext,
+    #[serde(default)]
+    pub dependency_summary: NodeDependencySummary,
     pub source: Option<SourcePreview>,
     pub insights: Vec<Insight>,
     pub total_insights: usize,
@@ -445,6 +447,18 @@ pub struct NodeCardAction {
     pub kind: String,
     pub label: String,
     pub query: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct NodeDependencySummary {
+    pub incoming: usize,
+    pub outgoing: usize,
+    pub edge_kinds: BTreeMap<String, usize>,
+    pub incoming_edge_kinds: BTreeMap<String, usize>,
+    pub outgoing_edge_kinds: BTreeMap<String, usize>,
+    pub confidences: BTreeMap<String, usize>,
+    pub neighbor_kinds: BTreeMap<String, usize>,
+    pub neighbor_languages: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1929,6 +1943,7 @@ pub fn node_card(
 
     Ok(Some(NodeCard {
         actions: node_card_actions(&context.node),
+        dependency_summary: node_dependency_summary(graph, node_id),
         context,
         source,
         insights,
@@ -1936,6 +1951,49 @@ pub fn node_card(
         insight_limit,
         truncated_insights: insight_limit < total_insights,
     }))
+}
+
+fn node_dependency_summary(graph: &CodeGraph, node_id: NodeId) -> NodeDependencySummary {
+    let nodes_by_id: BTreeMap<NodeId, &Node> =
+        graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let mut summary = NodeDependencySummary::default();
+
+    for edge in graph
+        .edges
+        .iter()
+        .filter(|edge| edge.source == node_id || edge.target == node_id)
+    {
+        let edge_kind = edge_kind_name(&edge.kind);
+        increment_facet(&mut summary.edge_kinds, edge_kind.clone());
+        increment_facet(&mut summary.confidences, confidence_name(edge.confidence));
+
+        if edge.source == node_id {
+            summary.outgoing += 1;
+            increment_facet(&mut summary.outgoing_edge_kinds, edge_kind.clone());
+        }
+        if edge.target == node_id {
+            summary.incoming += 1;
+            increment_facet(&mut summary.incoming_edge_kinds, edge_kind);
+        }
+
+        let neighbor_id = if edge.source == node_id {
+            edge.target
+        } else {
+            edge.source
+        };
+        if neighbor_id == node_id {
+            continue;
+        }
+        if let Some(neighbor) = nodes_by_id.get(&neighbor_id) {
+            increment_facet(&mut summary.neighbor_kinds, kind_name(&neighbor.kind));
+            increment_facet(
+                &mut summary.neighbor_languages,
+                node_language(&nodes_by_id, neighbor_id),
+            );
+        }
+    }
+
+    summary
 }
 
 fn node_card_actions(node: &Node) -> Vec<NodeCardAction> {
@@ -7343,6 +7401,20 @@ mod tests {
 
         assert_eq!(card.context.node.id, function);
         assert_eq!(card.context.edges.len(), 2);
+        assert_eq!(card.dependency_summary.incoming, 1);
+        assert_eq!(card.dependency_summary.outgoing, 1);
+        assert_eq!(card.dependency_summary.edge_kinds.get("contains"), Some(&1));
+        assert_eq!(card.dependency_summary.edge_kinds.get("calls"), Some(&1));
+        assert_eq!(card.dependency_summary.confidences.get("exact"), Some(&1));
+        assert_eq!(
+            card.dependency_summary.confidences.get("heuristic"),
+            Some(&1)
+        );
+        assert_eq!(card.dependency_summary.neighbor_kinds.get("file"), Some(&1));
+        assert_eq!(
+            card.dependency_summary.neighbor_kinds.get("unknown"),
+            Some(&1)
+        );
         assert_eq!(
             card.source.as_ref().map(|source| source.path.as_str()),
             Some("src/main.rs")

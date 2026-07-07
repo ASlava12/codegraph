@@ -1606,6 +1606,69 @@ button.cancel-action:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+.dependency-summary {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.dependency-totals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.dependency-totals span,
+.dependency-summary section span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.dependency-totals strong,
+.dependency-summary section strong {
+  color: var(--text);
+}
+
+.dependency-summary section {
+  display: grid;
+  gap: 5px;
+}
+
+.dependency-summary h4 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.dependency-summary section div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.dependency-summary section em {
+  min-width: 0;
+  overflow: hidden;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .empty,
 .error-text {
   margin: 0;
