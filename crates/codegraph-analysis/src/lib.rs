@@ -436,6 +436,15 @@ pub struct NodeCard {
     pub total_insights: usize,
     pub insight_limit: usize,
     pub truncated_insights: bool,
+    #[serde(default)]
+    pub actions: Vec<NodeCardAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeCardAction {
+    pub kind: String,
+    pub label: String,
+    pub query: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1919,6 +1928,7 @@ pub fn node_card(
     let insights = related_insights.into_iter().take(insight_limit).collect();
 
     Ok(Some(NodeCard {
+        actions: node_card_actions(&context.node),
         context,
         source,
         insights,
@@ -1926,6 +1936,69 @@ pub fn node_card(
         insight_limit,
         truncated_insights: insight_limit < total_insights,
     }))
+}
+
+fn node_card_actions(node: &Node) -> Vec<NodeCardAction> {
+    let mut actions = Vec::new();
+    if node.kind == NodeKind::File {
+        actions.push(NodeCardAction {
+            kind: "file_graph".to_string(),
+            label: "File graph".to_string(),
+            query: format!(
+                "files path:{} direction:out edge_limit:300",
+                quote_query_value(&node.label)
+            ),
+        });
+    }
+    if is_code_symbol(&node.kind) {
+        actions.push(NodeCardAction {
+            kind: "symbol_graph".to_string(),
+            label: "Symbol graph".to_string(),
+            query: format!("symbols node_id:{} direction:out edge_limit:300", node.id.0),
+        });
+    }
+    if is_package_query_node(node) {
+        actions.push(NodeCardAction {
+            kind: "package_graph".to_string(),
+            label: "Package graph".to_string(),
+            query: format!("packages node_id:{} edge_limit:300", node.id.0),
+        });
+    }
+    if matches!(node.kind, NodeKind::Config | NodeKind::Environment) {
+        actions.push(NodeCardAction {
+            kind: "config_graph".to_string(),
+            label: "Config readers".to_string(),
+            query: format!("configs node_id:{} depth:6", node.id.0),
+        });
+    }
+    if node
+        .metadata
+        .get("item_kind")
+        .is_some_and(|kind| kind == "error")
+    {
+        actions.push(NodeCardAction {
+            kind: "error_graph".to_string(),
+            label: "Error paths".to_string(),
+            query: format!("errors node_id:{} depth:6", node.id.0),
+        });
+    }
+    actions
+}
+
+fn quote_query_value(value: &str) -> String {
+    if value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || "._/@:+-".contains(character))
+    {
+        return value.to_string();
+    }
+    if !value.contains('"') {
+        return format!("\"{value}\"");
+    }
+    if !value.contains('\'') {
+        return format!("'{value}'");
+    }
+    format!("\"{}\"", value.replace('"', "'"))
 }
 
 fn node_source_preview(
@@ -7288,6 +7361,14 @@ mod tests {
                 .iter()
                 .any(|insight| insight.kind == "orphan_function")
         );
+        assert!(card.actions.iter().any(|action| {
+            action.kind == "symbol_graph"
+                && action.query
+                    == format!(
+                        "symbols node_id:{} direction:out edge_limit:300",
+                        function.0
+                    )
+        }));
 
         let file_card = node_card(&graph, Some(&root), file, 10, 1, 10)
             .unwrap()
@@ -7306,8 +7387,54 @@ mod tests {
                 .iter()
                 .any(|line| !line.highlight && line.text.contains("fn main"))
         );
+        assert!(file_card.actions.iter().any(|action| {
+            action.kind == "file_graph"
+                && action.query == "files path:src/main.rs direction:out edge_limit:300"
+        }));
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn node_card_suggests_focused_graph_actions() {
+        let mut graph = CodeGraph::new("repo");
+        let mut dependency_metadata = BTreeMap::new();
+        dependency_metadata.insert("item_kind".to_string(), "dependency".to_string());
+        dependency_metadata.insert("package_id".to_string(), "cargo:serde".to_string());
+        let dependency = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "serde",
+            None,
+            dependency_metadata,
+        );
+        let config = graph.add_node(NodeKind::Environment, "DATABASE_URL");
+        let mut error_metadata = BTreeMap::new();
+        error_metadata.insert("item_kind".to_string(), "error".to_string());
+        let error = graph.add_node_with_metadata(NodeKind::Unknown, "panic", None, error_metadata);
+
+        let dependency_card = node_card(&graph, None, dependency, 10, 1, 10)
+            .unwrap()
+            .expect("expected dependency card");
+        assert!(dependency_card.actions.iter().any(|action| {
+            action.kind == "package_graph"
+                && action.query == format!("packages node_id:{} edge_limit:300", dependency.0)
+        }));
+
+        let config_card = node_card(&graph, None, config, 10, 1, 10)
+            .unwrap()
+            .expect("expected config card");
+        assert!(config_card.actions.iter().any(|action| {
+            action.kind == "config_graph"
+                && action.query == format!("configs node_id:{} depth:6", config.0)
+        }));
+
+        let error_card = node_card(&graph, None, error, 10, 1, 10)
+            .unwrap()
+            .expect("expected error card");
+        assert!(error_card.actions.iter().any(|action| {
+            action.kind == "error_graph"
+                && action.query == format!("errors node_id:{} depth:6", error.0)
+        }));
     }
 
     #[test]

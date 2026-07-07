@@ -37,6 +37,9 @@ const I18N = {
     "selection.errorTrace": "Error Trace",
     "selection.packageGraph": "Packages",
     "selection.fileGraph": "File Graph",
+    "selection.symbolGraph": "Symbol Graph",
+    "selection.configGraph": "Config Graph",
+    "selection.errorGraph": "Error Graph",
     "selection.trace": "Trace",
     "selection.dependents": "Dependents",
     "selection.traceDepth": "Depth",
@@ -248,6 +251,9 @@ const I18N = {
     "selection.errorTrace": "Трасса ошибок",
     "selection.packageGraph": "Пакеты",
     "selection.fileGraph": "Граф файла",
+    "selection.symbolGraph": "Граф символа",
+    "selection.configGraph": "Граф конфига",
+    "selection.errorGraph": "Граф ошибок",
     "selection.trace": "Трассировать",
     "selection.dependents": "Зависимые",
     "selection.traceDepth": "Глубина",
@@ -5294,8 +5300,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
   const sourceLines = card?.source?.lines || null;
   const sourcePath = card?.source?.path || node.span?.path || "";
   const sourceLineSuffix = node.span ? `:${node.span.start_line}` : "";
-  const packageGraphQuery = packageGraphQueryForNode(node);
-  const fileGraphQuery = fileGraphQueryForNode(node);
+  const cardActions = nodeCardActions(card, node);
   const neighborRows = loading
     ? `<p class="empty">${escapeHtml(t("selection.loading"))}</p>`
     : edges.length > 0
@@ -5336,16 +5341,12 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
             ? `<button type="button" data-error-trace-target>${escapeHtml(t("selection.errorTrace"))}</button>`
             : ""
         }
-        ${
-          packageGraphQuery
-            ? `<button type="button" data-package-graph-query>${escapeHtml(t("selection.packageGraph"))}</button>`
-            : ""
-        }
-        ${
-          fileGraphQuery
-            ? `<button type="button" data-file-graph-query>${escapeHtml(t("selection.fileGraph"))}</button>`
-            : ""
-        }
+        ${cardActions
+          .map(
+            (action, index) =>
+              `<button type="button" data-card-query-action="${index}">${escapeHtml(nodeCardActionLabel(action))}</button>`,
+          )
+          .join("")}
       </div>
       <section class="node-card-section">
         <h3>${escapeHtml(t("selection.summary"))}</h3>
@@ -5447,15 +5448,12 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
     });
   }
 
-  const packageGraphTarget = selectionBody.querySelector("[data-package-graph-query]");
-  if (packageGraphTarget && packageGraphQuery) {
-    packageGraphTarget.addEventListener("click", () => runPackageGraphQuery(packageGraphQuery));
-  }
-
-  const fileGraphTarget = selectionBody.querySelector("[data-file-graph-query]");
-  if (fileGraphTarget && fileGraphQuery) {
-    fileGraphTarget.addEventListener("click", () => runFileGraphQuery(fileGraphQuery));
-  }
+  selectionBody.querySelectorAll("[data-card-query-action]").forEach((button) => {
+    const action = cardActions[Number(button.dataset.cardQueryAction)];
+    if (action?.query) {
+      button.addEventListener("click", () => runNodeCardQuery(action.query));
+    }
+  });
 
   const traceButton = document.querySelector("#traceButton");
   if (traceButton) {
@@ -5531,6 +5529,55 @@ function renderNodeIssue(insight, index) {
   `;
 }
 
+function nodeCardActions(card, node) {
+  if (Array.isArray(card?.actions)) {
+    return card.actions.filter((action) => action?.query);
+  }
+  return localNodeCardActions(node);
+}
+
+function localNodeCardActions(node) {
+  return [
+    fileGraphQueryForNode(node) && {
+      kind: "file_graph",
+      label: "File graph",
+      query: fileGraphQueryForNode(node),
+    },
+    symbolGraphQueryForNode(node) && {
+      kind: "symbol_graph",
+      label: "Symbol graph",
+      query: symbolGraphQueryForNode(node),
+    },
+    packageGraphQueryForNode(node) && {
+      kind: "package_graph",
+      label: "Package graph",
+      query: packageGraphQueryForNode(node),
+    },
+    configGraphQueryForNode(node) && {
+      kind: "config_graph",
+      label: "Config graph",
+      query: configGraphQueryForNode(node),
+    },
+    errorGraphQueryForNode(node) && {
+      kind: "error_graph",
+      label: "Error graph",
+      query: errorGraphQueryForNode(node),
+    },
+  ].filter(Boolean);
+}
+
+function nodeCardActionLabel(action) {
+  const labels = {
+    file_graph: "selection.fileGraph",
+    symbol_graph: "selection.symbolGraph",
+    package_graph: "selection.packageGraph",
+    config_graph: "selection.configGraph",
+    error_graph: "selection.errorGraph",
+  };
+  const key = labels[action?.kind || ""];
+  return key ? t(key) : action?.label || formatKind(action?.kind || "query");
+}
+
 function packageGraphQueryForNode(node) {
   if (node.kind !== "external_dependency") return null;
   const packageId = node.metadata?.package_id || "";
@@ -5552,13 +5599,22 @@ function fileGraphQueryForNode(node) {
   return `files path:${quoteQueryValue(node.label)} direction:out edge_limit:300`;
 }
 
-async function runPackageGraphQuery(expression) {
-  queryInput.value = expression;
-  await runGraphQuery({ focus: true });
-  queryResult.scrollIntoView({ block: "nearest" });
+function symbolGraphQueryForNode(node) {
+  if (!["function", "type", "module", "entrypoint"].includes(node.kind)) return null;
+  return `symbols node_id:${node.id} direction:out edge_limit:300`;
 }
 
-async function runFileGraphQuery(expression) {
+function configGraphQueryForNode(node) {
+  if (!["config", "environment"].includes(node.kind)) return null;
+  return `configs node_id:${node.id} depth:6`;
+}
+
+function errorGraphQueryForNode(node) {
+  if (node.metadata?.item_kind !== "error") return null;
+  return `errors node_id:${node.id} depth:6`;
+}
+
+async function runNodeCardQuery(expression) {
   queryInput.value = expression;
   await runGraphQuery({ focus: true });
   queryResult.scrollIntoView({ block: "nearest" });
