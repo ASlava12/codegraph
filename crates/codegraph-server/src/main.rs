@@ -17,7 +17,9 @@ use codegraph_analysis::{
     trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_core::CodeGraph;
-use codegraph_indexer::{IndexOptionOverrides, IndexOptions, configured_index_options};
+use codegraph_indexer::{
+    IndexOptionOverrides, IndexOptions, configured_index_options, scan_coverage,
+};
 use codegraph_storage::{
     CacheInfo, CacheStatus, GraphCache, default_cache_dir, scan_project_cached,
 };
@@ -369,6 +371,7 @@ async fn main() -> Result<()> {
         .route("/api/health", get(health))
         .route("/api/projects", get(projects_api))
         .route("/api/scan-options", get(scan_options_api))
+        .route("/api/coverage", get(coverage_api))
         .route("/api/scan", get(scan))
         .route("/api/cache-diff", get(cache_diff_api))
         .route("/api/scan-jobs", post(start_scan_job))
@@ -768,6 +771,19 @@ async fn summary(
 ) -> Result<Json<codegraph_analysis::GraphSummary>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(summarize(&graph)))
+}
+
+async fn coverage_api(
+    State(state): State<AppState>,
+    Query(query): Query<ScanQuery>,
+) -> Result<Json<codegraph_indexer::ScanCoverageReport>, ApiError> {
+    let root = resolve_scan_root(&state, query.path.as_deref())?;
+    let options = scan_options(&state, &root)?;
+    let report = tokio::task::spawn_blocking(move || scan_coverage(&root, &options))
+        .await
+        .map_err(|error| ApiError::internal(format!("coverage task failed: {error}")))?
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    Ok(Json(report))
 }
 
 async fn entrypoints_api(

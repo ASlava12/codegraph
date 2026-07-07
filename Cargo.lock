@@ -252,6 +252,7 @@ dependencies = [
  "codegraph-core",
  "codegraph-parser",
  "globset",
+ "serde",
  "serde_json",
  "thiserror",
  "toml",

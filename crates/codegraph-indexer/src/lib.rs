@@ -1,6 +1,7 @@
 use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan};
 use codegraph_parser::{Language, ParsedItemKind, parse_source};
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -49,6 +50,36 @@ pub struct IndexOptionOverrides {
     pub include_hidden: bool,
     pub include_ignored: bool,
     pub max_file_size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ScanCoverageReport {
+    pub root: String,
+    pub include_hidden: bool,
+    pub include_ignored: bool,
+    pub max_file_size: u64,
+    pub ignored_names: Vec<String>,
+    pub ignored_globs: Vec<String>,
+    pub directories_seen: usize,
+    pub files_seen: usize,
+    pub indexed_files: usize,
+    pub skipped_large_files: usize,
+    pub skipped_policy_entries: usize,
+    pub skipped_hidden_entries: usize,
+    pub skipped_ignored_name_entries: usize,
+    pub skipped_ignored_glob_entries: usize,
+    pub non_index_files: usize,
+    pub seen_bytes: u64,
+    pub indexed_bytes: u64,
+    pub skipped_large_bytes: u64,
+    pub languages: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EntryExclusion {
+    Hidden,
+    IgnoredName,
+    IgnoredGlob,
 }
 
 struct IndexContext {
@@ -509,6 +540,91 @@ pub fn scan_project(
     apply_custom_rules(&mut context);
 
     Ok(context.graph)
+}
+
+pub fn scan_coverage(
+    root: impl AsRef<Path>,
+    options: &IndexOptions,
+) -> Result<ScanCoverageReport, IndexError> {
+    let root = root.as_ref();
+    let ignored_globs = compile_ignored_globs(&options.ignored_globs)?;
+    let mut report = ScanCoverageReport {
+        root: root.display().to_string(),
+        include_hidden: options.include_hidden,
+        include_ignored: options.include_ignored,
+        max_file_size: options.max_file_size,
+        ignored_names: options.ignored_names.iter().cloned().collect(),
+        ignored_globs: options.ignored_globs.iter().cloned().collect(),
+        directories_seen: 0,
+        files_seen: 0,
+        indexed_files: 0,
+        skipped_large_files: 0,
+        skipped_policy_entries: 0,
+        skipped_hidden_entries: 0,
+        skipped_ignored_name_entries: 0,
+        skipped_ignored_glob_entries: 0,
+        non_index_files: 0,
+        seen_bytes: 0,
+        indexed_bytes: 0,
+        skipped_large_bytes: 0,
+        languages: BTreeMap::new(),
+    };
+
+    let mut entries = WalkDir::new(root).into_iter();
+    while let Some(entry) = entries.next() {
+        let entry = entry.map_err(|source| IndexError::Walk {
+            path: root.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        if path == root {
+            continue;
+        }
+
+        if entry.file_type().is_dir() {
+            report.directories_seen += 1;
+        } else if entry.file_type().is_file() {
+            report.files_seen += 1;
+        }
+
+        if let Some(exclusion) = entry_exclusion(&entry, root, options, &ignored_globs) {
+            report.skipped_policy_entries += 1;
+            match exclusion {
+                EntryExclusion::Hidden => report.skipped_hidden_entries += 1,
+                EntryExclusion::IgnoredName => report.skipped_ignored_name_entries += 1,
+                EntryExclusion::IgnoredGlob => report.skipped_ignored_glob_entries += 1,
+            }
+            if entry.file_type().is_dir() {
+                entries.skip_current_dir();
+            }
+            continue;
+        }
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let bytes = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+        report.seen_bytes += bytes;
+        if !is_index_relevant_file(path) {
+            report.non_index_files += 1;
+            continue;
+        }
+
+        if bytes > options.max_file_size {
+            report.skipped_large_files += 1;
+            report.skipped_large_bytes += bytes;
+            continue;
+        }
+
+        report.indexed_files += 1;
+        report.indexed_bytes += bytes;
+        if let Some(language) = Language::detect(path) {
+            *report.languages.entry(language.to_string()).or_default() += 1;
+        }
+    }
+
+    Ok(report)
 }
 
 fn index_skipped_file(
@@ -4618,18 +4734,28 @@ fn should_enter(
         return true;
     }
 
+    entry_exclusion(entry, root, options, ignored_globs).is_none()
+}
+
+fn entry_exclusion(
+    entry: &DirEntry,
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Option<EntryExclusion> {
     if !options.include_hidden && is_hidden(entry) {
-        return false;
+        return Some(EntryExclusion::Hidden);
     }
 
-    if !options.include_ignored
-        && (is_ignored_name(entry, &options.ignored_names)
-            || is_ignored_glob(entry.path(), root, ignored_globs))
-    {
-        return false;
+    if !options.include_ignored && is_ignored_name(entry, &options.ignored_names) {
+        return Some(EntryExclusion::IgnoredName);
     }
 
-    true
+    if !options.include_ignored && is_ignored_glob(entry.path(), root, ignored_globs) {
+        return Some(EntryExclusion::IgnoredGlob);
+    }
+
+    None
 }
 
 fn is_hidden(entry: &DirEntry) -> bool {
@@ -4784,6 +4910,49 @@ mod tests {
         assert!(labels.contains(&"src/domain/keep.rs"));
         assert!(!labels.contains(&"src/generated"));
         assert!(!labels.contains(&"src/generated/skip.rs"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_coverage_reports_policy_and_size_skips() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src").join("generated")).unwrap();
+        fs::create_dir_all(root.join("src").join("domain")).unwrap();
+        fs::create_dir_all(root.join("target")).unwrap();
+        fs::write(
+            root.join("src").join("domain").join("keep.rs"),
+            "fn k(){}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("domain").join("huge.rs"),
+            "fn huge_function_name() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("generated").join("skip.rs"),
+            "fn skip() {}\n",
+        )
+        .unwrap();
+        fs::write(root.join("target").join("skip.rs"), "fn target() {}\n").unwrap();
+
+        let report = scan_coverage(
+            &root,
+            &IndexOptions {
+                max_file_size: 12,
+                ignored_globs: BTreeSet::from(["src/generated/**".to_string()]),
+                ..IndexOptions::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(report.indexed_files, 1);
+        assert_eq!(report.skipped_large_files, 1);
+        assert_eq!(report.skipped_ignored_name_entries, 1);
+        assert_eq!(report.skipped_ignored_glob_entries, 1);
+        assert_eq!(report.skipped_policy_entries, 2);
+        assert_eq!(report.languages.get("rust"), Some(&1));
 
         fs::remove_dir_all(root).unwrap();
     }

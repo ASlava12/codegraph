@@ -7,7 +7,9 @@ use codegraph_analysis::{
     summarize, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_analysis::{export_dot, export_ndjson};
-use codegraph_indexer::{IndexOptionOverrides, configured_index_options, scan_project};
+use codegraph_indexer::{
+    IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
+};
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -51,6 +53,9 @@ enum Command {
 
     /// Emit graph summary counts as JSON.
     Summary(ScanArgs),
+
+    /// Explain scan coverage, ignored paths, and file-size skips as JSON.
+    Coverage(CoverageArgs),
 
     /// Benchmark project scans and emit timing plus graph size metrics as JSON.
     #[command(visible_alias = "bench")]
@@ -283,6 +288,21 @@ struct ScanArgs {
     cache: CacheArgs,
 }
 
+#[derive(Debug, Args)]
+struct CoverageArgs {
+    /// Project root to inspect.
+    #[arg(default_value = ".")]
+    path: PathBuf,
+
+    /// Include hidden files and directories.
+    #[arg(long)]
+    include_hidden: bool,
+
+    /// Include default ignored directories such as target and node_modules.
+    #[arg(long)]
+    include_ignored: bool,
+}
+
 #[derive(Debug, Clone, Args)]
 struct CacheArgs {
     /// Disable persistent graph cache for this command.
@@ -475,6 +495,16 @@ fn main() -> Result<()> {
                 &args.cache,
             )?;
             println!("{}", serde_json::to_string_pretty(&summarize(&graph))?);
+        }
+        Command::Coverage(args) => {
+            let options = configured_index_options(
+                &args.path,
+                &scan_overrides(args.include_hidden, args.include_ignored, max_file_size),
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&scan_coverage(&args.path, &options)?)?
+            );
         }
         Command::Benchmark(args) => {
             let report = benchmark_scans(args, max_file_size)?;

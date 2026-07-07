@@ -242,6 +242,7 @@ button:disabled {
 .relation-list,
 .edge-source-list,
 .scan-policy-list,
+.coverage-list,
 .annotation-list {
   display: flex;
   flex-wrap: wrap;
@@ -253,6 +254,7 @@ button:disabled {
 .relation-chip,
 .edge-source-chip,
 .scan-policy-chip,
+.coverage-chip,
 .annotation-chip {
   display: inline-grid;
   grid-template-columns: minmax(0, auto) auto;
@@ -272,6 +274,7 @@ button:disabled {
 .relation-chip span,
 .edge-source-chip span,
 .scan-policy-chip span,
+.coverage-chip span,
 .annotation-chip span {
   min-width: 0;
   overflow: hidden;
@@ -284,6 +287,7 @@ button:disabled {
 .relation-chip strong,
 .edge-source-chip strong,
 .scan-policy-chip strong,
+.coverage-chip strong,
 .annotation-chip strong {
   color: var(--muted);
   font-size: 11px;
@@ -292,6 +296,11 @@ button:disabled {
 .scan-policy-chip {
   max-width: 100%;
   background: rgba(103, 183, 220, 0.08);
+}
+
+.coverage-chip {
+  max-width: 100%;
+  background: rgba(229, 180, 84, 0.09);
 }
 
 .annotation-chip {

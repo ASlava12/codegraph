@@ -31,6 +31,7 @@ const state = {
   checkRequest: 0,
   summary: null,
   scanOptions: null,
+  coverage: null,
   entrypoints: [],
   insightReport: null,
   projects: [],
@@ -85,6 +86,7 @@ const confidenceList = document.querySelector("#confidenceList");
 const relationList = document.querySelector("#relationList");
 const edgeSourceList = document.querySelector("#edgeSourceList");
 const scanPolicyList = document.querySelector("#scanPolicyList");
+const coverageList = document.querySelector("#coverageList");
 const annotationList = document.querySelector("#annotationList");
 const entrypointList = document.querySelector("#entrypointList");
 const entryFlowSearchInput = document.querySelector("#entryFlowSearchInput");
@@ -300,6 +302,7 @@ async function scan() {
   state.overviewRequest += 1;
   state.summary = null;
   state.scanOptions = null;
+  state.coverage = null;
   state.entrypoints = [];
   renderOverview();
   state.insightReport = null;
@@ -516,14 +519,16 @@ async function loadProjectOverview() {
   const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
 
   try {
-    const [summaryResponse, entrypointsResponse, scanOptionsResponse] = await Promise.all([
+    const [summaryResponse, entrypointsResponse, scanOptionsResponse, coverageResponse] = await Promise.all([
       fetch(`/api/summary?${params.toString()}`),
       fetch(`/api/entrypoints?${params.toString()}`),
       fetch(`/api/scan-options?${params.toString()}`),
+      fetch(`/api/coverage?${params.toString()}`),
     ]);
     const summary = await summaryResponse.json();
     const entrypoints = await entrypointsResponse.json();
     const scanOptions = await scanOptionsResponse.json();
+    const coverage = await coverageResponse.json();
     if (requestId !== state.overviewRequest) return;
     if (!summaryResponse.ok) {
       throw new Error(summary.error || "summary failed");
@@ -534,8 +539,12 @@ async function loadProjectOverview() {
     if (!scanOptionsResponse.ok) {
       throw new Error(scanOptions.error || "scan options failed");
     }
+    if (!coverageResponse.ok) {
+      throw new Error(coverage.error || "coverage failed");
+    }
     state.summary = summary;
     state.scanOptions = scanOptions;
+    state.coverage = coverage;
     state.entrypoints = entrypoints;
     renderOverview();
   } catch (error) {
@@ -546,6 +555,7 @@ async function loadProjectOverview() {
     relationList.innerHTML = "";
     edgeSourceList.innerHTML = "";
     scanPolicyList.innerHTML = "";
+    coverageList.innerHTML = "";
     annotationList.innerHTML = "";
     entrypointList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   }
@@ -611,6 +621,7 @@ function renderOverview() {
       : '<p class="empty">No edge sources.</p>';
 
   renderScanPolicy(state.scanOptions);
+  renderCoverage(state.coverage);
 
   const annotations = annotationFacets(summary, state.graph.nodes);
   annotationList.innerHTML =
@@ -733,6 +744,32 @@ function renderScanPolicy(options) {
     .map(
       ([label, value]) => `
         <div class="scan-policy-chip">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function renderCoverage(coverage) {
+  if (!coverage) {
+    coverageList.innerHTML = '<p class="empty">No coverage.</p>';
+    return;
+  }
+
+  const chips = [
+    ["Indexed", String(coverage.indexed_files || 0)],
+    ["Large", String(coverage.skipped_large_files || 0)],
+    ["Policy skipped", String(coverage.skipped_policy_entries || 0)],
+    ["Other files", String(coverage.non_index_files || 0)],
+    ["Indexed bytes", formatBytes(Number(coverage.indexed_bytes || 0))],
+  ];
+
+  coverageList.innerHTML = chips
+    .map(
+      ([label, value]) => `
+        <div class="coverage-chip">
           <span>${escapeHtml(label)}</span>
           <strong>${escapeHtml(value)}</strong>
         </div>

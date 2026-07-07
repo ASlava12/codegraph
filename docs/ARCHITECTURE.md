@@ -36,6 +36,7 @@ The first implementation stores whole-graph JSON cache records keyed by root pat
 `codegraph-analysis` turns a full graph into focused artifacts:
 
 - summary counts
+- scan coverage reports for indexed files, policy skips, large-file skips, and non-indexed files
 - entrypoint candidates
 - outgoing dependency traces
 - incoming dependent traces for impact analysis

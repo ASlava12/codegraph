@@ -175,6 +175,7 @@ Goal: handle real repositories efficiently.
 - [x] Add repository-owned scan policy from `.codegraph/config.toml`.
 - [x] Expose effective scan policy through API and web overview.
 - [x] Add repository-owned glob path excludes for generated files and fixtures.
+- [x] Add scan coverage reports for indexed files and skip reasons.
 - Add persistent index storage with partial graph reuse.
 - Incrementally update changed files.
 - Cache parser and LSP facts.
