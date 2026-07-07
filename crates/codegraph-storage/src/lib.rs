@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
 
-const CACHE_SCHEMA_VERSION: u32 = 1;
+const CACHE_SCHEMA_VERSION: u32 = 2;
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
 
@@ -44,6 +44,48 @@ pub struct ProjectFingerprint {
     pub files: usize,
     pub bytes: u64,
     pub latest_modified_unix_nanos: u128,
+    pub entries: Vec<FingerprintEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct FingerprintEntry {
+    pub path: String,
+    pub bytes: u64,
+    pub modified_unix_nanos: u128,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CacheDiffReport {
+    pub cache_dir: String,
+    pub cache_record: CacheRecordStatus,
+    pub previous_hash: Option<String>,
+    pub current_hash: String,
+    pub previous_files: Option<usize>,
+    pub current_files: usize,
+    pub previous_bytes: Option<u64>,
+    pub current_bytes: u64,
+    pub added: Vec<FingerprintEntry>,
+    pub removed: Vec<FingerprintEntry>,
+    pub modified: Vec<FingerprintChange>,
+    pub unchanged: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheRecordStatus {
+    Missing,
+    Present,
+    Incompatible,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FingerprintChange {
+    pub path: String,
+    pub previous_bytes: u64,
+    pub current_bytes: u64,
+    pub previous_modified_unix_nanos: u128,
+    pub current_modified_unix_nanos: u128,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +137,7 @@ impl GraphCache {
         let mut files = 0;
         let mut bytes = 0;
         let mut latest_modified_unix_nanos = 0;
+        let mut entries = Vec::new();
 
         for entry in WalkDir::new(root)
             .sort_by_file_name()
@@ -136,6 +179,11 @@ impl GraphCache {
             hasher.write_str(&relative_path);
             hasher.write_u64(metadata.len());
             hasher.write_u128(modified);
+            entries.push(FingerprintEntry {
+                path: relative_path,
+                bytes: metadata.len(),
+                modified_unix_nanos: modified,
+            });
         }
 
         Ok(ProjectFingerprint {
@@ -143,6 +191,7 @@ impl GraphCache {
             files,
             bytes,
             latest_modified_unix_nanos,
+            entries,
         })
     }
 
@@ -169,6 +218,44 @@ impl GraphCache {
             return Ok(None);
         }
         Ok(Some(record.graph))
+    }
+
+    pub fn diff(
+        &self,
+        root: &Path,
+        options: &IndexOptions,
+        limit: usize,
+    ) -> Result<CacheDiffReport, CacheError> {
+        let current = Self::fingerprint_project(root, options)?;
+        let path = self.cache_path(root, options);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(diff_without_record(
+                    self,
+                    current,
+                    CacheRecordStatus::Missing,
+                    limit,
+                ));
+            }
+            Err(source) => return Err(CacheError::Io { path, source }),
+        };
+        let record: CacheRecord = serde_json::from_slice(&bytes)?;
+        if record.cache_schema_version != CACHE_SCHEMA_VERSION
+            || record.graph_schema_version != record.graph.schema_version
+            || record.graph_schema_version != CODEGRAPH_SCHEMA_VERSION
+            || record.root != cache_root(root)
+            || record.options_hash != options_hash(options)
+        {
+            return Ok(diff_without_record(
+                self,
+                current,
+                CacheRecordStatus::Incompatible,
+                limit,
+            ));
+        }
+
+        Ok(diff_fingerprints(self, &record.fingerprint, current, limit))
     }
 
     pub fn store(
@@ -276,6 +363,110 @@ pub fn default_cache_dir() -> PathBuf {
     std::env::temp_dir().join("codegraph-cache")
 }
 
+fn diff_without_record(
+    cache: &GraphCache,
+    current: ProjectFingerprint,
+    status: CacheRecordStatus,
+    limit: usize,
+) -> CacheDiffReport {
+    let limit = limit.clamp(1, 10_000);
+    let truncated = current.entries.len() > limit;
+    CacheDiffReport {
+        cache_dir: cache.dir().display().to_string(),
+        cache_record: status,
+        previous_hash: None,
+        current_hash: current.hash,
+        previous_files: None,
+        current_files: current.files,
+        previous_bytes: None,
+        current_bytes: current.bytes,
+        added: current.entries.into_iter().take(limit).collect(),
+        removed: Vec::new(),
+        modified: Vec::new(),
+        unchanged: 0,
+        truncated,
+    }
+}
+
+fn diff_fingerprints(
+    cache: &GraphCache,
+    previous: &ProjectFingerprint,
+    current: ProjectFingerprint,
+    limit: usize,
+) -> CacheDiffReport {
+    let limit = limit.clamp(1, 10_000);
+    let previous_entries = previous
+        .entries
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let current_entries = current
+        .entries
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
+    let mut modified = Vec::new();
+    let mut unchanged = 0usize;
+    let mut total_changes = 0usize;
+
+    for (path, current_entry) in &current_entries {
+        match previous_entries.get(path) {
+            Some(previous_entry)
+                if previous_entry.bytes == current_entry.bytes
+                    && previous_entry.modified_unix_nanos == current_entry.modified_unix_nanos =>
+            {
+                unchanged += 1;
+            }
+            Some(previous_entry) => {
+                total_changes += 1;
+                if modified.len() < limit {
+                    modified.push(FingerprintChange {
+                        path: (*path).to_string(),
+                        previous_bytes: previous_entry.bytes,
+                        current_bytes: current_entry.bytes,
+                        previous_modified_unix_nanos: previous_entry.modified_unix_nanos,
+                        current_modified_unix_nanos: current_entry.modified_unix_nanos,
+                    });
+                }
+            }
+            None => {
+                total_changes += 1;
+                if added.len() < limit {
+                    added.push((*current_entry).clone());
+                }
+            }
+        }
+    }
+
+    for (path, previous_entry) in &previous_entries {
+        if !current_entries.contains_key(path) {
+            total_changes += 1;
+            if removed.len() < limit {
+                removed.push((*previous_entry).clone());
+            }
+        }
+    }
+
+    CacheDiffReport {
+        cache_dir: cache.dir().display().to_string(),
+        cache_record: CacheRecordStatus::Present,
+        previous_hash: Some(previous.hash.clone()),
+        current_hash: current.hash,
+        previous_files: Some(previous.files),
+        current_files: current.files,
+        previous_bytes: Some(previous.bytes),
+        current_bytes: current.bytes,
+        added,
+        removed,
+        modified,
+        unchanged,
+        truncated: total_changes > limit,
+    }
+}
+
 fn should_enter(entry: &DirEntry, options: &IndexOptions) -> bool {
     if !options.include_hidden && is_hidden(entry) {
         return false;
@@ -310,7 +501,10 @@ fn modified_unix_nanos(metadata: &fs::Metadata) -> Option<u128> {
 }
 
 fn cache_root(root: &Path) -> String {
-    root.to_string_lossy().replace('\\', "/")
+    root.canonicalize()
+        .unwrap_or_else(|_| root.to_path_buf())
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn options_hash(options: &IndexOptions) -> String {
@@ -398,6 +592,31 @@ mod tests {
     }
 
     #[test]
+    fn cache_uses_canonical_root_paths() {
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        let equivalent_root = root.join(".");
+        let options = IndexOptions::default();
+        let fingerprint = GraphCache::fingerprint_project(&equivalent_root, &options).unwrap();
+        let graph = CodeGraph::new("demo");
+        let cache = GraphCache::new(&cache_dir);
+
+        cache
+            .store(&root, &options, fingerprint.clone(), &graph)
+            .unwrap();
+        let loaded = cache
+            .load(&equivalent_root, &options, &fingerprint)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(loaded, graph);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
     fn cache_misses_after_project_changes() {
         let root = temp_project_root();
         let cache_dir = temp_project_root();
@@ -441,6 +660,49 @@ mod tests {
         assert_eq!(first.cache.status, CacheStatus::Miss);
         assert_eq!(second.cache.status, CacheStatus::Hit);
         assert_eq!(first.graph, second.graph);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn cache_diff_reports_added_removed_and_modified_files() {
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        fs::write(root.join("src").join("old.rs"), "pub fn old() {}\n").unwrap();
+        let options = IndexOptions::default();
+        let cache = GraphCache::new(&cache_dir);
+
+        let missing = cache.diff(&root, &options, 10).unwrap();
+        assert_eq!(missing.cache_record, CacheRecordStatus::Missing);
+        assert_eq!(missing.added.len(), 2);
+
+        let first = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(first.cache.status, CacheStatus::Miss);
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() {}\nfn changed() {}\n",
+        )
+        .unwrap();
+        fs::write(root.join("src").join("new.rs"), "pub fn new() {}\n").unwrap();
+        fs::remove_file(root.join("src").join("old.rs")).unwrap();
+
+        let diff = cache.diff(&root, &options, 10).unwrap();
+        assert_eq!(diff.cache_record, CacheRecordStatus::Present);
+        assert_eq!(diff.previous_files, Some(2));
+        assert_eq!(diff.current_files, 2);
+        assert!(diff.added.iter().any(|entry| entry.path == "src/new.rs"));
+        assert!(diff.removed.iter().any(|entry| entry.path == "src/old.rs"));
+        assert!(
+            diff.modified
+                .iter()
+                .any(|entry| entry.path == "src/main.rs")
+        );
+        assert!(!diff.truncated);
+
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();
     }

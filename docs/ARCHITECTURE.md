@@ -29,7 +29,7 @@ It currently builds file, symbol, import, local import resolution, call, config,
 
 `codegraph-storage` owns persistent graph cache records and project fingerprints.
 
-The first implementation stores whole-graph JSON cache records keyed by root path and scan options. A fingerprint records scanned relative paths, file sizes, and modification times; a cache hit is only used when the current fingerprint matches the stored record. This is deliberately conservative: it accelerates repeated API and UI scans without yet promising partial graph reuse.
+The first implementation stores whole-graph JSON cache records keyed by root path and scan options. A fingerprint records scanned relative paths, file sizes, and modification times; a cache hit is only used when the current fingerprint matches the stored record. Cache diff reports compare the stored and current fingerprints so CLI/API users can see added, removed, and modified files behind a miss. This is deliberately conservative: it accelerates repeated API and UI scans without yet promising partial graph reuse.
 
 ### Analysis
 
@@ -105,6 +105,7 @@ Responsibilities:
 CLI output must remain machine-friendly. Human-oriented formatting can be added, but JSON should stay stable.
 The CLI also owns local scan benchmark reports: it runs the same indexer path repeatedly and emits timing, graph size, and summary metrics without changing the graph schema.
 Graph-reading CLI commands use the shared storage cache by default and expose `--no-cache` plus `--cache-dir` for deterministic runs.
+The CLI also exposes cache fingerprint diff diagnostics without running a full graph scan.
 
 ### Server And Web UI
 
@@ -116,6 +117,7 @@ Responsibilities:
 
 - provide health and scan endpoints
 - reuse persistent graph cache records when project fingerprints match
+- provide cache fingerprint diff endpoints for explaining cache invalidation
 - provide JSON, DOT, and NDJSON export endpoints
 - provide async scan job endpoints and SSE status streams for long-running scans
 - provide summary, entrypoint, and trace endpoints

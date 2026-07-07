@@ -92,6 +92,12 @@ struct ScanQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct CacheDiffQuery {
+    path: Option<PathBuf>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct SourceQuery {
     root: Option<PathBuf>,
     path: PathBuf,
@@ -333,6 +339,7 @@ async fn main() -> Result<()> {
         .route("/api/health", get(health))
         .route("/api/projects", get(projects_api))
         .route("/api/scan", get(scan))
+        .route("/api/cache-diff", get(cache_diff_api))
         .route("/api/scan-jobs", post(start_scan_job))
         .route("/api/scan-jobs/{id}", get(scan_job_status))
         .route("/api/scan-jobs/{id}/events", get(scan_job_events))
@@ -600,6 +607,25 @@ async fn scan(
         cache: output.cache,
         graph: output.graph,
     }))
+}
+
+async fn cache_diff_api(
+    State(state): State<AppState>,
+    Query(query): Query<CacheDiffQuery>,
+) -> Result<Json<codegraph_storage::CacheDiffReport>, ApiError> {
+    let root = resolve_scan_root(&state, query.path.as_deref())?;
+    let Some(cache) = state.cache.clone() else {
+        return Err(ApiError::bad_request(
+            "cache diff requires server cache; restart without --no-cache",
+        ));
+    };
+    let options = state.options.clone();
+    let limit = query.limit.unwrap_or(100).clamp(1, 10_000);
+    let report = tokio::task::spawn_blocking(move || cache.diff(&root, &options, limit))
+        .await
+        .map_err(|error| ApiError::internal(format!("cache diff task failed: {error}")))?
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    Ok(Json(report))
 }
 
 async fn export_api(

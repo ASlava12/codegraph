@@ -54,6 +54,7 @@ Implemented now:
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Persistent server-side graph cache with project fingerprint invalidation.
 - Persistent CLI graph cache using the same project fingerprinting and cache records as the server.
+- Cache fingerprint diff diagnostics for explaining cache misses by added, removed, and modified files.
 - CLI scan benchmark reports with timing and graph-size metrics for regression tracking.
 - CI checks for formatting, clippy, tests, UI syntax, CLI scan, and server cache smoke tests.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
@@ -247,6 +248,7 @@ single run or pin records to a specific directory:
 ```bash
 cargo run -p codegraph-cli -- summary . --no-cache
 cargo run -p codegraph-cli -- summary . --cache-dir /tmp/codegraph-cache
+cargo run -p codegraph-cli -- cache-diff . --cache-dir /tmp/codegraph-cache
 ```
 
 The output is JSON using the shared graph schema from `codegraph-core`.
@@ -281,9 +283,10 @@ Scan API:
 ```bash
 curl 'http://127.0.0.1:3765/api/projects'
 curl 'http://127.0.0.1:3765/api/scan?path=.'
+curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'
 ```
 
-The scan response includes `cache.status` as `hit`, `miss`, or `disabled`.
+The scan response includes `cache.status` as `hit`, `miss`, or `disabled`. Cache diff responses explain the previous and current project fingerprints without performing a full graph scan.
 
 Export API:
 

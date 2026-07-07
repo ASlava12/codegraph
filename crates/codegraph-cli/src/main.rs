@@ -52,6 +52,9 @@ enum Command {
     #[command(visible_alias = "bench")]
     Benchmark(BenchmarkArgs),
 
+    /// Explain graph cache fingerprint changes without scanning the full graph.
+    CacheDiff(CacheDiffArgs),
+
     /// Emit entrypoint candidate nodes as JSON.
     Entrypoints(ScanArgs),
 
@@ -304,6 +307,29 @@ struct BenchmarkArgs {
 }
 
 #[derive(Debug, Args)]
+struct CacheDiffArgs {
+    /// Project root to inspect.
+    #[arg(default_value = ".")]
+    path: PathBuf,
+
+    /// Include hidden files and directories.
+    #[arg(long)]
+    include_hidden: bool,
+
+    /// Include default ignored directories such as target and node_modules.
+    #[arg(long)]
+    include_ignored: bool,
+
+    /// Maximum changed files per list.
+    #[arg(long, default_value_t = 100)]
+    limit: usize,
+
+    /// Directory for persistent graph cache records.
+    #[arg(long)]
+    cache_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
 struct InsightArgs {
     #[command(flatten)]
     scan: ScanArgs,
@@ -419,6 +445,16 @@ fn main() -> Result<()> {
         }
         Command::Benchmark(args) => {
             let report = benchmark_scans(args)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::CacheDiff(args) => {
+            let options = IndexOptions {
+                include_hidden: args.include_hidden,
+                include_ignored: args.include_ignored,
+                ..IndexOptions::default()
+            };
+            let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
+            let report = cache.diff(&args.path, &options, args.limit)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Entrypoints(args) => {
