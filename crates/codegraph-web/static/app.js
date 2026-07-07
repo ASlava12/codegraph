@@ -77,6 +77,7 @@ const entryCount = document.querySelector("#entryCount");
 const overviewTotals = document.querySelector("#overviewTotals");
 const languageList = document.querySelector("#languageList");
 const confidenceList = document.querySelector("#confidenceList");
+const annotationList = document.querySelector("#annotationList");
 const entrypointList = document.querySelector("#entrypointList");
 const entryFlowSearchInput = document.querySelector("#entryFlowSearchInput");
 const entryFlowDepthInput = document.querySelector("#entryFlowDepthInput");
@@ -492,6 +493,7 @@ async function loadProjectOverview() {
     overviewTotals.textContent = "error";
     languageList.innerHTML = "";
     confidenceList.innerHTML = "";
+    annotationList.innerHTML = "";
     entrypointList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   }
 }
@@ -538,6 +540,21 @@ function renderOverview() {
           .join("")
       : '<p class="empty">No edge confidence.</p>';
 
+  const annotations = annotationFacets(state.graph.nodes);
+  annotationList.innerHTML =
+    annotations.length > 0
+      ? annotations
+          .map(
+            (facet) => `
+              <button class="annotation-chip" type="button" data-annotation-key="${escapeHtml(facet.key)}" data-annotation-value="${escapeHtml(facet.value)}">
+                <span>${escapeHtml(annotationLabel(facet.key, facet.value))}</span>
+                <strong>${facet.count}</strong>
+              </button>
+            `,
+          )
+          .join("")
+      : '<p class="empty">No annotations on this page.</p>';
+
   entrypointList.innerHTML =
     entrypoints.length > 0
       ? entrypoints
@@ -567,6 +584,16 @@ function renderOverview() {
     });
   });
 
+  annotationList.querySelectorAll("[data-annotation-key]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = button.dataset.annotationKey || "";
+      const value = button.dataset.annotationValue || "";
+      if (!key || !value) return;
+      queryInput.value = `nodes metadata.${key}:${quoteQueryValue(value)}`;
+      runGraphQuery();
+    });
+  });
+
   confidenceList.querySelectorAll("[data-confidence]").forEach((button) => {
     button.addEventListener("click", () => {
       serverConfidenceInput.value = button.dataset.confidence || "";
@@ -579,6 +606,36 @@ function renderOverview() {
       focusNodeId(Number(button.dataset.nodeId), "Focus: entrypoint");
     });
   });
+}
+
+function annotationFacets(nodes) {
+  const counts = new Map();
+  for (const node of nodes || []) {
+    for (const [key, value] of Object.entries(node.metadata || {})) {
+      if (!key.startsWith("annotation.")) continue;
+      const stringValue = String(value).trim();
+      if (!stringValue) continue;
+      const facetKey = `${key}\u0000${stringValue}`;
+      counts.set(facetKey, {
+        key,
+        value: stringValue,
+        count: (counts.get(facetKey)?.count || 0) + 1,
+      });
+    }
+  }
+  return [...counts.values()]
+    .sort(
+      (left, right) =>
+        right.count - left.count ||
+        annotationLabel(left.key, left.value).localeCompare(
+          annotationLabel(right.key, right.value),
+        ),
+    )
+    .slice(0, 8);
+}
+
+function annotationLabel(key, value) {
+  return `${formatKind(key.replace(/^annotation\./, ""))}: ${value}`;
 }
 
 function shiftGraphPage(direction) {

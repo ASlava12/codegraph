@@ -238,14 +238,16 @@ button:disabled {
 }
 
 .language-list,
-.confidence-list {
+.confidence-list,
+.annotation-list {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
 .language-chip,
-.confidence-chip {
+.confidence-chip,
+.annotation-chip {
   display: inline-grid;
   grid-template-columns: minmax(0, auto) auto;
   align-items: center;
@@ -260,7 +262,8 @@ button:disabled {
 }
 
 .language-chip span,
-.confidence-chip span {
+.confidence-chip span,
+.annotation-chip span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -268,9 +271,15 @@ button:disabled {
 }
 
 .language-chip strong,
-.confidence-chip strong {
+.confidence-chip strong,
+.annotation-chip strong {
   color: var(--muted);
   font-size: 11px;
+}
+
+.annotation-chip {
+  max-width: 100%;
+  background: rgba(92, 200, 167, 0.08);
 }
 
 .entrypoint-list {
