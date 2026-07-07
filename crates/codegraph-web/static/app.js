@@ -3,7 +3,7 @@ const DEFAULT_LABEL_MODE = "minimal";
 const LABEL_MODES = new Set(["minimal", "focus", "auto"]);
 const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
-const LABEL_MODE_STORAGE_VERSION = "9";
+const LABEL_MODE_STORAGE_VERSION = "10";
 const API_TOKEN_STORAGE_KEY = "codegraph.apiToken";
 
 const I18N = {
@@ -5754,7 +5754,7 @@ function draw() {
         selected,
         hovered,
         focused,
-        forced: selected || hovered,
+        forced: selected,
         priority: nodeLabelPriority(node),
       });
     }
@@ -5865,11 +5865,11 @@ function drawNodeLabels(candidates) {
 }
 
 function labelGeometry(candidate, occupied, nodeBoxes) {
-  const { node, position, radius, forced } = candidate;
+  const { node, position, radius, forced, selected } = candidate;
   const zoom = Math.max(0.18, state.zoom);
   const lines = forced
-    ? compactGraphLabelLines(node.label, 18, 2)
-    : [truncateGraphLabel(node.label, state.zoom >= 3.2 ? 14 : 9)];
+    ? compactGraphLabelLines(node.label, selected ? 18 : 14, selected ? 2 : 1)
+    : [truncateGraphLabel(node.label, state.zoom >= 3.2 ? 12 : 8)];
   const padX = (forced ? 6 : 4) / zoom;
   const padY = (forced ? 4 : 0) / zoom;
   const fontSize = (forced ? 11 : 10) / zoom;
@@ -5878,7 +5878,7 @@ function labelGeometry(candidate, occupied, nodeBoxes) {
   const width = Math.max(...lines.map((line) => ctx.measureText(line).width)) + padX * 2;
   const height = forced ? lines.length * lineHeight + padY * 2 : 16 / zoom;
   const gap = (forced ? 11 : 13) / zoom;
-  const placements = forced ? ["right", "left", "top", "bottom"] : ["right", "left", "top"];
+  const placements = forced ? ["right", "left", "top"] : ["right", "left", "top"];
   const geometries = placements.map((placement) =>
     clampLabelGeometryToViewport(labelGeometryForPlacement({
       node,
@@ -6006,7 +6006,7 @@ function nodeLabelBudget() {
 }
 
 function nodeOcclusionBoxes() {
-  const pad = 18 / Math.max(0.18, state.zoom);
+  const pad = 24 / Math.max(0.18, state.zoom);
   return state.visibleNodes
     .map((node) => {
       const position = state.positions.get(node.id);

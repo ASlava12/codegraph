@@ -42,10 +42,10 @@
     } = options || {};
 
     if (labelMode === "minimal") return false;
-    if (selected) return zoom >= 1.35 && visibleCount <= 60;
-    if (hovered) return zoom >= 1.8 && visibleCount <= 45;
-    if (labelMode === "focus") return focused && zoom >= 2.35;
-    if (focused) return zoom >= 2.65;
+    if (selected) return zoom >= 1.55 && visibleCount <= 35;
+    if (hovered) return zoom >= 2.25 && visibleCount <= 25;
+    if (labelMode === "focus") return focused && zoom >= 2.75 && visibleCount <= 18;
+    if (focused) return zoom >= 3.1 && visibleCount <= 18;
 
     if (hasSearch) {
       if (visibleCount <= 8) return zoom >= 3.6 && priority <= 1;
@@ -68,8 +68,8 @@
 
     if (labelMode === "minimal") return 0;
     if (labelMode === "focus") {
-      if (zoom < 2.35) return 0;
-      return visibleCount <= 25 ? 1 : 0;
+      if (zoom < 2.75) return 0;
+      return visibleCount <= 18 ? 1 : 0;
     }
     if (hasSearch) {
       if (zoom < 3.6) return 0;

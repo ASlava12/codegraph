@@ -86,6 +86,7 @@ Implemented now:
 - Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
 - Initial English/Russian web UI localization with a persistent language selector.
 - Minimal-by-default graph labels with collision-aware, sparse Auto/Focus modes so node cards stay readable without captions covering the graph.
+- Hover labels render as lightweight text, selected-node cards are zoom/density gated, and saved label modes reset when label-density rules change.
 - Dependency-free web label policy tests guard caption density, saved-mode resets, and interaction label behavior.
 - Web API error messages include request ids when available so UI failures can be correlated with server access logs.
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.

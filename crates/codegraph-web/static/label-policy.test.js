@@ -84,11 +84,54 @@ test("auto mode keeps hover labels out of very dense views", () => {
     policy.shouldShowNodeLabel({
       labelMode: "auto",
       hovered: true,
-      zoom: 2.2,
+      zoom: 2.25,
       visibleCount: 20,
       priority: 9,
     }),
     true,
+  );
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "auto",
+      hovered: true,
+      zoom: 2.6,
+      visibleCount: 26,
+      priority: 1,
+    }),
+    false,
+  );
+});
+
+test("selected labels stay out of dense low-zoom views", () => {
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "auto",
+      selected: true,
+      zoom: 1.5,
+      visibleCount: 20,
+      priority: 1,
+    }),
+    false,
+  );
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "auto",
+      selected: true,
+      zoom: 1.55,
+      visibleCount: 35,
+      priority: 1,
+    }),
+    true,
+  );
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "auto",
+      selected: true,
+      zoom: 2,
+      visibleCount: 36,
+      priority: 1,
+    }),
+    false,
   );
 });
 
@@ -97,7 +140,7 @@ test("focus mode only labels focused nodes at high zoom", () => {
     policy.shouldShowNodeLabel({
       labelMode: "focus",
       focused: true,
-      zoom: 2.3,
+      zoom: 2.7,
       visibleCount: 10,
       priority: 1,
     }),
@@ -107,13 +150,23 @@ test("focus mode only labels focused nodes at high zoom", () => {
     policy.shouldShowNodeLabel({
       labelMode: "focus",
       focused: true,
-      zoom: 2.35,
+      zoom: 2.75,
       visibleCount: 10,
       priority: 1,
     }),
     true,
   );
-  assert.equal(policy.nodeLabelBudget({ labelMode: "focus", zoom: 2.4, visibleCount: 80 }), 0);
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "focus",
+      focused: true,
+      zoom: 3,
+      visibleCount: 19,
+      priority: 1,
+    }),
+    false,
+  );
+  assert.equal(policy.nodeLabelBudget({ labelMode: "focus", zoom: 2.8, visibleCount: 80 }), 0);
 });
 
 test("graph labels are truncated to stable compact text", () => {
