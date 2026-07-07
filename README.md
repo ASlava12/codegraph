@@ -89,6 +89,7 @@ Implemented now:
 - Persistent per-file parser fact cache reused during graph-cache misses.
 - Cache fingerprint diff diagnostics in CLI, API, and web UI for explaining cache misses by added, removed, and modified files.
 - Cache reuse estimates in CLI, API, and web UI for planning incremental scans from unchanged files and bytes.
+- Incremental scan planning reports in CLI, API, and web UI with rescan, removed, and reusable path sets.
 - Scan coverage reports in CLI, API, and web overview for indexed files, policy skips, large-file skips, and non-indexed files.
 - CLI scan benchmark reports with timing and graph-size metrics for regression tracking.
 - Configurable scan file-size budget for CLI/server scans, with skipped large source files kept visible in summaries, insights, and the web stats panel.
@@ -375,6 +376,7 @@ single run or pin records to a specific directory:
 cargo run -p codegraph-cli -- summary . --no-cache
 cargo run -p codegraph-cli -- summary . --cache-dir /tmp/codegraph-cache
 cargo run -p codegraph-cli -- cache-diff . --cache-dir /tmp/codegraph-cache
+cargo run -p codegraph-cli -- incremental-plan . --cache-dir /tmp/codegraph-cache
 ```
 
 The output is JSON using the shared graph schema from `codegraph-core`.
@@ -454,6 +456,7 @@ curl 'http://127.0.0.1:3765/api/report?path=.&fail_on=warning&insight_limit=100'
 curl 'http://127.0.0.1:3765/api/coverage?path=.'
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'
+curl 'http://127.0.0.1:3765/api/incremental-plan?path=.&limit=50'
 ```
 
 The scan response includes `cache.status` as `hit`, `miss`, or `disabled`. Cache diff responses and the web Cache Diff panel explain the previous and current project fingerprints without performing a full graph scan, including reuse strategy, changed file counts, reusable file/byte counts, and reuse ratios for incremental-scan planning.

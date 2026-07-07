@@ -96,6 +96,39 @@ pub enum CacheRecordStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IncrementalScanPlan {
+    pub cache_dir: String,
+    pub cache_record: CacheRecordStatus,
+    pub action: IncrementalPlanAction,
+    pub reason: String,
+    pub previous_hash: Option<String>,
+    pub current_hash: String,
+    pub previous_files: Option<usize>,
+    pub current_files: usize,
+    pub changed_files: usize,
+    pub rescan_files: usize,
+    pub removed_files: usize,
+    pub reusable_files: usize,
+    pub changed_current_bytes: u64,
+    pub reusable_bytes: u64,
+    pub reuse_file_ratio_basis_points: u16,
+    pub reuse_byte_ratio_basis_points: u16,
+    pub scan_paths: Vec<String>,
+    pub removed_paths: Vec<String>,
+    pub reusable_paths: Vec<String>,
+    pub limit: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IncrementalPlanAction {
+    FullScan,
+    PartialRescan,
+    Noop,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FingerprintChange {
     pub path: String,
     pub previous_bytes: u64,
@@ -273,6 +306,49 @@ impl GraphCache {
         }
 
         Ok(diff_fingerprints(self, &record.fingerprint, current, limit))
+    }
+
+    pub fn incremental_plan(
+        &self,
+        root: &Path,
+        options: &IndexOptions,
+        limit: usize,
+    ) -> Result<IncrementalScanPlan, CacheError> {
+        let current = Self::fingerprint_project(root, options)?;
+        let path = self.cache_path(root, options);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(incremental_plan_without_record(
+                    self,
+                    current,
+                    CacheRecordStatus::Missing,
+                    limit,
+                ));
+            }
+            Err(source) => return Err(CacheError::Io { path, source }),
+        };
+        let record: CacheRecord = serde_json::from_slice(&bytes)?;
+        if record.cache_schema_version != CACHE_SCHEMA_VERSION
+            || record.graph_schema_version != record.graph.schema_version
+            || record.graph_schema_version != CODEGRAPH_SCHEMA_VERSION
+            || record.root != cache_root(root)
+            || record.options_hash != options_hash(options)
+        {
+            return Ok(incremental_plan_without_record(
+                self,
+                current,
+                CacheRecordStatus::Incompatible,
+                limit,
+            ));
+        }
+
+        Ok(incremental_plan_from_fingerprints(
+            self,
+            &record.fingerprint,
+            current,
+            limit,
+        ))
     }
 
     pub fn store(
@@ -510,6 +586,164 @@ fn diff_fingerprints(
         modified,
         unchanged,
         truncated: total_changes > limit,
+    }
+}
+
+fn incremental_plan_without_record(
+    cache: &GraphCache,
+    current: ProjectFingerprint,
+    status: CacheRecordStatus,
+    limit: usize,
+) -> IncrementalScanPlan {
+    let limit = limit.clamp(1, 10_000);
+    let scan_paths = current
+        .entries
+        .iter()
+        .take(limit)
+        .map(|entry| entry.path.clone())
+        .collect::<Vec<_>>();
+    let truncated = current.entries.len() > limit;
+    let reason = match status {
+        CacheRecordStatus::Missing => "no compatible cache record exists; scan all indexed files",
+        CacheRecordStatus::Incompatible => {
+            "cache record exists but is incompatible with the current schema, root, or scan options; scan all indexed files"
+        }
+        CacheRecordStatus::Present => {
+            "no previous fingerprint was supplied; scan all indexed files"
+        }
+    };
+
+    IncrementalScanPlan {
+        cache_dir: cache.dir().display().to_string(),
+        cache_record: status,
+        action: IncrementalPlanAction::FullScan,
+        reason: reason.to_string(),
+        previous_hash: None,
+        current_hash: current.hash,
+        previous_files: None,
+        current_files: current.files,
+        changed_files: current.files,
+        rescan_files: current.files,
+        removed_files: 0,
+        reusable_files: 0,
+        changed_current_bytes: current.bytes,
+        reusable_bytes: 0,
+        reuse_file_ratio_basis_points: 0,
+        reuse_byte_ratio_basis_points: 0,
+        scan_paths,
+        removed_paths: Vec::new(),
+        reusable_paths: Vec::new(),
+        limit,
+        truncated,
+    }
+}
+
+fn incremental_plan_from_fingerprints(
+    cache: &GraphCache,
+    previous: &ProjectFingerprint,
+    current: ProjectFingerprint,
+    limit: usize,
+) -> IncrementalScanPlan {
+    let limit = limit.clamp(1, 10_000);
+    let previous_entries = previous
+        .entries
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let current_entries = current
+        .entries
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    let mut scan_paths = Vec::new();
+    let mut removed_paths = Vec::new();
+    let mut reusable_paths = Vec::new();
+    let mut rescan_files = 0usize;
+    let mut removed_files = 0usize;
+    let mut reusable_files = 0usize;
+    let mut changed_current_bytes = 0u64;
+    let mut reusable_bytes = 0u64;
+
+    for (path, current_entry) in &current_entries {
+        match previous_entries.get(path) {
+            Some(previous_entry)
+                if previous_entry.bytes == current_entry.bytes
+                    && previous_entry.modified_unix_nanos == current_entry.modified_unix_nanos =>
+            {
+                reusable_files += 1;
+                reusable_bytes = reusable_bytes.saturating_add(current_entry.bytes);
+                if reusable_paths.len() < limit {
+                    reusable_paths.push((*path).to_string());
+                }
+            }
+            Some(_) | None => {
+                rescan_files += 1;
+                changed_current_bytes = changed_current_bytes.saturating_add(current_entry.bytes);
+                if scan_paths.len() < limit {
+                    scan_paths.push((*path).to_string());
+                }
+            }
+        }
+    }
+
+    for path in previous_entries.keys() {
+        if !current_entries.contains_key(path) {
+            removed_files += 1;
+            if removed_paths.len() < limit {
+                removed_paths.push((*path).to_string());
+            }
+        }
+    }
+
+    let changed_files = rescan_files + removed_files;
+    let action = if changed_files == 0 {
+        IncrementalPlanAction::Noop
+    } else if reusable_files > 0 {
+        IncrementalPlanAction::PartialRescan
+    } else {
+        IncrementalPlanAction::FullScan
+    };
+    let reason = match action {
+        IncrementalPlanAction::Noop => {
+            "cached fingerprint matches current files; no scan work is needed".to_string()
+        }
+        IncrementalPlanAction::PartialRescan => format!(
+            "{rescan_files} current files need scanning, {removed_files} cached files were removed, and {reusable_files} current files can be reused"
+        ),
+        IncrementalPlanAction::FullScan => {
+            "no current files match the cached fingerprint; scan all indexed files".to_string()
+        }
+    };
+    let truncated = scan_paths.len() < rescan_files
+        || removed_paths.len() < removed_files
+        || reusable_paths.len() < reusable_files;
+
+    IncrementalScanPlan {
+        cache_dir: cache.dir().display().to_string(),
+        cache_record: CacheRecordStatus::Present,
+        action,
+        reason,
+        previous_hash: Some(previous.hash.clone()),
+        current_hash: current.hash,
+        previous_files: Some(previous.files),
+        current_files: current.files,
+        changed_files,
+        rescan_files,
+        removed_files,
+        reusable_files,
+        changed_current_bytes,
+        reusable_bytes,
+        reuse_file_ratio_basis_points: ratio_basis_points(
+            reusable_files as u64,
+            current.files as u64,
+        ),
+        reuse_byte_ratio_basis_points: ratio_basis_points(reusable_bytes, current.bytes),
+        scan_paths,
+        removed_paths,
+        reusable_paths,
+        limit,
+        truncated,
     }
 }
 
@@ -850,6 +1084,11 @@ mod tests {
         assert_eq!(missing.reusable_files, 0);
         assert_eq!(missing.reuse_file_ratio_basis_points, 0);
         assert_eq!(missing.added.len(), 2);
+        let missing_plan = cache.incremental_plan(&root, &options, 10).unwrap();
+        assert_eq!(missing_plan.cache_record, CacheRecordStatus::Missing);
+        assert_eq!(missing_plan.action, IncrementalPlanAction::FullScan);
+        assert_eq!(missing_plan.rescan_files, 2);
+        assert_eq!(missing_plan.scan_paths.len(), 2);
 
         let first = scan_project_cached(&root, &options, Some(&cache)).unwrap();
         assert_eq!(first.cache.status, CacheStatus::Miss);
@@ -880,6 +1119,24 @@ mod tests {
                 .any(|entry| entry.path == "src/main.rs")
         );
         assert!(!diff.truncated);
+        let full_plan = cache.incremental_plan(&root, &options, 10).unwrap();
+        assert_eq!(full_plan.cache_record, CacheRecordStatus::Present);
+        assert_eq!(full_plan.action, IncrementalPlanAction::FullScan);
+        assert_eq!(full_plan.rescan_files, 3);
+        assert_eq!(full_plan.removed_files, 1);
+        assert_eq!(full_plan.reusable_files, 0);
+        assert!(
+            full_plan
+                .scan_paths
+                .iter()
+                .any(|path| path == "src/main.rs")
+        );
+        assert!(
+            full_plan
+                .removed_paths
+                .iter()
+                .any(|path| path == "src/old.rs")
+        );
 
         let second = scan_project_cached(&root, &options, Some(&cache)).unwrap();
         assert_eq!(second.cache.status, CacheStatus::Miss);
@@ -889,6 +1146,12 @@ mod tests {
         assert_eq!(clean.changed_files, 0);
         assert_eq!(clean.reusable_files, 3);
         assert_eq!(clean.reuse_file_ratio_basis_points, 10_000);
+        let clean_plan = cache.incremental_plan(&root, &options, 10).unwrap();
+        assert_eq!(clean_plan.action, IncrementalPlanAction::Noop);
+        assert_eq!(clean_plan.changed_files, 0);
+        assert_eq!(clean_plan.reusable_files, 3);
+        assert_eq!(clean_plan.scan_paths.len(), 0);
+        assert_eq!(clean_plan.reusable_paths.len(), 3);
 
         std::thread::sleep(std::time::Duration::from_millis(2));
         fs::write(root.join("src").join("new.rs"), "pub fn newer() {}\n").unwrap();
@@ -901,6 +1164,13 @@ mod tests {
         assert_eq!(reuse.reuse_file_ratio_basis_points, 6666);
         assert!(reuse.reusable_bytes > 0);
         assert!(reuse.changed_current_bytes > 0);
+        let partial_plan = cache.incremental_plan(&root, &options, 10).unwrap();
+        assert_eq!(partial_plan.action, IncrementalPlanAction::PartialRescan);
+        assert_eq!(partial_plan.changed_files, 1);
+        assert_eq!(partial_plan.rescan_files, 1);
+        assert_eq!(partial_plan.reusable_files, 2);
+        assert_eq!(partial_plan.scan_paths, vec!["src/new.rs".to_string()]);
+        assert!(partial_plan.reusable_paths.len() >= 2);
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();

@@ -730,6 +730,7 @@ async fn main() -> Result<()> {
         .route("/api/coverage", get(coverage_api))
         .route("/api/scan", get(scan))
         .route("/api/cache-diff", get(cache_diff_api))
+        .route("/api/incremental-plan", get(incremental_plan_api))
         .route("/api/scan-jobs", get(list_scan_jobs).post(start_scan_job))
         .route(
             "/api/scan-jobs/{id}",
@@ -1582,6 +1583,25 @@ async fn cache_diff_api(
         .map_err(|error| ApiError::internal(format!("cache diff task failed: {error}")))?
         .map_err(|error| ApiError::internal(error.to_string()))?;
     Ok(Json(report))
+}
+
+async fn incremental_plan_api(
+    State(state): State<AppState>,
+    Query(query): Query<CacheDiffQuery>,
+) -> Result<Json<codegraph_storage::IncrementalScanPlan>, ApiError> {
+    let root = resolve_scan_root(&state, query.path.as_deref())?;
+    let Some(cache) = state.cache.clone() else {
+        return Err(ApiError::bad_request(
+            "incremental plan requires server cache; restart without --no-cache",
+        ));
+    };
+    let options = scan_options(&state, &root)?;
+    let limit = query.limit.unwrap_or(100).clamp(1, 10_000);
+    let plan = tokio::task::spawn_blocking(move || cache.incremental_plan(&root, &options, limit))
+        .await
+        .map_err(|error| ApiError::internal(format!("incremental plan task failed: {error}")))?
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    Ok(Json(plan))
 }
 
 async fn export_api(
@@ -2654,6 +2674,21 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "CacheDiffReport",
                 ),
+                api_get(
+                    "/api/incremental-plan",
+                    "Plan incremental scan work from the persistent cache fingerprint without scanning the full graph.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            Some("100"),
+                            "Maximum paths per plan list.",
+                        ),
+                    ],
+                    "IncrementalScanPlan",
+                ),
                 api_post(
                     "/api/scan-jobs",
                     "Queue a long-running scan job.",
@@ -3452,6 +3487,7 @@ fn capability_features(cache_enabled: bool) -> Vec<&'static str> {
         "multi_project_roots",
         "api_schema",
         "repository_scan_policy",
+        "incremental_scan_plan",
         "mixed_language_syntax_graph",
         "source_preview",
         "graph_paging",
@@ -3505,6 +3541,7 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
                 "GET /api/scan",
                 "GET /api/coverage",
                 "GET /api/cache-diff",
+                "GET /api/incremental-plan",
                 "POST /api/scan-jobs",
                 "GET /api/scan-jobs",
                 "GET /api/scan-jobs/{id}",
@@ -3708,6 +3745,7 @@ mod tests {
         let with_cache = capability_features(true);
 
         assert!(without_cache.contains(&"api_schema"));
+        assert!(without_cache.contains(&"incremental_scan_plan"));
         assert!(without_cache.contains(&"async_scan_jobs"));
         assert!(without_cache.contains(&"job_cancellation"));
         assert!(without_cache.contains(&"runtime_metrics"));
@@ -3728,6 +3766,7 @@ mod tests {
         assert!(endpoints.contains(&"GET /api/schema"));
         assert!(endpoints.contains(&"GET /api/metrics"));
         assert!(endpoints.contains(&"GET /api/report"));
+        assert!(endpoints.contains(&"GET /api/incremental-plan"));
         assert!(endpoints.contains(&"GET /api/query"));
         assert!(endpoints.contains(&"GET /api/node-context"));
         assert!(endpoints.contains(&"POST /api/scan-jobs"));
@@ -3749,6 +3788,7 @@ mod tests {
         assert!(endpoints.contains(&("GET", "/api/schema")));
         assert!(endpoints.contains(&("GET", "/api/report")));
         assert!(endpoints.contains(&("GET", "/api/cache-diff")));
+        assert!(endpoints.contains(&("GET", "/api/incremental-plan")));
         assert!(endpoints.contains(&("GET", "/api/query")));
         assert!(endpoints.contains(&("POST", "/api/scan-jobs")));
         assert!(endpoints.contains(&("GET", "/api/scan-jobs/{id}/events")));

@@ -69,6 +69,7 @@ const I18N = {
     "button.run": "Run",
     "button.searchSource": "Search Source",
     "button.explainCache": "Explain Cache",
+    "button.planIncremental": "Plan Incremental",
     "button.downloadGraph": "Download Graph",
     "button.download": "Download",
     "button.findPath": "Find Path",
@@ -239,6 +240,7 @@ const I18N = {
     "button.run": "Запустить",
     "button.searchSource": "Искать в коде",
     "button.explainCache": "Объяснить кеш",
+    "button.planIncremental": "План инкремента",
     "button.downloadGraph": "Скачать граф",
     "button.download": "Скачать",
     "button.findPath": "Найти путь",
@@ -413,6 +415,7 @@ const state = {
   queryRequest: 0,
   sourceSearchRequest: 0,
   cacheDiffRequest: 0,
+  incrementalPlanRequest: 0,
   exportRequest: 0,
   pathRequest: 0,
   configTraceRequest: 0,
@@ -549,6 +552,7 @@ const sourceSearchResult = document.querySelector("#sourceSearchResult");
 const cacheDiffStatus = document.querySelector("#cacheDiffStatus");
 const cacheDiffLimitInput = document.querySelector("#cacheDiffLimitInput");
 const cacheDiffButton = document.querySelector("#cacheDiffButton");
+const incrementalPlanButton = document.querySelector("#incrementalPlanButton");
 const cacheDiffResult = document.querySelector("#cacheDiffResult");
 const exportFormatInput = document.querySelector("#exportFormatInput");
 const exportButton = document.querySelector("#exportButton");
@@ -621,6 +625,7 @@ for (const input of [sourceSearchInput, sourcePathFilterInput]) {
   });
 }
 cacheDiffButton.addEventListener("click", () => loadCacheDiff());
+incrementalPlanButton.addEventListener("click", () => loadIncrementalPlan());
 cacheDiffLimitInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") loadCacheDiff();
 });
@@ -2723,6 +2728,40 @@ async function loadCacheDiff() {
   }
 }
 
+async function loadIncrementalPlan() {
+  const limit = clampNumber(Number(cacheDiffLimitInput.value || 50), 1, 10000);
+  cacheDiffLimitInput.value = String(limit);
+  state.incrementalPlanRequest += 1;
+  const requestId = state.incrementalPlanRequest;
+  incrementalPlanButton.disabled = true;
+  cacheDiffStatus.textContent = "planning";
+  cacheDiffResult.innerHTML = '<p class="empty">Planning incremental scan...</p>';
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    limit: String(limit),
+  });
+
+  try {
+    const response = await fetch(`/api/incremental-plan?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.incrementalPlanRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "incremental plan failed");
+    }
+    cacheDiffStatus.textContent = formatKind(body.action || "unknown");
+    cacheDiffResult.innerHTML = renderIncrementalPlan(body);
+  } catch (error) {
+    if (requestId !== state.incrementalPlanRequest) return;
+    cacheDiffStatus.textContent = "error";
+    cacheDiffResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.incrementalPlanRequest) {
+      incrementalPlanButton.disabled = false;
+    }
+  }
+}
+
 async function runGraphExport() {
   const metadata = exportFormatMetadata(exportFormatInput.value);
   exportFormatInput.value = metadata.format;
@@ -2853,6 +2892,50 @@ function renderCacheDiff(report) {
   }
 
   return `${summary}${groups}`;
+}
+
+function renderIncrementalPlan(plan) {
+  const scanPaths = plan.scan_paths || [];
+  const removedPaths = plan.removed_paths || [];
+  const reusablePaths = plan.reusable_paths || [];
+  const summary = `
+    <div class="query-summary">
+      <span>${escapeHtml(formatKind(plan.action || "unknown"))}</span>
+      <span>${escapeHtml(formatKind(plan.cache_record || "unknown"))}</span>
+      <span>${Number(plan.changed_files || 0)} changed</span>
+      <span>${Number(plan.rescan_files || 0)} rescan</span>
+      <span>${Number(plan.removed_files || 0)} removed</span>
+      <span>${Number(plan.reusable_files || 0)} reusable</span>
+      <span>${formatBasisPoints(plan.reuse_file_ratio_basis_points)} file reuse</span>
+      <span>${formatBasisPoints(plan.reuse_byte_ratio_basis_points)} byte reuse</span>
+      <span>${formatBytes(plan.changed_current_bytes)} changed current</span>
+      <span>${formatBytes(plan.reusable_bytes)} reusable</span>
+      ${plan.truncated ? "<span>truncated</span>" : ""}
+      <span class="query-expression">${escapeHtml(plan.reason || "")}</span>
+    </div>
+  `;
+  const groups = [
+    renderCacheDiffGroup("Scan", scanPaths, renderPlanPath),
+    renderCacheDiffGroup("Removed", removedPaths, renderPlanPath),
+    renderCacheDiffGroup("Reusable", reusablePaths, renderPlanPath),
+  ]
+    .filter(Boolean)
+    .join("");
+
+  if (!groups) {
+    return `${summary}<p class="empty">No incremental scan work needed.</p>`;
+  }
+
+  return `${summary}${groups}`;
+}
+
+function renderPlanPath(path) {
+  return `
+    <div class="query-item cache-diff-item">
+      <span>path</span>
+      <strong>${escapeHtml(path || "")}</strong>
+    </div>
+  `;
 }
 
 function formatBasisPoints(value) {
