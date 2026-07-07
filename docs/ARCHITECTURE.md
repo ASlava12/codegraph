@@ -43,6 +43,7 @@ The first implementation stores whole-graph JSON cache records keyed by root pat
 - skipped large-file insights for scan coverage gaps
 - insight severity and kind summaries for triage
 - shared insight filtering for CLI, API, and web workflows
+- severity-threshold check reports for CI and agent gates
 - edge explanations for confidence and provenance evidence
 - manifest entrypoint target resolution checks
 - local import/include resolution checks
@@ -107,6 +108,7 @@ CLI output must remain machine-friendly. Human-oriented formatting can be added,
 The CLI also owns local scan benchmark reports: it runs the same indexer path repeatedly and emits timing, graph size, and summary metrics without changing the graph schema.
 Graph-reading CLI commands use the shared storage cache by default and expose `--no-cache` plus `--cache-dir` for deterministic runs.
 The CLI also exposes cache fingerprint diff diagnostics without running a full graph scan.
+The CLI check command emits machine-readable insight reports and exits non-zero when findings meet a configured severity threshold, making repository-specific rules and built-in consistency checks usable in CI.
 
 ### Server And Web UI
 

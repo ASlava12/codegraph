@@ -65,6 +65,9 @@ enum Command {
     /// Emit investigation insights such as unresolved calls and error flows.
     Insights(InsightArgs),
 
+    /// Run insight checks and exit non-zero when findings meet a severity threshold.
+    Check(CheckArgs),
+
     /// Query focused graph slices as JSON.
     Query {
         /// Query expression, for example: nodes kind:function label:main or path from:main to:init.
@@ -356,6 +359,28 @@ struct InsightArgs {
 }
 
 #[derive(Debug, Args)]
+struct CheckArgs {
+    #[command(flatten)]
+    scan: ScanArgs,
+
+    /// Fail when an insight has this severity or higher.
+    #[arg(long, value_enum, default_value = "error")]
+    fail_on: InsightSeverityArg,
+
+    /// Restrict checks to insight kinds containing this substring.
+    #[arg(long)]
+    kind: Option<String>,
+
+    /// Restrict checks by kind, message, node id, or edge index substring.
+    #[arg(long)]
+    search: Option<String>,
+
+    /// Maximum insights to include in the JSON report.
+    #[arg(long, default_value_t = 50)]
+    limit: usize,
+}
+
+#[derive(Debug, Args)]
 struct SourceSearchArgs {
     /// Text to search in source files.
     query: String,
@@ -423,6 +448,14 @@ struct BenchmarkMeasurement {
     duration_ms: f64,
     nodes: usize,
     edges: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct CheckReport {
+    passed: bool,
+    fail_on: String,
+    failing_insights: usize,
+    report: codegraph_analysis::InsightReport,
 }
 
 fn main() -> Result<()> {
@@ -494,6 +527,36 @@ fn main() -> Result<()> {
                 },
             );
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::Check(args) => {
+            let graph = scan_with_options(
+                args.scan.path,
+                args.scan.include_hidden,
+                args.scan.include_ignored,
+                max_file_size,
+                &args.scan.cache,
+            )?;
+            let fail_on = InsightSeverity::from(args.fail_on);
+            let report = filter_insight_report(
+                insights(&graph),
+                &InsightFilter {
+                    severity: None,
+                    kind: args.kind,
+                    search: args.search,
+                    limit: args.limit,
+                },
+            );
+            let failing_insights = failing_insight_count(&report, fail_on);
+            let check = CheckReport {
+                passed: failing_insights == 0,
+                fail_on: severity_label(fail_on).to_string(),
+                failing_insights,
+                report,
+            };
+            println!("{}", serde_json::to_string_pretty(&check)?);
+            if !check.passed {
+                std::process::exit(2);
+            }
         }
         Command::Query {
             expression,
@@ -671,6 +734,38 @@ impl From<InsightSeverityArg> for InsightSeverity {
     }
 }
 
+fn failing_insight_count(
+    report: &codegraph_analysis::InsightReport,
+    fail_on: InsightSeverity,
+) -> usize {
+    report
+        .by_severity
+        .iter()
+        .filter_map(|(severity, count)| {
+            parse_report_severity(severity)
+                .filter(|severity| *severity >= fail_on)
+                .map(|_| *count)
+        })
+        .sum()
+}
+
+fn parse_report_severity(value: &str) -> Option<InsightSeverity> {
+    match value {
+        "info" => Some(InsightSeverity::Info),
+        "warning" => Some(InsightSeverity::Warning),
+        "error" => Some(InsightSeverity::Error),
+        _ => None,
+    }
+}
+
+fn severity_label(severity: InsightSeverity) -> &'static str {
+    match severity {
+        InsightSeverity::Info => "info",
+        InsightSeverity::Warning => "warning",
+        InsightSeverity::Error => "error",
+    }
+}
+
 fn print_graph(graph: &codegraph_core::CodeGraph, format: OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(graph)?),
@@ -755,4 +850,28 @@ fn benchmark_scans(args: BenchmarkArgs, max_file_size: u64) -> Result<BenchmarkR
         measurements,
         summary: summarize(&graph),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn failing_insight_count_respects_thresholds() {
+        let report = codegraph_analysis::InsightReport {
+            total: 6,
+            by_severity: BTreeMap::from([
+                ("info".to_string(), 3),
+                ("warning".to_string(), 2),
+                ("error".to_string(), 1),
+            ]),
+            by_kind: BTreeMap::new(),
+            insights: Vec::new(),
+        };
+
+        assert_eq!(failing_insight_count(&report, InsightSeverity::Error), 1);
+        assert_eq!(failing_insight_count(&report, InsightSeverity::Warning), 3);
+        assert_eq!(failing_insight_count(&report, InsightSeverity::Info), 6);
+    }
 }

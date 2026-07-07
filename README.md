@@ -48,6 +48,7 @@ Implemented now:
 - Server-backed web insights for project-wide findings while browsing paged graph slices.
 - Insight reports include severity and kind breakdowns for triage.
 - Server-side insight filters for severity, kind, search, and capped agent/UI reads.
+- CI/agent check command for failing builds on insight severity thresholds.
 - Insight focus API and web interaction for turning findings into focused graph views.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - Web project selector backed by an explicit server-side allowlist for opening local repositories.
@@ -126,6 +127,16 @@ cargo run -p codegraph-cli -- insights .
 cargo run -p codegraph-cli -- insights . --severity warning --kind dependency --limit 25
 cargo run -p codegraph-cli -- insights . --kind custom_rule
 ```
+
+Fail CI or agent workflows when findings meet a severity threshold:
+
+```bash
+cargo run -p codegraph-cli -- check . --fail-on error
+cargo run -p codegraph-cli -- check . --fail-on warning --kind dependency
+```
+
+`check` prints a JSON report and exits with code `2` when matching insights are
+at or above the configured severity.
 
 Add repository-specific architecture checks with `.codegraph/rules.toml`:
 
