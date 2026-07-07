@@ -92,6 +92,21 @@ jobs:
           second="$(curl -fsS 'http://127.0.0.1:3765/api/scan?path=.' | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(JSON.parse(input).cache.status));')"
           test "$first" = "miss"
           test "$second" = "hit"
+          incremental_fixture="$(mktemp -d "$PWD/codegraph-incremental.XXXXXX")"
+          mkdir -p "$incremental_fixture/src"
+          cat > "$incremental_fixture/src/main.rs" <<'RS'
+          fn main() { let value = 1; }
+          RS
+          cat > "$incremental_fixture/src/stable.rs" <<'RS'
+          pub fn stable() {}
+          RS
+          curl -fsS "http://127.0.0.1:3765/api/scan?path=$incremental_fixture" | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const body = JSON.parse(input); if (body.cache.status !== "miss") process.exit(1); });'
+          cat > "$incremental_fixture/src/main.rs" <<'RS'
+          fn main() { let value = 2; }
+          RS
+          curl -fsS -X POST "http://127.0.0.1:3765/api/incremental-update?path=$incremental_fixture&limit=10" | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const body = JSON.parse(input); if (!body.cache.stored || body.preview.plan.action !== "partial_rescan" || !body.preview.merge.complete_graph || body.preview.merge.completeness_blockers.length !== 0) process.exit(1); });'
+          curl -fsS "http://127.0.0.1:3765/api/scan?path=$incremental_fixture" | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const body = JSON.parse(input); if (body.cache.status !== "hit") process.exit(1); });'
+          rm -rf "$incremental_fixture"
           curl -fsS 'http://127.0.0.1:3765/api/summary?path=.' | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const body = JSON.parse(input); if (typeof body.nodes !== "number" || !body.languages || !body.edge_confidences) process.exit(1); });'
           curl -fsS 'http://127.0.0.1:3765/api/entrypoints?path=.' | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const body = JSON.parse(input); if (!Array.isArray(body)) process.exit(1); });'
           curl -fsS 'http://127.0.0.1:3765/api/graph?path=.&node_limit=10&kind=function' | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const body = JSON.parse(input); if (!Array.isArray(body.nodes) || typeof body.total_nodes !== "number") process.exit(1); });'
