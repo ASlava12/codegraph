@@ -63,6 +63,29 @@ pub struct SemanticEnrichmentPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SemanticExecutionBatch {
+    pub workspace_root: String,
+    pub work_item_limit: usize,
+    pub work_item_filter: SemanticWorkItemFilter,
+    pub total_work_items: usize,
+    pub truncated_work_items: bool,
+    pub server_batches: Vec<SemanticServerBatch>,
+    pub blocked_items: Vec<SemanticWorkItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SemanticServerBatch {
+    pub server: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub installed: bool,
+    pub path: Option<String>,
+    pub status: &'static str,
+    pub languages: Vec<String>,
+    pub work_items: Vec<SemanticWorkItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LanguageEnrichmentPlan {
     pub language: String,
     pub status: &'static str,
@@ -261,6 +284,22 @@ pub fn semantic_enrichment_plan_with_filter(
 ) -> SemanticEnrichmentPlan {
     let discovery = discover_lsp_servers();
     semantic_enrichment_plan_with_discovery_and_filter(
+        graph,
+        &discovery,
+        work_item_limit,
+        work_item_filter,
+    )
+}
+
+pub fn semantic_execution_batch(
+    workspace_root: &Path,
+    graph: &CodeGraph,
+    work_item_limit: usize,
+    work_item_filter: SemanticWorkItemFilter,
+) -> SemanticExecutionBatch {
+    let discovery = discover_lsp_servers();
+    semantic_execution_batch_with_discovery(
+        workspace_root,
         graph,
         &discovery,
         work_item_limit,
@@ -497,6 +536,54 @@ pub fn semantic_enrichment_plan_with_discovery_and_filter(
     }
 }
 
+pub fn semantic_execution_batch_with_discovery(
+    workspace_root: &Path,
+    graph: &CodeGraph,
+    discovery: &LspDiscoveryReport,
+    work_item_limit: usize,
+    work_item_filter: SemanticWorkItemFilter,
+) -> SemanticExecutionBatch {
+    let plan = semantic_enrichment_plan_with_discovery_and_filter(
+        graph,
+        discovery,
+        work_item_limit,
+        work_item_filter,
+    );
+    let mut grouped: BTreeMap<String, SemanticServerBatchBuilder> = BTreeMap::new();
+    let mut blocked_items = Vec::new();
+
+    for item in &plan.work_items {
+        let Some(server_id) = item.server else {
+            blocked_items.push(item.clone());
+            continue;
+        };
+        let server = discovery
+            .servers
+            .iter()
+            .find(|server| server.id == server_id);
+        let entry = grouped
+            .entry(server_id.to_string())
+            .or_insert_with(|| SemanticServerBatchBuilder::new(server_id, server));
+        entry.languages.insert(item.language.clone());
+        entry.work_items.push(item.clone());
+    }
+
+    let server_batches = grouped
+        .into_values()
+        .map(SemanticServerBatchBuilder::finish)
+        .collect();
+
+    SemanticExecutionBatch {
+        workspace_root: workspace_root.display().to_string(),
+        work_item_limit: plan.work_item_limit,
+        work_item_filter: plan.work_item_filter,
+        total_work_items: plan.total_work_items,
+        truncated_work_items: plan.truncated_work_items,
+        server_batches,
+        blocked_items,
+    }
+}
+
 pub fn server_specs() -> &'static [&'static str] {
     const IDS: &[&str] = &[
         "rust-analyzer",
@@ -516,6 +603,52 @@ struct LanguagePlanAccumulator {
     files: usize,
     symbol_nodes: usize,
     heuristic_edges_to_upgrade: usize,
+}
+
+#[derive(Debug)]
+struct SemanticServerBatchBuilder {
+    server: String,
+    command: String,
+    args: Vec<String>,
+    installed: bool,
+    path: Option<String>,
+    languages: BTreeSet<String>,
+    work_items: Vec<SemanticWorkItem>,
+}
+
+impl SemanticServerBatchBuilder {
+    fn new(server_id: &str, server: Option<&LspServerStatus>) -> Self {
+        Self {
+            server: server_id.to_string(),
+            command: server
+                .map(|server| server.command.to_string())
+                .unwrap_or_else(|| server_id.to_string()),
+            args: server
+                .map(|server| server.args.iter().map(|arg| (*arg).to_string()).collect())
+                .unwrap_or_default(),
+            installed: server.is_some_and(|server| server.installed),
+            path: server.and_then(|server| server.path.clone()),
+            languages: BTreeSet::new(),
+            work_items: Vec::new(),
+        }
+    }
+
+    fn finish(self) -> SemanticServerBatch {
+        SemanticServerBatch {
+            status: if self.installed {
+                "ready"
+            } else {
+                "missing_server"
+            },
+            server: self.server,
+            command: self.command,
+            args: self.args,
+            installed: self.installed,
+            path: self.path,
+            languages: self.languages.into_iter().collect(),
+            work_items: self.work_items,
+        }
+    }
 }
 
 impl SemanticRequestCounts {
@@ -1176,6 +1309,53 @@ mod tests {
                 status: Some("ready".to_string()),
                 capability: Some("definitions".to_string()),
             }
+        );
+
+        let batch = semantic_execution_batch_with_discovery(
+            Path::new("/workspace/repo"),
+            &graph,
+            &discovery,
+            DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+            SemanticWorkItemFilter {
+                language: Some("rust".to_string()),
+                status: Some("ready".to_string()),
+                capability: Some("definitions".to_string()),
+            },
+        );
+
+        assert_eq!(batch.workspace_root, "/workspace/repo");
+        assert_eq!(batch.total_work_items, 1);
+        assert_eq!(batch.blocked_items, Vec::<SemanticWorkItem>::new());
+        assert_eq!(batch.server_batches.len(), 1);
+        assert_eq!(batch.server_batches[0].server, "rust-analyzer");
+        assert_eq!(batch.server_batches[0].command, "rust-analyzer");
+        assert!(batch.server_batches[0].installed);
+        assert_eq!(batch.server_batches[0].languages, vec!["rust"]);
+        assert_eq!(
+            batch.server_batches[0].work_items[0].id,
+            "definitions:rust:edge:1"
+        );
+
+        let blocked_batch = semantic_execution_batch_with_discovery(
+            Path::new("/workspace/repo"),
+            &graph,
+            &discovery,
+            DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+            SemanticWorkItemFilter {
+                language: Some("markdown".to_string()),
+                status: Some("unsupported_language".to_string()),
+                capability: None,
+            },
+        );
+
+        assert_eq!(
+            blocked_batch.server_batches,
+            Vec::<SemanticServerBatch>::new()
+        );
+        assert_eq!(blocked_batch.blocked_items.len(), 1);
+        assert_eq!(
+            blocked_batch.blocked_items[0].id,
+            "language_support:markdown"
         );
     }
 

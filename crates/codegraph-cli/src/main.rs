@@ -13,7 +13,7 @@ use codegraph_indexer::{
 };
 use codegraph_lsp::{
     DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, SemanticWorkItemFilter, discover_lsp_servers,
-    semantic_enrichment_plan_with_filter, semantic_readiness,
+    semantic_enrichment_plan_with_filter, semantic_execution_batch, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
@@ -46,6 +46,9 @@ enum Command {
 
     /// Plan semantic LSP enrichment work for the scanned graph.
     SemanticPlan(SemanticPlanArgs),
+
+    /// Group semantic LSP work into executable server batches.
+    SemanticBatch(SemanticPlanArgs),
 
     /// Scan a project and emit the initial graph as JSON.
     Scan {
@@ -587,6 +590,11 @@ fn main() -> Result<()> {
             );
         }
         Command::SemanticPlan(args) => {
+            let filter = SemanticWorkItemFilter {
+                language: args.work_language,
+                status: args.work_status,
+                capability: args.work_capability,
+            };
             let graph = scan_with_options(
                 args.scan.path,
                 args.scan.include_hidden,
@@ -599,11 +607,31 @@ fn main() -> Result<()> {
                 serde_json::to_string_pretty(&semantic_enrichment_plan_with_filter(
                     &graph,
                     args.work_item_limit,
-                    SemanticWorkItemFilter {
-                        language: args.work_language,
-                        status: args.work_status,
-                        capability: args.work_capability,
-                    }
+                    filter
+                ))?
+            );
+        }
+        Command::SemanticBatch(args) => {
+            let path = args.scan.path;
+            let filter = SemanticWorkItemFilter {
+                language: args.work_language,
+                status: args.work_status,
+                capability: args.work_capability,
+            };
+            let graph = scan_with_options(
+                path.clone(),
+                args.scan.include_hidden,
+                args.scan.include_ignored,
+                max_file_size,
+                &args.scan.cache,
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&semantic_execution_batch(
+                    &path,
+                    &graph,
+                    args.work_item_limit,
+                    filter
                 ))?
             );
         }

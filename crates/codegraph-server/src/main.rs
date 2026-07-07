@@ -24,7 +24,7 @@ use codegraph_indexer::{
 use codegraph_lsp::{
     DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, LspDiscoveryReport, SemanticEnrichmentPlan,
     SemanticReadinessReport, SemanticWorkItemFilter, discover_lsp_servers,
-    semantic_enrichment_plan_with_filter, semantic_readiness,
+    semantic_enrichment_plan_with_filter, semantic_execution_batch, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{
@@ -417,6 +417,7 @@ async fn main() -> Result<()> {
         .route("/api/lsp", get(lsp_api))
         .route("/api/semantic-readiness", get(semantic_readiness_api))
         .route("/api/semantic-plan", get(semantic_plan_api))
+        .route("/api/semantic-batch", get(semantic_batch_api))
         .route("/api/projects", get(projects_api))
         .route("/api/scan-options", get(scan_options_api))
         .route("/api/coverage", get(coverage_api))
@@ -698,6 +699,26 @@ async fn semantic_plan_api(
 ) -> Result<Json<SemanticEnrichmentPlan>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(semantic_enrichment_plan_with_filter(
+        &graph,
+        query
+            .work_item_limit
+            .unwrap_or(DEFAULT_SEMANTIC_WORK_ITEM_LIMIT),
+        SemanticWorkItemFilter {
+            language: query.work_language,
+            status: query.work_status,
+            capability: query.work_capability,
+        },
+    )))
+}
+
+async fn semantic_batch_api(
+    State(state): State<AppState>,
+    Query(query): Query<SemanticPlanQuery>,
+) -> Result<Json<codegraph_lsp::SemanticExecutionBatch>, ApiError> {
+    let root = resolve_scan_root(&state, query.path.as_deref())?;
+    let graph = scan_graph(&state, Some(root.as_path())).await?;
+    Ok(Json(semantic_execution_batch(
+        &root,
         &graph,
         query
             .work_item_limit
