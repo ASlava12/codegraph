@@ -269,6 +269,7 @@ const I18N = {
     "cap.nodeCard": "Node Card",
     "cap.focus": "Focus",
     "cap.queryLimit": "Query Limit",
+    "cap.querySize": "Query Size",
     "cap.routes": "Routes",
     "cap.on": "on",
     "cap.off": "off",
@@ -617,6 +618,7 @@ const I18N = {
     "cap.nodeCard": "Карточка узла",
     "cap.focus": "Фокус",
     "cap.queryLimit": "Лимит запроса",
+    "cap.querySize": "Размер запроса",
     "cap.routes": "Маршруты",
     "cap.on": "вкл",
     "cap.off": "выкл",
@@ -2538,6 +2540,9 @@ function renderCapabilities(capabilities) {
   const projects = Array.isArray(capabilities.projects) ? capabilities.projects : [];
   const limits = capabilities.limits || {};
   const cache = capabilities.cache || {};
+  if (Number(limits.max_graph_query_length || 0) > 0) {
+    queryInput.maxLength = String(Number(limits.max_graph_query_length));
+  }
   const chips = [
     [t("cap.api"), `v${Number(capabilities.api_version || 0)}`],
     [t("cap.graph"), `v${Number(capabilities.graph_schema_version || 0)}`],
@@ -2551,6 +2556,7 @@ function renderCapabilities(capabilities) {
     [t("cap.nodeCard"), String(Number(limits.max_node_context_edge_limit || 0))],
     [t("cap.focus"), String(Number(limits.max_focus_edge_limit || 0))],
     [t("cap.queryLimit"), String(Number(limits.max_graph_query_limit || 0))],
+    [t("cap.querySize"), String(Number(limits.max_graph_query_length || 0))],
     [t("cap.routes"), String(endpoints.length)],
   ];
 

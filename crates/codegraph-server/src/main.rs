@@ -68,6 +68,7 @@ const DEFAULT_FOCUS_EDGE_LIMIT: usize = 200;
 const MAX_FOCUS_EDGE_LIMIT: usize = 1000;
 const DEFAULT_GRAPH_QUERY_LIMIT: usize = 100;
 const MAX_GRAPH_QUERY_LIMIT: usize = 1000;
+const MAX_GRAPH_QUERY_LENGTH: usize = 4096;
 const DEFAULT_REPORT_INSIGHT_LIMIT: usize = 50;
 const MAX_REPORT_INSIGHT_LIMIT: usize = 500;
 const DEFAULT_SOURCE_CONTEXT: u32 = 4;
@@ -656,6 +657,7 @@ struct RuntimeLimitsResponse {
     max_focus_edge_limit: usize,
     default_graph_query_limit: usize,
     max_graph_query_limit: usize,
+    max_graph_query_length: usize,
     default_report_insight_limit: usize,
     max_report_insight_limit: usize,
     default_source_context: u32,
@@ -1499,6 +1501,7 @@ async fn capabilities_api(
             max_focus_edge_limit: MAX_FOCUS_EDGE_LIMIT,
             default_graph_query_limit: DEFAULT_GRAPH_QUERY_LIMIT,
             max_graph_query_limit: MAX_GRAPH_QUERY_LIMIT,
+            max_graph_query_length: MAX_GRAPH_QUERY_LENGTH,
             default_report_insight_limit: DEFAULT_REPORT_INSIGHT_LIMIT,
             max_report_insight_limit: MAX_REPORT_INSIGHT_LIMIT,
             default_source_context: DEFAULT_SOURCE_CONTEXT,
@@ -2317,6 +2320,11 @@ async fn query_api(
     State(state): State<AppState>,
     Query(query): Query<GraphQuery>,
 ) -> Result<Json<codegraph_analysis::QueryResult>, ApiError> {
+    if query.q.len() > MAX_GRAPH_QUERY_LENGTH {
+        return Err(ApiError::bad_request(format!(
+            "query expression is too long; maximum is {MAX_GRAPH_QUERY_LENGTH} bytes"
+        )));
+    }
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let result =
         query_graph(&graph, &query.q).map_err(|error| ApiError::bad_request(error.to_string()))?;
@@ -4856,8 +4864,28 @@ mod tests {
         assert_eq!(response.limits.max_focus_edge_limit, 1000);
         assert_eq!(response.limits.default_graph_query_limit, 100);
         assert_eq!(response.limits.max_graph_query_limit, 1000);
+        assert_eq!(response.limits.max_graph_query_length, 4096);
         assert_eq!(response.limits.default_report_insight_limit, 50);
         assert_eq!(response.limits.max_report_insight_limit, 500);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn query_api_rejects_oversized_query_before_scan() {
+        let root = temp_server_root();
+        fs::create_dir_all(&root).unwrap();
+        let state = test_state(root.clone(), vec![], false);
+        let query = GraphQuery {
+            path: None,
+            q: "x".repeat(MAX_GRAPH_QUERY_LENGTH + 1),
+        };
+
+        let error = query_api(State(state), Query(query))
+            .await
+            .expect_err("oversized query should fail");
+
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert!(error.message.contains("query expression is too long"));
         fs::remove_dir_all(root).unwrap();
     }
 
