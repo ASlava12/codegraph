@@ -148,6 +148,7 @@ Implemented now:
 - Incremental scan planning reports in CLI, API, and web UI with rescan, removed, reusable path sets, and cached impacted graph node/edge ids.
 - Changed-scope incremental scan graphs in CLI, API, and web UI for inspecting only files that need rescanning.
 - Incremental merge previews that use the persistent impact index to replace cached file scopes with changed-file rescans for fast review before a full scan.
+- API schema enum values document cache status, reuse strategy, incremental actions, and merge blocker kinds for agent-safe incremental workflows.
 - Web incremental cache diagnostics show localized completeness blockers and safe-update reasons.
 - Scan coverage reports in CLI, API, and web overview for indexed files, policy skips, large-file skips, and non-indexed files.
 - CLI scan benchmark reports with timing and graph-size metrics for regression tracking.

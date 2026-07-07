@@ -3208,6 +3208,28 @@ fn api_schema_response() -> ApiSchemaResponse {
                 "job_status",
                 vec!["queued", "running", "complete", "failed", "canceled"],
             ),
+            ("cache_status", vec!["disabled", "hit", "miss"]),
+            (
+                "cache_record_status",
+                vec!["missing", "present", "incompatible"],
+            ),
+            (
+                "cache_reuse_strategy",
+                vec!["full_scan", "partial_reuse", "no_changes"],
+            ),
+            (
+                "incremental_plan_action",
+                vec!["full_scan", "partial_rescan", "noop"],
+            ),
+            (
+                "incremental_merge_blocker_kind",
+                vec![
+                    "removed_paths",
+                    "incoming_cross_file_edges",
+                    "graph_surface_added",
+                    "graph_surface_removed",
+                ],
+            ),
             ("insight_severity", vec!["info", "warning", "error"]),
             ("insight_kind", KNOWN_INSIGHT_KINDS.to_vec()),
             (
@@ -5387,6 +5409,46 @@ mod tests {
                 .is_some_and(|capabilities| capabilities.contains(&"document_symbols")
                     && capabilities.contains(&"language_server")
                     && !capabilities.contains(&"symbols"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("cache_status")
+                .is_some_and(|statuses| statuses.contains(&"hit")
+                    && statuses.contains(&"miss")
+                    && statuses.contains(&"disabled"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("cache_record_status")
+                .is_some_and(|statuses| statuses.contains(&"present")
+                    && statuses.contains(&"missing")
+                    && statuses.contains(&"incompatible"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("cache_reuse_strategy")
+                .is_some_and(|strategies| strategies.contains(&"partial_reuse")
+                    && strategies.contains(&"full_scan")
+                    && strategies.contains(&"no_changes"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("incremental_plan_action")
+                .is_some_and(|actions| actions.contains(&"partial_rescan")
+                    && actions.contains(&"full_scan")
+                    && actions.contains(&"noop"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("incremental_merge_blocker_kind")
+                .is_some_and(|kinds| kinds.contains(&"incoming_cross_file_edges")
+                    && kinds.contains(&"graph_surface_added")
+                    && kinds.contains(&"removed_paths"))
         );
         assert!(
             schema

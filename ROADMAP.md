@@ -289,8 +289,9 @@ Goal: handle real repositories efficiently.
 - [x] Use POST as the primary API method for safe incremental cache updates.
 - [x] Add HTTP smoke coverage for safe body-only incremental cache updates.
 - [x] Localize web incremental cache diagnostics and safe-update blockers.
-- Add persistent index storage with partial graph reuse.
-- Incrementally update changed files.
+- [x] Add persistent index storage with partial graph reuse.
+- [x] Incrementally update changed files.
+- [x] Publish cache and incremental workflow enum values in the API schema for agents.
 - [x] Cache parser facts.
 - [x] Cache LSP facts.
 - [x] Add first large graph filtering and paging endpoint.
