@@ -2573,10 +2573,14 @@ async function loadInsights() {
     }
     state.insightReport = body;
     renderInsights();
+    renderLegend(new Set(state.graph.nodes.map((node) => node.kind)));
+    draw();
   } catch (error) {
     if (requestId !== state.insightRequest) return;
     state.insightReport = null;
     renderInsights();
+    renderLegend(new Set(state.graph.nodes.map((node) => node.kind)));
+    draw();
   } finally {
     if (requestId === state.insightRequest) {
       insightFilterButton.disabled = false;
@@ -4016,6 +4020,40 @@ function insightEdgeIndexes(insight) {
   return Array.isArray(insight.edges) ? insight.edges : [];
 }
 
+function insightRiskByNode() {
+  const riskByNode = new Map();
+  const insights = state.insightReport?.insights || buildClientInsights(state.graph);
+  insights.forEach((insight) => {
+    const severity = insight.severity || "info";
+    const rank = severityRank(severity);
+    insightNodeIds(insight).forEach((nodeId) => {
+      const key = Number(nodeId);
+      const current = riskByNode.get(key);
+      if (!current || rank > severityRank(current)) {
+        riskByNode.set(key, severity);
+      }
+    });
+  });
+  return riskByNode;
+}
+
+function visibleRiskSeverities() {
+  return new Set([...insightRiskByNode().values()]);
+}
+
+function severityRank(severity) {
+  switch (severity) {
+    case "error":
+      return 3;
+    case "warning":
+      return 2;
+    case "info":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
 async function focusInsight(insight) {
   const nodeIds = insightNodeIds(insight);
   const edgeIndexes = insightEdgeIndexes(insight);
@@ -4450,6 +4488,18 @@ function renderLegend(kinds) {
     item.append(swatch, text);
     legend.append(item);
   });
+  const riskSeverities = visibleRiskSeverities();
+  ["error", "warning", "info"].forEach((severity) => {
+    if (!riskSeverities.has(severity)) return;
+    const item = document.createElement("span");
+    item.className = "legend-item risk";
+    const swatch = document.createElement("span");
+    swatch.className = `swatch risk-swatch ${severity}`;
+    const text = document.createElement("span");
+    text.textContent = formatKind(severity);
+    item.append(swatch, text);
+    legend.append(item);
+  });
 }
 
 function startAnimation() {
@@ -4638,6 +4688,7 @@ function draw() {
   });
 
   const labelCandidates = [];
+  const riskByNode = insightRiskByNode();
   state.visibleNodes.forEach((node) => {
     const position = state.positions.get(node.id);
     const selected = node.id === state.selectedId;
@@ -4670,6 +4721,11 @@ function draw() {
     ctx.strokeStyle = selected ? "#ffffff" : focused ? "rgba(237, 241, 242, 0.92)" : "rgba(255,255,255,0.55)";
     ctx.stroke();
 
+    const riskSeverity = riskByNode.get(Number(node.id));
+    if (riskSeverity) {
+      drawRiskHalo(position, radius, riskSeverity, selected || focused || hovered);
+    }
+
     if (shouldShowNodeLabel(node, selected, hovered, focused)) {
       labelCandidates.push({
         node,
@@ -4686,6 +4742,15 @@ function draw() {
 
   drawNodeLabels(labelCandidates);
   ctx.restore();
+}
+
+function drawRiskHalo(position, radius, severity, emphasized) {
+  const zoom = Math.max(0.18, state.zoom);
+  ctx.beginPath();
+  ctx.arc(position.x, position.y, radius + (emphasized ? 8 : 5) / zoom, 0, Math.PI * 2);
+  ctx.lineWidth = (emphasized ? 3.2 : 2.2) / zoom;
+  ctx.strokeStyle = riskColor(severity);
+  ctx.stroke();
 }
 
 function drawEdge(edge, source, target, focused) {
@@ -5672,6 +5737,19 @@ function nodeRadiusById(nodeId) {
 
 function colorFor(kind) {
   return colors[kind] || colors.unknown;
+}
+
+function riskColor(severity) {
+  switch (severity) {
+    case "error":
+      return "rgba(224, 108, 117, 0.95)";
+    case "warning":
+      return "rgba(242, 193, 78, 0.95)";
+    case "info":
+      return "rgba(92, 200, 167, 0.82)";
+    default:
+      return "rgba(237, 241, 242, 0.72)";
+  }
 }
 
 function nodeIsFocused(node) {

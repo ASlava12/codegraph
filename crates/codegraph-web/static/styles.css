@@ -1994,6 +1994,23 @@ button.cancel-action:hover:not(:disabled) {
   font-size: 12px;
 }
 
+.legend-item.risk {
+  font-weight: 800;
+}
+
+.risk-swatch {
+  background: transparent;
+  border: 2px solid rgba(92, 200, 167, 0.82);
+}
+
+.risk-swatch.warning {
+  border-color: rgba(242, 193, 78, 0.95);
+}
+
+.risk-swatch.error {
+  border-color: rgba(224, 108, 117, 0.95);
+}
+
 @media (max-width: 860px) {
   .app-shell {
     grid-template-columns: 1fr;

@@ -7166,10 +7166,15 @@ mod tests {
     }
 
     fn temp_analysis_root() -> std::path::PathBuf {
+        static TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("codegraph-analysis-test-{nanos}"))
+        let counter = TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let process_id = std::process::id();
+        std::env::temp_dir().join(format!(
+            "codegraph-analysis-test-{process_id}-{counter}-{nanos}"
+        ))
     }
 }
