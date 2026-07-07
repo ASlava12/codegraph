@@ -230,6 +230,7 @@ Goal: handle real repositories efficiently.
 - [x] Expose persistent file graph chunk reports across CLI, API, and web UI.
 - [x] Add safe incremental cache update reports that persist only complete graph results.
 - [x] Store surface-stable partial graph updates from cached graph plus changed-file rescans.
+- [x] Use POST as the primary API method for safe incremental cache updates.
 - Add persistent index storage with partial graph reuse.
 - Incrementally update changed files.
 - [x] Cache parser facts.

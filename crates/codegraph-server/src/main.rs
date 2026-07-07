@@ -732,7 +732,10 @@ async fn main() -> Result<()> {
             "/api/incremental-merge-preview",
             get(incremental_merge_preview_api),
         )
-        .route("/api/incremental-update", get(incremental_update_api))
+        .route(
+            "/api/incremental-update",
+            get(incremental_update_api).post(incremental_update_api),
+        )
         .route("/api/scan-jobs", get(list_scan_jobs).post(start_scan_job))
         .route(
             "/api/scan-jobs/{id}",
@@ -2831,9 +2834,26 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "IncrementalMergePreview",
                 ),
-                api_get(
+                api_post(
                     "/api/incremental-update",
                     "Update the persistent graph cache when the incremental result is complete; incomplete partial previews are reported but not stored.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            Some("100"),
+                            "Maximum changed paths to inspect while planning the update.",
+                        ),
+                    ],
+                    None,
+                    "IncrementalUpdate",
+                    false,
+                ),
+                api_get(
+                    "/api/incremental-update",
+                    "Legacy compatibility alias for POST /api/incremental-update.",
                     vec![
                         path_param(),
                         query_param(
@@ -3744,6 +3764,7 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
                 "GET /api/incremental-plan",
                 "GET /api/incremental-scan",
                 "GET /api/incremental-merge-preview",
+                "POST /api/incremental-update",
                 "GET /api/incremental-update",
                 "POST /api/scan-jobs",
                 "GET /api/scan-jobs",
@@ -3982,6 +4003,7 @@ mod tests {
         assert!(endpoints.contains(&"GET /api/incremental-plan"));
         assert!(endpoints.contains(&"GET /api/incremental-scan"));
         assert!(endpoints.contains(&"GET /api/incremental-merge-preview"));
+        assert!(endpoints.contains(&"POST /api/incremental-update"));
         assert!(endpoints.contains(&"GET /api/incremental-update"));
         assert!(endpoints.contains(&"GET /api/cache-chunks"));
         assert!(endpoints.contains(&"GET /api/query"));
@@ -4010,6 +4032,7 @@ mod tests {
         assert!(endpoints.contains(&("GET", "/api/incremental-plan")));
         assert!(endpoints.contains(&("GET", "/api/incremental-scan")));
         assert!(endpoints.contains(&("GET", "/api/incremental-merge-preview")));
+        assert!(endpoints.contains(&("POST", "/api/incremental-update")));
         assert!(endpoints.contains(&("GET", "/api/incremental-update")));
         assert!(endpoints.contains(&("GET", "/api/node-card")));
         assert!(endpoints.contains(&("GET", "/api/query")));

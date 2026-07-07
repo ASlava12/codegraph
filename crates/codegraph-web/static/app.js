@@ -2943,7 +2943,7 @@ async function loadIncrementalUpdate() {
   });
 
   try {
-    const response = await fetch(`/api/incremental-update?${params.toString()}`);
+    const response = await fetch(`/api/incremental-update?${params.toString()}`, { method: "POST" });
     const body = await response.json();
     if (requestId !== state.incrementalUpdateRequest) return;
     if (!response.ok) {
