@@ -173,6 +173,7 @@ Goal: handle real repositories efficiently.
 - [x] Add cache fingerprint diff diagnostics across CLI, API, and web UI for explaining cache misses.
 - [x] Add configurable scan file-size budgets with skipped large-file visibility.
 - [x] Add repository-owned scan policy from `.codegraph/config.toml`.
+- [x] Expose effective scan policy through API and web overview.
 - Add persistent index storage with partial graph reuse.
 - Incrementally update changed files.
 - Cache parser and LSP facts.

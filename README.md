@@ -59,6 +59,7 @@ Implemented now:
 - CLI scan benchmark reports with timing and graph-size metrics for regression tracking.
 - Configurable scan file-size budget for CLI/server scans, with skipped large source files kept visible in summaries, insights, and the web stats panel.
 - Repository-owned scan policy from `.codegraph/config.toml` for file-size budgets and ignored names.
+- Effective scan policy API and web overview chips for explaining the active file-size, hidden-file, ignored-file, and ignored-name rules.
 - CI checks for formatting, clippy, tests, UI syntax, CLI scan, and server cache smoke tests.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Investigation insights for manifest entrypoints whose declared target cannot be resolved to a file or function.
@@ -320,6 +321,7 @@ Scan API:
 
 ```bash
 curl 'http://127.0.0.1:3765/api/projects'
+curl 'http://127.0.0.1:3765/api/scan-options?path=.'
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'
 ```

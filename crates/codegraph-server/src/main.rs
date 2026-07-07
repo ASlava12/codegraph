@@ -96,6 +96,11 @@ struct ScanQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct ScanOptionsQuery {
+    path: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
 struct CacheDiffQuery {
     path: Option<PathBuf>,
     limit: Option<usize>,
@@ -288,6 +293,16 @@ struct HealthResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct ScanOptionsResponse {
+    root: String,
+    config_path: Option<String>,
+    include_hidden: bool,
+    include_ignored: bool,
+    max_file_size: u64,
+    ignored_names: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct ScanResponse {
     root: String,
     cache: CacheInfo,
@@ -352,6 +367,7 @@ async fn main() -> Result<()> {
         .route("/styles.css", get(styles_css))
         .route("/api/health", get(health))
         .route("/api/projects", get(projects_api))
+        .route("/api/scan-options", get(scan_options_api))
         .route("/api/scan", get(scan))
         .route("/api/cache-diff", get(cache_diff_api))
         .route("/api/scan-jobs", post(start_scan_job))
@@ -603,6 +619,25 @@ async fn projects_api(State(state): State<AppState>) -> Json<Vec<ProjectResponse
             })
             .collect(),
     )
+}
+
+async fn scan_options_api(
+    State(state): State<AppState>,
+    Query(query): Query<ScanOptionsQuery>,
+) -> Result<Json<ScanOptionsResponse>, ApiError> {
+    let root = resolve_scan_root(&state, query.path.as_deref())?;
+    let options = scan_options(&state, &root)?;
+    let config_path = root.join(".codegraph").join("config.toml");
+    Ok(Json(ScanOptionsResponse {
+        root: root.display().to_string(),
+        config_path: config_path
+            .is_file()
+            .then(|| config_path.display().to_string()),
+        include_hidden: options.include_hidden,
+        include_ignored: options.include_ignored,
+        max_file_size: options.max_file_size,
+        ignored_names: options.ignored_names.into_iter().collect(),
+    }))
 }
 
 async fn scan(

@@ -120,6 +120,7 @@ Responsibilities:
 
 - provide health and scan endpoints
 - expose repository-owned scan policy consistently across API, web, and source search workflows
+- return effective scan options for humans and agents before they trigger a full scan
 - reuse persistent graph cache records when project fingerprints match
 - provide cache fingerprint diff endpoints and web controls for explaining cache invalidation
 - provide JSON, DOT, and NDJSON export endpoints

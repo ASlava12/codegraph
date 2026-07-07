@@ -30,6 +30,7 @@ const state = {
   insightFocusRequest: 0,
   checkRequest: 0,
   summary: null,
+  scanOptions: null,
   entrypoints: [],
   insightReport: null,
   projects: [],
@@ -83,6 +84,7 @@ const languageList = document.querySelector("#languageList");
 const confidenceList = document.querySelector("#confidenceList");
 const relationList = document.querySelector("#relationList");
 const edgeSourceList = document.querySelector("#edgeSourceList");
+const scanPolicyList = document.querySelector("#scanPolicyList");
 const annotationList = document.querySelector("#annotationList");
 const entrypointList = document.querySelector("#entrypointList");
 const entryFlowSearchInput = document.querySelector("#entryFlowSearchInput");
@@ -297,6 +299,7 @@ async function scan() {
   state.insightRequest += 1;
   state.overviewRequest += 1;
   state.summary = null;
+  state.scanOptions = null;
   state.entrypoints = [];
   renderOverview();
   state.insightReport = null;
@@ -513,12 +516,14 @@ async function loadProjectOverview() {
   const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
 
   try {
-    const [summaryResponse, entrypointsResponse] = await Promise.all([
+    const [summaryResponse, entrypointsResponse, scanOptionsResponse] = await Promise.all([
       fetch(`/api/summary?${params.toString()}`),
       fetch(`/api/entrypoints?${params.toString()}`),
+      fetch(`/api/scan-options?${params.toString()}`),
     ]);
     const summary = await summaryResponse.json();
     const entrypoints = await entrypointsResponse.json();
+    const scanOptions = await scanOptionsResponse.json();
     if (requestId !== state.overviewRequest) return;
     if (!summaryResponse.ok) {
       throw new Error(summary.error || "summary failed");
@@ -526,7 +531,11 @@ async function loadProjectOverview() {
     if (!entrypointsResponse.ok) {
       throw new Error(entrypoints.error || "entrypoints failed");
     }
+    if (!scanOptionsResponse.ok) {
+      throw new Error(scanOptions.error || "scan options failed");
+    }
     state.summary = summary;
+    state.scanOptions = scanOptions;
     state.entrypoints = entrypoints;
     renderOverview();
   } catch (error) {
@@ -536,6 +545,7 @@ async function loadProjectOverview() {
     confidenceList.innerHTML = "";
     relationList.innerHTML = "";
     edgeSourceList.innerHTML = "";
+    scanPolicyList.innerHTML = "";
     annotationList.innerHTML = "";
     entrypointList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   }
@@ -599,6 +609,8 @@ function renderOverview() {
     edgeSources.length > 0
       ? edgeSources.map(([source, count]) => renderOverviewChip("edge-source", source, count)).join("")
       : '<p class="empty">No edge sources.</p>';
+
+  renderScanPolicy(state.scanOptions);
 
   const annotations = annotationFacets(summary, state.graph.nodes);
   annotationList.innerHTML =
@@ -698,6 +710,33 @@ function renderOverviewChip(kind, value, count) {
       <strong>${count}</strong>
     </button>
   `;
+}
+
+function renderScanPolicy(options) {
+  if (!options) {
+    scanPolicyList.innerHTML = '<p class="empty">No scan policy.</p>';
+    return;
+  }
+
+  const ignoredNames = Array.isArray(options.ignored_names) ? options.ignored_names : [];
+  const chips = [
+    ["Max file", formatBytes(Number(options.max_file_size || 0))],
+    ["Policy", options.config_path ? ".codegraph" : "defaults"],
+    ["Ignore names", String(ignoredNames.length)],
+    ["Hidden", options.include_hidden ? "yes" : "no"],
+    ["Git ignored", options.include_ignored ? "yes" : "no"],
+  ];
+
+  scanPolicyList.innerHTML = chips
+    .map(
+      ([label, value]) => `
+        <div class="scan-policy-chip">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      `,
+    )
+    .join("");
 }
 
 function annotationFacets(summary, nodes) {
