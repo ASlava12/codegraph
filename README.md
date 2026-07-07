@@ -41,6 +41,7 @@ Implemented now:
 - Machine-readable API schema endpoint for agents and integrations.
 - API schema enum values document supported graph query commands and diagnostic query terms.
 - API schema enum values document graph node kinds, edge kinds, and confidence levels used by graph filters.
+- API schema enum values stay aligned with semantic work statuses and capabilities used by LSP work queues.
 - Runtime metrics endpoint for uptime, API/schema versions, roots, language/feature counts, cache state, job stores, and concurrency.
 - Project report snapshots in CLI, API, and web export for summary, quality gate, insights, topology reports, cache, and scan coverage.
 - Web overview chips for server capabilities, API/schema versions, cache state, supported language/export counts, job limits, and route groups.
@@ -67,6 +68,7 @@ Implemented now:
 - Confidence-aware edge queries and UI edge labels for fact provenance.
 - Server-side graph paging and filtering endpoint for large repository exploration.
 - Web graph page controls backed by server-side paging, search, kind, item, language, edge, confidence, relation, and source filters.
+- Web graph filter inputs use API schema enum suggestions for node kinds, edge kinds, confidence levels, and insight severity filters.
 - Web graph viewport controls for zooming, fitting visible nodes, restarting layout, and pausing layout simulation.
 - Web project overview for language mix, edge confidence/source/relation mix, and entrypoint launch points.
 - Language dependency matrix reports in CLI, API, and web overview for mixed-language coupling.

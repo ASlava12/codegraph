@@ -2708,16 +2708,17 @@ fn api_schema_response() -> ApiSchemaResponse {
             ("insight_severity", vec!["info", "warning", "error"]),
             (
                 "semantic_work_status",
-                vec!["ready", "missing_server", "unsupported"],
+                vec!["ready", "missing_server", "unsupported_language"],
             ),
             (
                 "semantic_work_capability",
                 vec![
                     "definitions",
                     "diagnostics",
-                    "symbols",
+                    "document_symbols",
                     "workspace_symbols",
                     "references",
+                    "language_server",
                 ],
             ),
             (
@@ -4116,6 +4117,21 @@ mod tests {
                 .get("graph_confidence")
                 .is_some_and(|confidences| confidences.contains(&"semantic")
                     && confidences.contains(&"heuristic"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("semantic_work_status")
+                .is_some_and(|statuses| statuses.contains(&"unsupported_language")
+                    && !statuses.contains(&"unsupported"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("semantic_work_capability")
+                .is_some_and(|capabilities| capabilities.contains(&"document_symbols")
+                    && capabilities.contains(&"language_server")
+                    && !capabilities.contains(&"symbols"))
         );
         assert!(
             schema

@@ -488,11 +488,13 @@ const state = {
   semanticEnrichRequest: 0,
   jobQueueRequest: 0,
   metricsRequest: 0,
+  apiSchemaRequest: 0,
   checkRequest: 0,
   summary: null,
   scanOptions: null,
   coverage: null,
   capabilities: null,
+  apiSchema: null,
   lsp: null,
   semanticReadiness: null,
   semanticPlan: null,
@@ -658,6 +660,10 @@ const resetLayoutButton = document.querySelector("#resetLayoutButton");
 const toggleLayoutButton = document.querySelector("#toggleLayoutButton");
 const viewportInfo = document.querySelector("#viewportInfo");
 const labelModeButtons = Array.from(document.querySelectorAll("[data-label-mode]"));
+const nodeKindOptions = document.querySelector("#nodeKindOptions");
+const edgeKindOptions = document.querySelector("#edgeKindOptions");
+const confidenceOptions = document.querySelector("#confidenceOptions");
+const severityOptions = document.querySelector("#severityOptions");
 
 localeSelect.value = state.locale;
 localeSelect.addEventListener("change", () => setLocale(localeSelect.value));
@@ -852,7 +858,7 @@ function applyLocale() {
 }
 
 async function init() {
-  await Promise.all([loadProjects(), loadCapabilities(), loadMetrics()]);
+  await Promise.all([loadProjects(), loadCapabilities(), loadApiSchema(), loadMetrics()]);
   loadJobQueue();
   scan();
 }
@@ -884,6 +890,41 @@ async function loadCapabilities() {
     state.capabilities = null;
   }
   renderOverview();
+}
+
+async function loadApiSchema() {
+  state.apiSchemaRequest += 1;
+  const requestId = state.apiSchemaRequest;
+
+  try {
+    const response = await fetch("/api/schema");
+    const body = await response.json();
+    if (requestId !== state.apiSchemaRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "schema failed");
+    }
+    state.apiSchema = body;
+  } catch (error) {
+    if (requestId !== state.apiSchemaRequest) return;
+    state.apiSchema = null;
+  }
+
+  renderApiSchemaOptions();
+}
+
+function renderApiSchemaOptions() {
+  const enums = state.apiSchema?.enum_values || {};
+  renderDatalist(nodeKindOptions, enums.graph_node_kind || []);
+  renderDatalist(edgeKindOptions, enums.graph_edge_kind || []);
+  renderDatalist(confidenceOptions, enums.graph_confidence || []);
+  renderDatalist(severityOptions, enums.insight_severity || []);
+}
+
+function renderDatalist(element, values) {
+  if (!element) return;
+  element.innerHTML = Array.isArray(values)
+    ? values.map((value) => `<option value="${escapeHtml(String(value))}"></option>`).join("")
+    : "";
 }
 
 async function loadMetrics() {

@@ -169,7 +169,7 @@
             </label>
             <label class="field compact">
               <span data-i18n="label.kind">Kind</span>
-              <input id="serverKindInput" type="text" autocomplete="off" />
+              <input id="serverKindInput" type="text" list="nodeKindOptions" autocomplete="off" />
             </label>
             <label class="field compact">
               <span data-i18n="label.item">Item</span>
@@ -185,11 +185,11 @@
             </label>
             <label class="field compact">
               <span data-i18n="label.edge">Edge</span>
-              <input id="serverEdgeKindInput" type="text" autocomplete="off" />
+              <input id="serverEdgeKindInput" type="text" list="edgeKindOptions" autocomplete="off" />
             </label>
             <label class="field compact">
               <span data-i18n="label.confidence">Confidence</span>
-              <input id="serverConfidenceInput" type="text" autocomplete="off" />
+              <input id="serverConfidenceInput" type="text" list="confidenceOptions" autocomplete="off" />
             </label>
             <label class="field compact">
               <span data-i18n="label.relation">Relation</span>
@@ -312,7 +312,7 @@
             </label>
             <label class="field compact">
               <span data-i18n="label.edge">Edge</span>
-              <input id="pathEdgeKindInput" type="text" autocomplete="off" />
+              <input id="pathEdgeKindInput" type="text" list="edgeKindOptions" autocomplete="off" />
             </label>
           </div>
           <button id="pathButton" type="button" data-i18n="button.findPath">Find Path</button>
@@ -363,11 +363,11 @@
           <div class="insight-filters">
             <label class="field compact">
               <span data-i18n="label.severity">Severity</span>
-              <input id="insightSeverityInput" type="text" autocomplete="off" />
+              <input id="insightSeverityInput" type="text" list="severityOptions" autocomplete="off" />
             </label>
             <label class="field compact">
               <span data-i18n="label.failOn">Fail On</span>
-              <input id="checkFailOnInput" type="text" value="error" autocomplete="off" />
+              <input id="checkFailOnInput" type="text" value="error" list="severityOptions" autocomplete="off" />
             </label>
             <label class="field compact">
               <span data-i18n="label.kind">Kind</span>
@@ -420,6 +420,11 @@
         <div class="legend" id="legend"></div>
       </section>
     </main>
+
+    <datalist id="nodeKindOptions"></datalist>
+    <datalist id="edgeKindOptions"></datalist>
+    <datalist id="confidenceOptions"></datalist>
+    <datalist id="severityOptions"></datalist>
 
     <script src="/app.js"></script>
   </body>
