@@ -1595,6 +1595,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "entrypoints" | "entrypoint" | "starts" | "startup" => query_entrypoints(graph, spec),
         "configs" | "config" | "environment" | "env" => query_configs(graph, spec),
         "errors" | "error" | "exceptions" | "exception" => query_errors(graph, spec),
+        "cycles" | "cycle" => query_cycles(graph, spec),
         "unreachable" | "dead" => query_unreachable(graph, spec),
         "diagnostics" | "diagnostic" => query_diagnostics(graph, spec),
         "insights" | "insight" | "risks" | "risk" | "findings" | "finding" => {
@@ -1602,7 +1603,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         }
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, entrypoints, configs, errors, unreachable, diagnostics, insights, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, entrypoints, configs, errors, cycles, unreachable, diagnostics, insights, or path"
         ))),
     }
 }
@@ -2462,6 +2463,47 @@ fn query_errors(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, Q
     })
 }
 
+fn query_cycles(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    validate_cycle_terms(&spec)?;
+    let path_index = node_path_index(graph);
+    let matched: Vec<_> = insights(graph)
+        .insights
+        .into_iter()
+        .filter(|insight| insight.kind == "dependency_cycle")
+        .filter(|insight| cycle_query_matches(graph, insight, &spec, &path_index))
+        .collect();
+    let total_matches = matched.len();
+    let mut node_ids = BTreeSet::new();
+    let mut edge_indexes = BTreeSet::new();
+    for insight in matched.iter().take(spec.limit) {
+        node_ids.extend(insight.nodes.iter().copied());
+        edge_indexes.extend(insight.edges.iter().copied());
+    }
+
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| node_ids.contains(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let edges = graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| edge_indexes.contains(index))
+        .map(|(_, edge)| edge.clone())
+        .collect::<Vec<_>>();
+
+    Ok(QueryResult {
+        query: spec.original,
+        total_nodes: nodes.len(),
+        total_edges: edges.len(),
+        truncated: total_matches > spec.limit,
+        nodes,
+        edges,
+    })
+}
+
 fn query_unreachable(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
     validate_unreachable_terms(&spec)?;
     let reachable = entrypoint_reachable_nodes(graph);
@@ -2865,6 +2907,29 @@ fn validate_error_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     Ok(())
 }
 
+fn validate_cycle_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if matches!(
+            key.as_str(),
+            "id" | "node"
+                | "node_id"
+                | "label"
+                | "search"
+                | "language"
+                | "path"
+                | "path_prefix"
+                | "kind"
+                | "edge_kind"
+        ) {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported cycles query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_unreachable_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     for key in spec.terms.keys() {
         if is_node_term(key) || matches!(key.as_str(), "path_prefix" | "scope") {
@@ -3101,6 +3166,47 @@ fn error_query_matches(
             .metadata
             .get(key.trim_start_matches("metadata."))
             .is_some_and(|value| text_matches(value, expected)),
+        _ => false,
+    })
+}
+
+fn cycle_query_matches(
+    graph: &CodeGraph,
+    insight: &Insight,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
+    spec.terms.iter().all(|(key, expected)| match key.as_str() {
+        "id" | "node" | "node_id" => insight_node_matches(graph, insight, expected),
+        "label" | "search" => {
+            insight.nodes.iter().any(|node_id| {
+                graph
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == *node_id)
+                    .is_some_and(|node| node_search_matches(node, expected))
+            }) || text_matches(&insight.message, expected)
+        }
+        "language" => insight.nodes.iter().any(|node_id| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == *node_id)
+                .is_some_and(|node| metadata_matches(node, "language", expected))
+        }),
+        "path" | "path_prefix" => insight.nodes.iter().any(|node_id| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == *node_id)
+                .is_some_and(|node| node_path_matches(node, path_index, expected))
+        }),
+        "kind" | "edge_kind" => insight.edges.iter().any(|edge_index| {
+            graph
+                .edges
+                .get(*edge_index)
+                .is_some_and(|edge| text_matches(&edge_kind_name(&edge.kind), expected))
+        }),
         _ => false,
     })
 }
@@ -6862,6 +6968,54 @@ mod tests {
                 .to_string()
                 .contains("unsupported errors query term")
         );
+    }
+
+    #[test]
+    fn query_cycles_returns_dependency_cycle_context() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "main",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let service = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "service",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let repository = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "repository",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        graph.add_edge(main, service, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(service, repository, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(repository, main, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(helper, service, EdgeKind::Calls, Confidence::Heuristic);
+
+        let result = query_graph(&graph, "cycles language:rust").unwrap();
+
+        assert_eq!(result.total_nodes, 3);
+        assert_eq!(result.total_edges, 3);
+        assert!(result.nodes.iter().any(|node| node.id == main));
+        assert!(result.nodes.iter().any(|node| node.id == service));
+        assert!(result.nodes.iter().any(|node| node.id == repository));
+        assert!(!result.nodes.iter().any(|node| node.id == helper));
+        assert!(result.edges.iter().all(|edge| edge.kind == EdgeKind::Calls));
+
+        let by_label = query_graph(&graph, "cycle label:repository").unwrap();
+        assert!(by_label.nodes.iter().any(|node| node.id == repository));
+
+        let by_edge_kind = query_graph(&graph, "cycles edge_kind:calls").unwrap();
+        assert_eq!(by_edge_kind.total_edges, 3);
+
+        let error =
+            query_graph(&graph, "cycles nope:value").expect_err("invalid cycles term should fail");
+        assert!(error.to_string().contains("unsupported cycles query term"));
     }
 
     #[test]
