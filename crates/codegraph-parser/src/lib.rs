@@ -650,11 +650,13 @@ fn effect_metadata(
     }
 
     let default_value = match language {
+        Language::Rust => rust_env_default_value(node, source),
         Language::Python => python_env_default_value(node, source),
         Language::JavaScript | Language::TypeScript | Language::Tsx => {
             javascript_env_default_value(node, source)
         }
         Language::Php => getenv_default_value(node, source),
+        Language::Bash => bash_env_default_value(node, source),
         _ => None,
     };
 
@@ -673,6 +675,21 @@ fn python_env_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
         return None;
     }
     all_string_literals(node, source).into_iter().nth(1)
+}
+
+fn rust_env_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
+    short_ancestor_text(node, source, |text| {
+        (text.contains("env::var") || text.contains("std::env::var"))
+            && (text.contains("unwrap_or") || text.contains("unwrap_or_else"))
+    })
+    .and_then(|expression| quoted_string_values(&expression).into_iter().nth(1))
+    .or_else(|| {
+        let line = source_line_text(node, source).filter(|text| {
+            (text.contains("env::var") || text.contains("std::env::var"))
+                && (text.contains("unwrap_or") || text.contains("unwrap_or_else"))
+        })?;
+        quoted_string_values(&line).into_iter().nth(1)
+    })
 }
 
 fn javascript_env_key(node: Node<'_>, source: &[u8]) -> Option<String> {
@@ -712,6 +729,28 @@ fn getenv_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
             && (text.contains("?:") || text.contains("??") || text.contains("||"))
     })?;
     quoted_string_values(&expression).into_iter().nth(1)
+}
+
+fn bash_env_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let key = node_text(node, source)?;
+    let expression = short_ancestor_text(node, source, |text| {
+        text.contains("${") && text.contains(&key) && (text.contains(":-") || text.contains("-"))
+    })?;
+    bash_parameter_default(&expression, &key)
+}
+
+fn bash_parameter_default(expression: &str, key: &str) -> Option<String> {
+    let marker = format!("${{{key}");
+    let start = expression.find(&marker)?;
+    let rest = &expression[start + marker.len()..];
+    let rest = rest.strip_prefix(":-").or_else(|| rest.strip_prefix('-'))?;
+    let end = rest.find('}')?;
+    let value = rest[..end].trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(strip_quotes(value.to_string()))
+    }
 }
 
 fn short_ancestor_text(
@@ -897,6 +936,23 @@ fn short_node_text(node: Node<'_>, source: &[u8]) -> Option<String> {
         return None;
     }
     node_text(node, source)
+}
+
+fn source_line_text(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let start = node.start_byte().min(source.len());
+    let line_start = source[..start]
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let line_end = source[start..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|offset| start + offset)
+        .unwrap_or(source.len());
+    std::str::from_utf8(&source[line_start..line_end])
+        .ok()
+        .map(str::to_string)
 }
 
 fn compact_label(value: String) -> String {
@@ -1280,6 +1336,53 @@ $port = getenv('PORT') ?: '8080';
         assert_eq!(
             port.metadata.get("default_value").map(String::as_str),
             Some("8080")
+        );
+    }
+
+    #[test]
+    fn parses_rust_environment_default_values() {
+        let parsed = parse_source(
+            "src/main.rs",
+            br#"fn main() {
+    let port = std::env::var("PORT").unwrap_or_else(|_| "7000".to_string());
+}
+"#,
+            Language::Rust,
+        )
+        .unwrap();
+
+        let port = parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "PORT")
+            .expect("missing PORT env read");
+
+        assert_eq!(
+            port.metadata.get("default_value").map(String::as_str),
+            Some("7000")
+        );
+    }
+
+    #[test]
+    fn parses_bash_environment_default_values() {
+        let parsed = parse_source(
+            "entrypoint.sh",
+            br#"#!/usr/bin/env bash
+PORT="${PORT:-5000}"
+"#,
+            Language::Bash,
+        )
+        .unwrap();
+
+        let port = parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "PORT")
+            .expect("missing PORT env read");
+
+        assert_eq!(
+            port.metadata.get("default_value").map(String::as_str),
+            Some("5000")
         );
     }
 

@@ -5786,6 +5786,15 @@ PORT = os.getenv("PORT", "8000")
 "#,
         )
         .unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            r#"fn main() {
+    let port = std::env::var("PORT").unwrap_or_else(|_| "7000".to_string());
+}
+"#,
+        )
+        .unwrap();
         fs::write(
             root.join("server.js"),
             r#"const port = process.env.PORT || "3000";
@@ -5799,6 +5808,13 @@ $port = getenv('PORT') ?: '8080';
 "#,
         )
         .unwrap();
+        fs::write(
+            root.join("entrypoint.sh"),
+            r#"#!/usr/bin/env bash
+PORT="${PORT:-5000}"
+"#,
+        )
+        .unwrap();
 
         let graph = scan_project(&root, &IndexOptions::default()).unwrap();
         let defaults = graph
@@ -5808,7 +5824,10 @@ $port = getenv('PORT') ?: '8080';
             .filter_map(|node| node.metadata.get("default_value").map(String::as_str))
             .collect::<BTreeSet<_>>();
 
-        assert_eq!(defaults, BTreeSet::from(["3000", "8000", "8080"]));
+        assert_eq!(
+            defaults,
+            BTreeSet::from(["3000", "5000", "7000", "8000", "8080"])
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

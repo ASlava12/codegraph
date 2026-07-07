@@ -106,7 +106,7 @@ Implemented now:
 - Investigation insights for heuristic cross-language dependency edges that deserve semantic review.
 - Investigation insights for local imports/includes whose target file cannot be found.
 - Investigation insights for config/environment reads that are not reachable from any detected entrypoint.
-- Investigation insights for config/environment keys that are read with conflicting fallback defaults, including common Python, JavaScript/TypeScript, and PHP environment-read patterns.
+- Investigation insights for config/environment keys that are read with conflicting fallback defaults, including common Rust, Python, JavaScript/TypeScript, PHP, and Bash environment-read patterns.
 - Dependency consistency insights for external imports/CommonJS requires that are not backed by declared manifest dependencies.
 - Dependency consistency insights for runtime manifest dependencies with no matching import.
 - Dependency consistency insights for package declarations with conflicting manifest constraints.
