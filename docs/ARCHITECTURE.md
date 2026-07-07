@@ -104,7 +104,7 @@ Responsibilities:
 
 - report installed language servers for semantic enrichment readiness
 - compare a scanned project's language mix with available language servers
-- plan semantic enrichment work by language, LSP capability, and installed-server status
+- plan semantic enrichment work by language, LSP capability, installed-server status, and capped concrete work items
 - launch and manage language servers
 - request definitions, references, symbols, and diagnostics
 - convert language-server facts into graph edges
@@ -130,7 +130,7 @@ Responsibilities:
 - provide health and scan endpoints
 - expose repository-owned scan policy consistently across API, web, and source search workflows
 - return effective scan options for humans and agents before they trigger a full scan
-- expose LSP readiness and semantic enrichment plans for humans and agents
+- expose LSP readiness and semantic enrichment plans, including capped work queues, for humans and agents
 - reuse persistent graph cache records when project fingerprints match
 - provide cache fingerprint diff endpoints and web controls for explaining cache invalidation
 - provide JSON, DOT, and NDJSON export endpoints

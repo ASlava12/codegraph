@@ -11,7 +11,10 @@ use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
 };
-use codegraph_lsp::{discover_lsp_servers, semantic_enrichment_plan, semantic_readiness};
+use codegraph_lsp::{
+    DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, discover_lsp_servers, semantic_enrichment_plan_with_limit,
+    semantic_readiness,
+};
 use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
 use serde::Serialize;
@@ -42,7 +45,7 @@ enum Command {
     SemanticReadiness(ScanArgs),
 
     /// Plan semantic LSP enrichment work for the scanned graph.
-    SemanticPlan(ScanArgs),
+    SemanticPlan(SemanticPlanArgs),
 
     /// Scan a project and emit the initial graph as JSON.
     Scan {
@@ -313,6 +316,16 @@ struct ScanArgs {
 }
 
 #[derive(Debug, Args)]
+struct SemanticPlanArgs {
+    #[command(flatten)]
+    scan: ScanArgs,
+
+    /// Maximum concrete semantic work items to include.
+    #[arg(long, default_value_t = DEFAULT_SEMANTIC_WORK_ITEM_LIMIT)]
+    work_item_limit: usize,
+}
+
+#[derive(Debug, Args)]
 struct CoverageArgs {
     /// Project root to inspect.
     #[arg(default_value = ".")]
@@ -563,15 +576,18 @@ fn main() -> Result<()> {
         }
         Command::SemanticPlan(args) => {
             let graph = scan_with_options(
-                args.path,
-                args.include_hidden,
-                args.include_ignored,
+                args.scan.path,
+                args.scan.include_hidden,
+                args.scan.include_ignored,
                 max_file_size,
-                &args.cache,
+                &args.scan.cache,
             )?;
             println!(
                 "{}",
-                serde_json::to_string_pretty(&semantic_enrichment_plan(&graph))?
+                serde_json::to_string_pretty(&semantic_enrichment_plan_with_limit(
+                    &graph,
+                    args.work_item_limit
+                ))?
             );
         }
         Command::Scan {

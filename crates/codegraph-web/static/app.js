@@ -906,6 +906,10 @@ function renderLspStatus(report, readiness, plan) {
           <span>Symbols</span>
           <strong>${Number(plan.planned_requests?.document_symbols || 0)}</strong>
         </div>
+        <div class="lsp-chip">
+          <span>Work queue</span>
+          <strong>${Number(plan.work_items?.length || 0)}/${Number(plan.total_work_items || 0)}</strong>
+        </div>
       `,
     );
   }

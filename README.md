@@ -15,7 +15,7 @@ Implemented now:
 - Built-in language adapter registry for Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash parser support.
 - LSP server discovery for semantic enrichment readiness across Rust, Go, JavaScript/TypeScript, Python, C/C++, PHP, and Bash.
 - Project semantic readiness reports showing which scanned languages are covered by installed LSP servers.
-- Semantic enrichment plans showing ready, blocked, and unsupported LSP work by language.
+- Semantic enrichment plans showing ready, blocked, and unsupported LSP work by language, including capped concrete work queues for agents.
 - Filesystem scanner with default build/vendor ignore rules.
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, PHP, and Bash.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
@@ -114,6 +114,7 @@ Report available semantic language servers:
 cargo run -p codegraph-cli -- lsp
 cargo run -p codegraph-cli -- semantic-readiness .
 cargo run -p codegraph-cli -- semantic-plan .
+cargo run -p codegraph-cli -- semantic-plan . --work-item-limit 25
 ```
 
 Limit per-file scan reads for very large repositories:
@@ -379,6 +380,7 @@ curl 'http://127.0.0.1:3765/api/languages'
 curl 'http://127.0.0.1:3765/api/lsp'
 curl 'http://127.0.0.1:3765/api/semantic-readiness?path=.'
 curl 'http://127.0.0.1:3765/api/semantic-plan?path=.'
+curl 'http://127.0.0.1:3765/api/semantic-plan?path=.&work_item_limit=25'
 curl 'http://127.0.0.1:3765/api/coverage?path=.'
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'

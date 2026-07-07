@@ -1,8 +1,10 @@
-use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeKind};
+use codegraph_core::{CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind, SourceSpan};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
+
+pub const DEFAULT_SEMANTIC_WORK_ITEM_LIMIT: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LspDiscoveryReport {
@@ -52,6 +54,10 @@ pub struct SemanticEnrichmentPlan {
     pub semantic_candidate_nodes: usize,
     pub heuristic_edges_to_upgrade: usize,
     pub planned_requests: SemanticRequestCounts,
+    pub total_work_items: usize,
+    pub work_item_limit: usize,
+    pub truncated_work_items: bool,
+    pub work_items: Vec<SemanticWorkItem>,
     pub missing_servers: Vec<&'static str>,
 }
 
@@ -77,6 +83,32 @@ pub struct SemanticRequestCounts {
     pub definitions: usize,
     pub references: usize,
     pub diagnostics: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SemanticWorkItem {
+    pub kind: &'static str,
+    pub capability: &'static str,
+    pub language: String,
+    pub status: &'static str,
+    pub server: Option<&'static str>,
+    pub blocked_reason: Option<&'static str>,
+    pub path: Option<String>,
+    pub line: Option<u32>,
+    pub column: Option<u32>,
+    pub node: Option<SemanticNodeRef>,
+    pub target: Option<SemanticNodeRef>,
+    pub edge_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SemanticNodeRef {
+    pub id: NodeId,
+    pub kind: NodeKind,
+    pub label: String,
+    pub path: Option<String>,
+    pub line: Option<u32>,
+    pub column: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,8 +233,15 @@ pub fn semantic_readiness(languages: &BTreeMap<String, usize>) -> SemanticReadin
 }
 
 pub fn semantic_enrichment_plan(graph: &CodeGraph) -> SemanticEnrichmentPlan {
+    semantic_enrichment_plan_with_limit(graph, DEFAULT_SEMANTIC_WORK_ITEM_LIMIT)
+}
+
+pub fn semantic_enrichment_plan_with_limit(
+    graph: &CodeGraph,
+    work_item_limit: usize,
+) -> SemanticEnrichmentPlan {
     let discovery = discover_lsp_servers();
-    semantic_enrichment_plan_with_discovery(graph, &discovery)
+    semantic_enrichment_plan_with_discovery_and_limit(graph, &discovery, work_item_limit)
 }
 
 pub fn semantic_readiness_with_discovery(
@@ -263,6 +302,18 @@ pub fn semantic_readiness_with_discovery(
 pub fn semantic_enrichment_plan_with_discovery(
     graph: &CodeGraph,
     discovery: &LspDiscoveryReport,
+) -> SemanticEnrichmentPlan {
+    semantic_enrichment_plan_with_discovery_and_limit(
+        graph,
+        discovery,
+        DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+    )
+}
+
+pub fn semantic_enrichment_plan_with_discovery_and_limit(
+    graph: &CodeGraph,
+    discovery: &LspDiscoveryReport,
+    work_item_limit: usize,
 ) -> SemanticEnrichmentPlan {
     let mut languages: BTreeMap<String, LanguagePlanAccumulator> = BTreeMap::new();
 
@@ -387,6 +438,7 @@ pub fn semantic_enrichment_plan_with_discovery(
         .iter()
         .filter(|plan| plan.status == "unsupported_language")
         .count();
+    let (work_items, total_work_items) = semantic_work_items(graph, &plans, work_item_limit);
 
     SemanticEnrichmentPlan {
         languages: plans,
@@ -397,6 +449,10 @@ pub fn semantic_enrichment_plan_with_discovery(
         semantic_candidate_nodes,
         heuristic_edges_to_upgrade,
         planned_requests: totals,
+        total_work_items,
+        work_item_limit,
+        truncated_work_items: total_work_items > work_items.len(),
+        work_items,
         missing_servers: missing_servers.into_iter().collect(),
     }
 }
@@ -429,6 +485,234 @@ impl SemanticRequestCounts {
         self.references += other.references;
         self.diagnostics += other.diagnostics;
     }
+}
+
+fn semantic_work_items(
+    graph: &CodeGraph,
+    plans: &[LanguageEnrichmentPlan],
+    work_item_limit: usize,
+) -> (Vec<SemanticWorkItem>, usize) {
+    let mut work_items = Vec::new();
+    let mut total_work_items = 0;
+    let nodes_by_id: BTreeMap<_, _> = graph.nodes.iter().map(|node| (node.id, node)).collect();
+
+    for plan in plans {
+        if plan.status == "unsupported_language" {
+            push_semantic_work_item(
+                &mut work_items,
+                &mut total_work_items,
+                work_item_limit,
+                SemanticWorkItem {
+                    kind: "language_support",
+                    capability: "language_server",
+                    language: plan.language.clone(),
+                    status: plan.status,
+                    server: None,
+                    blocked_reason: plan.blocked_reason,
+                    path: None,
+                    line: None,
+                    column: None,
+                    node: None,
+                    target: None,
+                    edge_index: None,
+                },
+            );
+            continue;
+        }
+
+        if plan.capabilities.contains(&"document_symbols") {
+            for node in language_file_nodes(graph, &plan.language) {
+                push_semantic_work_item(
+                    &mut work_items,
+                    &mut total_work_items,
+                    work_item_limit,
+                    file_work_item("document_symbols", plan, node),
+                );
+            }
+        }
+        if plan.capabilities.contains(&"diagnostics") {
+            for node in language_file_nodes(graph, &plan.language) {
+                push_semantic_work_item(
+                    &mut work_items,
+                    &mut total_work_items,
+                    work_item_limit,
+                    file_work_item("diagnostics", plan, node),
+                );
+            }
+        }
+        if plan.capabilities.contains(&"references") {
+            for node in language_symbol_nodes(graph, &plan.language) {
+                push_semantic_work_item(
+                    &mut work_items,
+                    &mut total_work_items,
+                    work_item_limit,
+                    node_work_item("references", plan, node),
+                );
+            }
+        }
+        if plan.capabilities.contains(&"definitions") {
+            for (edge_index, edge) in language_heuristic_edges(graph, &nodes_by_id, &plan.language)
+            {
+                let source = nodes_by_id.get(&edge.source).copied();
+                let target = nodes_by_id.get(&edge.target).copied();
+                push_semantic_work_item(
+                    &mut work_items,
+                    &mut total_work_items,
+                    work_item_limit,
+                    edge_work_item("definitions", plan, edge_index, edge, source, target),
+                );
+            }
+        }
+    }
+
+    (work_items, total_work_items)
+}
+
+fn language_file_nodes<'a>(graph: &'a CodeGraph, language: &str) -> impl Iterator<Item = &'a Node> {
+    graph.nodes.iter().filter(move |node| {
+        node.kind == NodeKind::File
+            && node_language(node.metadata.get("language").map(String::as_str)) == Some(language)
+    })
+}
+
+fn language_symbol_nodes<'a>(
+    graph: &'a CodeGraph,
+    language: &str,
+) -> impl Iterator<Item = &'a Node> {
+    graph.nodes.iter().filter(move |node| {
+        is_symbol_candidate(&node.kind)
+            && node.span.is_some()
+            && node_language(node.metadata.get("language").map(String::as_str)) == Some(language)
+    })
+}
+
+fn language_heuristic_edges<'a>(
+    graph: &'a CodeGraph,
+    nodes_by_id: &'a BTreeMap<NodeId, &'a Node>,
+    language: &str,
+) -> impl Iterator<Item = (usize, &'a Edge)> {
+    graph.edges.iter().enumerate().filter(move |(_, edge)| {
+        matches!(edge.confidence, Confidence::Heuristic | Confidence::Unknown)
+            && matches!(
+                edge.kind,
+                EdgeKind::Calls | EdgeKind::Imports | EdgeKind::References
+            )
+            && nodes_by_id
+                .get(&edge.source)
+                .and_then(|node| node_language(node.metadata.get("language").map(String::as_str)))
+                == Some(language)
+    })
+}
+
+fn push_semantic_work_item(
+    work_items: &mut Vec<SemanticWorkItem>,
+    total_work_items: &mut usize,
+    work_item_limit: usize,
+    item: SemanticWorkItem,
+) {
+    *total_work_items += 1;
+    if work_items.len() < work_item_limit {
+        work_items.push(item);
+    }
+}
+
+fn file_work_item(
+    capability: &'static str,
+    plan: &LanguageEnrichmentPlan,
+    node: &Node,
+) -> SemanticWorkItem {
+    let (path, line, column) = node_location(node);
+    SemanticWorkItem {
+        kind: "file",
+        capability,
+        language: plan.language.clone(),
+        status: plan.status,
+        server: plan.server,
+        blocked_reason: plan.blocked_reason,
+        path,
+        line,
+        column,
+        node: Some(node_ref(node)),
+        target: None,
+        edge_index: None,
+    }
+}
+
+fn node_work_item(
+    capability: &'static str,
+    plan: &LanguageEnrichmentPlan,
+    node: &Node,
+) -> SemanticWorkItem {
+    let (path, line, column) = node_location(node);
+    SemanticWorkItem {
+        kind: "symbol",
+        capability,
+        language: plan.language.clone(),
+        status: plan.status,
+        server: plan.server,
+        blocked_reason: plan.blocked_reason,
+        path,
+        line,
+        column,
+        node: Some(node_ref(node)),
+        target: None,
+        edge_index: None,
+    }
+}
+
+fn edge_work_item(
+    capability: &'static str,
+    plan: &LanguageEnrichmentPlan,
+    edge_index: usize,
+    _edge: &Edge,
+    source: Option<&Node>,
+    target: Option<&Node>,
+) -> SemanticWorkItem {
+    let (path, line, column) = source.map(node_location).unwrap_or((None, None, None));
+    SemanticWorkItem {
+        kind: "edge",
+        capability,
+        language: plan.language.clone(),
+        status: plan.status,
+        server: plan.server,
+        blocked_reason: plan.blocked_reason,
+        path,
+        line,
+        column,
+        node: source.map(node_ref),
+        target: target.map(node_ref),
+        edge_index: Some(edge_index),
+    }
+}
+
+fn node_ref(node: &Node) -> SemanticNodeRef {
+    let (path, line, column) = node_location(node);
+    SemanticNodeRef {
+        id: node.id,
+        kind: node.kind.clone(),
+        label: node.label.clone(),
+        path,
+        line,
+        column,
+    }
+}
+
+fn node_location(node: &Node) -> (Option<String>, Option<u32>, Option<u32>) {
+    if let Some(span) = &node.span {
+        return span_location(span);
+    }
+    if node.kind == NodeKind::File {
+        return (Some(node.label.clone()), None, None);
+    }
+    (None, None, None)
+}
+
+fn span_location(span: &SourceSpan) -> (Option<String>, Option<u32>, Option<u32>) {
+    (
+        Some(span.path.clone()),
+        Some(span.start_line),
+        Some(span.start_column),
+    )
 }
 
 fn node_language(language: Option<&str>) -> Option<&str> {
@@ -693,6 +977,21 @@ mod tests {
         assert_eq!(plan.planned_requests.definitions, 1);
         assert_eq!(plan.planned_requests.references, 2);
         assert_eq!(plan.planned_requests.diagnostics, 0);
+        assert_eq!(plan.total_work_items, 7);
+        assert_eq!(plan.work_item_limit, DEFAULT_SEMANTIC_WORK_ITEM_LIMIT);
+        assert!(!plan.truncated_work_items);
+        assert!(plan.work_items.iter().any(|item| {
+            item.kind == "edge"
+                && item.capability == "definitions"
+                && item.language == "rust"
+                && item.status == "ready"
+                && item.edge_index == Some(1)
+        }));
+        assert!(plan.work_items.iter().any(|item| {
+            item.kind == "language_support"
+                && item.language == "markdown"
+                && item.status == "unsupported_language"
+        }));
 
         assert_eq!(rust.status, "ready");
         assert_eq!(rust.files, 1);
