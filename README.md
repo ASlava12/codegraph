@@ -60,6 +60,7 @@ Implemented now:
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Persistent server-side graph cache with project fingerprint invalidation.
 - Persistent CLI graph cache using the same project fingerprinting and cache records as the server.
+- Persistent per-file parser fact cache reused during graph-cache misses.
 - Cache fingerprint diff diagnostics in CLI, API, and web UI for explaining cache misses by added, removed, and modified files.
 - Scan coverage reports in CLI, API, and web overview for indexed files, policy skips, large-file skips, and non-indexed files.
 - CLI scan benchmark reports with timing and graph-size metrics for regression tracking.

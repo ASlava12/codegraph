@@ -1,4 +1,5 @@
 use codegraph_core::SourceSpan;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::Path;
 use thiserror::Error;
@@ -14,7 +15,8 @@ pub enum ParseError {
     InvalidUtf8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Language {
     Rust,
     Python,
@@ -222,14 +224,14 @@ impl fmt::Display for Language {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedFile {
     pub language: Language,
     pub items: Vec<ParsedItem>,
     pub has_error_nodes: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedItem {
     pub kind: ParsedItemKind,
     pub label: String,
@@ -237,7 +239,8 @@ pub struct ParsedItem {
     pub parent: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ParsedItemKind {
     Function,
     Type,

@@ -29,7 +29,7 @@ It currently builds file, symbol, import, local import resolution, call, config,
 
 `codegraph-storage` owns persistent graph cache records and project fingerprints.
 
-The first implementation stores whole-graph JSON cache records keyed by root path and effective scan options, including repository config and the file-size budget. A fingerprint records scanned relative paths, file sizes, and modification times; a cache hit is only used when the current fingerprint matches the stored record. Cache diff reports compare the stored and current fingerprints so CLI, API, and web users can see added, removed, and modified files behind a miss. This is deliberately conservative: it accelerates repeated API and UI scans without yet promising partial graph reuse.
+The first implementation stores whole-graph JSON cache records keyed by root path and effective scan options, including repository config and the file-size budget. A fingerprint records scanned relative paths, file sizes, and modification times; a cache hit is only used when the current fingerprint matches the stored record. Cache diff reports compare the stored and current fingerprints so CLI, API, and web users can see added, removed, and modified files behind a miss. Graph-cache misses use a persistent per-file parser fact cache under the cache directory, keyed by language, relative path, file size, and modification time, so unchanged files can reuse parsed syntax facts while the graph is rebuilt. This is deliberately conservative: it accelerates repeated API and UI scans without yet promising partial graph reuse.
 
 ### Analysis
 

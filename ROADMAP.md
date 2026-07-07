@@ -182,7 +182,8 @@ Goal: handle real repositories efficiently.
 - [x] Add scan coverage reports for indexed files and skip reasons.
 - Add persistent index storage with partial graph reuse.
 - Incrementally update changed files.
-- Cache parser and LSP facts.
+- [x] Cache parser facts.
+- Cache LSP facts.
 - [x] Add first large graph filtering and paging endpoint.
 - [x] Support first UI-driven large graph paging.
 - [x] Add first CLI scan benchmarks.

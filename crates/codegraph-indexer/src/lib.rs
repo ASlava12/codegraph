@@ -1,14 +1,19 @@
 use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan};
-use codegraph_parser::{Language, ParsedItemKind, adapter_for_path};
+use codegraph_parser::{
+    Language, LanguageAdapter, ParsedFile, ParsedItemKind, adapter_for_language, adapter_for_path,
+};
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
 
 pub const DEFAULT_MAX_FILE_SIZE: u64 = 2 * 1024 * 1024;
+const PARSE_CACHE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Error)]
 pub enum IndexError {
@@ -43,6 +48,7 @@ pub struct IndexOptions {
     pub max_file_size: u64,
     pub ignored_names: BTreeSet<String>,
     pub ignored_globs: BTreeSet<String>,
+    pub parse_cache_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -117,6 +123,20 @@ struct PendingEntrypointTarget {
     target: String,
     ecosystem: String,
     entrypoint_kind: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct FileStamp {
+    len: u64,
+    modified_ns: Option<u128>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ParseCacheRecord {
+    cache_schema_version: u32,
+    language: Language,
+    stamp: FileStamp,
+    parsed: ParsedFile,
 }
 
 struct EntrypointTargetCandidate {
@@ -237,7 +257,15 @@ impl Default for IndexOptions {
             max_file_size: DEFAULT_MAX_FILE_SIZE,
             ignored_names: default_ignored_names(),
             ignored_globs: BTreeSet::new(),
+            parse_cache_dir: None,
         }
+    }
+}
+
+impl IndexOptions {
+    pub fn with_parse_cache_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.parse_cache_dir = Some(dir.into());
+        self
     }
 }
 
@@ -528,7 +556,7 @@ pub fn scan_project(
                         index_skipped_file(&mut context, path, &label, metadata.len(), options);
                     }
                 }
-                _ => index_file(&mut context, path, &label),
+                _ => index_file(&mut context, path, &label, options),
             }
         }
     }
@@ -661,7 +689,7 @@ fn index_skipped_file(
     );
 }
 
-fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
+fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &IndexOptions) {
     let mut metadata = BTreeMap::new();
     let source_bytes = fs::read(path)
         .map_err(|error| {
@@ -681,18 +709,11 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
     }
 
     let parse_result = source_bytes.as_ref().and_then(|source| {
-        if let Some(adapter) = adapter {
-            Some((adapter.language(), adapter.parse(Path::new(label), source)))
-        } else {
-            language.map(|language| {
-                (
-                    language,
-                    codegraph_parser::adapter_for_language(language)
-                        .expect("shebang languages are backed by built-in adapters")
-                        .parse(Path::new(label), source),
-                )
-            })
-        }
+        let adapter = adapter.or_else(|| language.and_then(adapter_for_language))?;
+        Some((
+            adapter.language(),
+            parse_source_cached(options, path, label, source, adapter),
+        ))
     });
 
     let file_id = context
@@ -915,6 +936,90 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
             ),
         }
     }
+}
+
+fn parse_source_cached(
+    options: &IndexOptions,
+    path: &Path,
+    label: &str,
+    source: &[u8],
+    adapter: &dyn LanguageAdapter,
+) -> Result<ParsedFile, codegraph_parser::ParseError> {
+    let Some(cache_dir) = options.parse_cache_dir.as_deref() else {
+        return adapter.parse(Path::new(label), source);
+    };
+    let Some(stamp) = file_stamp(path) else {
+        return adapter.parse(Path::new(label), source);
+    };
+    let language = adapter.language();
+
+    if let Some(parsed) = load_cached_parse(cache_dir, label, language, stamp) {
+        return Ok(parsed);
+    }
+
+    let parsed = adapter.parse(Path::new(label), source)?;
+    store_cached_parse(cache_dir, label, language, stamp, &parsed);
+    Ok(parsed)
+}
+
+fn load_cached_parse(
+    cache_dir: &Path,
+    label: &str,
+    language: Language,
+    stamp: FileStamp,
+) -> Option<ParsedFile> {
+    let path = parse_cache_path(cache_dir, label, language);
+    let bytes = fs::read(path).ok()?;
+    let record: ParseCacheRecord = serde_json::from_slice(&bytes).ok()?;
+    if record.cache_schema_version == PARSE_CACHE_SCHEMA_VERSION
+        && record.language == language
+        && record.stamp == stamp
+    {
+        Some(record.parsed)
+    } else {
+        None
+    }
+}
+
+fn store_cached_parse(
+    cache_dir: &Path,
+    label: &str,
+    language: Language,
+    stamp: FileStamp,
+    parsed: &ParsedFile,
+) {
+    let record = ParseCacheRecord {
+        cache_schema_version: PARSE_CACHE_SCHEMA_VERSION,
+        language,
+        stamp,
+        parsed: parsed.clone(),
+    };
+    if fs::create_dir_all(cache_dir).is_err() {
+        return;
+    }
+    if let Ok(bytes) = serde_json::to_vec(&record) {
+        let _ = fs::write(parse_cache_path(cache_dir, label, language), bytes);
+    }
+}
+
+fn parse_cache_path(cache_dir: &Path, label: &str, language: Language) -> PathBuf {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    language.hash(&mut hasher);
+    label.hash(&mut hasher);
+    cache_dir.join(format!("parse-{:016x}.json", hasher.finish()))
+}
+
+fn file_stamp(path: &Path) -> Option<FileStamp> {
+    let metadata = fs::metadata(path).ok()?;
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos());
+    Some(FileStamp {
+        len: metadata.len(),
+        modified_ns,
+    })
 }
 
 fn index_manifest_facts(
@@ -5064,6 +5169,40 @@ mod tests {
         );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_uses_persistent_parse_cache_records() {
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        let source_path = root.join("src").join("main.rs");
+        fs::write(&source_path, "fn main() {}\n").unwrap();
+        let options = IndexOptions::default().with_parse_cache_dir(cache_dir.clone());
+
+        let graph = scan_project(&root, &options).unwrap();
+        let stamp = file_stamp(&source_path).unwrap();
+        let cached = load_cached_parse(&cache_dir, "src/main.rs", Language::Rust, stamp).unwrap();
+
+        assert!(graph.nodes.iter().any(|node| node.label == "main"));
+        assert!(
+            cached
+                .items
+                .iter()
+                .any(|item| item.label == "main" && item.kind == ParsedItemKind::Entrypoint)
+        );
+
+        fs::write(&source_path, "fn main() {}\nfn helper() {}\n").unwrap();
+        let graph = scan_project(&root, &options).unwrap();
+
+        assert!(
+            load_cached_parse(&cache_dir, "src/main.rs", Language::Rust, stamp).is_none(),
+            "stale parse cache records must not be reused after file changes"
+        );
+        assert!(graph.nodes.iter().any(|node| node.label == "helper"));
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
     }
 
     #[test]

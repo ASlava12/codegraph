@@ -265,6 +265,7 @@ name = "codegraph-parser"
 version = "0.1.0"
 dependencies = [
  "codegraph-core",
+ "serde",
  "thiserror",
  "tree-sitter",
  "tree-sitter-bash",

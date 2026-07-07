@@ -336,7 +336,10 @@ pub fn scan_project_cached(
         });
     }
 
-    let graph = scan_project(root, options)?;
+    let scan_options = options
+        .clone()
+        .with_parse_cache_dir(cache.dir().join("parse-facts"));
+    let graph = scan_project(root, &scan_options)?;
     let _ = cache.store(root, options, fingerprint, &graph);
     Ok(CachedScan {
         graph,
@@ -771,6 +774,13 @@ mod tests {
         assert_eq!(first.cache.status, CacheStatus::Miss);
         assert_eq!(second.cache.status, CacheStatus::Hit);
         assert_eq!(first.graph, second.graph);
+        assert!(
+            fs::read_dir(cache_dir.join("parse-facts"))
+                .unwrap()
+                .next()
+                .is_some(),
+            "graph cache misses should populate persistent per-file parse facts"
+        );
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();
     }
