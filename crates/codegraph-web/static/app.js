@@ -719,10 +719,12 @@ function renderScanPolicy(options) {
   }
 
   const ignoredNames = Array.isArray(options.ignored_names) ? options.ignored_names : [];
+  const ignoredGlobs = Array.isArray(options.ignored_globs) ? options.ignored_globs : [];
   const chips = [
     ["Max file", formatBytes(Number(options.max_file_size || 0))],
     ["Policy", options.config_path ? ".codegraph" : "defaults"],
     ["Ignore names", String(ignoredNames.length)],
+    ["Ignore globs", String(ignoredGlobs.length)],
     ["Hidden", options.include_hidden ? "yes" : "no"],
     ["Git ignored", options.include_ignored ? "yes" : "no"],
   ];

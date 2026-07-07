@@ -58,8 +58,8 @@ Implemented now:
 - Cache fingerprint diff diagnostics in CLI, API, and web UI for explaining cache misses by added, removed, and modified files.
 - CLI scan benchmark reports with timing and graph-size metrics for regression tracking.
 - Configurable scan file-size budget for CLI/server scans, with skipped large source files kept visible in summaries, insights, and the web stats panel.
-- Repository-owned scan policy from `.codegraph/config.toml` for file-size budgets and ignored names.
-- Effective scan policy API and web overview chips for explaining the active file-size, hidden-file, ignored-file, and ignored-name rules.
+- Repository-owned scan policy from `.codegraph/config.toml` for file-size budgets plus ignored names and globs.
+- Effective scan policy API and web overview chips for explaining the active file-size, hidden-file, ignored-file, ignored-name, and ignored-glob rules.
 - CI checks for formatting, clippy, tests, UI syntax, CLI scan, and server cache smoke tests.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Investigation insights for manifest entrypoints whose declared target cannot be resolved to a file or function.
@@ -148,10 +148,13 @@ max_file_size = 1048576
 include_hidden = false
 include_ignored = false
 extra_ignored_names = ["coverage", "generated"]
+extra_ignored_globs = ["fixtures/**", "public/**/*.min.js"]
 ```
 
 `ignored_names = [...]` replaces the default ignored directory list, while
-`extra_ignored_names = [...]` extends it. CLI/server flags such as
+`extra_ignored_names = [...]` extends it. `ignored_globs = [...]` replaces the
+repository path-pattern ignore list, while `extra_ignored_globs = [...]` extends
+it. Glob patterns are matched against normalized project-relative paths. CLI/server flags such as
 `--include-hidden`, `--include-ignored`, and `--max-file-size` override the
 repository config for that run.
 

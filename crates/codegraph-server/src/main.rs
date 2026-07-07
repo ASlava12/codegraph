@@ -300,6 +300,7 @@ struct ScanOptionsResponse {
     include_ignored: bool,
     max_file_size: u64,
     ignored_names: Vec<String>,
+    ignored_globs: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -637,6 +638,7 @@ async fn scan_options_api(
         include_ignored: options.include_ignored,
         max_file_size: options.max_file_size,
         ignored_names: options.ignored_names.into_iter().collect(),
+        ignored_globs: options.ignored_globs.into_iter().collect(),
     }))
 }
 
@@ -1014,6 +1016,7 @@ async fn source_search_api(
         include_ignored: options.include_ignored,
         max_file_size: options.max_file_size,
         ignored_names: options.ignored_names,
+        ignored_globs: options.ignored_globs,
     };
     let result = tokio::task::spawn_blocking(move || search_source(&search_root, &request))
         .await

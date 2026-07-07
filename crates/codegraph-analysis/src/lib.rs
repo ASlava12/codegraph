@@ -1,4 +1,5 @@
 use codegraph_core::{CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -33,6 +34,7 @@ pub struct SourceSearchRequest {
     pub include_ignored: bool,
     pub max_file_size: u64,
     pub ignored_names: BTreeSet<String>,
+    pub ignored_globs: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -319,12 +321,13 @@ pub fn search_source(root: &Path, request: &SourceSearchRequest) -> SourceSearch
         });
     let limit = request.limit.clamp(1, 1_000);
     let context = request.context.min(20);
+    let ignored_globs = compile_ignored_globs(&request.ignored_globs);
     let mut matches = Vec::new();
     let mut total_matches = 0usize;
 
     for entry in WalkDir::new(root)
         .into_iter()
-        .filter_entry(|entry| should_search_entry(entry, request))
+        .filter_entry(|entry| should_search_entry(entry, root, request, &ignored_globs))
         .filter_map(Result::ok)
     {
         let path = entry.path();
@@ -412,19 +415,81 @@ fn source_search_context(
         .collect()
 }
 
-fn should_search_entry(entry: &DirEntry, request: &SourceSearchRequest) -> bool {
+fn should_search_entry(
+    entry: &DirEntry,
+    root: &Path,
+    request: &SourceSearchRequest,
+    ignored_globs: &Option<GlobSet>,
+) -> bool {
+    if entry.path() == root {
+        return true;
+    }
+
     if !request.include_hidden && is_hidden_entry(entry) {
         return false;
     }
     if !request.include_ignored
-        && entry
-            .file_name()
-            .to_str()
-            .is_some_and(|name| request.ignored_names.contains(name))
+        && (is_ignored_name(entry, request) || is_ignored_glob(entry.path(), root, ignored_globs))
     {
         return false;
     }
     true
+}
+
+fn is_ignored_name(entry: &DirEntry, request: &SourceSearchRequest) -> bool {
+    entry
+        .file_name()
+        .to_str()
+        .is_some_and(|name| request.ignored_names.contains(name))
+}
+
+fn is_ignored_glob(path: &Path, root: &Path, ignored_globs: &Option<GlobSet>) -> bool {
+    let Some(ignored_globs) = ignored_globs else {
+        return false;
+    };
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    !relative.is_empty() && ignored_globs.is_match(relative)
+}
+
+fn compile_ignored_globs(patterns: &BTreeSet<String>) -> Option<GlobSet> {
+    if patterns.is_empty() {
+        return None;
+    }
+
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        for expanded in expanded_ignored_glob_patterns(pattern) {
+            builder.add(Glob::new(&expanded).ok()?);
+        }
+    }
+    builder.build().ok()
+}
+
+fn expanded_ignored_glob_patterns(pattern: &str) -> Vec<String> {
+    let normalized = normalize_glob_pattern(pattern);
+    let mut patterns = vec![normalized.clone()];
+    for suffix in ["/**", "/**/*"] {
+        if let Some(prefix) = normalized.strip_suffix(suffix)
+            && !prefix.is_empty()
+        {
+            patterns.push(prefix.to_string());
+        }
+    }
+    patterns
+}
+
+fn normalize_glob_pattern(pattern: &str) -> String {
+    let mut normalized = pattern.trim().replace('\\', "/");
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_string();
+    }
+    while let Some(stripped) = normalized.strip_prefix('/') {
+        normalized = stripped.to_string();
+    }
+    normalized
 }
 
 fn is_hidden_entry(entry: &DirEntry) -> bool {
@@ -3738,6 +3803,7 @@ mod tests {
                 include_ignored: false,
                 max_file_size: 1024,
                 ignored_names: BTreeSet::from(["target".to_string()]),
+                ignored_globs: BTreeSet::from(["fixtures/**".to_string()]),
             },
         );
 
@@ -3768,6 +3834,44 @@ mod tests {
                 .iter()
                 .any(|line| line.highlight && line.text.contains("token = load_secret()"))
         );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn source_search_respects_ignored_globs() {
+        let root = temp_analysis_root();
+        std::fs::create_dir_all(root.join("src").join("generated")).unwrap();
+        std::fs::create_dir_all(root.join("src").join("domain")).unwrap();
+        std::fs::write(
+            root.join("src").join("generated").join("skip.py"),
+            "token = 1\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src").join("domain").join("keep.py"),
+            "token = 2\n",
+        )
+        .unwrap();
+
+        let result = search_source(
+            &root,
+            &SourceSearchRequest {
+                query: "token".to_string(),
+                path_filter: None,
+                case_sensitive: false,
+                limit: 10,
+                context: 0,
+                include_hidden: false,
+                include_ignored: false,
+                max_file_size: 1024,
+                ignored_names: BTreeSet::new(),
+                ignored_globs: BTreeSet::from(["src/generated/**".to_string()]),
+            },
+        );
+
+        assert_eq!(result.total_matches, 1);
+        assert_eq!(result.matches[0].path, "src/domain/keep.py");
 
         std::fs::remove_dir_all(root).unwrap();
     }

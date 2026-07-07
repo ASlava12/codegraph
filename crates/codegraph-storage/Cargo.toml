@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 codegraph-core.workspace = true
 codegraph-indexer.workspace = true
+globset.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

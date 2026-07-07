@@ -1,5 +1,6 @@
 use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan};
 use codegraph_parser::{Language, ParsedItemKind, parse_source};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,6 +31,8 @@ pub enum IndexError {
     },
     #[error("invalid project config at {path}: {message}")]
     ConfigInvalid { path: PathBuf, message: String },
+    #[error("invalid scan options: {message}")]
+    InvalidOptions { message: String },
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +41,7 @@ pub struct IndexOptions {
     pub include_ignored: bool,
     pub max_file_size: u64,
     pub ignored_names: BTreeSet<String>,
+    pub ignored_globs: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -201,6 +205,7 @@ impl Default for IndexOptions {
             include_ignored: false,
             max_file_size: DEFAULT_MAX_FILE_SIZE,
             ignored_names: default_ignored_names(),
+            ignored_globs: BTreeSet::new(),
         }
     }
 }
@@ -278,6 +283,21 @@ fn apply_project_config(
     if let Some(extra_ignored_names) = optional_string_array(path, scan, "extra_ignored_names")? {
         options.ignored_names.extend(extra_ignored_names);
     }
+    if let Some(ignored_globs) = optional_string_array(path, scan, "ignored_globs")? {
+        validate_ignored_globs(path, "ignored_globs", &ignored_globs)?;
+        options.ignored_globs = ignored_globs
+            .into_iter()
+            .map(|pattern| normalize_glob_pattern(&pattern))
+            .collect();
+    }
+    if let Some(extra_ignored_globs) = optional_string_array(path, scan, "extra_ignored_globs")? {
+        validate_ignored_globs(path, "extra_ignored_globs", &extra_ignored_globs)?;
+        options.ignored_globs.extend(
+            extra_ignored_globs
+                .into_iter()
+                .map(|pattern| normalize_glob_pattern(&pattern)),
+        );
+    }
 
     Ok(())
 }
@@ -345,6 +365,64 @@ fn optional_string_array(
         .transpose()
 }
 
+fn validate_ignored_globs(path: &Path, key: &str, patterns: &[String]) -> Result<(), IndexError> {
+    for pattern in patterns {
+        let normalized = normalize_glob_pattern(pattern);
+        for expanded in expanded_ignored_glob_patterns(&normalized) {
+            Glob::new(&expanded).map_err(|error| {
+                config_invalid(path, &format!("scan.{key} contains invalid glob: {error}"))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn compile_ignored_globs(patterns: &BTreeSet<String>) -> Result<Option<GlobSet>, IndexError> {
+    if patterns.is_empty() {
+        return Ok(None);
+    }
+
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        for expanded in expanded_ignored_glob_patterns(pattern) {
+            builder.add(
+                Glob::new(&expanded).map_err(|error| IndexError::InvalidOptions {
+                    message: format!("ignored glob `{pattern}` is invalid: {error}"),
+                })?,
+            );
+        }
+    }
+    Ok(Some(builder.build().map_err(|error| {
+        IndexError::InvalidOptions {
+            message: format!("ignored glob set is invalid: {error}"),
+        }
+    })?))
+}
+
+fn expanded_ignored_glob_patterns(pattern: &str) -> Vec<String> {
+    let normalized = normalize_glob_pattern(pattern);
+    let mut patterns = vec![normalized.clone()];
+    for suffix in ["/**", "/**/*"] {
+        if let Some(prefix) = normalized.strip_suffix(suffix)
+            && !prefix.is_empty()
+        {
+            patterns.push(prefix.to_string());
+        }
+    }
+    patterns
+}
+
+fn normalize_glob_pattern(pattern: &str) -> String {
+    let mut normalized = pattern.trim().replace('\\', "/");
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_string();
+    }
+    while let Some(stripped) = normalized.strip_prefix('/') {
+        normalized = stripped.to_string();
+    }
+    normalized
+}
+
 fn config_invalid(path: &Path, message: &str) -> IndexError {
     IndexError::ConfigInvalid {
         path: path.to_path_buf(),
@@ -357,13 +435,14 @@ pub fn scan_project(
     options: &IndexOptions,
 ) -> Result<CodeGraph, IndexError> {
     let root = root.as_ref();
+    let ignored_globs = compile_ignored_globs(&options.ignored_globs)?;
     let root_label = root
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(".");
     let cargo_workspace_dependencies = cargo_workspace_dependencies(root);
-    let go_modules = go_module_roots(root, options);
-    let c_include_dirs = c_include_dirs(root, options);
+    let go_modules = go_module_roots(root, options, &ignored_globs);
+    let c_include_dirs = c_include_dirs(root, options, &ignored_globs);
     let custom_rules = custom_rules(root);
     let annotations = graph_annotations(root);
     let mut context = IndexContext {
@@ -383,7 +462,7 @@ pub fn scan_project(
 
     for entry in WalkDir::new(root)
         .into_iter()
-        .filter_entry(|entry| should_enter(entry, options))
+        .filter_entry(|entry| should_enter(entry, root, options, &ignored_globs))
     {
         let entry = entry.map_err(|source| IndexError::Walk {
             path: root.to_path_buf(),
@@ -3008,11 +3087,15 @@ fn cargo_workspace_dependencies(root: &Path) -> BTreeMap<String, Option<String>>
         .collect()
 }
 
-fn go_module_roots(root: &Path, options: &IndexOptions) -> Vec<GoModuleRoot> {
+fn go_module_roots(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Vec<GoModuleRoot> {
     let mut modules = Vec::new();
     for entry in WalkDir::new(root)
         .into_iter()
-        .filter_entry(|entry| should_enter(entry, options))
+        .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
         .filter_map(Result::ok)
     {
         let path = entry.path();
@@ -3049,18 +3132,26 @@ fn go_module_roots(root: &Path, options: &IndexOptions) -> Vec<GoModuleRoot> {
     modules
 }
 
-fn c_include_dirs(root: &Path, options: &IndexOptions) -> Vec<String> {
-    let mut dirs = cmake_include_dirs(root, options);
-    dirs.extend(compile_commands_include_dirs(root, options));
+fn c_include_dirs(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Vec<String> {
+    let mut dirs = cmake_include_dirs(root, options, ignored_globs);
+    dirs.extend(compile_commands_include_dirs(root, options, ignored_globs));
     dedup_preserving_order(&mut dirs);
     dirs
 }
 
-fn cmake_include_dirs(root: &Path, options: &IndexOptions) -> Vec<String> {
+fn cmake_include_dirs(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Vec<String> {
     let mut dirs = Vec::new();
     for entry in WalkDir::new(root)
         .into_iter()
-        .filter_entry(|entry| should_enter(entry, options))
+        .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
         .filter_map(Result::ok)
     {
         let path = entry.path();
@@ -3088,11 +3179,15 @@ fn cmake_include_dirs(root: &Path, options: &IndexOptions) -> Vec<String> {
     dirs
 }
 
-fn compile_commands_include_dirs(root: &Path, options: &IndexOptions) -> Vec<String> {
+fn compile_commands_include_dirs(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Vec<String> {
     let mut dirs = Vec::new();
     for entry in WalkDir::new(root)
         .into_iter()
-        .filter_entry(|entry| should_enter(entry, options))
+        .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
         .filter_map(Result::ok)
     {
         let path = entry.path();
@@ -4513,12 +4608,24 @@ fn is_effect_item(kind: ParsedItemKind) -> bool {
     )
 }
 
-fn should_enter(entry: &DirEntry, options: &IndexOptions) -> bool {
+fn should_enter(
+    entry: &DirEntry,
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> bool {
+    if entry.path() == root {
+        return true;
+    }
+
     if !options.include_hidden && is_hidden(entry) {
         return false;
     }
 
-    if !options.include_ignored && is_ignored_name(entry, &options.ignored_names) {
+    if !options.include_ignored
+        && (is_ignored_name(entry, &options.ignored_names)
+            || is_ignored_glob(entry.path(), root, ignored_globs))
+    {
         return false;
     }
 
@@ -4537,6 +4644,17 @@ fn is_ignored_name(entry: &DirEntry, ignored_names: &BTreeSet<String>) -> bool {
         .file_name()
         .to_str()
         .is_some_and(|name| ignored_names.contains(name))
+}
+
+fn is_ignored_glob(path: &Path, root: &Path, ignored_globs: &Option<GlobSet>) -> bool {
+    let Some(ignored_globs) = ignored_globs else {
+        return false;
+    };
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    !relative.is_empty() && ignored_globs.is_match(relative)
 }
 
 fn default_ignored_names() -> BTreeSet<String> {
@@ -4622,7 +4740,7 @@ mod tests {
         fs::create_dir_all(root.join(".codegraph")).unwrap();
         fs::write(
             root.join(".codegraph").join("config.toml"),
-            "[scan]\nmax_file_size = 7\nextra_ignored_names = [\"generated\"]\ninclude_hidden = true\n",
+            "[scan]\nmax_file_size = 7\nextra_ignored_names = [\"generated\"]\nextra_ignored_globs = [\"fixtures/**\"]\ninclude_hidden = true\n",
         )
         .unwrap();
 
@@ -4632,6 +4750,40 @@ mod tests {
         assert!(options.include_hidden);
         assert!(options.ignored_names.contains("generated"));
         assert!(options.ignored_names.contains("target"));
+        assert!(options.ignored_globs.contains("fixtures/**"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_skips_configured_ignored_globs() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src").join("generated")).unwrap();
+        fs::create_dir_all(root.join("src").join("domain")).unwrap();
+        fs::write(
+            root.join("src").join("generated").join("skip.rs"),
+            "fn skip() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("domain").join("keep.rs"),
+            "fn keep() {}\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(
+            &root,
+            &IndexOptions {
+                ignored_globs: BTreeSet::from(["src/generated/**".to_string()]),
+                ..IndexOptions::default()
+            },
+        )
+        .unwrap();
+        let labels: Vec<_> = graph.nodes.iter().map(|node| node.label.as_str()).collect();
+
+        assert!(labels.contains(&"src/domain/keep.rs"));
+        assert!(!labels.contains(&"src/generated"));
+        assert!(!labels.contains(&"src/generated/skip.rs"));
 
         fs::remove_dir_all(root).unwrap();
     }

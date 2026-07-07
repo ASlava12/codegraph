@@ -573,6 +573,7 @@ fn main() -> Result<()> {
                     include_ignored: options.include_ignored,
                     max_file_size: options.max_file_size,
                     ignored_names: options.ignored_names,
+                    ignored_globs: options.ignored_globs,
                 },
             );
             println!("{}", serde_json::to_string_pretty(&result)?);

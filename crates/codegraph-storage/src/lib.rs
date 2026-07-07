@@ -1,5 +1,6 @@
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{IndexError, IndexOptions, is_index_relevant_file, scan_project};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
@@ -133,6 +134,7 @@ impl GraphCache {
     ) -> Result<ProjectFingerprint, CacheError> {
         let mut hasher = StableHasher::new();
         hash_index_options(&mut hasher, options);
+        let ignored_globs = compile_ignored_globs(&options.ignored_globs)?;
 
         let mut files = 0;
         let mut bytes = 0;
@@ -142,7 +144,7 @@ impl GraphCache {
         for entry in WalkDir::new(root)
             .sort_by_file_name()
             .into_iter()
-            .filter_entry(|entry| should_enter(entry, options))
+            .filter_entry(|entry| should_enter(entry, root, options, &ignored_globs))
         {
             let entry = entry.map_err(|source| CacheError::Walk {
                 path: root.to_path_buf(),
@@ -467,11 +469,23 @@ fn diff_fingerprints(
     }
 }
 
-fn should_enter(entry: &DirEntry, options: &IndexOptions) -> bool {
+fn should_enter(
+    entry: &DirEntry,
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> bool {
+    if entry.path() == root {
+        return true;
+    }
+
     if !options.include_hidden && is_hidden(entry) {
         return false;
     }
-    if !options.include_ignored && is_ignored_name(entry, &options.ignored_names) {
+    if !options.include_ignored
+        && (is_ignored_name(entry, &options.ignored_names)
+            || is_ignored_glob(entry.path(), root, ignored_globs))
+    {
         return false;
     }
     true
@@ -489,6 +503,63 @@ fn is_ignored_name(entry: &DirEntry, ignored_names: &BTreeSet<String>) -> bool {
         .file_name()
         .to_str()
         .is_some_and(|name| ignored_names.contains(name))
+}
+
+fn is_ignored_glob(path: &Path, root: &Path, ignored_globs: &Option<GlobSet>) -> bool {
+    let Some(ignored_globs) = ignored_globs else {
+        return false;
+    };
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    !relative.is_empty() && ignored_globs.is_match(relative)
+}
+
+fn compile_ignored_globs(patterns: &BTreeSet<String>) -> Result<Option<GlobSet>, IndexError> {
+    if patterns.is_empty() {
+        return Ok(None);
+    }
+
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        for expanded in expanded_ignored_glob_patterns(pattern) {
+            builder.add(
+                Glob::new(&expanded).map_err(|error| IndexError::InvalidOptions {
+                    message: format!("ignored glob `{pattern}` is invalid: {error}"),
+                })?,
+            );
+        }
+    }
+    Ok(Some(builder.build().map_err(|error| {
+        IndexError::InvalidOptions {
+            message: format!("ignored glob set is invalid: {error}"),
+        }
+    })?))
+}
+
+fn expanded_ignored_glob_patterns(pattern: &str) -> Vec<String> {
+    let normalized = normalize_glob_pattern(pattern);
+    let mut patterns = vec![normalized.clone()];
+    for suffix in ["/**", "/**/*"] {
+        if let Some(prefix) = normalized.strip_suffix(suffix)
+            && !prefix.is_empty()
+        {
+            patterns.push(prefix.to_string());
+        }
+    }
+    patterns
+}
+
+fn normalize_glob_pattern(pattern: &str) -> String {
+    let mut normalized = pattern.trim().replace('\\', "/");
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_string();
+    }
+    while let Some(stripped) = normalized.strip_prefix('/') {
+        normalized = stripped.to_string();
+    }
+    normalized
 }
 
 fn modified_unix_nanos(metadata: &fs::Metadata) -> Option<u128> {
@@ -519,6 +590,9 @@ fn hash_index_options(hasher: &mut StableHasher, options: &IndexOptions) {
     hasher.write_u64(options.max_file_size);
     for name in &options.ignored_names {
         hasher.write_str(name);
+    }
+    for pattern in &options.ignored_globs {
+        hasher.write_str(pattern);
     }
 }
 
