@@ -11,7 +11,7 @@ use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
 };
-use codegraph_lsp::discover_lsp_servers;
+use codegraph_lsp::{discover_lsp_servers, semantic_readiness};
 use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
 use serde::Serialize;
@@ -37,6 +37,9 @@ enum Command {
 
     /// Report available semantic language servers for LSP enrichment.
     Lsp,
+
+    /// Report project language coverage by available semantic language servers.
+    SemanticReadiness(ScanArgs),
 
     /// Scan a project and emit the initial graph as JSON.
     Scan {
@@ -527,6 +530,20 @@ fn main() -> Result<()> {
         }
         Command::Lsp => {
             println!("{}", serde_json::to_string_pretty(&discover_lsp_servers())?);
+        }
+        Command::SemanticReadiness(args) => {
+            let graph = scan_with_options(
+                args.path,
+                args.include_hidden,
+                args.include_ignored,
+                max_file_size,
+                &args.cache,
+            )?;
+            let summary = summarize(&graph);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&semantic_readiness(&summary.languages))?
+            );
         }
         Command::Scan {
             path,

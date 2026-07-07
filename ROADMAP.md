@@ -62,6 +62,7 @@ Goal: improve precision where language tooling exists.
 
 - [x] Add `codegraph-lsp`.
 - [x] Add LSP server discovery report in CLI, API, and web overview.
+- [x] Add project semantic readiness reports from scanned language mix and available LSP servers.
 - Use LSP definitions, references, document symbols, workspace symbols, and diagnostics.
 - Add Rust enrichment through `rust-analyzer`.
 - Add TypeScript/JavaScript enrichment through tsserver-compatible tooling.

@@ -33,6 +33,7 @@ const state = {
   scanOptions: null,
   coverage: null,
   lsp: null,
+  semanticReadiness: null,
   architecture: null,
   hotspots: null,
   architecturePathPrefix: "",
@@ -311,6 +312,7 @@ async function scan() {
   state.scanOptions = null;
   state.coverage = null;
   state.lsp = null;
+  state.semanticReadiness = null;
   state.architecture = null;
   state.hotspots = null;
   state.architecturePathPrefix = "";
@@ -537,6 +539,7 @@ async function loadProjectOverview() {
       scanOptionsResponse,
       coverageResponse,
       lspResponse,
+      semanticReadinessResponse,
       architectureResponse,
       hotspotsResponse,
     ] = await Promise.all([
@@ -545,6 +548,7 @@ async function loadProjectOverview() {
       fetch(`/api/scan-options?${params.toString()}`),
       fetch(`/api/coverage?${params.toString()}`),
       fetch("/api/lsp"),
+      fetch(`/api/semantic-readiness?${params.toString()}`),
       fetch(`/api/architecture?${params.toString()}&group_limit=8&edge_limit=40`),
       fetch(`/api/hotspots?${params.toString()}&limit=8`),
     ]);
@@ -553,6 +557,7 @@ async function loadProjectOverview() {
     const scanOptions = await scanOptionsResponse.json();
     const coverage = await coverageResponse.json();
     const lsp = await lspResponse.json();
+    const semanticReadiness = await semanticReadinessResponse.json();
     const architecture = await architectureResponse.json();
     const hotspots = await hotspotsResponse.json();
     if (requestId !== state.overviewRequest) return;
@@ -571,6 +576,9 @@ async function loadProjectOverview() {
     if (!lspResponse.ok) {
       throw new Error(lsp.error || "lsp status failed");
     }
+    if (!semanticReadinessResponse.ok) {
+      throw new Error(semanticReadiness.error || "semantic readiness failed");
+    }
     if (!architectureResponse.ok) {
       throw new Error(architecture.error || "architecture failed");
     }
@@ -581,6 +589,7 @@ async function loadProjectOverview() {
     state.scanOptions = scanOptions;
     state.coverage = coverage;
     state.lsp = lsp;
+    state.semanticReadiness = semanticReadiness;
     state.architecture = architecture;
     state.hotspots = hotspots;
     state.entrypoints = entrypoints;
@@ -663,7 +672,7 @@ function renderOverview() {
 
   renderScanPolicy(state.scanOptions);
   renderCoverage(state.coverage);
-  renderLspStatus(state.lsp);
+  renderLspStatus(state.lsp, state.semanticReadiness);
   renderArchitecture(state.architecture);
   renderHotspots(state.hotspots);
 
@@ -822,13 +831,13 @@ function renderCoverage(coverage) {
     .join("");
 }
 
-function renderLspStatus(report) {
-  if (!report) {
+function renderLspStatus(report, readiness) {
+  if (!report && !readiness) {
     lspList.innerHTML = '<p class="empty">No LSP status.</p>';
     return;
   }
 
-  const servers = Array.isArray(report.servers) ? report.servers : [];
+  const servers = Array.isArray(report?.servers) ? report.servers : [];
   const chips = servers.slice(0, 8).map(
     (server) => `
       <div class="lsp-chip ${server.installed ? "available" : "missing"}">
@@ -840,9 +849,47 @@ function renderLspStatus(report) {
   chips.unshift(`
     <div class="lsp-chip">
       <span>Semantic</span>
-      <strong>${Number(report.available_servers || 0)}/${Number(report.total_servers || 0)}</strong>
+      <strong>${Number(readiness?.covered_languages ?? report?.available_servers ?? 0)}/${Number(readiness?.total_languages ?? report?.total_servers ?? 0)}</strong>
     </div>
   `);
+  if (readiness) {
+    chips.splice(
+      1,
+      0,
+      `
+        <div class="lsp-chip ${Number(readiness.missing_languages || 0) === 0 ? "available" : "missing"}">
+          <span>Missing semantic</span>
+          <strong>${Number(readiness.missing_languages || 0)}</strong>
+        </div>
+        <div class="lsp-chip">
+          <span>Candidate nodes</span>
+          <strong>${Number(readiness.semantic_candidate_nodes || 0)}</strong>
+        </div>
+      `,
+    );
+  }
+  const missingServers = Array.isArray(readiness?.missing_servers)
+    ? readiness.missing_servers.slice(0, 4)
+    : [];
+  missingServers.forEach((server) => {
+    chips.push(`
+      <div class="lsp-chip missing">
+        <span>${escapeHtml(server)}</span>
+        <strong>needed</strong>
+      </div>
+    `);
+  });
+  const uncoveredLanguages = Array.isArray(readiness?.languages)
+    ? readiness.languages.filter((language) => !language.server).slice(0, 4)
+    : [];
+  uncoveredLanguages.forEach((language) => {
+    chips.push(`
+      <div class="lsp-chip missing">
+        <span>${escapeHtml(language.language || "language")}</span>
+        <strong>no server</strong>
+      </div>
+    `);
+  });
   lspList.innerHTML = chips.join("");
 }
 
