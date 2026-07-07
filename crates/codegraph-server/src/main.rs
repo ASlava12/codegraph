@@ -4762,6 +4762,8 @@ mod tests {
 
         assert!(index.contains("riskSummaryList"));
         assert!(app.contains("apiFetch(`/api/report?${reportParams.toString()}`)"));
+        assert!(app.contains("state.report?.quality_gate"));
+        assert!(app.contains("\"risk.gate\""));
         for endpoint in [
             "/api/summary?",
             "/api/entrypoints?",

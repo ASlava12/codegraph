@@ -568,6 +568,7 @@ button.cancel-action:hover:not(:disabled) {
 }
 
 .risk-summary-chip.clean,
+.risk-summary-chip.passed,
 .risk-summary-chip.grade-clean,
 .risk-summary-chip.grade-low {
   background: rgba(92, 200, 167, 0.1);
@@ -584,6 +585,7 @@ button.cancel-action:hover:not(:disabled) {
 }
 
 .risk-summary-chip.error,
+.risk-summary-chip.failed,
 .risk-summary-chip.grade-critical {
   background: rgba(224, 108, 117, 0.13);
 }

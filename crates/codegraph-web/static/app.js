@@ -276,6 +276,7 @@ const I18N = {
     "risk.errors": "Errors",
     "risk.warnings": "Warnings",
     "risk.infos": "Info",
+    "risk.gate": "Gate",
     "risk.clean": "Clean",
     "export.report": "Report JSON",
     "trace.tracing": "Tracing...",
@@ -616,6 +617,7 @@ const I18N = {
     "risk.errors": "Ошибки",
     "risk.warnings": "Предупреждения",
     "risk.infos": "Инфо",
+    "risk.gate": "Гейт",
     "risk.clean": "Чисто",
     "export.report": "JSON-отчёт",
     "trace.tracing": "Трассирую...",
@@ -2157,7 +2159,7 @@ function renderOverview() {
 
   renderScanPolicy(state.scanOptions);
   renderCoverage(state.coverage);
-  renderRiskSummary(state.report?.risk_summary);
+  renderRiskSummary(state.report?.risk_summary, state.report?.quality_gate);
   renderLspStatus(state.lsp, state.semanticReadiness, state.semanticPlan);
   renderSemanticWorkFilterOptions(summary);
   renderSemanticWork(state.semanticPlan);
@@ -2356,14 +2358,21 @@ function renderCoverage(coverage) {
     .join("");
 }
 
-function renderRiskSummary(risk) {
+function renderRiskSummary(risk, qualityGate = null) {
   if (!risk) {
     riskSummaryList.innerHTML = `<p class="empty">${escapeHtml(t("empty.noInsights"))}</p>`;
     return;
   }
 
   const grade = String(risk.grade || "clean");
+  const gate = qualityGate || {};
+  const gateStatus = gate.passed === false ? "failed" : "passed";
+  const gateValue =
+    gate.passed === false
+      ? `${Number(gate.failing_insights || 0)} ${formatKind(gate.fail_on || "error")}`
+      : formatKind(gate.fail_on || "error");
   const chips = [
+    riskChip(t("risk.gate"), gateValue, gateStatus),
     riskChip(t("risk.score"), formatCompactNumber(risk.score), `grade-${grade}`),
     riskChip(t("risk.grade"), formatKind(grade), `grade-${grade}`),
     riskChip(t("risk.errors"), Number(risk.errors || 0), "error", "error"),
