@@ -41,6 +41,7 @@ Implemented now:
 - API capabilities endpoint for discovering supported languages, exports, features, limits, cache state, and route groups.
 - API capabilities limits include graph page, node-card, focus, query, report, source preview, and source-search ceilings for production clients.
 - API and web UI enforce the published maximum graph query expression length before running repository scans.
+- API and web UI enforce the published maximum source-search text length before scanning source files.
 - Machine-readable API schema endpoint for agents and integrations.
 - API schema enum values document supported graph query commands and query terms, including exact edge index lookups.
 - API schema enum values document graph node kinds, edge kinds, insight kinds, and confidence levels used by graph filters.

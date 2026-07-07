@@ -229,6 +229,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Publish known insight kinds in the API schema for agent discovery and web filter suggestions.
 - [x] Use API schema enum values as web graph filter suggestions.
 - [x] Enforce and publish graph query expression length limits for production clients.
+- [x] Enforce and publish source-search query length limits for production clients.
 - [x] Publish project report sections and risk grades in the API schema for agent discovery.
 - [x] Publish web deep-link parameters in the API schema for agent discovery.
 - [x] Add runtime metrics endpoint for uptime, cache, job stores, and concurrency.

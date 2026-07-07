@@ -270,6 +270,7 @@ const I18N = {
     "cap.focus": "Focus",
     "cap.queryLimit": "Query Limit",
     "cap.querySize": "Query Size",
+    "cap.sourceSearchSize": "Source Search",
     "cap.routes": "Routes",
     "cap.on": "on",
     "cap.off": "off",
@@ -619,6 +620,7 @@ const I18N = {
     "cap.focus": "Фокус",
     "cap.queryLimit": "Лимит запроса",
     "cap.querySize": "Размер запроса",
+    "cap.sourceSearchSize": "Размер поиска",
     "cap.routes": "Маршруты",
     "cap.on": "вкл",
     "cap.off": "выкл",
@@ -2543,6 +2545,9 @@ function renderCapabilities(capabilities) {
   if (Number(limits.max_graph_query_length || 0) > 0) {
     queryInput.maxLength = String(Number(limits.max_graph_query_length));
   }
+  if (Number(limits.max_source_search_query_length || 0) > 0) {
+    sourceSearchInput.maxLength = String(Number(limits.max_source_search_query_length));
+  }
   const chips = [
     [t("cap.api"), `v${Number(capabilities.api_version || 0)}`],
     [t("cap.graph"), `v${Number(capabilities.graph_schema_version || 0)}`],
@@ -2557,6 +2562,7 @@ function renderCapabilities(capabilities) {
     [t("cap.focus"), String(Number(limits.max_focus_edge_limit || 0))],
     [t("cap.queryLimit"), String(Number(limits.max_graph_query_limit || 0))],
     [t("cap.querySize"), String(Number(limits.max_graph_query_length || 0))],
+    [t("cap.sourceSearchSize"), String(Number(limits.max_source_search_query_length || 0))],
     [t("cap.routes"), String(endpoints.length)],
   ];
 

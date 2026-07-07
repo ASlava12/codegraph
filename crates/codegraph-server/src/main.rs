@@ -75,6 +75,7 @@ const DEFAULT_SOURCE_CONTEXT: u32 = 4;
 const MAX_SOURCE_CONTEXT: u32 = 40;
 const DEFAULT_SOURCE_SEARCH_LIMIT: usize = 50;
 const MAX_SOURCE_SEARCH_LIMIT: usize = 1000;
+const MAX_SOURCE_SEARCH_QUERY_LENGTH: usize = 4096;
 const DEFAULT_SOURCE_SEARCH_CONTEXT: usize = 2;
 const MAX_SOURCE_SEARCH_CONTEXT: usize = 20;
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
@@ -664,6 +665,7 @@ struct RuntimeLimitsResponse {
     max_source_context: u32,
     default_source_search_limit: usize,
     max_source_search_limit: usize,
+    max_source_search_query_length: usize,
     default_source_search_context: usize,
     max_source_search_context: usize,
 }
@@ -1508,6 +1510,7 @@ async fn capabilities_api(
             max_source_context: MAX_SOURCE_CONTEXT,
             default_source_search_limit: DEFAULT_SOURCE_SEARCH_LIMIT,
             max_source_search_limit: MAX_SOURCE_SEARCH_LIMIT,
+            max_source_search_query_length: MAX_SOURCE_SEARCH_QUERY_LENGTH,
             default_source_search_context: DEFAULT_SOURCE_SEARCH_CONTEXT,
             max_source_search_context: MAX_SOURCE_SEARCH_CONTEXT,
         },
@@ -2467,11 +2470,16 @@ async fn source_search_api(
     State(state): State<AppState>,
     Query(query): Query<SourceSearchQuery>,
 ) -> Result<Json<SourceSearchResult>, ApiError> {
-    let search_root = resolve_scan_root(&state, query.path.as_deref())?;
     let search_text = query.q.trim().to_string();
     if search_text.is_empty() {
         return Err(ApiError::bad_request("source-search requires q"));
     }
+    if search_text.len() > MAX_SOURCE_SEARCH_QUERY_LENGTH {
+        return Err(ApiError::bad_request(format!(
+            "source-search query is too long; maximum is {MAX_SOURCE_SEARCH_QUERY_LENGTH} bytes"
+        )));
+    }
+    let search_root = resolve_scan_root(&state, query.path.as_deref())?;
     let options = scan_options(&state, &search_root)?;
     let request = SourceSearchRequest {
         query: search_text,
@@ -4867,6 +4875,7 @@ mod tests {
         assert_eq!(response.limits.max_graph_query_length, 4096);
         assert_eq!(response.limits.default_report_insight_limit, 50);
         assert_eq!(response.limits.max_report_insight_limit, 500);
+        assert_eq!(response.limits.max_source_search_query_length, 4096);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -4886,6 +4895,29 @@ mod tests {
 
         assert_eq!(error.status, StatusCode::BAD_REQUEST);
         assert!(error.message.contains("query expression is too long"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn source_search_api_rejects_oversized_query_before_scan() {
+        let root = temp_server_root();
+        fs::create_dir_all(&root).unwrap();
+        let state = test_state(root.clone(), vec![], false);
+        let query = SourceSearchQuery {
+            path: None,
+            q: "x".repeat(MAX_SOURCE_SEARCH_QUERY_LENGTH + 1),
+            path_filter: None,
+            case_sensitive: None,
+            limit: None,
+            context: None,
+        };
+
+        let error = source_search_api(State(state), Query(query))
+            .await
+            .expect_err("oversized source-search query should fail");
+
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert!(error.message.contains("source-search query is too long"));
         fs::remove_dir_all(root).unwrap();
     }
 
