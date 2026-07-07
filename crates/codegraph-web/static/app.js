@@ -780,6 +780,7 @@ const state = {
   selectedEdgeKey: null,
   draggingId: null,
   hoveredId: null,
+  hoveredEdgeKey: null,
   pan: { x: 0, y: 0 },
   zoom: 1,
   lastPointer: null,
@@ -1117,7 +1118,7 @@ for (const input of [
 canvas.addEventListener("pointerdown", onPointerDown);
 canvas.addEventListener("pointermove", onPointerMove);
 canvas.addEventListener("pointerup", onPointerUp);
-canvas.addEventListener("pointerleave", onPointerUp);
+canvas.addEventListener("pointerleave", onPointerLeave);
 canvas.addEventListener("wheel", onWheel, { passive: false });
 window.addEventListener("resize", resizeCanvas);
 
@@ -1399,6 +1400,7 @@ function selectNodeById(nodeId, options = {}) {
   if (!Number.isInteger(id) || id < 0) return;
   const syncUrl = options.syncUrl !== false;
   state.selectedEdgeKey = null;
+  state.hoveredEdgeKey = null;
   state.selectedId = id;
   if (syncUrl) syncSelectionUrl();
   renderSelection();
@@ -1409,6 +1411,7 @@ function clearSelection(options = {}) {
   const syncUrl = options.syncUrl !== false;
   state.selectedId = null;
   state.selectedEdgeKey = null;
+  state.hoveredEdgeKey = null;
   if (syncUrl) syncSelectionUrl();
   if (options.render !== false) renderSelection();
 }
@@ -2016,6 +2019,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     state.graphPage.root = root || state.graphPage.root || pathInput.value.trim() || ".";
     clearSelection({ syncUrl: false, render: false });
     state.hoveredId = null;
+    state.hoveredEdgeKey = null;
     state.queryFocus = null;
     state.insightReport = null;
     queryResult.innerHTML = "";
@@ -2345,6 +2349,7 @@ function applySemanticEnrichResult(result, root) {
   state.edgeSelectionCache.clear();
   state.edgeSelectionNodeCache.clear();
   state.hoveredId = null;
+  state.hoveredEdgeKey = null;
   state.queryFocus = null;
   state.insightReport = null;
   queryResult.innerHTML = "";
@@ -3404,6 +3409,7 @@ function initializeGraph(options = {}) {
   state.edgeSelectionCache.clear();
   state.edgeSelectionNodeCache.clear();
   state.hoveredId = null;
+  state.hoveredEdgeKey = null;
   state.positions.clear();
   state.velocities.clear();
   const kinds = [...new Set(state.graph.nodes.map((node) => node.kind))].sort();
@@ -4079,6 +4085,7 @@ function showIncrementalScanGraph(scan) {
   state.graphPage.truncatedNodes = false;
   clearSelection({ render: false });
   state.hoveredId = null;
+  state.hoveredEdgeKey = null;
   state.queryFocus = null;
   rootLabel.textContent = t("cache.changedGraph", { action: formatKind(plan.action || "scan") });
   initializeGraph({ preserveView: false });
@@ -4101,6 +4108,7 @@ function showIncrementalMergePreviewGraph(preview) {
   state.graphPage.truncatedNodes = false;
   clearSelection({ render: false });
   state.hoveredId = null;
+  state.hoveredEdgeKey = null;
   state.queryFocus = null;
   rootLabel.textContent = merge.complete_graph ? t("cache.incrementalComplete") : t("cache.incrementalPreview");
   initializeGraph({ preserveView: false });
@@ -4848,6 +4856,9 @@ function applyFilters() {
   if (state.selectedEdgeKey && !state.visibleEdges.some((edge) => edgeSelectionKey(edge) === state.selectedEdgeKey)) {
     state.selectedEdgeKey = null;
     selectionChanged = true;
+  }
+  if (state.hoveredEdgeKey && !state.visibleEdges.some((edge) => edgeSelectionKey(edge) === state.hoveredEdgeKey)) {
+    state.hoveredEdgeKey = null;
   }
   if (selectionChanged) syncSelectionUrl();
   renderSelection();
@@ -5725,22 +5736,23 @@ function draw() {
   ctx.scale(state.zoom, state.zoom);
 
   const visibleIds = new Set(state.visibleNodes.map((node) => node.id));
-  const focusedEdges = [];
+  const highlightedEdges = [];
   state.visibleEdges.forEach((edge) => {
     if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) return;
-    if (edgeIsFocused(edge)) {
-      focusedEdges.push(edge);
+    const emphasis = edgeEmphasis(edge);
+    if (emphasis !== "normal") {
+      highlightedEdges.push([edge, emphasis]);
       return;
     }
     const source = state.positions.get(edge.source);
     const target = state.positions.get(edge.target);
-    drawEdge(edge, source, target, false);
+    drawEdge(edge, source, target, "normal");
   });
 
-  focusedEdges.forEach((edge) => {
+  highlightedEdges.forEach(([edge, emphasis]) => {
     const source = state.positions.get(edge.source);
     const target = state.positions.get(edge.target);
-    drawEdge(edge, source, target, true);
+    drawEdge(edge, source, target, emphasis);
   });
 
   const labelCandidates = [];
@@ -5809,15 +5821,16 @@ function drawRiskHalo(position, radius, severity, emphasized) {
   ctx.stroke();
 }
 
-function drawEdge(edge, source, target, focused) {
+function drawEdge(edge, source, target, emphasis) {
   if (!source || !target) return;
+  const emphasized = emphasis !== "normal";
   const dx = target.x - source.x;
   const dy = target.y - source.y;
   const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
   const ux = dx / distance;
   const uy = dy / distance;
   const sourceRadius = nodeRadiusById(edge.source) + 2 / state.zoom;
-  const targetRadius = nodeRadiusById(edge.target) + (focused ? 8 : 3) / state.zoom;
+  const targetRadius = nodeRadiusById(edge.target) + (emphasized ? 8 : 3) / state.zoom;
   const start = {
     x: source.x + ux * Math.min(sourceRadius, distance * 0.35),
     y: source.y + uy * Math.min(sourceRadius, distance * 0.35),
@@ -5827,24 +5840,24 @@ function drawEdge(edge, source, target, focused) {
     y: target.y - uy * Math.min(targetRadius, distance * 0.35),
   };
 
-  if (focused) {
+  if (emphasized) {
     ctx.beginPath();
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(end.x, end.y);
-    ctx.lineWidth = 6 / state.zoom;
-    ctx.strokeStyle = "rgba(13, 15, 16, 0.72)";
+    ctx.lineWidth = (emphasis === "hover" ? 5 : 6) / state.zoom;
+    ctx.strokeStyle = "rgba(13, 15, 16, 0.76)";
     ctx.stroke();
   }
 
   ctx.beginPath();
   ctx.moveTo(start.x, start.y);
   ctx.lineTo(end.x, end.y);
-  ctx.lineWidth = (focused ? 3.2 : 1) / state.zoom;
-  ctx.strokeStyle = focused ? focusEdgeColor() : edgeColor(edge);
+  ctx.lineWidth = (emphasis === "normal" ? 1 : emphasis === "hover" ? 2.4 : 3.2) / state.zoom;
+  ctx.strokeStyle = emphasis === "normal" ? edgeColor(edge) : edgeHighlightColor(emphasis);
   ctx.stroke();
 
-  if (focused) {
-    drawArrowHead(start, end, focusEdgeColor());
+  if (emphasized) {
+    drawArrowHead(start, end, edgeHighlightColor(emphasis));
   }
 }
 
@@ -6957,6 +6970,7 @@ function selectEdgeByKey(selectionKey, options = {}) {
   const syncUrl = options.syncUrl !== false;
   state.selectedId = null;
   state.selectedEdgeKey = selectionKey;
+  state.hoveredEdgeKey = null;
   if (syncUrl) syncSelectionUrl();
   renderSelection();
   draw();
@@ -7120,8 +7134,13 @@ function onPointerDown(event) {
 function onPointerMove(event) {
   const world = screenToWorld(event.offsetX, event.offsetY);
   const hit = findNodeAt(world);
+  const edgeHit = hit ? null : findEdgeAt(world);
+  const nextHoveredEdgeKey = edgeHit ? edgeSelectionKey(edgeHit) : null;
+  const hoverChanged = state.hoveredEdgeKey !== nextHoveredEdgeKey || state.hoveredId !== (hit ? hit.id : null);
   state.hoveredId = hit ? hit.id : null;
-  canvas.style.cursor = hit || findEdgeAt(world) ? "pointer" : event.buttons === 1 ? "grabbing" : "";
+  state.hoveredEdgeKey = nextHoveredEdgeKey;
+  canvas.style.cursor = hit || edgeHit ? "pointer" : event.buttons === 1 ? "grabbing" : "";
+  if (hoverChanged) draw();
 
   if (!state.lastPointer) return;
 
@@ -7143,6 +7162,16 @@ function onPointerMove(event) {
 function onPointerUp() {
   state.draggingId = null;
   state.lastPointer = null;
+}
+
+function onPointerLeave() {
+  onPointerUp();
+  if (state.hoveredId != null || state.hoveredEdgeKey != null) {
+    state.hoveredId = null;
+    state.hoveredEdgeKey = null;
+    draw();
+  }
+  canvas.style.cursor = "";
 }
 
 function onWheel(event) {
@@ -7262,15 +7291,16 @@ function nodeIsFocused(node) {
   return Boolean(state.queryFocus?.nodeIds?.has(node.id));
 }
 
-function edgeIsFocused(edge) {
-  return (
-    edgeSelectionKey(edge) === state.selectedEdgeKey ||
-    Boolean(state.queryFocus?.edgeKeys?.has(edgeKey(edge)))
-  );
+function edgeEmphasis(edge) {
+  if (edgeSelectionKey(edge) === state.selectedEdgeKey) return "selected";
+  if (state.queryFocus?.edgeKeys?.has(edgeKey(edge))) return "focus";
+  if (edgeSelectionKey(edge) === state.hoveredEdgeKey) return "hover";
+  return "normal";
 }
 
-function focusEdgeColor() {
-  if (state.selectedEdgeKey) return "rgba(92, 200, 167, 0.98)";
+function edgeHighlightColor(emphasis) {
+  if (emphasis === "selected") return "rgba(92, 200, 167, 0.98)";
+  if (emphasis === "hover") return "rgba(237, 241, 242, 0.92)";
   return state.queryFocus?.mode === "path" ? "rgba(92, 200, 167, 0.98)" : "rgba(237, 241, 242, 0.9)";
 }
 

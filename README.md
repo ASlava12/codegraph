@@ -89,6 +89,7 @@ Implemented now:
 - Enriched selected-node cards with summary metadata, source snippets, neighboring dependencies, trace actions, and related risks.
 - Graph, query, focus, and node-card edges include stable `metadata.edge_index` values for exact dependency explanation and UI edge selection.
 - Web canvas edges can be selected directly to open dependency cards with source, target, confidence, metadata, and provenance explanation actions.
+- Web canvas edges highlight on hover so dependency paths are easier to inspect before opening a card.
 - Edge explanations include related risk summaries and capped edge-scoped findings for dependency-level triage.
 - Dependency cards can be opened from graph edges, query results, traces, and node neighbor lists.
 - Dependency cards can focus or query their exact `edge_index` for fast canvas narrowing and agent handoff.

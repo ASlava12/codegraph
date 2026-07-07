@@ -6409,6 +6409,17 @@ mod tests {
     }
 
     #[test]
+    fn embedded_web_assets_highlight_hovered_graph_edges() {
+        let app = include_str!("../../codegraph-web/static/app.js");
+
+        assert!(app.contains("hoveredEdgeKey"));
+        assert!(app.contains("edgeEmphasis"));
+        assert!(app.contains("\"hover\""));
+        assert!(app.contains("onPointerLeave"));
+        assert!(app.contains("edgeHighlightColor"));
+    }
+
+    #[test]
     fn api_schema_lists_agent_contracts() {
         let schema = api_schema_response();
         let endpoints: Vec<_> = schema

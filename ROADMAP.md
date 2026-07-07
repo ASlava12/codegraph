@@ -205,6 +205,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add shareable query deep-links and copy-link actions for reusable web investigations.
 - [x] Add package graph actions from external dependency/import node cards.
 - [x] Add selectable graph edges with dependency cards and exact edge explanation actions.
+- [x] Highlight graph edges on hover before opening dependency cards.
 - [x] Surface edge-scoped risks in dependency explanation cards.
 - [x] Open dependency cards from query, trace, and node-neighbor edge rows.
 - [x] Add exact focus/query actions to dependency cards.
