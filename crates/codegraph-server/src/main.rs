@@ -23,8 +23,8 @@ use codegraph_indexer::{
 };
 use codegraph_lsp::{
     DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, LspDiscoveryReport, SemanticEnrichmentPlan,
-    SemanticReadinessReport, discover_lsp_servers, semantic_enrichment_plan_with_limit,
-    semantic_readiness,
+    SemanticReadinessReport, SemanticWorkItemFilter, discover_lsp_servers,
+    semantic_enrichment_plan_with_filter, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{
@@ -108,6 +108,9 @@ struct ScanQuery {
 struct SemanticPlanQuery {
     path: Option<PathBuf>,
     work_item_limit: Option<usize>,
+    work_language: Option<String>,
+    work_status: Option<String>,
+    work_capability: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -694,11 +697,16 @@ async fn semantic_plan_api(
     Query(query): Query<SemanticPlanQuery>,
 ) -> Result<Json<SemanticEnrichmentPlan>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
-    Ok(Json(semantic_enrichment_plan_with_limit(
+    Ok(Json(semantic_enrichment_plan_with_filter(
         &graph,
         query
             .work_item_limit
             .unwrap_or(DEFAULT_SEMANTIC_WORK_ITEM_LIMIT),
+        SemanticWorkItemFilter {
+            language: query.work_language,
+            status: query.work_status,
+            capability: query.work_capability,
+        },
     )))
 }
 

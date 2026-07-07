@@ -12,8 +12,8 @@ use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
 };
 use codegraph_lsp::{
-    DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, discover_lsp_servers, semantic_enrichment_plan_with_limit,
-    semantic_readiness,
+    DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, SemanticWorkItemFilter, discover_lsp_servers,
+    semantic_enrichment_plan_with_filter, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
@@ -323,6 +323,18 @@ struct SemanticPlanArgs {
     /// Maximum concrete semantic work items to include.
     #[arg(long, default_value_t = DEFAULT_SEMANTIC_WORK_ITEM_LIMIT)]
     work_item_limit: usize,
+
+    /// Restrict semantic work items to a source language such as rust or python.
+    #[arg(long)]
+    work_language: Option<String>,
+
+    /// Restrict semantic work items to a status such as ready or missing_server.
+    #[arg(long)]
+    work_status: Option<String>,
+
+    /// Restrict semantic work items to an LSP capability such as definitions.
+    #[arg(long)]
+    work_capability: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -584,9 +596,14 @@ fn main() -> Result<()> {
             )?;
             println!(
                 "{}",
-                serde_json::to_string_pretty(&semantic_enrichment_plan_with_limit(
+                serde_json::to_string_pretty(&semantic_enrichment_plan_with_filter(
                     &graph,
-                    args.work_item_limit
+                    args.work_item_limit,
+                    SemanticWorkItemFilter {
+                        language: args.work_language,
+                        status: args.work_status,
+                        capability: args.work_capability,
+                    }
                 ))?
             );
         }

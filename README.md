@@ -116,6 +116,7 @@ cargo run -p codegraph-cli -- lsp
 cargo run -p codegraph-cli -- semantic-readiness .
 cargo run -p codegraph-cli -- semantic-plan .
 cargo run -p codegraph-cli -- semantic-plan . --work-item-limit 25
+cargo run -p codegraph-cli -- semantic-plan . --work-status ready --work-capability definitions
 ```
 
 Limit per-file scan reads for very large repositories:
@@ -382,6 +383,7 @@ curl 'http://127.0.0.1:3765/api/lsp'
 curl 'http://127.0.0.1:3765/api/semantic-readiness?path=.'
 curl 'http://127.0.0.1:3765/api/semantic-plan?path=.'
 curl 'http://127.0.0.1:3765/api/semantic-plan?path=.&work_item_limit=25'
+curl 'http://127.0.0.1:3765/api/semantic-plan?path=.&work_status=ready&work_capability=definitions'
 curl 'http://127.0.0.1:3765/api/coverage?path=.'
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'

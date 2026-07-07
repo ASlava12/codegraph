@@ -56,6 +56,7 @@ pub struct SemanticEnrichmentPlan {
     pub planned_requests: SemanticRequestCounts,
     pub total_work_items: usize,
     pub work_item_limit: usize,
+    pub work_item_filter: SemanticWorkItemFilter,
     pub truncated_work_items: bool,
     pub work_items: Vec<SemanticWorkItem>,
     pub missing_servers: Vec<&'static str>,
@@ -83,6 +84,13 @@ pub struct SemanticRequestCounts {
     pub definitions: usize,
     pub references: usize,
     pub diagnostics: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct SemanticWorkItemFilter {
+    pub language: Option<String>,
+    pub status: Option<String>,
+    pub capability: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -243,8 +251,21 @@ pub fn semantic_enrichment_plan_with_limit(
     graph: &CodeGraph,
     work_item_limit: usize,
 ) -> SemanticEnrichmentPlan {
+    semantic_enrichment_plan_with_filter(graph, work_item_limit, SemanticWorkItemFilter::default())
+}
+
+pub fn semantic_enrichment_plan_with_filter(
+    graph: &CodeGraph,
+    work_item_limit: usize,
+    work_item_filter: SemanticWorkItemFilter,
+) -> SemanticEnrichmentPlan {
     let discovery = discover_lsp_servers();
-    semantic_enrichment_plan_with_discovery_and_limit(graph, &discovery, work_item_limit)
+    semantic_enrichment_plan_with_discovery_and_filter(
+        graph,
+        &discovery,
+        work_item_limit,
+        work_item_filter,
+    )
 }
 
 pub fn semantic_readiness_with_discovery(
@@ -317,6 +338,20 @@ pub fn semantic_enrichment_plan_with_discovery_and_limit(
     graph: &CodeGraph,
     discovery: &LspDiscoveryReport,
     work_item_limit: usize,
+) -> SemanticEnrichmentPlan {
+    semantic_enrichment_plan_with_discovery_and_filter(
+        graph,
+        discovery,
+        work_item_limit,
+        SemanticWorkItemFilter::default(),
+    )
+}
+
+pub fn semantic_enrichment_plan_with_discovery_and_filter(
+    graph: &CodeGraph,
+    discovery: &LspDiscoveryReport,
+    work_item_limit: usize,
+    work_item_filter: SemanticWorkItemFilter,
 ) -> SemanticEnrichmentPlan {
     let mut languages: BTreeMap<String, LanguagePlanAccumulator> = BTreeMap::new();
 
@@ -441,7 +476,8 @@ pub fn semantic_enrichment_plan_with_discovery_and_limit(
         .iter()
         .filter(|plan| plan.status == "unsupported_language")
         .count();
-    let (work_items, total_work_items) = semantic_work_items(graph, &plans, work_item_limit);
+    let (work_items, total_work_items) =
+        semantic_work_items(graph, &plans, work_item_limit, &work_item_filter);
 
     SemanticEnrichmentPlan {
         languages: plans,
@@ -454,6 +490,7 @@ pub fn semantic_enrichment_plan_with_discovery_and_limit(
         planned_requests: totals,
         total_work_items,
         work_item_limit,
+        work_item_filter,
         truncated_work_items: total_work_items > work_items.len(),
         work_items,
         missing_servers: missing_servers.into_iter().collect(),
@@ -494,6 +531,7 @@ fn semantic_work_items(
     graph: &CodeGraph,
     plans: &[LanguageEnrichmentPlan],
     work_item_limit: usize,
+    work_item_filter: &SemanticWorkItemFilter,
 ) -> (Vec<SemanticWorkItem>, usize) {
     let mut work_items = Vec::new();
     let mut total_work_items = 0;
@@ -505,6 +543,7 @@ fn semantic_work_items(
                 &mut work_items,
                 &mut total_work_items,
                 work_item_limit,
+                work_item_filter,
                 SemanticWorkItem {
                     id: format!("language_support:{}", plan.language),
                     kind: "language_support",
@@ -535,6 +574,7 @@ fn semantic_work_items(
                     &mut work_items,
                     &mut total_work_items,
                     work_item_limit,
+                    work_item_filter,
                     edge_work_item("definitions", plan, edge_index, source, target),
                 );
             }
@@ -545,6 +585,7 @@ fn semantic_work_items(
                     &mut work_items,
                     &mut total_work_items,
                     work_item_limit,
+                    work_item_filter,
                     file_work_item("diagnostics", plan, node),
                 );
             }
@@ -555,6 +596,7 @@ fn semantic_work_items(
                     &mut work_items,
                     &mut total_work_items,
                     work_item_limit,
+                    work_item_filter,
                     file_work_item("document_symbols", plan, node),
                 );
             }
@@ -565,6 +607,7 @@ fn semantic_work_items(
                     &mut work_items,
                     &mut total_work_items,
                     work_item_limit,
+                    work_item_filter,
                     node_work_item("references", plan, node),
                 );
             }
@@ -614,12 +657,31 @@ fn push_semantic_work_item(
     work_items: &mut Vec<SemanticWorkItem>,
     total_work_items: &mut usize,
     work_item_limit: usize,
+    work_item_filter: &SemanticWorkItemFilter,
     item: SemanticWorkItem,
 ) {
+    if !semantic_work_item_matches(&item, work_item_filter) {
+        return;
+    }
     *total_work_items += 1;
     if work_items.len() < work_item_limit {
         work_items.push(item);
     }
+}
+
+fn semantic_work_item_matches(
+    item: &SemanticWorkItem,
+    work_item_filter: &SemanticWorkItemFilter,
+) -> bool {
+    filter_matches(&work_item_filter.language, &item.language)
+        && filter_matches(&work_item_filter.status, item.status)
+        && filter_matches(&work_item_filter.capability, item.capability)
+}
+
+fn filter_matches(filter: &Option<String>, value: &str) -> bool {
+    filter
+        .as_deref()
+        .is_none_or(|filter| filter.is_empty() || filter.eq_ignore_ascii_case(value))
 }
 
 fn file_work_item(
@@ -1092,6 +1154,29 @@ mod tests {
         assert_eq!(python.planned_requests.definitions, 0);
         assert_eq!(markdown.status, "unsupported_language");
         assert_eq!(markdown.blocked_reason, Some("no_known_language_server"));
+
+        let filtered = semantic_enrichment_plan_with_discovery_and_filter(
+            &graph,
+            &discovery,
+            DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+            SemanticWorkItemFilter {
+                language: Some("rust".to_string()),
+                status: Some("ready".to_string()),
+                capability: Some("definitions".to_string()),
+            },
+        );
+
+        assert_eq!(filtered.total_work_items, 1);
+        assert_eq!(filtered.work_items.len(), 1);
+        assert_eq!(filtered.work_items[0].id, "definitions:rust:edge:1");
+        assert_eq!(
+            filtered.work_item_filter,
+            SemanticWorkItemFilter {
+                language: Some("rust".to_string()),
+                status: Some("ready".to_string()),
+                capability: Some("definitions".to_string()),
+            }
+        );
     }
 
     fn temp_dir() -> PathBuf {

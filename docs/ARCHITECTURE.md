@@ -104,7 +104,7 @@ Responsibilities:
 
 - report installed language servers for semantic enrichment readiness
 - compare a scanned project's language mix with available language servers
-- plan semantic enrichment work by language, LSP capability, installed-server status, and capped concrete work items with stable ids, priorities, and reasons
+- plan semantic enrichment work by language, LSP capability, installed-server status, and capped concrete work items with stable ids, priorities, reasons, and agent-facing filters
 - launch and manage language servers
 - request definitions, references, symbols, and diagnostics
 - convert language-server facts into graph edges
