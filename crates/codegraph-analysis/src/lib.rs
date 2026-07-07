@@ -399,6 +399,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unused_dependency_insights(graph, &mut insights);
     add_conflicting_dependency_insights(graph, &mut insights);
     add_duplicate_framework_route_insights(graph, &mut insights);
+    add_custom_rule_violation_insights(graph, &mut insights);
     add_dependency_cycle_insights(graph, &mut insights);
     insights.sort_by(|left, right| {
         right
@@ -2502,6 +2503,50 @@ fn add_duplicate_framework_route_insights(graph: &CodeGraph, insights: &mut Vec<
     }
 }
 
+fn add_custom_rule_violation_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node
+            .metadata
+            .get("item_kind")
+            .is_none_or(|kind| kind != "custom_rule_violation")
+        {
+            continue;
+        }
+
+        let rule_kind = node
+            .metadata
+            .get("rule_kind")
+            .map(String::as_str)
+            .unwrap_or("violation");
+        let message = node
+            .metadata
+            .get("message")
+            .cloned()
+            .unwrap_or_else(|| node.label.clone());
+        let severity = node
+            .metadata
+            .get("severity")
+            .map(|value| insight_severity_from_str(value))
+            .unwrap_or(InsightSeverity::Warning);
+
+        insights.push(Insight {
+            kind: format!("custom_rule_{rule_kind}"),
+            severity,
+            message,
+            nodes: vec![node.id],
+            edges: outgoing_edge_indexes(graph, node.id, EdgeKind::References),
+        });
+    }
+}
+
+fn insight_severity_from_str(value: &str) -> InsightSeverity {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "error" => InsightSeverity::Error,
+        "info" => InsightSeverity::Info,
+        _ => InsightSeverity::Warning,
+    }
+}
+
 fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     const MAX_CYCLE_INSIGHTS: usize = 50;
 
@@ -4432,6 +4477,42 @@ mod tests {
         assert!(duplicate.nodes.contains(&second));
         assert!(!duplicate.nodes.contains(&post));
         assert_eq!(duplicate.edges.len(), 2);
+    }
+
+    #[test]
+    fn insights_report_custom_rule_violations() {
+        let mut graph = CodeGraph::new("repo");
+        let dependency = dependency_node(&mut graph, "left-pad", "npm:left-pad");
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "custom_rule_violation".to_string());
+        metadata.insert("rule_id".to_string(), "no-left-pad".to_string());
+        metadata.insert("rule_kind".to_string(), "forbidden_dependency".to_string());
+        metadata.insert("severity".to_string(), "error".to_string());
+        metadata.insert("message".to_string(), "left-pad is forbidden".to_string());
+        let violation = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "custom rule violation:no-left-pad",
+            None,
+            metadata,
+        );
+        graph.add_edge(
+            violation,
+            dependency,
+            EdgeKind::References,
+            Confidence::Exact,
+        );
+
+        let report = insights(&graph);
+        let custom = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "custom_rule_forbidden_dependency")
+            .expect("expected custom rule insight");
+
+        assert_eq!(custom.severity, InsightSeverity::Error);
+        assert_eq!(custom.message, "left-pad is forbidden");
+        assert_eq!(custom.nodes, vec![violation]);
+        assert_eq!(custom.edges.len(), 1);
     }
 
     #[test]

@@ -30,6 +30,7 @@ struct IndexContext {
     file_nodes: BTreeMap<String, NodeId>,
     external_dependencies: BTreeMap<String, NodeId>,
     cargo_workspace_dependencies: BTreeMap<String, Option<String>>,
+    custom_rules: CustomRules,
     pending_calls: Vec<PendingCall>,
     pending_entrypoint_targets: Vec<PendingEntrypointTarget>,
 }
@@ -91,6 +92,30 @@ struct FrameworkConfig {
     line: u32,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct CustomRules {
+    forbidden_dependencies: Vec<ForbiddenDependencyRule>,
+    required_configs: Vec<RequiredConfigRule>,
+    parse_errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ForbiddenDependencyRule {
+    id: String,
+    package: String,
+    ecosystem: Option<String>,
+    severity: String,
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RequiredConfigRule {
+    id: String,
+    target: String,
+    severity: String,
+    message: Option<String>,
+}
+
 impl Default for IndexOptions {
     fn default() -> Self {
         Self {
@@ -112,12 +137,14 @@ pub fn scan_project(
         .and_then(|name| name.to_str())
         .unwrap_or(".");
     let cargo_workspace_dependencies = cargo_workspace_dependencies(root);
+    let custom_rules = custom_rules(root);
     let mut context = IndexContext {
         graph: CodeGraph::new(root_label),
         function_symbols: BTreeMap::new(),
         file_nodes: BTreeMap::new(),
         external_dependencies: BTreeMap::new(),
         cargo_workspace_dependencies,
+        custom_rules,
         pending_calls: Vec::new(),
         pending_entrypoint_targets: Vec::new(),
     };
@@ -159,6 +186,7 @@ pub fn scan_project(
 
     resolve_pending_calls(&mut context);
     resolve_pending_entrypoint_targets(&mut context);
+    apply_custom_rules(&mut context);
 
     Ok(context.graph)
 }
@@ -572,6 +600,302 @@ fn framework_configs(
     }
 
     configs.into_iter().collect()
+}
+
+fn apply_custom_rules(context: &mut IndexContext) {
+    let rules = context.custom_rules.clone();
+    for message in rules.parse_errors {
+        add_custom_rule_violation(
+            context,
+            "rules_parse_error",
+            "parse_error",
+            "error",
+            message,
+            None,
+        );
+    }
+
+    for rule in rules.forbidden_dependencies {
+        let matches = matching_dependency_nodes(&context.graph, &rule);
+        for dependency in matches {
+            let dependency_label =
+                graph_node_label(&context.graph, dependency).unwrap_or("unknown");
+            let message = rule.message.clone().unwrap_or_else(|| {
+                format!(
+                    "Dependency `{dependency_label}` is forbidden by custom rule `{}`",
+                    rule.id
+                )
+            });
+            add_custom_rule_violation(
+                context,
+                &rule.id,
+                "forbidden_dependency",
+                &rule.severity,
+                message,
+                Some(dependency),
+            );
+        }
+    }
+
+    for rule in rules.required_configs {
+        if custom_rule_config_exists(&context.graph, &rule.target) {
+            continue;
+        }
+        let message = rule.message.clone().unwrap_or_else(|| {
+            format!(
+                "Required config or environment target `{}` is missing for custom rule `{}`",
+                rule.target, rule.id
+            )
+        });
+        add_custom_rule_violation(
+            context,
+            &rule.id,
+            "required_config",
+            &rule.severity,
+            message,
+            None,
+        );
+    }
+}
+
+fn graph_node_label(graph: &CodeGraph, id: NodeId) -> Option<&str> {
+    graph
+        .nodes
+        .iter()
+        .find(|node| node.id == id)
+        .map(|node| node.label.as_str())
+}
+
+fn matching_dependency_nodes(graph: &CodeGraph, rule: &ForbiddenDependencyRule) -> Vec<NodeId> {
+    graph
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            if node.kind != NodeKind::ExternalDependency
+                || node
+                    .metadata
+                    .get("item_kind")
+                    .is_none_or(|kind| kind != "dependency")
+            {
+                return None;
+            }
+
+            let package_id = node.metadata.get("package_id")?;
+            if forbidden_dependency_matches(package_id, &node.label, rule) {
+                Some(node.id)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn forbidden_dependency_matches(
+    package_id: &str,
+    package_label: &str,
+    rule: &ForbiddenDependencyRule,
+) -> bool {
+    let Some((ecosystem, package)) = package_id.split_once(':') else {
+        return false;
+    };
+    if rule
+        .ecosystem
+        .as_deref()
+        .is_some_and(|expected| !expected.eq_ignore_ascii_case(ecosystem))
+    {
+        return false;
+    }
+
+    let expected = canonical_package_name(ecosystem, &rule.package);
+    package.eq_ignore_ascii_case(&expected)
+        || package_label.eq_ignore_ascii_case(&rule.package)
+        || package_label.eq_ignore_ascii_case(&expected)
+}
+
+fn custom_rule_config_exists(graph: &CodeGraph, target: &str) -> bool {
+    graph.nodes.iter().any(|node| {
+        if !matches!(node.kind, NodeKind::Config | NodeKind::Environment) {
+            return false;
+        }
+        custom_rule_text_matches(&node.label, target)
+            || node
+                .metadata
+                .values()
+                .any(|value| custom_rule_text_matches(value, target))
+    })
+}
+
+fn custom_rule_text_matches(value: &str, expected: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    let expected = expected.trim().to_ascii_lowercase();
+    !expected.is_empty() && (value == expected || value.contains(&expected))
+}
+
+fn add_custom_rule_violation(
+    context: &mut IndexContext,
+    rule_id: &str,
+    rule_kind: &str,
+    severity: &str,
+    message: String,
+    target: Option<NodeId>,
+) {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("item_kind".to_string(), "custom_rule_violation".to_string());
+    metadata.insert("source".to_string(), "custom_rule".to_string());
+    metadata.insert("rule_id".to_string(), rule_id.to_string());
+    metadata.insert("rule_kind".to_string(), rule_kind.to_string());
+    metadata.insert(
+        "severity".to_string(),
+        normalize_rule_severity(severity).to_string(),
+    );
+    metadata.insert("message".to_string(), message.clone());
+
+    let violation = context.graph.add_node_with_metadata(
+        NodeKind::Unknown,
+        format!("custom rule violation:{rule_id}"),
+        None,
+        metadata,
+    );
+    let root_id = context.graph.root;
+    add_edge_once(
+        &mut context.graph,
+        root_id,
+        violation,
+        EdgeKind::Contains,
+        Confidence::Exact,
+    );
+
+    if let Some(target) = target {
+        let mut edge_metadata = BTreeMap::new();
+        edge_metadata.insert("source".to_string(), "custom_rule".to_string());
+        edge_metadata.insert("relation".to_string(), "custom_rule_target".to_string());
+        edge_metadata.insert("rule_id".to_string(), rule_id.to_string());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            violation,
+            target,
+            EdgeKind::References,
+            Confidence::Exact,
+            edge_metadata,
+        );
+    }
+}
+
+fn custom_rules(root: &Path) -> CustomRules {
+    let path = root.join(".codegraph").join("rules.toml");
+    if !path.is_file() {
+        return CustomRules::default();
+    }
+
+    let Ok(source) = fs::read_to_string(&path) else {
+        return CustomRules {
+            parse_errors: vec![format!(
+                "Could not read custom rules from {}",
+                path.display()
+            )],
+            ..CustomRules::default()
+        };
+    };
+
+    let Ok(value) = toml::from_str::<toml::Value>(&source) else {
+        return CustomRules {
+            parse_errors: vec![format!(
+                "Could not parse custom rules from {}",
+                path.display()
+            )],
+            ..CustomRules::default()
+        };
+    };
+
+    let rules = value.get("rules").unwrap_or(&value);
+    CustomRules {
+        forbidden_dependencies: rule_array(rules, "forbidden_dependency")
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, value)| forbidden_dependency_rule(value, index + 1))
+            .collect(),
+        required_configs: rule_array(rules, "required_config")
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, value)| required_config_rule(value, index + 1))
+            .collect(),
+        parse_errors: Vec::new(),
+    }
+}
+
+fn rule_array<'a>(rules: &'a toml::Value, name: &str) -> Vec<&'a toml::Value> {
+    rules
+        .get(name)
+        .and_then(|value| value.as_array())
+        .map(|values| values.iter().collect())
+        .unwrap_or_default()
+}
+
+fn forbidden_dependency_rule(value: &toml::Value, index: usize) -> Option<ForbiddenDependencyRule> {
+    let package = value.get("package")?.as_str()?.trim().to_string();
+    if package.is_empty() {
+        return None;
+    }
+    Some(ForbiddenDependencyRule {
+        id: rule_id(value, "forbidden_dependency", index, &package),
+        package,
+        ecosystem: value
+            .get("ecosystem")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty()),
+        severity: rule_severity(value),
+        message: rule_message(value),
+    })
+}
+
+fn required_config_rule(value: &toml::Value, index: usize) -> Option<RequiredConfigRule> {
+    let target = value.get("target")?.as_str()?.trim().to_string();
+    if target.is_empty() {
+        return None;
+    }
+    Some(RequiredConfigRule {
+        id: rule_id(value, "required_config", index, &target),
+        target,
+        severity: rule_severity(value),
+        message: rule_message(value),
+    })
+}
+
+fn rule_id(value: &toml::Value, kind: &str, index: usize, fallback: &str) -> String {
+    value
+        .get("id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{kind}:{index}:{fallback}"))
+}
+
+fn rule_severity(value: &toml::Value) -> String {
+    value
+        .get("severity")
+        .and_then(|value| value.as_str())
+        .map(normalize_rule_severity)
+        .unwrap_or("warning")
+        .to_string()
+}
+
+fn normalize_rule_severity(value: &str) -> &'static str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "error" => "error",
+        "info" => "info",
+        _ => "warning",
+    }
+}
+
+fn rule_message(value: &toml::Value) -> Option<String> {
+    value
+        .get("message")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn index_manifest_dependencies(
@@ -3473,6 +3797,112 @@ add_executable(imported_tool IMPORTED)
                         .is_some_and(|value| value == "framework")
             }));
         }
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_applies_custom_rules() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join(".codegraph")).unwrap();
+        fs::write(
+            root.join(".codegraph").join("rules.toml"),
+            r#"[[rules.forbidden_dependency]]
+id = "no-left-pad"
+ecosystem = "npm"
+package = "left-pad"
+severity = "error"
+message = "left-pad is not allowed"
+
+[[rules.required_config]]
+id = "needs-database-url"
+target = "DATABASE_URL"
+
+[[rules.required_config]]
+id = "needs-payments-token"
+target = "PAYMENTS_TOKEN"
+severity = "warning"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+  "dependencies": {
+    "left-pad": "1.3.0"
+  }
+}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("app.py"),
+            "import os\nDATABASE_URL = os.environ.get('DATABASE_URL')\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let violations: Vec<_> = graph
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.metadata
+                    .get("item_kind")
+                    .is_some_and(|kind| kind == "custom_rule_violation")
+            })
+            .collect();
+
+        assert_eq!(violations.len(), 2);
+        assert!(violations.iter().any(|node| {
+            node.metadata
+                .get("rule_id")
+                .is_some_and(|value| value == "no-left-pad")
+                && node
+                    .metadata
+                    .get("severity")
+                    .is_some_and(|value| value == "error")
+                && node
+                    .metadata
+                    .get("message")
+                    .is_some_and(|value| value == "left-pad is not allowed")
+        }));
+        assert!(violations.iter().any(|node| {
+            node.metadata
+                .get("rule_id")
+                .is_some_and(|value| value == "needs-payments-token")
+        }));
+        assert!(!violations.iter().any(|node| {
+            node.metadata
+                .get("rule_id")
+                .is_some_and(|value| value == "needs-database-url")
+        }));
+
+        let forbidden = violations
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("rule_id")
+                    .is_some_and(|value| value == "no-left-pad")
+            })
+            .expect("missing forbidden dependency violation");
+        let dependency = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "npm:left-pad")
+            })
+            .expect("missing left-pad dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == forbidden.id
+                && edge.target == dependency.id
+                && edge.kind == EdgeKind::References
+                && edge.confidence == Confidence::Exact
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "custom_rule_target")
+        }));
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -62,6 +62,7 @@ Implemented now:
 - Dependency consistency insights for package declarations with conflicting manifest constraints.
 - Framework route insights for duplicate HTTP method/path declarations.
 - Framework config convention facts for common web/service stacks across mixed-language repositories.
+- Repository custom rule insights from `.codegraph/rules.toml`.
 - Dependency cycle insights for circular calls, imports, references, and manifest dependency edges.
 
 Planned next:
@@ -109,7 +110,28 @@ List investigation insights:
 ```bash
 cargo run -p codegraph-cli -- insights .
 cargo run -p codegraph-cli -- insights . --severity warning --kind dependency --limit 25
+cargo run -p codegraph-cli -- insights . --kind custom_rule
 ```
+
+Add repository-specific architecture checks with `.codegraph/rules.toml`:
+
+```toml
+[[rules.forbidden_dependency]]
+id = "no-left-pad"
+ecosystem = "npm"
+package = "left-pad"
+severity = "error"
+message = "left-pad is not allowed in production services"
+
+[[rules.required_config]]
+id = "needs-database-url"
+target = "DATABASE_URL"
+severity = "warning"
+```
+
+Custom rules currently support forbidden manifest dependencies and required
+config/environment targets. Violations are emitted as normal graph facts and
+show up in CLI, API, and web insight reports.
 
 Query focused graph slices:
 
