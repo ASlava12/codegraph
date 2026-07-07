@@ -1111,6 +1111,7 @@ pub fn entrypoints(graph: &CodeGraph) -> Vec<Node> {
 pub fn insights(graph: &CodeGraph) -> InsightReport {
     let mut insights = Vec::new();
     add_parse_error_insights(graph, &mut insights);
+    add_semantic_diagnostic_insights(graph, &mut insights);
     add_unresolved_call_insights(graph, &mut insights);
     add_unresolved_local_import_insights(graph, &mut insights);
     add_cross_language_heuristic_edge_insights(graph, &mut insights);
@@ -3213,6 +3214,91 @@ fn add_parse_error_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
                 edges: Vec::new(),
             });
         }
+    }
+}
+
+fn add_semantic_diagnostic_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node
+            .metadata
+            .get("item_kind")
+            .is_none_or(|kind| kind != "diagnostic")
+        {
+            continue;
+        }
+        if node
+            .metadata
+            .get("source")
+            .is_none_or(|source| source != "lsp")
+        {
+            continue;
+        }
+
+        let diagnostic_severity = node
+            .metadata
+            .get("severity")
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        let severity = match diagnostic_severity {
+            "error" => InsightSeverity::Error,
+            "warning" => InsightSeverity::Warning,
+            _ => InsightSeverity::Info,
+        };
+        let message = node
+            .metadata
+            .get("message")
+            .map(String::as_str)
+            .unwrap_or(node.label.as_str());
+        let path = node
+            .metadata
+            .get("path")
+            .map(String::as_str)
+            .or_else(|| node.span.as_ref().map(|span| span.path.as_str()))
+            .unwrap_or("unknown path");
+        let line = node
+            .metadata
+            .get("line")
+            .cloned()
+            .or_else(|| node.span.as_ref().map(|span| span.start_line.to_string()))
+            .unwrap_or_else(|| "?".to_string());
+        let column = node
+            .metadata
+            .get("column")
+            .cloned()
+            .or_else(|| node.span.as_ref().map(|span| span.start_column.to_string()))
+            .unwrap_or_else(|| "?".to_string());
+        let diagnostic_source = node
+            .metadata
+            .get("diagnostic_source")
+            .map(String::as_str)
+            .unwrap_or("lsp");
+        let diagnostic_code = node.metadata.get("diagnostic_code").map(String::as_str);
+        let code = diagnostic_code
+            .map(|value| format!(" [{value}]"))
+            .unwrap_or_default();
+        let edges = graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter_map(|(index, edge)| {
+                (edge.target == node.id
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|relation| relation == "diagnostic"))
+                .then_some(index)
+            })
+            .collect();
+
+        insights.push(Insight {
+            kind: "semantic_diagnostic".to_string(),
+            severity,
+            message: format!(
+                "{diagnostic_source} {diagnostic_severity} at {path}:{line}:{column}{code}: {message}"
+            ),
+            nodes: vec![node.id],
+            edges,
+        });
     }
 }
 
@@ -7083,6 +7169,57 @@ mod tests {
         assert!(insight.message.contains("src/huge.rs"));
         assert!(insight.message.contains("8192"));
         assert!(insight.nodes.contains(&file));
+    }
+
+    #[test]
+    fn insights_report_semantic_diagnostics() {
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node(NodeKind::File, "src/main.rs");
+        let diagnostic = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "error: semantic mismatch",
+            Some(SourceSpan {
+                path: "src/main.rs".to_string(),
+                start_line: 3,
+                start_column: 9,
+                end_line: 3,
+                end_column: 10,
+            }),
+            BTreeMap::from([
+                ("item_kind".to_string(), "diagnostic".to_string()),
+                ("source".to_string(), "lsp".to_string()),
+                ("severity".to_string(), "error".to_string()),
+                ("diagnostic_source".to_string(), "rustc".to_string()),
+                ("diagnostic_code".to_string(), "E0001".to_string()),
+                ("message".to_string(), "semantic mismatch".to_string()),
+                ("path".to_string(), "src/main.rs".to_string()),
+                ("line".to_string(), "3".to_string()),
+                ("column".to_string(), "9".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            file,
+            diagnostic,
+            EdgeKind::MayError,
+            Confidence::Semantic,
+            BTreeMap::from([("relation".to_string(), "diagnostic".to_string())]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "semantic_diagnostic")
+            .expect("expected semantic diagnostic insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Error);
+        assert_eq!(insight.nodes, vec![diagnostic]);
+        assert_eq!(insight.edges, vec![0]);
+        assert!(insight.message.contains("rustc error"));
+        assert!(insight.message.contains("src/main.rs:3:9"));
+        assert!(insight.message.contains("E0001"));
+        assert_eq!(report.by_severity.get("error"), Some(&1));
+        assert_eq!(report.by_kind.get("semantic_diagnostic"), Some(&1));
     }
 
     #[test]

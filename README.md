@@ -103,6 +103,7 @@ Implemented now:
 - Effective scan policy API and web overview chips for explaining the active file-size, hidden-file, ignored-file, ignored-name, and ignored-glob rules.
 - CI checks for formatting, clippy, tests, UI syntax, CLI scan, and server cache smoke tests.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
+- Investigation insights for semantic LSP diagnostics, preserving language-server severity, source, code, and file location.
 - Investigation insights for manifest entrypoints whose declared target cannot be resolved to a file or function.
 - Investigation insights for framework routes whose named handler cannot be linked to a scanned function.
 - Investigation insights for heuristic cross-language dependency edges that deserve semantic review.
