@@ -474,6 +474,8 @@ const state = {
   architecturePathPrefix: "",
   entrypoints: [],
   insightReport: null,
+  riskByNode: new Map(),
+  riskSeverities: new Set(),
   projects: [],
   queryFocus: null,
   scanJobId: null,
@@ -816,6 +818,7 @@ function applyLocale() {
   renderRuntimeMetrics();
   renderJobQueue();
   renderInsights();
+  renderLegend(state.enabledKinds);
   renderSelection();
   draw();
 }
@@ -2572,14 +2575,16 @@ async function loadInsights() {
       throw new Error(body.error || "insights failed");
     }
     state.insightReport = body;
+    refreshRiskIndex();
     renderInsights();
-    renderLegend(new Set(state.graph.nodes.map((node) => node.kind)));
+    renderLegend(state.enabledKinds);
     draw();
   } catch (error) {
     if (requestId !== state.insightRequest) return;
     state.insightReport = null;
+    refreshRiskIndex();
     renderInsights();
-    renderLegend(new Set(state.graph.nodes.map((node) => node.kind)));
+    renderLegend(state.enabledKinds);
     draw();
   } finally {
     if (requestId === state.insightRequest) {
@@ -2645,6 +2650,7 @@ function initializeGraph(options = {}) {
   state.velocities.clear();
   const kinds = [...new Set(state.graph.nodes.map((node) => node.kind))].sort();
   state.enabledKinds = new Set(kinds);
+  refreshRiskIndex();
   renderKindFilters(kinds);
   renderLegend(kinds);
   state.layoutPaused = false;
@@ -4020,7 +4026,7 @@ function insightEdgeIndexes(insight) {
   return Array.isArray(insight.edges) ? insight.edges : [];
 }
 
-function insightRiskByNode() {
+function refreshRiskIndex() {
   const riskByNode = new Map();
   const insights = state.insightReport?.insights || buildClientInsights(state.graph);
   insights.forEach((insight) => {
@@ -4034,11 +4040,12 @@ function insightRiskByNode() {
       }
     });
   });
-  return riskByNode;
+  state.riskByNode = riskByNode;
+  state.riskSeverities = new Set(riskByNode.values());
 }
 
 function visibleRiskSeverities() {
-  return new Set([...insightRiskByNode().values()]);
+  return state.riskSeverities;
 }
 
 function severityRank(severity) {
@@ -4688,7 +4695,7 @@ function draw() {
   });
 
   const labelCandidates = [];
-  const riskByNode = insightRiskByNode();
+  const riskByNode = state.riskByNode;
   state.visibleNodes.forEach((node) => {
     const position = state.positions.get(node.id);
     const selected = node.id === state.selectedId;
