@@ -2744,10 +2744,28 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "neighbors",
                     "entrypoints",
                     "configs",
+                    "errors",
                     "unreachable",
                     "diagnostics",
                     "insights",
                     "path",
+                ],
+            ),
+            (
+                "graph_query_error_term",
+                vec![
+                    "id",
+                    "node_id",
+                    "target",
+                    "label",
+                    "search",
+                    "language",
+                    "kind",
+                    "item_kind",
+                    "path",
+                    "path_prefix",
+                    "depth",
+                    "metadata.*",
                 ],
             ),
             (
@@ -3242,7 +3260,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/query",
-                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, entrypoints, configs, unreachable, diagnostics, or insights.",
+                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, entrypoints, configs, errors, unreachable, diagnostics, or insights.",
                     vec![
                         path_param(),
                         query_param(
@@ -3250,7 +3268,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Graph query expression, for example `entrypoints language:rust`, `configs target:DATABASE_URL`, `unreachable language:rust`, `diagnostics severity:error language:rust`, or `insights severity:error`.",
+                            "Graph query expression, for example `entrypoints language:rust`, `configs target:DATABASE_URL`, `errors target:panic`, `unreachable language:rust`, `diagnostics severity:error language:rust`, or `insights severity:error`.",
                         ),
                     ],
                     "QueryResult",
@@ -4204,6 +4222,7 @@ mod tests {
                 .is_some_and(|commands| {
                     commands.contains(&"entrypoints")
                         && commands.contains(&"configs")
+                        && commands.contains(&"errors")
                         && commands.contains(&"diagnostics")
                         && commands.contains(&"insights")
                 })
@@ -4218,6 +4237,12 @@ mod tests {
             schema
                 .enum_values
                 .get("graph_query_config_term")
+                .is_some_and(|terms| terms.contains(&"target") && terms.contains(&"depth"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_error_term")
                 .is_some_and(|terms| terms.contains(&"target") && terms.contains(&"depth"))
         );
         assert!(

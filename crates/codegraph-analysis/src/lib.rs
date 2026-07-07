@@ -1594,6 +1594,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "neighbors" | "neighbor" | "neighborhood" => query_neighbors(graph, spec),
         "entrypoints" | "entrypoint" | "starts" | "startup" => query_entrypoints(graph, spec),
         "configs" | "config" | "environment" | "env" => query_configs(graph, spec),
+        "errors" | "error" | "exceptions" | "exception" => query_errors(graph, spec),
         "unreachable" | "dead" => query_unreachable(graph, spec),
         "diagnostics" | "diagnostic" => query_diagnostics(graph, spec),
         "insights" | "insight" | "risks" | "risk" | "findings" | "finding" => {
@@ -1601,7 +1602,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         }
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, entrypoints, configs, unreachable, diagnostics, insights, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, entrypoints, configs, errors, unreachable, diagnostics, insights, or path"
         ))),
     }
 }
@@ -2372,6 +2373,95 @@ fn query_configs(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, 
     })
 }
 
+fn query_errors(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    if let Some(first) = spec.positional.first() {
+        spec.terms
+            .entry("search".to_string())
+            .or_insert(first.clone());
+    }
+    validate_error_terms(&spec)?;
+    let max_depth = spec
+        .terms
+        .get("depth")
+        .map(|value| parse_limit(value).map(|value| value.clamp(1, 32)))
+        .transpose()?
+        .unwrap_or(6);
+    let path_index = node_path_index(graph);
+    let matched_errors: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata
+                .get("item_kind")
+                .is_some_and(|kind| kind == "error")
+                && error_query_matches(node, &spec, &path_index)
+        })
+        .cloned()
+        .collect();
+
+    let mut node_ids = BTreeSet::new();
+    let mut edge_indexes = BTreeSet::new();
+    let mut remaining_paths = spec.limit;
+    let mut truncated = matched_errors.len() > spec.limit;
+
+    for error in matched_errors.iter().take(spec.limit) {
+        node_ids.insert(error.id);
+        let source_edges: Vec<_> = graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| edge.target == error.id && edge.kind == EdgeKind::MayError)
+            .collect();
+
+        for (edge_index, edge) in source_edges {
+            node_ids.insert(edge.source);
+            node_ids.insert(edge.target);
+            edge_indexes.insert(edge_index);
+
+            if remaining_paths == 0 {
+                truncated = true;
+                continue;
+            }
+
+            let (paths, paths_truncated) =
+                error_source_paths(graph, edge.source, edge_index, max_depth, remaining_paths);
+            truncated |= paths_truncated;
+            remaining_paths = remaining_paths.saturating_sub(paths.len());
+            for path in paths {
+                for node in path.nodes {
+                    node_ids.insert(node.id);
+                }
+                for index in path.edge_indexes {
+                    edge_indexes.insert(index);
+                }
+            }
+        }
+    }
+
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| node_ids.contains(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let edges = graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| edge_indexes.contains(index))
+        .map(|(_, edge)| edge.clone())
+        .collect::<Vec<_>>();
+
+    Ok(QueryResult {
+        query: spec.original,
+        total_nodes: nodes.len(),
+        total_edges: edges.len(),
+        truncated,
+        nodes,
+        edges,
+    })
+}
+
 fn query_unreachable(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
     validate_unreachable_terms(&spec)?;
     let reachable = entrypoint_reachable_nodes(graph);
@@ -2750,6 +2840,31 @@ fn validate_config_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     Ok(())
 }
 
+fn validate_error_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if matches!(
+            key.as_str(),
+            "id" | "node_id"
+                | "target"
+                | "label"
+                | "search"
+                | "language"
+                | "kind"
+                | "item_kind"
+                | "path"
+                | "path_prefix"
+                | "depth"
+        ) || key.starts_with("metadata.")
+        {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported errors query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_unreachable_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     for key in spec.terms.keys() {
         if is_node_term(key) || matches!(key.as_str(), "path_prefix" | "scope") {
@@ -2957,6 +3072,27 @@ fn config_query_matches(
         "id" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
         "target" | "label" => text_matches(&node.label, expected),
         "search" => config_target_matches(node, expected),
+        "language" | "item_kind" => metadata_matches(node, key, expected),
+        "kind" => text_matches(&kind_name(&node.kind), expected),
+        "path" | "path_prefix" => node_path_matches(node, path_index, expected),
+        "depth" => true,
+        key if key.starts_with("metadata.") => node
+            .metadata
+            .get(key.trim_start_matches("metadata."))
+            .is_some_and(|value| text_matches(value, expected)),
+        _ => false,
+    })
+}
+
+fn error_query_matches(
+    node: &Node,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
+    spec.terms.iter().all(|(key, expected)| match key.as_str() {
+        "id" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        "target" | "label" => text_matches(&node.label, expected),
+        "search" => error_target_matches(node, expected),
         "language" | "item_kind" => metadata_matches(node, key, expected),
         "kind" => text_matches(&kind_name(&node.kind), expected),
         "path" | "path_prefix" => node_path_matches(node, path_index, expected),
@@ -6661,6 +6797,71 @@ mod tests {
         let error = query_graph(&graph, "configs nope:value")
             .expect_err("invalid configs term should fail");
         assert!(error.to_string().contains("unsupported configs query term"));
+    }
+
+    #[test]
+    fn query_errors_returns_source_and_entrypoint_context() {
+        let mut graph = CodeGraph::new("repo");
+        let entrypoint = graph.add_node(NodeKind::Entrypoint, "npm script:start");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let load_data = graph.add_node(NodeKind::Function, "loadData");
+        let error = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "failed to load data",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "error".to_string())]),
+        );
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        let panic = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "panic",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "error".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            entrypoint,
+            main,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "entrypoint_function".to_string())]),
+        );
+        graph.add_edge(main, load_data, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(load_data, error, EdgeKind::MayError, Confidence::Heuristic);
+        graph.add_edge(helper, panic, EdgeKind::MayError, Confidence::Heuristic);
+
+        let result = query_graph(&graph, "errors target:load depth:4").unwrap();
+
+        assert!(result.nodes.iter().any(|node| node.id == entrypoint));
+        assert!(result.nodes.iter().any(|node| node.id == main));
+        assert!(result.nodes.iter().any(|node| node.id == load_data));
+        assert!(result.nodes.iter().any(|node| node.id == error));
+        assert!(!result.nodes.iter().any(|node| node.id == panic));
+        assert!(
+            result
+                .edges
+                .iter()
+                .any(|edge| edge.source == load_data && edge.target == error)
+        );
+
+        let all_errors = query_graph(&graph, "errors").unwrap();
+        assert!(all_errors.nodes.iter().any(|node| node.id == panic));
+        assert!(
+            all_errors
+                .edges
+                .iter()
+                .any(|edge| edge.source == helper && edge.target == panic)
+        );
+
+        let by_search = query_graph(&graph, "exceptions panic").unwrap();
+        assert!(by_search.nodes.iter().any(|node| node.id == panic));
+
+        let error_query =
+            query_graph(&graph, "errors nope:value").expect_err("invalid errors term should fail");
+        assert!(
+            error_query
+                .to_string()
+                .contains("unsupported errors query term")
+        );
     }
 
     #[test]
