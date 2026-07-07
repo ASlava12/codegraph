@@ -11,6 +11,7 @@ use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
 };
+use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -30,6 +31,9 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// List built-in language adapters and detection patterns as JSON.
+    Languages,
+
     /// Scan a project and emit the initial graph as JSON.
     Scan {
         /// Project root to scan.
@@ -501,11 +505,22 @@ struct BenchmarkMeasurement {
     edges: usize,
 }
 
+#[derive(Debug, Serialize)]
+struct LanguageInfo {
+    language: &'static str,
+    parser: &'static str,
+    extensions: &'static [&'static str],
+    file_names: &'static [&'static str],
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let max_file_size = cli.max_file_size;
 
     match cli.command {
+        Command::Languages => {
+            println!("{}", serde_json::to_string_pretty(&language_report())?);
+        }
         Command::Scan {
             path,
             include_hidden,
@@ -827,6 +842,21 @@ fn print_graph(graph: &codegraph_core::CodeGraph, format: OutputFormat) -> Resul
         OutputFormat::Ndjson => print!("{}", export_ndjson(graph)?),
     }
     Ok(())
+}
+
+fn language_report() -> Vec<LanguageInfo> {
+    language_adapters()
+        .iter()
+        .map(|adapter| {
+            let info = adapter.info();
+            LanguageInfo {
+                language: info.language,
+                parser: info.parser,
+                extensions: info.extensions,
+                file_names: info.file_names,
+            }
+        })
+        .collect()
 }
 
 fn scan_with_options(

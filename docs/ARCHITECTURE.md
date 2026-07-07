@@ -75,6 +75,7 @@ This crate is shared by the CLI and server so humans, UI features, and agents re
 
 Responsibilities:
 
+- built-in language adapter registry for parser discovery and future extension points
 - language detection
 - Tree-sitter parser management
 - syntax-level graph extraction

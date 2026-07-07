@@ -28,29 +28,175 @@ pub enum Language {
     Bash,
 }
 
-impl Language {
-    pub fn detect(path: &Path) -> Option<Self> {
-        let file_name = path.file_name()?.to_str()?;
-        let extension = path.extension().and_then(|value| value.to_str());
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LanguageAdapterInfo {
+    pub language: &'static str,
+    pub parser: &'static str,
+    pub extensions: &'static [&'static str],
+    pub file_names: &'static [&'static str],
+}
 
-        if file_name == "Makefile" {
-            return Some(Self::Bash);
+pub trait LanguageAdapter: Sync {
+    fn language(&self) -> Language;
+
+    fn name(&self) -> &'static str {
+        self.language().name()
+    }
+
+    fn parser(&self) -> &'static str {
+        "tree-sitter"
+    }
+
+    fn extensions(&self) -> &'static [&'static str];
+
+    fn file_names(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    fn matches_path(&self, path: &Path) -> bool {
+        let file_name = path.file_name().and_then(|value| value.to_str());
+        if file_name.is_some_and(|value| self.file_names().contains(&value)) {
+            return true;
         }
 
-        match extension {
-            Some("rs") => Some(Self::Rust),
-            Some("py") | Some("pyw") => Some(Self::Python),
-            Some("js") | Some("mjs") | Some("cjs") => Some(Self::JavaScript),
-            Some("ts") | Some("mts") | Some("cts") => Some(Self::TypeScript),
-            Some("tsx") => Some(Self::Tsx),
-            Some("go") => Some(Self::Go),
-            Some("c") | Some("h") => Some(Self::C),
-            Some("cc") | Some("cpp") | Some("cxx") | Some("hpp") | Some("hh") | Some("hxx") => {
-                Some(Self::Cpp)
-            }
-            Some("php") | Some("phtml") => Some(Self::Php),
-            Some("sh") | Some("bash") | Some("zsh") | Some("ksh") => Some(Self::Bash),
-            _ => None,
+        path.extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| self.extensions().contains(&extension))
+    }
+
+    fn parse(&self, path: &Path, source: &[u8]) -> Result<ParsedFile, ParseError> {
+        parse_source(path, source, self.language())
+    }
+
+    fn info(&self) -> LanguageAdapterInfo {
+        LanguageAdapterInfo {
+            language: self.name(),
+            parser: self.parser(),
+            extensions: self.extensions(),
+            file_names: self.file_names(),
+        }
+    }
+}
+
+struct BuiltinLanguageAdapter {
+    language: Language,
+    extensions: &'static [&'static str],
+    file_names: &'static [&'static str],
+}
+
+impl LanguageAdapter for BuiltinLanguageAdapter {
+    fn language(&self) -> Language {
+        self.language
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        self.extensions
+    }
+
+    fn file_names(&self) -> &'static [&'static str] {
+        self.file_names
+    }
+}
+
+static RUST_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Rust,
+    extensions: &["rs"],
+    file_names: &[],
+};
+static PYTHON_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Python,
+    extensions: &["py", "pyw"],
+    file_names: &[],
+};
+static JAVASCRIPT_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::JavaScript,
+    extensions: &["js", "mjs", "cjs"],
+    file_names: &[],
+};
+static TYPESCRIPT_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::TypeScript,
+    extensions: &["ts", "mts", "cts"],
+    file_names: &[],
+};
+static TSX_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Tsx,
+    extensions: &["tsx"],
+    file_names: &[],
+};
+static GO_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Go,
+    extensions: &["go"],
+    file_names: &[],
+};
+static C_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::C,
+    extensions: &["c", "h"],
+    file_names: &[],
+};
+static CPP_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Cpp,
+    extensions: &["cc", "cpp", "cxx", "hpp", "hh", "hxx"],
+    file_names: &[],
+};
+static PHP_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Php,
+    extensions: &["php", "phtml"],
+    file_names: &[],
+};
+static BASH_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Bash,
+    extensions: &["sh", "bash", "zsh", "ksh"],
+    file_names: &["Makefile"],
+};
+
+static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 10] = [
+    &RUST_ADAPTER,
+    &PYTHON_ADAPTER,
+    &JAVASCRIPT_ADAPTER,
+    &TYPESCRIPT_ADAPTER,
+    &TSX_ADAPTER,
+    &GO_ADAPTER,
+    &C_ADAPTER,
+    &CPP_ADAPTER,
+    &PHP_ADAPTER,
+    &BASH_ADAPTER,
+];
+
+pub fn language_adapters() -> &'static [&'static dyn LanguageAdapter] {
+    &LANGUAGE_ADAPTERS
+}
+
+pub fn adapter_for_language(language: Language) -> Option<&'static dyn LanguageAdapter> {
+    language_adapters()
+        .iter()
+        .copied()
+        .find(|adapter| adapter.language() == language)
+}
+
+pub fn adapter_for_path(path: &Path) -> Option<&'static dyn LanguageAdapter> {
+    language_adapters()
+        .iter()
+        .copied()
+        .find(|adapter| adapter.matches_path(path))
+}
+
+impl Language {
+    pub fn detect(path: &Path) -> Option<Self> {
+        adapter_for_path(path).map(LanguageAdapter::language)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rust => "rust",
+            Self::Python => "python",
+            Self::JavaScript => "javascript",
+            Self::TypeScript => "typescript",
+            Self::Tsx => "tsx",
+            Self::Go => "go",
+            Self::C => "c",
+            Self::Cpp => "cpp",
+            Self::Php => "php",
+            Self::Bash => "bash",
         }
     }
 
@@ -72,19 +218,7 @@ impl Language {
 
 impl fmt::Display for Language {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            Self::Rust => "rust",
-            Self::Python => "python",
-            Self::JavaScript => "javascript",
-            Self::TypeScript => "typescript",
-            Self::Tsx => "tsx",
-            Self::Go => "go",
-            Self::C => "c",
-            Self::Cpp => "cpp",
-            Self::Php => "php",
-            Self::Bash => "bash",
-        };
-        f.write_str(name)
+        f.write_str(self.name())
     }
 }
 
@@ -692,6 +826,38 @@ fn dedupe_items(items: &mut Vec<ParsedItem>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn language_registry_exposes_all_builtin_adapters() {
+        let adapters = language_adapters();
+        let languages = adapters
+            .iter()
+            .map(|adapter| adapter.info().language)
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(adapters.len(), 10);
+        assert_eq!(
+            languages,
+            BTreeSet::from([
+                "bash",
+                "c",
+                "cpp",
+                "go",
+                "javascript",
+                "php",
+                "python",
+                "rust",
+                "tsx",
+                "typescript",
+            ])
+        );
+        assert!(
+            adapters
+                .iter()
+                .all(|adapter| adapter.info().parser == "tree-sitter")
+        );
+    }
 
     #[test]
     fn detects_target_languages_by_extension() {
@@ -709,7 +875,27 @@ mod tests {
 
         for (path, language) in cases {
             assert_eq!(Language::detect(Path::new(path)), Some(language));
+            assert_eq!(
+                adapter_for_path(Path::new(path)).map(|adapter| adapter.language()),
+                Some(language)
+            );
         }
+    }
+
+    #[test]
+    fn language_adapters_parse_sources() {
+        let adapter = adapter_for_language(Language::Rust).unwrap();
+        let parsed = adapter
+            .parse(Path::new("src/main.rs"), b"fn main() {}\n")
+            .unwrap();
+
+        assert_eq!(parsed.language, Language::Rust);
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|item| { item.kind == ParsedItemKind::Entrypoint && item.label == "main" })
+        );
     }
 
     #[test]

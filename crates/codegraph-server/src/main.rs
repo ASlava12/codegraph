@@ -20,6 +20,7 @@ use codegraph_core::CodeGraph;
 use codegraph_indexer::{
     IndexOptionOverrides, IndexOptions, configured_index_options, scan_coverage,
 };
+use codegraph_parser::language_adapters;
 use codegraph_storage::{
     CacheInfo, CacheStatus, GraphCache, default_cache_dir, scan_project_cached,
 };
@@ -309,6 +310,14 @@ struct HealthResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct LanguageResponse {
+    language: &'static str,
+    parser: &'static str,
+    extensions: &'static [&'static str],
+    file_names: &'static [&'static str],
+}
+
+#[derive(Debug, Serialize)]
 struct ScanOptionsResponse {
     root: String,
     config_path: Option<String>,
@@ -383,6 +392,7 @@ async fn main() -> Result<()> {
         .route("/app.js", get(app_js))
         .route("/styles.css", get(styles_css))
         .route("/api/health", get(health))
+        .route("/api/languages", get(languages_api))
         .route("/api/projects", get(projects_api))
         .route("/api/scan-options", get(scan_options_api))
         .route("/api/coverage", get(coverage_api))
@@ -625,6 +635,23 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, A
             .as_ref()
             .map(|cache| cache.dir().display().to_string()),
     }))
+}
+
+async fn languages_api() -> Json<Vec<LanguageResponse>> {
+    Json(
+        language_adapters()
+            .iter()
+            .map(|adapter| {
+                let info = adapter.info();
+                LanguageResponse {
+                    language: info.language,
+                    parser: info.parser,
+                    extensions: info.extensions,
+                    file_names: info.file_names,
+                }
+            })
+            .collect(),
+    )
 }
 
 async fn projects_api(State(state): State<AppState>) -> Json<Vec<ProjectResponse>> {

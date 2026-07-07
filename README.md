@@ -12,6 +12,7 @@ Implemented now:
 
 - Rust workspace layout.
 - Core graph model.
+- Built-in language adapter registry for Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash parser support.
 - Filesystem scanner with default build/vendor ignore rules.
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, PHP, and Bash.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
@@ -93,6 +94,12 @@ Run the initial scanner:
 
 ```bash
 cargo run -p codegraph-cli -- scan .
+```
+
+List built-in language adapters and detection patterns:
+
+```bash
+cargo run -p codegraph-cli -- languages
 ```
 
 Limit per-file scan reads for very large repositories:
@@ -348,6 +355,7 @@ Scan API:
 ```bash
 curl 'http://127.0.0.1:3765/api/projects'
 curl 'http://127.0.0.1:3765/api/scan-options?path=.'
+curl 'http://127.0.0.1:3765/api/languages'
 curl 'http://127.0.0.1:3765/api/coverage?path=.'
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'

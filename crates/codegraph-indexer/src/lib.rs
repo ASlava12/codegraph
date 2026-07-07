@@ -1,5 +1,5 @@
 use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan};
-use codegraph_parser::{Language, ParsedItemKind, parse_source};
+use codegraph_parser::{Language, ParsedItemKind, adapter_for_path};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -619,8 +619,11 @@ pub fn scan_coverage(
 
         report.indexed_files += 1;
         report.indexed_bytes += bytes;
-        if let Some(language) = Language::detect(path) {
-            *report.languages.entry(language.to_string()).or_default() += 1;
+        if let Some(adapter) = adapter_for_path(path) {
+            *report
+                .languages
+                .entry(adapter.language().to_string())
+                .or_default() += 1;
         }
     }
 
@@ -642,8 +645,8 @@ fn index_skipped_file(
         "max_file_size_bytes".to_string(),
         options.max_file_size.to_string(),
     );
-    if let Some(language) = Language::detect(path) {
-        metadata.insert("language".to_string(), language.to_string());
+    if let Some(adapter) = adapter_for_path(path) {
+        metadata.insert("language".to_string(), adapter.language().to_string());
     }
 
     let file_id = context
@@ -665,7 +668,8 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
             metadata.insert("read_error".to_string(), error.to_string());
         })
         .ok();
-    let language = Language::detect(path).or_else(|| {
+    let adapter = adapter_for_path(path);
+    let language = adapter.map(|adapter| adapter.language()).or_else(|| {
         source_bytes
             .as_deref()
             .and_then(|source| std::str::from_utf8(source).ok())
@@ -676,10 +680,19 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
         metadata.insert("language".to_string(), language.to_string());
     }
 
-    let parse_result = language.and_then(|language| {
-        source_bytes
-            .as_ref()
-            .map(|source| (language, parse_source(label, source, language)))
+    let parse_result = source_bytes.as_ref().and_then(|source| {
+        if let Some(adapter) = adapter {
+            Some((adapter.language(), adapter.parse(Path::new(label), source)))
+        } else {
+            language.map(|language| {
+                (
+                    language,
+                    codegraph_parser::adapter_for_language(language)
+                        .expect("shebang languages are backed by built-in adapters")
+                        .parse(Path::new(label), source),
+                )
+            })
+        }
     });
 
     let file_id = context
