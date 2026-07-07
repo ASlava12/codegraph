@@ -15,7 +15,7 @@ Implemented now:
 - Built-in language adapter registry for Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash parser support.
 - LSP server discovery for semantic enrichment readiness across Rust, Go, JavaScript/TypeScript, Python, C/C++, PHP, and Bash.
 - Project semantic readiness reports showing which scanned languages are covered by installed LSP servers.
-- Semantic enrichment plans showing ready, blocked, and unsupported LSP work by language, including capped concrete work queues for agents.
+- Semantic enrichment plans showing ready, blocked, and unsupported LSP work by language, including capped concrete work queues with stable ids and priorities for agents.
 - Filesystem scanner with default build/vendor ignore rules.
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, PHP, and Bash.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.

@@ -87,8 +87,11 @@ pub struct SemanticRequestCounts {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SemanticWorkItem {
+    pub id: String,
     pub kind: &'static str,
     pub capability: &'static str,
+    pub priority: usize,
+    pub reason: &'static str,
     pub language: String,
     pub status: &'static str,
     pub server: Option<&'static str>,
@@ -503,8 +506,11 @@ fn semantic_work_items(
                 &mut total_work_items,
                 work_item_limit,
                 SemanticWorkItem {
+                    id: format!("language_support:{}", plan.language),
                     kind: "language_support",
                     capability: "language_server",
+                    priority: work_item_priority("language_server"),
+                    reason: "no language server is configured for this source language",
                     language: plan.language.clone(),
                     status: plan.status,
                     server: None,
@@ -520,13 +526,16 @@ fn semantic_work_items(
             continue;
         }
 
-        if plan.capabilities.contains(&"document_symbols") {
-            for node in language_file_nodes(graph, &plan.language) {
+        if plan.capabilities.contains(&"definitions") {
+            for (edge_index, edge) in language_heuristic_edges(graph, &nodes_by_id, &plan.language)
+            {
+                let source = nodes_by_id.get(&edge.source).copied();
+                let target = nodes_by_id.get(&edge.target).copied();
                 push_semantic_work_item(
                     &mut work_items,
                     &mut total_work_items,
                     work_item_limit,
-                    file_work_item("document_symbols", plan, node),
+                    edge_work_item("definitions", plan, edge_index, source, target),
                 );
             }
         }
@@ -540,6 +549,16 @@ fn semantic_work_items(
                 );
             }
         }
+        if plan.capabilities.contains(&"document_symbols") {
+            for node in language_file_nodes(graph, &plan.language) {
+                push_semantic_work_item(
+                    &mut work_items,
+                    &mut total_work_items,
+                    work_item_limit,
+                    file_work_item("document_symbols", plan, node),
+                );
+            }
+        }
         if plan.capabilities.contains(&"references") {
             for node in language_symbol_nodes(graph, &plan.language) {
                 push_semantic_work_item(
@@ -547,19 +566,6 @@ fn semantic_work_items(
                     &mut total_work_items,
                     work_item_limit,
                     node_work_item("references", plan, node),
-                );
-            }
-        }
-        if plan.capabilities.contains(&"definitions") {
-            for (edge_index, edge) in language_heuristic_edges(graph, &nodes_by_id, &plan.language)
-            {
-                let source = nodes_by_id.get(&edge.source).copied();
-                let target = nodes_by_id.get(&edge.target).copied();
-                push_semantic_work_item(
-                    &mut work_items,
-                    &mut total_work_items,
-                    work_item_limit,
-                    edge_work_item("definitions", plan, edge_index, edge, source, target),
                 );
             }
         }
@@ -622,9 +628,19 @@ fn file_work_item(
     node: &Node,
 ) -> SemanticWorkItem {
     let (path, line, column) = node_location(node);
+    let id = work_item_id(
+        capability,
+        &plan.language,
+        path.as_deref(),
+        Some(node),
+        None,
+    );
     SemanticWorkItem {
+        id,
         kind: "file",
         capability,
+        priority: work_item_priority(capability),
+        reason: work_item_reason(capability),
         language: plan.language.clone(),
         status: plan.status,
         server: plan.server,
@@ -644,9 +660,19 @@ fn node_work_item(
     node: &Node,
 ) -> SemanticWorkItem {
     let (path, line, column) = node_location(node);
+    let id = work_item_id(
+        capability,
+        &plan.language,
+        path.as_deref(),
+        Some(node),
+        None,
+    );
     SemanticWorkItem {
+        id,
         kind: "symbol",
         capability,
+        priority: work_item_priority(capability),
+        reason: work_item_reason(capability),
         language: plan.language.clone(),
         status: plan.status,
         server: plan.server,
@@ -664,14 +690,23 @@ fn edge_work_item(
     capability: &'static str,
     plan: &LanguageEnrichmentPlan,
     edge_index: usize,
-    _edge: &Edge,
     source: Option<&Node>,
     target: Option<&Node>,
 ) -> SemanticWorkItem {
     let (path, line, column) = source.map(node_location).unwrap_or((None, None, None));
+    let id = work_item_id(
+        capability,
+        &plan.language,
+        path.as_deref(),
+        source,
+        Some(edge_index),
+    );
     SemanticWorkItem {
+        id,
         kind: "edge",
         capability,
+        priority: work_item_priority(capability),
+        reason: work_item_reason(capability),
         language: plan.language.clone(),
         status: plan.status,
         server: plan.server,
@@ -682,6 +717,47 @@ fn edge_work_item(
         node: source.map(node_ref),
         target: target.map(node_ref),
         edge_index: Some(edge_index),
+    }
+}
+
+fn work_item_id(
+    capability: &str,
+    language: &str,
+    path: Option<&str>,
+    node: Option<&Node>,
+    edge_index: Option<usize>,
+) -> String {
+    if let Some(edge_index) = edge_index {
+        return format!("{capability}:{language}:edge:{edge_index}");
+    }
+    if let Some(node) = node {
+        return format!("{capability}:{language}:node:{}", node.id.0);
+    }
+    if let Some(path) = path {
+        return format!("{capability}:{language}:path:{path}");
+    }
+    format!("{capability}:{language}")
+}
+
+fn work_item_priority(capability: &str) -> usize {
+    match capability {
+        "definitions" => 10,
+        "diagnostics" => 20,
+        "document_symbols" => 30,
+        "references" => 40,
+        "language_server" => 90,
+        _ => 100,
+    }
+}
+
+fn work_item_reason(capability: &str) -> &'static str {
+    match capability {
+        "definitions" => "upgrade heuristic graph edges to semantic definitions",
+        "diagnostics" => "collect language-server diagnostics for source files",
+        "document_symbols" => "compare parser symbols with language-server document symbols",
+        "references" => "find semantic references for known graph symbols",
+        "language_server" => "enable language-server support before semantic enrichment",
+        _ => "semantic enrichment work item",
     }
 }
 
@@ -980,17 +1056,30 @@ mod tests {
         assert_eq!(plan.total_work_items, 7);
         assert_eq!(plan.work_item_limit, DEFAULT_SEMANTIC_WORK_ITEM_LIMIT);
         assert!(!plan.truncated_work_items);
-        assert!(plan.work_items.iter().any(|item| {
-            item.kind == "edge"
-                && item.capability == "definitions"
-                && item.language == "rust"
-                && item.status == "ready"
-                && item.edge_index == Some(1)
-        }));
+        let definition_item = plan
+            .work_items
+            .iter()
+            .find(|item| {
+                item.kind == "edge"
+                    && item.capability == "definitions"
+                    && item.language == "rust"
+                    && item.status == "ready"
+                    && item.edge_index == Some(1)
+            })
+            .expect("definition work item");
+        assert_eq!(definition_item.id, "definitions:rust:edge:1");
+        assert_eq!(definition_item.priority, 10);
+        assert_eq!(
+            definition_item.reason,
+            "upgrade heuristic graph edges to semantic definitions"
+        );
+        assert_eq!(plan.work_items.first(), Some(definition_item));
         assert!(plan.work_items.iter().any(|item| {
             item.kind == "language_support"
                 && item.language == "markdown"
                 && item.status == "unsupported_language"
+                && item.id == "language_support:markdown"
+                && item.priority == 90
         }));
 
         assert_eq!(rust.status, "ready");
