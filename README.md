@@ -51,6 +51,7 @@ Implemented now:
 - Optional API bearer-token protection through `--api-token` or `CODEGRAPH_API_TOKEN`, with same-origin web UI token prompting.
 - Project report snapshots in CLI, API, and web export for summary, full-risk scoring, quality gate, insights, topology reports, cache, and scan coverage.
 - Web overview chips for server capabilities, API/schema versions, cache state, supported language/export counts, job limits, and route groups.
+- Web overview risk summary chips for report grade, weighted score, severity counts, and top finding kinds with quick insight filtering.
 - Web runtime panel for uptime, cache state, scan/semantic slots, and retained job-store totals.
 - Async scan job API for long-running repository scans.
 - SSE scan job status stream for live web progress updates.

@@ -476,6 +476,7 @@ button.cancel-action:hover:not(:disabled) {
 .edge-source-list,
 .scan-policy-list,
 .coverage-list,
+.risk-summary-list,
 .lsp-list,
 .architecture-list,
 .language-dependency-list,
@@ -493,6 +494,7 @@ button.cancel-action:hover:not(:disabled) {
 .edge-source-chip,
 .scan-policy-chip,
 .coverage-chip,
+.risk-summary-chip,
 .lsp-chip,
 .architecture-chip,
 .architecture-edge-chip,
@@ -519,6 +521,7 @@ button.cancel-action:hover:not(:disabled) {
 .edge-source-chip span,
 .scan-policy-chip span,
 .coverage-chip span,
+.risk-summary-chip span,
 .lsp-chip span,
 .architecture-chip span,
 .architecture-edge-chip span,
@@ -538,6 +541,7 @@ button.cancel-action:hover:not(:disabled) {
 .edge-source-chip strong,
 .scan-policy-chip strong,
 .coverage-chip strong,
+.risk-summary-chip strong,
 .lsp-chip strong,
 .architecture-chip strong,
 .architecture-edge-chip strong,
@@ -556,6 +560,32 @@ button.cancel-action:hover:not(:disabled) {
 .capability-chip {
   max-width: 100%;
   background: rgba(92, 200, 167, 0.08);
+}
+
+.risk-summary-chip {
+  max-width: 100%;
+  background: rgba(237, 241, 242, 0.06);
+}
+
+.risk-summary-chip.clean,
+.risk-summary-chip.grade-clean,
+.risk-summary-chip.grade-low {
+  background: rgba(92, 200, 167, 0.1);
+}
+
+.risk-summary-chip.info,
+.risk-summary-chip.grade-medium {
+  background: rgba(103, 183, 220, 0.1);
+}
+
+.risk-summary-chip.warning,
+.risk-summary-chip.grade-high {
+  background: rgba(242, 193, 78, 0.12);
+}
+
+.risk-summary-chip.error,
+.risk-summary-chip.grade-critical {
+  background: rgba(224, 108, 117, 0.13);
 }
 
 .coverage-chip {
@@ -748,6 +778,7 @@ button.cancel-action:hover:not(:disabled) {
 
 .language-chip:hover,
 .confidence-chip:hover,
+.risk-summary-chip:hover,
 .architecture-chip:hover,
 .architecture-edge-chip:hover,
 .language-dependency-chip:hover,

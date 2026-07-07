@@ -271,6 +271,12 @@ const I18N = {
     "runtime.semanticSlots": "Semantic Slots",
     "runtime.scanJobs": "Scan Jobs",
     "runtime.semanticJobs": "Semantic Jobs",
+    "risk.score": "Risk Score",
+    "risk.grade": "Grade",
+    "risk.errors": "Errors",
+    "risk.warnings": "Warnings",
+    "risk.infos": "Info",
+    "risk.clean": "Clean",
     "export.report": "Report JSON",
     "trace.tracing": "Tracing...",
     "trace.tracingDependents": "Tracing dependents...",
@@ -605,6 +611,12 @@ const I18N = {
     "runtime.semanticSlots": "Слоты сем.",
     "runtime.scanJobs": "Скан-задачи",
     "runtime.semanticJobs": "Сем. задачи",
+    "risk.score": "Риск",
+    "risk.grade": "Оценка",
+    "risk.errors": "Ошибки",
+    "risk.warnings": "Предупреждения",
+    "risk.infos": "Инфо",
+    "risk.clean": "Чисто",
     "export.report": "JSON-отчёт",
     "trace.tracing": "Трассирую...",
     "trace.tracingDependents": "Трассирую зависимые узлы...",
@@ -772,6 +784,7 @@ const state = {
   lsp: null,
   semanticReadiness: null,
   semanticPlan: null,
+  report: null,
   architecture: null,
   languageDependencies: null,
   hotspots: null,
@@ -853,6 +866,7 @@ const relationList = document.querySelector("#relationList");
 const edgeSourceList = document.querySelector("#edgeSourceList");
 const scanPolicyList = document.querySelector("#scanPolicyList");
 const coverageList = document.querySelector("#coverageList");
+const riskSummaryList = document.querySelector("#riskSummaryList");
 const lspList = document.querySelector("#lspList");
 const semanticWorkLanguageInput = document.querySelector("#semanticWorkLanguageInput");
 const semanticWorkStatusInput = document.querySelector("#semanticWorkStatusInput");
@@ -1472,6 +1486,7 @@ async function scan() {
   state.lsp = null;
   state.semanticReadiness = null;
   state.semanticPlan = null;
+  state.report = null;
   state.architecture = null;
   state.languageDependencies = null;
   state.hotspots = null;
@@ -1767,6 +1782,7 @@ async function loadProjectOverview() {
       lspResponse,
       semanticReadinessResponse,
       semanticPlanResponse,
+      reportResponse,
       architectureResponse,
       languageDependenciesResponse,
       hotspotsResponse,
@@ -1778,6 +1794,7 @@ async function loadProjectOverview() {
       apiFetch("/api/lsp"),
       apiFetch(`/api/semantic-readiness?${params.toString()}`),
       apiFetch(`/api/semantic-plan?${semanticParams.toString()}`),
+      apiFetch(`/api/report?${params.toString()}&insight_limit=6&fail_on=warning`),
       apiFetch(`/api/architecture?${params.toString()}&group_limit=8&edge_limit=40`),
       apiFetch(`/api/language-dependencies?${params.toString()}&limit=8`),
       apiFetch(`/api/hotspots?${params.toString()}&limit=8`),
@@ -1789,6 +1806,7 @@ async function loadProjectOverview() {
     const lsp = await lspResponse.json();
     const semanticReadiness = await semanticReadinessResponse.json();
     const semanticPlan = await semanticPlanResponse.json();
+    const report = await reportResponse.json();
     const architecture = await architectureResponse.json();
     const languageDependencies = await languageDependenciesResponse.json();
     const hotspots = await hotspotsResponse.json();
@@ -1814,6 +1832,9 @@ async function loadProjectOverview() {
     if (!semanticPlanResponse.ok) {
       throw new Error(apiErrorMessage(semanticPlan, semanticPlanResponse, "semantic plan failed"));
     }
+    if (!reportResponse.ok) {
+      throw new Error(apiErrorMessage(report, reportResponse, "report failed"));
+    }
     if (!architectureResponse.ok) {
       throw new Error(apiErrorMessage(architecture, architectureResponse, "architecture failed"));
     }
@@ -1829,6 +1850,7 @@ async function loadProjectOverview() {
     state.lsp = lsp;
     state.semanticReadiness = semanticReadiness;
     state.semanticPlan = semanticPlan;
+    state.report = report.report || report;
     state.architecture = architecture;
     state.languageDependencies = languageDependencies;
     state.hotspots = hotspots;
@@ -1844,6 +1866,8 @@ async function loadProjectOverview() {
     edgeSourceList.innerHTML = "";
     scanPolicyList.innerHTML = "";
     coverageList.innerHTML = "";
+    state.report = null;
+    riskSummaryList.innerHTML = "";
     lspList.innerHTML = "";
     semanticWorkList.innerHTML = "";
     architectureList.innerHTML = "";
@@ -2161,6 +2185,7 @@ function renderOverview() {
 
   renderScanPolicy(state.scanOptions);
   renderCoverage(state.coverage);
+  renderRiskSummary(state.report?.risk_summary);
   renderLspStatus(state.lsp, state.semanticReadiness, state.semanticPlan);
   renderSemanticWorkFilterOptions(summary);
   renderSemanticWork(state.semanticPlan);
@@ -2357,6 +2382,69 @@ function renderCoverage(coverage) {
       `,
     )
     .join("");
+}
+
+function renderRiskSummary(risk) {
+  if (!risk) {
+    riskSummaryList.innerHTML = `<p class="empty">${escapeHtml(t("empty.noInsights"))}</p>`;
+    return;
+  }
+
+  const grade = String(risk.grade || "clean");
+  const chips = [
+    riskChip(t("risk.score"), formatCompactNumber(risk.score), `grade-${grade}`),
+    riskChip(t("risk.grade"), formatKind(grade), `grade-${grade}`),
+    riskChip(t("risk.errors"), Number(risk.errors || 0), "error", "error"),
+    riskChip(t("risk.warnings"), Number(risk.warnings || 0), "warning", "warning"),
+    riskChip(t("risk.infos"), Number(risk.infos || 0), "info", "info"),
+  ];
+  const topKinds = Array.isArray(risk.top_kinds) ? risk.top_kinds.slice(0, 5) : [];
+  topKinds.forEach((item) => {
+    chips.push(riskKindChip(item));
+  });
+  if (Number(risk.total || 0) === 0) {
+    chips.push(riskChip(t("risk.clean"), 0, "clean"));
+  }
+  riskSummaryList.innerHTML = chips.join("");
+  riskSummaryList.querySelectorAll("[data-risk-severity]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const severity = button.dataset.riskSeverity || "";
+      insightSeverityInput.value =
+        insightSeverityInput.value.trim().toLowerCase() === severity ? "" : severity;
+      insightKindInput.value = "";
+      loadInsights();
+    });
+  });
+  riskSummaryList.querySelectorAll("[data-risk-kind]").forEach((button) => {
+    button.addEventListener("click", () => {
+      insightKindInput.value = button.dataset.riskKind || "";
+      insightSeverityInput.value = "";
+      loadInsights();
+    });
+  });
+}
+
+function riskChip(label, value, status, severity = "") {
+  const dataset = severity ? `data-risk-severity="${escapeHtml(severity)}"` : "";
+  const tag = severity ? "button" : "div";
+  const type = severity ? 'type="button"' : "";
+  return `
+    <${tag} class="risk-summary-chip ${escapeHtml(status || "")}" ${type} ${dataset}>
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(String(value))}</strong>
+    </${tag}>
+  `;
+}
+
+function riskKindChip(item) {
+  const kind = String(item.kind || "");
+  const severity = String(item.severity || "info");
+  return `
+    <button class="risk-summary-chip ${escapeHtml(severity)}" type="button" data-risk-kind="${escapeHtml(kind)}">
+      <span>${escapeHtml(formatKind(kind))}</span>
+      <strong>${Number(item.count || 0)}</strong>
+    </button>
+  `;
 }
 
 function renderLspStatus(report, readiness, plan) {
@@ -6880,6 +6968,15 @@ function edgeColor(edge) {
 function formatKind(value) {
   const raw = String(value);
   return translate(`kind.${raw}`, raw.replaceAll("_", " "));
+}
+
+function formatCompactNumber(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "0";
+  return new Intl.NumberFormat(state.locale, {
+    notation: Math.abs(number) >= 10_000 ? "compact" : "standard",
+    maximumFractionDigits: 1,
+  }).format(number);
 }
 
 function formatBytes(value) {
