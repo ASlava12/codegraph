@@ -38,6 +38,7 @@ Implemented now:
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
 - API capabilities endpoint for discovering supported languages, exports, features, limits, cache state, and route groups.
+- Web overview chips for server capabilities, API/schema versions, cache state, supported language/export counts, job limits, and route groups.
 - Async scan job API for long-running repository scans.
 - SSE scan job status stream for live web progress updates.
 - Cancelable scan and semantic enrichment jobs for stopping queued or running long work.

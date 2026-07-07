@@ -113,7 +113,19 @@ const I18N = {
     "empty.noEdgeSources": "No edge sources.",
     "empty.noInsights": "No matching insights.",
     "empty.noVisibleIssues": "No obvious issues in the visible graph.",
+    "empty.noCapabilities": "No server capabilities.",
     "empty.loadingSource": "Loading...",
+    "cap.api": "API",
+    "cap.graph": "Graph",
+    "cap.cache": "Cache",
+    "cap.languages": "Languages",
+    "cap.exports": "Exports",
+    "cap.projects": "Projects",
+    "cap.scanJobs": "Scan Jobs",
+    "cap.semanticJobs": "Semantic Jobs",
+    "cap.routes": "Routes",
+    "cap.on": "on",
+    "cap.off": "off",
     "trace.tracing": "Tracing...",
     "trace.tracingDependents": "Tracing dependents...",
     "trace.noDependents": "No incoming dependents.",
@@ -258,7 +270,19 @@ const I18N = {
     "empty.noEdgeSources": "Нет источников связей.",
     "empty.noInsights": "Совпадающих находок нет.",
     "empty.noVisibleIssues": "В видимом графе явных проблем нет.",
+    "empty.noCapabilities": "Нет данных о сервере.",
     "empty.loadingSource": "Загружаю...",
+    "cap.api": "API",
+    "cap.graph": "Граф",
+    "cap.cache": "Кеш",
+    "cap.languages": "Языки",
+    "cap.exports": "Экспорты",
+    "cap.projects": "Проекты",
+    "cap.scanJobs": "Скан-задачи",
+    "cap.semanticJobs": "Сем. задачи",
+    "cap.routes": "Маршруты",
+    "cap.on": "вкл",
+    "cap.off": "выкл",
     "trace.tracing": "Трассирую...",
     "trace.tracingDependents": "Трассирую зависимые узлы...",
     "trace.noDependents": "Входящих зависимых нет.",
@@ -376,6 +400,7 @@ const state = {
   summary: null,
   scanOptions: null,
   coverage: null,
+  capabilities: null,
   lsp: null,
   semanticReadiness: null,
   semanticPlan: null,
@@ -445,6 +470,7 @@ const semanticJobSummary = document.querySelector("#semanticJobSummary");
 const scanJobList = document.querySelector("#scanJobList");
 const semanticJobList = document.querySelector("#semanticJobList");
 const overviewTotals = document.querySelector("#overviewTotals");
+const capabilitiesList = document.querySelector("#capabilitiesList");
 const languageList = document.querySelector("#languageList");
 const confidenceList = document.querySelector("#confidenceList");
 const relationList = document.querySelector("#relationList");
@@ -705,7 +731,7 @@ function applyLocale() {
 }
 
 async function init() {
-  await loadProjects();
+  await Promise.all([loadProjects(), loadCapabilities()]);
   loadJobQueue();
   scan();
 }
@@ -723,6 +749,20 @@ async function loadProjects() {
     state.projects = [];
     projectSelect.innerHTML = `<option value=".">${escapeHtml(t("project.currentRoot"))}</option>`;
   }
+}
+
+async function loadCapabilities() {
+  try {
+    const response = await fetch("/api/capabilities");
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.error || "capabilities failed");
+    }
+    state.capabilities = body;
+  } catch (error) {
+    state.capabilities = null;
+  }
+  renderOverview();
 }
 
 function renderProjects() {
@@ -1261,6 +1301,7 @@ async function loadProjectOverview() {
   } catch (error) {
     if (requestId !== state.overviewRequest) return;
     overviewTotals.textContent = "error";
+    renderCapabilities(state.capabilities);
     languageList.innerHTML = "";
     confidenceList.innerHTML = "";
     relationList.innerHTML = "";
@@ -1525,6 +1566,8 @@ function renderOverview() {
     : `0 ${nodesLabel}`;
   skippedCount.textContent = String(summary?.skipped_files || 0);
 
+  renderCapabilities(state.capabilities);
+
   const languages = Object.entries(summary?.languages || {})
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
     .slice(0, 8);
@@ -1682,6 +1725,42 @@ function renderOverviewChip(kind, value, count) {
       <strong>${count}</strong>
     </button>
   `;
+}
+
+function renderCapabilities(capabilities) {
+  if (!capabilities) {
+    capabilitiesList.innerHTML = `<p class="empty">${escapeHtml(t("empty.noCapabilities"))}</p>`;
+    return;
+  }
+
+  const endpoints = Array.isArray(capabilities.endpoints) ? capabilities.endpoints : [];
+  const languages = Array.isArray(capabilities.languages) ? capabilities.languages : [];
+  const exportFormats = Array.isArray(capabilities.export_formats) ? capabilities.export_formats : [];
+  const projects = Array.isArray(capabilities.projects) ? capabilities.projects : [];
+  const limits = capabilities.limits || {};
+  const cache = capabilities.cache || {};
+  const chips = [
+    [t("cap.api"), `v${Number(capabilities.api_version || 0)}`],
+    [t("cap.graph"), `v${Number(capabilities.graph_schema_version || 0)}`],
+    [t("cap.cache"), cache.enabled ? t("cap.on") : t("cap.off")],
+    [t("cap.languages"), String(languages.length)],
+    [t("cap.exports"), String(exportFormats.length)],
+    [t("cap.projects"), String(projects.length)],
+    [t("cap.scanJobs"), `${Number(limits.max_scan_concurrency || 0)}/${Number(limits.max_scan_jobs || 0)}`],
+    [t("cap.semanticJobs"), `${Number(limits.max_semantic_concurrency || 0)}/${Number(limits.max_semantic_jobs || 0)}`],
+    [t("cap.routes"), String(endpoints.length)],
+  ];
+
+  capabilitiesList.innerHTML = chips
+    .map(
+      ([label, value]) => `
+        <div class="capability-chip">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      `,
+    )
+    .join("");
 }
 
 function renderScanPolicy(options) {

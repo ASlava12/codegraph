@@ -422,6 +422,7 @@ button.cancel-action:hover:not(:disabled) {
 }
 
 .language-list,
+.capability-list,
 .confidence-list,
 .relation-list,
 .edge-source-list,
@@ -438,6 +439,7 @@ button.cancel-action:hover:not(:disabled) {
 }
 
 .language-chip,
+.capability-chip,
 .confidence-chip,
 .relation-chip,
 .edge-source-chip,
@@ -463,6 +465,7 @@ button.cancel-action:hover:not(:disabled) {
 }
 
 .language-chip span,
+.capability-chip span,
 .confidence-chip span,
 .relation-chip span,
 .edge-source-chip span,
@@ -481,6 +484,7 @@ button.cancel-action:hover:not(:disabled) {
 }
 
 .language-chip strong,
+.capability-chip strong,
 .confidence-chip strong,
 .relation-chip strong,
 .edge-source-chip strong,
@@ -499,6 +503,11 @@ button.cancel-action:hover:not(:disabled) {
 .scan-policy-chip {
   max-width: 100%;
   background: rgba(103, 183, 220, 0.08);
+}
+
+.capability-chip {
+  max-width: 100%;
+  background: rgba(92, 200, 167, 0.08);
 }
 
 .coverage-chip {
