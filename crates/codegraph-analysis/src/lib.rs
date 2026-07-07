@@ -3276,7 +3276,7 @@ fn add_semantic_diagnostic_insights(graph: &CodeGraph, insights: &mut Vec<Insigh
         let code = diagnostic_code
             .map(|value| format!(" [{value}]"))
             .unwrap_or_default();
-        let edges = graph
+        let diagnostic_edges = graph
             .edges
             .iter()
             .enumerate()
@@ -3288,7 +3288,15 @@ fn add_semantic_diagnostic_insights(graph: &CodeGraph, insights: &mut Vec<Insigh
                         .is_some_and(|relation| relation == "diagnostic"))
                 .then_some(index)
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let mut nodes = vec![node.id];
+        for edge_index in &diagnostic_edges {
+            if let Some(edge) = graph.edges.get(*edge_index)
+                && !nodes.contains(&edge.source)
+            {
+                nodes.push(edge.source);
+            }
+        }
 
         insights.push(Insight {
             kind: "semantic_diagnostic".to_string(),
@@ -3296,8 +3304,8 @@ fn add_semantic_diagnostic_insights(graph: &CodeGraph, insights: &mut Vec<Insigh
             message: format!(
                 "{diagnostic_source} {diagnostic_severity} at {path}:{line}:{column}{code}: {message}"
             ),
-            nodes: vec![node.id],
-            edges,
+            nodes,
+            edges: diagnostic_edges,
         });
     }
 }
@@ -7213,13 +7221,22 @@ mod tests {
             .expect("expected semantic diagnostic insight");
 
         assert_eq!(insight.severity, InsightSeverity::Error);
-        assert_eq!(insight.nodes, vec![diagnostic]);
+        assert_eq!(insight.nodes, vec![diagnostic, file]);
         assert_eq!(insight.edges, vec![0]);
         assert!(insight.message.contains("rustc error"));
         assert!(insight.message.contains("src/main.rs:3:9"));
         assert!(insight.message.contains("E0001"));
         assert_eq!(report.by_severity.get("error"), Some(&1));
         assert_eq!(report.by_kind.get("semantic_diagnostic"), Some(&1));
+
+        let card = node_card(&graph, None, file, 10, 1, 10)
+            .unwrap()
+            .expect("expected file card");
+        assert!(
+            card.insights
+                .iter()
+                .any(|insight| insight.kind == "semantic_diagnostic")
+        );
     }
 
     #[test]
