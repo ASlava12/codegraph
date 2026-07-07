@@ -116,6 +116,7 @@ Goal: answer practical code investigation questions.
 - [x] Back web insights with server analysis during paged graph exploration.
 - [x] Add CLI, server-side, and web filters for insight severity, kind, and search.
 - [x] Add insight severity and kind breakdowns for triage.
+- [x] Make web insight severity breakdown chips clickable triage filters.
 - [x] Add CI/agent check command, API, and web quality gate for insight severity thresholds.
 - [x] Add first graph query language for nodes, edges, calls, dependencies, and traces.
 - [x] Add directed path queries between graph labels or node ids.

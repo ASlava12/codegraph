@@ -77,6 +77,7 @@ Implemented now:
 - Node context API and detail-panel neighbor loading for paged graph exploration.
 - Server-backed web insights for project-wide findings while browsing paged graph slices.
 - Insight reports include severity and kind breakdowns for triage.
+- Web insight severity breakdown chips can apply and clear triage filters directly.
 - Server-side insight filters for severity, kind, search, and capped agent/UI reads.
 - CI/agent check command, API, and web quality gate for failing on insight severity thresholds.
 - Insight focus API and web interaction for turning findings into focused graph views.

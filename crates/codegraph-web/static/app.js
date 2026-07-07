@@ -3935,6 +3935,7 @@ function renderInsights() {
     insightList.innerHTML = report
       ? `${severitySummary}${kindSummary}<p class="empty">${escapeHtml(t("empty.noInsights"))}</p>`
       : `<p class="empty">${escapeHtml(t("empty.noVisibleIssues"))}</p>`;
+    attachInsightSeverityFilters();
     attachInsightKindFilters();
     return;
   }
@@ -3962,6 +3963,7 @@ function renderInsights() {
       if (insight) focusInsight(insight);
     });
   });
+  attachInsightSeverityFilters();
   attachInsightKindFilters();
 }
 
@@ -3977,10 +3979,22 @@ function renderInsightEvidence(insight) {
 
 function renderInsightSeveritySummary(report) {
   if (!report?.by_severity) return "";
+  const activeSeverity = insightSeverityInput.value.trim().toLowerCase();
   const rows = ["error", "warning", "info"]
     .map((severity) => {
       const count = report.by_severity[severity] || 0;
-      return `<span class="${severity}">${escapeHtml(formatKind(severity))}: ${count}</span>`;
+      const active = activeSeverity === severity;
+      return `
+        <button
+          class="${severity}${active ? " active" : ""}"
+          type="button"
+          data-insight-severity="${severity}"
+          aria-pressed="${active ? "true" : "false"}"
+        >
+          <span>${escapeHtml(formatKind(severity))}</span>
+          <strong>${count}</strong>
+        </button>
+      `;
     })
     .join("");
   return `<div class="insight-summary">${rows}</div>`;
@@ -4007,6 +4021,17 @@ function attachInsightKindFilters() {
   insightList.querySelectorAll("[data-insight-kind]").forEach((button) => {
     button.addEventListener("click", () => {
       insightKindInput.value = button.dataset.insightKind || "";
+      loadInsights();
+    });
+  });
+}
+
+function attachInsightSeverityFilters() {
+  insightList.querySelectorAll("[data-insight-severity]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const severity = button.dataset.insightSeverity || "";
+      insightSeverityInput.value =
+        insightSeverityInput.value.trim().toLowerCase() === severity ? "" : severity;
       loadInsights();
     });
   });

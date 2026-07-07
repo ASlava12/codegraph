@@ -1282,13 +1282,36 @@ button.cancel-action:hover:not(:disabled) {
   gap: 6px;
 }
 
-.insight-summary span {
+.insight-summary button {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 76px;
+  min-height: 28px;
   padding: 4px 7px;
+  border: 1px solid var(--line);
   border-radius: 6px;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.05);
   font-size: 11px;
   font-weight: 800;
+  text-align: left;
+}
+
+.insight-summary button:hover {
+  border-color: rgba(92, 200, 167, 0.55);
+  background: rgba(92, 200, 167, 0.08);
+}
+
+.insight-summary button[aria-pressed="true"] {
+  border-color: rgba(92, 200, 167, 0.78);
+  background: rgba(92, 200, 167, 0.16);
+}
+
+.insight-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
   text-transform: uppercase;
 }
 
