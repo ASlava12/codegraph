@@ -37,6 +37,7 @@ Implemented now:
 - Heuristic config reads, environment reads, and potential error/exception constructs.
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
+- API capabilities endpoint for discovering supported languages, exports, features, limits, cache state, and route groups.
 - Async scan job API for long-running repository scans.
 - SSE scan job status stream for live web progress updates.
 - Cancelable scan and semantic enrichment jobs for stopping queued or running long work.
@@ -407,6 +408,7 @@ Scan API:
 
 ```bash
 curl 'http://127.0.0.1:3765/api/projects'
+curl 'http://127.0.0.1:3765/api/capabilities'
 curl 'http://127.0.0.1:3765/api/health'
 curl 'http://127.0.0.1:3765/api/scan-options?path=.'
 curl 'http://127.0.0.1:3765/api/languages'

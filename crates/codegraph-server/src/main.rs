@@ -17,7 +17,7 @@ use codegraph_analysis::{
     query_graph, search_source, slice_graph, summarize, trace, trace_config, trace_dependents,
     trace_entrypoints, trace_errors,
 };
-use codegraph_core::CodeGraph;
+use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
     IndexOptionOverrides, IndexOptions, configured_index_options, scan_coverage,
 };
@@ -464,6 +464,52 @@ struct HealthResponse {
     semantic_concurrency: ConcurrencyHealth,
 }
 
+#[derive(Debug, Serialize)]
+struct CapabilitiesResponse {
+    name: &'static str,
+    api_version: u32,
+    graph_schema_version: u32,
+    root: String,
+    projects: Vec<ProjectResponse>,
+    languages: Vec<LanguageResponse>,
+    export_formats: Vec<&'static str>,
+    features: Vec<&'static str>,
+    endpoints: Vec<EndpointGroupResponse>,
+    scan: ScanCapabilityResponse,
+    limits: RuntimeLimitsResponse,
+    cache: CacheCapabilityResponse,
+}
+
+#[derive(Debug, Serialize)]
+struct EndpointGroupResponse {
+    group: &'static str,
+    endpoints: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct ScanCapabilityResponse {
+    include_hidden: bool,
+    include_ignored: bool,
+    allow_any_path: bool,
+    max_file_size: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeLimitsResponse {
+    max_scan_jobs: usize,
+    max_semantic_jobs: usize,
+    max_scan_concurrency: usize,
+    max_semantic_concurrency: usize,
+    default_job_list_limit: usize,
+    max_job_list_limit: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct CacheCapabilityResponse {
+    enabled: bool,
+    dir: Option<String>,
+}
+
 #[derive(Debug, Default, Serialize)]
 struct JobStoreHealth {
     total: usize,
@@ -572,6 +618,7 @@ async fn main() -> Result<()> {
         .route("/", get(index))
         .route("/app.js", get(app_js))
         .route("/styles.css", get(styles_css))
+        .route("/api/capabilities", get(capabilities_api))
         .route("/api/health", get(health))
         .route("/api/languages", get(languages_api))
         .route("/api/lsp", get(lsp_api))
@@ -937,21 +984,46 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, A
     }))
 }
 
+async fn capabilities_api(
+    State(state): State<AppState>,
+) -> Result<Json<CapabilitiesResponse>, ApiError> {
+    let options = scan_options(&state, &state.root)?;
+    Ok(Json(CapabilitiesResponse {
+        name: "CodeGraph",
+        api_version: 1,
+        graph_schema_version: CODEGRAPH_SCHEMA_VERSION,
+        root: state.root.display().to_string(),
+        projects: project_responses(&state),
+        languages: language_responses(),
+        export_formats: vec!["json", "dot", "ndjson"],
+        features: capability_features(state.cache.is_some()),
+        endpoints: capability_endpoints(),
+        scan: ScanCapabilityResponse {
+            include_hidden: options.include_hidden,
+            include_ignored: options.include_ignored,
+            allow_any_path: state.allow_any_path,
+            max_file_size: options.max_file_size,
+        },
+        limits: RuntimeLimitsResponse {
+            max_scan_jobs: state.max_scan_jobs,
+            max_semantic_jobs: state.max_semantic_jobs,
+            max_scan_concurrency: state.max_scan_concurrency,
+            max_semantic_concurrency: state.max_semantic_concurrency,
+            default_job_list_limit: DEFAULT_JOB_LIST_LIMIT,
+            max_job_list_limit: MAX_JOB_LIST_LIMIT,
+        },
+        cache: CacheCapabilityResponse {
+            enabled: state.cache.is_some(),
+            dir: state
+                .cache
+                .as_ref()
+                .map(|cache| cache.dir().display().to_string()),
+        },
+    }))
+}
+
 async fn languages_api() -> Json<Vec<LanguageResponse>> {
-    Json(
-        language_adapters()
-            .iter()
-            .map(|adapter| {
-                let info = adapter.info();
-                LanguageResponse {
-                    language: info.language,
-                    parser: info.parser,
-                    extensions: info.extensions,
-                    file_names: info.file_names,
-                }
-            })
-            .collect(),
-    )
+    Json(language_responses())
 }
 
 async fn lsp_api() -> Json<LspDiscoveryReport> {
@@ -1314,17 +1386,7 @@ async fn semantic_job_result(
 }
 
 async fn projects_api(State(state): State<AppState>) -> Json<Vec<ProjectResponse>> {
-    Json(
-        state
-            .projects
-            .iter()
-            .map(|project| ProjectResponse {
-                name: project.name.clone(),
-                path: project.path.display().to_string(),
-                default: project.default,
-            })
-            .collect(),
-    )
+    Json(project_responses(&state))
 }
 
 async fn scan_options_api(
@@ -2267,6 +2329,154 @@ fn prune_semantic_jobs(jobs: &mut BTreeMap<String, SemanticJob>, max_jobs: usize
     }
 }
 
+fn project_responses(state: &AppState) -> Vec<ProjectResponse> {
+    state
+        .projects
+        .iter()
+        .map(|project| ProjectResponse {
+            name: project.name.clone(),
+            path: project.path.display().to_string(),
+            default: project.default,
+        })
+        .collect()
+}
+
+fn language_responses() -> Vec<LanguageResponse> {
+    language_adapters()
+        .iter()
+        .map(|adapter| {
+            let info = adapter.info();
+            LanguageResponse {
+                language: info.language,
+                parser: info.parser,
+                extensions: info.extensions,
+                file_names: info.file_names,
+            }
+        })
+        .collect()
+}
+
+fn capability_features(cache_enabled: bool) -> Vec<&'static str> {
+    let mut features = vec![
+        "multi_project_roots",
+        "repository_scan_policy",
+        "mixed_language_syntax_graph",
+        "source_preview",
+        "graph_paging",
+        "node_context",
+        "focused_subgraphs",
+        "query_language",
+        "entrypoint_traces",
+        "config_traces",
+        "error_traces",
+        "reverse_dependents",
+        "insights",
+        "quality_checks",
+        "edge_explanations",
+        "source_search",
+        "async_scan_jobs",
+        "async_semantic_jobs",
+        "job_listing",
+        "job_cancellation",
+        "sse_job_events",
+        "semantic_lsp",
+        "web_canvas",
+        "i18n_en_ru",
+        "dot_export",
+        "ndjson_export",
+    ];
+    if cache_enabled {
+        features.push("persistent_graph_cache");
+    }
+    features
+}
+
+fn capability_endpoints() -> Vec<EndpointGroupResponse> {
+    vec![
+        EndpointGroupResponse {
+            group: "system",
+            endpoints: vec![
+                "GET /api/capabilities",
+                "GET /api/health",
+                "GET /api/projects",
+                "GET /api/languages",
+                "GET /api/scan-options",
+            ],
+        },
+        EndpointGroupResponse {
+            group: "scan",
+            endpoints: vec![
+                "GET /api/scan",
+                "GET /api/coverage",
+                "GET /api/cache-diff",
+                "POST /api/scan-jobs",
+                "GET /api/scan-jobs",
+                "GET /api/scan-jobs/{id}",
+                "DELETE /api/scan-jobs/{id}",
+                "GET /api/scan-jobs/{id}/events",
+                "GET /api/scan-jobs/{id}/result",
+            ],
+        },
+        EndpointGroupResponse {
+            group: "semantic",
+            endpoints: vec![
+                "GET /api/lsp",
+                "GET /api/semantic-readiness",
+                "GET /api/semantic-plan",
+                "GET /api/semantic-batch",
+                "POST /api/semantic-patch",
+                "POST /api/semantic-apply",
+                "POST /api/semantic-enrich",
+                "POST /api/semantic-jobs",
+                "GET /api/semantic-jobs",
+                "GET /api/semantic-jobs/{id}",
+                "DELETE /api/semantic-jobs/{id}",
+                "GET /api/semantic-jobs/{id}/events",
+                "GET /api/semantic-jobs/{id}/result",
+            ],
+        },
+        EndpointGroupResponse {
+            group: "graph",
+            endpoints: vec![
+                "GET /api/graph",
+                "GET /api/node-context",
+                "GET /api/focus",
+                "GET /api/summary",
+                "GET /api/query",
+                "GET /api/explain-edge",
+            ],
+        },
+        EndpointGroupResponse {
+            group: "analysis",
+            endpoints: vec![
+                "GET /api/architecture",
+                "GET /api/language-dependencies",
+                "GET /api/hotspots",
+                "GET /api/entrypoints",
+                "GET /api/entrypoint-traces",
+                "GET /api/insights",
+                "GET /api/check",
+                "GET /api/trace",
+                "GET /api/dependents",
+                "GET /api/trace-config",
+                "GET /api/trace-errors",
+            ],
+        },
+        EndpointGroupResponse {
+            group: "source",
+            endpoints: vec!["GET /api/source", "GET /api/source-search"],
+        },
+        EndpointGroupResponse {
+            group: "export",
+            endpoints: vec![
+                "GET /api/export?format=json",
+                "GET /api/export?format=dot",
+                "GET /api/export?format=ndjson",
+            ],
+        },
+    ]
+}
+
 fn job_store_health(statuses: impl IntoIterator<Item = ScanJobStatus>) -> JobStoreHealth {
     let mut health = JobStoreHealth::default();
     for status in statuses {
@@ -2372,6 +2582,53 @@ mod tests {
         );
 
         fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn language_responses_include_required_mixed_language_set() {
+        let languages: Vec<_> = language_responses()
+            .into_iter()
+            .map(|language| language.language)
+            .collect();
+
+        for language in [
+            "rust",
+            "python",
+            "javascript",
+            "go",
+            "c",
+            "cpp",
+            "php",
+            "bash",
+        ] {
+            assert!(languages.contains(&language), "missing {language}");
+        }
+    }
+
+    #[test]
+    fn capability_features_reflect_cache_availability() {
+        let without_cache = capability_features(false);
+        let with_cache = capability_features(true);
+
+        assert!(without_cache.contains(&"async_scan_jobs"));
+        assert!(without_cache.contains(&"job_cancellation"));
+        assert!(without_cache.contains(&"semantic_lsp"));
+        assert!(!without_cache.contains(&"persistent_graph_cache"));
+        assert!(with_cache.contains(&"persistent_graph_cache"));
+    }
+
+    #[test]
+    fn capability_endpoints_include_discovery_and_agent_routes() {
+        let endpoints: Vec<_> = capability_endpoints()
+            .into_iter()
+            .flat_map(|group| group.endpoints)
+            .collect();
+
+        assert!(endpoints.contains(&"GET /api/capabilities"));
+        assert!(endpoints.contains(&"GET /api/query"));
+        assert!(endpoints.contains(&"GET /api/node-context"));
+        assert!(endpoints.contains(&"POST /api/scan-jobs"));
+        assert!(endpoints.contains(&"POST /api/semantic-jobs"));
     }
 
     #[test]

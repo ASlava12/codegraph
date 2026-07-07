@@ -128,6 +128,7 @@ The web UI renders the current graph slice on a canvas with explicit viewport co
 Responsibilities:
 
 - provide health and scan endpoints
+- expose server capabilities for agent and UI discovery of languages, features, limits, cache state, and route groups
 - expose repository-owned scan policy consistently across API, web, and source search workflows
 - return effective scan options for humans and agents before they trigger a full scan
 - expose LSP readiness and semantic enrichment plans, including capped work queues, for humans and agents

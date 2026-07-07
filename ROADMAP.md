@@ -185,6 +185,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add cancelable scan and semantic jobs in API and web UI.
 - [x] Add filterable scan and semantic job list APIs for retained job history.
 - [x] Add web job monitor for scan and semantic job history.
+- [x] Add API capabilities endpoint for agent and UI runtime discovery.
 - Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
 - [x] Add source preview.
 - [x] Add trace panels.
