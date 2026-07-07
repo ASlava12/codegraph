@@ -19,6 +19,7 @@ Implemented now:
 - Semantic execution batch reports that group filtered LSP work by language server command and include executable LSP request descriptors for semantic runners.
 - CLI semantic runner that executes ready LSP batches over stdio and emits reusable response JSON for graph patching or enrichment.
 - HTTP/API and web semantic enrichment action that can run ready LSP batches and render an enriched graph in the browser.
+- Async semantic enrichment job API with status, SSE events, and result retrieval for long-running LSP work.
 - Semantic LSP response patch reports that map definitions, references, and diagnostics back onto graph nodes.
 - Semantic graph patch application that emits enriched graphs with semantic edges and diagnostic nodes.
 - Filesystem scanner with default build/vendor ignore rules.
@@ -410,6 +411,11 @@ curl -X POST 'http://127.0.0.1:3765/api/semantic-apply' \
 curl -X POST 'http://127.0.0.1:3765/api/semantic-enrich' \
   -H 'content-type: application/json' \
   --data '{"path":".","work_item_limit":25,"work_status":"ready","work_capability":"definitions"}'
+curl -X POST 'http://127.0.0.1:3765/api/semantic-jobs' \
+  -H 'content-type: application/json' \
+  --data '{"path":".","work_item_limit":25,"work_status":"ready","work_capability":"definitions"}'
+curl 'http://127.0.0.1:3765/api/semantic-jobs/semantic-1/events'
+curl 'http://127.0.0.1:3765/api/semantic-jobs/semantic-1/result'
 curl 'http://127.0.0.1:3765/api/coverage?path=.'
 curl 'http://127.0.0.1:3765/api/scan?path=.'
 curl 'http://127.0.0.1:3765/api/cache-diff?path=.&limit=50'

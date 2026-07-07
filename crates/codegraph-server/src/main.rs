@@ -99,6 +99,7 @@ struct AppState {
     allow_any_path: bool,
     cache: Option<GraphCache>,
     jobs: Arc<RwLock<BTreeMap<String, ScanJob>>>,
+    semantic_jobs: Arc<RwLock<BTreeMap<String, SemanticJob>>>,
     next_job_id: Arc<AtomicU64>,
 }
 
@@ -126,7 +127,7 @@ struct SemanticPatchRequest {
     responses: Vec<SemanticLspResponse>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct SemanticEnrichRequest {
     path: Option<PathBuf>,
     work_item_limit: Option<usize>,
@@ -136,7 +137,7 @@ struct SemanticEnrichRequest {
     request_timeout_ms: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct SemanticEnrichResponse {
     graph: CodeGraph,
     summary: GraphSummary,
@@ -144,6 +145,27 @@ struct SemanticEnrichResponse {
     responses: usize,
     response_errors: usize,
     unmatched_locations: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SemanticJob {
+    id: String,
+    status: ScanJobStatus,
+    path: String,
+    message: String,
+    responses: Option<usize>,
+    response_errors: Option<usize>,
+    unmatched_locations: Option<usize>,
+    report: Option<SemanticGraphApplyReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<SemanticEnrichResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct SemanticJobResult {
+    id: String,
+    root: String,
+    result: SemanticEnrichResponse,
 }
 
 #[derive(Debug, Deserialize)]
@@ -438,6 +460,7 @@ async fn main() -> Result<()> {
             ))
         },
         jobs: Arc::new(RwLock::new(BTreeMap::new())),
+        semantic_jobs: Arc::new(RwLock::new(BTreeMap::new())),
         next_job_id: Arc::new(AtomicU64::new(1)),
     };
 
@@ -454,6 +477,10 @@ async fn main() -> Result<()> {
         .route("/api/semantic-patch", post(semantic_patch_api))
         .route("/api/semantic-apply", post(semantic_apply_api))
         .route("/api/semantic-enrich", post(semantic_enrich_api))
+        .route("/api/semantic-jobs", post(start_semantic_job))
+        .route("/api/semantic-jobs/{id}", get(semantic_job_status))
+        .route("/api/semantic-jobs/{id}/events", get(semantic_job_events))
+        .route("/api/semantic-jobs/{id}/result", get(semantic_job_result))
         .route("/api/projects", get(projects_api))
         .route("/api/scan-options", get(scan_options_api))
         .route("/api/coverage", get(coverage_api))
@@ -821,55 +848,175 @@ async fn semantic_enrich_api(
 ) -> Result<Json<SemanticEnrichResponse>, ApiError> {
     let root = resolve_scan_root(&state, request.path.as_deref())?;
     let graph = scan_graph(&state, Some(root.as_path())).await?;
-    let timeout = Duration::from_millis(
-        request
-            .request_timeout_ms
-            .unwrap_or(30_000)
-            .clamp(1, 300_000),
-    );
-    let batch = semantic_execution_batch(
-        &root,
-        &graph,
-        request
-            .work_item_limit
-            .unwrap_or(DEFAULT_SEMANTIC_WORK_ITEM_LIMIT),
-        SemanticWorkItemFilter {
-            language: request.work_language,
-            status: request.work_status,
-            capability: request.work_capability,
-        },
-    );
 
-    let result = tokio::task::spawn_blocking(move || {
-        let responses = run_semantic_execution_batch(
-            &batch,
-            &SemanticLspRunOptions {
-                request_timeout: timeout,
-            },
-        )?;
-        let patch = semantic_graph_patch_from_responses(&root, &graph, &batch, &responses);
-        let apply_result = apply_semantic_graph_patch(&graph, &patch);
-        Ok::<_, codegraph_lsp::SemanticLspRunError>((
-            apply_result,
-            responses.len(),
-            patch.response_errors.len(),
-            patch.unmatched_locations.len(),
-        ))
-    })
-    .await
-    .map_err(|error| ApiError::internal(format!("semantic enrichment task failed: {error}")))?
-    .map_err(|error| ApiError::bad_request(format!("semantic enrichment failed: {error}")))?;
+    let result = tokio::task::spawn_blocking(move || run_semantic_enrichment(root, graph, request))
+        .await
+        .map_err(|error| ApiError::internal(format!("semantic enrichment task failed: {error}")))?
+        .map_err(|error| ApiError::bad_request(format!("semantic enrichment failed: {error}")))?;
 
-    let (apply_result, responses, response_errors, unmatched_locations) = result;
-    let summary = summarize(&apply_result.graph);
-    Ok(Json(SemanticEnrichResponse {
-        graph: apply_result.graph,
-        summary,
-        report: apply_result.report,
-        responses,
-        response_errors,
-        unmatched_locations,
-    }))
+    Ok(Json(result))
+}
+
+async fn start_semantic_job(
+    State(state): State<AppState>,
+    Json(request): Json<SemanticEnrichRequest>,
+) -> Result<Json<SemanticJob>, ApiError> {
+    let root = resolve_scan_root(&state, request.path.as_deref())?;
+    let id = format!(
+        "semantic-{}",
+        state.next_job_id.fetch_add(1, Ordering::Relaxed)
+    );
+    let path = root.display().to_string();
+    let job = SemanticJob {
+        id: id.clone(),
+        status: ScanJobStatus::Queued,
+        path: path.clone(),
+        message: "queued".to_string(),
+        responses: None,
+        response_errors: None,
+        unmatched_locations: None,
+        report: None,
+        result: None,
+    };
+    state
+        .semantic_jobs
+        .write()
+        .await
+        .insert(id.clone(), job.clone());
+
+    let jobs = Arc::clone(&state.semantic_jobs);
+    let options = scan_options(&state, &root)?;
+    let cache = state.cache.clone();
+    tokio::spawn(async move {
+        update_semantic_job(
+            &jobs,
+            &id,
+            ScanJobStatus::Running,
+            "running semantic enrichment".to_string(),
+            None,
+        )
+        .await;
+
+        let scan_root = root.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let output = scan_project_cached(scan_root.clone(), &options, cache.as_ref())
+                .map_err(|error| error.to_string())?;
+            run_semantic_enrichment(scan_root, output.graph, request)
+                .map_err(|error| error.to_string())
+        })
+        .await;
+
+        match result {
+            Ok(Ok(result)) => {
+                update_semantic_job(
+                    &jobs,
+                    &id,
+                    ScanJobStatus::Complete,
+                    "complete".to_string(),
+                    Some(result),
+                )
+                .await;
+            }
+            Ok(Err(error)) => {
+                update_semantic_job(&jobs, &id, ScanJobStatus::Failed, error, None).await;
+            }
+            Err(error) => {
+                update_semantic_job(
+                    &jobs,
+                    &id,
+                    ScanJobStatus::Failed,
+                    format!("semantic enrichment task failed: {error}"),
+                    None,
+                )
+                .await;
+            }
+        }
+    });
+
+    Ok(Json(job))
+}
+
+async fn semantic_job_status(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<SemanticJob>, ApiError> {
+    let jobs = state.semantic_jobs.read().await;
+    let job = jobs
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found("semantic job not found"))?;
+    Ok(Json(semantic_job_without_result(job)))
+}
+
+async fn semantic_job_events(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    {
+        let jobs = state.semantic_jobs.read().await;
+        if !jobs.contains_key(&id) {
+            return Err(ApiError::not_found("semantic job not found"));
+        }
+    }
+
+    let jobs = Arc::clone(&state.semantic_jobs);
+    let stream = stream! {
+        loop {
+            let job = {
+                let jobs = jobs.read().await;
+                jobs.get(&id).cloned().map(semantic_job_without_result)
+            };
+
+            let Some(job) = job else {
+                let data = serde_json::json!({ "error": "semantic job not found" }).to_string();
+                yield Ok::<Event, Infallible>(Event::default().event("error").data(data));
+                break;
+            };
+
+            let is_terminal = matches!(job.status, ScanJobStatus::Complete | ScanJobStatus::Failed);
+            let data = serde_json::to_string(&job).unwrap_or_else(|error| {
+                serde_json::json!({ "error": error.to_string() }).to_string()
+            });
+            yield Ok::<Event, Infallible>(Event::default().event("status").data(data));
+
+            if is_terminal {
+                break;
+            }
+
+            sleep(Duration::from_millis(350)).await;
+        }
+    };
+
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(10))
+            .text("codegraph-semantic"),
+    ))
+}
+
+async fn semantic_job_result(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<SemanticJobResult>, ApiError> {
+    let jobs = state.semantic_jobs.read().await;
+    let job = jobs
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found("semantic job not found"))?;
+    match job.status {
+        ScanJobStatus::Complete => {
+            let result = job
+                .result
+                .ok_or_else(|| ApiError::internal("semantic job completed without result"))?;
+            Ok(Json(SemanticJobResult {
+                id: job.id,
+                root: job.path,
+                result,
+            }))
+        }
+        ScanJobStatus::Failed => Err(ApiError::internal(job.message)),
+        _ => Err(ApiError::bad_request("semantic job is not complete")),
+    }
 }
 
 async fn projects_api(State(state): State<AppState>) -> Json<Vec<ProjectResponse>> {
@@ -1547,8 +1694,77 @@ async fn update_scan_job(
     }
 }
 
+fn run_semantic_enrichment(
+    root: PathBuf,
+    graph: CodeGraph,
+    request: SemanticEnrichRequest,
+) -> Result<SemanticEnrichResponse, codegraph_lsp::SemanticLspRunError> {
+    let timeout = Duration::from_millis(
+        request
+            .request_timeout_ms
+            .unwrap_or(30_000)
+            .clamp(1, 300_000),
+    );
+    let batch = semantic_execution_batch(
+        &root,
+        &graph,
+        request
+            .work_item_limit
+            .unwrap_or(DEFAULT_SEMANTIC_WORK_ITEM_LIMIT),
+        SemanticWorkItemFilter {
+            language: request.work_language,
+            status: request.work_status,
+            capability: request.work_capability,
+        },
+    );
+    let responses = run_semantic_execution_batch(
+        &batch,
+        &SemanticLspRunOptions {
+            request_timeout: timeout,
+        },
+    )?;
+    let patch = semantic_graph_patch_from_responses(&root, &graph, &batch, &responses);
+    let response_errors = patch.response_errors.len();
+    let unmatched_locations = patch.unmatched_locations.len();
+    let apply_result = apply_semantic_graph_patch(&graph, &patch);
+    let summary = summarize(&apply_result.graph);
+    Ok(SemanticEnrichResponse {
+        graph: apply_result.graph,
+        summary,
+        report: apply_result.report,
+        responses: responses.len(),
+        response_errors,
+        unmatched_locations,
+    })
+}
+
+async fn update_semantic_job(
+    jobs: &RwLock<BTreeMap<String, SemanticJob>>,
+    id: &str,
+    status: ScanJobStatus,
+    message: String,
+    result: Option<SemanticEnrichResponse>,
+) {
+    if let Some(job) = jobs.write().await.get_mut(id) {
+        job.status = status;
+        job.message = message;
+        if let Some(result) = result {
+            job.responses = Some(result.responses);
+            job.response_errors = Some(result.response_errors);
+            job.unmatched_locations = Some(result.unmatched_locations);
+            job.report = Some(result.report.clone());
+            job.result = Some(result);
+        }
+    }
+}
+
 fn job_without_graph(mut job: ScanJob) -> ScanJob {
     job.graph = None;
+    job
+}
+
+fn semantic_job_without_result(mut job: SemanticJob) -> SemanticJob {
+    job.result = None;
     job
 }
 
@@ -1625,6 +1841,7 @@ mod tests {
             allow_any_path,
             cache: None,
             jobs: Arc::new(RwLock::new(BTreeMap::new())),
+            semantic_jobs: Arc::new(RwLock::new(BTreeMap::new())),
             next_job_id: Arc::new(AtomicU64::new(1)),
         }
     }

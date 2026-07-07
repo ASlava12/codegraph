@@ -360,6 +360,8 @@ const state = {
   queryFocus: null,
   scanJobId: null,
   scanEvents: null,
+  semanticJobId: null,
+  semanticEvents: null,
   layoutPaused: false,
   graphPage: {
     nodeOffset: 0,
@@ -727,6 +729,10 @@ async function scan() {
     state.scanEvents.close();
     state.scanEvents = null;
   }
+  if (state.semanticEvents) {
+    state.semanticEvents.close();
+    state.semanticEvents = null;
+  }
 
   try {
     const response = await fetch("/api/scan-jobs", {
@@ -1055,37 +1061,25 @@ async function runSemanticEnrich() {
   semanticEnrichButton.disabled = true;
   semanticWorkFilterButton.disabled = true;
   semanticWorkList.innerHTML = `<p class="empty">${escapeHtml(t("semantic.running"))}</p>`;
+  if (state.semanticEvents) {
+    state.semanticEvents.close();
+    state.semanticEvents = null;
+  }
 
   try {
-    const response = await fetch("/api/semantic-enrich", {
+    const response = await fetch("/api/semantic-jobs", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    const result = await response.json();
+    const job = await response.json();
     if (requestId !== state.semanticEnrichRequest) return;
     if (!response.ok) {
-      throw new Error(result.error || "semantic enrichment failed");
+      throw new Error(job.error || "semantic enrichment failed");
     }
 
-    state.graph = result.graph || { nodes: [], edges: [] };
-    state.summary = result.summary || null;
-    state.graphPage.root = body.path;
-    state.graphPage.nodeOffset = 0;
-    state.graphPage.totalNodes = state.graph.nodes.length;
-    state.graphPage.totalEdges = state.graph.edges.length;
-    state.graphPage.truncatedNodes = false;
-    state.selectedId = null;
-    state.hoveredId = null;
-    state.queryFocus = null;
-    state.insightReport = null;
-    queryResult.innerHTML = "";
-    checkResult.innerHTML = "";
-    rootLabel.textContent = state.graphPage.root;
-    initializeGraph({ preserveView: false });
-    renderOverview();
-    renderSemanticEnrichReport(result);
-    setStatus("ready");
+    state.semanticJobId = job.id;
+    await watchSemanticJob(job.id, requestId);
   } catch (error) {
     if (requestId !== state.semanticEnrichRequest) return;
     setStatus("error", "error");
@@ -1096,6 +1090,126 @@ async function runSemanticEnrich() {
       semanticWorkFilterButton.disabled = false;
     }
   }
+}
+
+async function watchSemanticJob(jobId, requestId) {
+  if (!window.EventSource) {
+    return pollSemanticJob(jobId, requestId);
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const events = new EventSource(`/api/semantic-jobs/${encodeURIComponent(jobId)}/events`);
+    state.semanticEvents = events;
+
+    const finish = async () => {
+      if (settled) return;
+      settled = true;
+      events.close();
+      if (state.semanticEvents === events) state.semanticEvents = null;
+      try {
+        await loadSemanticJobResult(jobId, requestId);
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    events.addEventListener("status", (event) => {
+      if (state.semanticJobId !== jobId || requestId !== state.semanticEnrichRequest) {
+        events.close();
+        if (!settled) resolve();
+        settled = true;
+        return;
+      }
+
+      let job;
+      try {
+        job = JSON.parse(event.data);
+      } catch (error) {
+        settled = true;
+        events.close();
+        if (state.semanticEvents === events) state.semanticEvents = null;
+        reject(new Error(`invalid semantic event: ${error.message}`));
+        return;
+      }
+      if (job.status === "queued" || job.status === "running") {
+        setStatus("semantic", "busy");
+        semanticWorkList.innerHTML = `<p class="empty">${escapeHtml(job.message || t("semantic.running"))}</p>`;
+        return;
+      }
+      if (job.status === "failed") {
+        settled = true;
+        events.close();
+        if (state.semanticEvents === events) state.semanticEvents = null;
+        reject(new Error(job.message || "semantic enrichment failed"));
+        return;
+      }
+      if (job.status === "complete") {
+        finish();
+      }
+    });
+
+    events.onerror = () => {
+      if (settled) return;
+      settled = true;
+      events.close();
+      if (state.semanticEvents === events) state.semanticEvents = null;
+      pollSemanticJob(jobId, requestId).then(resolve, reject);
+    };
+  });
+}
+
+async function pollSemanticJob(jobId, requestId) {
+  while (state.semanticJobId === jobId && requestId === state.semanticEnrichRequest) {
+    const response = await fetch(`/api/semantic-jobs/${encodeURIComponent(jobId)}`);
+    const job = await response.json();
+    if (!response.ok) {
+      throw new Error(job.error || "semantic status failed");
+    }
+    if (job.status === "queued" || job.status === "running") {
+      setStatus("semantic", "busy");
+      semanticWorkList.innerHTML = `<p class="empty">${escapeHtml(job.message || t("semantic.running"))}</p>`;
+      await sleep(350);
+      continue;
+    }
+    if (job.status === "failed") {
+      throw new Error(job.message || "semantic enrichment failed");
+    }
+    await loadSemanticJobResult(jobId, requestId);
+    return;
+  }
+}
+
+async function loadSemanticJobResult(jobId, requestId) {
+  const response = await fetch(`/api/semantic-jobs/${encodeURIComponent(jobId)}/result`);
+  const body = await response.json();
+  if (requestId !== state.semanticEnrichRequest || state.semanticJobId !== jobId) return;
+  if (!response.ok) {
+    throw new Error(body.error || "semantic result failed");
+  }
+  applySemanticEnrichResult(body.result, body.root || pathInput.value.trim() || ".");
+}
+
+function applySemanticEnrichResult(result, root) {
+  state.graph = result.graph || { nodes: [], edges: [] };
+  state.summary = result.summary || null;
+  state.graphPage.root = root;
+  state.graphPage.nodeOffset = 0;
+  state.graphPage.totalNodes = state.graph.nodes.length;
+  state.graphPage.totalEdges = state.graph.edges.length;
+  state.graphPage.truncatedNodes = false;
+  state.selectedId = null;
+  state.hoveredId = null;
+  state.queryFocus = null;
+  state.insightReport = null;
+  queryResult.innerHTML = "";
+  checkResult.innerHTML = "";
+  rootLabel.textContent = state.graphPage.root;
+  initializeGraph({ preserveView: false });
+  renderOverview();
+  renderSemanticEnrichReport(result);
+  setStatus("ready");
 }
 
 function renderSemanticEnrichReport(result) {
