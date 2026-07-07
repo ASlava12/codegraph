@@ -27,7 +27,8 @@ test("minimal mode keeps labels hidden except direct interaction", () => {
 });
 
 test("auto mode only allows a tiny label budget in dense graphs", () => {
-  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 3.5, visibleCount: 20 }), 3);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 3.5, visibleCount: 20 }), 1);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 4.1, visibleCount: 10 }), 2);
   assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 3.5, visibleCount: 60 }), 0);
   assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 2.4, visibleCount: 15 }), 0);
 });
@@ -39,8 +40,8 @@ test("auto mode prioritizes entrypoints and risks over low-signal nodes", () => 
   assert.equal(
     policy.shouldShowNodeLabel({
       labelMode: "auto",
-      zoom: 3.4,
-      visibleCount: 140,
+      zoom: 3.7,
+      visibleCount: 20,
       priority: entrypointPriority,
     }),
     true,
@@ -48,8 +49,8 @@ test("auto mode prioritizes entrypoints and risks over low-signal nodes", () => 
   assert.equal(
     policy.shouldShowNodeLabel({
       labelMode: "auto",
-      zoom: 3.4,
-      visibleCount: 140,
+      zoom: 3.7,
+      visibleCount: 20,
       priority: functionPriority,
     }),
     false,
@@ -61,7 +62,7 @@ test("focus mode only labels focused nodes at high zoom", () => {
     policy.shouldShowNodeLabel({
       labelMode: "focus",
       focused: true,
-      zoom: 2,
+      zoom: 2.3,
       visibleCount: 10,
       priority: 1,
     }),
@@ -71,13 +72,13 @@ test("focus mode only labels focused nodes at high zoom", () => {
     policy.shouldShowNodeLabel({
       labelMode: "focus",
       focused: true,
-      zoom: 2.1,
+      zoom: 2.35,
       visibleCount: 10,
       priority: 1,
     }),
     true,
   );
-  assert.equal(policy.nodeLabelBudget({ labelMode: "focus", zoom: 2.2, visibleCount: 80 }), 0);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "focus", zoom: 2.4, visibleCount: 80 }), 0);
 });
 
 test("graph labels are truncated to stable compact text", () => {

@@ -3,7 +3,7 @@ const DEFAULT_LABEL_MODE = "minimal";
 const LABEL_MODES = new Set(["minimal", "focus", "auto"]);
 const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
-const LABEL_MODE_STORAGE_VERSION = "5";
+const LABEL_MODE_STORAGE_VERSION = "6";
 
 const I18N = {
   en: {
@@ -4899,7 +4899,7 @@ function draw() {
         selected,
         hovered,
         focused,
-        forced: selected || hovered,
+        forced: hovered,
         priority: nodeLabelPriority(node),
       });
     }
@@ -5044,8 +5044,7 @@ function labelGeometry(candidate, occupied, nodeBoxes) {
       boxIntersectsViewport(geometry) && !labelIntersectsScene(geometry, occupied, nodeBoxes),
   );
   if (usable) return usable;
-  if (!forced) return null;
-  return geometries.find((geometry) => boxIntersectsViewport(geometry)) || geometries[0];
+  return null;
 }
 
 function labelGeometryForPlacement(options) {

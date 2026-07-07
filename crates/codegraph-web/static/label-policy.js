@@ -43,19 +43,18 @@
 
     if (selected || hovered) return true;
     if (labelMode === "minimal") return false;
-    if (labelMode === "focus") return focused && zoom >= 2.1;
-    if (focused) return zoom >= 2.35;
+    if (labelMode === "focus") return focused && zoom >= 2.35;
+    if (focused) return zoom >= 2.65;
 
     if (hasSearch) {
-      if (visibleCount <= 20) return zoom >= 2.35 && priority <= 3;
-      if (visibleCount <= 80) return zoom >= 2.9 && priority <= 2;
-      return zoom >= 3.25 && priority <= 1;
+      if (visibleCount <= 18) return zoom >= 2.65 && priority <= 2;
+      if (visibleCount <= 35) return zoom >= 3.1 && priority <= 1;
+      return false;
     }
-    if (zoom < 2.85) return false;
-    if (visibleCount > 120) return zoom >= 3.35 && priority <= 1;
-    if (visibleCount > 50) return zoom >= 3.2 && priority <= 1;
-    if (visibleCount > 20) return zoom >= 3.05 && priority <= 2;
-    return priority <= 3;
+    if (zoom < 3.25) return false;
+    if (visibleCount > 25) return false;
+    if (visibleCount > 12) return zoom >= 3.6 && priority <= 1;
+    return priority <= 2;
   }
 
   function nodeLabelBudget(options) {
@@ -68,14 +67,17 @@
 
     if (labelMode === "minimal") return 0;
     if (labelMode === "focus") {
-      if (zoom < 2.1) return 0;
-      return visibleCount <= 40 ? 1 : 0;
+      if (zoom < 2.35) return 0;
+      return visibleCount <= 25 ? 1 : 0;
     }
-    if (zoom < 2.85 && !hasSearch) return 0;
-    let budget = visibleCount <= 25 ? 2 : visibleCount <= 50 ? 1 : 0;
-    if (zoom >= 3.3 && visibleCount <= 25) budget += 1;
-    if (hasSearch && visibleCount <= 30) budget += 1;
-    return Math.max(0, Math.min(3, budget));
+    if (hasSearch) {
+      if (zoom < 2.65) return 0;
+      return visibleCount <= 18 ? 2 : visibleCount <= 35 ? 1 : 0;
+    }
+    if (zoom < 3.25) return 0;
+    if (visibleCount > 25) return 0;
+    if (visibleCount <= 12 && zoom >= 4) return 2;
+    return 1;
   }
 
   function truncateGraphLabel(value, maxLength) {
