@@ -2685,6 +2685,38 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "references",
                 ],
             ),
+            (
+                "graph_query_command",
+                vec![
+                    "nodes",
+                    "edges",
+                    "calls",
+                    "dependencies",
+                    "trace",
+                    "dependents",
+                    "neighbors",
+                    "unreachable",
+                    "diagnostics",
+                    "path",
+                ],
+            ),
+            (
+                "graph_query_diagnostic_term",
+                vec![
+                    "id",
+                    "label",
+                    "message",
+                    "severity",
+                    "source",
+                    "diagnostic_source",
+                    "code",
+                    "diagnostic_code",
+                    "path",
+                    "path_prefix",
+                    "language",
+                    "metadata.*",
+                ],
+            ),
         ]),
     }
 }
@@ -3110,7 +3142,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/query",
-                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, or unreachable.",
+                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, unreachable, or diagnostics.",
                     vec![
                         path_param(),
                         query_param(
@@ -3118,7 +3150,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Graph query expression, for example `unreachable language:rust`.",
+                            "Graph query expression, for example `unreachable language:rust` or `diagnostics severity:error language:rust`.",
                         ),
                     ],
                     "QueryResult",
@@ -4025,6 +4057,18 @@ mod tests {
 
         assert_eq!(schema.api_version, 1);
         assert!(schema.enum_values.contains_key("export_format"));
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_command")
+                .is_some_and(|commands| commands.contains(&"diagnostics"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_diagnostic_term")
+                .is_some_and(|terms| terms.contains(&"severity") && terms.contains(&"language"))
+        );
         assert!(endpoints.contains(&("GET", "/api/schema")));
         assert!(endpoints.contains(&("GET", "/api/report")));
         assert!(endpoints.contains(&("GET", "/api/cache-diff")));
