@@ -13,8 +13,9 @@ use codegraph_analysis::{
     GraphSlice, GraphSliceRequest, InsightFilter, InsightReport, InsightSeverity, NodeContext,
     SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, architecture_map,
     check_insights, entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report,
-    focus_subgraph, hotspots, insights, node_context, query_graph, search_source, slice_graph,
-    summarize, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    focus_subgraph, hotspots, insights, language_dependencies, node_context, query_graph,
+    search_source, slice_graph, summarize, trace, trace_config, trace_dependents,
+    trace_entrypoints, trace_errors,
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{
@@ -111,6 +112,12 @@ struct ArchitectureQuery {
     path: Option<PathBuf>,
     group_limit: Option<usize>,
     edge_limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LanguageDependencyQuery {
+    path: Option<PathBuf>,
+    limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -413,6 +420,7 @@ async fn main() -> Result<()> {
         .route("/api/focus", get(focus_api))
         .route("/api/summary", get(summary))
         .route("/api/architecture", get(architecture_api))
+        .route("/api/language-dependencies", get(language_dependencies_api))
         .route("/api/hotspots", get(hotspots_api))
         .route("/api/entrypoints", get(entrypoints_api))
         .route("/api/entrypoint-traces", get(entrypoint_traces_api))
@@ -857,6 +865,17 @@ async fn architecture_api(
         &graph,
         query.group_limit.unwrap_or(50),
         query.edge_limit.unwrap_or(200),
+    )))
+}
+
+async fn language_dependencies_api(
+    State(state): State<AppState>,
+    Query(query): Query<LanguageDependencyQuery>,
+) -> Result<Json<codegraph_analysis::LanguageDependencyReport>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    Ok(Json(language_dependencies(
+        &graph,
+        query.limit.unwrap_or(50),
     )))
 }
 

@@ -245,6 +245,7 @@ button:disabled {
 .coverage-list,
 .lsp-list,
 .architecture-list,
+.language-dependency-list,
 .hotspot-list,
 .annotation-list {
   display: flex;
@@ -261,6 +262,7 @@ button:disabled {
 .lsp-chip,
 .architecture-chip,
 .architecture-edge-chip,
+.language-dependency-chip,
 .hotspot-chip,
 .annotation-chip {
   display: inline-grid;
@@ -285,6 +287,7 @@ button:disabled {
 .lsp-chip span,
 .architecture-chip span,
 .architecture-edge-chip span,
+.language-dependency-chip span,
 .hotspot-chip span,
 .annotation-chip span {
   min-width: 0;
@@ -302,6 +305,7 @@ button:disabled {
 .lsp-chip strong,
 .architecture-chip strong,
 .architecture-edge-chip strong,
+.language-dependency-chip strong,
 .hotspot-chip strong,
 .annotation-chip strong {
   color: var(--muted);
@@ -339,6 +343,11 @@ button:disabled {
 .architecture-edge-chip {
   max-width: 100%;
   background: rgba(223, 126, 126, 0.1);
+}
+
+.language-dependency-chip {
+  max-width: 100%;
+  background: rgba(103, 183, 220, 0.1);
 }
 
 .hotspot-chip {
@@ -380,6 +389,7 @@ button:disabled {
 .confidence-chip:hover,
 .architecture-chip:hover,
 .architecture-edge-chip:hover,
+.language-dependency-chip:hover,
 .hotspot-chip:hover,
 .entrypoint-item:hover {
   border-color: rgba(92, 200, 167, 0.55);

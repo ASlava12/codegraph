@@ -35,6 +35,7 @@ const state = {
   lsp: null,
   semanticReadiness: null,
   architecture: null,
+  languageDependencies: null,
   hotspots: null,
   architecturePathPrefix: "",
   entrypoints: [],
@@ -94,6 +95,7 @@ const scanPolicyList = document.querySelector("#scanPolicyList");
 const coverageList = document.querySelector("#coverageList");
 const lspList = document.querySelector("#lspList");
 const architectureList = document.querySelector("#architectureList");
+const languageDependencyList = document.querySelector("#languageDependencyList");
 const hotspotList = document.querySelector("#hotspotList");
 const annotationList = document.querySelector("#annotationList");
 const entrypointList = document.querySelector("#entrypointList");
@@ -314,6 +316,7 @@ async function scan() {
   state.lsp = null;
   state.semanticReadiness = null;
   state.architecture = null;
+  state.languageDependencies = null;
   state.hotspots = null;
   state.architecturePathPrefix = "";
   state.entrypoints = [];
@@ -541,6 +544,7 @@ async function loadProjectOverview() {
       lspResponse,
       semanticReadinessResponse,
       architectureResponse,
+      languageDependenciesResponse,
       hotspotsResponse,
     ] = await Promise.all([
       fetch(`/api/summary?${params.toString()}`),
@@ -550,6 +554,7 @@ async function loadProjectOverview() {
       fetch("/api/lsp"),
       fetch(`/api/semantic-readiness?${params.toString()}`),
       fetch(`/api/architecture?${params.toString()}&group_limit=8&edge_limit=40`),
+      fetch(`/api/language-dependencies?${params.toString()}&limit=8`),
       fetch(`/api/hotspots?${params.toString()}&limit=8`),
     ]);
     const summary = await summaryResponse.json();
@@ -559,6 +564,7 @@ async function loadProjectOverview() {
     const lsp = await lspResponse.json();
     const semanticReadiness = await semanticReadinessResponse.json();
     const architecture = await architectureResponse.json();
+    const languageDependencies = await languageDependenciesResponse.json();
     const hotspots = await hotspotsResponse.json();
     if (requestId !== state.overviewRequest) return;
     if (!summaryResponse.ok) {
@@ -582,6 +588,9 @@ async function loadProjectOverview() {
     if (!architectureResponse.ok) {
       throw new Error(architecture.error || "architecture failed");
     }
+    if (!languageDependenciesResponse.ok) {
+      throw new Error(languageDependencies.error || "language dependencies failed");
+    }
     if (!hotspotsResponse.ok) {
       throw new Error(hotspots.error || "hotspots failed");
     }
@@ -591,6 +600,7 @@ async function loadProjectOverview() {
     state.lsp = lsp;
     state.semanticReadiness = semanticReadiness;
     state.architecture = architecture;
+    state.languageDependencies = languageDependencies;
     state.hotspots = hotspots;
     state.entrypoints = entrypoints;
     renderOverview();
@@ -605,6 +615,7 @@ async function loadProjectOverview() {
     coverageList.innerHTML = "";
     lspList.innerHTML = "";
     architectureList.innerHTML = "";
+    languageDependencyList.innerHTML = "";
     hotspotList.innerHTML = "";
     annotationList.innerHTML = "";
     entrypointList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
@@ -674,6 +685,7 @@ function renderOverview() {
   renderCoverage(state.coverage);
   renderLspStatus(state.lsp, state.semanticReadiness);
   renderArchitecture(state.architecture);
+  renderLanguageDependencies(state.languageDependencies);
   renderHotspots(state.hotspots);
 
   const annotations = annotationFacets(summary, state.graph.nodes);
@@ -971,6 +983,65 @@ async function focusArchitectureEdge(edge) {
       throw new Error(body.error || "focus failed");
     }
     showFocusedGraph(body, `Focus: ${edge.source || "area"} -> ${edge.target || "area"}`);
+  } catch (error) {
+    if (requestId !== state.insightFocusRequest) return;
+    queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderLanguageDependencies(report) {
+  if (!report) {
+    languageDependencyList.innerHTML = '<p class="empty">No language dependencies.</p>';
+    return;
+  }
+
+  const links = Array.isArray(report.links) ? report.links.slice(0, 8) : [];
+  const chips = links.map(
+    (link, index) => `
+      <button class="language-dependency-chip" type="button" data-language-dependency-index="${index}">
+        <span>${escapeHtml(link.source_language || "unknown")} -> ${escapeHtml(link.target_language || "unknown")}</span>
+        <strong>${Number(link.count || 0)}</strong>
+      </button>
+    `,
+  );
+  chips.unshift(`
+    <div class="language-dependency-chip">
+      <span>Cross-language</span>
+      <strong>${Number(report.cross_language_edges || 0)}</strong>
+    </div>
+  `);
+  languageDependencyList.innerHTML = chips.join("");
+  languageDependencyList.querySelectorAll("[data-language-dependency-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const link = report.links?.[Number(button.dataset.languageDependencyIndex)];
+      if (!link) return;
+      focusLanguageDependency(link);
+    });
+  });
+}
+
+async function focusLanguageDependency(link) {
+  const edgeIndexes = Array.isArray(link.edge_indexes) ? link.edge_indexes : [];
+  if (edgeIndexes.length === 0) return;
+  state.insightFocusRequest += 1;
+  const requestId = state.insightFocusRequest;
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    edge_indexes: edgeIndexes.join(","),
+    edge_limit: "300",
+  });
+
+  try {
+    const response = await fetch(`/api/focus?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.insightFocusRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "focus failed");
+    }
+    showFocusedGraph(
+      body,
+      `Focus: ${link.source_language || "unknown"} -> ${link.target_language || "unknown"}`,
+    );
   } catch (error) {
     if (requestId !== state.insightFocusRequest) return;
     queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;

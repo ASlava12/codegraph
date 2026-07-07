@@ -55,6 +55,25 @@ pub struct ArchitectureEdge {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LanguageDependencyReport {
+    pub links: Vec<LanguageDependency>,
+    pub total_links: usize,
+    pub total_edges: usize,
+    pub cross_language_edges: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LanguageDependency {
+    pub source_language: String,
+    pub target_language: String,
+    pub count: usize,
+    pub edge_kinds: BTreeMap<String, usize>,
+    pub confidences: BTreeMap<String, usize>,
+    pub edge_indexes: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HotspotReport {
     pub hotspots: Vec<Hotspot>,
     pub total_candidates: usize,
@@ -869,6 +888,72 @@ pub fn architecture_map(
         total_edges,
         truncated_groups: total_groups > group_limit,
         truncated_edges: total_edges > edge_limit,
+    }
+}
+
+pub fn language_dependencies(graph: &CodeGraph, limit: usize) -> LanguageDependencyReport {
+    let limit = limit.clamp(1, 500);
+    let nodes_by_id: BTreeMap<NodeId, &Node> =
+        graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let mut links: BTreeMap<(String, String), LanguageDependency> = BTreeMap::new();
+    let mut total_edges = 0;
+    let mut cross_language_edges = 0;
+
+    for (edge_index, edge) in graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| is_architecture_dependency_edge(&edge.kind))
+    {
+        let source_language = node_language(&nodes_by_id, edge.source);
+        let target_language = node_language(&nodes_by_id, edge.target);
+        if source_language == "unknown" && target_language == "unknown" {
+            continue;
+        }
+        total_edges += 1;
+        if source_language != target_language {
+            cross_language_edges += 1;
+        }
+
+        let link = links
+            .entry((source_language.clone(), target_language.clone()))
+            .or_insert_with(|| LanguageDependency {
+                source_language: source_language.clone(),
+                target_language: target_language.clone(),
+                count: 0,
+                edge_kinds: BTreeMap::new(),
+                confidences: BTreeMap::new(),
+                edge_indexes: Vec::new(),
+            });
+        link.count += 1;
+        *link
+            .edge_kinds
+            .entry(edge_kind_name(&edge.kind))
+            .or_insert(0) += 1;
+        *link
+            .confidences
+            .entry(confidence_name(edge.confidence))
+            .or_insert(0) += 1;
+        link.edge_indexes.push(edge_index);
+    }
+
+    let total_links = links.len();
+    let mut links: Vec<_> = links.into_values().collect();
+    links.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.source_language.cmp(&right.source_language))
+            .then_with(|| left.target_language.cmp(&right.target_language))
+    });
+    links.truncate(limit);
+
+    LanguageDependencyReport {
+        links,
+        total_links,
+        total_edges,
+        cross_language_edges,
+        truncated: total_links > limit,
     }
 }
 
@@ -4054,6 +4139,16 @@ fn is_hotspot_candidate(kind: &NodeKind) -> bool {
     )
 }
 
+fn node_language(nodes_by_id: &BTreeMap<NodeId, &Node>, id: NodeId) -> String {
+    nodes_by_id
+        .get(&id)
+        .and_then(|node| node.metadata.get("language"))
+        .map(|language| language.trim())
+        .filter(|language| !language.is_empty())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
 fn edge_kind_name(kind: &EdgeKind) -> String {
     serde_json_name(kind).unwrap_or_else(|| format!("{kind:?}").to_ascii_lowercase())
 }
@@ -4185,6 +4280,57 @@ mod tests {
         assert_eq!(map.edges[0].target, "core");
         assert_eq!(map.edges[0].edge_kinds.get("calls"), Some(&1));
         assert_eq!(map.edges[0].edge_indexes, vec![4]);
+    }
+
+    #[test]
+    fn language_dependencies_group_edges_by_node_languages() {
+        let mut graph = CodeGraph::new("repo");
+        let rust_main = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "main",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let python_helper = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "helper",
+            None,
+            BTreeMap::from([("language".to_string(), "python".to_string())]),
+        );
+        let python_config = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "settings.yaml",
+            None,
+            BTreeMap::from([("language".to_string(), "python".to_string())]),
+        );
+        graph.add_edge(
+            rust_main,
+            python_helper,
+            EdgeKind::Calls,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            python_helper,
+            python_config,
+            EdgeKind::ReadsConfig,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(graph.root, rust_main, EdgeKind::Contains, Confidence::Exact);
+
+        let report = language_dependencies(&graph, 10);
+
+        assert_eq!(report.total_links, 2);
+        assert_eq!(report.total_edges, 2);
+        assert_eq!(report.cross_language_edges, 1);
+        let cross = report
+            .links
+            .iter()
+            .find(|link| link.source_language == "rust" && link.target_language == "python")
+            .unwrap();
+        assert_eq!(cross.count, 1);
+        assert_eq!(cross.edge_kinds.get("calls"), Some(&1));
+        assert_eq!(cross.confidences.get("heuristic"), Some(&1));
+        assert_eq!(cross.edge_indexes, vec![0]);
     }
 
     #[test]

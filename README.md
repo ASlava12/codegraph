@@ -46,6 +46,7 @@ Implemented now:
 - Web graph page controls backed by server-side paging, search, kind, item, language, edge, confidence, relation, and source filters.
 - Web graph viewport controls for zooming, fitting visible nodes, restarting layout, and pausing layout simulation.
 - Web project overview for language mix, edge confidence/source/relation mix, and entrypoint launch points.
+- Language dependency matrix reports in CLI, API, and web overview for mixed-language coupling.
 - Architecture map reports in CLI, API, and web overview for top-level project areas and cross-area dependencies.
 - Architecture overview chips can focus the paged graph by project area path prefix.
 - Architecture dependency chips can focus the exact graph edges behind cross-area coupling.
@@ -135,6 +136,12 @@ Show an architecture map grouped by top-level project area:
 
 ```bash
 cargo run -p codegraph-cli -- architecture .
+```
+
+Show language-to-language dependency links:
+
+```bash
+cargo run -p codegraph-cli -- language-dependencies .
 ```
 
 Find high-degree graph hotspots:
@@ -401,6 +408,7 @@ curl 'http://127.0.0.1:3765/api/node-context?path=.&node_id=1&edge_limit=80'
 curl 'http://127.0.0.1:3765/api/focus?path=.&node_ids=1,2&edge_indexes=0&edge_limit=200'
 curl 'http://127.0.0.1:3765/api/summary?path=.'
 curl 'http://127.0.0.1:3765/api/architecture?path=.&group_limit=50&edge_limit=200'
+curl 'http://127.0.0.1:3765/api/language-dependencies?path=.&limit=50'
 curl 'http://127.0.0.1:3765/api/hotspots?path=.&limit=25'
 curl 'http://127.0.0.1:3765/api/entrypoints?path=.'
 curl 'http://127.0.0.1:3765/api/entrypoint-traces?path=.&search=server&depth=4'
