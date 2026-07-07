@@ -202,6 +202,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add unified node card contracts across CLI, API, and web UI with source preview and related risks.
 - [x] Add insight focus API and web interaction for opening findings as focused graph views.
 - [x] Add enriched node cards with summary, code preview, dependencies, and related risks.
+- [x] Add shareable query deep-links and copy-link actions for reusable web investigations.
 - [x] Add package graph actions from external dependency/import node cards.
 - [x] Add selectable graph edges with dependency cards and exact edge explanation actions.
 - [x] Surface edge-scoped risks in dependency explanation cards.

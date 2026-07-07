@@ -123,6 +123,7 @@ const I18N = {
     "button.labelsFocus": "Focus",
     "button.card": "Card",
     "button.copyLink": "Copy Link",
+    "button.copyQueryLink": "Copy Query Link",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
     "button.queryEdge": "Query",
@@ -466,6 +467,7 @@ const I18N = {
     "button.labelsFocus": "Фокус",
     "button.card": "Карточка",
     "button.copyLink": "Скопировать ссылку",
+    "button.copyQueryLink": "Ссылка на запрос",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
     "button.queryEdge": "Запрос",
@@ -824,6 +826,7 @@ const state = {
   locale: getInitialLocale(),
   labelMode: getInitialLabelMode(),
   pendingSelectionLink: null,
+  pendingQueryLink: null,
 };
 
 const colors = {
@@ -907,6 +910,7 @@ const pageReloadButton = document.querySelector("#pageReloadButton");
 const pageNextButton = document.querySelector("#pageNextButton");
 const queryInput = document.querySelector("#queryInput");
 const queryButton = document.querySelector("#queryButton");
+const queryCopyButton = document.querySelector("#queryCopyButton");
 const queryResult = document.querySelector("#queryResult");
 const sourceSearchInput = document.querySelector("#sourceSearchInput");
 const sourcePathFilterInput = document.querySelector("#sourcePathFilterInput");
@@ -987,6 +991,7 @@ searchInput.addEventListener("input", () => {
   applyFilters();
 });
 queryButton.addEventListener("click", () => runGraphQuery());
+queryCopyButton.addEventListener("click", () => copyCurrentQueryLink(queryCopyButton));
 queryInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runGraphQuery();
 });
@@ -1175,6 +1180,13 @@ function applyUrlState() {
   if (link.nodeId != null || link.edgeIndex != null) {
     state.pendingSelectionLink = link;
   }
+  if (link.query) {
+    queryInput.value = link.query;
+    state.pendingQueryLink = {
+      query: link.query,
+      focus: link.queryFocus,
+    };
+  }
 }
 
 function readSelectionLinkFromUrl() {
@@ -1184,9 +1196,11 @@ function readSelectionLinkFromUrl() {
       path: params.get("path") || "",
       nodeId: parseUrlInteger(params.get("node")),
       edgeIndex: parseUrlInteger(params.get("edge")),
+      query: params.get("query") || "",
+      queryFocus: params.get("query_focus") === "1",
     };
   } catch (error) {
-    return { path: "", nodeId: null, edgeIndex: null };
+    return { path: "", nodeId: null, edgeIndex: null, query: "", queryFocus: false };
   }
 }
 
@@ -1222,15 +1236,54 @@ function buildSelectionUrl({ nodeId = null, edgeIndex = null, absolute = true } 
   if (nodeId != null) {
     url.searchParams.set("node", String(nodeId));
     url.searchParams.delete("edge");
+    url.searchParams.delete("query");
+    url.searchParams.delete("query_focus");
   } else if (edgeIndex != null) {
     url.searchParams.set("edge", String(edgeIndex));
     url.searchParams.delete("node");
+    url.searchParams.delete("query");
+    url.searchParams.delete("query_focus");
   } else {
     url.searchParams.delete("node");
     url.searchParams.delete("edge");
   }
 
   return absolute ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
+}
+
+function buildQueryUrl(expression, { focus = false, absolute = true } = {}) {
+  const url = new URL(window.location.href);
+  const root = pathInput.value.trim();
+  if (root && root !== ".") {
+    url.searchParams.set("path", root);
+  } else {
+    url.searchParams.delete("path");
+  }
+  url.searchParams.set("query", expression);
+  if (focus) {
+    url.searchParams.set("query_focus", "1");
+  } else {
+    url.searchParams.delete("query_focus");
+  }
+  url.searchParams.delete("node");
+  url.searchParams.delete("edge");
+  return absolute ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
+}
+
+function syncQueryUrl(expression, options = {}) {
+  try {
+    window.history.replaceState(null, "", buildQueryUrl(expression, { ...options, absolute: false }));
+  } catch (error) {
+    // Query links are best-effort; query execution itself does not depend on History API.
+  }
+}
+
+async function restorePendingQueryLink() {
+  const link = state.pendingQueryLink;
+  state.pendingQueryLink = null;
+  if (!link?.query) return;
+  queryInput.value = link.query;
+  await runGraphQuery({ focus: link.focus, syncUrl: false });
 }
 
 function selectedEdgeIndexFromKey(selectionKey) {
@@ -1289,6 +1342,27 @@ function attachCopyLinkActions(container) {
       }
     });
   });
+}
+
+async function copyCurrentQueryLink(button) {
+  const expression = queryInput.value.trim();
+  if (!expression) return;
+  button.disabled = true;
+  try {
+    await writeClipboardText(buildQueryUrl(expression, { focus: Boolean(state.queryFocus) }));
+    const previous = button.textContent;
+    button.textContent = t("button.copied");
+    window.setTimeout(() => {
+      button.textContent = previous || t("button.copyQueryLink");
+    }, 1200);
+  } catch (error) {
+    button.textContent = error.message;
+    window.setTimeout(() => {
+      button.textContent = t("button.copyQueryLink");
+    }, 1600);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function selectNodeById(nodeId, options = {}) {
@@ -1924,6 +1998,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     errorTraceResult.innerHTML = "";
     rootLabel.textContent = state.graphPage.root;
     initializeGraph({ preserveView: !resetLayout });
+    await restorePendingQueryLink();
     await restorePendingSelectionLink();
     loadProjectOverview();
     loadInsights();
@@ -3325,6 +3400,9 @@ async function runGraphQuery(options = {}) {
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "query failed"));
     }
+    if (options.syncUrl !== false) {
+      syncQueryUrl(expression, { focus: Boolean(options.focus) });
+    }
     queryResult.innerHTML = renderQueryResult(body);
     attachQueryNavigation(queryResult);
     attachEdgeExplainActions(queryResult);
@@ -4593,11 +4671,13 @@ function attachQueryFocusActions(container, result) {
   if (focusButton) {
     focusButton.addEventListener("click", () => {
       focusQueryResult(result, container);
+      if (result.query) syncQueryUrl(result.query, { focus: true });
     });
   }
   if (clearButton) {
     clearButton.addEventListener("click", () => {
       clearQueryFocus();
+      if (result.query) syncQueryUrl(result.query, { focus: false });
     });
   }
 }
