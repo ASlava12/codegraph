@@ -26,7 +26,7 @@ Implemented now:
 - HTTP API and embedded web UI for interactive graph exploration.
 - Async scan job API for long-running repository scans.
 - SSE scan job status stream for live web progress updates.
-- Source preview API and UI panel for graph nodes with source spans.
+- Source preview API and UI panel for parsed symbols plus framework route/config facts with source spans.
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
 - Reverse dependency/dependent traces for impact analysis from CLI, API, query language, and web detail panels.
 - Entrypoint trace API, CLI command, and web panel for comparing startup flows from manifest/code entrypoints.

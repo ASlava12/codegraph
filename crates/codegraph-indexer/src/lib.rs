@@ -519,7 +519,7 @@ fn index_framework_routes(
         let entrypoint_id = context.graph.add_node_with_metadata(
             NodeKind::Entrypoint,
             format!("route {} {}", route.method, route.path),
-            None,
+            Some(line_span(label, source, route.line)),
             metadata,
         );
         add_edge_once(
@@ -596,10 +596,12 @@ fn index_framework_configs(
             metadata.insert("value".to_string(), value.to_string());
         }
 
-        let config_id =
-            context
-                .graph
-                .add_node_with_metadata(NodeKind::Config, config.label, None, metadata);
+        let config_id = context.graph.add_node_with_metadata(
+            NodeKind::Config,
+            config.label,
+            Some(line_span(label, source, config.line)),
+            metadata,
+        );
         let mut edge_metadata = BTreeMap::new();
         edge_metadata.insert("source".to_string(), "framework".to_string());
         edge_metadata.insert("framework".to_string(), config.framework);
@@ -636,6 +638,21 @@ fn framework_configs(
     }
 
     configs.into_iter().collect()
+}
+
+fn line_span(path: &str, source: &str, line: u32) -> SourceSpan {
+    let line = line.max(1);
+    let line_text = source
+        .lines()
+        .nth(line.saturating_sub(1) as usize)
+        .unwrap_or("");
+    SourceSpan {
+        path: path.to_string(),
+        start_line: line,
+        start_column: 1,
+        end_line: line,
+        end_column: line_text.chars().count() as u32 + 1,
+    }
 }
 
 fn apply_graph_annotations(context: &mut IndexContext) {
@@ -4090,6 +4107,12 @@ add_executable(imported_tool IMPORTED)
                 node.metadata.get("framework").map(String::as_str),
                 Some(framework)
             );
+            assert!(
+                node.span
+                    .as_ref()
+                    .is_some_and(|span| span.path == path && span.start_line >= 1),
+                "missing route source span for {route_label}"
+            );
             assert!(has_entrypoint_reference(
                 &graph,
                 entrypoint,
@@ -4177,6 +4200,12 @@ add_executable(imported_tool IMPORTED)
             assert_eq!(
                 node.metadata.get("config_kind").map(String::as_str),
                 Some(config_kind)
+            );
+            assert!(
+                node.span
+                    .as_ref()
+                    .is_some_and(|span| !span.path.is_empty() && span.start_line >= 1),
+                "missing framework config source span for {label}"
             );
             assert!(graph.edges.iter().any(|edge| {
                 edge.target == config_id
