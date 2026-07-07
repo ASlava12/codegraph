@@ -139,6 +139,7 @@ Goal: answer practical code investigation questions.
 - [x] Add error query slices for focused exception/error source context.
 - [x] Add cycle query slices for focused circular dependency context.
 - [x] Add hotspot query slices for focused high-degree dependency context.
+- [x] Add query result facets for agent and web triage summaries.
 - [x] Add reverse dependent traces for impact analysis.
 - [x] Add source text search across CLI, API, and web for focused code snippets.
 - [x] Add edge explanation for confidence and provenance evidence across CLI, API, and web.

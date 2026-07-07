@@ -3359,7 +3359,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/query",
-                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, or insights.",
+                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, or insights. QueryResult includes returned counts and facets for node kinds, edge kinds, languages, item kinds, and confidence.",
                     vec![
                         path_param(),
                         query_param(

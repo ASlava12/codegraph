@@ -65,6 +65,7 @@ Implemented now:
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, trace, diagnostic, insight/risk, and unreachable-code slices.
+- Focused query responses include returned counts and facets for node kinds, edge kinds, languages, item kinds, and confidence.
 - Agent-friendly entrypoint graph queries for focused startup slices with immediate trace edges.
 - Agent-friendly route graph queries for focused HTTP/framework route and handler slices.
 - Agent-friendly config graph queries for focused configuration/environment reader slices and entrypoint paths.

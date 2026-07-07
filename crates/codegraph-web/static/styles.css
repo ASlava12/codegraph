@@ -990,6 +990,47 @@ button.cancel-action:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+.query-facets {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.query-facets section {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.query-facets h3 {
+  min-width: 72px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.query-facets span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.query-facets strong {
+  color: var(--text);
+}
+
 .query-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -3849,14 +3849,19 @@ function renderQueryResult(result, options = {}) {
   const expression = result.query
     ? `<span class="query-expression">${escapeHtml(result.query)}</span>`
     : "";
+  const shownNodes = Number(result.returned_nodes ?? result.nodes.length);
+  const shownEdges = Number(result.returned_edges ?? result.edges.length);
+  const nodeTotal = Number(result.total_nodes ?? shownNodes);
+  const edgeTotal = Number(result.total_edges ?? shownEdges);
 
   return `
     <div class="query-summary">
       ${resultLabel}
-      <span>${result.total_nodes} nodes</span>
-      <span>${result.total_edges} edges</span>
+      <span>${formatReturnedCount(shownNodes, nodeTotal)} nodes</span>
+      <span>${formatReturnedCount(shownEdges, edgeTotal)} edges</span>
       ${expression}
     </div>
+    ${renderQueryFacets(result.facets)}
     <div class="query-actions">
       <button data-focus-result type="button" ${hasResults ? "" : "disabled"}>Focus result</button>
       <button data-clear-focus type="button" ${state.queryFocus ? "" : "disabled"}>Clear focus</button>
@@ -3866,6 +3871,40 @@ function renderQueryResult(result, options = {}) {
     ${!nodeRows && !edgeRows ? '<p class="empty">No query results.</p>' : ""}
     ${truncated}
   `;
+}
+
+function formatReturnedCount(returned, total) {
+  return returned === total ? String(total) : `${returned}/${total}`;
+}
+
+function renderQueryFacets(facets) {
+  if (!facets) return "";
+  const groups = [
+    ["nodes", facets.node_kinds],
+    ["edges", facets.edge_kinds],
+    ["languages", facets.languages],
+    ["items", facets.item_kinds],
+    ["confidence", facets.edge_confidences],
+  ]
+    .map(([label, values]) => renderQueryFacetGroup(label, values))
+    .filter(Boolean)
+    .join("");
+  return groups ? `<div class="query-facets">${groups}</div>` : "";
+}
+
+function renderQueryFacetGroup(label, values) {
+  const entries = Object.entries(values || {})
+    .filter(([, count]) => Number(count) > 0)
+    .sort((left, right) => Number(right[1]) - Number(left[1]) || left[0].localeCompare(right[0]))
+    .slice(0, 6);
+  if (!entries.length) return "";
+  const chips = entries
+    .map(
+      ([key, count]) =>
+        `<span><strong>${escapeHtml(formatKind(key))}</strong>${Number(count)}</span>`,
+    )
+    .join("");
+  return `<section><h3>${escapeHtml(label)}</h3>${chips}</section>`;
 }
 
 function renderQueryNode(node) {

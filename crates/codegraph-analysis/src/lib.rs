@@ -268,7 +268,81 @@ pub struct QueryResult {
     pub edges: Vec<Edge>,
     pub total_nodes: usize,
     pub total_edges: usize,
+    #[serde(default)]
+    pub returned_nodes: usize,
+    #[serde(default)]
+    pub returned_edges: usize,
     pub truncated: bool,
+    #[serde(default)]
+    pub facets: QueryFacets,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueryFacets {
+    pub node_kinds: BTreeMap<String, usize>,
+    pub edge_kinds: BTreeMap<String, usize>,
+    pub languages: BTreeMap<String, usize>,
+    pub item_kinds: BTreeMap<String, usize>,
+    pub edge_confidences: BTreeMap<String, usize>,
+}
+
+impl QueryResult {
+    fn new(
+        query: impl Into<String>,
+        nodes: Vec<Node>,
+        edges: Vec<Edge>,
+        total_nodes: usize,
+        total_edges: usize,
+        truncated: bool,
+    ) -> Self {
+        let returned_nodes = nodes.len();
+        let returned_edges = edges.len();
+        let facets = QueryFacets::from_graph_parts(&nodes, &edges);
+        Self {
+            query: query.into(),
+            nodes,
+            edges,
+            total_nodes,
+            total_edges,
+            returned_nodes,
+            returned_edges,
+            truncated,
+            facets,
+        }
+    }
+}
+
+impl QueryFacets {
+    fn from_graph_parts(nodes: &[Node], edges: &[Edge]) -> Self {
+        let mut node_kinds = BTreeMap::new();
+        let mut edge_kinds = BTreeMap::new();
+        let mut languages = BTreeMap::new();
+        let mut item_kinds = BTreeMap::new();
+        let mut edge_confidences = BTreeMap::new();
+
+        for node in nodes {
+            increment_facet(&mut node_kinds, kind_name(&node.kind));
+            if let Some(language) = node.metadata.get("language") {
+                increment_facet(&mut languages, language.clone());
+            }
+            if let Some(item_kind) = node.metadata.get("item_kind") {
+                increment_facet(&mut item_kinds, item_kind.clone());
+            }
+        }
+
+        for edge in edges {
+            increment_facet(&mut edge_kinds, edge_kind_name(&edge.kind));
+            increment_facet(&mut edge_confidences, confidence_name(edge.confidence));
+        }
+
+        Self {
+            node_kinds,
+            edge_kinds,
+            languages,
+            item_kinds,
+            edge_confidences,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1663,14 +1737,14 @@ pub fn focus_subgraph(graph: &CodeGraph, request: FocusRequest) -> QueryResult {
         .cloned()
         .collect();
 
-    QueryResult {
-        query: "focus".to_string(),
-        total_nodes: nodes.len(),
-        total_edges,
-        truncated: total_edges > edges.len(),
+    QueryResult::new(
+        "focus",
         nodes,
         edges,
-    }
+        node_ids.len(),
+        total_edges,
+        total_edges > edge_limit,
+    )
 }
 
 pub fn explain_edge(
@@ -2008,14 +2082,14 @@ fn query_nodes(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryE
     let total_nodes = matched.len();
     let nodes = matched.into_iter().take(spec.limit).collect();
 
-    Ok(QueryResult {
-        query: spec.original,
+    Ok(QueryResult::new(
+        spec.original,
         nodes,
-        edges: Vec::new(),
+        Vec::new(),
         total_nodes,
-        total_edges: 0,
-        truncated: total_nodes > spec.limit,
-    })
+        0,
+        total_nodes > spec.limit,
+    ))
 }
 
 fn query_edges(
@@ -2051,15 +2125,16 @@ fn query_edges(
     let total_edges = matched.len();
     let edges: Vec<_> = matched.into_iter().take(spec.limit).collect();
     let nodes = endpoint_nodes(graph, &edges);
+    let total_nodes = nodes.len();
 
-    Ok(QueryResult {
-        query: spec.original,
-        total_nodes: nodes.len(),
-        total_edges,
-        truncated: total_edges > spec.limit,
+    Ok(QueryResult::new(
+        spec.original,
         nodes,
         edges,
-    })
+        total_nodes,
+        total_edges,
+        total_edges > spec.limit,
+    ))
 }
 
 fn query_trace(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -2103,24 +2178,27 @@ fn query_trace_with(
             max_depth: depth,
         },
     ) else {
-        return Ok(QueryResult {
-            query: spec.original,
-            nodes: Vec::new(),
-            edges: Vec::new(),
-            total_nodes: 0,
-            total_edges: 0,
-            truncated: false,
-        });
+        return Ok(QueryResult::new(
+            spec.original,
+            Vec::new(),
+            Vec::new(),
+            0,
+            0,
+            false,
+        ));
     };
 
-    Ok(QueryResult {
-        query: spec.original,
-        total_nodes: result.nodes.len(),
-        total_edges: result.edges.len(),
-        truncated: result.truncated,
-        nodes: result.nodes.into_iter().map(|node| node.node).collect(),
-        edges: result.edges,
-    })
+    let total_nodes = result.nodes.len();
+    let total_edges = result.edges.len();
+    let nodes = result.nodes.into_iter().map(|node| node.node).collect();
+    Ok(QueryResult::new(
+        spec.original,
+        nodes,
+        result.edges,
+        total_nodes,
+        total_edges,
+        result.truncated,
+    ))
 }
 
 fn query_neighbors(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -2229,14 +2307,14 @@ fn query_neighbors(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, Qu
         .cloned()
         .collect();
 
-    Ok(QueryResult {
-        query: spec.original,
+    Ok(QueryResult::new(
+        spec.original,
         nodes,
         edges,
-        total_nodes: visited_nodes.len(),
+        visited_nodes.len(),
         total_edges,
         truncated,
-    })
+    ))
 }
 
 fn query_entrypoints(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -2285,14 +2363,15 @@ fn query_entrypoints(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResu
         .cloned()
         .collect::<Vec<_>>();
 
-    Ok(QueryResult {
-        query: spec.original,
-        total_nodes: nodes.len(),
-        total_edges,
-        truncated: matched.len() > spec.limit || total_edges > spec.limit,
+    let total_nodes = nodes.len();
+    Ok(QueryResult::new(
+        spec.original,
         nodes,
         edges,
-    })
+        total_nodes,
+        total_edges,
+        matched.len() > spec.limit || total_edges > spec.limit,
+    ))
 }
 
 fn query_routes(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -2390,14 +2469,15 @@ fn query_routes(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, Q
         .map(|(_, edge)| edge.clone())
         .collect::<Vec<_>>();
 
-    Ok(QueryResult {
-        query: spec.original,
-        total_nodes: nodes.len(),
-        total_edges,
-        truncated: truncated || total_edges > edge_limit,
+    let total_nodes = nodes.len();
+    Ok(QueryResult::new(
+        spec.original,
         nodes,
         edges,
-    })
+        total_nodes,
+        total_edges,
+        truncated || total_edges > edge_limit,
+    ))
 }
 
 fn query_packages(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -2477,14 +2557,15 @@ fn query_packages(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult,
         .cloned()
         .collect::<Vec<_>>();
 
-    Ok(QueryResult {
-        query: spec.original,
-        total_nodes: nodes.len(),
-        total_edges,
-        truncated: matched.len() > spec.limit || total_edges > edge_limit,
+    let total_nodes = nodes.len();
+    Ok(QueryResult::new(
+        spec.original,
         nodes,
         edges,
-    })
+        total_nodes,
+        total_edges,
+        matched.len() > spec.limit || total_edges > edge_limit,
+    ))
 }
 
 fn query_configs(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -2570,14 +2651,16 @@ fn query_configs(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, 
         .map(|(_, edge)| edge.clone())
         .collect::<Vec<_>>();
 
-    Ok(QueryResult {
-        query: spec.original,
-        total_nodes: nodes.len(),
-        total_edges: edges.len(),
-        truncated,
+    let total_nodes = nodes.len();
+    let total_edges = edges.len();
+    Ok(QueryResult::new(
+        spec.original,
         nodes,
         edges,
-    })
+        total_nodes,
+        total_edges,
+        truncated,
+    ))
 }
 
 fn query_errors(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -2659,14 +2742,16 @@ fn query_errors(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, Q
         .map(|(_, edge)| edge.clone())
         .collect::<Vec<_>>();
 
-    Ok(QueryResult {
-        query: spec.original,
-        total_nodes: nodes.len(),
-        total_edges: edges.len(),
-        truncated,
+    let total_nodes = nodes.len();
+    let total_edges = edges.len();
+    Ok(QueryResult::new(
+        spec.original,
         nodes,
         edges,
-    })
+        total_nodes,
+        total_edges,
+        truncated,
+    ))
 }
 
 fn query_cycles(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -2700,14 +2785,16 @@ fn query_cycles(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, Query
         .map(|(_, edge)| edge.clone())
         .collect::<Vec<_>>();
 
-    Ok(QueryResult {
-        query: spec.original,
-        total_nodes: nodes.len(),
-        total_edges: edges.len(),
-        truncated: total_matches > spec.limit,
+    let total_nodes = nodes.len();
+    let total_edges = edges.len();
+    Ok(QueryResult::new(
+        spec.original,
         nodes,
         edges,
-    })
+        total_nodes,
+        total_edges,
+        total_matches > spec.limit,
+    ))
 }
 
 fn query_hotspots(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -2785,28 +2872,29 @@ fn query_hotspots(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, Que
         .cloned()
         .collect::<Vec<_>>();
 
-    Ok(QueryResult {
-        query: spec.original,
-        total_nodes: nodes.len(),
-        total_edges,
-        truncated: matched.len() > spec.limit || total_edges > edge_limit,
+    let total_nodes = nodes.len();
+    Ok(QueryResult::new(
+        spec.original,
         nodes,
         edges,
-    })
+        total_nodes,
+        total_edges,
+        matched.len() > spec.limit || total_edges > edge_limit,
+    ))
 }
 
 fn query_unreachable(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
     validate_unreachable_terms(&spec)?;
     let reachable = entrypoint_reachable_nodes(graph);
     if reachable.is_empty() {
-        return Ok(QueryResult {
-            query: spec.original,
-            nodes: Vec::new(),
-            edges: Vec::new(),
-            total_nodes: 0,
-            total_edges: 0,
-            truncated: false,
-        });
+        return Ok(QueryResult::new(
+            spec.original,
+            Vec::new(),
+            Vec::new(),
+            0,
+            0,
+            false,
+        ));
     }
 
     let path_index = node_path_index(graph);
@@ -2861,14 +2949,15 @@ fn query_unreachable(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, 
         .collect::<Vec<_>>();
     let truncated = total_matches > spec.limit || total_edges > edge_limit;
 
-    Ok(QueryResult {
-        query: spec.original,
-        total_nodes: nodes.len(),
+    let total_nodes = nodes.len();
+    Ok(QueryResult::new(
+        spec.original,
+        nodes,
+        matched_edges,
+        total_nodes,
         total_edges,
         truncated,
-        nodes,
-        edges: matched_edges,
-    })
+    ))
 }
 
 fn query_diagnostics(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -2911,14 +3000,15 @@ fn query_diagnostics(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, 
         .collect::<Vec<_>>();
     let truncated = total_matches > spec.limit || total_edges > edge_limit;
 
-    Ok(QueryResult {
-        query: spec.original,
-        total_nodes: nodes.len(),
+    let total_nodes = nodes.len();
+    Ok(QueryResult::new(
+        spec.original,
+        nodes,
+        matched_edges,
+        total_nodes,
         total_edges,
         truncated,
-        nodes,
-        edges: matched_edges,
-    })
+    ))
 }
 
 fn query_insights(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -2954,14 +3044,16 @@ fn query_insights(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, Que
         .cloned()
         .collect();
 
-    Ok(QueryResult {
-        query: spec.original,
-        total_nodes: nodes.len(),
-        total_edges: edges.len(),
-        truncated: total_insights > spec.limit,
+    let total_nodes = nodes.len();
+    let total_edges = edges.len();
+    Ok(QueryResult::new(
+        spec.original,
         nodes,
         edges,
-    })
+        total_nodes,
+        total_edges,
+        total_insights > spec.limit,
+    ))
 }
 
 fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -2999,14 +3091,14 @@ fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryEr
 
     if start == target {
         let node = graph.nodes.iter().find(|node| node.id == start).cloned();
-        return Ok(QueryResult {
-            query: spec.original,
-            nodes: node.into_iter().collect(),
-            edges: Vec::new(),
-            total_nodes: 1,
-            total_edges: 0,
-            truncated: false,
-        });
+        return Ok(QueryResult::new(
+            spec.original,
+            node.into_iter().collect(),
+            Vec::new(),
+            1,
+            0,
+            false,
+        ));
     }
 
     let mut visited = BTreeSet::from([start]);
@@ -3038,27 +3130,29 @@ fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryEr
                     .filter_map(|index| graph.edges.get(*index).cloned())
                     .collect();
                 let nodes = path_nodes(graph, start, &edges);
-                return Ok(QueryResult {
-                    query: spec.original,
-                    total_nodes: nodes.len(),
-                    total_edges: edges.len(),
-                    truncated: false,
+                let total_nodes = nodes.len();
+                let total_edges = edges.len();
+                return Ok(QueryResult::new(
+                    spec.original,
                     nodes,
                     edges,
-                });
+                    total_nodes,
+                    total_edges,
+                    false,
+                ));
             }
             queue.push_back((edge.target, depth + 1));
         }
     }
 
-    Ok(QueryResult {
-        query: spec.original,
-        nodes: Vec::new(),
-        edges: Vec::new(),
-        total_nodes: 0,
-        total_edges: 0,
+    Ok(QueryResult::new(
+        spec.original,
+        Vec::new(),
+        Vec::new(),
+        0,
+        0,
         truncated,
-    })
+    ))
 }
 
 fn validate_node_terms(spec: &QuerySpec) -> Result<(), QueryError> {
@@ -4501,6 +4595,10 @@ fn text_matches(actual: &str, expected: &str) -> bool {
     actual
         .to_ascii_lowercase()
         .contains(&expected.to_ascii_lowercase())
+}
+
+fn increment_facet(facets: &mut BTreeMap<String, usize>, key: String) {
+    *facets.entry(key).or_insert(0) += 1;
 }
 
 fn parse_node_id(value: &str) -> Result<NodeId, QueryError> {
@@ -7358,6 +7456,16 @@ mod tests {
 
         let result = query_graph(&graph, "packages serde ecosystem:cargo").unwrap();
 
+        assert_eq!(result.returned_nodes, result.nodes.len());
+        assert_eq!(result.returned_edges, result.edges.len());
+        assert_eq!(
+            result.facets.node_kinds.get("external_dependency"),
+            Some(&2)
+        );
+        assert_eq!(result.facets.node_kinds.get("file"), Some(&2));
+        assert_eq!(result.facets.edge_kinds.get("depends_on"), Some(&1));
+        assert_eq!(result.facets.edge_kinds.get("imports"), Some(&1));
+        assert_eq!(result.facets.languages.get("rust"), Some(&2));
         assert!(result.nodes.iter().any(|node| node.id == cargo_manifest));
         assert!(result.nodes.iter().any(|node| node.id == rust_file));
         assert!(result.nodes.iter().any(|node| node.id == serde_dependency));
