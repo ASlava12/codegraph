@@ -6593,6 +6593,8 @@ mod tests {
         assert!(app.contains("capabilities.server_version"));
         assert!(app.contains("\"cap.server\""));
         assert!(app.contains("\"cap.apiBody\""));
+        assert!(app.contains("\"cap.headers\""));
+        assert!(app.contains("common_response_headers"));
         assert!(app.contains("limits.max_api_body_bytes"));
         assert!(app.contains("data-risk-gate"));
         assert!(app.contains("checkFailOnInput.value"));

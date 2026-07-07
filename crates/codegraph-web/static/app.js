@@ -290,6 +290,7 @@ const I18N = {
     "cap.querySize": "Query Size",
     "cap.report": "Report",
     "cap.sourceSearchSize": "Source Search",
+    "cap.headers": "Headers",
     "cap.routes": "Routes",
     "cap.on": "on",
     "cap.off": "off",
@@ -659,6 +660,7 @@ const I18N = {
     "cap.querySize": "Размер запроса",
     "cap.report": "Отчет",
     "cap.sourceSearchSize": "Размер поиска",
+    "cap.headers": "Заголовки",
     "cap.routes": "Маршруты",
     "cap.on": "вкл",
     "cap.off": "выкл",
@@ -1515,6 +1517,7 @@ async function loadApiSchema() {
   }
 
   renderApiSchemaOptions();
+  renderOverview();
 }
 
 function renderApiSchemaOptions() {
@@ -2593,6 +2596,9 @@ function renderCapabilities(capabilities) {
   const projects = Array.isArray(capabilities.projects) ? capabilities.projects : [];
   const limits = capabilities.limits || {};
   const cache = capabilities.cache || {};
+  const commonHeaders = Array.isArray(state.apiSchema?.common_response_headers)
+    ? state.apiSchema.common_response_headers
+    : [];
   if (Number(limits.max_graph_query_length || 0) > 0) {
     queryInput.maxLength = String(Number(limits.max_graph_query_length));
   }
@@ -2617,6 +2623,7 @@ function renderCapabilities(capabilities) {
     [t("cap.focus"), String(Number(limits.max_focus_edge_limit || 0))],
     [t("cap.queryLimit"), String(Number(limits.max_graph_query_limit || 0))],
     [t("cap.querySize"), String(Number(limits.max_graph_query_length || 0))],
+    [t("cap.headers"), String(commonHeaders.length)],
     [
       t("cap.report"),
       [

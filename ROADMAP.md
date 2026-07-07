@@ -260,6 +260,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Surface request ids in web error messages for access-log correlation.
 - [x] Add graceful HTTP server shutdown for Ctrl-C and SIGTERM.
 - [x] Surface server capabilities in the web overview.
+- [x] Surface API schema common response-header contracts in the web overview.
 - [x] Add server-wide security headers for embedded web and API responses.
 - [x] Add production cache-control headers for embedded web assets and runtime API responses.
 - [x] Add ETag-backed conditional responses for embedded web assets.
