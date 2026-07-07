@@ -4,7 +4,7 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
@@ -50,6 +50,8 @@ const DEFAULT_MAX_SCAN_JOBS: usize = 64;
 const DEFAULT_MAX_SEMANTIC_JOBS: usize = 64;
 const DEFAULT_MAX_SCAN_CONCURRENCY: usize = 2;
 const DEFAULT_MAX_SEMANTIC_CONCURRENCY: usize = 1;
+const DEFAULT_JOB_LIST_LIMIT: usize = 50;
+const MAX_JOB_LIST_LIMIT: usize = 500;
 
 #[derive(Debug, Parser)]
 #[command(name = "codegraph-server")]
@@ -197,6 +199,16 @@ struct SemanticJobResult {
     id: String,
     root: String,
     result: SemanticEnrichResponse,
+}
+
+#[derive(Debug, Serialize)]
+struct SemanticJobListResponse {
+    jobs: Vec<SemanticJob>,
+    total: usize,
+    returned: usize,
+    limit: usize,
+    status: Option<ScanJobStatus>,
+    summary: JobStoreHealth,
 }
 
 #[derive(Debug, Deserialize)]
@@ -365,6 +377,12 @@ struct ScanJobRequest {
     path: Option<PathBuf>,
 }
 
+#[derive(Debug, Deserialize)]
+struct JobListQuery {
+    status: Option<String>,
+    limit: Option<usize>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct ScanJob {
     id: String,
@@ -406,6 +424,16 @@ struct ScanJobResult {
     id: String,
     root: String,
     graph: CodeGraph,
+}
+
+#[derive(Debug, Serialize)]
+struct ScanJobListResponse {
+    jobs: Vec<ScanJob>,
+    total: usize,
+    returned: usize,
+    limit: usize,
+    status: Option<ScanJobStatus>,
+    summary: JobStoreHealth,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -553,9 +581,14 @@ async fn main() -> Result<()> {
         .route("/api/semantic-patch", post(semantic_patch_api))
         .route("/api/semantic-apply", post(semantic_apply_api))
         .route("/api/semantic-enrich", post(semantic_enrich_api))
-        .route("/api/semantic-jobs", post(start_semantic_job))
-        .route("/api/semantic-jobs/{id}", get(semantic_job_status))
-        .route("/api/semantic-jobs/{id}", delete(cancel_semantic_job))
+        .route(
+            "/api/semantic-jobs",
+            get(list_semantic_jobs).post(start_semantic_job),
+        )
+        .route(
+            "/api/semantic-jobs/{id}",
+            get(semantic_job_status).delete(cancel_semantic_job),
+        )
         .route("/api/semantic-jobs/{id}/events", get(semantic_job_events))
         .route("/api/semantic-jobs/{id}/result", get(semantic_job_result))
         .route("/api/projects", get(projects_api))
@@ -563,9 +596,11 @@ async fn main() -> Result<()> {
         .route("/api/coverage", get(coverage_api))
         .route("/api/scan", get(scan))
         .route("/api/cache-diff", get(cache_diff_api))
-        .route("/api/scan-jobs", post(start_scan_job))
-        .route("/api/scan-jobs/{id}", get(scan_job_status))
-        .route("/api/scan-jobs/{id}", delete(cancel_scan_job))
+        .route("/api/scan-jobs", get(list_scan_jobs).post(start_scan_job))
+        .route(
+            "/api/scan-jobs/{id}",
+            get(scan_job_status).delete(cancel_scan_job),
+        )
         .route("/api/scan-jobs/{id}/events", get(scan_job_events))
         .route("/api/scan-jobs/{id}/result", get(scan_job_result))
         .route("/api/export", get(export_api))
@@ -729,6 +764,34 @@ async fn start_scan_job(
     });
 
     Ok(Json(job))
+}
+
+async fn list_scan_jobs(
+    State(state): State<AppState>,
+    Query(query): Query<JobListQuery>,
+) -> Result<Json<ScanJobListResponse>, ApiError> {
+    let status = parse_optional_job_status(query.status.as_deref())?;
+    let limit = job_list_limit(query.limit);
+    let jobs = state.jobs.read().await;
+    let summary = job_store_health(jobs.values().map(|job| job.status));
+    let total = jobs.len();
+    let mut list: Vec<_> = jobs
+        .values()
+        .filter(|job| status.is_none_or(|status| job.status == status))
+        .cloned()
+        .map(job_without_graph)
+        .collect();
+    sort_scan_jobs_recent_first(&mut list);
+    list.truncate(limit);
+
+    Ok(Json(ScanJobListResponse {
+        returned: list.len(),
+        jobs: list,
+        total,
+        limit,
+        status,
+        summary,
+    }))
 }
 
 async fn scan_job_status(
@@ -1127,6 +1190,34 @@ async fn start_semantic_job(
     });
 
     Ok(Json(job))
+}
+
+async fn list_semantic_jobs(
+    State(state): State<AppState>,
+    Query(query): Query<JobListQuery>,
+) -> Result<Json<SemanticJobListResponse>, ApiError> {
+    let status = parse_optional_job_status(query.status.as_deref())?;
+    let limit = job_list_limit(query.limit);
+    let jobs = state.semantic_jobs.read().await;
+    let summary = job_store_health(jobs.values().map(|job| job.status));
+    let total = jobs.len();
+    let mut list: Vec<_> = jobs
+        .values()
+        .filter(|job| status.is_none_or(|status| job.status == status))
+        .cloned()
+        .map(semantic_job_without_result)
+        .collect();
+    sort_semantic_jobs_recent_first(&mut list);
+    list.truncate(limit);
+
+    Ok(Json(SemanticJobListResponse {
+        returned: list.len(),
+        jobs: list,
+        total,
+        limit,
+        status,
+        summary,
+    }))
 }
 
 async fn semantic_job_status(
@@ -1780,6 +1871,53 @@ fn normalize_query_string(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn parse_optional_job_status(value: Option<&str>) -> Result<Option<ScanJobStatus>, ApiError> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(parse_job_status)
+        .transpose()
+}
+
+fn parse_job_status(value: &str) -> Result<ScanJobStatus, ApiError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "queued" => Ok(ScanJobStatus::Queued),
+        "running" => Ok(ScanJobStatus::Running),
+        "complete" | "completed" => Ok(ScanJobStatus::Complete),
+        "failed" => Ok(ScanJobStatus::Failed),
+        "canceled" | "cancelled" => Ok(ScanJobStatus::Canceled),
+        other => Err(ApiError::bad_request(format!(
+            "invalid job status `{other}`; expected queued, running, complete, failed, or canceled"
+        ))),
+    }
+}
+
+fn job_list_limit(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(DEFAULT_JOB_LIST_LIMIT)
+        .clamp(1, MAX_JOB_LIST_LIMIT)
+}
+
+fn sort_scan_jobs_recent_first(jobs: &mut [ScanJob]) {
+    jobs.sort_by(|left, right| {
+        right
+            .updated_at_unix
+            .cmp(&left.updated_at_unix)
+            .then_with(|| right.created_at_unix.cmp(&left.created_at_unix))
+            .then_with(|| right.id.cmp(&left.id))
+    });
+}
+
+fn sort_semantic_jobs_recent_first(jobs: &mut [SemanticJob]) {
+    jobs.sort_by(|left, right| {
+        right
+            .updated_at_unix
+            .cmp(&left.updated_at_unix)
+            .then_with(|| right.created_at_unix.cmp(&left.created_at_unix))
+            .then_with(|| right.id.cmp(&left.id))
+    });
+}
+
 fn insight_filter_from_query(query: InsightQuery) -> Result<InsightFilter, ApiError> {
     Ok(InsightFilter {
         severity: normalize_query_string(query.severity)
@@ -2312,6 +2450,35 @@ mod tests {
         assert_eq!(health.limit, 3);
         assert_eq!(health.active, 1);
         assert_eq!(health.available, 2);
+    }
+
+    #[test]
+    fn parse_job_status_accepts_supported_values() {
+        assert_eq!(parse_job_status("queued").unwrap(), ScanJobStatus::Queued);
+        assert_eq!(
+            parse_job_status("completed").unwrap(),
+            ScanJobStatus::Complete
+        );
+        assert_eq!(
+            parse_job_status("cancelled").unwrap(),
+            ScanJobStatus::Canceled
+        );
+        assert!(parse_job_status("waiting").is_err());
+        assert_eq!(job_list_limit(Some(usize::MAX)), MAX_JOB_LIST_LIMIT);
+    }
+
+    #[test]
+    fn sort_scan_jobs_orders_recent_jobs_first() {
+        let mut jobs = vec![
+            test_scan_job("scan-1", ScanJobStatus::Complete, 10, Some(20)),
+            test_scan_job("scan-3", ScanJobStatus::Complete, 10, Some(20)),
+            test_scan_job("scan-2", ScanJobStatus::Running, 30, None),
+        ];
+
+        sort_scan_jobs_recent_first(&mut jobs);
+
+        let ids: Vec<_> = jobs.into_iter().map(|job| job.id).collect();
+        assert_eq!(ids, vec!["scan-2", "scan-3", "scan-1"]);
     }
 
     #[tokio::test]

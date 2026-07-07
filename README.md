@@ -40,6 +40,7 @@ Implemented now:
 - Async scan job API for long-running repository scans.
 - SSE scan job status stream for live web progress updates.
 - Cancelable scan and semantic enrichment jobs for stopping queued or running long work.
+- Job listing APIs for inspecting retained scan and semantic job history by status.
 - Source preview API and UI panel for parsed symbols plus framework route/config facts with source spans.
 - Enriched selected-node cards with summary metadata, source snippets, neighboring dependencies, trace actions, and related risks.
 - Initial English/Russian web UI localization with a persistent language selector.
@@ -427,6 +428,7 @@ curl -X POST 'http://127.0.0.1:3765/api/semantic-enrich' \
 curl -X POST 'http://127.0.0.1:3765/api/semantic-jobs' \
   -H 'content-type: application/json' \
   --data '{"path":".","work_item_limit":25,"work_status":"ready","work_capability":"definitions"}'
+curl 'http://127.0.0.1:3765/api/semantic-jobs?status=running&limit=20'
 curl 'http://127.0.0.1:3765/api/semantic-jobs/semantic-1/events'
 curl 'http://127.0.0.1:3765/api/semantic-jobs/semantic-1/result'
 curl -X DELETE 'http://127.0.0.1:3765/api/semantic-jobs/semantic-1'
@@ -450,6 +452,7 @@ Async scan job API:
 curl -X POST 'http://127.0.0.1:3765/api/scan-jobs' \
   -H 'content-type: application/json' \
   -d '{"path":"."}'
+curl 'http://127.0.0.1:3765/api/scan-jobs?status=complete&limit=20'
 curl 'http://127.0.0.1:3765/api/scan-jobs/scan-1'
 curl -N 'http://127.0.0.1:3765/api/scan-jobs/scan-1/events'
 curl 'http://127.0.0.1:3765/api/scan-jobs/scan-1/result'
