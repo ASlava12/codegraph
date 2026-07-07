@@ -64,6 +64,7 @@ Implemented now:
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, trace, diagnostic, insight/risk, and unreachable-code slices.
+- Agent-friendly entrypoint graph queries for focused startup slices with immediate trace edges.
 - Agent-friendly source search command, API, and web panel for compact matching snippets.
 - Edge explanation command, API, and web controls for confidence/provenance evidence.
 - Path queries for finding directed dependency paths between labels or node ids.
@@ -327,6 +328,7 @@ cargo run -p codegraph-cli -- query 'calls(function:main)' .
 cargo run -p codegraph-cli -- query 'trace label:main depth:3' .
 cargo run -p codegraph-cli -- query 'dependents label:load_config depth:3' .
 cargo run -p codegraph-cli -- query 'neighbors label:main direction:out depth:2 edge_kind:calls' .
+cargo run -p codegraph-cli -- query 'entrypoints language:rust' .
 cargo run -p codegraph-cli -- query 'path from:main to:load_config depth:6' .
 cargo run -p codegraph-cli -- query 'unreachable language:rust' .
 cargo run -p codegraph-cli -- query 'unreachable kind:function label:legacy_worker' .

@@ -2742,10 +2742,27 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "trace",
                     "dependents",
                     "neighbors",
+                    "entrypoints",
                     "unreachable",
                     "diagnostics",
                     "insights",
                     "path",
+                ],
+            ),
+            (
+                "graph_query_entrypoint_term",
+                vec![
+                    "id",
+                    "node_id",
+                    "label",
+                    "search",
+                    "language",
+                    "kind",
+                    "item_kind",
+                    "entrypoint_kind",
+                    "path",
+                    "path_prefix",
+                    "metadata.*",
                 ],
             ),
             (
@@ -3207,7 +3224,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/query",
-                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, unreachable, diagnostics, or insights.",
+                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, entrypoints, unreachable, diagnostics, or insights.",
                     vec![
                         path_param(),
                         query_param(
@@ -3215,7 +3232,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Graph query expression, for example `unreachable language:rust`, `diagnostics severity:error language:rust`, or `insights severity:error`.",
+                            "Graph query expression, for example `entrypoints language:rust`, `unreachable language:rust`, `diagnostics severity:error language:rust`, or `insights severity:error`.",
                         ),
                     ],
                     "QueryResult",
@@ -4167,8 +4184,16 @@ mod tests {
                 .enum_values
                 .get("graph_query_command")
                 .is_some_and(|commands| {
-                    commands.contains(&"diagnostics") && commands.contains(&"insights")
+                    commands.contains(&"entrypoints")
+                        && commands.contains(&"diagnostics")
+                        && commands.contains(&"insights")
                 })
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_entrypoint_term")
+                .is_some_and(|terms| terms.contains(&"search") && terms.contains(&"language"))
         );
         assert!(
             schema

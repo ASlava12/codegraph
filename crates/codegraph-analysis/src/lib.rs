@@ -1592,6 +1592,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "trace" => query_trace(graph, spec),
         "dependents" | "impact" | "incoming" => query_dependents(graph, spec),
         "neighbors" | "neighbor" | "neighborhood" => query_neighbors(graph, spec),
+        "entrypoints" | "entrypoint" | "starts" | "startup" => query_entrypoints(graph, spec),
         "unreachable" | "dead" => query_unreachable(graph, spec),
         "diagnostics" | "diagnostic" => query_diagnostics(graph, spec),
         "insights" | "insight" | "risks" | "risk" | "findings" | "finding" => {
@@ -1599,7 +1600,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         }
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, unreachable, diagnostics, insights, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, entrypoints, unreachable, diagnostics, insights, or path"
         ))),
     }
 }
@@ -2221,6 +2222,62 @@ fn query_neighbors(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, Qu
     })
 }
 
+fn query_entrypoints(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    if let Some(first) = spec.positional.first() {
+        spec.terms
+            .entry("search".to_string())
+            .or_insert(first.clone());
+    }
+    validate_entrypoint_terms(&spec)?;
+
+    let path_index = node_path_index(graph);
+    let matched: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == NodeKind::Entrypoint && entrypoint_query_matches(node, &spec, &path_index)
+        })
+        .cloned()
+        .collect();
+    let selected_ids: BTreeSet<_> = matched
+        .iter()
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+
+    let matched_edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            (selected_ids.contains(&edge.target) && edge.kind == EdgeKind::Entrypoint)
+                || (selected_ids.contains(&edge.source) && is_trace_edge(&edge.kind))
+        })
+        .cloned()
+        .collect();
+    let total_edges = matched_edges.len();
+    let edges: Vec<_> = matched_edges.into_iter().take(spec.limit).collect();
+    let mut node_ids = selected_ids;
+    for edge in &edges {
+        node_ids.insert(edge.source);
+        node_ids.insert(edge.target);
+    }
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| node_ids.contains(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    Ok(QueryResult {
+        query: spec.original,
+        total_nodes: nodes.len(),
+        total_edges,
+        truncated: matched.len() > spec.limit || total_edges > spec.limit,
+        nodes,
+        edges,
+    })
+}
+
 fn query_unreachable(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
     validate_unreachable_terms(&spec)?;
     let reachable = entrypoint_reachable_nodes(graph);
@@ -2550,6 +2607,30 @@ fn validate_neighbor_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     Ok(())
 }
 
+fn validate_entrypoint_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if matches!(
+            key.as_str(),
+            "id" | "node_id"
+                | "label"
+                | "search"
+                | "language"
+                | "kind"
+                | "item_kind"
+                | "entrypoint_kind"
+                | "path"
+                | "path_prefix"
+        ) || key.starts_with("metadata.")
+        {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported entrypoints query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_unreachable_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     for key in spec.terms.keys() {
         if is_node_term(key) || matches!(key.as_str(), "path_prefix" | "scope") {
@@ -2724,6 +2805,26 @@ fn insight_query_matches(
                 .find(|node| node.id == *node_id)
                 .is_some_and(|node| metadata_matches(node, "language", expected))
         }),
+        _ => false,
+    })
+}
+
+fn entrypoint_query_matches(
+    node: &Node,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
+    spec.terms.iter().all(|(key, expected)| match key.as_str() {
+        "id" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        "label" => text_matches(&node.label, expected),
+        "search" => node_search_matches(node, expected),
+        "language" | "item_kind" | "entrypoint_kind" => metadata_matches(node, key, expected),
+        "kind" => text_matches(&kind_name(&node.kind), expected),
+        "path" | "path_prefix" => node_path_matches(node, path_index, expected),
+        key if key.starts_with("metadata.") => node
+            .metadata
+            .get(key.trim_start_matches("metadata."))
+            .is_some_and(|value| text_matches(value, expected)),
         _ => false,
     })
 }
@@ -6290,6 +6391,69 @@ mod tests {
             error
                 .to_string()
                 .contains("unsupported insights query term")
+        );
+    }
+
+    #[test]
+    fn query_entrypoints_returns_start_context() {
+        let mut graph = CodeGraph::new("repo");
+        let cargo = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "cargo bin:api",
+            None,
+            BTreeMap::from([
+                ("language".to_string(), "rust".to_string()),
+                ("item_kind".to_string(), "manifest_entrypoint".to_string()),
+                ("entrypoint_kind".to_string(), "binary".to_string()),
+            ]),
+        );
+        let npm = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "npm script:start",
+            None,
+            BTreeMap::from([
+                ("language".to_string(), "javascript".to_string()),
+                ("item_kind".to_string(), "manifest_entrypoint".to_string()),
+            ]),
+        );
+        let main = graph.add_node(NodeKind::Function, "main");
+        graph.add_edge(graph.root, cargo, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(graph.root, npm, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge_with_metadata(
+            cargo,
+            main,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "entrypoint_function".to_string())]),
+        );
+
+        let result = query_graph(&graph, "entrypoints language:rust").unwrap();
+
+        assert!(result.nodes.iter().any(|node| node.id == cargo));
+        assert!(result.nodes.iter().any(|node| node.id == main));
+        assert!(!result.nodes.iter().any(|node| node.id == npm));
+        assert!(
+            result
+                .edges
+                .iter()
+                .any(|edge| edge.source == graph.root && edge.target == cargo)
+        );
+        assert!(
+            result
+                .edges
+                .iter()
+                .any(|edge| edge.source == cargo && edge.target == main)
+        );
+
+        let by_search = query_graph(&graph, "starts api").unwrap();
+        assert!(by_search.nodes.iter().any(|node| node.id == cargo));
+
+        let error = query_graph(&graph, "entrypoints nope:value")
+            .expect_err("invalid entrypoints term should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported entrypoints query term")
         );
     }
 
