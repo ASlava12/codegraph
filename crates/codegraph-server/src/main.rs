@@ -2743,6 +2743,7 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "dependents",
                     "neighbors",
                     "symbols",
+                    "files",
                     "entrypoints",
                     "routes",
                     "packages",
@@ -2826,6 +2827,31 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "node_kind",
                     "item_kind",
                     "path",
+                    "path_prefix",
+                    "direction",
+                    "dir",
+                    "edge_kind",
+                    "confidence",
+                    "edge_limit",
+                    "metadata.*",
+                ],
+            ),
+            (
+                "graph_query_file_term",
+                vec![
+                    "id",
+                    "node",
+                    "node_id",
+                    "label",
+                    "search",
+                    "language",
+                    "kind",
+                    "node_kind",
+                    "item_kind",
+                    "path",
+                    "source_path",
+                    "file",
+                    "file_path",
                     "path_prefix",
                     "direction",
                     "dir",
@@ -3382,7 +3408,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/query",
-                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, symbols, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, or insights. QueryResult includes returned counts and facets for node kinds, edge kinds, languages, item kinds, and confidence.",
+                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, symbols, files, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, or insights. QueryResult includes returned counts and facets for node kinds, edge kinds, languages, item kinds, and confidence.",
                     vec![
                         path_param(),
                         query_param(
@@ -3390,7 +3416,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Graph query expression, for example `symbols label:load_config direction:out`, `entrypoints language:rust`, `routes method:GET path:/users`, `packages package:serde ecosystem:cargo`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable language:rust`, `diagnostics severity:error language:rust`, or `insights severity:error`.",
+                            "Graph query expression, for example `symbols label:load_config direction:out`, `files path:src/main.rs direction:out`, `entrypoints language:rust`, `routes method:GET path:/users`, `packages package:serde ecosystem:cargo`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable language:rust`, `diagnostics severity:error language:rust`, or `insights severity:error`.",
                         ),
                     ],
                     "QueryResult",
@@ -4344,6 +4370,7 @@ mod tests {
                 .is_some_and(|commands| {
                     commands.contains(&"entrypoints")
                         && commands.contains(&"symbols")
+                        && commands.contains(&"files")
                         && commands.contains(&"routes")
                         && commands.contains(&"packages")
                         && commands.contains(&"configs")
@@ -4371,6 +4398,12 @@ mod tests {
                 .enum_values
                 .get("graph_query_symbol_term")
                 .is_some_and(|terms| terms.contains(&"direction") && terms.contains(&"path"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_file_term")
+                .is_some_and(|terms| terms.contains(&"path") && terms.contains(&"edge_limit"))
         );
         assert!(
             schema

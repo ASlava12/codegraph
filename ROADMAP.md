@@ -130,6 +130,7 @@ Goal: answer practical code investigation questions.
 - [x] Add web path navigation with visual dependency-path highlighting.
 - [x] Add richer query language with neighborhood expansion.
 - [x] Add symbol query slices for focused function/type/module structure context.
+- [x] Add file query slices for focused source-file structure and contained-symbol dependency context.
 - [x] Add reachability-aware query slices for unreachable source files and nodes.
 - [x] Add semantic diagnostic query slices for focused LSP issue context.
 - [x] Add insight/risk query slices for focused investigation findings.
