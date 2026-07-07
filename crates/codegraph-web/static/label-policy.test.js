@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 
 const policy = require("./label-policy.js");
 
-test("minimal mode keeps labels hidden except selected nodes", () => {
+test("minimal mode keeps all graph labels hidden", () => {
   assert.equal(
     policy.shouldShowNodeLabel({
       labelMode: "minimal",
@@ -31,15 +31,16 @@ test("minimal mode keeps labels hidden except selected nodes", () => {
       visibleCount: 200,
       priority: 9,
     }),
-    true,
+    false,
   );
   assert.equal(policy.nodeLabelBudget({ labelMode: "minimal", zoom: 4, visibleCount: 5 }), 0);
 });
 
-test("auto mode only allows labels in sparse, highly zoomed graphs", () => {
+test("auto mode only allows labels in very sparse, highly zoomed graphs", () => {
   assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 3.5, visibleCount: 20 }), 0);
-  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 4.1, visibleCount: 10 }), 1);
-  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 4.1, visibleCount: 20 }), 0);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 4.1, visibleCount: 8 }), 0);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 4.3, visibleCount: 8 }), 1);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 4.3, visibleCount: 10 }), 0);
   assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 3.5, visibleCount: 60 }), 0);
   assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 2.4, visibleCount: 15 }), 0);
 });
@@ -51,8 +52,8 @@ test("auto mode prioritizes entrypoints and risks over low-signal nodes", () => 
   assert.equal(
     policy.shouldShowNodeLabel({
       labelMode: "auto",
-      zoom: 3.9,
-      visibleCount: 10,
+      zoom: 4.3,
+      visibleCount: 8,
       priority: entrypointPriority,
     }),
     true,
@@ -60,8 +61,8 @@ test("auto mode prioritizes entrypoints and risks over low-signal nodes", () => 
   assert.equal(
     policy.shouldShowNodeLabel({
       labelMode: "auto",
-      zoom: 3.9,
-      visibleCount: 10,
+      zoom: 4.3,
+      visibleCount: 8,
       priority: functionPriority,
     }),
     false,

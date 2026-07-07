@@ -3,7 +3,7 @@ const DEFAULT_LABEL_MODE = "minimal";
 const LABEL_MODES = new Set(["minimal", "focus", "auto"]);
 const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
-const LABEL_MODE_STORAGE_VERSION = "8";
+const LABEL_MODE_STORAGE_VERSION = "9";
 const API_TOKEN_STORAGE_KEY = "codegraph.apiToken";
 
 const I18N = {
@@ -5486,19 +5486,19 @@ function labelGeometry(candidate, occupied, nodeBoxes) {
   const { node, position, radius, forced } = candidate;
   const zoom = Math.max(0.18, state.zoom);
   const lines = forced
-    ? compactGraphLabelLines(node.label, 24, 2)
+    ? compactGraphLabelLines(node.label, 18, 2)
     : [truncateGraphLabel(node.label, state.zoom >= 3.2 ? 14 : 9)];
-  const padX = (forced ? 7 : 4) / zoom;
-  const padY = (forced ? 5 : 0) / zoom;
-  const fontSize = (forced ? 12 : 10) / zoom;
-  const lineHeight = (forced ? 13 : 11) / zoom;
+  const padX = (forced ? 6 : 4) / zoom;
+  const padY = (forced ? 4 : 0) / zoom;
+  const fontSize = (forced ? 11 : 10) / zoom;
+  const lineHeight = (forced ? 12 : 11) / zoom;
   ctx.font = `${fontSize}px Inter, sans-serif`;
   const width = Math.max(...lines.map((line) => ctx.measureText(line).width)) + padX * 2;
   const height = forced ? lines.length * lineHeight + padY * 2 : 16 / zoom;
   const gap = (forced ? 11 : 13) / zoom;
-  const placements = ["right", "left", "top"];
+  const placements = forced ? ["right", "left", "top", "bottom"] : ["right", "left", "top"];
   const geometries = placements.map((placement) =>
-    labelGeometryForPlacement({
+    clampLabelGeometryToViewport(labelGeometryForPlacement({
       node,
       position,
       radius,
@@ -5511,7 +5511,7 @@ function labelGeometry(candidate, occupied, nodeBoxes) {
       font: ctx.font,
       forced,
       placement,
-    }),
+    })),
   );
   const usable = geometries.find(
     (geometry) =>
@@ -5588,6 +5588,19 @@ function drawLabelGeometry(geometry) {
   }
   ctx.fillStyle = "#edf1f2";
   drawLabelText(geometry, (line, x, y) => ctx.fillText(line, x, y));
+}
+
+function clampLabelGeometryToViewport(geometry) {
+  const zoom = Math.max(0.18, state.zoom);
+  const margin = 8 / zoom;
+  const minX = (-state.pan.x / zoom) + margin;
+  const minY = (-state.pan.y / zoom) + margin;
+  const maxX = ((canvas.width - state.pan.x) / zoom) - geometry.width - margin;
+  const maxY = ((canvas.height - state.pan.y) / zoom) - geometry.height - margin;
+  if (maxX >= minX) geometry.x = Math.max(minX, Math.min(maxX, geometry.x));
+  if (maxY >= minY) geometry.y = Math.max(minY, Math.min(maxY, geometry.y));
+  geometry.textY = geometry.y + geometry.height / 2;
+  return geometry;
 }
 
 function drawLabelText(geometry, drawLine) {
