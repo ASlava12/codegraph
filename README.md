@@ -70,6 +70,7 @@ Implemented now:
 - Web graph page controls backed by server-side paging, search, kind, item, language, edge, confidence, relation, and source filters.
 - Web graph filter inputs use API schema enum suggestions for node kinds, edge kinds, confidence levels, and insight severity filters.
 - Web graph viewport controls for zooming, fitting visible nodes, restarting layout, and pausing layout simulation.
+- Web risk legend entries can filter the graph to nodes with matching insight severity.
 - Web project overview for language mix, edge confidence/source/relation mix, and entrypoint launch points.
 - Language dependency matrix reports in CLI, API, and web overview for mixed-language coupling.
 - Architecture map reports in CLI, API, and web overview for top-level project areas and cross-area dependencies.

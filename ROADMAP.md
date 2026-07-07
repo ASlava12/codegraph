@@ -190,6 +190,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Reduce graph label clutter with zoom thresholds and collision-aware label drawing.
 - [x] Tighten graph label budgets and adaptive label placement so node captions do not cover dense graphs.
 - [x] Make minimal node labels the default and keep dense captions behind explicit Focus/Auto modes.
+- [x] Add clickable risk severity legend filters for graph triage.
 - [x] Add bounded server retention for scan and semantic jobs with health counters.
 - [x] Add configurable server concurrency limits for scan and semantic jobs with health counters.
 - [x] Add cancelable scan and semantic jobs in API and web UI.

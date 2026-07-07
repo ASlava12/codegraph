@@ -2017,6 +2017,22 @@ button.cancel-action:hover:not(:disabled) {
   font-size: 12px;
 }
 
+.legend button.legend-item {
+  min-height: 24px;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.legend button.legend-item:hover,
+.legend button.legend-item.active {
+  color: var(--text);
+  border-color: rgba(237, 241, 242, 0.24);
+  background: rgba(255, 255, 255, 0.07);
+}
+
 .legend-item.risk {
   font-weight: 800;
 }

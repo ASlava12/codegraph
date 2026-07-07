@@ -191,6 +191,7 @@ const I18N = {
     "semantic.noServer": "no server",
     "semantic.errors": "Errors",
     "semantic.unmatched": "Unmatched",
+    "legend.riskFilter": "Filter graph by {severity} risks",
     "status.idle": "idle",
     "status.queue": "queue",
     "status.scan": "scan",
@@ -389,6 +390,7 @@ const I18N = {
     "semantic.noServer": "нет сервера",
     "semantic.errors": "Ошибки",
     "semantic.unmatched": "Без совпадения",
+    "legend.riskFilter": "Фильтр графа по рискам: {severity}",
     "status.idle": "ожидание",
     "status.queue": "очередь",
     "status.scan": "скан",
@@ -506,6 +508,7 @@ const state = {
   insightReport: null,
   riskByNode: new Map(),
   riskSeverities: new Set(),
+  activeRiskSeverity: null,
   projects: [],
   queryFocus: null,
   scanJobId: null,
@@ -3950,6 +3953,8 @@ function applyFilters() {
   state.visibleNodes = state.graph.nodes.filter((node) => {
     const kindEnabled = state.enabledKinds.has(node.kind);
     const focusHit = !state.queryFocus || state.queryFocus.nodeIds.has(node.id);
+    const nodeRiskSeverity = state.riskByNode.get(Number(node.id));
+    const riskHit = !state.activeRiskSeverity || nodeRiskSeverity === state.activeRiskSeverity;
     const searchHit =
       !query ||
       node.label.toLowerCase().includes(query) ||
@@ -3957,8 +3962,8 @@ function applyFilters() {
       Object.values(node.metadata || {}).some((value) =>
         String(value).toLowerCase().includes(query),
       );
-    if (kindEnabled && focusHit && searchHit) visibleIds.add(node.id);
-    return kindEnabled && focusHit && searchHit;
+    if (kindEnabled && focusHit && riskHit && searchHit) visibleIds.add(node.id);
+    return kindEnabled && focusHit && riskHit && searchHit;
   });
 
   state.visibleEdges = state.graph.edges.filter((edge) => {
@@ -4144,6 +4149,9 @@ function refreshRiskIndex() {
   });
   state.riskByNode = riskByNode;
   state.riskSeverities = new Set(riskByNode.values());
+  if (state.activeRiskSeverity && !state.riskSeverities.has(state.activeRiskSeverity)) {
+    state.activeRiskSeverity = null;
+  }
 }
 
 function visibleRiskSeverities() {
@@ -4600,14 +4608,29 @@ function renderLegend(kinds) {
   const riskSeverities = visibleRiskSeverities();
   ["error", "warning", "info"].forEach((severity) => {
     if (!riskSeverities.has(severity)) return;
-    const item = document.createElement("span");
-    item.className = "legend-item risk";
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = `legend-item risk risk-filter${
+      state.activeRiskSeverity === severity ? " active" : ""
+    }`;
+    item.dataset.riskSeverity = severity;
+    item.setAttribute("aria-pressed", state.activeRiskSeverity === severity ? "true" : "false");
+    item.setAttribute("aria-label", t("legend.riskFilter", { severity: formatKind(severity) }));
     const swatch = document.createElement("span");
     swatch.className = `swatch risk-swatch ${severity}`;
     const text = document.createElement("span");
     text.textContent = formatKind(severity);
     item.append(swatch, text);
     legend.append(item);
+  });
+  legend.querySelectorAll("[data-risk-severity]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const severity = button.dataset.riskSeverity || "";
+      state.activeRiskSeverity = state.activeRiskSeverity === severity ? null : severity;
+      applyFilters();
+      renderLegend(state.enabledKinds);
+      draw();
+    });
   });
 }
 
