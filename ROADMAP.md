@@ -216,6 +216,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Reset saved web label mode and make Auto labels sparse enough for dense graph exploration.
 - [x] Add web label policy regression tests for caption density and interaction labels.
 - [x] Add embedded web asset smoke checks for script order, content types, and static JS validity.
+- [x] Add embedded web asset smoke coverage for shareable card and query investigation links.
 - [x] Add clickable risk severity legend filters for graph triage.
 - [x] Add bounded server retention for scan and semantic jobs with health counters.
 - [x] Add configurable server concurrency limits for scan and semantic jobs with health counters.

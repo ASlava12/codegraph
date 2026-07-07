@@ -4801,6 +4801,26 @@ mod tests {
     }
 
     #[test]
+    fn embedded_web_assets_keep_shareable_investigation_links() {
+        let index = include_str!("../../codegraph-web/static/index.html");
+        let app = include_str!("../../codegraph-web/static/app.js");
+
+        assert!(index.contains("queryCopyButton"));
+        assert!(index.contains("button.copyQueryLink"));
+        assert!(app.contains("buildSelectionUrl"));
+        assert!(app.contains("buildQueryUrl"));
+        assert!(app.contains("pendingQueryLink"));
+        assert!(app.contains("restorePendingQueryLink"));
+        assert!(app.contains("query_focus"));
+        assert!(app.contains("copyCurrentQueryLink"));
+        assert!(app.contains("data-copy-selection-link=\"node\""));
+        assert!(app.contains("data-copy-selection-link=\"edge\""));
+        assert!(app.contains("url.searchParams.delete(\"query\")"));
+        assert!(app.contains("url.searchParams.delete(\"node\")"));
+        assert!(app.contains("navigator.clipboard?.writeText"));
+    }
+
+    #[test]
     fn api_schema_lists_agent_contracts() {
         let schema = api_schema_response();
         let endpoints: Vec<_> = schema
