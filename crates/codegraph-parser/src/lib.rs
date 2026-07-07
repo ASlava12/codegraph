@@ -226,7 +226,7 @@ fn classify_node(
         Language::Go => match kind {
             "function_declaration" | "method_declaration" => ParsedItemKind::Function,
             "type_declaration" => ParsedItemKind::Type,
-            "import_declaration" => ParsedItemKind::Import,
+            "import_spec" => ParsedItemKind::Import,
             _ => return None,
         },
         Language::C | Language::Cpp => match kind {
@@ -755,6 +755,36 @@ mod tests {
                 && item.label == "helper"
                 && item.parent.as_deref() == Some("main")
         }));
+    }
+
+    #[test]
+    fn parses_go_import_specs_individually() {
+        let parsed = parse_source(
+            "main.go",
+            br#"package main
+import (
+    "fmt"
+    "github.com/acme/demo/internal/auth"
+)
+func main() {}
+"#,
+            Language::Go,
+        )
+        .unwrap();
+
+        let imports = parsed
+            .items
+            .iter()
+            .filter(|item| item.kind == ParsedItemKind::Import)
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(imports.contains(&"\"fmt\""));
+        assert!(imports.contains(&"\"github.com/acme/demo/internal/auth\""));
+        assert!(
+            !imports.iter().any(|label| label.starts_with("import (")),
+            "Go import declarations should be split into per-import facts"
+        );
     }
 
     #[test]

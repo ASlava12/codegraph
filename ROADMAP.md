@@ -32,6 +32,7 @@ Goal: extract language-independent structure from source files.
 - [x] Extract approximate call sites.
 - [x] Resolve local import/include file dependencies where syntax-level paths are explicit.
 - [x] Resolve Python project-local absolute imports when they match scanned files.
+- [x] Resolve Go module-local imports from `go.mod` module paths when package files are scanned.
 - [x] Detect CommonJS `require(...)` imports for dependency and local-file analysis.
 - [x] Detect config and environment reads.
 - [x] Detect basic error/exception constructs.

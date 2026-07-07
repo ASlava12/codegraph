@@ -30,6 +30,7 @@ struct IndexContext {
     file_nodes: BTreeMap<String, NodeId>,
     external_dependencies: BTreeMap<String, NodeId>,
     cargo_workspace_dependencies: BTreeMap<String, Option<String>>,
+    go_modules: Vec<GoModuleRoot>,
     custom_rules: CustomRules,
     annotations: GraphAnnotations,
     pending_calls: Vec<PendingCall>,
@@ -99,6 +100,12 @@ struct FrameworkConfig {
     config_kind: String,
     value: Option<String>,
     line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GoModuleRoot {
+    module: String,
+    dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,6 +191,7 @@ pub fn scan_project(
         .and_then(|name| name.to_str())
         .unwrap_or(".");
     let cargo_workspace_dependencies = cargo_workspace_dependencies(root);
+    let go_modules = go_module_roots(root, options);
     let custom_rules = custom_rules(root);
     let annotations = graph_annotations(root);
     let mut context = IndexContext {
@@ -192,6 +200,7 @@ pub fn scan_project(
         file_nodes: BTreeMap::new(),
         external_dependencies: BTreeMap::new(),
         cargo_workspace_dependencies,
+        go_modules,
         custom_rules,
         annotations,
         pending_calls: Vec::new(),
@@ -324,7 +333,12 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
                     };
                     let possible_local_import =
                         if local_import.is_none() && item.kind == ParsedItemKind::Import {
-                            possible_local_import_target(language, label, &item.label)
+                            possible_local_import_target(
+                                language,
+                                label,
+                                &item.label,
+                                &context.go_modules,
+                            )
                         } else {
                             None
                         };
@@ -2783,6 +2797,47 @@ fn cargo_workspace_dependencies(root: &Path) -> BTreeMap<String, Option<String>>
         .collect()
 }
 
+fn go_module_roots(root: &Path, options: &IndexOptions) -> Vec<GoModuleRoot> {
+    let mut modules = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| should_enter(entry, options))
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path == root || !entry.file_type().is_file() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) != Some("go.mod")
+            || !is_probably_source_file(path, options.max_file_size)
+        {
+            continue;
+        }
+
+        let Ok(source) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Some(module) = go_module_name(&source) else {
+            continue;
+        };
+        let dir = path
+            .parent()
+            .and_then(|parent| parent.strip_prefix(root).ok())
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map(|relative| normalize_path(&relative))
+            .filter(|relative| !relative.is_empty());
+        modules.push(GoModuleRoot { module, dir });
+    }
+    modules.sort_by(|left, right| {
+        right
+            .module
+            .len()
+            .cmp(&left.module.len())
+            .then_with(|| left.dir.cmp(&right.dir))
+    });
+    modules
+}
+
 fn dependency_version_from_toml_value(
     name: &str,
     value: &toml::Value,
@@ -2890,9 +2945,11 @@ fn possible_local_import_target(
     language: Language,
     source_label: &str,
     import_label: &str,
+    go_modules: &[GoModuleRoot],
 ) -> Option<LocalImportTarget> {
     match language {
         Language::Python => python_absolute_local_import_target(source_label, import_label),
+        Language::Go => go_module_import_target(import_label, go_modules),
         _ => None,
     }
 }
@@ -3100,11 +3157,39 @@ fn go_local_import_target(source_label: &str, import_label: &str) -> Option<Loca
     let package_dir = join_path(path_dir(source_label).as_deref(), &path);
     Some(LocalImportTarget {
         target: path,
-        candidates: vec![
-            normalize_path(&format!("{package_dir}/main.go")),
-            normalize_path(&format!("{package_dir}/lib.go")),
-        ],
+        candidates: vec![directory_candidate(&package_dir)],
     })
+}
+
+fn go_module_import_target(
+    import_label: &str,
+    go_modules: &[GoModuleRoot],
+) -> Option<LocalImportTarget> {
+    let path = first_quoted_value(import_label)?;
+    if path.starts_with("./") || path.starts_with("../") || path.starts_with('/') {
+        return None;
+    }
+    let module = go_modules
+        .iter()
+        .find(|module| path == module.module || path.starts_with(&format!("{}/", module.module)))?;
+    let suffix = path
+        .strip_prefix(&module.module)
+        .unwrap_or("")
+        .trim_start_matches('/');
+    let package_dir = join_path(module.dir.as_deref(), suffix);
+    Some(LocalImportTarget {
+        target: path,
+        candidates: vec![directory_candidate(&package_dir)],
+    })
+}
+
+fn directory_candidate(path: &str) -> String {
+    let normalized = normalize_path(path);
+    if normalized.is_empty() {
+        "/".to_string()
+    } else {
+        format!("{normalized}/")
+    }
 }
 
 fn module_file_candidates(source_label: &str, module: &str, extensions: &[&str]) -> Vec<String> {
@@ -3243,10 +3328,7 @@ fn resolve_pending_local_imports(context: &mut IndexContext) {
     let pending_imports = std::mem::take(&mut context.pending_local_imports);
 
     for import in pending_imports {
-        let resolved = import
-            .candidates
-            .iter()
-            .find_map(|candidate| context.file_nodes.get(candidate).map(|id| (candidate, *id)));
+        let resolved = resolve_local_import_candidate(&context.file_nodes, &import.candidates);
 
         if let Some((candidate, file_id)) = resolved {
             add_node_metadata(
@@ -3271,7 +3353,7 @@ fn resolve_pending_local_imports(context: &mut IndexContext) {
                 &mut context.graph,
                 import.import_node,
                 "resolved_path",
-                candidate.to_string(),
+                candidate,
             );
             let mut metadata = BTreeMap::new();
             metadata.insert("relation".to_string(), "local_import_file".to_string());
@@ -3301,6 +3383,47 @@ fn resolve_pending_local_imports(context: &mut IndexContext) {
             );
         }
     }
+}
+
+fn resolve_local_import_candidate(
+    file_nodes: &BTreeMap<String, NodeId>,
+    candidates: &[String],
+) -> Option<(String, NodeId)> {
+    for candidate in candidates {
+        if let Some(file_id) = file_nodes.get(candidate).copied() {
+            return Some((candidate.clone(), file_id));
+        }
+        if let Some((path, file_id)) = resolve_directory_import_candidate(file_nodes, candidate) {
+            return Some((path, file_id));
+        }
+    }
+    None
+}
+
+fn resolve_directory_import_candidate(
+    file_nodes: &BTreeMap<String, NodeId>,
+    candidate: &str,
+) -> Option<(String, NodeId)> {
+    let prefix = candidate.strip_suffix('/')?;
+    let mut package_files = file_nodes.iter().filter(|(path, _)| {
+        is_go_file(path)
+            && if prefix.is_empty() {
+                !path.contains('/')
+            } else {
+                path.strip_prefix(prefix)
+                    .and_then(|rest| rest.strip_prefix('/'))
+                    .is_some_and(|rest| !rest.contains('/'))
+            }
+    });
+
+    package_files
+        .find(|(path, _)| !path.ends_with("_test.go"))
+        .or_else(|| package_files.next())
+        .map(|(path, file_id)| (path.clone(), *file_id))
+}
+
+fn is_go_file(path: &str) -> bool {
+    path.ends_with(".go")
 }
 
 fn resolve_pending_entrypoint_targets(context: &mut IndexContext) {
@@ -4185,6 +4308,77 @@ mod tests {
                 && edge.kind == EdgeKind::References
         }));
         assert!(!requests_import.metadata.contains_key("import_scope"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_resolves_go_module_local_imports() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("internal").join("auth")).unwrap();
+        fs::write(
+            root.join("go.mod"),
+            "module github.com/acme/demo\n\ngo 1.23\n\nrequire github.com/gin-gonic/gin v1.10.0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("main.go"),
+            "package main\n\nimport (\n    \"fmt\"\n    \"github.com/acme/demo/internal/auth\"\n    \"github.com/gin-gonic/gin\"\n)\n\nfunc main() { fmt.Println(auth.Name); _ = gin.Mode() }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("internal").join("auth").join("service.go"),
+            "package auth\n\nconst Name = \"auth\"\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let local_import = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "\"github.com/acme/demo/internal/auth\"")
+            .expect("missing Go module local import node");
+        let external_import = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "\"github.com/gin-gonic/gin\"")
+            .expect("missing Go external import node");
+        let stdlib_import = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "\"fmt\"")
+            .expect("missing Go stdlib import node");
+        let auth_file = node_id(&graph, NodeKind::File, "internal/auth/service.go");
+
+        assert_eq!(
+            local_import
+                .metadata
+                .get("import_scope")
+                .map(String::as_str),
+            Some("local")
+        );
+        assert_eq!(
+            local_import.metadata.get("resolution").map(String::as_str),
+            Some("resolved")
+        );
+        assert_eq!(
+            local_import
+                .metadata
+                .get("resolved_path")
+                .map(String::as_str),
+            Some("internal/auth/service.go")
+        );
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == local_import.id
+                && edge.target == auth_file
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "local_import_file")
+        }));
+        assert!(!external_import.metadata.contains_key("import_scope"));
+        assert!(!stdlib_import.metadata.contains_key("import_scope"));
 
         fs::remove_dir_all(root).unwrap();
     }
