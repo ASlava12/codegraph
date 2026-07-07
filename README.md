@@ -40,6 +40,7 @@ Implemented now:
 - API capabilities endpoint for discovering supported languages, exports, features, limits, cache state, and route groups.
 - Runtime metrics endpoint for uptime, API/schema versions, roots, language/feature counts, cache state, job stores, and concurrency.
 - Web overview chips for server capabilities, API/schema versions, cache state, supported language/export counts, job limits, and route groups.
+- Web runtime panel for uptime, cache state, scan/semantic slots, and retained job-store totals.
 - Async scan job API for long-running repository scans.
 - SSE scan job status stream for live web progress updates.
 - Cancelable scan and semantic enrichment jobs for stopping queued or running long work.

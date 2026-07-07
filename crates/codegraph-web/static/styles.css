@@ -239,11 +239,13 @@ button.cancel-action:hover:not(:disabled) {
   font-size: 12px;
 }
 
+.runtime-status,
 .job-queue {
   display: grid;
   gap: 8px;
 }
 
+.runtime-status header,
 .job-queue header {
   display: flex;
   align-items: center;
@@ -251,6 +253,7 @@ button.cancel-action:hover:not(:disabled) {
   gap: 10px;
 }
 
+.runtime-status h2,
 .job-queue h2,
 .job-queue h3 {
   margin: 0;
@@ -264,9 +267,54 @@ button.cancel-action:hover:not(:disabled) {
   text-transform: uppercase;
 }
 
+.runtime-status header button,
 .job-queue header button {
   height: 30px;
   padding: 0 10px;
+  font-size: 12px;
+}
+
+.runtime-metrics-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.runtime-metric-chip {
+  display: inline-grid;
+  grid-template-columns: minmax(0, auto) auto;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(92, 200, 167, 0.08);
+}
+
+.runtime-metric-chip.busy {
+  background: rgba(229, 180, 84, 0.09);
+}
+
+.runtime-metric-chip.missing {
+  background: rgba(223, 126, 126, 0.08);
+}
+
+.runtime-metric-chip span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.runtime-metric-chip strong {
+  color: var(--text);
   font-size: 12px;
 }
 

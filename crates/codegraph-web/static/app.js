@@ -93,6 +93,7 @@ const I18N = {
     "option.server": "Server",
     "section.overview": "Overview",
     "section.jobs": "Jobs",
+    "section.runtime": "Runtime",
     "section.entryFlows": "Entry Flows",
     "section.graphPage": "Graph Page",
     "section.sourceSearch": "Source Search",
@@ -117,6 +118,7 @@ const I18N = {
     "empty.noInsights": "No matching insights.",
     "empty.noVisibleIssues": "No obvious issues in the visible graph.",
     "empty.noCapabilities": "No server capabilities.",
+    "empty.noMetrics": "No runtime metrics.",
     "empty.loadingSource": "Loading...",
     "cap.api": "API",
     "cap.graph": "Graph",
@@ -129,6 +131,12 @@ const I18N = {
     "cap.routes": "Routes",
     "cap.on": "on",
     "cap.off": "off",
+    "runtime.uptime": "Uptime",
+    "runtime.cache": "Cache",
+    "runtime.scanSlots": "Scan Slots",
+    "runtime.semanticSlots": "Semantic Slots",
+    "runtime.scanJobs": "Scan Jobs",
+    "runtime.semanticJobs": "Semantic Jobs",
     "trace.tracing": "Tracing...",
     "trace.tracingDependents": "Tracing dependents...",
     "trace.noDependents": "No incoming dependents.",
@@ -253,6 +261,7 @@ const I18N = {
     "option.server": "Сервер",
     "section.overview": "Обзор",
     "section.jobs": "Задачи",
+    "section.runtime": "Рантайм",
     "section.entryFlows": "Потоки входа",
     "section.graphPage": "Страница графа",
     "section.sourceSearch": "Поиск в коде",
@@ -277,6 +286,7 @@ const I18N = {
     "empty.noInsights": "Совпадающих находок нет.",
     "empty.noVisibleIssues": "В видимом графе явных проблем нет.",
     "empty.noCapabilities": "Нет данных о сервере.",
+    "empty.noMetrics": "Нет runtime-метрик.",
     "empty.loadingSource": "Загружаю...",
     "cap.api": "API",
     "cap.graph": "Граф",
@@ -289,6 +299,12 @@ const I18N = {
     "cap.routes": "Маршруты",
     "cap.on": "вкл",
     "cap.off": "выкл",
+    "runtime.uptime": "Аптайм",
+    "runtime.cache": "Кеш",
+    "runtime.scanSlots": "Слоты скана",
+    "runtime.semanticSlots": "Слоты сем.",
+    "runtime.scanJobs": "Скан-задачи",
+    "runtime.semanticJobs": "Сем. задачи",
     "trace.tracing": "Трассирую...",
     "trace.tracingDependents": "Трассирую зависимые узлы...",
     "trace.noDependents": "Входящих зависимых нет.",
@@ -403,6 +419,7 @@ const state = {
   insightFocusRequest: 0,
   semanticEnrichRequest: 0,
   jobQueueRequest: 0,
+  metricsRequest: 0,
   checkRequest: 0,
   summary: null,
   scanOptions: null,
@@ -425,6 +442,7 @@ const state = {
   semanticJobId: null,
   semanticEvents: null,
   semanticJobs: null,
+  metrics: null,
   layoutPaused: false,
   graphPage: {
     nodeOffset: 0,
@@ -472,8 +490,10 @@ const errorCount = document.querySelector("#errorCount");
 const entryCount = document.querySelector("#entryCount");
 const skippedCount = document.querySelector("#skippedCount");
 const jobRefreshButton = document.querySelector("#jobRefreshButton");
+const metricsRefreshButton = document.querySelector("#metricsRefreshButton");
 const scanJobSummary = document.querySelector("#scanJobSummary");
 const semanticJobSummary = document.querySelector("#semanticJobSummary");
+const runtimeMetricsList = document.querySelector("#runtimeMetricsList");
 const scanJobList = document.querySelector("#scanJobList");
 const semanticJobList = document.querySelector("#semanticJobList");
 const overviewTotals = document.querySelector("#overviewTotals");
@@ -569,6 +589,7 @@ localeSelect.addEventListener("change", () => setLocale(localeSelect.value));
 scanButton.addEventListener("click", () => scan());
 scanCancelButton.addEventListener("click", () => cancelScanJob());
 jobRefreshButton.addEventListener("click", () => loadJobQueue());
+metricsRefreshButton.addEventListener("click", () => loadMetrics());
 scanJobList.addEventListener("click", (event) => onJobListClick(event, "scan"));
 semanticJobList.addEventListener("click", (event) => onJobListClick(event, "semantic"));
 projectSelect.addEventListener("change", () => {
@@ -735,6 +756,7 @@ function applyLocale() {
   }
   renderViewportControls();
   renderOverview();
+  renderRuntimeMetrics();
   renderJobQueue();
   renderInsights();
   renderSelection();
@@ -742,7 +764,7 @@ function applyLocale() {
 }
 
 async function init() {
-  await Promise.all([loadProjects(), loadCapabilities()]);
+  await Promise.all([loadProjects(), loadCapabilities(), loadMetrics()]);
   loadJobQueue();
   scan();
 }
@@ -774,6 +796,31 @@ async function loadCapabilities() {
     state.capabilities = null;
   }
   renderOverview();
+}
+
+async function loadMetrics() {
+  state.metricsRequest += 1;
+  const requestId = state.metricsRequest;
+  metricsRefreshButton.disabled = true;
+
+  try {
+    const response = await fetch("/api/metrics");
+    const body = await response.json();
+    if (requestId !== state.metricsRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "metrics failed");
+    }
+    state.metrics = body;
+    renderRuntimeMetrics();
+  } catch (error) {
+    if (requestId !== state.metricsRequest) return;
+    state.metrics = null;
+    runtimeMetricsList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.metricsRequest) {
+      metricsRefreshButton.disabled = false;
+    }
+  }
 }
 
 function renderProjects() {
@@ -810,6 +857,7 @@ async function loadJobQueue() {
     state.scanJobs = scanJobs;
     state.semanticJobs = semanticJobs;
     renderJobQueue();
+    loadMetrics();
   } catch (error) {
     if (requestId !== state.jobQueueRequest) return;
     scanJobList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
@@ -836,6 +884,58 @@ function renderJobQueue() {
   renderJobSummary(semanticJobSummary, state.semanticJobs);
   scanJobList.innerHTML = renderJobList(state.scanJobs, "scan");
   semanticJobList.innerHTML = renderJobList(state.semanticJobs, "semantic");
+}
+
+function renderRuntimeMetrics() {
+  const metrics = state.metrics;
+  if (!metrics) {
+    runtimeMetricsList.innerHTML = `<p class="empty">${escapeHtml(t("empty.noMetrics"))}</p>`;
+    return;
+  }
+
+  const scanConcurrency = metrics.scan_jobs?.concurrency || {};
+  const semanticConcurrency = metrics.semantic_jobs?.concurrency || {};
+  const chips = [
+    [t("runtime.uptime"), formatDuration(Number(metrics.uptime_seconds || 0)), ""],
+    [t("runtime.cache"), metrics.cache?.enabled ? t("cap.on") : t("cap.off"), metrics.cache?.enabled ? "" : "missing"],
+    [t("runtime.scanSlots"), concurrencyValue(scanConcurrency), Number(scanConcurrency.active || 0) > 0 ? "busy" : ""],
+    [
+      t("runtime.semanticSlots"),
+      concurrencyValue(semanticConcurrency),
+      Number(semanticConcurrency.active || 0) > 0 ? "busy" : "",
+    ],
+    [t("runtime.scanJobs"), jobStoreValue(metrics.scan_jobs?.store), jobStoreBusyClass(metrics.scan_jobs?.store)],
+    [
+      t("runtime.semanticJobs"),
+      jobStoreValue(metrics.semantic_jobs?.store),
+      jobStoreBusyClass(metrics.semantic_jobs?.store),
+    ],
+  ];
+
+  runtimeMetricsList.innerHTML = chips
+    .map(
+      ([label, value, status]) => `
+        <div class="runtime-metric-chip ${escapeHtml(status)}">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function concurrencyValue(concurrency) {
+  return `${Number(concurrency.active || 0)}/${Number(concurrency.limit || 0)}`;
+}
+
+function jobStoreValue(store) {
+  const total = Number(store?.total || 0);
+  const active = Number(store?.queued || 0) + Number(store?.running || 0);
+  return active > 0 ? `${active}/${total}` : String(total);
+}
+
+function jobStoreBusyClass(store) {
+  return Number(store?.queued || 0) + Number(store?.running || 0) > 0 ? "busy" : "";
 }
 
 function renderJobSummary(target, list) {
@@ -934,6 +1034,18 @@ function formatJobTime(seconds) {
   const date = new Date(Number(seconds) * 1000);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleTimeString(state.locale, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds || 0)));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
 }
 
 async function scan() {
