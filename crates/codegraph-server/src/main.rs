@@ -731,6 +731,7 @@ async fn main() -> Result<()> {
             "/api/incremental-merge-preview",
             get(incremental_merge_preview_api),
         )
+        .route("/api/incremental-update", get(incremental_update_api))
         .route("/api/scan-jobs", get(list_scan_jobs).post(start_scan_job))
         .route(
             "/api/scan-jobs/{id}",
@@ -1662,6 +1663,28 @@ async fn incremental_merge_preview_api(
     .map_err(|error| ApiError::internal(format!("incremental merge preview task failed: {error}")))?
     .map_err(|error| ApiError::internal(error.to_string()))?;
     Ok(Json(preview))
+}
+
+async fn incremental_update_api(
+    State(state): State<AppState>,
+    Query(query): Query<CacheDiffQuery>,
+) -> Result<Json<codegraph_storage::IncrementalUpdate>, ApiError> {
+    let root = resolve_scan_root(&state, query.path.as_deref())?;
+    let Some(cache) = state.cache.clone() else {
+        return Err(ApiError::bad_request(
+            "incremental update requires server cache; restart without --no-cache",
+        ));
+    };
+    let options = scan_options(&state, &root)?;
+    let limit = query.limit.unwrap_or(100).clamp(1, 10_000);
+    let update =
+        tokio::task::spawn_blocking(move || cache.incremental_update(&root, &options, limit))
+            .await
+            .map_err(|error| {
+                ApiError::internal(format!("incremental update task failed: {error}"))
+            })?
+            .map_err(|error| ApiError::internal(error.to_string()))?;
+    Ok(Json(update))
 }
 
 async fn export_api(
@@ -2794,6 +2817,21 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "IncrementalMergePreview",
                 ),
+                api_get(
+                    "/api/incremental-update",
+                    "Update the persistent graph cache when the incremental result is complete; incomplete partial previews are reported but not stored.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            Some("100"),
+                            "Maximum changed paths to inspect while planning the update.",
+                        ),
+                    ],
+                    "IncrementalUpdate",
+                ),
                 api_post(
                     "/api/scan-jobs",
                     "Queue a long-running scan job.",
@@ -3625,6 +3663,7 @@ fn capability_features(cache_enabled: bool) -> Vec<&'static str> {
         "incremental_scan_plan",
         "incremental_changed_scan",
         "incremental_merge_preview",
+        "safe_incremental_cache_update",
         "mixed_language_syntax_graph",
         "source_preview",
         "graph_paging",
@@ -3684,6 +3723,7 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
                 "GET /api/incremental-plan",
                 "GET /api/incremental-scan",
                 "GET /api/incremental-merge-preview",
+                "GET /api/incremental-update",
                 "POST /api/scan-jobs",
                 "GET /api/scan-jobs",
                 "GET /api/scan-jobs/{id}",
@@ -3892,6 +3932,7 @@ mod tests {
         assert!(without_cache.contains(&"incremental_scan_plan"));
         assert!(without_cache.contains(&"incremental_changed_scan"));
         assert!(without_cache.contains(&"incremental_merge_preview"));
+        assert!(without_cache.contains(&"safe_incremental_cache_update"));
         assert!(without_cache.contains(&"async_scan_jobs"));
         assert!(without_cache.contains(&"job_cancellation"));
         assert!(without_cache.contains(&"runtime_metrics"));
@@ -3918,6 +3959,7 @@ mod tests {
         assert!(endpoints.contains(&"GET /api/incremental-plan"));
         assert!(endpoints.contains(&"GET /api/incremental-scan"));
         assert!(endpoints.contains(&"GET /api/incremental-merge-preview"));
+        assert!(endpoints.contains(&"GET /api/incremental-update"));
         assert!(endpoints.contains(&"GET /api/cache-chunks"));
         assert!(endpoints.contains(&"GET /api/query"));
         assert!(endpoints.contains(&"GET /api/node-context"));
@@ -3945,6 +3987,7 @@ mod tests {
         assert!(endpoints.contains(&("GET", "/api/incremental-plan")));
         assert!(endpoints.contains(&("GET", "/api/incremental-scan")));
         assert!(endpoints.contains(&("GET", "/api/incremental-merge-preview")));
+        assert!(endpoints.contains(&("GET", "/api/incremental-update")));
         assert!(endpoints.contains(&("GET", "/api/node-card")));
         assert!(endpoints.contains(&("GET", "/api/query")));
         assert!(endpoints.contains(&("POST", "/api/scan-jobs")));

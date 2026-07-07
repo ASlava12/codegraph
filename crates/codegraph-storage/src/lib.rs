@@ -41,6 +41,21 @@ pub struct IncrementalMergePreview {
     pub graph: CodeGraph,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct IncrementalUpdate {
+    pub preview: IncrementalMergePreview,
+    pub cache: IncrementalUpdateCacheReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IncrementalUpdateCacheReport {
+    pub cache_dir: String,
+    pub stored: bool,
+    pub previous_hash: Option<String>,
+    pub current_hash: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct IncrementalMergeReport {
     pub complete_graph: bool,
@@ -590,6 +605,48 @@ impl GraphCache {
         };
 
         Ok(IncrementalMergePreview { plan, merge, graph })
+    }
+
+    pub fn incremental_update(
+        &self,
+        root: &Path,
+        options: &IndexOptions,
+        limit: usize,
+    ) -> Result<IncrementalUpdate, CacheError> {
+        let current = Self::fingerprint_project(root, options)?;
+        let preview = self.incremental_merge_preview(root, options, limit)?;
+        let previous_hash = preview.plan.previous_hash.clone();
+        let current_hash = current.hash.clone();
+        let (stored, reason) = if !preview.merge.complete_graph {
+            (
+                false,
+                preview.merge.warning.clone().unwrap_or_else(|| {
+                    "incremental merge is incomplete; cache record was not updated".to_string()
+                }),
+            )
+        } else if matches!(preview.plan.action, IncrementalPlanAction::Noop) {
+            (
+                false,
+                "cache already matches the current project fingerprint".to_string(),
+            )
+        } else {
+            self.store(root, options, current, &preview.graph)?;
+            (
+                true,
+                "stored complete graph under the current project fingerprint".to_string(),
+            )
+        };
+
+        Ok(IncrementalUpdate {
+            preview,
+            cache: IncrementalUpdateCacheReport {
+                cache_dir: self.dir().display().to_string(),
+                stored,
+                previous_hash,
+                current_hash,
+                reason,
+            },
+        })
     }
 
     pub fn store(
@@ -2031,6 +2088,62 @@ mod tests {
         assert!(labels.contains(&"changed"));
         assert!(labels.contains(&"src/stable.rs"));
         assert!(labels.contains(&"stable"));
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn incremental_update_stores_complete_full_scan_graph() {
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        let options = IndexOptions::default();
+        let cache = GraphCache::new(&cache_dir);
+
+        let update = cache.incremental_update(&root, &options, 10).unwrap();
+
+        assert!(update.preview.merge.complete_graph);
+        assert!(update.cache.stored);
+        assert_eq!(update.preview.plan.cache_record, CacheRecordStatus::Missing);
+        let hit = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(hit.cache.status, CacheStatus::Hit);
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn incremental_update_does_not_store_incomplete_partial_merge() {
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        fs::write(root.join("src").join("stable.rs"), "pub fn stable() {}\n").unwrap();
+        let options = IndexOptions::default();
+        let cache = GraphCache::new(&cache_dir);
+        let first = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(first.cache.status, CacheStatus::Miss);
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() {}\nfn changed() {}\n",
+        )
+        .unwrap();
+
+        let update = cache.incremental_update(&root, &options, 10).unwrap();
+        let current = GraphCache::fingerprint_project(&root, &options).unwrap();
+
+        assert_eq!(
+            update.preview.plan.action,
+            IncrementalPlanAction::PartialRescan
+        );
+        assert!(!update.preview.merge.complete_graph);
+        assert!(!update.cache.stored);
+        assert!(update.cache.reason.contains("partial merge"));
+        assert!(cache.load(&root, &options, &current).unwrap().is_none());
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();

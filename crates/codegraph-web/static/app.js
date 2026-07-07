@@ -76,6 +76,7 @@ const I18N = {
     "button.planIncremental": "Plan Incremental",
     "button.scanIncremental": "Scan Changed",
     "button.previewMerge": "Preview Merge",
+    "button.updateCache": "Update Cache",
     "button.downloadGraph": "Download Graph",
     "button.download": "Download",
     "button.findPath": "Find Path",
@@ -252,6 +253,7 @@ const I18N = {
     "button.planIncremental": "План инкремента",
     "button.scanIncremental": "Скан изменений",
     "button.previewMerge": "Предпросмотр merge",
+    "button.updateCache": "Обновить кеш",
     "button.downloadGraph": "Скачать граф",
     "button.download": "Скачать",
     "button.findPath": "Найти путь",
@@ -432,6 +434,7 @@ const state = {
   incrementalPlanRequest: 0,
   incrementalScanRequest: 0,
   incrementalMergeRequest: 0,
+  incrementalUpdateRequest: 0,
   exportRequest: 0,
   pathRequest: 0,
   configTraceRequest: 0,
@@ -572,6 +575,7 @@ const cacheChunksButton = document.querySelector("#cacheChunksButton");
 const incrementalPlanButton = document.querySelector("#incrementalPlanButton");
 const incrementalScanButton = document.querySelector("#incrementalScanButton");
 const incrementalMergeButton = document.querySelector("#incrementalMergeButton");
+const incrementalUpdateButton = document.querySelector("#incrementalUpdateButton");
 const cacheDiffResult = document.querySelector("#cacheDiffResult");
 const exportFormatInput = document.querySelector("#exportFormatInput");
 const exportButton = document.querySelector("#exportButton");
@@ -648,6 +652,7 @@ cacheChunksButton.addEventListener("click", () => loadCacheChunks());
 incrementalPlanButton.addEventListener("click", () => loadIncrementalPlan());
 incrementalScanButton.addEventListener("click", () => loadIncrementalScan());
 incrementalMergeButton.addEventListener("click", () => loadIncrementalMergePreview());
+incrementalUpdateButton.addEventListener("click", () => loadIncrementalUpdate());
 cacheDiffLimitInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") loadCacheDiff();
 });
@@ -2891,6 +2896,44 @@ async function loadIncrementalMergePreview() {
   }
 }
 
+async function loadIncrementalUpdate() {
+  const limit = clampNumber(Number(cacheDiffLimitInput.value || 50), 1, 10000);
+  cacheDiffLimitInput.value = String(limit);
+  state.incrementalUpdateRequest += 1;
+  const requestId = state.incrementalUpdateRequest;
+  incrementalUpdateButton.disabled = true;
+  cacheDiffStatus.textContent = "updating";
+  cacheDiffResult.innerHTML = '<p class="empty">Updating graph cache...</p>';
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    limit: String(limit),
+  });
+
+  try {
+    const response = await fetch(`/api/incremental-update?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.incrementalUpdateRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "incremental update failed");
+    }
+    const plan = body.preview?.plan || {};
+    cacheDiffStatus.textContent = body.cache?.stored ? "stored" : formatKind(plan.action || "skipped");
+    cacheDiffResult.innerHTML = renderIncrementalUpdate(body);
+    if (body.preview?.graph) {
+      showIncrementalMergePreviewGraph(body.preview);
+    }
+  } catch (error) {
+    if (requestId !== state.incrementalUpdateRequest) return;
+    cacheDiffStatus.textContent = "error";
+    cacheDiffResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.incrementalUpdateRequest) {
+      incrementalUpdateButton.disabled = false;
+    }
+  }
+}
+
 async function runGraphExport() {
   const metadata = exportFormatMetadata(exportFormatInput.value);
   exportFormatInput.value = metadata.format;
@@ -3126,6 +3169,20 @@ function renderIncrementalMergePreview(preview) {
     </div>
   `;
   return `${graphSummary}${warning}${renderIncrementalPlan(plan)}`;
+}
+
+function renderIncrementalUpdate(update) {
+  const cache = update.cache || {};
+  const status = cache.stored ? "stored" : "not stored";
+  const summary = `
+    <div class="query-summary">
+      <span>${escapeHtml(status)}</span>
+      <span>${escapeHtml(cache.reason || "")}</span>
+      <span class="query-expression">previous ${escapeHtml(cache.previous_hash || "none")}</span>
+      <span class="query-expression">current ${escapeHtml(cache.current_hash || "unknown")}</span>
+    </div>
+  `;
+  return `${summary}${renderIncrementalMergePreview(update.preview || {})}`;
 }
 
 function showIncrementalScanGraph(scan) {
