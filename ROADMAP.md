@@ -169,6 +169,9 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add web path navigation, focused graph views, and visual highlighting for dependency paths.
 - [x] Add node context API for paged graph detail panels.
 - [x] Add insight focus API and web interaction for opening findings as focused graph views.
+- [x] Add enriched node cards with summary, code preview, dependencies, and related risks.
+- [x] Add initial multi-language UI support with English and Russian.
+- [x] Reduce graph label clutter with zoom thresholds and collision-aware label drawing.
 - Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
 - [x] Add source preview.
 - [x] Add trace panels.

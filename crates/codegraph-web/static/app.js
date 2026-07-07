@@ -1,3 +1,276 @@
+const DEFAULT_LOCALE = "en";
+
+const I18N = {
+  en: {
+    "root.empty": "No project loaded",
+    "project.currentRoot": "Current root",
+    "selection.title": "Selection",
+    "selection.noNode": "No node selected.",
+    "selection.loading": "Loading node context...",
+    "selection.node": "Node",
+    "selection.kind": "Kind",
+    "selection.id": "Id",
+    "selection.path": "Path",
+    "selection.lines": "Lines",
+    "selection.summary": "Summary",
+    "selection.dependencies": "Dependencies",
+    "selection.risks": "Risks",
+    "selection.source": "Source",
+    "selection.metadata": "Metadata",
+    "selection.noDependencies": "No neighboring edges.",
+    "selection.noIssues": "No matching risks for this node.",
+    "selection.contextEdges": "{count} edges",
+    "selection.contextEdgesLimited": "{count} edges, first {limit}",
+    "selection.issueHint": "Open finding",
+    "selection.noSource": "No source span is attached to this node.",
+    "selection.incoming": "incoming",
+    "selection.outgoing": "outgoing",
+    "selection.from": "From",
+    "selection.to": "To",
+    "selection.configTrace": "Config Trace",
+    "selection.errorTrace": "Error Trace",
+    "selection.trace": "Trace",
+    "selection.dependents": "Dependents",
+    "selection.traceDepth": "Depth",
+    "label.project": "Project",
+    "label.path": "Path",
+    "label.workLang": "Work Lang",
+    "label.status": "Status",
+    "label.capability": "Capability",
+    "label.search": "Search",
+    "label.depth": "Depth",
+    "label.nodes": "Nodes",
+    "label.edges": "Edges",
+    "label.kind": "Kind",
+    "label.item": "Item",
+    "label.language": "Language",
+    "label.edge": "Edge",
+    "label.confidence": "Confidence",
+    "label.relation": "Relation",
+    "label.source": "Source",
+    "label.query": "Query",
+    "label.text": "Text",
+    "label.limit": "Limit",
+    "label.from": "From",
+    "label.to": "To",
+    "label.target": "Target",
+    "label.severity": "Severity",
+    "label.failOn": "Fail On",
+    "button.scan": "Scan",
+    "button.apply": "Apply",
+    "button.traceEntrypoints": "Trace Entrypoints",
+    "button.run": "Run",
+    "button.searchSource": "Search Source",
+    "button.explainCache": "Explain Cache",
+    "button.findPath": "Find Path",
+    "button.traceConfig": "Trace Config",
+    "button.traceErrors": "Trace Errors",
+    "button.runCheck": "Run Check",
+    "button.fit": "Fit",
+    "button.reset": "Reset",
+    "button.pause": "Pause",
+    "button.resume": "Resume",
+    "button.explain": "Explain",
+    "option.any": "Any",
+    "option.ready": "Ready",
+    "option.missing": "Missing",
+    "option.unsupported": "Unsupported",
+    "option.definitions": "Definitions",
+    "option.diagnostics": "Diagnostics",
+    "option.symbols": "Symbols",
+    "option.references": "References",
+    "option.server": "Server",
+    "section.overview": "Overview",
+    "section.entryFlows": "Entry Flows",
+    "section.graphPage": "Graph Page",
+    "section.sourceSearch": "Source Search",
+    "section.cacheDiff": "Cache Diff",
+    "section.path": "Path",
+    "section.configTrace": "Config Trace",
+    "section.errorTrace": "Error Trace",
+    "section.insights": "Insights",
+    "stat.nodes": "Nodes",
+    "stat.edges": "Edges",
+    "stat.calls": "Calls",
+    "stat.env": "Env",
+    "stat.config": "Config",
+    "stat.errors": "Errors",
+    "stat.entrypoints": "Entrypoints",
+    "stat.skipped": "Skipped",
+    "empty.noLanguages": "No languages.",
+    "empty.noEdgeConfidence": "No edge confidence.",
+    "empty.noEdgeRelations": "No edge relations.",
+    "empty.noEdgeSources": "No edge sources.",
+    "empty.noInsights": "No matching insights.",
+    "empty.noVisibleIssues": "No obvious issues in the visible graph.",
+    "empty.loadingSource": "Loading...",
+    "trace.tracing": "Tracing...",
+    "trace.tracingDependents": "Tracing dependents...",
+    "trace.noDependents": "No incoming dependents.",
+    "trace.dependents": "Dependents",
+    "status.idle": "idle",
+    "status.queue": "queue",
+    "status.scan": "scan",
+    "status.page": "page",
+    "status.ready": "ready",
+    "status.error": "error",
+    "kind.error": "error",
+    "kind.warning": "warning",
+    "kind.info": "info",
+  },
+  ru: {
+    "root.empty": "Проект не загружен",
+    "project.currentRoot": "Текущий каталог",
+    "selection.title": "Выбор",
+    "selection.noNode": "Узел не выбран.",
+    "selection.loading": "Загружаю контекст узла...",
+    "selection.node": "Узел",
+    "selection.kind": "Тип",
+    "selection.id": "Id",
+    "selection.path": "Путь",
+    "selection.lines": "Строки",
+    "selection.summary": "Сводка",
+    "selection.dependencies": "Связи",
+    "selection.risks": "Риски",
+    "selection.source": "Код",
+    "selection.metadata": "Метаданные",
+    "selection.noDependencies": "Соседних связей нет.",
+    "selection.noIssues": "Для этого узла нет совпадающих рисков.",
+    "selection.contextEdges": "{count} связей",
+    "selection.contextEdgesLimited": "{count} связей, первые {limit}",
+    "selection.issueHint": "Открыть находку",
+    "selection.noSource": "К этому узлу не привязан фрагмент кода.",
+    "selection.incoming": "входящая",
+    "selection.outgoing": "исходящая",
+    "selection.from": "Отсюда",
+    "selection.to": "Сюда",
+    "selection.configTrace": "Трасса конфига",
+    "selection.errorTrace": "Трасса ошибок",
+    "selection.trace": "Трассировать",
+    "selection.dependents": "Зависимые",
+    "selection.traceDepth": "Глубина",
+    "label.project": "Проект",
+    "label.path": "Путь",
+    "label.workLang": "Язык задач",
+    "label.status": "Статус",
+    "label.capability": "Возможность",
+    "label.search": "Поиск",
+    "label.depth": "Глубина",
+    "label.nodes": "Узлы",
+    "label.edges": "Связи",
+    "label.kind": "Тип",
+    "label.item": "Элемент",
+    "label.language": "Язык",
+    "label.edge": "Связь",
+    "label.confidence": "Уверенность",
+    "label.relation": "Отношение",
+    "label.source": "Источник",
+    "label.query": "Запрос",
+    "label.text": "Текст",
+    "label.limit": "Лимит",
+    "label.from": "Откуда",
+    "label.to": "Куда",
+    "label.target": "Цель",
+    "label.severity": "Важность",
+    "label.failOn": "Порог",
+    "button.scan": "Сканировать",
+    "button.apply": "Применить",
+    "button.traceEntrypoints": "Трассировать входы",
+    "button.run": "Запустить",
+    "button.searchSource": "Искать в коде",
+    "button.explainCache": "Объяснить кеш",
+    "button.findPath": "Найти путь",
+    "button.traceConfig": "Трассировать конфиг",
+    "button.traceErrors": "Трассировать ошибки",
+    "button.runCheck": "Проверить",
+    "button.fit": "Вписать",
+    "button.reset": "Сброс",
+    "button.pause": "Пауза",
+    "button.resume": "Продолжить",
+    "button.explain": "Пояснить",
+    "option.any": "Любой",
+    "option.ready": "Готово",
+    "option.missing": "Нет сервера",
+    "option.unsupported": "Не поддержано",
+    "option.definitions": "Определения",
+    "option.diagnostics": "Диагностика",
+    "option.symbols": "Символы",
+    "option.references": "Ссылки",
+    "option.server": "Сервер",
+    "section.overview": "Обзор",
+    "section.entryFlows": "Потоки входа",
+    "section.graphPage": "Страница графа",
+    "section.sourceSearch": "Поиск в коде",
+    "section.cacheDiff": "Дифф кеша",
+    "section.path": "Путь",
+    "section.configTrace": "Трасса конфига",
+    "section.errorTrace": "Трасса ошибок",
+    "section.insights": "Находки",
+    "stat.nodes": "Узлы",
+    "stat.edges": "Связи",
+    "stat.calls": "Вызовы",
+    "stat.env": "Env",
+    "stat.config": "Конфиг",
+    "stat.errors": "Ошибки",
+    "stat.entrypoints": "Точки входа",
+    "stat.skipped": "Пропущено",
+    "empty.noLanguages": "Языки не найдены.",
+    "empty.noEdgeConfidence": "Нет данных об уверенности связей.",
+    "empty.noEdgeRelations": "Нет отношений связей.",
+    "empty.noEdgeSources": "Нет источников связей.",
+    "empty.noInsights": "Совпадающих находок нет.",
+    "empty.noVisibleIssues": "В видимом графе явных проблем нет.",
+    "empty.loadingSource": "Загружаю...",
+    "trace.tracing": "Трассирую...",
+    "trace.tracingDependents": "Трассирую зависимые узлы...",
+    "trace.noDependents": "Входящих зависимых нет.",
+    "trace.dependents": "Зависимые",
+    "status.idle": "ожидание",
+    "status.queue": "очередь",
+    "status.scan": "скан",
+    "status.page": "страница",
+    "status.ready": "готово",
+    "status.error": "ошибка",
+    "kind.error": "ошибка",
+    "kind.warning": "предупреждение",
+    "kind.info": "инфо",
+    "kind.function": "функция",
+    "kind.file": "файл",
+    "kind.directory": "каталог",
+    "kind.module": "модуль",
+    "kind.type": "тип",
+    "kind.config": "конфиг",
+    "kind.environment": "окружение",
+    "kind.entrypoint": "точка входа",
+    "kind.external_dependency": "внешняя зависимость",
+    "kind.repository": "репозиторий",
+    "kind.unknown": "неизвестно",
+    "kind.calls": "вызов",
+    "kind.imports": "импорт",
+    "kind.references": "ссылка",
+    "kind.reads_config": "читает конфиг",
+    "kind.reads_environment": "читает окружение",
+    "kind.may_error": "может ошибиться",
+    "kind.entrypoint_edge": "точка входа",
+    "kind.unresolved_call": "неразрешённый вызов",
+    "kind.parse_error": "ошибка парсинга",
+    "kind.syntax_error": "синтаксическая ошибка",
+    "kind.orphan_function": "изолированная функция",
+    "kind.potential_error_flow": "потенциальный поток ошибки",
+    "kind.undeclared_external_import": "импорт без зависимости",
+  },
+};
+
+function getInitialLocale() {
+  try {
+    const saved = window.localStorage?.getItem("codegraph.locale");
+    if (saved && I18N[saved]) return saved;
+  } catch (error) {
+    // Local storage can be disabled; falling back keeps the UI usable.
+  }
+  return DEFAULT_LOCALE;
+}
+
 const state = {
   graph: { nodes: [], edges: [] },
   visibleNodes: [],
@@ -55,6 +328,7 @@ const state = {
     truncatedNodes: false,
     root: "",
   },
+  locale: getInitialLocale(),
 };
 
 const colors = {
@@ -76,6 +350,7 @@ const ctx = canvas.getContext("2d");
 const scanButton = document.querySelector("#scanButton");
 const projectSelect = document.querySelector("#projectSelect");
 const pathInput = document.querySelector("#pathInput");
+const localeSelect = document.querySelector("#localeSelect");
 const searchInput = document.querySelector("#searchInput");
 const statusEl = document.querySelector("#status");
 const rootLabel = document.querySelector("#rootLabel");
@@ -168,6 +443,8 @@ const resetLayoutButton = document.querySelector("#resetLayoutButton");
 const toggleLayoutButton = document.querySelector("#toggleLayoutButton");
 const viewportInfo = document.querySelector("#viewportInfo");
 
+localeSelect.value = state.locale;
+localeSelect.addEventListener("change", () => setLocale(localeSelect.value));
 scanButton.addEventListener("click", () => scan());
 projectSelect.addEventListener("change", () => {
   const selected = projectSelect.value;
@@ -267,8 +544,58 @@ canvas.addEventListener("pointerleave", onPointerUp);
 canvas.addEventListener("wheel", onWheel, { passive: false });
 window.addEventListener("resize", resizeCanvas);
 
+applyLocale();
 resizeCanvas();
 init();
+
+function t(key, vars = {}) {
+  return translate(key, key, vars);
+}
+
+function translate(key, fallback, vars = {}) {
+  const dictionary = I18N[state.locale] || I18N[DEFAULT_LOCALE] || {};
+  const defaultDictionary = I18N[DEFAULT_LOCALE] || {};
+  const template = dictionary[key] ?? defaultDictionary[key] ?? fallback;
+  return String(template).replace(/\{([A-Za-z0-9_]+)\}/g, (_, name) =>
+    Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : `{${name}}`,
+  );
+}
+
+function setLocale(locale) {
+  state.locale = I18N[locale] ? locale : DEFAULT_LOCALE;
+  try {
+    window.localStorage?.setItem("codegraph.locale", state.locale);
+  } catch (error) {
+    // Local storage can be disabled; the in-memory locale still works.
+  }
+  applyLocale();
+}
+
+function applyLocale() {
+  document.documentElement.lang = state.locale;
+  if (localeSelect.value !== state.locale) localeSelect.value = state.locale;
+  document.querySelectorAll("[data-i18n]").forEach((element) => {
+    const key = element.dataset.i18n;
+    if (key) element.textContent = t(key);
+  });
+  if (!state.graphPage.root && !state.graph.nodes.length) {
+    rootLabel.textContent = t("root.empty");
+  }
+  if (statusEl.dataset.status) {
+    statusEl.textContent = translate(`status.${statusEl.dataset.status}`, statusEl.dataset.status);
+  } else {
+    statusEl.textContent = t("status.idle");
+  }
+  if (!state.projects.length) renderProjects();
+  if (!state.selectedId && selectionTitle.dataset.i18nFallback) {
+    selectionTitle.textContent = t(selectionTitle.dataset.i18nFallback);
+  }
+  renderViewportControls();
+  renderOverview();
+  renderInsights();
+  renderSelection();
+  draw();
+}
 
 async function init() {
   await loadProjects();
@@ -286,13 +613,13 @@ async function loadProjects() {
     renderProjects();
   } catch (error) {
     state.projects = [];
-    projectSelect.innerHTML = '<option value=".">Current root</option>';
+    projectSelect.innerHTML = `<option value=".">${escapeHtml(t("project.currentRoot"))}</option>`;
   }
 }
 
 function renderProjects() {
   if (!state.projects.length) {
-    projectSelect.innerHTML = '<option value=".">Current root</option>';
+    projectSelect.innerHTML = `<option value=".">${escapeHtml(t("project.currentRoot"))}</option>`;
     return;
   }
 
@@ -316,7 +643,7 @@ function renderProjects() {
 async function scan() {
   setStatus("queue", "busy");
   scanButton.disabled = true;
-  selectionTitle.textContent = "Selection";
+  selectionTitle.textContent = t("selection.title");
   selectionBody.innerHTML = "";
   state.insightRequest += 1;
   state.overviewRequest += 1;
@@ -355,7 +682,7 @@ async function scan() {
     await watchScanJob(body.id);
   } catch (error) {
     setStatus("error", "error");
-    selectionTitle.textContent = "Error";
+    selectionTitle.textContent = t("status.error");
     selectionBody.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   } finally {
     scanButton.disabled = false;
@@ -532,7 +859,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
   } catch (error) {
     if (requestId !== state.pageRequest) return;
     setStatus("error", "error");
-    selectionTitle.textContent = "Error";
+    selectionTitle.textContent = t("status.error");
     selectionBody.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   } finally {
     if (requestId === state.pageRequest) {
@@ -651,10 +978,12 @@ async function loadProjectOverview() {
 function renderOverview() {
   const summary = state.summary;
   const entrypoints = state.entrypoints || [];
+  const nodesLabel = t("stat.nodes").toLowerCase();
+  const edgesLabel = t("stat.edges").toLowerCase();
 
   overviewTotals.textContent = summary
-    ? `${summary.nodes} nodes · ${summary.edges} edges`
-    : "0 nodes";
+    ? `${summary.nodes} ${nodesLabel} · ${summary.edges} ${edgesLabel}`
+    : `0 ${nodesLabel}`;
   skippedCount.textContent = String(summary?.skipped_files || 0);
 
   const languages = Object.entries(summary?.languages || {})
@@ -672,7 +1001,7 @@ function renderOverview() {
             `,
           )
           .join("")
-      : '<p class="empty">No languages.</p>';
+      : `<p class="empty">${escapeHtml(t("empty.noLanguages"))}</p>`;
 
   const confidences = Object.entries(summary?.edge_confidences || {})
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
@@ -689,7 +1018,7 @@ function renderOverview() {
             `,
           )
           .join("")
-      : '<p class="empty">No edge confidence.</p>';
+      : `<p class="empty">${escapeHtml(t("empty.noEdgeConfidence"))}</p>`;
 
   const relations = Object.entries(summary?.edge_relations || {})
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
@@ -697,7 +1026,7 @@ function renderOverview() {
   relationList.innerHTML =
     relations.length > 0
       ? relations.map(([relation, count]) => renderOverviewChip("relation", relation, count)).join("")
-      : '<p class="empty">No edge relations.</p>';
+      : `<p class="empty">${escapeHtml(t("empty.noEdgeRelations"))}</p>`;
 
   const edgeSources = Object.entries(summary?.edge_sources || {})
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
@@ -705,7 +1034,7 @@ function renderOverview() {
   edgeSourceList.innerHTML =
     edgeSources.length > 0
       ? edgeSources.map(([source, count]) => renderOverviewChip("edge-source", source, count)).join("")
-      : '<p class="empty">No edge sources.</p>';
+      : `<p class="empty">${escapeHtml(t("empty.noEdgeSources"))}</p>`;
 
   renderScanPolicy(state.scanOptions);
   renderCoverage(state.coverage);
@@ -1005,7 +1334,7 @@ function renderSemanticWorkFilterOptions(summary) {
   const current = semanticWorkLanguageInput.value;
   const languages = Object.keys(summary?.languages || {}).sort((left, right) => left.localeCompare(right));
   semanticWorkLanguageInput.innerHTML = [
-    '<option value="">Any</option>',
+    `<option value="">${escapeHtml(t("option.any"))}</option>`,
     ...languages.map(
       (language) =>
         `<option value="${escapeHtml(language)}" ${language === current ? "selected" : ""}>${escapeHtml(language)}</option>`,
@@ -2297,8 +2626,8 @@ function renderInsights() {
   insightCount.textContent = String(total);
   if (insights.length === 0) {
     insightList.innerHTML = report
-      ? `${severitySummary}${kindSummary}<p class="empty">No matching insights.</p>`
-      : '<p class="empty">No obvious issues in the visible graph.</p>';
+      ? `${severitySummary}${kindSummary}<p class="empty">${escapeHtml(t("empty.noInsights"))}</p>`
+      : `<p class="empty">${escapeHtml(t("empty.noVisibleIssues"))}</p>`;
     attachInsightKindFilters();
     return;
   }
@@ -2828,8 +3157,8 @@ function startAnimation() {
 }
 
 function renderViewportControls() {
-  viewportInfo.textContent = `${state.visibleNodes.length} nodes / ${state.visibleEdges.length} edges`;
-  toggleLayoutButton.textContent = state.layoutPaused ? "Run" : "Pause";
+  viewportInfo.textContent = `${state.visibleNodes.length} ${t("stat.nodes").toLowerCase()} / ${state.visibleEdges.length} ${t("stat.edges").toLowerCase()}`;
+  toggleLayoutButton.textContent = state.layoutPaused ? t("button.resume") : t("button.pause");
   toggleLayoutButton.setAttribute(
     "aria-label",
     state.layoutPaused ? "Resume graph layout" : "Pause graph layout",
@@ -2995,6 +3324,7 @@ function draw() {
     drawEdge(edge, source, target, true);
   });
 
+  const labelCandidates = [];
   state.visibleNodes.forEach((node) => {
     const position = state.positions.get(node.id);
     const selected = node.id === state.selectedId;
@@ -3027,11 +3357,12 @@ function draw() {
     ctx.strokeStyle = selected ? "#ffffff" : focused ? "rgba(237, 241, 242, 0.92)" : "rgba(255,255,255,0.55)";
     ctx.stroke();
 
-    if (state.zoom > 0.45 || selected || hovered || focused) {
-      drawLabel(node, position, radius);
+    if (shouldShowNodeLabel(selected, hovered, focused)) {
+      labelCandidates.push({ node, position, radius, selected, hovered, focused });
     }
   });
 
+  drawNodeLabels(labelCandidates);
   ctx.restore();
 }
 
@@ -3087,18 +3418,70 @@ function drawArrowHead(start, end, color) {
   ctx.fill();
 }
 
-function drawLabel(node, position, radius) {
+function shouldShowNodeLabel(selected, hovered, focused) {
+  if (selected || hovered || focused) return true;
+  if (state.visibleNodes.length <= 40 && state.zoom >= 0.92) return true;
+  if (state.visibleNodes.length <= 120 && state.zoom >= 1.12) return true;
+  return state.zoom >= 1.38;
+}
+
+function drawNodeLabels(candidates) {
+  const occupied = [];
+  const ordered = candidates.sort((left, right) => {
+    const leftPriority = left.selected ? 0 : left.hovered ? 1 : left.focused ? 2 : 3;
+    const rightPriority = right.selected ? 0 : right.hovered ? 1 : right.focused ? 2 : 3;
+    return leftPriority - rightPriority || left.node.label.localeCompare(right.node.label);
+  });
+
+  ordered.forEach((candidate) => {
+    const geometry = labelGeometry(candidate.node, candidate.position, candidate.radius);
+    const forced = candidate.selected || candidate.hovered || candidate.focused;
+    if (!forced && occupied.some((box) => boxesIntersect(box, geometry))) return;
+    drawLabelGeometry(geometry);
+    occupied.push(geometry);
+  });
+}
+
+function labelGeometry(node, position, radius) {
   const label = node.label.length > 34 ? `${node.label.slice(0, 31)}...` : node.label;
-  ctx.font = `${Math.max(11, 12 / state.zoom)}px Inter, sans-serif`;
+  const zoom = Math.max(0.18, state.zoom);
+  const padX = 6 / zoom;
+  const height = 22 / zoom;
+  ctx.font = `${12 / zoom}px Inter, sans-serif`;
   const metrics = ctx.measureText(label);
-  const width = metrics.width + 12;
+  const width = metrics.width + padX * 2;
   const x = position.x - width / 2;
-  const y = position.y + radius + 7;
+  const y = position.y + radius + 7 / zoom;
+  return {
+    label,
+    x,
+    y,
+    width,
+    height,
+    padX,
+    textY: y + 15 / zoom,
+    radius: 5 / zoom,
+    font: ctx.font,
+  };
+}
+
+function drawLabelGeometry(geometry) {
+  ctx.font = geometry.font;
   ctx.fillStyle = "rgba(13, 15, 16, 0.82)";
-  roundRect(ctx, x, y, width, 20 / state.zoom, 5 / state.zoom);
+  roundRect(ctx, geometry.x, geometry.y, geometry.width, geometry.height, geometry.radius);
   ctx.fill();
   ctx.fillStyle = "#edf1f2";
-  ctx.fillText(label, x + 6, y + 14 / state.zoom);
+  ctx.fillText(geometry.label, geometry.x + geometry.padX, geometry.textY);
+}
+
+function boxesIntersect(left, right) {
+  const pad = 5 / Math.max(0.18, state.zoom);
+  return !(
+    left.x + left.width + pad < right.x ||
+    right.x + right.width + pad < left.x ||
+    left.y + left.height + pad < right.y ||
+    right.y + right.height + pad < left.y
+  );
 }
 
 function renderSelection() {
@@ -3107,12 +3490,12 @@ function renderSelection() {
   const node = state.graph.nodes.find((candidate) => candidate.id === state.selectedId);
   if (!node) {
     if (state.selectedId) {
-      selectionTitle.textContent = `Node ${state.selectedId}`;
-      selectionBody.innerHTML = '<p class="empty">Loading node context...</p>';
+      selectionTitle.textContent = `${t("selection.node")} ${state.selectedId}`;
+      selectionBody.innerHTML = `<p class="empty">${escapeHtml(t("selection.loading"))}</p>`;
       loadNodeContext(state.selectedId, requestId);
     } else {
-      selectionTitle.textContent = "Selection";
-      selectionBody.innerHTML = '<p class="empty">No node selected.</p>';
+      selectionTitle.textContent = t("selection.title");
+      selectionBody.innerHTML = `<p class="empty">${escapeHtml(t("selection.noNode"))}</p>`;
     }
     return;
   }
@@ -3148,7 +3531,7 @@ async function loadNodeContext(nodeId, requestId) {
         container.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
       }
     } else {
-      selectionTitle.textContent = "Error";
+      selectionTitle.textContent = t("status.error");
       selectionBody.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
     }
   }
@@ -3156,76 +3539,114 @@ async function loadNodeContext(nodeId, requestId) {
 
 function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, context = null) {
   selectionTitle.textContent = node.label;
-  const rows = [
-    ["Kind", formatKind(node.kind)],
-    ["Id", String(node.id)],
-  ];
-  if (node.span) {
-    rows.push(["Path", node.span.path]);
-    rows.push(["Lines", `${node.span.start_line}-${node.span.end_line}`]);
-  }
-  Object.entries(node.metadata || {}).forEach(([key, value]) => rows.push([formatKind(key), value]));
-
+  const summaryRows = renderNodeSummaryRows(node);
+  const metadataRows = renderNodeMetadataRows(node);
+  const nodeIssues = nodeInsightsForNode(node.id).slice(0, 8);
   const neighborRows = loading
-    ? '<p class="empty">Loading node context...</p>'
+    ? `<p class="empty">${escapeHtml(t("selection.loading"))}</p>`
     : edges.length > 0
       ? edges.map((edge) => renderNeighbor(edge, node.id, nodeMap)).join("")
-      : '<p class="empty">No neighboring edges.</p>';
+      : `<p class="empty">${escapeHtml(t("selection.noDependencies"))}</p>`;
   const contextSummary = context
-    ? `<p class="neighbor-summary">${context.total_edges} edges${context.truncated_edges ? `, first ${context.edge_limit}` : ""}</p>`
+    ? `<span class="neighbor-summary">${
+        escapeHtml(
+          context.truncated_edges
+            ? t("selection.contextEdgesLimited", {
+                count: context.total_edges,
+                limit: context.edge_limit,
+              })
+            : t("selection.contextEdges", { count: context.total_edges }),
+        )
+      }</span>`
     : "";
 
   selectionBody.innerHTML = `
-    <div class="selection-actions">
-      <button type="button" data-path-endpoint="from">From</button>
-      <button type="button" data-path-endpoint="to">To</button>
-      ${
-        node.kind === "config" || node.kind === "environment"
-          ? '<button type="button" data-config-trace-target>Config Trace</button>'
-          : ""
-      }
-      ${
-        node.metadata?.item_kind === "error"
-          ? '<button type="button" data-error-trace-target>Error Trace</button>'
-          : ""
-      }
-    </div>
-    <table class="detail-table">
-      <tbody>
-        ${rows
-          .map(
-            ([key, value]) =>
-              `<tr><th>${escapeHtml(key)}</th><td>${escapeHtml(String(value))}</td></tr>`,
-          )
-          .join("")}
-      </tbody>
-    </table>
-    <div class="neighbors">
-      ${contextSummary}
-      ${neighborRows}
-    </div>
-    <section class="trace-panel">
-      <div class="trace-controls">
-        <label class="field compact">
-          <span>Depth</span>
-          <input id="traceDepthInput" type="number" min="1" max="8" value="3" />
-        </label>
-        <button id="traceButton" type="button">Trace</button>
-        <button id="dependentsButton" type="button">Dependents</button>
+    <div class="node-card">
+      <header class="node-card-header">
+        <div class="node-card-title">
+          <span>${escapeHtml(formatKind(node.kind))}</span>
+          <strong>${escapeHtml(node.label)}</strong>
+        </div>
+        <span class="node-card-id">#${node.id}</span>
+      </header>
+      <div class="selection-actions">
+        <button type="button" data-path-endpoint="from">${escapeHtml(t("selection.from"))}</button>
+        <button type="button" data-path-endpoint="to">${escapeHtml(t("selection.to"))}</button>
+        ${
+          node.kind === "config" || node.kind === "environment"
+            ? `<button type="button" data-config-trace-target>${escapeHtml(t("selection.configTrace"))}</button>`
+            : ""
+        }
+        ${
+          node.metadata?.item_kind === "error"
+            ? `<button type="button" data-error-trace-target>${escapeHtml(t("selection.errorTrace"))}</button>`
+            : ""
+        }
       </div>
-      <div id="traceResult" class="trace-result"></div>
-    </section>
-    ${
-      node.span
-        ? `<section class="source-preview">
+      <section class="node-card-section">
+        <h3>${escapeHtml(t("selection.summary"))}</h3>
+        <dl class="node-summary">
+          ${summaryRows.map(renderDefinitionRow).join("")}
+        </dl>
+      </section>
+      ${
+        metadataRows.length > 0
+          ? `<section class="node-card-section">
+              <h3>${escapeHtml(t("selection.metadata"))}</h3>
+              <dl class="node-summary">
+                ${metadataRows.map(renderDefinitionRow).join("")}
+              </dl>
+            </section>`
+          : ""
+      }
+      <section class="node-card-section">
+        <div class="node-card-section-header">
+          <h3>${escapeHtml(t("selection.dependencies"))}</h3>
+          ${contextSummary}
+        </div>
+        <div class="neighbors">${neighborRows}</div>
+      </section>
+      <section class="node-card-section">
+        <div class="node-card-section-header">
+          <h3>${escapeHtml(t("selection.risks"))}</h3>
+          <span>${nodeIssues.length}</span>
+        </div>
+        <div class="node-issues">
+          ${
+            nodeIssues.length > 0
+              ? nodeIssues.map(renderNodeIssue).join("")
+              : `<p class="empty">${escapeHtml(t("selection.noIssues"))}</p>`
+          }
+        </div>
+      </section>
+      <section class="trace-panel">
+        <div class="trace-controls">
+          <label class="field compact">
+            <span>${escapeHtml(t("selection.traceDepth"))}</span>
+            <input id="traceDepthInput" type="number" min="1" max="8" value="3" />
+          </label>
+          <button id="traceButton" type="button">${escapeHtml(t("selection.trace"))}</button>
+          <button id="dependentsButton" type="button">${escapeHtml(t("selection.dependents"))}</button>
+        </div>
+        <div id="traceResult" class="trace-result"></div>
+      </section>
+      ${
+        node.span
+          ? `<section class="source-preview">
             <header>
-              <span>Source</span>
+              <span>${escapeHtml(t("selection.source"))}</span>
               <strong>${escapeHtml(node.span.path)}:${node.span.start_line}</strong>
             </header>
-            <pre id="sourcePreview"><code>Loading...</code></pre>
+            <pre id="sourcePreview"><code>${escapeHtml(t("empty.loadingSource"))}</code></pre>
           </section>`
-        : ""
-    }
+          : `<section class="source-preview">
+              <header>
+                <span>${escapeHtml(t("selection.source"))}</span>
+              </header>
+              <p class="empty">${escapeHtml(t("selection.noSource"))}</p>
+            </section>`
+      }
+    </div>
   `;
 
   selectionBody.querySelectorAll(".neighbor").forEach((button) => {
@@ -3268,11 +3689,68 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
     dependentsButton.addEventListener("click", () => loadDependents(node));
   }
 
+  selectionBody.querySelectorAll("[data-node-issue-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const issue = nodeIssues[Number(button.dataset.nodeIssueIndex)];
+      if (issue) focusInsight(issue);
+    });
+  });
+
   if (node.span) {
     loadSourcePreview(node, requestId);
   }
 
   attachEdgeExplainActions(selectionBody);
+}
+
+function renderNodeSummaryRows(node) {
+  const rows = [
+    [t("selection.kind"), formatKind(node.kind)],
+    [t("selection.id"), String(node.id)],
+  ];
+  if (node.metadata?.language) rows.push([t("label.language"), node.metadata.language]);
+  if (node.metadata?.item_kind) rows.push([t("label.item"), formatKind(node.metadata.item_kind)]);
+  if (node.span) {
+    rows.push([t("selection.path"), node.span.path]);
+    rows.push([t("selection.lines"), `${node.span.start_line}-${node.span.end_line}`]);
+  }
+  return rows;
+}
+
+function renderNodeMetadataRows(node) {
+  const summaryKeys = new Set(["language", "item_kind"]);
+  return Object.entries(node.metadata || {})
+    .filter(([key, value]) => !summaryKeys.has(key) && value != null && String(value).length > 0)
+    .sort((left, right) => left[0].localeCompare(right[0]))
+    .map(([key, value]) => [formatKind(key), value]);
+}
+
+function renderDefinitionRow([key, value]) {
+  return `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd>`;
+}
+
+function nodeInsightsForNode(nodeId) {
+  const insights = [...(state.insightReport?.insights || []), ...buildClientInsights(state.graph)];
+  const seen = new Set();
+  return insights.filter((insight) => {
+    const ids = insightNodeIds(insight).map((id) => Number(id));
+    if (!ids.includes(Number(nodeId))) return false;
+    const key = `${insight.severity || ""}:${insight.kind || ""}:${insight.message || ""}:${ids.join(",")}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function renderNodeIssue(insight, index) {
+  const severity = insight.severity || "info";
+  return `
+    <button class="node-issue ${escapeHtml(severity)}" type="button" data-node-issue-index="${index}">
+      <span>${escapeHtml(formatKind(severity))} · ${escapeHtml(formatKind(insight.kind || "insight"))}</span>
+      <strong>${escapeHtml(insight.message || "")}</strong>
+      <em>${escapeHtml(t("selection.issueHint"))}</em>
+    </button>
+  `;
 }
 
 async function loadTrace(node) {
@@ -3282,7 +3760,7 @@ async function loadTrace(node) {
   const target = document.querySelector("#traceResult");
   if (!target) return;
 
-  target.innerHTML = '<p class="empty">Tracing...</p>';
+  target.innerHTML = `<p class="empty">${escapeHtml(t("trace.tracing"))}</p>`;
   const depthInput = document.querySelector("#traceDepthInput");
   const depth = clampNumber(Number(depthInput?.value || 3), 1, 8);
   if (depthInput) depthInput.value = String(depth);
@@ -3315,7 +3793,7 @@ async function loadDependents(node) {
   const target = document.querySelector("#traceResult");
   if (!target) return;
 
-  target.innerHTML = '<p class="empty">Tracing dependents...</p>';
+  target.innerHTML = `<p class="empty">${escapeHtml(t("trace.tracingDependents"))}</p>`;
   const depthInput = document.querySelector("#traceDepthInput");
   const depth = clampNumber(Number(depthInput?.value || 3), 1, 16);
   if (depthInput) depthInput.value = String(depth);
@@ -3332,7 +3810,10 @@ async function loadDependents(node) {
     if (!response.ok) {
       throw new Error(body.error || "dependents trace failed");
     }
-    target.innerHTML = renderTrace(body, { empty: "No incoming dependents.", label: "Dependents" });
+    target.innerHTML = renderTrace(body, {
+      empty: t("trace.noDependents"),
+      label: t("trace.dependents"),
+    });
     attachTraceNavigation(target);
     attachEdgeExplainActions(target);
   } catch (error) {
@@ -3363,17 +3844,17 @@ function renderTrace(trace, options = {}) {
   return `
     <div class="trace-summary">
       ${options.label ? `<span>${escapeHtml(options.label)}</span>` : ""}
-      <span>${trace.nodes.length} nodes</span>
-      <span>${trace.edges.length} edges</span>
-      <span>depth ${trace.max_depth}</span>
+      <span>${trace.nodes.length} ${escapeHtml(t("stat.nodes").toLowerCase())}</span>
+      <span>${trace.edges.length} ${escapeHtml(t("stat.edges").toLowerCase())}</span>
+      <span>${escapeHtml(t("label.depth").toLowerCase())} ${trace.max_depth}</span>
     </div>
     <div class="trace-columns">
       <section>
-        <h3>Nodes</h3>
+        <h3>${escapeHtml(t("label.nodes"))}</h3>
         <ul class="trace-list">${nodeRows}</ul>
       </section>
       <section>
-        <h3>Edges</h3>
+        <h3>${escapeHtml(t("label.edges"))}</h3>
         <ul class="trace-list trace-edge-list">${edgeRows}</ul>
       </section>
     </div>
@@ -3458,7 +3939,7 @@ function renderSourceLine(line) {
 function renderNeighbor(edge, selectedId, nodeMap = null) {
   const otherId = edge.source === selectedId ? edge.target : edge.source;
   const other = nodeMap?.get(otherId) || state.graph.nodes.find((node) => node.id === otherId);
-  const direction = edge.source === selectedId ? "out" : "in";
+  const direction = edge.source === selectedId ? t("selection.outgoing") : t("selection.incoming");
   const facts = renderEdgeFacts(edge);
   return `
     <div>
@@ -3490,7 +3971,7 @@ function renderExplainEdgeButton(edge) {
       data-edge-source="n${edge.source}"
       data-edge-target="n${edge.target}"
       data-edge-kind="${escapeHtml(edge.kind)}"
-    >Explain</button>
+    >${escapeHtml(t("button.explain"))}</button>
   `;
 }
 
@@ -3718,7 +4199,8 @@ function edgeColor(edge) {
 }
 
 function formatKind(value) {
-  return String(value).replaceAll("_", " ");
+  const raw = String(value);
+  return translate(`kind.${raw}`, raw.replaceAll("_", " "));
 }
 
 function formatBytes(value) {
@@ -3736,7 +4218,8 @@ function formatBytes(value) {
 }
 
 function setStatus(text, className = "") {
-  statusEl.textContent = text;
+  statusEl.textContent = translate(`status.${text}`, text);
+  statusEl.dataset.status = text;
   statusEl.className = `status ${className}`.trim();
 }
 

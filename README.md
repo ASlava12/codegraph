@@ -33,6 +33,9 @@ Implemented now:
 - Async scan job API for long-running repository scans.
 - SSE scan job status stream for live web progress updates.
 - Source preview API and UI panel for parsed symbols plus framework route/config facts with source spans.
+- Enriched selected-node cards with summary metadata, source snippets, neighboring dependencies, trace actions, and related risks.
+- Initial English/Russian web UI localization with a persistent language selector.
+- Collision-aware graph labels that stay quiet at overview zoom and appear for selected, hovered, focused, or sufficiently zoomed nodes.
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
 - Reverse dependency/dependent traces for impact analysis from CLI, API, query language, and web detail panels.
 - Entrypoint trace API, CLI command, and web panel for comparing startup flows from manifest/code entrypoints.
