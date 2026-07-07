@@ -3153,9 +3153,11 @@ function renderIncrementalMergePreview(preview) {
   const graph = preview.graph || { nodes: [], edges: [] };
   const plan = preview.plan || {};
   const merge = preview.merge || {};
+  const blockers = merge.completeness_blockers || [];
   const warning = merge.warning
     ? `<p class="empty">${escapeHtml(merge.warning)}</p>`
     : "";
+  const blockerGroup = renderCacheDiffGroup("Completeness blockers", blockers, renderMergeBlocker);
   const graphSummary = `
     <div class="query-summary">
       <span>${Number(graph.nodes?.length || 0)} preview nodes</span>
@@ -3169,10 +3171,15 @@ function renderIncrementalMergePreview(preview) {
       <span>${Number(merge.scanned_nodes || 0)} scanned nodes</span>
       <span>${Number(merge.scanned_edges || 0)} scanned edges</span>
       <span>${Number(merge.replaced_paths || 0)} replaced paths</span>
+      <span>${Number(merge.incoming_cross_file_edges || 0)} incoming blockers</span>
+      <span>${Number(merge.graph_surface_added || 0)} surface added</span>
+      <span>${Number(merge.graph_surface_removed || 0)} surface removed</span>
+      <span>${Number(merge.removed_paths_blocking || 0)} removed paths</span>
+      <span>${Number(blockers.length || 0)} blockers</span>
       <span>${merge.complete_graph ? "complete" : "preview"}</span>
     </div>
   `;
-  return `${graphSummary}${warning}${renderIncrementalPlan(plan)}`;
+  return `${graphSummary}${warning}${blockerGroup}${renderIncrementalPlan(plan)}`;
 }
 
 function renderIncrementalUpdate(update) {
@@ -3241,6 +3248,16 @@ function renderPlanScalar(value) {
     <div class="query-item cache-diff-item">
       <span>id</span>
       <strong>${escapeHtml(String(value ?? ""))}</strong>
+    </div>
+  `;
+}
+
+function renderMergeBlocker(blocker) {
+  return `
+    <div class="query-item cache-diff-item">
+      <span>${Number(blocker.count || 0)}</span>
+      <strong>${escapeHtml(formatKind(blocker.kind || "blocker"))}</strong>
+      <span>${escapeHtml(blocker.message || "")}</span>
     </div>
   `;
 }

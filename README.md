@@ -478,7 +478,7 @@ curl 'http://127.0.0.1:3765/api/incremental-update?path=.&limit=50'
 ```
 
 The scan response includes `cache.status` as `hit`, `miss`, or `disabled`. Cache diff responses and the web Cache Diff panel explain the previous and current project fingerprints without performing a full graph scan, including reuse strategy, changed file counts, reusable file/byte counts, and reuse ratios for incremental-scan planning. Incremental scan responses include the plan plus a focused graph for changed current files, while full-scan actions still return a complete graph. Merge preview responses use persistent impact and chunk indexes to remove cached scopes for changed or removed files, then add changed-file rescans. Surface-stable partial previews, such as body-only edits with the same graph signatures and no incoming cross-file blockers, are marked complete and can be stored; structural changes remain incomplete until a full scan rebuilds cross-file incoming edges.
-Incremental update responses persist the graph cache only when the result is complete; incomplete partial previews report `stored: false` with the reason and leave the previous cache record untouched.
+Incremental update responses persist the graph cache only when the result is complete; incomplete partial previews report `stored: false` with the reason and leave the previous cache record untouched. Incomplete previews also include structured blocker counters for removed paths, incoming cross-file edges, and graph-surface additions/removals so agents and the web UI can explain why the cache was not updated.
 Cache chunk responses list the persistent per-file node and edge scopes currently stored in the graph cache, including compact node/edge id previews for agent diagnostics.
 
 Export API:

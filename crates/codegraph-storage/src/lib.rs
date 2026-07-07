@@ -65,12 +65,24 @@ pub struct IncrementalMergeReport {
     pub removed_cached_edges: usize,
     pub chunk_removed_nodes: usize,
     pub chunk_removed_edges: usize,
+    pub incoming_cross_file_edges: usize,
+    pub graph_surface_added: usize,
+    pub graph_surface_removed: usize,
+    pub removed_paths_blocking: usize,
+    pub completeness_blockers: Vec<IncrementalMergeBlocker>,
     pub replaced_paths: usize,
     pub scanned_nodes: usize,
     pub scanned_edges: usize,
     pub merged_nodes: usize,
     pub merged_edges: usize,
     pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IncrementalMergeBlocker {
+    pub kind: String,
+    pub count: usize,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1316,6 +1328,11 @@ fn complete_merge_report(
         removed_cached_edges: 0,
         chunk_removed_nodes: 0,
         chunk_removed_edges: 0,
+        incoming_cross_file_edges: 0,
+        graph_surface_added: 0,
+        graph_surface_removed: 0,
+        removed_paths_blocking: 0,
+        completeness_blockers: Vec::new(),
         replaced_paths: plan.scan_paths.len() + plan.removed_paths.len(),
         scanned_nodes: graph.nodes.len().saturating_sub(reused_nodes),
         scanned_edges: graph.edges.len().saturating_sub(reused_edges),
@@ -1342,9 +1359,15 @@ fn merge_graph_preview(
         cross_scope_incoming_edges(cached, &removed_node_ids, &removed_edge_indexes);
     let cached_signatures = graph_signatures_for_node_ids(cached, &removed_node_ids);
     let changed_signatures = graph_signatures_for_paths(changed, scan_paths);
-    let complete_graph = removed_paths.is_empty()
-        && incoming_blockers == 0
-        && cached_signatures == changed_signatures;
+    let graph_surface_added = changed_signatures.difference(&cached_signatures).count();
+    let graph_surface_removed = cached_signatures.difference(&changed_signatures).count();
+    let completeness_blockers = incremental_merge_blockers(
+        removed_paths.len(),
+        incoming_blockers,
+        graph_surface_added,
+        graph_surface_removed,
+    );
+    let complete_graph = completeness_blockers.is_empty();
 
     let mut kept_node_ids = BTreeSet::new();
     let mut merged = CodeGraph {
@@ -1407,6 +1430,7 @@ fn merge_graph_preview(
         merged.edges.push(remap_edge(edge, *source, *target));
     }
 
+    let warning = partial_merge_warning(&completeness_blockers);
     let merge = IncrementalMergeReport {
         complete_graph,
         reused_nodes,
@@ -1415,12 +1439,17 @@ fn merge_graph_preview(
         removed_cached_edges: removed_edge_indexes.len(),
         chunk_removed_nodes,
         chunk_removed_edges,
+        incoming_cross_file_edges: incoming_blockers,
+        graph_surface_added,
+        graph_surface_removed,
+        removed_paths_blocking: removed_paths.len(),
+        completeness_blockers,
         replaced_paths: replaced_paths.len(),
         scanned_nodes: changed.nodes.len(),
         scanned_edges: changed.edges.len(),
         merged_nodes: merged.nodes.len(),
         merged_edges: merged.edges.len(),
-        warning: partial_merge_warning(complete_graph, removed_paths, incoming_blockers),
+        warning,
     };
 
     (merged, merge)
@@ -1514,29 +1543,54 @@ fn node_source_paths(node: &Node) -> BTreeSet<String> {
     paths
 }
 
-fn partial_merge_warning(
-    complete_graph: bool,
-    removed_paths: &BTreeSet<String>,
-    incoming_blockers: usize,
-) -> Option<String> {
-    if complete_graph {
-        return None;
+fn incremental_merge_blockers(
+    removed_paths: usize,
+    incoming_cross_file_edges: usize,
+    graph_surface_added: usize,
+    graph_surface_removed: usize,
+) -> Vec<IncrementalMergeBlocker> {
+    let mut blockers = Vec::new();
+    if removed_paths > 0 {
+        blockers.push(IncrementalMergeBlocker {
+            kind: "removed_paths".to_string(),
+            count: removed_paths,
+            message:
+                "partial merge preview includes removed files; run a full scan before storing the graph cache"
+                    .to_string(),
+        });
     }
-    if !removed_paths.is_empty() {
-        return Some(
-            "partial merge preview includes removed files; run a full scan before storing the graph cache"
-                .to_string(),
-        );
+    if incoming_cross_file_edges > 0 {
+        blockers.push(IncrementalMergeBlocker {
+            kind: "incoming_cross_file_edges".to_string(),
+            count: incoming_cross_file_edges,
+            message: format!(
+                "partial merge preview would drop {incoming_cross_file_edges} incoming cross-file edge(s); run a full scan before storing the graph cache"
+            ),
+        });
     }
-    if incoming_blockers > 0 {
-        return Some(format!(
-            "partial merge preview would drop {incoming_blockers} incoming cross-file edge(s); run a full scan before storing the graph cache"
-        ));
+    if graph_surface_added > 0 {
+        blockers.push(IncrementalMergeBlocker {
+            kind: "graph_surface_added".to_string(),
+            count: graph_surface_added,
+            message:
+                "partial merge preview adds graph-surface nodes; run a full scan before storing the graph cache"
+                    .to_string(),
+        });
     }
-    Some(
-        "partial merge preview changes the file graph surface; run a full scan before storing the graph cache"
-            .to_string(),
-    )
+    if graph_surface_removed > 0 {
+        blockers.push(IncrementalMergeBlocker {
+            kind: "graph_surface_removed".to_string(),
+            count: graph_surface_removed,
+            message:
+                "partial merge preview removes graph-surface nodes; run a full scan before storing the graph cache"
+                    .to_string(),
+        });
+    }
+    blockers
+}
+
+fn partial_merge_warning(blockers: &[IncrementalMergeBlocker]) -> Option<String> {
+    blockers.first().map(|blocker| blocker.message.clone())
 }
 
 fn find_existing_directory(graph: &CodeGraph, label: &str) -> Option<NodeId> {
@@ -2201,6 +2255,15 @@ mod tests {
         );
         assert_eq!(preview.merge.replaced_paths, 1);
         assert!(preview.merge.warning.is_some());
+        assert!(preview.merge.graph_surface_added > 0);
+        assert_eq!(preview.merge.graph_surface_removed, 0);
+        assert!(
+            preview
+                .merge
+                .completeness_blockers
+                .iter()
+                .any(|blocker| blocker.kind == "graph_surface_added")
+        );
         assert!(labels.contains(&"src/main.rs"));
         assert!(labels.contains(&"changed"));
         assert!(labels.contains(&"src/stable.rs"));
@@ -2263,6 +2326,11 @@ mod tests {
         assert!(update.preview.merge.complete_graph);
         assert!(update.cache.stored);
         assert!(update.preview.merge.warning.is_none());
+        assert_eq!(update.preview.merge.incoming_cross_file_edges, 0);
+        assert_eq!(update.preview.merge.graph_surface_added, 0);
+        assert_eq!(update.preview.merge.graph_surface_removed, 0);
+        assert_eq!(update.preview.merge.removed_paths_blocking, 0);
+        assert!(update.preview.merge.completeness_blockers.is_empty());
         let hit = scan_project_cached(&root, &options, Some(&cache)).unwrap();
         assert_eq!(hit.cache.status, CacheStatus::Hit);
 
@@ -2298,7 +2366,17 @@ mod tests {
         );
         assert!(!update.preview.merge.complete_graph);
         assert!(!update.cache.stored);
-        assert!(update.cache.reason.contains("file graph surface"));
+        assert!(update.preview.merge.graph_surface_added > 0);
+        assert_eq!(update.preview.merge.graph_surface_removed, 0);
+        assert!(
+            update
+                .preview
+                .merge
+                .completeness_blockers
+                .iter()
+                .any(|blocker| blocker.kind == "graph_surface_added")
+        );
+        assert!(update.cache.reason.contains("graph-surface nodes"));
         assert!(cache.load(&root, &options, &current).unwrap().is_none());
 
         fs::remove_dir_all(root).unwrap();
