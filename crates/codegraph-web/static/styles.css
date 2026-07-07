@@ -340,6 +340,23 @@ button:disabled {
   gap: 6px;
 }
 
+.semantic-work-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: 6px;
+  align-items: end;
+}
+
+.semantic-work-filters select,
+.semantic-work-filters button {
+  height: 32px;
+  font-size: 12px;
+}
+
+.semantic-work-filters button {
+  padding: 0 10px;
+}
+
 .semantic-work-summary {
   display: flex;
   align-items: center;
@@ -1501,6 +1518,10 @@ button:disabled {
 
   .graph-stage {
     order: 1;
+  }
+
+  .semantic-work-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .graph-controls {

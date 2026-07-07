@@ -52,6 +52,35 @@
           <div id="scanPolicyList" class="scan-policy-list"></div>
           <div id="coverageList" class="coverage-list"></div>
           <div id="lspList" class="lsp-list"></div>
+          <div class="semantic-work-filters">
+            <label class="field compact">
+              <span>Work Lang</span>
+              <select id="semanticWorkLanguageInput">
+                <option value="">Any</option>
+              </select>
+            </label>
+            <label class="field compact">
+              <span>Status</span>
+              <select id="semanticWorkStatusInput">
+                <option value="">Any</option>
+                <option value="ready">Ready</option>
+                <option value="missing_server">Missing</option>
+                <option value="unsupported_language">Unsupported</option>
+              </select>
+            </label>
+            <label class="field compact">
+              <span>Capability</span>
+              <select id="semanticWorkCapabilityInput">
+                <option value="">Any</option>
+                <option value="definitions">Definitions</option>
+                <option value="diagnostics">Diagnostics</option>
+                <option value="document_symbols">Symbols</option>
+                <option value="references">References</option>
+                <option value="language_server">Server</option>
+              </select>
+            </label>
+            <button id="semanticWorkFilterButton" type="button">Apply</button>
+          </div>
           <div id="semanticWorkList" class="semantic-work-list"></div>
           <div id="architectureList" class="architecture-list"></div>
           <div id="languageDependencyList" class="language-dependency-list"></div>

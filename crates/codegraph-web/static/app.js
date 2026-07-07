@@ -95,6 +95,10 @@ const edgeSourceList = document.querySelector("#edgeSourceList");
 const scanPolicyList = document.querySelector("#scanPolicyList");
 const coverageList = document.querySelector("#coverageList");
 const lspList = document.querySelector("#lspList");
+const semanticWorkLanguageInput = document.querySelector("#semanticWorkLanguageInput");
+const semanticWorkStatusInput = document.querySelector("#semanticWorkStatusInput");
+const semanticWorkCapabilityInput = document.querySelector("#semanticWorkCapabilityInput");
+const semanticWorkFilterButton = document.querySelector("#semanticWorkFilterButton");
 const semanticWorkList = document.querySelector("#semanticWorkList");
 const architectureList = document.querySelector("#architectureList");
 const languageDependencyList = document.querySelector("#languageDependencyList");
@@ -227,6 +231,10 @@ checkButton.addEventListener("click", () => runCheck());
 checkFailOnInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runCheck();
 });
+semanticWorkFilterButton.addEventListener("click", () => loadProjectOverview());
+for (const input of [semanticWorkLanguageInput, semanticWorkStatusInput, semanticWorkCapabilityInput]) {
+  input.addEventListener("change", () => loadProjectOverview());
+}
 pagePrevButton.addEventListener("click", () => shiftGraphPage(-1));
 pageNextButton.addEventListener("click", () => shiftGraphPage(1));
 pageReloadButton.addEventListener("click", () => loadGraphPage({ resetPage: true }));
@@ -537,6 +545,13 @@ async function loadProjectOverview() {
   state.overviewRequest += 1;
   const requestId = state.overviewRequest;
   const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
+  const semanticParams = new URLSearchParams(params);
+  const workLanguage = semanticWorkLanguageInput.value.trim();
+  const workStatus = semanticWorkStatusInput.value.trim();
+  const workCapability = semanticWorkCapabilityInput.value.trim();
+  if (workLanguage) semanticParams.set("work_language", workLanguage);
+  if (workStatus) semanticParams.set("work_status", workStatus);
+  if (workCapability) semanticParams.set("work_capability", workCapability);
 
   try {
     const [
@@ -557,7 +572,7 @@ async function loadProjectOverview() {
       fetch(`/api/coverage?${params.toString()}`),
       fetch("/api/lsp"),
       fetch(`/api/semantic-readiness?${params.toString()}`),
-      fetch(`/api/semantic-plan?${params.toString()}`),
+      fetch(`/api/semantic-plan?${semanticParams.toString()}`),
       fetch(`/api/architecture?${params.toString()}&group_limit=8&edge_limit=40`),
       fetch(`/api/language-dependencies?${params.toString()}&limit=8`),
       fetch(`/api/hotspots?${params.toString()}&limit=8`),
@@ -695,6 +710,7 @@ function renderOverview() {
   renderScanPolicy(state.scanOptions);
   renderCoverage(state.coverage);
   renderLspStatus(state.lsp, state.semanticReadiness, state.semanticPlan);
+  renderSemanticWorkFilterOptions(summary);
   renderSemanticWork(state.semanticPlan);
   renderArchitecture(state.architecture);
   renderLanguageDependencies(state.languageDependencies);
@@ -960,17 +976,18 @@ function renderLspStatus(report, readiness, plan) {
 function renderSemanticWork(plan) {
   const items = Array.isArray(plan?.work_items) ? plan.work_items.slice(0, 8) : [];
   if (items.length === 0) {
-    semanticWorkList.innerHTML = "";
+    semanticWorkList.innerHTML = '<p class="empty">No semantic work items.</p>';
     return;
   }
 
+  const filter = renderSemanticWorkFilterLabel(plan.work_item_filter);
   const truncated = plan.truncated_work_items
     ? `<span>${items.length}/${Number(plan.total_work_items || items.length)} shown</span>`
     : `<span>${items.length} queued</span>`;
   semanticWorkList.innerHTML = `
     <div class="semantic-work-summary">
       <strong>Semantic work</strong>
-      ${truncated}
+      <span>${filter}${truncated}</span>
     </div>
     <ul class="semantic-work-items">
       ${items.map(renderSemanticWorkItem).join("")}
@@ -982,6 +999,32 @@ function renderSemanticWork(plan) {
       if (item) focusSemanticWorkItem(item);
     });
   });
+}
+
+function renderSemanticWorkFilterOptions(summary) {
+  const current = semanticWorkLanguageInput.value;
+  const languages = Object.keys(summary?.languages || {}).sort((left, right) => left.localeCompare(right));
+  semanticWorkLanguageInput.innerHTML = [
+    '<option value="">Any</option>',
+    ...languages.map(
+      (language) =>
+        `<option value="${escapeHtml(language)}" ${language === current ? "selected" : ""}>${escapeHtml(language)}</option>`,
+    ),
+  ].join("");
+  if (current && !languages.includes(current)) {
+    semanticWorkLanguageInput.insertAdjacentHTML(
+      "beforeend",
+      `<option value="${escapeHtml(current)}" selected>${escapeHtml(current)}</option>`,
+    );
+  }
+}
+
+function renderSemanticWorkFilterLabel(filter) {
+  const labels = [];
+  if (filter?.language) labels.push(filter.language);
+  if (filter?.status) labels.push(formatKind(filter.status));
+  if (filter?.capability) labels.push(formatKind(filter.capability));
+  return labels.length > 0 ? `${escapeHtml(labels.join(" / "))} · ` : "";
 }
 
 function renderSemanticWorkItem(item, index) {
