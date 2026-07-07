@@ -827,13 +827,59 @@ function renderArchitecture(architecture) {
       <strong>${Number(architecture.total_edges || 0)}</strong>
     </div>
   `);
+  const edgeChips = (Array.isArray(architecture.edges) ? architecture.edges.slice(0, 6) : [])
+    .map((edge, index) => ({ edge, index }))
+    .filter(({ edge }) => Array.isArray(edge.edge_indexes) && edge.edge_indexes.length > 0)
+    .map(
+      ({ edge, index }) => `
+        <button class="architecture-edge-chip" type="button" data-architecture-edge-index="${index}">
+          <span>${escapeHtml(edge.source || "root")} -> ${escapeHtml(edge.target || "root")}</span>
+          <strong>${Number(edge.count || 0)}</strong>
+        </button>
+      `,
+    );
   architectureList.innerHTML = groupChips.join("");
+  if (edgeChips.length > 0) {
+    architectureList.insertAdjacentHTML("beforeend", edgeChips.join(""));
+  }
   architectureList.querySelectorAll("[data-architecture-prefix]").forEach((button) => {
     button.addEventListener("click", () => {
       state.architecturePathPrefix = button.dataset.architecturePrefix || "";
       loadGraphPage({ resetPage: true, resetLayout: true });
     });
   });
+  architectureList.querySelectorAll("[data-architecture-edge-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const edge = architecture.edges?.[Number(button.dataset.architectureEdgeIndex)];
+      if (!edge) return;
+      focusArchitectureEdge(edge);
+    });
+  });
+}
+
+async function focusArchitectureEdge(edge) {
+  const edgeIndexes = Array.isArray(edge.edge_indexes) ? edge.edge_indexes : [];
+  if (edgeIndexes.length === 0) return;
+  state.insightFocusRequest += 1;
+  const requestId = state.insightFocusRequest;
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    edge_indexes: edgeIndexes.join(","),
+    edge_limit: "300",
+  });
+
+  try {
+    const response = await fetch(`/api/focus?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.insightFocusRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "focus failed");
+    }
+    showFocusedGraph(body, `Focus: ${edge.source || "area"} -> ${edge.target || "area"}`);
+  } catch (error) {
+    if (requestId !== state.insightFocusRequest) return;
+    queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
 }
 
 function annotationFacets(summary, nodes) {

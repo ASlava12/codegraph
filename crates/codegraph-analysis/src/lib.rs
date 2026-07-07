@@ -51,6 +51,7 @@ pub struct ArchitectureEdge {
     pub count: usize,
     pub edge_kinds: BTreeMap<String, usize>,
     pub confidences: BTreeMap<String, usize>,
+    pub edge_indexes: Vec<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -788,7 +789,7 @@ pub fn architecture_map(
     }
 
     let mut edges: BTreeMap<(String, String), ArchitectureEdge> = BTreeMap::new();
-    for edge in &graph.edges {
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
         if !is_architecture_dependency_edge(&edge.kind) {
             continue;
         }
@@ -808,8 +809,12 @@ pub fn architecture_map(
             count: 0,
             edge_kinds: BTreeMap::new(),
             confidences: BTreeMap::new(),
+            edge_indexes: Vec::new(),
         });
         architecture_edge.count += 1;
+        if architecture_edge.edge_indexes.len() < 100 {
+            architecture_edge.edge_indexes.push(edge_index);
+        }
         *architecture_edge
             .edge_kinds
             .entry(edge_kind_name(&edge.kind))
@@ -4079,6 +4084,7 @@ mod tests {
         assert_eq!(map.edges[0].source, "api");
         assert_eq!(map.edges[0].target, "core");
         assert_eq!(map.edges[0].edge_kinds.get("calls"), Some(&1));
+        assert_eq!(map.edges[0].edge_indexes, vec![4]);
     }
 
     #[test]

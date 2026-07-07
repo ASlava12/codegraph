@@ -257,6 +257,7 @@ button:disabled {
 .scan-policy-chip,
 .coverage-chip,
 .architecture-chip,
+.architecture-edge-chip,
 .annotation-chip {
   display: inline-grid;
   grid-template-columns: minmax(0, auto) auto;
@@ -278,6 +279,7 @@ button:disabled {
 .scan-policy-chip span,
 .coverage-chip span,
 .architecture-chip span,
+.architecture-edge-chip span,
 .annotation-chip span {
   min-width: 0;
   overflow: hidden;
@@ -292,6 +294,7 @@ button:disabled {
 .scan-policy-chip strong,
 .coverage-chip strong,
 .architecture-chip strong,
+.architecture-edge-chip strong,
 .annotation-chip strong {
   color: var(--muted);
   font-size: 11px;
@@ -310,6 +313,11 @@ button:disabled {
 .architecture-chip {
   max-width: 100%;
   background: rgba(184, 142, 230, 0.1);
+}
+
+.architecture-edge-chip {
+  max-width: 100%;
+  background: rgba(223, 126, 126, 0.1);
 }
 
 .annotation-chip {
@@ -345,6 +353,7 @@ button:disabled {
 .language-chip:hover,
 .confidence-chip:hover,
 .architecture-chip:hover,
+.architecture-edge-chip:hover,
 .entrypoint-item:hover {
   border-color: rgba(92, 200, 167, 0.55);
   background: rgba(92, 200, 167, 0.08);

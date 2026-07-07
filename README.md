@@ -45,6 +45,7 @@ Implemented now:
 - Web project overview for language mix, edge confidence/source/relation mix, and entrypoint launch points.
 - Architecture map reports in CLI, API, and web overview for top-level project areas and cross-area dependencies.
 - Architecture overview chips can focus the paged graph by project area path prefix.
+- Architecture dependency chips can focus the exact graph edges behind cross-area coupling.
 - Web path navigation for finding, focusing, and visually highlighting dependency paths between graph nodes.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
 - Server-backed web insights for project-wide findings while browsing paged graph slices.
