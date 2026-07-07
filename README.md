@@ -44,6 +44,7 @@ Implemented now:
 - API schema enum values document graph node kinds, edge kinds, and confidence levels used by graph filters.
 - API schema enum values stay aligned with semantic work statuses and capabilities used by LSP work queues.
 - Runtime metrics endpoint for uptime, API/schema versions, roots, language/feature counts, cache state, job stores, and concurrency.
+- Built-in HTTP access logs with method, target, status, and latency for server operations.
 - Server-wide security headers for the embedded web UI and API responses.
 - Project report snapshots in CLI, API, and web export for summary, quality gate, insights, topology reports, cache, and scan coverage.
 - Web overview chips for server capabilities, API/schema versions, cache state, supported language/export counts, job limits, and route groups.

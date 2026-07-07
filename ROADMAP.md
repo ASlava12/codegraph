@@ -223,6 +223,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Use API schema enum values as web graph filter suggestions.
 - [x] Add runtime metrics endpoint for uptime, cache, job stores, and concurrency.
 - [x] Surface runtime metrics in the web UI.
+- [x] Add built-in HTTP access logs with latency and quiet-mode control.
 - [x] Surface server capabilities in the web overview.
 - [x] Add server-wide security headers for embedded web and API responses.
 - [x] Add project report snapshots across CLI, API, and web export.

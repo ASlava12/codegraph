@@ -113,6 +113,10 @@ struct Args {
     /// Maximum semantic enrichment jobs allowed to run at the same time.
     #[arg(long, default_value_t = DEFAULT_MAX_SEMANTIC_CONCURRENCY)]
     max_semantic_concurrency: usize,
+
+    /// Disable per-request access logs on stderr.
+    #[arg(long)]
+    quiet_access_log: bool,
 }
 
 #[derive(Clone)]
@@ -129,6 +133,7 @@ struct AppState {
     max_semantic_jobs: usize,
     max_scan_concurrency: usize,
     max_semantic_concurrency: usize,
+    access_log_enabled: bool,
     scan_permits: Arc<Semaphore>,
     semantic_permits: Arc<Semaphore>,
     next_job_id: Arc<AtomicU64>,
@@ -690,6 +695,7 @@ async fn main() -> Result<()> {
         max_semantic_jobs: args.max_semantic_jobs.max(1),
         max_scan_concurrency,
         max_semantic_concurrency,
+        access_log_enabled: !args.quiet_access_log,
         scan_permits: Arc::new(Semaphore::new(max_scan_concurrency)),
         semantic_permits: Arc::new(Semaphore::new(max_semantic_concurrency)),
         next_job_id: Arc::new(AtomicU64::new(1)),
@@ -770,6 +776,11 @@ async fn main() -> Result<()> {
         .fallback(not_found)
         .with_state(state)
         .layer(middleware::from_fn(security_headers));
+    let app = if args.quiet_access_log {
+        app
+    } else {
+        app.layer(middleware::from_fn(access_log))
+    };
 
     let listener = TcpListener::bind(bind_addr)
         .await
@@ -783,6 +794,31 @@ async fn security_headers(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     apply_security_headers(response.headers_mut());
     response
+}
+
+async fn access_log(request: Request, next: Next) -> Response {
+    let method = request.method().as_str().to_string();
+    let target = request
+        .uri()
+        .path_and_query()
+        .map(|target| target.as_str().to_string())
+        .unwrap_or_else(|| request.uri().path().to_string());
+    let started = Instant::now();
+    let response = next.run(request).await;
+    let elapsed = started.elapsed();
+    eprintln!(
+        "{}",
+        access_log_line(&method, &target, response.status(), elapsed)
+    );
+    response
+}
+
+fn access_log_line(method: &str, target: &str, status: StatusCode, elapsed: Duration) -> String {
+    format!(
+        "{method} {target} -> {} {}ms",
+        status.as_u16(),
+        elapsed.as_millis()
+    )
 }
 
 fn apply_security_headers(headers: &mut HeaderMap) {
@@ -1141,7 +1177,7 @@ async fn metrics_api(State(state): State<AppState>) -> Result<Json<MetricsRespon
         root: state.root.display().to_string(),
         projects: state.projects.len(),
         languages: language_adapters().len(),
-        features: capability_features(state.cache.is_some()).len(),
+        features: capability_features(state.cache.is_some(), state.access_log_enabled).len(),
         max_file_size: options.max_file_size,
         cache: CacheCapabilityResponse {
             enabled: state.cache.is_some(),
@@ -1178,7 +1214,7 @@ async fn capabilities_api(
         projects: project_responses(&state),
         languages: language_responses(),
         export_formats: vec!["json", "dot", "ndjson"],
-        features: capability_features(state.cache.is_some()),
+        features: capability_features(state.cache.is_some(), state.access_log_enabled),
         endpoints: capability_endpoints(),
         scan: ScanCapabilityResponse {
             include_hidden: options.include_hidden,
@@ -4056,7 +4092,7 @@ fn query_param(
     }
 }
 
-fn capability_features(cache_enabled: bool) -> Vec<&'static str> {
+fn capability_features(cache_enabled: bool, access_log_enabled: bool) -> Vec<&'static str> {
     let mut features = vec![
         "multi_project_roots",
         "api_schema",
@@ -4093,6 +4129,9 @@ fn capability_features(cache_enabled: bool) -> Vec<&'static str> {
         "dot_export",
         "ndjson_export",
     ];
+    if access_log_enabled {
+        features.push("access_log");
+    }
     if cache_enabled {
         features.push("persistent_graph_cache");
         features.push("persistent_graph_chunks");
@@ -4359,9 +4398,23 @@ mod tests {
     }
 
     #[test]
+    fn access_log_line_includes_method_target_status_and_latency() {
+        assert_eq!(
+            access_log_line(
+                "GET",
+                "/api/health?verbose=1",
+                StatusCode::OK,
+                Duration::from_millis(42),
+            ),
+            "GET /api/health?verbose=1 -> 200 42ms"
+        );
+    }
+
+    #[test]
     fn capability_features_reflect_cache_availability() {
-        let without_cache = capability_features(false);
-        let with_cache = capability_features(true);
+        let without_cache = capability_features(false, true);
+        let with_cache = capability_features(true, true);
+        let quiet = capability_features(true, false);
 
         assert!(without_cache.contains(&"api_schema"));
         assert!(without_cache.contains(&"incremental_scan_plan"));
@@ -4371,6 +4424,7 @@ mod tests {
         assert!(without_cache.contains(&"async_scan_jobs"));
         assert!(without_cache.contains(&"job_cancellation"));
         assert!(without_cache.contains(&"runtime_metrics"));
+        assert!(without_cache.contains(&"access_log"));
         assert!(without_cache.contains(&"project_report"));
         assert!(without_cache.contains(&"semantic_lsp"));
         assert!(without_cache.contains(&"node_cards"));
@@ -4380,6 +4434,7 @@ mod tests {
         assert!(with_cache.contains(&"persistent_graph_cache"));
         assert!(with_cache.contains(&"persistent_graph_chunks"));
         assert!(with_cache.contains(&"semantic_lsp_cache"));
+        assert!(!quiet.contains(&"access_log"));
     }
 
     #[test]
@@ -4776,6 +4831,7 @@ mod tests {
             max_semantic_jobs: DEFAULT_MAX_SEMANTIC_JOBS,
             max_scan_concurrency: DEFAULT_MAX_SCAN_CONCURRENCY,
             max_semantic_concurrency: DEFAULT_MAX_SEMANTIC_CONCURRENCY,
+            access_log_enabled: true,
             scan_permits: Arc::new(Semaphore::new(DEFAULT_MAX_SCAN_CONCURRENCY)),
             semantic_permits: Arc::new(Semaphore::new(DEFAULT_MAX_SEMANTIC_CONCURRENCY)),
             next_job_id: Arc::new(AtomicU64::new(1)),
