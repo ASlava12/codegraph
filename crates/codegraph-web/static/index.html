@@ -328,6 +328,10 @@
             <button id="resetLayoutButton" type="button" aria-label="Restart graph layout" data-i18n="button.reset">Reset</button>
             <button id="toggleLayoutButton" type="button" aria-label="Pause graph layout">Pause</button>
           </div>
+          <div class="graph-label-modes" role="group" aria-label="Node labels">
+            <button type="button" data-label-mode="auto" aria-pressed="true" data-i18n="button.labelsAuto">Auto</button>
+            <button type="button" data-label-mode="focus" aria-pressed="false" data-i18n="button.labelsFocus">Focus</button>
+          </div>
           <span id="viewportInfo" class="viewport-info">0 nodes</span>
         </div>
         <canvas id="graphCanvas"></canvas>

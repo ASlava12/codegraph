@@ -1,4 +1,7 @@
 const DEFAULT_LOCALE = "en";
+const DEFAULT_LABEL_MODE = "auto";
+const LABEL_MODES = new Set(["auto", "focus"]);
+const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 
 const I18N = {
   en: {
@@ -70,6 +73,8 @@ const I18N = {
     "button.reset": "Reset",
     "button.pause": "Pause",
     "button.resume": "Resume",
+    "button.labelsAuto": "Auto",
+    "button.labelsFocus": "Focus",
     "button.explain": "Explain",
     "option.any": "Any",
     "option.ready": "Ready",
@@ -188,6 +193,8 @@ const I18N = {
     "button.reset": "Сброс",
     "button.pause": "Пауза",
     "button.resume": "Продолжить",
+    "button.labelsAuto": "Авто",
+    "button.labelsFocus": "Фокус",
     "button.explain": "Пояснить",
     "option.any": "Любой",
     "option.ready": "Готово",
@@ -273,6 +280,16 @@ function getInitialLocale() {
   return DEFAULT_LOCALE;
 }
 
+function getInitialLabelMode() {
+  try {
+    const saved = window.localStorage?.getItem(LABEL_MODE_STORAGE_KEY);
+    if (saved && LABEL_MODES.has(saved)) return saved;
+  } catch (error) {
+    // Local storage can be disabled; the in-memory label mode still works.
+  }
+  return DEFAULT_LABEL_MODE;
+}
+
 const state = {
   graph: { nodes: [], edges: [] },
   visibleNodes: [],
@@ -331,6 +348,7 @@ const state = {
     root: "",
   },
   locale: getInitialLocale(),
+  labelMode: getInitialLabelMode(),
 };
 
 const colors = {
@@ -444,6 +462,7 @@ const fitGraphButton = document.querySelector("#fitGraphButton");
 const resetLayoutButton = document.querySelector("#resetLayoutButton");
 const toggleLayoutButton = document.querySelector("#toggleLayoutButton");
 const viewportInfo = document.querySelector("#viewportInfo");
+const labelModeButtons = Array.from(document.querySelectorAll("[data-label-mode]"));
 
 localeSelect.value = state.locale;
 localeSelect.addEventListener("change", () => setLocale(localeSelect.value));
@@ -522,6 +541,9 @@ zoomInButton.addEventListener("click", () => zoomAtCanvasCenter(1.18));
 fitGraphButton.addEventListener("click", () => fitVisibleGraph());
 resetLayoutButton.addEventListener("click", () => resetGraphLayout());
 toggleLayoutButton.addEventListener("click", () => toggleLayout());
+labelModeButtons.forEach((button) => {
+  button.addEventListener("click", () => setLabelMode(button.dataset.labelMode));
+});
 for (const input of [
   nodeLimitInput,
   edgeLimitInput,
@@ -571,6 +593,18 @@ function setLocale(locale) {
     // Local storage can be disabled; the in-memory locale still works.
   }
   applyLocale();
+}
+
+function setLabelMode(mode) {
+  if (!LABEL_MODES.has(mode)) return;
+  state.labelMode = mode;
+  try {
+    window.localStorage?.setItem(LABEL_MODE_STORAGE_KEY, mode);
+  } catch (error) {
+    // Local storage can be disabled; the in-memory label mode still works.
+  }
+  renderViewportControls();
+  draw();
 }
 
 function applyLocale() {
@@ -3175,6 +3209,11 @@ function renderViewportControls() {
   zoomInButton.disabled = state.graph.nodes.length === 0;
   zoomOutButton.disabled = state.graph.nodes.length === 0;
   toggleLayoutButton.disabled = state.graph.nodes.length === 0;
+  labelModeButtons.forEach((button) => {
+    const active = button.dataset.labelMode === state.labelMode;
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    button.disabled = state.graph.nodes.length === 0;
+  });
 }
 
 function zoomAtCanvasCenter(scale) {
@@ -3364,8 +3403,17 @@ function draw() {
     ctx.strokeStyle = selected ? "#ffffff" : focused ? "rgba(237, 241, 242, 0.92)" : "rgba(255,255,255,0.55)";
     ctx.stroke();
 
-    if (shouldShowNodeLabel(selected, hovered, focused)) {
-      labelCandidates.push({ node, position, radius, selected, hovered, focused });
+    if (shouldShowNodeLabel(node, selected, hovered, focused)) {
+      labelCandidates.push({
+        node,
+        position,
+        radius,
+        selected,
+        hovered,
+        focused,
+        forced: selected || hovered || focused,
+        priority: nodeLabelPriority(node),
+      });
     }
   });
 
@@ -3425,60 +3473,168 @@ function drawArrowHead(start, end, color) {
   ctx.fill();
 }
 
-function shouldShowNodeLabel(selected, hovered, focused) {
+function shouldShowNodeLabel(node, selected, hovered, focused) {
   if (selected || hovered || focused) return true;
-  if (state.visibleNodes.length <= 40 && state.zoom >= 0.92) return true;
-  if (state.visibleNodes.length <= 120 && state.zoom >= 1.12) return true;
-  return state.zoom >= 1.38;
+  if (state.labelMode === "focus") return false;
+
+  const priority = nodeLabelPriority(node);
+  const visibleCount = state.visibleNodes.length;
+  if (state.search && visibleCount <= 120 && state.zoom >= 0.82) return true;
+  if (state.zoom < 0.9) return false;
+  if (visibleCount > 220) return state.zoom >= 1.75 && priority <= 4;
+  if (visibleCount > 120) return state.zoom >= 1.45 && priority <= 6;
+  if (visibleCount > 60) return state.zoom >= 1.15 || priority <= 4;
+  if (priority >= 8) return state.zoom >= 1.7;
+  return true;
 }
 
 function drawNodeLabels(candidates) {
   const occupied = [];
+  const nodeBoxes = nodeOcclusionBoxes();
+  const budget = nodeLabelBudget();
+  let drawnAutoLabels = 0;
   const ordered = candidates.sort((left, right) => {
     const leftPriority = left.selected ? 0 : left.hovered ? 1 : left.focused ? 2 : 3;
     const rightPriority = right.selected ? 0 : right.hovered ? 1 : right.focused ? 2 : 3;
-    return leftPriority - rightPriority || left.node.label.localeCompare(right.node.label);
+    return (
+      leftPriority - rightPriority ||
+      left.priority - right.priority ||
+      left.node.label.localeCompare(right.node.label)
+    );
   });
 
   ordered.forEach((candidate) => {
-    const geometry = labelGeometry(candidate.node, candidate.position, candidate.radius);
-    const forced = candidate.selected || candidate.hovered || candidate.focused;
+    const forced = candidate.forced;
+    if (!forced && drawnAutoLabels >= budget) return;
+    const geometry = labelGeometry(candidate);
+    if (!forced && !boxIntersectsViewport(geometry)) return;
     if (!forced && occupied.some((box) => boxesIntersect(box, geometry))) return;
+    if (
+      !forced &&
+      nodeBoxes.some((box) => box.nodeId !== candidate.node.id && boxesIntersect(box, geometry))
+    ) {
+      return;
+    }
     drawLabelGeometry(geometry);
     occupied.push(geometry);
+    if (!forced) drawnAutoLabels += 1;
   });
 }
 
-function labelGeometry(node, position, radius) {
-  const label = node.label.length > 34 ? `${node.label.slice(0, 31)}...` : node.label;
+function labelGeometry(candidate) {
+  const { node, position, radius, forced } = candidate;
   const zoom = Math.max(0.18, state.zoom);
-  const padX = 6 / zoom;
-  const height = 22 / zoom;
-  ctx.font = `${12 / zoom}px Inter, sans-serif`;
+  const maxLength = forced ? 46 : state.zoom >= 1.8 ? 30 : 22;
+  const label = truncateGraphLabel(node.label, maxLength);
+  const padX = (forced ? 7 : 5) / zoom;
+  const height = (forced ? 23 : 20) / zoom;
+  ctx.font = `${(forced ? 12 : 11) / zoom}px Inter, sans-serif`;
   const metrics = ctx.measureText(label);
   const width = metrics.width + padX * 2;
   const x = position.x - width / 2;
-  const y = position.y + radius + 7 / zoom;
+  const y = position.y + radius + (forced ? 9 : 6) / zoom;
   return {
+    nodeId: node.id,
     label,
     x,
     y,
     width,
     height,
     padX,
-    textY: y + 15 / zoom,
+    textY: y + (forced ? 15 : 14) / zoom,
     radius: 5 / zoom,
     font: ctx.font,
+    forced,
   };
 }
 
 function drawLabelGeometry(geometry) {
   ctx.font = geometry.font;
-  ctx.fillStyle = "rgba(13, 15, 16, 0.82)";
+  ctx.fillStyle = geometry.forced
+    ? "rgba(13, 15, 16, 0.84)"
+    : "rgba(13, 15, 16, 0.58)";
   roundRect(ctx, geometry.x, geometry.y, geometry.width, geometry.height, geometry.radius);
   ctx.fill();
+  if (geometry.forced) {
+    ctx.lineWidth = 1 / Math.max(0.18, state.zoom);
+    ctx.strokeStyle = "rgba(237, 241, 242, 0.22)";
+    ctx.stroke();
+  }
   ctx.fillStyle = "#edf1f2";
   ctx.fillText(geometry.label, geometry.x + geometry.padX, geometry.textY);
+}
+
+function nodeLabelPriority(node) {
+  if (node.metadata?.item_kind === "diagnostic") return 1;
+  switch (node.kind) {
+    case "entrypoint":
+      return 1;
+    case "repository":
+      return 2;
+    case "config":
+    case "environment":
+      return 3;
+    case "directory":
+    case "file":
+    case "module":
+    case "type":
+      return 5;
+    case "function":
+      return 7;
+    case "external_dependency":
+      return 9;
+    default:
+      return 8;
+  }
+}
+
+function nodeLabelBudget() {
+  if (state.labelMode === "focus") return 0;
+  const visibleCount = state.visibleNodes.length;
+  let budget = visibleCount <= 25
+    ? visibleCount
+    : visibleCount <= 80
+      ? 28
+      : visibleCount <= 160
+        ? 20
+        : 12;
+  if (state.zoom >= 2.4) budget += 14;
+  else if (state.zoom >= 1.8) budget += 8;
+  else if (state.zoom < 1.1) budget -= 8;
+  if (state.search) budget += 8;
+  return Math.max(4, Math.min(64, budget));
+}
+
+function nodeOcclusionBoxes() {
+  const pad = 7 / Math.max(0.18, state.zoom);
+  return state.visibleNodes
+    .map((node) => {
+      const position = state.positions.get(node.id);
+      if (!position) return null;
+      const radius = nodeRadius(node) + pad;
+      return {
+        nodeId: node.id,
+        x: position.x - radius,
+        y: position.y - radius,
+        width: radius * 2,
+        height: radius * 2,
+      };
+    })
+    .filter(Boolean);
+}
+
+function truncateGraphLabel(value, maxLength) {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function boxIntersectsViewport(box) {
+  const left = box.x * state.zoom + state.pan.x;
+  const right = (box.x + box.width) * state.zoom + state.pan.x;
+  const top = box.y * state.zoom + state.pan.y;
+  const bottom = (box.y + box.height) * state.zoom + state.pan.y;
+  const margin = 24;
+  return !(right < -margin || left > canvas.width + margin || bottom < -margin || top > canvas.height + margin);
 }
 
 function boxesIntersect(left, right) {
