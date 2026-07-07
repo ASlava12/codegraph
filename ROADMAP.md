@@ -244,6 +244,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Publish web deep-link parameters in the API schema for agent discovery.
 - [x] Add runtime metrics endpoint for uptime, cache, job stores, and concurrency.
 - [x] Add lightweight liveness and readiness probes for production deployments.
+- [x] Add a multi-stage Docker image for web/API server deployment.
 - [x] Surface runtime metrics in the web UI.
 - [x] Add built-in HTTP access logs with latency and quiet-mode control.
 - [x] Add `x-request-id` response headers, JSON error fields, and access-log correlation.

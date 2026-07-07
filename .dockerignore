@@ -1,0 +1,10 @@
+.git
+.github
+target
+**/target
+.DS_Store
+*.log
+*.tmp
+codegraph-fixture.*
+codegraph-incremental.*
+responses.json

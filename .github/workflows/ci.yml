@@ -48,6 +48,9 @@ jobs:
       - name: Run web JavaScript tests
         run: node --test crates/codegraph-web/static/label-policy.test.js
 
+      - name: Build Docker image
+        run: docker build -t codegraph:ci .
+
       - name: Smoke scan CLI
         run: |
           cargo run -p codegraph-cli -- scan . --format ndjson > /tmp/codegraph.ndjson

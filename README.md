@@ -61,6 +61,7 @@ Implemented now:
 - API schema enum values stay aligned with semantic work statuses and capabilities used by LSP work queues.
 - Runtime metrics endpoint for uptime, API/schema versions, roots, language/feature counts, cache state, job stores, and concurrency.
 - Lightweight liveness and readiness probe endpoints for deployment health checks.
+- Multi-stage Docker image definition for running the web/API server with a mounted repository and persistent cache volume.
 - Built-in HTTP access logs with method, target, status, and latency for server operations.
 - Per-response `x-request-id` correlation headers mirrored in access logs and JSON error bodies.
 - Graceful HTTP server shutdown on Ctrl-C and SIGTERM.
@@ -499,6 +500,19 @@ The server stores persistent graph cache records outside the project by default
 (`CODEGRAPH_CACHE_DIR`, `XDG_CACHE_HOME/codegraph`, `~/Library/Caches/codegraph`
 on macOS, or a temp fallback). Use `--cache-dir <path>` to choose a directory or
 `--no-cache` to force every request to rescan.
+
+Build and run the container image:
+
+```bash
+docker build -t codegraph:local .
+docker run --rm -p 3765:3765 \
+  -v "$PWD:/workspace:ro" \
+  -v codegraph-cache:/cache \
+  codegraph:local
+```
+
+The image starts `codegraph-server` as a non-root user with `/workspace` as the
+default project root and `/cache` as the persistent graph cache directory.
 Use `--max-file-size <bytes>` to cap per-file reads. Source/manifest files above
 the limit remain visible as skipped file nodes and produce `skipped_large_file`
 insights. When a selected project has `.codegraph/config.toml`, the server uses
