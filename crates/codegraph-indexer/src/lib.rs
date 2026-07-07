@@ -31,6 +31,7 @@ struct IndexContext {
     external_dependencies: BTreeMap<String, NodeId>,
     cargo_workspace_dependencies: BTreeMap<String, Option<String>>,
     go_modules: Vec<GoModuleRoot>,
+    cmake_include_dirs: Vec<String>,
     custom_rules: CustomRules,
     annotations: GraphAnnotations,
     pending_calls: Vec<PendingCall>,
@@ -192,6 +193,7 @@ pub fn scan_project(
         .unwrap_or(".");
     let cargo_workspace_dependencies = cargo_workspace_dependencies(root);
     let go_modules = go_module_roots(root, options);
+    let cmake_include_dirs = cmake_include_dirs(root, options);
     let custom_rules = custom_rules(root);
     let annotations = graph_annotations(root);
     let mut context = IndexContext {
@@ -201,6 +203,7 @@ pub fn scan_project(
         external_dependencies: BTreeMap::new(),
         cargo_workspace_dependencies,
         go_modules,
+        cmake_include_dirs,
         custom_rules,
         annotations,
         pending_calls: Vec::new(),
@@ -327,7 +330,12 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
                         parsed_item_kind_name(item.kind).to_string(),
                     );
                     let local_import = if item.kind == ParsedItemKind::Import {
-                        local_import_target(language, label, &item.label)
+                        local_import_target(
+                            language,
+                            label,
+                            &item.label,
+                            &context.cmake_include_dirs,
+                        )
                     } else {
                         None
                     };
@@ -664,7 +672,7 @@ fn index_commonjs_require_imports(
         metadata.insert("item_kind".to_string(), "import".to_string());
         metadata.insert("import_style".to_string(), "commonjs".to_string());
 
-        let local_import = local_import_target(language, label, &require_call);
+        let local_import = local_import_target(language, label, &require_call, &[]);
         if let Some(local_import) = local_import.as_ref() {
             metadata.insert("import_scope".to_string(), "local".to_string());
             metadata.insert("import_target".to_string(), local_import.target.clone());
@@ -2838,6 +2846,105 @@ fn go_module_roots(root: &Path, options: &IndexOptions) -> Vec<GoModuleRoot> {
     modules
 }
 
+fn cmake_include_dirs(root: &Path, options: &IndexOptions) -> Vec<String> {
+    let mut dirs = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| should_enter(entry, options))
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path == root || !entry.file_type().is_file() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) != Some("CMakeLists.txt")
+            || !is_probably_source_file(path, options.max_file_size)
+        {
+            continue;
+        }
+
+        let Ok(source) = fs::read_to_string(path) else {
+            continue;
+        };
+        let base = path
+            .parent()
+            .and_then(|parent| parent.strip_prefix(root).ok())
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map(|relative| normalize_path(&relative))
+            .filter(|relative| !relative.is_empty());
+        dirs.extend(cmake_include_dirs_from_source(base.as_deref(), &source));
+    }
+    dedup_preserving_order(&mut dirs);
+    dirs
+}
+
+fn cmake_include_dirs_from_source(base: Option<&str>, source: &str) -> Vec<String> {
+    let mut dirs = Vec::new();
+    for body in cmake_command_bodies(source, "include_directories") {
+        for arg in cmake_command_args(&body) {
+            if let Some(dir) = cmake_include_dir_arg(base, &arg) {
+                dirs.push(dir);
+            }
+        }
+    }
+    for body in cmake_command_bodies(source, "target_include_directories") {
+        for arg in cmake_command_args(&body).into_iter().skip(1) {
+            if is_cmake_include_scope_or_option(&arg) {
+                continue;
+            }
+            if let Some(dir) = cmake_include_dir_arg(base, &arg) {
+                dirs.push(dir);
+            }
+        }
+    }
+    dedup_preserving_order(&mut dirs);
+    dirs
+}
+
+fn cmake_include_dir_arg(base: Option<&str>, arg: &str) -> Option<String> {
+    let mut value = arg.trim().trim_matches(['"', '\'']).to_string();
+    if value.is_empty()
+        || value.starts_with('/')
+        || value.starts_with('$') && !value.starts_with("${")
+        || value.starts_with("$<")
+        || is_cmake_include_scope_or_option(&value)
+    {
+        return None;
+    }
+
+    let current_dir = base.unwrap_or(".");
+    let root_relative =
+        value.contains("${PROJECT_SOURCE_DIR}") || value.contains("${CMAKE_SOURCE_DIR}");
+    value = value
+        .replace("${CMAKE_CURRENT_SOURCE_DIR}", current_dir)
+        .replace("${CMAKE_CURRENT_LIST_DIR}", current_dir)
+        .replace("${PROJECT_SOURCE_DIR}", ".")
+        .replace("${CMAKE_SOURCE_DIR}", ".");
+    if value.contains('$') || value.starts_with('/') {
+        return None;
+    }
+
+    let path = if value == "." {
+        if root_relative {
+            ".".to_string()
+        } else {
+            current_dir.to_string()
+        }
+    } else if root_relative {
+        normalize_path(&value)
+    } else {
+        join_path(base, &value)
+    };
+    if path.is_empty() { None } else { Some(path) }
+}
+
+fn is_cmake_include_scope_or_option(value: &str) -> bool {
+    matches!(
+        value.to_ascii_uppercase().as_str(),
+        "PUBLIC" | "PRIVATE" | "INTERFACE" | "SYSTEM" | "BEFORE" | "AFTER"
+    )
+}
+
 fn dependency_version_from_toml_value(
     name: &str,
     value: &toml::Value,
@@ -2927,13 +3034,16 @@ fn local_import_target(
     language: Language,
     source_label: &str,
     import_label: &str,
+    cmake_include_dirs: &[String],
 ) -> Option<LocalImportTarget> {
     match language {
         Language::JavaScript | Language::TypeScript | Language::Tsx => {
             js_local_import_target(source_label, import_label)
         }
         Language::Python => python_local_import_target(source_label, import_label),
-        Language::C | Language::Cpp => c_local_import_target(source_label, import_label),
+        Language::C | Language::Cpp => {
+            c_local_import_target(source_label, import_label, cmake_include_dirs)
+        }
         Language::Php => php_local_import_target(source_label, import_label),
         Language::Bash => bash_local_import_target(source_label, import_label),
         Language::Rust => rust_local_import_target(source_label, import_label),
@@ -3077,11 +3187,22 @@ fn dedup_preserving_order(values: &mut Vec<String>) {
     values.retain(|value| seen.insert(value.clone()));
 }
 
-fn c_local_import_target(source_label: &str, import_label: &str) -> Option<LocalImportTarget> {
+fn c_local_import_target(
+    source_label: &str,
+    import_label: &str,
+    cmake_include_dirs: &[String],
+) -> Option<LocalImportTarget> {
     let header = first_quoted_value(import_label)?;
+    let mut candidates = vec![join_path(path_dir(source_label).as_deref(), &header)];
+    candidates.extend(
+        cmake_include_dirs
+            .iter()
+            .map(|include_dir| join_path(Some(include_dir), &header)),
+    );
+    dedup_preserving_order(&mut candidates);
     Some(LocalImportTarget {
         target: header.clone(),
-        candidates: vec![join_path(path_dir(source_label).as_deref(), &header)],
+        candidates,
     })
 }
 
@@ -4227,6 +4348,60 @@ mod tests {
                 .get("candidate_paths")
                 .is_some_and(|value| value.contains("src/missing.js"))
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_resolves_cmake_include_directories() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("include").join("app")).unwrap();
+        fs::write(
+            root.join("CMakeLists.txt"),
+            "cmake_minimum_required(VERSION 3.20)\nproject(demo C)\nadd_executable(demo src/main.c)\ntarget_include_directories(demo PRIVATE ${PROJECT_SOURCE_DIR}/include)\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("main.c"),
+            "#include \"app/config.h\"\nint main() { return APP_VALUE; }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("include").join("app").join("config.h"),
+            "#define APP_VALUE 0\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let include = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "#include \"app/config.h\"")
+            .expect("missing C include node");
+        let header = node_id(&graph, NodeKind::File, "include/app/config.h");
+
+        assert_eq!(
+            include.metadata.get("import_scope").map(String::as_str),
+            Some("local")
+        );
+        assert_eq!(
+            include.metadata.get("resolution").map(String::as_str),
+            Some("resolved")
+        );
+        assert_eq!(
+            include.metadata.get("resolved_path").map(String::as_str),
+            Some("include/app/config.h")
+        );
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == include.id
+                && edge.target == header
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "local_import_file")
+        }));
 
         fs::remove_dir_all(root).unwrap();
     }
