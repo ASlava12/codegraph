@@ -94,6 +94,8 @@ const serverLanguageInput = document.querySelector("#serverLanguageInput");
 const serverSearchInput = document.querySelector("#serverSearchInput");
 const serverEdgeKindInput = document.querySelector("#serverEdgeKindInput");
 const serverConfidenceInput = document.querySelector("#serverConfidenceInput");
+const serverEdgeRelationInput = document.querySelector("#serverEdgeRelationInput");
+const serverEdgeSourceInput = document.querySelector("#serverEdgeSourceInput");
 const pagePrevButton = document.querySelector("#pagePrevButton");
 const pageReloadButton = document.querySelector("#pageReloadButton");
 const pageNextButton = document.querySelector("#pageNextButton");
@@ -197,6 +199,8 @@ for (const input of [
   serverSearchInput,
   serverEdgeKindInput,
   serverConfidenceInput,
+  serverEdgeRelationInput,
+  serverEdgeSourceInput,
 ]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") loadGraphPage({ resetPage: true });
@@ -419,12 +423,16 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
   const serverSearch = serverSearchInput.value.trim();
   const edgeKind = serverEdgeKindInput.value.trim();
   const confidence = serverConfidenceInput.value.trim();
+  const edgeRelation = serverEdgeRelationInput.value.trim();
+  const edgeSource = serverEdgeSourceInput.value.trim();
   if (kind) params.set("kind", kind);
   if (itemKind) params.set("item_kind", itemKind);
   if (language) params.set("language", language);
   if (serverSearch) params.set("search", serverSearch);
   if (edgeKind) params.set("edge_kind", edgeKind);
   if (confidence) params.set("confidence", confidence);
+  if (edgeRelation) params.set("edge_relation", edgeRelation);
+  if (edgeSource) params.set("edge_source", edgeSource);
 
   try {
     const response = await fetch(`/api/graph?${params.toString()}`);
@@ -598,6 +606,8 @@ function renderOverview() {
       serverSearchInput.value = "";
       serverEdgeKindInput.value = "";
       serverConfidenceInput.value = "";
+      serverEdgeRelationInput.value = "";
+      serverEdgeSourceInput.value = "";
       searchInput.value = "";
       state.search = "";
       loadGraphPage({ resetPage: true, resetLayout: true });
@@ -625,8 +635,9 @@ function renderOverview() {
     button.addEventListener("click", () => {
       const relation = button.dataset.relation || "";
       if (!relation) return;
-      queryInput.value = `edges metadata.relation:${quoteQueryValue(relation)}`;
-      runGraphQuery();
+      serverEdgeRelationInput.value = relation;
+      serverEdgeSourceInput.value = "";
+      loadGraphPage({ resetPage: true, resetLayout: true });
     });
   });
 
@@ -634,8 +645,9 @@ function renderOverview() {
     button.addEventListener("click", () => {
       const source = button.dataset.edgeSource || "";
       if (!source) return;
-      queryInput.value = `edges metadata.source:${quoteQueryValue(source)}`;
-      runGraphQuery();
+      serverEdgeSourceInput.value = source;
+      serverEdgeRelationInput.value = "";
+      loadGraphPage({ resetPage: true, resetLayout: true });
     });
   });
 

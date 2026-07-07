@@ -57,7 +57,7 @@ The first implementation stores whole-graph JSON cache records keyed by root pat
 - graph query results and directed path searches for agent and API clients
 - insight focus subgraphs for findings with multiple nodes or edges
 - project overview data for language mix, edge confidence/source/relation mix, annotations, and entrypoints
-- graph slices for paged UI, search/item/language/confidence-filtered exploration, and agent loading
+- graph slices for paged UI, search/item/language/confidence/relation/source-filtered exploration, and agent loading
 - node context records for detail panels and focused agent reads
 - DOT and NDJSON exports
 

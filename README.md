@@ -39,7 +39,7 @@ Implemented now:
 - Path queries for finding directed dependency paths between labels or node ids.
 - Confidence-aware edge queries and UI edge labels for fact provenance.
 - Server-side graph paging and filtering endpoint for large repository exploration.
-- Web graph page controls backed by server-side paging, search, kind, item, language, edge, and confidence filters.
+- Web graph page controls backed by server-side paging, search, kind, item, language, edge, confidence, relation, and source filters.
 - Web graph viewport controls for zooming, fitting visible nodes, restarting layout, and pausing layout simulation.
 - Web project overview for language mix, edge confidence/source/relation mix, and entrypoint launch points.
 - Web path navigation for finding, focusing, and visually highlighting dependency paths between graph nodes.
@@ -334,8 +334,8 @@ curl --get 'http://127.0.0.1:3765/api/trace-errors' \
 ```
 
 `/api/graph` supports `node_offset`, `node_limit`, `edge_offset`,
-`edge_limit`, `kind`, `search`, `language`, `item_kind`, `edge_kind`, and
-`confidence`.
+`edge_limit`, `kind`, `search`, `language`, `item_kind`, `edge_kind`,
+`confidence`, `edge_relation`, and `edge_source`.
 Returned edges connect nodes in the returned node page.
 
 Source preview API:

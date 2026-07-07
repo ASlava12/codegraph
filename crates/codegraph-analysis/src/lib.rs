@@ -195,6 +195,8 @@ pub struct GraphSliceRequest {
     pub item_kind: Option<String>,
     pub edge_kind: Option<String>,
     pub confidence: Option<String>,
+    pub edge_relation: Option<String>,
+    pub edge_source: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -946,6 +948,14 @@ pub fn slice_graph(graph: &CodeGraph, request: GraphSliceRequest) -> GraphSlice 
                 && request.confidence.as_deref().is_none_or(|expected| {
                     text_matches(&confidence_name(edge.confidence), expected)
                 })
+                && request
+                    .edge_relation
+                    .as_deref()
+                    .is_none_or(|expected| edge_metadata_matches(edge, "relation", expected))
+                && request
+                    .edge_source
+                    .as_deref()
+                    .is_none_or(|expected| edge_metadata_matches(edge, "source", expected))
         })
         .cloned()
         .collect();
@@ -1539,6 +1549,12 @@ fn slice_node_matches(node: &Node, request: &GraphSliceRequest) -> bool {
 
 fn metadata_matches(node: &Node, key: &str, expected: &str) -> bool {
     node.metadata
+        .get(key)
+        .is_some_and(|value| text_matches(value, expected))
+}
+
+fn edge_metadata_matches(edge: &Edge, key: &str, expected: &str) -> bool {
+    edge.metadata
         .get(key)
         .is_some_and(|value| text_matches(value, expected))
 }
@@ -4055,7 +4071,16 @@ mod tests {
         let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
         let main = graph.add_node(NodeKind::Function, "main");
         let unrelated = graph.add_node(NodeKind::Function, "unrelated");
-        graph.add_edge(entrypoint, main, EdgeKind::References, Confidence::Exact);
+        graph.add_edge_with_metadata(
+            entrypoint,
+            main,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("relation".to_string(), "entrypoint_function".to_string()),
+                ("source".to_string(), "manifest".to_string()),
+            ]),
+        );
         graph.add_edge(unrelated, main, EdgeKind::Calls, Confidence::Heuristic);
 
         let result = focus_subgraph(
@@ -4100,6 +4125,8 @@ mod tests {
                 item_kind: None,
                 edge_kind: None,
                 confidence: None,
+                edge_relation: None,
+                edge_source: None,
             },
         );
 
@@ -4121,6 +4148,8 @@ mod tests {
                 item_kind: Some("function".to_string()),
                 edge_kind: None,
                 confidence: None,
+                edge_relation: None,
+                edge_source: None,
             },
         );
 
@@ -4151,6 +4180,8 @@ mod tests {
                 item_kind: None,
                 edge_kind: Some("calls".to_string()),
                 confidence: None,
+                edge_relation: None,
+                edge_source: None,
             },
         );
 
@@ -4168,7 +4199,16 @@ mod tests {
         let helper = graph.add_node(NodeKind::Function, "helper");
         let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
         graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
-        graph.add_edge(entrypoint, main, EdgeKind::References, Confidence::Exact);
+        graph.add_edge_with_metadata(
+            entrypoint,
+            main,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("relation".to_string(), "entrypoint_function".to_string()),
+                ("source".to_string(), "manifest".to_string()),
+            ]),
+        );
 
         let result = slice_graph(
             &graph,
@@ -4183,6 +4223,8 @@ mod tests {
                 item_kind: None,
                 edge_kind: None,
                 confidence: Some("exact".to_string()),
+                edge_relation: Some("entrypoint_function".to_string()),
+                edge_source: Some("manifest".to_string()),
             },
         );
 

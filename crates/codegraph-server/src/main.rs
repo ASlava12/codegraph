@@ -168,6 +168,8 @@ struct GraphSliceQuery {
     item_kind: Option<String>,
     edge_kind: Option<String>,
     confidence: Option<String>,
+    edge_relation: Option<String>,
+    edge_source: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -631,6 +633,8 @@ async fn graph_api(
             item_kind: normalize_query_string(query.item_kind),
             edge_kind: normalize_query_string(query.edge_kind),
             confidence: normalize_query_string(query.confidence),
+            edge_relation: normalize_query_string(query.edge_relation),
+            edge_source: normalize_query_string(query.edge_source),
         },
     )))
 }

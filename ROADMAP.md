@@ -140,6 +140,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add web controls for server-side graph search and item filtering.
 - [x] Add web controls for server-side language filtering.
 - [x] Add web controls for server-side edge confidence filtering.
+- [x] Add web controls for server-side edge relation and provenance source filtering.
 - [x] Add graph viewport controls for zoom, fit, layout reset, and layout pause.
 - [x] Add web project overview for languages, edge confidence, and entrypoints.
 - [x] Add web project overview facets for edge relation and provenance sources.
