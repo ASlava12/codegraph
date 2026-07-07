@@ -236,6 +236,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add project report snapshots across CLI, API, and web export.
 - [x] Add full-project risk summary and limit-independent quality gate evaluation to report snapshots.
 - [x] Surface project report risk summary in the web overview with severity and kind quick filters.
+- [x] Back web overview summary, coverage, topology, hotspots, and risks from one report snapshot to reduce duplicate scans.
 - Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
 - [x] Add source preview.
 - [x] Add trace panels.

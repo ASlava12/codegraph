@@ -1772,56 +1772,36 @@ async function loadProjectOverview() {
   if (workLanguage) semanticParams.set("work_language", workLanguage);
   if (workStatus) semanticParams.set("work_status", workStatus);
   if (workCapability) semanticParams.set("work_capability", workCapability);
+  const reportParams = new URLSearchParams(params);
+  reportParams.set("architecture_group_limit", "8");
+  reportParams.set("architecture_edge_limit", "40");
+  reportParams.set("language_link_limit", "8");
+  reportParams.set("hotspot_limit", "8");
+  reportParams.set("insight_limit", "6");
+  reportParams.set("fail_on", "warning");
 
   try {
     const [
-      summaryResponse,
-      entrypointsResponse,
       scanOptionsResponse,
-      coverageResponse,
       lspResponse,
       semanticReadinessResponse,
       semanticPlanResponse,
       reportResponse,
-      architectureResponse,
-      languageDependenciesResponse,
-      hotspotsResponse,
     ] = await Promise.all([
-      apiFetch(`/api/summary?${params.toString()}`),
-      apiFetch(`/api/entrypoints?${params.toString()}`),
       apiFetch(`/api/scan-options?${params.toString()}`),
-      apiFetch(`/api/coverage?${params.toString()}`),
       apiFetch("/api/lsp"),
       apiFetch(`/api/semantic-readiness?${params.toString()}`),
       apiFetch(`/api/semantic-plan?${semanticParams.toString()}`),
-      apiFetch(`/api/report?${params.toString()}&insight_limit=6&fail_on=warning`),
-      apiFetch(`/api/architecture?${params.toString()}&group_limit=8&edge_limit=40`),
-      apiFetch(`/api/language-dependencies?${params.toString()}&limit=8`),
-      apiFetch(`/api/hotspots?${params.toString()}&limit=8`),
+      apiFetch(`/api/report?${reportParams.toString()}`),
     ]);
-    const summary = await summaryResponse.json();
-    const entrypoints = await entrypointsResponse.json();
     const scanOptions = await scanOptionsResponse.json();
-    const coverage = await coverageResponse.json();
     const lsp = await lspResponse.json();
     const semanticReadiness = await semanticReadinessResponse.json();
     const semanticPlan = await semanticPlanResponse.json();
-    const report = await reportResponse.json();
-    const architecture = await architectureResponse.json();
-    const languageDependencies = await languageDependenciesResponse.json();
-    const hotspots = await hotspotsResponse.json();
+    const reportResponseBody = await reportResponse.json();
     if (requestId !== state.overviewRequest) return;
-    if (!summaryResponse.ok) {
-      throw new Error(apiErrorMessage(summary, summaryResponse, "summary failed"));
-    }
-    if (!entrypointsResponse.ok) {
-      throw new Error(apiErrorMessage(entrypoints, entrypointsResponse, "entrypoints failed"));
-    }
     if (!scanOptionsResponse.ok) {
       throw new Error(apiErrorMessage(scanOptions, scanOptionsResponse, "scan options failed"));
-    }
-    if (!coverageResponse.ok) {
-      throw new Error(apiErrorMessage(coverage, coverageResponse, "coverage failed"));
     }
     if (!lspResponse.ok) {
       throw new Error(apiErrorMessage(lsp, lspResponse, "lsp status failed"));
@@ -1833,28 +1813,20 @@ async function loadProjectOverview() {
       throw new Error(apiErrorMessage(semanticPlan, semanticPlanResponse, "semantic plan failed"));
     }
     if (!reportResponse.ok) {
-      throw new Error(apiErrorMessage(report, reportResponse, "report failed"));
+      throw new Error(apiErrorMessage(reportResponseBody, reportResponse, "report failed"));
     }
-    if (!architectureResponse.ok) {
-      throw new Error(apiErrorMessage(architecture, architectureResponse, "architecture failed"));
-    }
-    if (!languageDependenciesResponse.ok) {
-      throw new Error(apiErrorMessage(languageDependencies, languageDependenciesResponse, "language dependencies failed"));
-    }
-    if (!hotspotsResponse.ok) {
-      throw new Error(apiErrorMessage(hotspots, hotspotsResponse, "hotspots failed"));
-    }
-    state.summary = summary;
+    const report = reportResponseBody.report || {};
+    state.summary = report.summary || null;
     state.scanOptions = scanOptions;
-    state.coverage = coverage;
+    state.coverage = reportResponseBody.coverage || null;
     state.lsp = lsp;
     state.semanticReadiness = semanticReadiness;
     state.semanticPlan = semanticPlan;
-    state.report = report.report || report;
-    state.architecture = architecture;
-    state.languageDependencies = languageDependencies;
-    state.hotspots = hotspots;
-    state.entrypoints = entrypoints;
+    state.report = report;
+    state.architecture = report.architecture || null;
+    state.languageDependencies = report.language_dependencies || null;
+    state.hotspots = report.hotspots || null;
+    state.entrypoints = Array.isArray(report.entrypoints) ? report.entrypoints : [];
     renderOverview();
   } catch (error) {
     if (requestId !== state.overviewRequest) return;
