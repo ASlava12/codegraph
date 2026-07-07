@@ -3,7 +3,7 @@ const DEFAULT_LABEL_MODE = "minimal";
 const LABEL_MODES = new Set(["minimal", "focus", "auto"]);
 const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
-const LABEL_MODE_STORAGE_VERSION = "3";
+const LABEL_MODE_STORAGE_VERSION = "4";
 
 const I18N = {
   en: {
@@ -4725,23 +4725,23 @@ function drawArrowHead(start, end, color) {
 function shouldShowNodeLabel(node, selected, hovered, focused) {
   if (selected || hovered) return true;
   if (state.labelMode === "minimal") return false;
-  if (state.labelMode === "focus") return focused && state.zoom >= 1.35;
-  if (focused) return state.zoom >= 1.45;
+  if (state.labelMode === "focus") return focused && state.zoom >= 1.75;
+  if (focused) return state.zoom >= 1.8;
 
   const priority = nodeLabelPriority(node);
   const visibleCount = state.visibleNodes.length;
   if (state.search) {
-    if (visibleCount <= 30) return state.zoom >= 1.55 && priority <= 5;
-    if (visibleCount <= 120) return state.zoom >= 2.15 && priority <= 3;
-    return state.zoom >= 2.7 && priority <= 2;
+    if (visibleCount <= 30) return state.zoom >= 1.85 && priority <= 4;
+    if (visibleCount <= 120) return state.zoom >= 2.45 && priority <= 2;
+    return state.zoom >= 3.1 && priority <= 1;
   }
-  if (state.zoom < 1.95) return false;
-  if (visibleCount > 220) return state.zoom >= 3.1 && priority <= 1;
-  if (visibleCount > 120) return state.zoom >= 2.85 && priority <= 1;
-  if (visibleCount > 60) return state.zoom >= 2.55 && priority <= 2;
-  if (visibleCount > 25) return state.zoom >= 2.25 && priority <= 3;
-  if (priority >= 8) return state.zoom >= 2.65;
-  return state.zoom >= 1.95 && priority <= 4;
+  if (state.zoom < 2.35) return false;
+  if (visibleCount > 220) return state.zoom >= 3.6 && priority <= 1;
+  if (visibleCount > 120) return state.zoom >= 3.35 && priority <= 1;
+  if (visibleCount > 60) return state.zoom >= 3.05 && priority <= 1;
+  if (visibleCount > 25) return state.zoom >= 2.7 && priority <= 2;
+  if (priority >= 8) return state.zoom >= 3.1;
+  return state.zoom >= 2.35 && priority <= 3;
 }
 
 function drawNodeLabels(candidates) {
@@ -4773,7 +4773,7 @@ function drawNodeLabels(candidates) {
 function labelGeometry(candidate, occupied, nodeBoxes) {
   const { node, position, radius, forced } = candidate;
   const zoom = Math.max(0.18, state.zoom);
-  const maxLength = forced ? 40 : state.zoom >= 2.4 ? 22 : 14;
+  const maxLength = forced ? 40 : state.zoom >= 2.8 ? 18 : 12;
   const label = truncateGraphLabel(node.label, maxLength);
   const padX = (forced ? 7 : 5) / zoom;
   const height = (forced ? 23 : 18) / zoom;
@@ -4904,22 +4904,21 @@ function nodeLabelBudget() {
   const visibleCount = state.visibleNodes.length;
   if (state.labelMode === "minimal") return 0;
   if (state.labelMode === "focus") {
-    if (state.zoom < 1.35) return 0;
-    return visibleCount <= 40 ? 3 : 1;
+    if (state.zoom < 1.75) return 0;
+    return visibleCount <= 40 ? 2 : 1;
   }
-  if (state.zoom < 1.95 && !state.search) return 0;
+  if (state.zoom < 2.35 && !state.search) return 0;
   let budget = visibleCount <= 25
-    ? 4
+    ? 3
     : visibleCount <= 80
-      ? 2
+      ? 1
       : visibleCount <= 160
-        ? 1
-        : 1;
-  if (state.zoom >= 2.9) budget += 2;
-  else if (state.zoom >= 2.35) budget += 1;
-  else if (state.zoom < 2.1 && visibleCount > 60) budget = Math.min(budget, 1);
+        ? 0
+        : 0;
+  if (state.zoom >= 3.35) budget += 1;
+  if (state.zoom >= 3.8 && visibleCount <= 80) budget += 1;
   if (state.search && visibleCount <= 80) budget += 1;
-  return Math.max(0, Math.min(6, budget));
+  return Math.max(0, Math.min(4, budget));
 }
 
 function nodeOcclusionBoxes() {
