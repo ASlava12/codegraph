@@ -45,6 +45,8 @@ pub struct IncrementalMergeReport {
     pub complete_graph: bool,
     pub reused_nodes: usize,
     pub reused_edges: usize,
+    pub removed_cached_nodes: usize,
+    pub removed_cached_edges: usize,
     pub replaced_paths: usize,
     pub scanned_nodes: usize,
     pub scanned_edges: usize,
@@ -493,7 +495,13 @@ impl GraphCache {
                     .clone()
                     .with_parse_cache_dir(self.dir().join("parse-facts"));
                 let changed_graph = scan_project_paths(root, &scan_options, &scan_paths)?;
-                merge_graph_preview(&record.graph, &changed_graph, &scan_paths, &removed_paths)
+                merge_graph_preview(
+                    &record.graph,
+                    &record.impact_index,
+                    &changed_graph,
+                    &scan_paths,
+                    &removed_paths,
+                )
             }
         };
 
@@ -977,15 +985,7 @@ fn graph_impact_from_index(
         return (0, 0, Vec::new(), Vec::new(), false);
     }
 
-    let mut impacted_node_set = BTreeSet::new();
-    let mut impacted_edge_set = BTreeSet::new();
-    for path in paths {
-        let Some(scope) = index.by_path.get(path) else {
-            continue;
-        };
-        impacted_node_set.extend(scope.node_ids.iter().copied());
-        impacted_edge_set.extend(scope.edge_indexes.iter().copied());
-    }
+    let (impacted_node_set, impacted_edge_set) = graph_scope_from_index(index, paths);
 
     let impacted_nodes = impacted_node_set.len();
     let impacted_edges = impacted_edge_set.len();
@@ -1002,6 +1002,22 @@ fn graph_impact_from_index(
     )
 }
 
+fn graph_scope_from_index(
+    index: &GraphImpactIndex,
+    paths: &BTreeSet<String>,
+) -> (BTreeSet<u64>, BTreeSet<usize>) {
+    let mut node_ids = BTreeSet::new();
+    let mut edge_indexes = BTreeSet::new();
+    for path in paths {
+        let Some(scope) = index.by_path.get(path) else {
+            continue;
+        };
+        node_ids.extend(scope.node_ids.iter().copied());
+        edge_indexes.extend(scope.edge_indexes.iter().copied());
+    }
+    (node_ids, edge_indexes)
+}
+
 fn complete_merge_report(
     graph: &CodeGraph,
     plan: &IncrementalScanPlan,
@@ -1012,6 +1028,8 @@ fn complete_merge_report(
         complete_graph: true,
         reused_nodes,
         reused_edges,
+        removed_cached_nodes: 0,
+        removed_cached_edges: 0,
         replaced_paths: plan.scan_paths.len() + plan.removed_paths.len(),
         scanned_nodes: graph.nodes.len().saturating_sub(reused_nodes),
         scanned_edges: graph.edges.len().saturating_sub(reused_edges),
@@ -1023,18 +1041,14 @@ fn complete_merge_report(
 
 fn merge_graph_preview(
     cached: &CodeGraph,
+    index: &GraphImpactIndex,
     changed: &CodeGraph,
     scan_paths: &BTreeSet<String>,
     removed_paths: &BTreeSet<String>,
 ) -> (CodeGraph, IncrementalMergeReport) {
     let mut replaced_paths = scan_paths.clone();
     replaced_paths.extend(removed_paths.iter().cloned());
-    let removed_node_ids = cached
-        .nodes
-        .iter()
-        .filter(|node| node_matches_any_path(node, &replaced_paths))
-        .map(|node| node.id.0)
-        .collect::<BTreeSet<_>>();
+    let (removed_node_ids, removed_edge_indexes) = graph_scope_from_index(index, &replaced_paths);
 
     let mut kept_node_ids = BTreeSet::new();
     let mut merged = CodeGraph {
@@ -1052,7 +1066,10 @@ fn merge_graph_preview(
         merged.nodes.push(node.clone());
     }
 
-    for edge in &cached.edges {
+    for (edge_index, edge) in cached.edges.iter().enumerate() {
+        if removed_edge_indexes.contains(&edge_index) {
+            continue;
+        }
         if kept_node_ids.contains(&edge.source.0) && kept_node_ids.contains(&edge.target.0) {
             merged.edges.push(edge.clone());
         }
@@ -1098,6 +1115,8 @@ fn merge_graph_preview(
         complete_graph: false,
         reused_nodes,
         reused_edges,
+        removed_cached_nodes: removed_node_ids.len(),
+        removed_cached_edges: removed_edge_indexes.len(),
         replaced_paths: replaced_paths.len(),
         scanned_nodes: changed.nodes.len(),
         scanned_edges: changed.edges.len(),
@@ -1110,15 +1129,6 @@ fn merge_graph_preview(
     };
 
     (merged, merge)
-}
-
-fn node_matches_any_path(node: &Node, paths: &BTreeSet<String>) -> bool {
-    if matches!(node.kind, NodeKind::File) && paths.contains(&node.label) {
-        return true;
-    }
-    node.span
-        .as_ref()
-        .is_some_and(|span| paths.contains(&span.path))
 }
 
 fn find_existing_directory(graph: &CodeGraph, label: &str) -> Option<NodeId> {
@@ -1715,6 +1725,8 @@ mod tests {
         assert!(!preview.merge.complete_graph);
         assert!(preview.merge.reused_nodes > 0);
         assert!(preview.merge.reused_edges > 0);
+        assert!(preview.merge.removed_cached_nodes > 0);
+        assert!(preview.merge.removed_cached_edges > 0);
         assert_eq!(preview.merge.replaced_paths, 1);
         assert!(preview.merge.warning.is_some());
         assert!(labels.contains(&"src/main.rs"));
