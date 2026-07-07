@@ -122,6 +122,8 @@ const I18N = {
     "button.labelsAuto": "Auto",
     "button.labelsFocus": "Focus",
     "button.card": "Card",
+    "button.copyLink": "Copy Link",
+    "button.copied": "Copied",
     "button.focusEdge": "Focus",
     "button.queryEdge": "Query",
     "button.explain": "Explain",
@@ -463,6 +465,8 @@ const I18N = {
     "button.labelsAuto": "Авто",
     "button.labelsFocus": "Фокус",
     "button.card": "Карточка",
+    "button.copyLink": "Скопировать ссылку",
+    "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
     "button.queryEdge": "Запрос",
     "button.explain": "Пояснить",
@@ -1194,34 +1198,39 @@ function parseUrlInteger(value) {
 
 function syncSelectionUrl() {
   try {
-    const url = new URL(window.location.href);
-    const root = pathInput.value.trim();
-    if (root && root !== ".") {
-      url.searchParams.set("path", root);
-    } else {
-      url.searchParams.delete("path");
-    }
-
-    if (state.selectedId != null) {
-      url.searchParams.set("node", String(state.selectedId));
-      url.searchParams.delete("edge");
-    } else if (state.selectedEdgeKey) {
-      const edgeIndex = selectedEdgeIndexFromKey(state.selectedEdgeKey);
-      if (edgeIndex == null) {
-        url.searchParams.delete("edge");
-      } else {
-        url.searchParams.set("edge", String(edgeIndex));
-      }
-      url.searchParams.delete("node");
-    } else {
-      url.searchParams.delete("node");
-      url.searchParams.delete("edge");
-    }
-
-    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    const edgeIndex = state.selectedEdgeKey ? selectedEdgeIndexFromKey(state.selectedEdgeKey) : null;
+    const href = buildSelectionUrl({
+      nodeId: state.selectedId,
+      edgeIndex,
+      absolute: false,
+    });
+    window.history.replaceState(null, "", href);
   } catch (error) {
     // URL state is a sharing convenience; selection still works without History API.
   }
+}
+
+function buildSelectionUrl({ nodeId = null, edgeIndex = null, absolute = true } = {}) {
+  const url = new URL(window.location.href);
+  const root = pathInput.value.trim();
+  if (root && root !== ".") {
+    url.searchParams.set("path", root);
+  } else {
+    url.searchParams.delete("path");
+  }
+
+  if (nodeId != null) {
+    url.searchParams.set("node", String(nodeId));
+    url.searchParams.delete("edge");
+  } else if (edgeIndex != null) {
+    url.searchParams.set("edge", String(edgeIndex));
+    url.searchParams.delete("node");
+  } else {
+    url.searchParams.delete("node");
+    url.searchParams.delete("edge");
+  }
+
+  return absolute ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
 }
 
 function selectedEdgeIndexFromKey(selectionKey) {
@@ -1230,6 +1239,56 @@ function selectedEdgeIndexFromKey(selectionKey) {
   if (edgeIndex != null) return edgeIndex;
   const match = String(selectionKey || "").match(/^edge:(\d+)$/);
   return match ? Number(match[1]) : null;
+}
+
+async function copySelectionLink(kind, value, button) {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id < 0) return;
+  const href = buildSelectionUrl({
+    nodeId: kind === "node" ? id : null,
+    edgeIndex: kind === "edge" ? id : null,
+  });
+  await writeClipboardText(href);
+  const previous = button.textContent;
+  button.textContent = t("button.copied");
+  window.setTimeout(() => {
+    button.textContent = previous || t("button.copyLink");
+  }, 1200);
+}
+
+async function writeClipboardText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("clipboard copy failed");
+}
+
+function attachCopyLinkActions(container) {
+  container.querySelectorAll("[data-copy-selection-link]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await copySelectionLink(button.dataset.copySelectionLink, button.dataset.selectionLinkId, button);
+      } catch (error) {
+        button.textContent = error.message;
+        window.setTimeout(() => {
+          button.textContent = t("button.copyLink");
+        }, 1600);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
 }
 
 function selectNodeById(nodeId, options = {}) {
@@ -5942,6 +6001,11 @@ function renderEdgeSelectionPanel(edge, source = null, target = null) {
         ${
           edgeIndex == null
             ? ""
+            : `<button type="button" data-copy-selection-link="edge" data-selection-link-id="${edgeIndex}">${escapeHtml(t("button.copyLink"))}</button>`
+        }
+        ${
+          edgeIndex == null
+            ? ""
             : `<button type="button" data-focus-edge-index="${edgeIndex}">${escapeHtml(t("button.focusEdge"))}</button>
                <button type="button" data-query-edge-index="${edgeIndex}">${escapeHtml(t("button.queryEdge"))}</button>`
         }
@@ -5981,6 +6045,7 @@ function renderEdgeSelectionPanel(edge, source = null, target = null) {
   `;
   attachQueryNavigation(selectionBody);
   attachEdgeExplainActions(selectionBody);
+  attachCopyLinkActions(selectionBody);
   selectionBody.querySelectorAll("[data-focus-edge-index]").forEach((button) => {
     button.addEventListener("click", () => focusEdgeIndex(Number(button.dataset.focusEdgeIndex)));
   });
@@ -6065,6 +6130,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
         <span class="node-card-id">#${node.id}</span>
       </header>
       <div class="selection-actions">
+        <button type="button" data-copy-selection-link="node" data-selection-link-id="${node.id}">${escapeHtml(t("button.copyLink"))}</button>
         <button type="button" data-path-endpoint="from">${escapeHtml(t("selection.from"))}</button>
         <button type="button" data-path-endpoint="to">${escapeHtml(t("selection.to"))}</button>
         ${
@@ -6214,6 +6280,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
   }
 
   attachEdgeExplainActions(selectionBody);
+  attachCopyLinkActions(selectionBody);
 }
 
 function renderNodeSummaryRows(node) {

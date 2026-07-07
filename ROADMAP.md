@@ -207,7 +207,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Surface edge-scoped risks in dependency explanation cards.
 - [x] Open dependency cards from query, trace, and node-neighbor edge rows.
 - [x] Add exact focus/query actions to dependency cards.
-- [x] Add shareable web deep-links for selected node and dependency cards.
+- [x] Add shareable web deep-links and copy-link actions for selected node and dependency cards.
 - [x] Add initial multi-language UI support with English and Russian.
 - [x] Reduce graph label clutter with zoom thresholds and collision-aware label drawing.
 - [x] Tighten graph label budgets and adaptive label placement so node captions do not cover dense graphs.
