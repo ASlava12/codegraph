@@ -88,6 +88,7 @@ const DEFAULT_SOURCE_SEARCH_CONTEXT: usize = 2;
 const MAX_SOURCE_SEARCH_CONTEXT: usize = 20;
 const DEFAULT_API_BODY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_API_BODY_BYTES: usize = 256 * 1024 * 1024;
+const RESPONSE_TIME_HEADER: &str = "x-response-time-ms";
 const STATIC_ASSET_CACHE_CONTROL: &str = "no-cache";
 const DYNAMIC_CACHE_CONTROL: &str = "no-store";
 const APP_JS: &str = include_str!("../../codegraph-web/static/app.js");
@@ -973,6 +974,7 @@ async fn main() -> Result<()> {
     } else {
         app.layer(middleware::from_fn(access_log))
     };
+    let app = app.layer(middleware::from_fn(response_timing_header));
     let app = app.layer(middleware::from_fn(request_id_header));
 
     let listener = TcpListener::bind(bind_addr)
@@ -1030,6 +1032,16 @@ async fn cache_headers(request: Request, next: Next) -> Response {
     let path = request.uri().path().to_string();
     let mut response = next.run(request).await;
     apply_cache_headers_for_path(&path, response.headers_mut());
+    response
+}
+
+async fn response_timing_header(request: Request, next: Next) -> Response {
+    let started = Instant::now();
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        HeaderName::from_static(RESPONSE_TIME_HEADER),
+        response_time_header_value(started.elapsed()),
+    );
     response
 }
 
@@ -1192,6 +1204,11 @@ fn access_log_line(
         status.as_u16(),
         elapsed.as_millis()
     )
+}
+
+fn response_time_header_value(elapsed: Duration) -> HeaderValue {
+    HeaderValue::from_str(&elapsed.as_millis().to_string())
+        .expect("elapsed milliseconds are header-safe")
 }
 
 fn apply_security_headers(headers: &mut HeaderMap) {
@@ -5827,6 +5844,7 @@ fn capability_features(cache_enabled: bool, access_log_enabled: bool) -> Vec<&'s
         "runtime_probes",
         "graceful_shutdown",
         "request_ids",
+        "response_timing_headers",
         "api_body_limits",
         "sse_job_events",
         "semantic_lsp",
@@ -6199,6 +6217,22 @@ mod tests {
     }
 
     #[test]
+    fn response_time_header_value_formats_elapsed_milliseconds() {
+        assert_eq!(
+            response_time_header_value(Duration::from_millis(0)),
+            HeaderValue::from_static("0")
+        );
+        assert_eq!(
+            response_time_header_value(Duration::from_millis(42)),
+            HeaderValue::from_static("42")
+        );
+        assert_eq!(
+            response_time_header_value(Duration::from_micros(42_999)),
+            HeaderValue::from_static("42")
+        );
+    }
+
+    #[test]
     fn request_ids_accept_safe_values_and_reject_header_injection() {
         assert!(is_valid_request_id("req-123"));
         assert!(is_valid_request_id("trace.root:span_1"));
@@ -6282,6 +6316,7 @@ mod tests {
         assert!(without_cache.contains(&"runtime_probes"));
         assert!(without_cache.contains(&"graceful_shutdown"));
         assert!(without_cache.contains(&"request_ids"));
+        assert!(without_cache.contains(&"response_timing_headers"));
         assert!(without_cache.contains(&"api_body_limits"));
         assert!(without_cache.contains(&"access_log"));
         assert!(without_cache.contains(&"project_report"));

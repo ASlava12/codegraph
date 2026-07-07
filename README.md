@@ -67,6 +67,7 @@ Implemented now:
 - Multi-stage Docker image definition for running the web/API server with a mounted repository and persistent cache volume.
 - Built-in HTTP access logs with method, target, status, and latency for server operations.
 - Per-response `x-request-id` correlation headers mirrored in access logs and JSON error bodies.
+- Per-response `x-response-time-ms` timing headers for browser, proxy, and agent-side latency diagnostics.
 - Graceful HTTP server shutdown on Ctrl-C and SIGTERM.
 - Server-wide security headers for the embedded web UI and API responses.
 - Server cache-control headers keep runtime/API responses uncacheable and force browser revalidation for unversioned embedded web assets.

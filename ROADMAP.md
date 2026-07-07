@@ -255,6 +255,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Surface runtime metrics in the web UI.
 - [x] Add built-in HTTP access logs with latency and quiet-mode control.
 - [x] Add `x-request-id` response headers, JSON error fields, and access-log correlation.
+- [x] Add `x-response-time-ms` response headers for client-side latency diagnostics.
 - [x] Surface request ids in web error messages for access-log correlation.
 - [x] Add graceful HTTP server shutdown for Ctrl-C and SIGTERM.
 - [x] Surface server capabilities in the web overview.
