@@ -173,7 +173,8 @@ Exit criteria:
 Goal: make language and framework knowledge extensible.
 
 - Add language adapter interface.
-- Add framework detectors for config and entrypoints.
+- [x] Add first framework route detectors for entrypoints.
+- Add framework detectors for config conventions.
 - Add custom rules for repositories.
 - Support user-defined graph annotations.
 

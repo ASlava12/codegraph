@@ -73,6 +73,15 @@ struct ManifestEntrypoint {
     target: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FrameworkRoute {
+    framework: String,
+    method: String,
+    path: String,
+    handler: Option<String>,
+    line: u32,
+}
+
 impl Default for IndexOptions {
     fn default() -> Self {
         Self {
@@ -180,10 +189,11 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
         Confidence::Exact,
     );
 
+    let source_text = fs::read_to_string(path).ok();
     let mut script_entrypoint = None;
-    if let Ok(source) = fs::read_to_string(path) {
-        script_entrypoint = index_script_entrypoint(context, file_id, label, &source);
-        index_manifest_facts(context, file_id, path, label, &source);
+    if let Some(source) = source_text.as_deref() {
+        script_entrypoint = index_script_entrypoint(context, file_id, label, source);
+        index_manifest_facts(context, file_id, path, label, source);
     }
 
     if let Some((language, parse_result)) = parse_result {
@@ -262,6 +272,17 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
                         "shebang_main",
                         Confidence::Syntactic,
                         Some("main"),
+                    );
+                }
+
+                if let Some(source) = source_text.as_deref() {
+                    index_framework_routes(
+                        context,
+                        file_id,
+                        label,
+                        language,
+                        source,
+                        &local_functions,
                     );
                 }
 
@@ -396,6 +417,87 @@ fn index_script_entrypoint(
     );
 
     Some(entrypoint_id)
+}
+
+fn index_framework_routes(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    language: Language,
+    source: &str,
+    local_functions: &BTreeMap<String, NodeId>,
+) {
+    for route in framework_routes(language, source) {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "framework_route".to_string());
+        metadata.insert("entrypoint_kind".to_string(), "route".to_string());
+        metadata.insert("source".to_string(), "framework".to_string());
+        metadata.insert("language".to_string(), language.to_string());
+        metadata.insert("framework".to_string(), route.framework.clone());
+        metadata.insert("method".to_string(), route.method.clone());
+        metadata.insert("path".to_string(), route.path.clone());
+        metadata.insert("target".to_string(), label.to_string());
+        metadata.insert("line".to_string(), route.line.to_string());
+        if let Some(handler) = route.handler.as_deref() {
+            metadata.insert("handler".to_string(), handler.to_string());
+        }
+
+        let entrypoint_id = context.graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            format!("route {} {}", route.method, route.path),
+            None,
+            metadata,
+        );
+        add_edge_once(
+            &mut context.graph,
+            file_id,
+            entrypoint_id,
+            EdgeKind::Contains,
+            Confidence::Syntactic,
+        );
+        let root_id = context.graph.root;
+        add_edge_once(
+            &mut context.graph,
+            root_id,
+            entrypoint_id,
+            EdgeKind::Entrypoint,
+            Confidence::Syntactic,
+        );
+        add_entrypoint_reference(
+            &mut context.graph,
+            entrypoint_id,
+            file_id,
+            "entrypoint_file",
+            "framework_route_file",
+            Confidence::Syntactic,
+            None,
+        );
+
+        if let Some(handler) = route.handler.as_deref()
+            && let Some(handler_id) = resolve_local_function(local_functions, handler)
+        {
+            add_entrypoint_reference(
+                &mut context.graph,
+                entrypoint_id,
+                handler_id,
+                "entrypoint_function",
+                "framework_route_handler",
+                Confidence::Syntactic,
+                Some(handler),
+            );
+        }
+    }
+}
+
+fn framework_routes(language: Language, source: &str) -> Vec<FrameworkRoute> {
+    match language {
+        Language::Python => python_framework_routes(source),
+        Language::JavaScript | Language::TypeScript | Language::Tsx => js_framework_routes(source),
+        Language::Rust => rust_framework_routes(source),
+        Language::Go => go_framework_routes(source),
+        Language::Php => php_framework_routes(source),
+        Language::C | Language::Cpp | Language::Bash => Vec::new(),
+    }
 }
 
 fn index_manifest_dependencies(
@@ -999,6 +1101,294 @@ fn shebang_language(source: &str) -> Option<Language> {
         "php" => Some(Language::Php),
         _ => None,
     }
+}
+
+fn python_framework_routes(source: &str) -> Vec<FrameworkRoute> {
+    let mut routes = Vec::new();
+    let mut pending = Vec::new();
+
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let trimmed = line.trim();
+        if trimmed.starts_with('@') {
+            if let Some(mut route) = route_from_python_decorator(trimmed, line_number) {
+                route.handler = None;
+                pending.push(route);
+            }
+            continue;
+        }
+
+        if let Some(function) = trimmed
+            .strip_prefix("def ")
+            .and_then(|rest| rest.split_once('(').map(|(name, _)| name.trim()))
+            .filter(|name| !name.is_empty())
+        {
+            for mut route in pending.drain(..) {
+                route.handler = Some(function.to_string());
+                routes.push(route);
+            }
+        } else if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            pending.clear();
+        }
+    }
+
+    routes
+}
+
+fn route_from_python_decorator(line: &str, line_number: u32) -> Option<FrameworkRoute> {
+    let lower = line.to_ascii_lowercase();
+    if !(lower.contains(".route(")
+        || route_methods()
+            .iter()
+            .any(|method| lower.contains(&format!(".{}(", method.to_ascii_lowercase()))))
+    {
+        return None;
+    }
+    let path = first_quoted_value(line)?;
+    let method = route_methods()
+        .iter()
+        .find(|method| lower.contains(&format!(".{}(", method.to_ascii_lowercase())))
+        .copied()
+        .or_else(|| method_from_python_route_methods(line))
+        .unwrap_or("ROUTE")
+        .to_string();
+    let framework = if method != "ROUTE" || lower.contains("fastapi") || lower.contains("router.") {
+        "fastapi"
+    } else {
+        "flask"
+    };
+
+    Some(FrameworkRoute {
+        framework: framework.to_string(),
+        method,
+        path,
+        handler: None,
+        line: line_number,
+    })
+}
+
+fn method_from_python_route_methods(line: &str) -> Option<&'static str> {
+    let lower = line.to_ascii_uppercase();
+    route_methods()
+        .iter()
+        .find(|method| {
+            lower.contains(&format!("\"{method}\"")) || lower.contains(&format!("'{method}'"))
+        })
+        .copied()
+}
+
+fn js_framework_routes(source: &str) -> Vec<FrameworkRoute> {
+    source
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            route_from_call_line(
+                line,
+                index as u32 + 1,
+                "express",
+                &["app", "router", "server", "routes"],
+            )
+        })
+        .collect()
+}
+
+fn rust_framework_routes(source: &str) -> Vec<FrameworkRoute> {
+    source
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let line_number = index as u32 + 1;
+            let trimmed = line.trim();
+            if !trimmed.contains(".route(") {
+                return None;
+            }
+            let path = first_quoted_value(trimmed)?;
+            let method = route_methods()
+                .iter()
+                .find(|method| trimmed.contains(&format!("{}(", method.to_ascii_lowercase())))
+                .copied()
+                .unwrap_or("ROUTE")
+                .to_string();
+            let handler = handler_from_rust_route(trimmed);
+            Some(FrameworkRoute {
+                framework: "axum".to_string(),
+                method,
+                path,
+                handler,
+                line: line_number,
+            })
+        })
+        .collect()
+}
+
+fn go_framework_routes(source: &str) -> Vec<FrameworkRoute> {
+    source
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let line_number = index as u32 + 1;
+            let trimmed = line.trim();
+            if trimmed.contains("HandleFunc(") {
+                let path = first_quoted_value(trimmed)?;
+                let handler = handler_after_first_comma(trimmed);
+                return Some(FrameworkRoute {
+                    framework: "net/http".to_string(),
+                    method: "ROUTE".to_string(),
+                    path,
+                    handler,
+                    line: line_number,
+                });
+            }
+            route_from_call_line(
+                trimmed,
+                line_number,
+                "go-router",
+                &["r", "router", "engine", "api", "group", "v1", "v2"],
+            )
+        })
+        .collect()
+}
+
+fn php_framework_routes(source: &str) -> Vec<FrameworkRoute> {
+    let mut routes = Vec::new();
+    let mut pending = Vec::new();
+
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let trimmed = line.trim();
+        if trimmed.starts_with("#[") && trimmed.contains("Route(") {
+            if let Some(path) = first_quoted_value(trimmed) {
+                pending.push(FrameworkRoute {
+                    framework: "php-attribute".to_string(),
+                    method: method_from_php_route(trimmed)
+                        .unwrap_or("ROUTE")
+                        .to_string(),
+                    path,
+                    handler: None,
+                    line: line_number,
+                });
+            }
+            continue;
+        }
+        if let Some(function) = trimmed
+            .strip_prefix("function ")
+            .and_then(|rest| rest.split_once('(').map(|(name, _)| name.trim()))
+            .filter(|name| !name.is_empty())
+        {
+            for mut route in pending.drain(..) {
+                route.handler = Some(function.to_string());
+                routes.push(route);
+            }
+        } else if !trimmed.is_empty() && !trimmed.starts_with("//") {
+            pending.clear();
+        }
+    }
+
+    routes
+}
+
+fn route_from_call_line(
+    line: &str,
+    line_number: u32,
+    framework: &str,
+    allowed_receivers: &[&str],
+) -> Option<FrameworkRoute> {
+    let lower = line.to_ascii_lowercase();
+    let method = route_methods()
+        .iter()
+        .find(|method| {
+            let method = method.to_ascii_lowercase();
+            route_receiver_matches(&lower, &method, allowed_receivers)
+        })
+        .copied()?;
+    let path = first_quoted_value(line)?;
+    let handler = handler_after_first_comma(line);
+    Some(FrameworkRoute {
+        framework: framework.to_string(),
+        method: method.to_string(),
+        path,
+        handler,
+        line: line_number,
+    })
+}
+
+fn route_receiver_matches(line: &str, method: &str, allowed_receivers: &[&str]) -> bool {
+    let Some(method_index) = line
+        .find(&format!(".{method}("))
+        .or_else(|| line.find(&format!("->{method}(")))
+    else {
+        return false;
+    };
+    let receiver = line[..method_index]
+        .rsplit(|character: char| {
+            !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
+        })
+        .next()
+        .unwrap_or("")
+        .trim_start_matches('$');
+    allowed_receivers
+        .iter()
+        .any(|allowed| receiver.eq_ignore_ascii_case(allowed))
+}
+
+fn handler_from_rust_route(line: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    for method in route_methods() {
+        let needle = format!("{}(", method.to_ascii_lowercase());
+        if let Some(start) = lower.find(&needle) {
+            let rest = &line[start + needle.len()..];
+            let handler = rest
+                .split([',', ')'])
+                .next()
+                .map(|value| value.trim().trim_start_matches("move ").trim())
+                .filter(|value| !value.is_empty())?;
+            return Some(handler.to_string());
+        }
+    }
+    None
+}
+
+fn handler_after_first_comma(line: &str) -> Option<String> {
+    let handler = line
+        .split_once(',')
+        .map(|(_, rest)| rest.trim())
+        .and_then(|rest| rest.split([',', ')']).next())
+        .map(|value| {
+            value
+                .trim()
+                .trim_start_matches('&')
+                .trim_start_matches("::")
+                .trim_matches(['"', '\'', '`'])
+                .to_string()
+        })
+        .filter(|value| !value.is_empty())?;
+    if handler.starts_with('|') || handler.starts_with("function") || handler.starts_with("async") {
+        None
+    } else {
+        Some(handler)
+    }
+}
+
+fn method_from_php_route(line: &str) -> Option<&'static str> {
+    let upper = line.to_ascii_uppercase();
+    route_methods()
+        .iter()
+        .find(|method| {
+            upper.contains(&format!("\"{method}\"")) || upper.contains(&format!("'{method}'"))
+        })
+        .copied()
+}
+
+fn first_quoted_value(value: &str) -> Option<String> {
+    let quote_index = value.find(['"', '\'', '`'])?;
+    let quote = value[quote_index..].chars().next()?;
+    let rest = &value[quote_index + quote.len_utf8()..];
+    let end = rest.find(quote)?;
+    Some(rest[..end].to_string())
+}
+
+fn route_methods() -> &'static [&'static str] {
+    &["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
 }
 
 fn requirements_dependencies(source: &str) -> Vec<ManifestDependency> {
@@ -1696,6 +2086,8 @@ fn add_entrypoint_reference(
     metadata.insert("relation".to_string(), relation.to_string());
     let fact_source = if resolution.starts_with("shebang") {
         "shebang"
+    } else if resolution.starts_with("framework") {
+        "framework"
     } else {
         "manifest"
     };
@@ -2492,6 +2884,87 @@ add_executable(imported_tool IMPORTED)
             "entrypoint_function",
             Confidence::Syntactic,
         ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_adds_framework_route_entrypoints() {
+        let root = temp_project_root();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("api.py"),
+            "from fastapi import FastAPI\napp = FastAPI()\n\n@app.get(\"/health\")\ndef health():\n    return {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("server.js"),
+            "const express = require('express');\nconst app = express();\nfunction listUsers() {}\napp.post('/users', listUsers);\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("main.go"),
+            "package main\nimport \"net/http\"\nfunc health(w http.ResponseWriter, r *http.Request) {}\nfunc main() { http.HandleFunc(\"/ready\", health) }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("router.rs"),
+            "use axum::{routing::get, Router};\nasync fn status() {}\nfn app() -> Router { Router::new().route(\"/status\", get(status)) }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("Controller.php"),
+            "<?php\n#[Route('/admin', methods: ['GET'])]\nfunction admin() {}\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let expected = [
+            ("route GET /health", "health", "api.py", "fastapi"),
+            ("route POST /users", "listUsers", "server.js", "express"),
+            ("route ROUTE /ready", "health", "main.go", "net/http"),
+            ("route GET /status", "status", "router.rs", "axum"),
+            (
+                "route GET /admin",
+                "admin",
+                "Controller.php",
+                "php-attribute",
+            ),
+        ];
+
+        for (route_label, handler, path, framework) in expected {
+            let entrypoint = node_id(&graph, NodeKind::Entrypoint, route_label);
+            let file = node_id(&graph, NodeKind::File, path);
+            let handler_id = function_id_in_file(&graph, handler, path);
+            let node = graph
+                .nodes
+                .iter()
+                .find(|node| node.id == entrypoint)
+                .expect("missing route entrypoint");
+
+            assert_eq!(
+                node.metadata.get("item_kind").map(String::as_str),
+                Some("framework_route")
+            );
+            assert_eq!(
+                node.metadata.get("framework").map(String::as_str),
+                Some(framework)
+            );
+            assert!(has_entrypoint_reference(
+                &graph,
+                entrypoint,
+                file,
+                "entrypoint_file",
+                Confidence::Syntactic,
+            ));
+            assert!(has_entrypoint_reference(
+                &graph,
+                entrypoint,
+                handler_id,
+                "entrypoint_function",
+                Confidence::Syntactic,
+            ));
+        }
 
         fs::remove_dir_all(root).unwrap();
     }
