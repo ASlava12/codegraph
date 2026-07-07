@@ -4756,6 +4756,28 @@ mod tests {
     }
 
     #[test]
+    fn embedded_web_overview_uses_report_snapshot() {
+        let index = include_str!("../../codegraph-web/static/index.html");
+        let app = include_str!("../../codegraph-web/static/app.js");
+
+        assert!(index.contains("riskSummaryList"));
+        assert!(app.contains("apiFetch(`/api/report?${reportParams.toString()}`)"));
+        for endpoint in [
+            "/api/summary?",
+            "/api/entrypoints?",
+            "/api/coverage?",
+            "/api/architecture?",
+            "/api/language-dependencies?",
+            "/api/hotspots?",
+        ] {
+            assert!(
+                !app.contains(endpoint),
+                "web overview should use /api/report instead of {endpoint}"
+            );
+        }
+    }
+
+    #[test]
     fn api_schema_lists_agent_contracts() {
         let schema = api_schema_response();
         let endpoints: Vec<_> = schema
