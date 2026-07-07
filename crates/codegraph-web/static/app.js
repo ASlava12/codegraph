@@ -78,6 +78,7 @@ const I18N = {
     "option.definitions": "Definitions",
     "option.diagnostics": "Diagnostics",
     "option.symbols": "Symbols",
+    "option.workspaceSymbols": "Workspace Symbols",
     "option.references": "References",
     "option.server": "Server",
     "section.overview": "Overview",
@@ -195,6 +196,7 @@ const I18N = {
     "option.definitions": "Определения",
     "option.diagnostics": "Диагностика",
     "option.symbols": "Символы",
+    "option.workspaceSymbols": "Символы workspace",
     "option.references": "Ссылки",
     "option.server": "Сервер",
     "section.overview": "Обзор",
@@ -1255,6 +1257,10 @@ function renderLspStatus(report, readiness, plan) {
           <strong>${Number(plan.planned_requests?.document_symbols || 0)}</strong>
         </div>
         <div class="lsp-chip">
+          <span>Workspace</span>
+          <strong>${Number(plan.planned_requests?.workspace_symbols || 0)}</strong>
+        </div>
+        <div class="lsp-chip">
           <span>Work queue</span>
           <strong>${Number(plan.work_items?.length || 0)}/${Number(plan.total_work_items || 0)}</strong>
         </div>
@@ -1288,6 +1294,7 @@ function renderLspStatus(report, readiness, plan) {
     const requests = language.planned_requests || {};
     const requestCount =
       Number(requests.document_symbols || 0) +
+      Number(requests.workspace_symbols || 0) +
       Number(requests.definitions || 0) +
       Number(requests.references || 0) +
       Number(requests.diagnostics || 0);

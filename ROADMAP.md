@@ -68,6 +68,8 @@ Goal: improve precision where language tooling exists.
 - [x] Add stable ids, priorities, and reasons to semantic work queue items.
 - [x] Add semantic work queue filters for language, status, and capability.
 - [x] Add semantic execution batch reports grouped by language server command.
+- [x] Add executable LSP request descriptors for semantic batch runners.
+- [x] Add workspace symbol work items and request planning.
 - Use LSP definitions, references, document symbols, workspace symbols, and diagnostics.
 - Add Rust enrichment through `rust-analyzer`.
 - Add TypeScript/JavaScript enrichment through tsserver-compatible tooling.
