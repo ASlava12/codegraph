@@ -86,6 +86,7 @@ const MAX_SOURCE_SEARCH_LIMIT: usize = 1000;
 const MAX_SOURCE_SEARCH_QUERY_LENGTH: usize = 4096;
 const DEFAULT_SOURCE_SEARCH_CONTEXT: usize = 2;
 const MAX_SOURCE_SEARCH_CONTEXT: usize = 20;
+const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 tokio::task_local! {
@@ -95,6 +96,7 @@ tokio::task_local! {
 #[derive(Debug, Parser)]
 #[command(name = "codegraph-server")]
 #[command(about = "Serve the CodeGraph API and web interface")]
+#[command(version)]
 struct Args {
     /// Project root exposed to the scanner.
     #[arg(long, default_value = ".")]
@@ -540,6 +542,7 @@ struct ProjectResponse {
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     status: &'static str,
+    server_version: &'static str,
     root: String,
     max_file_size: u64,
     cache_dir: Option<String>,
@@ -554,6 +557,7 @@ struct HealthResponse {
 #[derive(Debug, Serialize)]
 struct ProbeResponse {
     status: &'static str,
+    server_version: &'static str,
     api_version: u32,
     graph_schema_version: u32,
     root: String,
@@ -563,6 +567,7 @@ struct ProbeResponse {
 #[derive(Debug, Serialize)]
 struct MetricsResponse {
     status: &'static str,
+    server_version: &'static str,
     api_version: u32,
     graph_schema_version: u32,
     uptime_seconds: u64,
@@ -586,6 +591,7 @@ struct JobPoolMetricsResponse {
 #[derive(Debug, Serialize)]
 struct CapabilitiesResponse {
     name: &'static str,
+    server_version: &'static str,
     api_version: u32,
     graph_schema_version: u32,
     root: String,
@@ -602,6 +608,7 @@ struct CapabilitiesResponse {
 #[derive(Debug, Serialize)]
 struct ApiSchemaResponse {
     name: &'static str,
+    server_version: &'static str,
     api_version: u32,
     graph_schema_version: u32,
     description: &'static str,
@@ -1487,6 +1494,7 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, A
     };
     Ok(Json(HealthResponse {
         status: "ok",
+        server_version: SERVER_VERSION,
         root: state.root.display().to_string(),
         max_file_size: options.max_file_size,
         cache_dir: state
@@ -1508,6 +1516,7 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, A
 fn probe_response(state: &AppState, status: &'static str) -> ProbeResponse {
     ProbeResponse {
         status,
+        server_version: SERVER_VERSION,
         api_version: 1,
         graph_schema_version: CODEGRAPH_SCHEMA_VERSION,
         root: state.root.display().to_string(),
@@ -1527,6 +1536,7 @@ async fn metrics_api(State(state): State<AppState>) -> Result<Json<MetricsRespon
     };
     Ok(Json(MetricsResponse {
         status: "ok",
+        server_version: SERVER_VERSION,
         api_version: 1,
         graph_schema_version: CODEGRAPH_SCHEMA_VERSION,
         uptime_seconds: state.started_at.elapsed().as_secs(),
@@ -1564,6 +1574,7 @@ async fn capabilities_api(
     let options = scan_options(&state, &state.root)?;
     Ok(Json(CapabilitiesResponse {
         name: "CodeGraph",
+        server_version: SERVER_VERSION,
         api_version: 1,
         graph_schema_version: CODEGRAPH_SCHEMA_VERSION,
         root: state.root.display().to_string(),
@@ -3200,6 +3211,7 @@ fn language_responses() -> Vec<LanguageResponse> {
 fn api_schema_response() -> ApiSchemaResponse {
     ApiSchemaResponse {
         name: "CodeGraph API",
+        server_version: SERVER_VERSION,
         api_version: 1,
         graph_schema_version: CODEGRAPH_SCHEMA_VERSION,
         description: "Machine-readable API contract for CodeGraph clients and agents.",
@@ -3596,13 +3608,15 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Discover server features, limits, route groups, cache state, and configured projects.",
                     vec![],
                     "CapabilitiesResponse",
-                ),
+                )
+                .with_response_fields(capabilities_response_fields()),
                 api_get(
                     "/api/schema",
                     "Discover this machine-readable endpoint contract.",
                     vec![],
                     "ApiSchemaResponse",
-                ),
+                )
+                .with_response_fields(api_schema_response_fields()),
                 api_get(
                     "/api/live",
                     "Read a lightweight liveness probe for process supervision.",
@@ -4692,6 +4706,94 @@ fn semantic_enrich_body_fields() -> Vec<ApiParameterSpec> {
     fields
 }
 
+fn capabilities_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("name", true, "string", "Product name."),
+        response_field(
+            "server_version",
+            true,
+            "semver",
+            "CodeGraph server package version.",
+        ),
+        response_field("api_version", true, "u32", "HTTP API contract version."),
+        response_field(
+            "graph_schema_version",
+            true,
+            "u32",
+            "Serialized graph schema version.",
+        ),
+        response_field("root", true, "path", "Resolved primary project root."),
+        response_field(
+            "projects",
+            true,
+            "ProjectResponse[]",
+            "Configured project roots available to the server.",
+        ),
+        response_field(
+            "languages",
+            true,
+            "LanguageResponse[]",
+            "Built-in language adapters.",
+        ),
+        response_field(
+            "features",
+            true,
+            "string[]",
+            "Advertised runtime feature keys.",
+        ),
+        response_field(
+            "endpoints",
+            true,
+            "EndpointGroupResponse[]",
+            "Grouped route summaries.",
+        ),
+        response_field(
+            "limits",
+            true,
+            "RuntimeLimitsResponse",
+            "Published runtime limits for clients.",
+        ),
+        response_field(
+            "cache",
+            true,
+            "CacheCapabilityResponse",
+            "Persistent graph cache status.",
+        ),
+    ]
+}
+
+fn api_schema_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("name", true, "string", "API contract name."),
+        response_field(
+            "server_version",
+            true,
+            "semver",
+            "CodeGraph server package version.",
+        ),
+        response_field("api_version", true, "u32", "HTTP API contract version."),
+        response_field(
+            "graph_schema_version",
+            true,
+            "u32",
+            "Serialized graph schema version.",
+        ),
+        response_field("description", true, "string", "API contract description."),
+        response_field(
+            "groups",
+            true,
+            "ApiSchemaGroup[]",
+            "Machine-readable endpoint groups.",
+        ),
+        response_field(
+            "enum_values",
+            true,
+            "map<string,string[]>",
+            "Known enum values and query terms for clients.",
+        ),
+    ]
+}
+
 fn probe_response_fields() -> Vec<ApiParameterSpec> {
     vec![
         response_field(
@@ -4699,6 +4801,12 @@ fn probe_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "string",
             "Probe status: ok for liveness and ready for readiness.",
+        ),
+        response_field(
+            "server_version",
+            true,
+            "semver",
+            "CodeGraph server package version.",
         ),
         response_field("api_version", true, "u32", "HTTP API contract version."),
         response_field(
@@ -4720,6 +4828,12 @@ fn probe_response_fields() -> Vec<ApiParameterSpec> {
 fn health_response_fields() -> Vec<ApiParameterSpec> {
     vec![
         response_field("status", true, "string", "Runtime health status."),
+        response_field(
+            "server_version",
+            true,
+            "semver",
+            "CodeGraph server package version.",
+        ),
         response_field("root", true, "path", "Resolved primary project root."),
         response_field(
             "max_file_size",
@@ -4775,6 +4889,12 @@ fn health_response_fields() -> Vec<ApiParameterSpec> {
 fn metrics_response_fields() -> Vec<ApiParameterSpec> {
     vec![
         response_field("status", true, "string", "Runtime metrics status."),
+        response_field(
+            "server_version",
+            true,
+            "semver",
+            "CodeGraph server package version.",
+        ),
         response_field("api_version", true, "u32", "HTTP API contract version."),
         response_field(
             "graph_schema_version",
@@ -6018,6 +6138,7 @@ mod tests {
             .expect("capabilities response");
 
         assert_eq!(response.limits.default_incremental_report_limit, 100);
+        assert_eq!(response.server_version, SERVER_VERSION);
         assert_eq!(response.limits.max_incremental_report_limit, 10000);
         assert_eq!(response.limits.default_semantic_work_item_limit, 100);
         assert_eq!(response.limits.max_semantic_work_item_limit, 1000);
@@ -6061,6 +6182,7 @@ mod tests {
 
         let Json(live) = live_api(State(test_state(root.clone(), vec![], false))).await;
         assert_eq!(live.status, "ok");
+        assert_eq!(live.server_version, SERVER_VERSION);
         assert_eq!(live.api_version, 1);
         assert_eq!(live.graph_schema_version, CODEGRAPH_SCHEMA_VERSION);
         assert_eq!(live.root, root.display().to_string());
@@ -6070,6 +6192,7 @@ mod tests {
             .await
             .expect("ready probe");
         assert_eq!(ready.status, "ready");
+        assert_eq!(ready.server_version, SERVER_VERSION);
         assert_eq!(ready.api_version, 1);
         assert_eq!(ready.graph_schema_version, CODEGRAPH_SCHEMA_VERSION);
         assert_eq!(ready.root, root.display().to_string());
@@ -6229,6 +6352,7 @@ mod tests {
             .collect();
 
         assert_eq!(schema.api_version, 1);
+        assert_eq!(schema.server_version, SERVER_VERSION);
         assert!(schema.enum_values.contains_key("export_format"));
         assert!(
             schema
@@ -6429,6 +6553,24 @@ mod tests {
                     && params.contains(&"query_focus"))
         );
         assert!(endpoints.contains(&("GET", "/api/schema")));
+        let capabilities_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/capabilities")
+            .expect("schema should list capabilities endpoint");
+        assert!(capabilities_endpoint.response_fields.iter().any(|field| {
+            field.name == "server_version" && field.value_type == "semver" && field.required
+        }));
+        let schema_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/schema")
+            .expect("schema should list schema endpoint");
+        assert!(schema_endpoint.response_fields.iter().any(|field| {
+            field.name == "enum_values" && field.value_type == "map<string,string[]>"
+        }));
         assert!(endpoints.contains(&("GET", "/api/live")));
         assert!(endpoints.contains(&("GET", "/api/ready")));
         let live_endpoint = schema
@@ -6439,6 +6581,9 @@ mod tests {
             .expect("schema should list live endpoint");
         assert!(live_endpoint.response_fields.iter().any(|field| {
             field.name == "status" && field.location == "response" && field.required
+        }));
+        assert!(live_endpoint.response_fields.iter().any(|field| {
+            field.name == "server_version" && field.value_type == "semver" && field.required
         }));
         assert!(live_endpoint.response_fields.iter().any(|field| {
             field.name == "cache_enabled" && field.value_type == "bool" && field.required

@@ -61,6 +61,7 @@ Implemented now:
 - API schema enum values stay aligned with semantic work statuses and capabilities used by LSP work queues.
 - Runtime metrics endpoint for uptime, API/schema versions, roots, language/feature counts, cache state, job stores, and concurrency.
 - Lightweight liveness and readiness probe endpoints for deployment health checks.
+- Server package version is published through runtime probes, health, metrics, capabilities, and API schema responses.
 - Multi-stage Docker image definition for running the web/API server with a mounted repository and persistent cache volume.
 - Built-in HTTP access logs with method, target, status, and latency for server operations.
 - Per-response `x-request-id` correlation headers mirrored in access logs and JSON error bodies.
