@@ -807,6 +807,7 @@ button.cancel-action:hover:not(:disabled) {
 .query,
 .source-search,
 .cache-diff,
+.graph-export,
 .path-query,
 .config-trace,
 .error-trace {
@@ -821,6 +822,7 @@ button.cancel-action:hover:not(:disabled) {
 
 .source-search header,
 .cache-diff header,
+.graph-export header,
 .path-query header,
 .config-trace header,
 .error-trace header {
@@ -831,6 +833,7 @@ button.cancel-action:hover:not(:disabled) {
 
 .source-search h2,
 .cache-diff h2,
+.graph-export h2,
 .path-query h2,
 .config-trace h2,
 .error-trace h2 {
@@ -851,6 +854,7 @@ button.cancel-action:hover:not(:disabled) {
 
 .source-search-fields,
 .cache-diff-fields,
+.graph-export-fields,
 .path-fields,
 .config-trace-fields,
 .error-trace-fields {
@@ -861,6 +865,7 @@ button.cancel-action:hover:not(:disabled) {
 
 .source-search-fields input,
 .cache-diff-fields input,
+.graph-export-fields select,
 .path-fields input,
 .config-trace-fields input,
 .error-trace-fields input {
@@ -869,6 +874,7 @@ button.cancel-action:hover:not(:disabled) {
 
 .source-search > button,
 .cache-diff > button,
+.graph-export > button,
 .path-query > button,
 .config-trace > button,
 .error-trace > button {
@@ -878,6 +884,10 @@ button.cancel-action:hover:not(:disabled) {
 }
 
 .cache-diff-fields {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.graph-export-fields {
   grid-template-columns: minmax(0, 1fr);
 }
 

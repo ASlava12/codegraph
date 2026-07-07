@@ -241,6 +241,24 @@
           <div id="cacheDiffResult" class="query-result"></div>
         </section>
 
+        <section class="graph-export" aria-label="Graph export">
+          <header>
+            <h2 data-i18n="section.export">Export</h2>
+          </header>
+          <div class="graph-export-fields">
+            <label class="field compact">
+              <span data-i18n="label.format">Format</span>
+              <select id="exportFormatInput">
+                <option value="json">JSON</option>
+                <option value="dot">DOT</option>
+                <option value="ndjson">NDJSON</option>
+              </select>
+            </label>
+          </div>
+          <button id="exportButton" type="button" data-i18n="button.downloadGraph">Download Graph</button>
+          <div id="exportResult" class="query-result"></div>
+        </section>
+
         <section class="path-query" aria-label="Graph path">
           <header>
             <h2 data-i18n="section.path">Path</h2>

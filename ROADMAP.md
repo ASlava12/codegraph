@@ -161,6 +161,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add web controls for server-side language filtering.
 - [x] Add web controls for server-side edge confidence filtering.
 - [x] Add web controls for server-side edge relation and provenance source filtering.
+- [x] Add web graph export downloads for JSON, DOT, and NDJSON.
 - [x] Add graph viewport controls for zoom, fit, layout reset, and layout pause.
 - [x] Add web project overview for languages, edge confidence, and entrypoints.
 - [x] Add web semantic work queue for prioritized LSP enrichment tasks.

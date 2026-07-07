@@ -59,6 +59,7 @@ const I18N = {
     "label.target": "Target",
     "label.severity": "Severity",
     "label.failOn": "Fail On",
+    "label.format": "Format",
     "button.scan": "Scan",
     "button.cancel": "Cancel",
     "button.refresh": "Refresh",
@@ -68,6 +69,7 @@ const I18N = {
     "button.run": "Run",
     "button.searchSource": "Search Source",
     "button.explainCache": "Explain Cache",
+    "button.downloadGraph": "Download Graph",
     "button.findPath": "Find Path",
     "button.traceConfig": "Trace Config",
     "button.traceErrors": "Trace Errors",
@@ -95,6 +97,7 @@ const I18N = {
     "section.graphPage": "Graph Page",
     "section.sourceSearch": "Source Search",
     "section.cacheDiff": "Cache Diff",
+    "section.export": "Export",
     "section.path": "Path",
     "section.configTrace": "Config Trace",
     "section.errorTrace": "Error Trace",
@@ -216,6 +219,7 @@ const I18N = {
     "label.target": "Цель",
     "label.severity": "Важность",
     "label.failOn": "Порог",
+    "label.format": "Формат",
     "button.scan": "Сканировать",
     "button.cancel": "Отменить",
     "button.refresh": "Обновить",
@@ -225,6 +229,7 @@ const I18N = {
     "button.run": "Запустить",
     "button.searchSource": "Искать в коде",
     "button.explainCache": "Объяснить кеш",
+    "button.downloadGraph": "Скачать граф",
     "button.findPath": "Найти путь",
     "button.traceConfig": "Трассировать конфиг",
     "button.traceErrors": "Трассировать ошибки",
@@ -252,6 +257,7 @@ const I18N = {
     "section.graphPage": "Страница графа",
     "section.sourceSearch": "Поиск в коде",
     "section.cacheDiff": "Дифф кеша",
+    "section.export": "Экспорт",
     "section.path": "Путь",
     "section.configTrace": "Трасса конфига",
     "section.errorTrace": "Трасса ошибок",
@@ -387,6 +393,7 @@ const state = {
   queryRequest: 0,
   sourceSearchRequest: 0,
   cacheDiffRequest: 0,
+  exportRequest: 0,
   pathRequest: 0,
   configTraceRequest: 0,
   errorTraceRequest: 0,
@@ -519,6 +526,9 @@ const cacheDiffStatus = document.querySelector("#cacheDiffStatus");
 const cacheDiffLimitInput = document.querySelector("#cacheDiffLimitInput");
 const cacheDiffButton = document.querySelector("#cacheDiffButton");
 const cacheDiffResult = document.querySelector("#cacheDiffResult");
+const exportFormatInput = document.querySelector("#exportFormatInput");
+const exportButton = document.querySelector("#exportButton");
+const exportResult = document.querySelector("#exportResult");
 const pathFromInput = document.querySelector("#pathFromInput");
 const pathToInput = document.querySelector("#pathToInput");
 const pathDepthInput = document.querySelector("#pathDepthInput");
@@ -589,6 +599,7 @@ cacheDiffButton.addEventListener("click", () => loadCacheDiff());
 cacheDiffLimitInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") loadCacheDiff();
 });
+exportButton.addEventListener("click", () => runGraphExport());
 entryFlowButton.addEventListener("click", () => runEntryFlowTrace());
 for (const input of [entryFlowSearchInput, entryFlowDepthInput]) {
   input.addEventListener("keydown", (event) => {
@@ -948,6 +959,7 @@ async function scan() {
   state.insightReport = null;
   renderInsights();
   checkResult.innerHTML = "";
+  exportResult.innerHTML = "";
   if (state.scanEvents) {
     state.scanEvents.close();
     state.scanEvents = null;
@@ -1189,6 +1201,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     state.insightReport = null;
     queryResult.innerHTML = "";
     checkResult.innerHTML = "";
+    exportResult.innerHTML = "";
     entryFlowResult.innerHTML = "";
     pathResult.innerHTML = "";
     configTraceResult.innerHTML = "";
@@ -2592,6 +2605,93 @@ async function loadCacheDiff() {
       cacheDiffButton.disabled = false;
     }
   }
+}
+
+async function runGraphExport() {
+  const metadata = exportFormatMetadata(exportFormatInput.value);
+  exportFormatInput.value = metadata.format;
+  state.exportRequest += 1;
+  const requestId = state.exportRequest;
+  exportButton.disabled = true;
+  exportResult.innerHTML = '<p class="empty">Exporting graph...</p>';
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    format: metadata.format,
+  });
+
+  try {
+    const response = await fetch(`/api/export?${params.toString()}`);
+    if (requestId !== state.exportRequest) return;
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response, "export failed"));
+    }
+
+    const blob = await response.blob();
+    if (requestId !== state.exportRequest) return;
+    const fileName = `codegraph-${safeFilePart(pathInput.value.trim() || state.graphPage.root || "project")}.${metadata.extension}`;
+    downloadBlob(blob, fileName);
+    exportResult.innerHTML = `
+      <div class="query-summary">
+        <span>${escapeHtml(metadata.label)}</span>
+        <span>${escapeHtml(formatBytes(blob.size))}</span>
+        <span class="query-expression">${escapeHtml(fileName)}</span>
+      </div>
+    `;
+  } catch (error) {
+    if (requestId !== state.exportRequest) return;
+    exportResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.exportRequest) {
+      exportButton.disabled = false;
+    }
+  }
+}
+
+async function responseErrorMessage(response, fallback) {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    try {
+      const body = await response.json();
+      return body.error || fallback;
+    } catch (error) {
+      return fallback;
+    }
+  }
+  const text = await response.text();
+  return text.trim() || fallback;
+}
+
+function exportFormatMetadata(format) {
+  switch (format) {
+    case "dot":
+      return { format: "dot", extension: "dot", label: "DOT" };
+    case "ndjson":
+      return { format: "ndjson", extension: "ndjson", label: "NDJSON" };
+    case "json":
+    default:
+      return { format: "json", extension: "json", label: "JSON" };
+  }
+}
+
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function safeFilePart(value) {
+  return String(value)
+    .trim()
+    .replace(/[/\\:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "project";
 }
 
 function renderCacheDiff(report) {

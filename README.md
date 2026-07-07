@@ -77,6 +77,7 @@ Implemented now:
 - CI/agent check command, API, and web quality gate for failing on insight severity thresholds.
 - Insight focus API and web interaction for turning findings into focused graph views.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
+- Web export panel for downloading full graph snapshots as JSON, DOT, or NDJSON.
 - Web project selector backed by an explicit server-side allowlist for opening local repositories.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Persistent server-side graph cache with project fingerprint invalidation.
