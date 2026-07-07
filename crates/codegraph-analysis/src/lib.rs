@@ -1268,6 +1268,24 @@ fn insight_breakdowns(insights: &[Insight]) -> (BTreeMap<String, usize>, BTreeMa
     (by_severity, by_kind)
 }
 
+fn format_backtick_list<'a>(values: impl Iterator<Item = &'a str>, limit: usize) -> String {
+    let values = values.collect::<Vec<_>>();
+    let rendered = values
+        .iter()
+        .take(limit)
+        .map(|value| format!("`{value}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let remaining = values.len().saturating_sub(limit);
+    if remaining == 0 {
+        rendered
+    } else if rendered.is_empty() {
+        format!("{remaining} more")
+    } else {
+        format!("{rendered}, and {remaining} more")
+    }
+}
+
 pub fn trace(graph: &CodeGraph, request: TraceRequest) -> Option<TraceResult> {
     trace_with_direction(graph, request, TraceDirection::Outgoing)
 }
@@ -3412,12 +3430,7 @@ fn add_conflicting_config_default_insights(graph: &CodeGraph, insights: &mut Vec
             .iter()
             .flat_map(|node_id| incoming_edge_indexes(graph, *node_id, edge_kind.clone()))
             .collect();
-        let values = default_values
-            .keys()
-            .take(4)
-            .map(|value| format!("`{value}`"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let values = format_backtick_list(default_values.keys().map(String::as_str), 8);
 
         insights.push(Insight {
             kind: "conflicting_config_default".to_string(),
@@ -6045,6 +6058,17 @@ mod tests {
             None,
             BTreeMap::from([("default_value".to_string(), "9000".to_string())]),
         );
+        let extra_envs = ["3000", "5000", "7000", "8080", "9090", "9091", "9092"]
+            .into_iter()
+            .map(|default_value| {
+                graph.add_node_with_metadata(
+                    NodeKind::Environment,
+                    "PORT",
+                    None,
+                    BTreeMap::from([("default_value".to_string(), default_value.to_string())]),
+                )
+            })
+            .collect::<Vec<_>>();
         let stable_env = graph.add_node_with_metadata(
             NodeKind::Environment,
             "HOST",
@@ -6063,6 +6087,14 @@ mod tests {
             EdgeKind::ReadsEnvironment,
             codegraph_core::Confidence::Heuristic,
         );
+        for env in &extra_envs {
+            graph.add_edge(
+                second_reader,
+                *env,
+                EdgeKind::ReadsEnvironment,
+                codegraph_core::Confidence::Heuristic,
+            );
+        }
         graph.add_edge(
             second_reader,
             stable_env,
@@ -6081,9 +6113,12 @@ mod tests {
         assert!(insight.message.contains("PORT"));
         assert!(insight.message.contains("8000"));
         assert!(insight.message.contains("9000"));
+        assert!(insight.message.contains("9091"));
+        assert!(insight.message.contains("and 1 more"));
         assert!(insight.nodes.contains(&first_env));
         assert!(insight.nodes.contains(&second_env));
-        assert_eq!(insight.edges.len(), 2);
+        assert!(extra_envs.iter().all(|env| insight.nodes.contains(env)));
+        assert_eq!(insight.edges.len(), 9);
         assert!(!insight.nodes.contains(&stable_env));
     }
 
