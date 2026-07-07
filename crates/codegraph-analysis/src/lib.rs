@@ -23,6 +23,36 @@ pub struct GraphSummary {
     pub skipped_files: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArchitectureMap {
+    pub groups: Vec<ArchitectureGroup>,
+    pub edges: Vec<ArchitectureEdge>,
+    pub total_groups: usize,
+    pub total_edges: usize,
+    pub truncated_groups: bool,
+    pub truncated_edges: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArchitectureGroup {
+    pub id: String,
+    pub label: String,
+    pub files: usize,
+    pub symbols: usize,
+    pub entrypoints: usize,
+    pub skipped_files: usize,
+    pub languages: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArchitectureEdge {
+    pub source: String,
+    pub target: String,
+    pub count: usize,
+    pub edge_kinds: BTreeMap<String, usize>,
+    pub confidences: BTreeMap<String, usize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceSearchRequest {
     pub query: String,
@@ -683,6 +713,140 @@ pub fn summarize(graph: &CodeGraph) -> GraphSummary {
             .filter(|edge| edge.kind == EdgeKind::Entrypoint)
             .count(),
         skipped_files,
+    }
+}
+
+pub fn architecture_map(
+    graph: &CodeGraph,
+    group_limit: usize,
+    edge_limit: usize,
+) -> ArchitectureMap {
+    let group_limit = group_limit.clamp(1, 500);
+    let edge_limit = edge_limit.clamp(1, 2_000);
+    let nodes_by_id: BTreeMap<NodeId, &Node> =
+        graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let mut node_groups = BTreeMap::new();
+    let mut groups: BTreeMap<String, ArchitectureGroup> = BTreeMap::new();
+
+    for node in &graph.nodes {
+        if node.kind != NodeKind::File {
+            continue;
+        }
+        let (id, label) = architecture_group_for_path(&node.label);
+        let group = groups
+            .entry(id.clone())
+            .or_insert_with(|| ArchitectureGroup {
+                id: id.clone(),
+                label,
+                files: 0,
+                symbols: 0,
+                entrypoints: 0,
+                skipped_files: 0,
+                languages: BTreeMap::new(),
+            });
+        group.files += 1;
+        if node
+            .metadata
+            .get("skipped")
+            .is_some_and(|value| value == "true")
+        {
+            group.skipped_files += 1;
+        }
+        if let Some(language) = node.metadata.get("language") {
+            *group.languages.entry(language.clone()).or_insert(0) += 1;
+        }
+        node_groups.insert(node.id, id);
+    }
+
+    for edge in &graph.edges {
+        if edge.kind != EdgeKind::Contains {
+            continue;
+        }
+        let Some(source_group) = node_groups.get(&edge.source).cloned() else {
+            continue;
+        };
+        let Some(target) = nodes_by_id.get(&edge.target) else {
+            continue;
+        };
+        node_groups.entry(target.id).or_insert(source_group);
+    }
+
+    for node in &graph.nodes {
+        let Some(group_id) = node_groups.get(&node.id) else {
+            continue;
+        };
+        let Some(group) = groups.get_mut(group_id) else {
+            continue;
+        };
+        if is_architecture_symbol(&node.kind) {
+            group.symbols += 1;
+        }
+        if node.kind == NodeKind::Entrypoint {
+            group.entrypoints += 1;
+        }
+    }
+
+    let mut edges: BTreeMap<(String, String), ArchitectureEdge> = BTreeMap::new();
+    for edge in &graph.edges {
+        if !is_architecture_dependency_edge(&edge.kind) {
+            continue;
+        }
+        let Some(source_group) = node_groups.get(&edge.source) else {
+            continue;
+        };
+        let Some(target_group) = node_groups.get(&edge.target) else {
+            continue;
+        };
+        if source_group == target_group {
+            continue;
+        }
+        let key = (source_group.clone(), target_group.clone());
+        let architecture_edge = edges.entry(key).or_insert_with(|| ArchitectureEdge {
+            source: source_group.clone(),
+            target: target_group.clone(),
+            count: 0,
+            edge_kinds: BTreeMap::new(),
+            confidences: BTreeMap::new(),
+        });
+        architecture_edge.count += 1;
+        *architecture_edge
+            .edge_kinds
+            .entry(edge_kind_name(&edge.kind))
+            .or_insert(0) += 1;
+        *architecture_edge
+            .confidences
+            .entry(confidence_name(edge.confidence))
+            .or_insert(0) += 1;
+    }
+
+    let total_groups = groups.len();
+    let total_edges = edges.len();
+    let mut groups: Vec<_> = groups.into_values().collect();
+    groups.sort_by(|left, right| {
+        right
+            .files
+            .cmp(&left.files)
+            .then_with(|| right.symbols.cmp(&left.symbols))
+            .then_with(|| left.label.cmp(&right.label))
+    });
+    let mut edges: Vec<_> = edges.into_values().collect();
+    edges.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.source.cmp(&right.source))
+            .then_with(|| left.target.cmp(&right.target))
+    });
+    groups.truncate(group_limit);
+    edges.truncate(edge_limit);
+
+    ArchitectureMap {
+        groups,
+        edges,
+        total_groups,
+        total_edges,
+        truncated_groups: total_groups > group_limit,
+        truncated_edges: total_edges > edge_limit,
     }
 }
 
@@ -3676,6 +3840,45 @@ fn kind_name(kind: &codegraph_core::NodeKind) -> String {
     serde_json_name(kind).unwrap_or_else(|| format!("{kind:?}").to_ascii_lowercase())
 }
 
+fn architecture_group_for_path(path: &str) -> (String, String) {
+    let normalized = path.trim_matches('/').replace('\\', "/");
+    let Some((first, _)) = normalized.split_once('/') else {
+        return (".".to_string(), "root".to_string());
+    };
+    let first = first.trim();
+    if first.is_empty() {
+        (".".to_string(), "root".to_string())
+    } else {
+        (first.to_string(), first.to_string())
+    }
+}
+
+fn is_architecture_symbol(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Module
+            | NodeKind::Function
+            | NodeKind::Entrypoint
+            | NodeKind::Type
+            | NodeKind::Config
+            | NodeKind::Environment
+    )
+}
+
+fn is_architecture_dependency_edge(kind: &EdgeKind) -> bool {
+    matches!(
+        kind,
+        EdgeKind::Imports
+            | EdgeKind::Calls
+            | EdgeKind::References
+            | EdgeKind::ReadsConfig
+            | EdgeKind::ReadsEnvironment
+            | EdgeKind::MayError
+            | EdgeKind::Entrypoint
+            | EdgeKind::DependsOn
+    )
+}
+
 fn edge_kind_name(kind: &EdgeKind) -> String {
     serde_json_name(kind).unwrap_or_else(|| format!("{kind:?}").to_ascii_lowercase())
 }
@@ -3768,6 +3971,44 @@ mod tests {
                 .and_then(|values| values.get("team-payments")),
             Some(&1)
         );
+    }
+
+    #[test]
+    fn architecture_map_groups_files_and_cross_group_edges() {
+        let mut graph = CodeGraph::new("repo");
+        let api_file = graph.add_node(NodeKind::File, "api/main.rs");
+        let core_file = graph.add_node(NodeKind::File, "core/lib.rs");
+        let api_main = graph.add_node(NodeKind::Function, "main");
+        let core_load = graph.add_node(NodeKind::Function, "load_config");
+        graph.add_edge(graph.root, api_file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(graph.root, core_file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(
+            api_file,
+            api_main,
+            EdgeKind::Contains,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            core_file,
+            core_load,
+            EdgeKind::Contains,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(api_main, core_load, EdgeKind::Calls, Confidence::Heuristic);
+
+        let map = architecture_map(&graph, 10, 10);
+
+        assert_eq!(map.total_groups, 2);
+        assert_eq!(map.total_edges, 1);
+        let api = map.groups.iter().find(|group| group.id == "api").unwrap();
+        let core = map.groups.iter().find(|group| group.id == "core").unwrap();
+        assert_eq!(api.files, 1);
+        assert_eq!(api.symbols, 1);
+        assert_eq!(core.files, 1);
+        assert_eq!(core.symbols, 1);
+        assert_eq!(map.edges[0].source, "api");
+        assert_eq!(map.edges[0].target, "core");
+        assert_eq!(map.edges[0].edge_kinds.get("calls"), Some(&1));
     }
 
     #[test]

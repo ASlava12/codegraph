@@ -32,6 +32,7 @@ const state = {
   summary: null,
   scanOptions: null,
   coverage: null,
+  architecture: null,
   entrypoints: [],
   insightReport: null,
   projects: [],
@@ -87,6 +88,7 @@ const relationList = document.querySelector("#relationList");
 const edgeSourceList = document.querySelector("#edgeSourceList");
 const scanPolicyList = document.querySelector("#scanPolicyList");
 const coverageList = document.querySelector("#coverageList");
+const architectureList = document.querySelector("#architectureList");
 const annotationList = document.querySelector("#annotationList");
 const entrypointList = document.querySelector("#entrypointList");
 const entryFlowSearchInput = document.querySelector("#entryFlowSearchInput");
@@ -303,6 +305,7 @@ async function scan() {
   state.summary = null;
   state.scanOptions = null;
   state.coverage = null;
+  state.architecture = null;
   state.entrypoints = [];
   renderOverview();
   state.insightReport = null;
@@ -519,16 +522,24 @@ async function loadProjectOverview() {
   const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
 
   try {
-    const [summaryResponse, entrypointsResponse, scanOptionsResponse, coverageResponse] = await Promise.all([
+    const [
+      summaryResponse,
+      entrypointsResponse,
+      scanOptionsResponse,
+      coverageResponse,
+      architectureResponse,
+    ] = await Promise.all([
       fetch(`/api/summary?${params.toString()}`),
       fetch(`/api/entrypoints?${params.toString()}`),
       fetch(`/api/scan-options?${params.toString()}`),
       fetch(`/api/coverage?${params.toString()}`),
+      fetch(`/api/architecture?${params.toString()}&group_limit=8&edge_limit=40`),
     ]);
     const summary = await summaryResponse.json();
     const entrypoints = await entrypointsResponse.json();
     const scanOptions = await scanOptionsResponse.json();
     const coverage = await coverageResponse.json();
+    const architecture = await architectureResponse.json();
     if (requestId !== state.overviewRequest) return;
     if (!summaryResponse.ok) {
       throw new Error(summary.error || "summary failed");
@@ -542,9 +553,13 @@ async function loadProjectOverview() {
     if (!coverageResponse.ok) {
       throw new Error(coverage.error || "coverage failed");
     }
+    if (!architectureResponse.ok) {
+      throw new Error(architecture.error || "architecture failed");
+    }
     state.summary = summary;
     state.scanOptions = scanOptions;
     state.coverage = coverage;
+    state.architecture = architecture;
     state.entrypoints = entrypoints;
     renderOverview();
   } catch (error) {
@@ -556,6 +571,7 @@ async function loadProjectOverview() {
     edgeSourceList.innerHTML = "";
     scanPolicyList.innerHTML = "";
     coverageList.innerHTML = "";
+    architectureList.innerHTML = "";
     annotationList.innerHTML = "";
     entrypointList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   }
@@ -622,6 +638,7 @@ function renderOverview() {
 
   renderScanPolicy(state.scanOptions);
   renderCoverage(state.coverage);
+  renderArchitecture(state.architecture);
 
   const annotations = annotationFacets(summary, state.graph.nodes);
   annotationList.innerHTML =
@@ -776,6 +793,30 @@ function renderCoverage(coverage) {
       `,
     )
     .join("");
+}
+
+function renderArchitecture(architecture) {
+  if (!architecture) {
+    architectureList.innerHTML = '<p class="empty">No architecture map.</p>';
+    return;
+  }
+
+  const groups = Array.isArray(architecture.groups) ? architecture.groups.slice(0, 8) : [];
+  const groupChips = groups.map(
+    (group) => `
+      <div class="architecture-chip">
+        <span>${escapeHtml(group.label || group.id || "root")}</span>
+        <strong>${Number(group.files || 0)}f/${Number(group.symbols || 0)}s</strong>
+      </div>
+    `,
+  );
+  groupChips.push(`
+    <div class="architecture-chip">
+      <span>Area edges</span>
+      <strong>${Number(architecture.total_edges || 0)}</strong>
+    </div>
+  `);
+  architectureList.innerHTML = groupChips.join("");
 }
 
 function annotationFacets(summary, nodes) {

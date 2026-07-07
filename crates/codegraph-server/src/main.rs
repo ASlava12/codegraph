@@ -11,10 +11,10 @@ use codegraph_analysis::{
     CheckReport, ConfigTraceRequest, ConfigTraceResult, EntrypointTraceReport,
     EntrypointTraceRequest, ErrorTraceRequest, ErrorTraceResult, ExplainEdgeRequest, FocusRequest,
     GraphSlice, GraphSliceRequest, InsightFilter, InsightReport, InsightSeverity, NodeContext,
-    SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, check_insights, entrypoints,
-    explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph, insights,
-    node_context, query_graph, search_source, slice_graph, summarize, trace, trace_config,
-    trace_dependents, trace_entrypoints, trace_errors,
+    SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, architecture_map,
+    check_insights, entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report,
+    focus_subgraph, insights, node_context, query_graph, search_source, slice_graph, summarize,
+    trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{
@@ -100,6 +100,13 @@ struct ScanQuery {
 #[derive(Debug, Deserialize)]
 struct ScanOptionsQuery {
     path: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArchitectureQuery {
+    path: Option<PathBuf>,
+    group_limit: Option<usize>,
+    edge_limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -383,6 +390,7 @@ async fn main() -> Result<()> {
         .route("/api/node-context", get(node_context_api))
         .route("/api/focus", get(focus_api))
         .route("/api/summary", get(summary))
+        .route("/api/architecture", get(architecture_api))
         .route("/api/entrypoints", get(entrypoints_api))
         .route("/api/entrypoint-traces", get(entrypoint_traces_api))
         .route("/api/insights", get(insights_api))
@@ -784,6 +792,18 @@ async fn coverage_api(
         .map_err(|error| ApiError::internal(format!("coverage task failed: {error}")))?
         .map_err(|error| ApiError::internal(error.to_string()))?;
     Ok(Json(report))
+}
+
+async fn architecture_api(
+    State(state): State<AppState>,
+    Query(query): Query<ArchitectureQuery>,
+) -> Result<Json<codegraph_analysis::ArchitectureMap>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    Ok(Json(architecture_map(
+        &graph,
+        query.group_limit.unwrap_or(50),
+        query.edge_limit.unwrap_or(200),
+    )))
 }
 
 async fn entrypoints_api(

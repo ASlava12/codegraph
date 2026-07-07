@@ -2,9 +2,10 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
     ConfigTraceRequest, EntrypointTraceRequest, ErrorTraceRequest, ExplainEdgeRequest,
-    InsightFilter, InsightSeverity, SourceSearchRequest, TraceRequest, TraceStart, check_insights,
-    entrypoints, explain_edge, filter_insight_report, insights, query_graph, search_source,
-    summarize, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    InsightFilter, InsightSeverity, SourceSearchRequest, TraceRequest, TraceStart,
+    architecture_map, check_insights, entrypoints, explain_edge, filter_insight_report, insights,
+    query_graph, search_source, summarize, trace, trace_config, trace_dependents,
+    trace_entrypoints, trace_errors,
 };
 use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{
@@ -53,6 +54,9 @@ enum Command {
 
     /// Emit graph summary counts as JSON.
     Summary(ScanArgs),
+
+    /// Emit a top-level architecture map grouped by project area.
+    Architecture(ArchitectureArgs),
 
     /// Explain scan coverage, ignored paths, and file-size skips as JSON.
     Coverage(CoverageArgs),
@@ -303,6 +307,20 @@ struct CoverageArgs {
     include_ignored: bool,
 }
 
+#[derive(Debug, Args)]
+struct ArchitectureArgs {
+    #[command(flatten)]
+    scan: ScanArgs,
+
+    /// Maximum groups to include.
+    #[arg(long, default_value_t = 50)]
+    group_limit: usize,
+
+    /// Maximum inter-group edges to include.
+    #[arg(long, default_value_t = 200)]
+    edge_limit: usize,
+}
+
 #[derive(Debug, Clone, Args)]
 struct CacheArgs {
     /// Disable persistent graph cache for this command.
@@ -504,6 +522,23 @@ fn main() -> Result<()> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&scan_coverage(&args.path, &options)?)?
+            );
+        }
+        Command::Architecture(args) => {
+            let graph = scan_with_options(
+                args.scan.path,
+                args.scan.include_hidden,
+                args.scan.include_ignored,
+                max_file_size,
+                &args.scan.cache,
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&architecture_map(
+                    &graph,
+                    args.group_limit,
+                    args.edge_limit,
+                ))?
             );
         }
         Command::Benchmark(args) => {

@@ -43,6 +43,7 @@ Implemented now:
 - Web graph page controls backed by server-side paging, search, kind, item, language, edge, confidence, relation, and source filters.
 - Web graph viewport controls for zooming, fitting visible nodes, restarting layout, and pausing layout simulation.
 - Web project overview for language mix, edge confidence/source/relation mix, and entrypoint launch points.
+- Architecture map reports in CLI, API, and web overview for top-level project areas and cross-area dependencies.
 - Web path navigation for finding, focusing, and visually highlighting dependency paths between graph nodes.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
 - Server-backed web insights for project-wide findings while browsing paged graph slices.
@@ -108,6 +109,12 @@ Summarize a project:
 
 ```bash
 cargo run -p codegraph-cli -- summary .
+```
+
+Show an architecture map grouped by top-level project area:
+
+```bash
+cargo run -p codegraph-cli -- architecture .
 ```
 
 Explain scan coverage before or after a full graph scan:
@@ -364,6 +371,7 @@ curl 'http://127.0.0.1:3765/api/graph?path=.&node_limit=250&kind=function'
 curl 'http://127.0.0.1:3765/api/node-context?path=.&node_id=1&edge_limit=80'
 curl 'http://127.0.0.1:3765/api/focus?path=.&node_ids=1,2&edge_indexes=0&edge_limit=200'
 curl 'http://127.0.0.1:3765/api/summary?path=.'
+curl 'http://127.0.0.1:3765/api/architecture?path=.&group_limit=50&edge_limit=200'
 curl 'http://127.0.0.1:3765/api/entrypoints?path=.'
 curl 'http://127.0.0.1:3765/api/entrypoint-traces?path=.&search=server&depth=4'
 curl 'http://127.0.0.1:3765/api/check?path=.&fail_on=warning&kind=dependency'
