@@ -50,6 +50,7 @@ Implemented now:
 - API schema parameters expose structured minimum, maximum, maximum string length, and matching capability-limit keys where runtime bounds exist.
 - API schema POST endpoints expose structured body fields for scan jobs and semantic enrichment requests.
 - API schema system endpoints expose structured response fields for probes, health, and runtime metrics.
+- API schema graph investigation endpoints expose structured response fields for graph slices, node cards, queries, edge explanations, and reports.
 - Semantic work queues clamp and publish maximum work item limits across CLI, API, schema, and web capabilities.
 - Semantic LSP request timeouts clamp and publish runtime limits across CLI, API, and web capabilities.
 - API schema enum values document supported graph query commands and query terms, including exact edge index lookups.

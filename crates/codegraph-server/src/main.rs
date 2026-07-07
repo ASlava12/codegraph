@@ -3968,7 +3968,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Read a server-side paged and filtered graph slice. Returned edges include metadata.edge_index for exact edge explanation and UI selection.",
                     graph_slice_params(),
                     "GraphSlice",
-                ),
+                )
+                .with_response_fields(graph_slice_response_fields()),
                 api_get(
                     "/api/node-context",
                     "Read selected node context with neighboring edges. Returned edges include metadata.edge_index for exact edge explanation and UI selection.",
@@ -3986,7 +3987,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         .with_capability_limit("max_node_context_edge_limit"),
                     ],
                     "NodeContext",
-                ),
+                )
+                .with_response_fields(node_context_response_fields()),
                 api_get(
                     "/api/node-card",
                     "Read selected node investigation card with neighboring edges, dependency summary facets, file-level summaries, source preview, related risks including file-scoped contained-node risks, risk summaries, exact edge indexes, and suggested focused graph query actions.",
@@ -4022,7 +4024,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         .with_capability_limit("max_node_card_insight_limit"),
                     ],
                     "NodeCard",
-                ),
+                )
+                .with_response_fields(node_card_response_fields()),
                 api_get(
                     "/api/focus",
                     "Build a focused subgraph from node ids and edge indexes. Returned edges include metadata.edge_index for exact edge explanation and UI selection.",
@@ -4047,7 +4050,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         .with_capability_limit("max_focus_edge_limit"),
                     ],
                     "QueryResult",
-                ),
+                )
+                .with_response_fields(query_result_response_fields()),
                 api_get(
                     "/api/summary",
                     "Summarize graph node/edge facts and facets.",
@@ -4070,7 +4074,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         .with_capability_limit("max_graph_query_length"),
                     ],
                     "QueryResult",
-                ),
+                )
+                .with_response_fields(query_result_response_fields()),
                 api_get(
                     "/api/explain-edge",
                     "Explain why an edge exists with confidence, provenance evidence, and related edge-scoped risk findings.",
@@ -4094,7 +4099,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         query_param("kind", false, "string", None, "Edge kind substring."),
                     ],
                     "EdgeExplanation?",
-                ),
+                )
+                .with_response_fields(edge_explanation_response_fields()),
             ],
         },
         ApiSchemaGroup {
@@ -4105,7 +4111,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Return a production project report snapshot with cache, coverage, summary, full-project risk scoring, quality gate, topology, and hotspots.",
                     report_params(),
                     "ProjectReportResponse",
-                ),
+                )
+                .with_response_fields(project_report_response_fields()),
                 api_get(
                     "/api/architecture",
                     "Group files and cross-area dependencies by top-level project area.",
@@ -4811,6 +4818,278 @@ fn metrics_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "JobPoolMetricsResponse",
             "Semantic job retention and concurrency metrics.",
+        ),
+    ]
+}
+
+fn graph_slice_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("nodes", true, "Node[]", "Returned graph nodes."),
+        response_field(
+            "edges",
+            true,
+            "Edge[]",
+            "Returned graph edges with metadata.edge_index values.",
+        ),
+        response_field(
+            "total_nodes",
+            true,
+            "usize",
+            "Total nodes matching the graph filters.",
+        ),
+        response_field(
+            "total_edges",
+            true,
+            "usize",
+            "Total edges matching the graph filters.",
+        ),
+        response_field("node_offset", true, "usize", "Returned node page offset."),
+        response_field("node_limit", true, "usize", "Returned node page limit."),
+        response_field("edge_offset", true, "usize", "Returned edge page offset."),
+        response_field("edge_limit", true, "usize", "Returned edge page limit."),
+        response_field(
+            "truncated_nodes",
+            true,
+            "bool",
+            "Whether more matching nodes exist beyond this page.",
+        ),
+        response_field(
+            "truncated_edges",
+            true,
+            "bool",
+            "Whether more matching edges exist beyond this page.",
+        ),
+    ]
+}
+
+fn node_context_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("node", true, "Node", "Selected graph node."),
+        response_field(
+            "nodes",
+            true,
+            "Node[]",
+            "Selected node plus neighboring nodes referenced by returned edges.",
+        ),
+        response_field(
+            "edges",
+            true,
+            "Edge[]",
+            "Neighboring edges with metadata.edge_index values.",
+        ),
+        response_field(
+            "total_edges",
+            true,
+            "usize",
+            "Total neighboring edges before limiting.",
+        ),
+        response_field(
+            "edge_limit",
+            true,
+            "usize",
+            "Applied neighboring edge limit.",
+        ),
+        response_field(
+            "truncated_edges",
+            true,
+            "bool",
+            "Whether more neighboring edges exist beyond the limit.",
+        ),
+    ]
+}
+
+fn node_card_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "context",
+            true,
+            "NodeContext",
+            "Selected node, neighboring nodes, and neighboring edges.",
+        ),
+        response_field(
+            "dependency_summary",
+            true,
+            "NodeDependencySummary",
+            "Incoming/outgoing dependency counts and neighbor facets.",
+        ),
+        response_field(
+            "insight_summary",
+            true,
+            "NodeInsightSummary",
+            "Related risk counts by severity and kind.",
+        ),
+        response_field(
+            "file_summary",
+            false,
+            "FileNodeSummary?",
+            "File-level contained symbol, import, config, error, and trace facts.",
+        ),
+        response_field(
+            "source",
+            false,
+            "SourcePreview?",
+            "Source snippet around the selected node when available.",
+        ),
+        response_field(
+            "insights",
+            true,
+            "Insight[]",
+            "Capped related risk findings for this node or contained file facts.",
+        ),
+        response_field(
+            "total_insights",
+            true,
+            "usize",
+            "Total related risk findings before limiting.",
+        ),
+        response_field(
+            "insight_limit",
+            true,
+            "usize",
+            "Applied related risk limit.",
+        ),
+        response_field(
+            "truncated_insights",
+            true,
+            "bool",
+            "Whether more related risks exist beyond the limit.",
+        ),
+        response_field(
+            "actions",
+            true,
+            "NodeCardAction[]",
+            "Suggested focused graph actions for investigation handoff.",
+        ),
+    ]
+}
+
+fn query_result_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "query",
+            true,
+            "string",
+            "Normalized graph query expression.",
+        ),
+        response_field("nodes", true, "Node[]", "Returned query nodes."),
+        response_field(
+            "edges",
+            true,
+            "Edge[]",
+            "Returned query edges with metadata.edge_index values.",
+        ),
+        response_field(
+            "total_nodes",
+            true,
+            "usize",
+            "Total nodes matching the query before paging or limiting.",
+        ),
+        response_field(
+            "total_edges",
+            true,
+            "usize",
+            "Total edges matching the query before paging or limiting.",
+        ),
+        response_field("returned_nodes", true, "usize", "Returned node count."),
+        response_field("returned_edges", true, "usize", "Returned edge count."),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether the result was capped by query limits.",
+        ),
+        response_field(
+            "facets",
+            true,
+            "QueryFacets",
+            "Returned node/edge facets for triage.",
+        ),
+    ]
+}
+
+fn edge_explanation_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("edge_index", true, "usize", "Exact graph edge index."),
+        response_field(
+            "total_matches",
+            true,
+            "usize",
+            "Total matching edges for the lookup.",
+        ),
+        response_field("source", true, "Node", "Edge source node."),
+        response_field("target", true, "Node", "Edge target node."),
+        response_field("edge", true, "Edge", "Explained graph edge."),
+        response_field(
+            "summary",
+            true,
+            "string",
+            "Human-readable explanation summary.",
+        ),
+        response_field(
+            "evidence",
+            true,
+            "string[]",
+            "Provenance and confidence evidence for the edge.",
+        ),
+        response_field(
+            "insight_summary",
+            true,
+            "NodeInsightSummary",
+            "Edge-scoped related risk counts by severity and kind.",
+        ),
+        response_field(
+            "insights",
+            true,
+            "Insight[]",
+            "Capped edge-scoped related risk findings.",
+        ),
+        response_field(
+            "total_insights",
+            true,
+            "usize",
+            "Total edge-scoped related risks before limiting.",
+        ),
+        response_field(
+            "insight_limit",
+            true,
+            "usize",
+            "Applied edge-scoped risk limit.",
+        ),
+        response_field(
+            "truncated_insights",
+            true,
+            "bool",
+            "Whether more edge-scoped risks exist beyond the limit.",
+        ),
+    ]
+}
+
+fn project_report_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("root", true, "path", "Resolved project root."),
+        response_field(
+            "generated_at_unix",
+            true,
+            "u64",
+            "Unix timestamp when the report snapshot was generated.",
+        ),
+        response_field(
+            "cache",
+            true,
+            "CacheInfo",
+            "Graph cache status for the scan.",
+        ),
+        response_field(
+            "coverage",
+            true,
+            "ScanCoverageReport",
+            "Indexed, skipped, and non-indexed file coverage.",
+        ),
+        response_field(
+            "report",
+            true,
+            "ProjectReport",
+            "Production project report with summary, risks, quality gate, topology, and hotspots.",
         ),
     ]
 }
@@ -5866,6 +6145,42 @@ mod tests {
             graph_node_limit.capability_limit,
             Some("max_graph_node_limit")
         );
+        assert!(graph_endpoint.response_fields.iter().any(|field| {
+            field.name == "nodes" && field.value_type == "Node[]" && field.required
+        }));
+        assert!(
+            graph_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "truncated_edges" && field.value_type == "bool" })
+        );
+        let node_card_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/node-card")
+            .expect("schema should list node-card endpoint");
+        assert!(node_card_endpoint.response_fields.iter().any(|field| {
+            field.name == "context" && field.value_type == "NodeContext" && field.required
+        }));
+        assert!(
+            node_card_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "actions" && field.value_type == "NodeCardAction[]" })
+        );
+        let focus_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/focus")
+            .expect("schema should list focus endpoint");
+        assert!(
+            focus_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "facets" && field.value_type == "QueryFacets" })
+        );
         let semantic_plan_endpoint = schema
             .groups
             .iter()
@@ -5936,6 +6251,30 @@ mod tests {
                     && parameter.max_length == Some(MAX_GRAPH_QUERY_LENGTH)
                     && parameter.capability_limit == Some("max_graph_query_length"))
         );
+        assert!(query_endpoint.response_fields.iter().any(|field| {
+            field.name == "returned_nodes" && field.value_type == "usize" && field.required
+        }));
+        assert!(
+            query_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "facets" && field.value_type == "QueryFacets" })
+        );
+        let explain_edge_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/explain-edge")
+            .expect("schema should list explain-edge endpoint");
+        assert!(explain_edge_endpoint.response_fields.iter().any(|field| {
+            field.name == "edge_index" && field.value_type == "usize" && field.required
+        }));
+        assert!(
+            explain_edge_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "evidence" && field.value_type == "string[]" })
+        );
         let report_endpoint = schema
             .groups
             .iter()
@@ -5953,6 +6292,14 @@ mod tests {
             report_insight_limit.capability_limit,
             Some("max_report_insight_limit")
         );
+        assert!(
+            report_endpoint.response_fields.iter().any(|field| {
+                field.name == "coverage" && field.value_type == "ScanCoverageReport"
+            })
+        );
+        assert!(report_endpoint.response_fields.iter().any(|field| {
+            field.name == "report" && field.value_type == "ProjectReport" && field.required
+        }));
         let architecture_endpoint = schema
             .groups
             .iter()
