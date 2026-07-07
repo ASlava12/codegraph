@@ -6147,6 +6147,7 @@ async function explainEdge(button) {
       throw new Error(body.error || "edge explanation failed");
     }
     target.innerHTML = renderEdgeExplanation(body);
+    attachEdgeExplanationInsights(target, body);
   } catch (error) {
     if (button.dataset.explainToken !== requestId) return;
     target.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
@@ -6165,6 +6166,17 @@ function renderEdgeExplanation(explanation) {
   const evidence = (explanation.evidence || [])
     .map((item) => `<li>${escapeHtml(item)}</li>`)
     .join("");
+  const insights = Array.isArray(explanation.insights) ? explanation.insights.slice(0, 8) : [];
+  const riskSummary = renderNodeRiskSummary(explanation.insight_summary);
+  const riskRows = insights
+    .map((insight, index) => renderEdgeExplanationInsight(insight, index))
+    .join("");
+  const totalInsights = Number(explanation.total_insights || insights.length);
+  const insightLimit = Number(explanation.insight_limit || insights.length);
+  const riskLimitNote =
+    explanation.truncated_insights && totalInsights > insightLimit
+      ? `<p class="empty">${escapeHtml(formatReturnedCount(insights.length, totalInsights))} ${escapeHtml(t("selection.risks").toLowerCase())}</p>`
+      : "";
   const matchNote =
     explanation.total_matches > 1
       ? `<span>${explanation.total_matches} matches, showing first</span>`
@@ -6177,7 +6189,38 @@ function renderEdgeExplanation(explanation) {
       ${matchNote}
     </div>
     ${evidence ? `<ul>${evidence}</ul>` : '<p class="empty">No evidence metadata.</p>'}
+    ${
+      totalInsights > 0
+        ? `<section class="edge-explanation-risks">
+            <h4>${escapeHtml(t("selection.risks"))}</h4>
+            ${riskSummary}
+            <div class="node-issues">${riskRows}</div>
+            ${riskLimitNote}
+          </section>`
+        : ""
+    }
   `;
+}
+
+function renderEdgeExplanationInsight(insight, index) {
+  const severity = insight.severity || "info";
+  return `
+    <button class="node-issue ${escapeHtml(severity)}" type="button" data-edge-insight-index="${index}">
+      <span>${escapeHtml(formatKind(severity))} · ${escapeHtml(formatKind(insight.kind || "insight"))}</span>
+      <strong>${escapeHtml(insight.message || "")}</strong>
+      <em>${escapeHtml(t("selection.issueHint"))}</em>
+    </button>
+  `;
+}
+
+function attachEdgeExplanationInsights(container, explanation) {
+  const insights = Array.isArray(explanation?.insights) ? explanation.insights : [];
+  container.querySelectorAll("[data-edge-insight-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const insight = insights[Number(button.dataset.edgeInsightIndex)];
+      if (insight) focusInsight(insight);
+    });
+  });
 }
 
 function edgeFacts(edge) {

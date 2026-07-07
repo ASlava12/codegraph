@@ -1226,6 +1226,23 @@ button.cancel-action:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+.edge-explanation-risks {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.edge-explanation-risks h4 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .query-edge em::before {
   content: "-> ";
 }

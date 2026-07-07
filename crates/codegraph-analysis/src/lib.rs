@@ -315,6 +315,7 @@ impl QueryResult {
 }
 
 const EDGE_INDEX_METADATA_KEY: &str = "edge_index";
+const EDGE_EXPLANATION_INSIGHT_LIMIT: usize = 25;
 
 impl QueryFacets {
     fn from_graph_parts(nodes: &[Node], edges: &[Edge]) -> Self {
@@ -366,6 +367,16 @@ pub struct EdgeExplanation {
     pub edge: Edge,
     pub summary: String,
     pub evidence: Vec<String>,
+    #[serde(default)]
+    pub insight_summary: NodeInsightSummary,
+    #[serde(default)]
+    pub insights: Vec<Insight>,
+    #[serde(default)]
+    pub total_insights: usize,
+    #[serde(default)]
+    pub insight_limit: usize,
+    #[serde(default)]
+    pub truncated_insights: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1839,6 +1850,12 @@ pub fn explain_edge(
         confidence_name(edge.confidence)
     );
     let evidence = edge_evidence(edge_index, &source, &target, &edge);
+    let related_insights = edge_related_insights(graph, edge_index);
+    let insight_summary = node_insight_summary(&related_insights);
+    let total_insights = related_insights.len();
+    let insight_limit = EDGE_EXPLANATION_INSIGHT_LIMIT;
+    let truncated_insights = total_insights > insight_limit;
+    let insights = related_insights.into_iter().take(insight_limit).collect();
 
     Ok(Some(EdgeExplanation {
         edge_index,
@@ -1848,7 +1865,20 @@ pub fn explain_edge(
         edge,
         summary,
         evidence,
+        insight_summary,
+        insights,
+        total_insights,
+        insight_limit,
+        truncated_insights,
     }))
+}
+
+fn edge_related_insights(graph: &CodeGraph, edge_index: usize) -> Vec<Insight> {
+    insights(graph)
+        .insights
+        .into_iter()
+        .filter(|insight| insight.edges.contains(&edge_index))
+        .collect()
 }
 
 fn edge_with_index(edge_index: usize, edge: &Edge) -> Edge {
@@ -8115,6 +8145,41 @@ mod tests {
         assert_eq!(explanation.edge_index, 1);
         assert_eq!(explanation.edge.kind, EdgeKind::ReadsConfig);
         assert_eq!(explanation.target.label, "settings.toml");
+    }
+
+    #[test]
+    fn explain_edge_includes_related_insights() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let service = graph.add_node(NodeKind::Function, "service");
+        let repository = graph.add_node(NodeKind::Function, "repository");
+        graph.add_edge(main, service, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(service, repository, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(repository, main, EdgeKind::Calls, Confidence::Heuristic);
+
+        let explanation = explain_edge(
+            &graph,
+            ExplainEdgeRequest {
+                edge_index: Some(0),
+                source: None,
+                target: None,
+                kind: None,
+            },
+        )
+        .unwrap()
+        .expect("missing explanation");
+
+        assert_eq!(explanation.total_insights, 1);
+        assert_eq!(
+            explanation.insight_summary.by_severity.get("warning"),
+            Some(&1)
+        );
+        assert_eq!(
+            explanation.insight_summary.by_kind.get("dependency_cycle"),
+            Some(&1)
+        );
+        assert_eq!(explanation.insights[0].kind, "dependency_cycle");
+        assert!(!explanation.truncated_insights);
     }
 
     #[test]

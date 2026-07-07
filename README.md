@@ -62,6 +62,7 @@ Implemented now:
 - Enriched selected-node cards with summary metadata, source snippets, neighboring dependencies, trace actions, and related risks.
 - Graph, query, focus, and node-card edges include stable `metadata.edge_index` values for exact dependency explanation and UI edge selection.
 - Web canvas edges can be selected directly to open dependency cards with source, target, confidence, metadata, and provenance explanation actions.
+- Edge explanations include related risk summaries and capped edge-scoped findings for dependency-level triage.
 - Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
 - Initial English/Russian web UI localization with a persistent language selector.
 - Minimal-by-default graph labels with collision-aware Auto/Focus modes so node cards stay readable without covering the graph.

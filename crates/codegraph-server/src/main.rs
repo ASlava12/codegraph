@@ -3423,7 +3423,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/explain-edge",
-                    "Explain why an edge exists with confidence and provenance evidence.",
+                    "Explain why an edge exists with confidence, provenance evidence, and related edge-scoped risk findings.",
                     vec![
                         path_param(),
                         query_param("edge_index", false, "usize", None, "Exact edge index."),
