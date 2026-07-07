@@ -3349,7 +3349,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/node-card",
-                    "Read selected node investigation card with neighboring edges, dependency summary facets, file-level summaries, source preview, related risks, and suggested focused graph query actions.",
+                    "Read selected node investigation card with neighboring edges, dependency summary facets, file-level summaries, source preview, related risks including file-scoped contained-node risks, and suggested focused graph query actions.",
                     vec![
                         path_param(),
                         query_param("node_id", true, "u64", None, "Node numeric id."),

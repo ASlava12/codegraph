@@ -1954,11 +1954,7 @@ pub fn node_card(
         None => None,
     };
     let insight_limit = insight_limit.clamp(1, 500);
-    let related_insights = insights(graph)
-        .insights
-        .into_iter()
-        .filter(|insight| insight.nodes.contains(&node_id))
-        .collect::<Vec<_>>();
+    let related_insights = node_card_related_insights(graph, &context.node);
     let total_insights = related_insights.len();
     let insights = related_insights.into_iter().take(insight_limit).collect();
 
@@ -1973,6 +1969,40 @@ pub fn node_card(
         insight_limit,
         truncated_insights: insight_limit < total_insights,
     }))
+}
+
+fn node_card_related_insights(graph: &CodeGraph, node: &Node) -> Vec<Insight> {
+    let path_index = (node.kind == NodeKind::File).then(|| node_path_index(graph));
+    insights(graph)
+        .insights
+        .into_iter()
+        .filter(|insight| node_card_insight_matches(graph, node, path_index.as_ref(), insight))
+        .collect()
+}
+
+fn node_card_insight_matches(
+    graph: &CodeGraph,
+    node: &Node,
+    path_index: Option<&BTreeMap<NodeId, String>>,
+    insight: &Insight,
+) -> bool {
+    if insight.nodes.contains(&node.id) {
+        return true;
+    }
+    if node.kind != NodeKind::File {
+        return false;
+    }
+
+    let Some(path_index) = path_index else {
+        return false;
+    };
+    insight.nodes.iter().any(|node_id| {
+        graph
+            .nodes
+            .iter()
+            .find(|candidate| candidate.id == *node_id)
+            .is_some_and(|candidate| node_path_matches(candidate, path_index, &node.label))
+    })
 }
 
 fn file_node_summary(graph: &CodeGraph, node: &Node) -> Option<FileNodeSummary> {
@@ -7572,6 +7602,19 @@ mod tests {
             .unwrap()
             .expect("expected file node card");
         assert_eq!(file_card.context.node.id, file);
+        assert_eq!(file_card.total_insights, 2);
+        assert!(
+            file_card
+                .insights
+                .iter()
+                .any(|insight| insight.kind == "orphan_function")
+        );
+        assert!(
+            file_card
+                .insights
+                .iter()
+                .any(|insight| insight.kind == "potential_error_flow")
+        );
         assert_eq!(
             file_card.source.as_ref().map(|source| source.path.as_str()),
             Some("src/main.rs")
