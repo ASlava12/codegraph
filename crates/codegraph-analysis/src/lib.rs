@@ -432,8 +432,6 @@ pub fn filter_insight_report(report: InsightReport, filter: &InsightFilter) -> I
         .search
         .as_ref()
         .map(|value| value.to_ascii_lowercase());
-    let by_severity = report.by_severity.clone();
-    let by_kind = report.by_kind.clone();
     let mut insights: Vec<_> = report
         .insights
         .into_iter()
@@ -450,6 +448,7 @@ pub fn filter_insight_report(report: InsightReport, filter: &InsightFilter) -> I
         })
         .collect();
     let total = insights.len();
+    let (by_severity, by_kind) = insight_breakdowns(&insights);
     insights.truncate(filter.limit.clamp(1, 500));
 
     InsightReport {
@@ -458,6 +457,18 @@ pub fn filter_insight_report(report: InsightReport, filter: &InsightFilter) -> I
         by_kind,
         insights,
     }
+}
+
+fn insight_breakdowns(insights: &[Insight]) -> (BTreeMap<String, usize>, BTreeMap<String, usize>) {
+    let mut by_severity = BTreeMap::new();
+    let mut by_kind = BTreeMap::new();
+    for insight in insights {
+        *by_severity
+            .entry(severity_name(insight.severity).to_string())
+            .or_insert(0) += 1;
+        *by_kind.entry(insight.kind.clone()).or_insert(0) += 1;
+    }
+    (by_severity, by_kind)
 }
 
 pub fn trace(graph: &CodeGraph, request: TraceRequest) -> Option<TraceResult> {
@@ -2528,13 +2539,24 @@ fn add_custom_rule_violation_insights(graph: &CodeGraph, insights: &mut Vec<Insi
             .get("severity")
             .map(|value| insight_severity_from_str(value))
             .unwrap_or(InsightSeverity::Warning);
+        let mut edges = outgoing_edge_indexes(graph, node.id, EdgeKind::References);
+        if let Some(edge_index) = node
+            .metadata
+            .get("violated_edge_index")
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|index| *index < graph.edges.len())
+        {
+            edges.push(edge_index);
+            edges.sort_unstable();
+            edges.dedup();
+        }
 
         insights.push(Insight {
             kind: format!("custom_rule_{rule_kind}"),
             severity,
             message,
             nodes: vec![node.id],
-            edges: outgoing_edge_indexes(graph, node.id, EdgeKind::References),
+            edges,
         });
     }
 }
@@ -4482,37 +4504,47 @@ mod tests {
     #[test]
     fn insights_report_custom_rule_violations() {
         let mut graph = CodeGraph::new("repo");
-        let dependency = dependency_node(&mut graph, "left-pad", "npm:left-pad");
+        let caller = graph.add_node(NodeKind::Function, "render");
+        let callee = graph.add_node(NodeKind::Function, "query_user");
+        graph.add_edge(caller, callee, EdgeKind::Calls, Confidence::Heuristic);
+        let violated_edge_index = graph.edges.len() - 1;
         let mut metadata = BTreeMap::new();
         metadata.insert("item_kind".to_string(), "custom_rule_violation".to_string());
-        metadata.insert("rule_id".to_string(), "no-left-pad".to_string());
-        metadata.insert("rule_kind".to_string(), "forbidden_dependency".to_string());
+        metadata.insert("rule_id".to_string(), "ui-cannot-call-db".to_string());
+        metadata.insert("rule_kind".to_string(), "forbidden_edge".to_string());
         metadata.insert("severity".to_string(), "error".to_string());
-        metadata.insert("message".to_string(), "left-pad is forbidden".to_string());
+        metadata.insert(
+            "message".to_string(),
+            "UI layer must not call database layer directly".to_string(),
+        );
+        metadata.insert(
+            "violated_edge_index".to_string(),
+            violated_edge_index.to_string(),
+        );
         let violation = graph.add_node_with_metadata(
             NodeKind::Unknown,
             "custom rule violation:no-left-pad",
             None,
             metadata,
         );
-        graph.add_edge(
-            violation,
-            dependency,
-            EdgeKind::References,
-            Confidence::Exact,
-        );
+        graph.add_edge(violation, caller, EdgeKind::References, Confidence::Exact);
+        graph.add_edge(violation, callee, EdgeKind::References, Confidence::Exact);
 
         let report = insights(&graph);
         let custom = report
             .insights
             .iter()
-            .find(|insight| insight.kind == "custom_rule_forbidden_dependency")
+            .find(|insight| insight.kind == "custom_rule_forbidden_edge")
             .expect("expected custom rule insight");
 
         assert_eq!(custom.severity, InsightSeverity::Error);
-        assert_eq!(custom.message, "left-pad is forbidden");
+        assert_eq!(
+            custom.message,
+            "UI layer must not call database layer directly"
+        );
         assert_eq!(custom.nodes, vec![violation]);
-        assert_eq!(custom.edges.len(), 1);
+        assert!(custom.edges.contains(&violated_edge_index));
+        assert_eq!(custom.edges.len(), 3);
     }
 
     #[test]
@@ -4561,10 +4593,10 @@ mod tests {
         );
 
         assert_eq!(filtered.total, 1);
-        assert_eq!(filtered.by_severity.get("error"), Some(&1));
-        assert_eq!(filtered.by_severity.get("warning"), Some(&2));
+        assert_eq!(filtered.by_severity.get("error"), None);
+        assert_eq!(filtered.by_severity.get("warning"), Some(&1));
         assert_eq!(filtered.by_kind.get("dependency_cycle"), Some(&1));
-        assert_eq!(filtered.by_kind.get("parse_error"), Some(&1));
+        assert_eq!(filtered.by_kind.get("parse_error"), None);
         assert_eq!(filtered.insights.len(), 1);
         assert_eq!(filtered.insights[0].kind, "dependency_cycle");
     }

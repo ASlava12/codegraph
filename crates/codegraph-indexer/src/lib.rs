@@ -96,6 +96,7 @@ struct FrameworkConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct CustomRules {
     forbidden_dependencies: Vec<ForbiddenDependencyRule>,
+    forbidden_edges: Vec<ForbiddenEdgeRule>,
     required_configs: Vec<RequiredConfigRule>,
     parse_errors: Vec<String>,
 }
@@ -113,6 +114,20 @@ struct ForbiddenDependencyRule {
 struct RequiredConfigRule {
     id: String,
     target: String,
+    severity: String,
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ForbiddenEdgeRule {
+    id: String,
+    edge_kind: Option<String>,
+    source_kind: Option<String>,
+    source_label: Option<String>,
+    source_metadata: BTreeMap<String, String>,
+    target_kind: Option<String>,
+    target_label: Option<String>,
+    target_metadata: BTreeMap<String, String>,
     severity: String,
     message: Option<String>,
 }
@@ -816,6 +831,21 @@ fn node_kind_name(kind: &NodeKind) -> &'static str {
     }
 }
 
+fn edge_kind_name(kind: &EdgeKind) -> &'static str {
+    match kind {
+        EdgeKind::Contains => "contains",
+        EdgeKind::Imports => "imports",
+        EdgeKind::Calls => "calls",
+        EdgeKind::Defines => "defines",
+        EdgeKind::References => "references",
+        EdgeKind::ReadsConfig => "reads_config",
+        EdgeKind::ReadsEnvironment => "reads_environment",
+        EdgeKind::MayError => "may_error",
+        EdgeKind::Entrypoint => "entrypoint",
+        EdgeKind::DependsOn => "depends_on",
+    }
+}
+
 fn apply_custom_rules(context: &mut IndexContext) {
     let rules = context.custom_rules.clone();
     for message in rules.parse_errors {
@@ -851,6 +881,29 @@ fn apply_custom_rules(context: &mut IndexContext) {
         }
     }
 
+    for rule in rules.forbidden_edges {
+        let matches = matching_forbidden_edges(&context.graph, &rule);
+        for edge_match in matches {
+            let source = graph_node_label(&context.graph, edge_match.source).unwrap_or("unknown");
+            let target = graph_node_label(&context.graph, edge_match.target).unwrap_or("unknown");
+            let message = rule.message.clone().unwrap_or_else(|| {
+                format!(
+                    "Edge `{source}` -> `{target}` violates custom rule `{}`",
+                    rule.id
+                )
+            });
+            add_custom_rule_violation_with_targets(
+                context,
+                &rule.id,
+                "forbidden_edge",
+                &rule.severity,
+                message,
+                &[edge_match.source, edge_match.target],
+                Some(edge_match.edge_index),
+            );
+        }
+    }
+
     for rule in rules.required_configs {
         if custom_rule_config_exists(&context.graph, &rule.target) {
             continue;
@@ -870,6 +923,13 @@ fn apply_custom_rules(context: &mut IndexContext) {
             None,
         );
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ForbiddenEdgeMatch {
+    edge_index: usize,
+    source: NodeId,
+    target: NodeId,
 }
 
 fn graph_node_label(graph: &CodeGraph, id: NodeId) -> Option<&str> {
@@ -902,6 +962,62 @@ fn matching_dependency_nodes(graph: &CodeGraph, rule: &ForbiddenDependencyRule) 
             }
         })
         .collect()
+}
+
+fn matching_forbidden_edges(
+    graph: &CodeGraph,
+    rule: &ForbiddenEdgeRule,
+) -> Vec<ForbiddenEdgeMatch> {
+    graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter_map(|(edge_index, edge)| {
+            if rule
+                .edge_kind
+                .as_deref()
+                .is_some_and(|expected| !text_matches(edge_kind_name(&edge.kind), expected))
+            {
+                return None;
+            }
+            let source = graph.nodes.iter().find(|node| node.id == edge.source)?;
+            let target = graph.nodes.iter().find(|node| node.id == edge.target)?;
+            if endpoint_rule_matches(
+                source,
+                rule.source_kind.as_deref(),
+                rule.source_label.as_deref(),
+                &rule.source_metadata,
+            ) && endpoint_rule_matches(
+                target,
+                rule.target_kind.as_deref(),
+                rule.target_label.as_deref(),
+                &rule.target_metadata,
+            ) {
+                Some(ForbiddenEdgeMatch {
+                    edge_index,
+                    source: edge.source,
+                    target: edge.target,
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn endpoint_rule_matches(
+    node: &codegraph_core::Node,
+    kind: Option<&str>,
+    label: Option<&str>,
+    metadata: &BTreeMap<String, String>,
+) -> bool {
+    kind.is_none_or(|expected| text_matches(node_kind_name(&node.kind), expected))
+        && label.is_none_or(|expected| text_matches(&node.label, expected))
+        && metadata.iter().all(|(key, expected)| {
+            node.metadata
+                .get(key)
+                .is_some_and(|value| text_matches(value, expected))
+        })
 }
 
 fn forbidden_dependency_matches(
@@ -953,6 +1069,21 @@ fn add_custom_rule_violation(
     message: String,
     target: Option<NodeId>,
 ) {
+    let targets = target.into_iter().collect::<Vec<_>>();
+    add_custom_rule_violation_with_targets(
+        context, rule_id, rule_kind, severity, message, &targets, None,
+    );
+}
+
+fn add_custom_rule_violation_with_targets(
+    context: &mut IndexContext,
+    rule_id: &str,
+    rule_kind: &str,
+    severity: &str,
+    message: String,
+    targets: &[NodeId],
+    violated_edge_index: Option<usize>,
+) {
     let mut metadata = BTreeMap::new();
     metadata.insert("item_kind".to_string(), "custom_rule_violation".to_string());
     metadata.insert("source".to_string(), "custom_rule".to_string());
@@ -963,6 +1094,9 @@ fn add_custom_rule_violation(
         normalize_rule_severity(severity).to_string(),
     );
     metadata.insert("message".to_string(), message.clone());
+    if let Some(edge_index) = violated_edge_index {
+        metadata.insert("violated_edge_index".to_string(), edge_index.to_string());
+    }
 
     let violation = context.graph.add_node_with_metadata(
         NodeKind::Unknown,
@@ -979,7 +1113,7 @@ fn add_custom_rule_violation(
         Confidence::Exact,
     );
 
-    if let Some(target) = target {
+    for target in targets {
         let mut edge_metadata = BTreeMap::new();
         edge_metadata.insert("source".to_string(), "custom_rule".to_string());
         edge_metadata.insert("relation".to_string(), "custom_rule_target".to_string());
@@ -987,7 +1121,7 @@ fn add_custom_rule_violation(
         add_edge_once_with_metadata(
             &mut context.graph,
             violation,
-            target,
+            *target,
             EdgeKind::References,
             Confidence::Exact,
             edge_metadata,
@@ -1028,6 +1162,11 @@ fn custom_rules(root: &Path) -> CustomRules {
             .enumerate()
             .filter_map(|(index, value)| forbidden_dependency_rule(value, index + 1))
             .collect(),
+        forbidden_edges: rule_array(rules, "forbidden_edge")
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, value)| forbidden_edge_rule(value, index + 1))
+            .collect(),
         required_configs: rule_array(rules, "required_config")
             .into_iter()
             .enumerate()
@@ -1058,6 +1197,44 @@ fn forbidden_dependency_rule(value: &toml::Value, index: usize) -> Option<Forbid
             .and_then(|value| value.as_str())
             .map(|value| value.trim().to_ascii_lowercase())
             .filter(|value| !value.is_empty()),
+        severity: rule_severity(value),
+        message: rule_message(value),
+    })
+}
+
+fn forbidden_edge_rule(value: &toml::Value, index: usize) -> Option<ForbiddenEdgeRule> {
+    let source_metadata = value
+        .get("source_metadata")
+        .and_then(string_table)
+        .unwrap_or_default();
+    let target_metadata = value
+        .get("target_metadata")
+        .and_then(string_table)
+        .unwrap_or_default();
+    let source_kind = optional_string(value, "source_kind");
+    let source_label = optional_string(value, "source_label");
+    let target_kind = optional_string(value, "target_kind");
+    let target_label = optional_string(value, "target_label");
+
+    if source_metadata.is_empty()
+        && target_metadata.is_empty()
+        && source_kind.is_none()
+        && source_label.is_none()
+        && target_kind.is_none()
+        && target_label.is_none()
+    {
+        return None;
+    }
+
+    Some(ForbiddenEdgeRule {
+        id: rule_id(value, "forbidden_edge", index, "edge"),
+        edge_kind: optional_string(value, "edge_kind"),
+        source_kind,
+        source_label,
+        source_metadata,
+        target_kind,
+        target_label,
+        target_metadata,
         severity: rule_severity(value),
         message: rule_message(value),
     })
@@ -4208,6 +4385,99 @@ severity = "warning"
                     .get("relation")
                     .is_some_and(|value| value == "custom_rule_target")
         }));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_applies_forbidden_edge_custom_rules() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join(".codegraph")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join(".codegraph").join("annotations.toml"),
+            r#"[[annotations.node]]
+id = "ui-render"
+kind = "function"
+label = "render"
+
+[annotations.node.set]
+layer = "ui"
+
+[[annotations.node]]
+id = "db-query"
+kind = "function"
+label = "query_user"
+
+[annotations.node.set]
+layer = "database"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join(".codegraph").join("rules.toml"),
+            r#"[[rules.forbidden_edge]]
+id = "ui-cannot-call-db"
+edge_kind = "calls"
+severity = "error"
+message = "UI layer must not call database layer directly"
+
+[rules.forbidden_edge.source_metadata]
+"annotation.layer" = "ui"
+
+[rules.forbidden_edge.target_metadata]
+"annotation.layer" = "database"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn render() { query_user(); }\nfn query_user() {}\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let render = node_id(&graph, NodeKind::Function, "render");
+        let query_user = node_id(&graph, NodeKind::Function, "query_user");
+        let call_edge_index = graph
+            .edges
+            .iter()
+            .position(|edge| {
+                edge.source == render && edge.target == query_user && edge.kind == EdgeKind::Calls
+            })
+            .expect("missing render -> query_user call edge");
+        let violation = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("rule_id")
+                    .is_some_and(|value| value == "ui-cannot-call-db")
+            })
+            .expect("missing forbidden edge violation");
+
+        assert_eq!(
+            violation.metadata.get("rule_kind").map(String::as_str),
+            Some("forbidden_edge")
+        );
+        assert_eq!(
+            violation.metadata.get("violated_edge_index").cloned(),
+            Some(call_edge_index.to_string())
+        );
+        assert!(has_entrypoint_reference(
+            &graph,
+            violation.id,
+            render,
+            "custom_rule_target",
+            Confidence::Exact,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            violation.id,
+            query_user,
+            "custom_rule_target",
+            Confidence::Exact,
+        ));
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -127,11 +127,24 @@ message = "left-pad is not allowed in production services"
 id = "needs-database-url"
 target = "DATABASE_URL"
 severity = "warning"
+
+[[rules.forbidden_edge]]
+id = "ui-cannot-call-db"
+edge_kind = "calls"
+severity = "error"
+message = "UI layer must not call database layer directly"
+
+[rules.forbidden_edge.source_metadata]
+"annotation.layer" = "ui"
+
+[rules.forbidden_edge.target_metadata]
+"annotation.layer" = "database"
 ```
 
-Custom rules currently support forbidden manifest dependencies and required
-config/environment targets. Violations are emitted as normal graph facts and
-show up in CLI, API, and web insight reports.
+Custom rules currently support forbidden manifest dependencies, required
+config/environment targets, and forbidden graph edges between annotated nodes.
+Violations are emitted as normal graph facts and show up in CLI, API, and web
+insight reports.
 
 Add user-owned graph metadata with `.codegraph/annotations.toml`:
 

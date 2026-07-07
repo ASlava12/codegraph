@@ -48,7 +48,7 @@ The first implementation stores whole-graph JSON cache records keyed by root pat
 - conflicting manifest dependency constraint checks
 - duplicate framework route checks
 - framework config convention facts
-- repository custom rule violation facts
+- repository custom rule violation facts, including forbidden edge boundary checks
 - user graph annotation facts
 - entrypoint reachability checks for config and environment reads
 - dependency cycle checks

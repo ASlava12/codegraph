@@ -89,6 +89,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect runtime manifest dependencies with no matching import.
 - [x] Detect conflicting manifest dependency constraints for the same package.
 - [x] Detect duplicate framework route method/path declarations.
+- [x] Detect custom architectural boundary violations on graph edges.
 - [x] Detect config and environment reads that are not reachable from entrypoints.
 - [x] Back web insights with server analysis during paged graph exploration.
 - [x] Add CLI, server-side, and web filters for insight severity, kind, and search.
