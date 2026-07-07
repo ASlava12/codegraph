@@ -12,6 +12,7 @@ pub struct GraphSummary {
     pub edge_kinds: BTreeMap<String, usize>,
     pub edge_confidences: BTreeMap<String, usize>,
     pub languages: BTreeMap<String, usize>,
+    pub annotation_facets: BTreeMap<String, BTreeMap<String, usize>>,
     pub entrypoints: usize,
 }
 
@@ -340,11 +341,22 @@ pub fn summarize(graph: &CodeGraph) -> GraphSummary {
     let mut edge_kinds = BTreeMap::new();
     let mut edge_confidences = BTreeMap::new();
     let mut languages = BTreeMap::new();
+    let mut annotation_facets: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
 
     for node in &graph.nodes {
         *node_kinds.entry(kind_name(&node.kind)).or_insert(0) += 1;
         if let Some(language) = node.metadata.get("language") {
             *languages.entry(language.clone()).or_insert(0) += 1;
+        }
+        for (key, value) in &node.metadata {
+            if !key.starts_with("annotation.") || value.trim().is_empty() {
+                continue;
+            }
+            *annotation_facets
+                .entry(key.clone())
+                .or_default()
+                .entry(value.clone())
+                .or_insert(0) += 1;
         }
     }
 
@@ -362,6 +374,7 @@ pub fn summarize(graph: &CodeGraph) -> GraphSummary {
         edge_kinds,
         edge_confidences,
         languages,
+        annotation_facets,
         entrypoints: graph
             .edges
             .iter()
@@ -3221,6 +3234,10 @@ mod tests {
     fn summary_counts_graph_facts() {
         let mut graph = CodeGraph::new("repo");
         let main = graph.add_node(NodeKind::Function, "main");
+        let mut metadata = BTreeMap::new();
+        metadata.insert("annotation.domain".to_string(), "payments".to_string());
+        metadata.insert("annotation.owner".to_string(), "team-payments".to_string());
+        graph.add_node_with_metadata(NodeKind::File, "src/payments.rs", None, metadata);
         graph.add_edge(
             graph.root,
             main,
@@ -3230,11 +3247,25 @@ mod tests {
 
         let summary = summarize(&graph);
 
-        assert_eq!(summary.nodes, 2);
+        assert_eq!(summary.nodes, 3);
         assert_eq!(summary.edges, 1);
         assert_eq!(summary.entrypoints, 1);
         assert_eq!(summary.node_kinds.get("function"), Some(&1));
         assert_eq!(summary.edge_confidences.get("syntactic"), Some(&1));
+        assert_eq!(
+            summary
+                .annotation_facets
+                .get("annotation.domain")
+                .and_then(|values| values.get("payments")),
+            Some(&1)
+        );
+        assert_eq!(
+            summary
+                .annotation_facets
+                .get("annotation.owner")
+                .and_then(|values| values.get("team-payments")),
+            Some(&1)
+        );
     }
 
     #[test]

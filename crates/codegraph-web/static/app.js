@@ -540,7 +540,7 @@ function renderOverview() {
           .join("")
       : '<p class="empty">No edge confidence.</p>';
 
-  const annotations = annotationFacets(state.graph.nodes);
+  const annotations = annotationFacets(summary, state.graph.nodes);
   annotationList.innerHTML =
     annotations.length > 0
       ? annotations
@@ -553,7 +553,7 @@ function renderOverview() {
             `,
           )
           .join("")
-      : '<p class="empty">No annotations on this page.</p>';
+      : '<p class="empty">No annotations.</p>';
 
   entrypointList.innerHTML =
     entrypoints.length > 0
@@ -608,7 +608,19 @@ function renderOverview() {
   });
 }
 
-function annotationFacets(nodes) {
+function annotationFacets(summary, nodes) {
+  const summaryFacets = summary?.annotation_facets || {};
+  const fromSummary = Object.entries(summaryFacets).flatMap(([key, values]) =>
+    Object.entries(values || {}).map(([value, count]) => ({
+      key,
+      value,
+      count,
+    })),
+  );
+  if (fromSummary.length > 0) {
+    return sortAnnotationFacets(fromSummary).slice(0, 8);
+  }
+
   const counts = new Map();
   for (const node of nodes || []) {
     for (const [key, value] of Object.entries(node.metadata || {})) {
@@ -623,15 +635,18 @@ function annotationFacets(nodes) {
       });
     }
   }
-  return [...counts.values()]
+  return sortAnnotationFacets([...counts.values()]).slice(0, 8);
+}
+
+function sortAnnotationFacets(facets) {
+  return facets
     .sort(
       (left, right) =>
         right.count - left.count ||
         annotationLabel(left.key, left.value).localeCompare(
           annotationLabel(right.key, right.value),
         ),
-    )
-    .slice(0, 8);
+    );
 }
 
 function annotationLabel(key, value) {

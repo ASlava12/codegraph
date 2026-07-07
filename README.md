@@ -63,7 +63,7 @@ Implemented now:
 - Framework route insights for duplicate HTTP method/path declarations.
 - Framework config convention facts for common web/service stacks across mixed-language repositories.
 - Repository custom rule insights from `.codegraph/rules.toml`.
-- Web overview facets for user graph annotations from `.codegraph/annotations.toml`.
+- Project-wide web overview facets for user graph annotations from `.codegraph/annotations.toml`.
 - Dependency cycle insights for circular calls, imports, references, and manifest dependency edges.
 
 Planned next:
