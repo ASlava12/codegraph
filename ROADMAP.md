@@ -132,6 +132,7 @@ Goal: answer practical code investigation questions.
 - [x] Add semantic diagnostic query slices for focused LSP issue context.
 - [x] Add insight/risk query slices for focused investigation findings.
 - [x] Add entrypoint query slices for focused startup graph context.
+- [x] Add config query slices for focused configuration reader context.
 - [x] Add reverse dependent traces for impact analysis.
 - [x] Add source text search across CLI, API, and web for focused code snippets.
 - [x] Add edge explanation for confidence and provenance evidence across CLI, API, and web.
