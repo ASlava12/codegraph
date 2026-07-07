@@ -28,6 +28,7 @@ const state = {
   overviewRequest: 0,
   insightRequest: 0,
   insightFocusRequest: 0,
+  checkRequest: 0,
   summary: null,
   entrypoints: [],
   insightReport: null,
@@ -130,9 +131,12 @@ const errorTraceResult = document.querySelector("#errorTraceResult");
 const insightCount = document.querySelector("#insightCount");
 const insightList = document.querySelector("#insightList");
 const insightSeverityInput = document.querySelector("#insightSeverityInput");
+const checkFailOnInput = document.querySelector("#checkFailOnInput");
 const insightKindInput = document.querySelector("#insightKindInput");
 const insightSearchInput = document.querySelector("#insightSearchInput");
 const insightFilterButton = document.querySelector("#insightFilterButton");
+const checkButton = document.querySelector("#checkButton");
+const checkResult = document.querySelector("#checkResult");
 const kindFilters = document.querySelector("#kindFilters");
 const selectionTitle = document.querySelector("#selectionTitle");
 const selectionBody = document.querySelector("#selectionBody");
@@ -203,6 +207,10 @@ for (const input of [insightSeverityInput, insightKindInput, insightSearchInput]
     if (event.key === "Enter") loadInsights();
   });
 }
+checkButton.addEventListener("click", () => runCheck());
+checkFailOnInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") runCheck();
+});
 pagePrevButton.addEventListener("click", () => shiftGraphPage(-1));
 pageNextButton.addEventListener("click", () => shiftGraphPage(1));
 pageReloadButton.addEventListener("click", () => loadGraphPage({ resetPage: true }));
@@ -293,6 +301,7 @@ async function scan() {
   renderOverview();
   state.insightReport = null;
   renderInsights();
+  checkResult.innerHTML = "";
   if (state.scanEvents) {
     state.scanEvents.close();
     state.scanEvents = null;
@@ -476,6 +485,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     state.queryFocus = null;
     state.insightReport = null;
     queryResult.innerHTML = "";
+    checkResult.innerHTML = "";
     entryFlowResult.innerHTML = "";
     pathResult.innerHTML = "";
     configTraceResult.innerHTML = "";
@@ -889,6 +899,52 @@ async function loadInsights() {
       insightFilterButton.disabled = false;
     }
   }
+}
+
+async function runCheck() {
+  state.checkRequest += 1;
+  const requestId = state.checkRequest;
+  const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
+  const failOn = checkFailOnInput.value.trim() || "error";
+  const kind = insightKindInput.value.trim();
+  const search = insightSearchInput.value.trim();
+  params.set("fail_on", failOn);
+  if (kind) params.set("kind", kind);
+  if (search) params.set("search", search);
+  params.set("limit", "50");
+
+  checkButton.disabled = true;
+  checkResult.innerHTML = '<p class="empty">Running check...</p>';
+
+  try {
+    const response = await fetch(`/api/check?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.checkRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "check failed");
+    }
+    checkResult.innerHTML = renderCheckReport(body);
+  } catch (error) {
+    if (requestId !== state.checkRequest) return;
+    checkResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.checkRequest) {
+      checkButton.disabled = false;
+    }
+  }
+}
+
+function renderCheckReport(check) {
+  const stateClass = check.passed ? "passed" : "failed";
+  const label = check.passed ? "Passed" : "Failed";
+  return `
+    <div class="check-card ${stateClass}">
+      <strong>${label}</strong>
+      <span>fail on ${escapeHtml(formatKind(check.fail_on || "error"))}</span>
+      <span>${check.failing_insights || 0} failing</span>
+      <span>${check.report?.total || 0} matched</span>
+    </div>
+  `;
 }
 
 function initializeGraph(options = {}) {

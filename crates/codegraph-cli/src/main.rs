@@ -2,9 +2,9 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
     ConfigTraceRequest, EntrypointTraceRequest, ErrorTraceRequest, ExplainEdgeRequest,
-    InsightFilter, InsightSeverity, SourceSearchRequest, TraceRequest, TraceStart, entrypoints,
-    explain_edge, filter_insight_report, insights, query_graph, search_source, summarize, trace,
-    trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    InsightFilter, InsightSeverity, SourceSearchRequest, TraceRequest, TraceStart, check_insights,
+    entrypoints, explain_edge, filter_insight_report, insights, query_graph, search_source,
+    summarize, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{DEFAULT_MAX_FILE_SIZE, IndexOptions, scan_project};
@@ -450,14 +450,6 @@ struct BenchmarkMeasurement {
     edges: usize,
 }
 
-#[derive(Debug, Serialize)]
-struct CheckReport {
-    passed: bool,
-    fail_on: String,
-    failing_insights: usize,
-    report: codegraph_analysis::InsightReport,
-}
-
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let max_file_size = cli.max_file_size;
@@ -546,13 +538,7 @@ fn main() -> Result<()> {
                     limit: args.limit,
                 },
             );
-            let failing_insights = failing_insight_count(&report, fail_on);
-            let check = CheckReport {
-                passed: failing_insights == 0,
-                fail_on: severity_label(fail_on).to_string(),
-                failing_insights,
-                report,
-            };
+            let check = check_insights(report, fail_on);
             println!("{}", serde_json::to_string_pretty(&check)?);
             if !check.passed {
                 std::process::exit(2);
@@ -734,38 +720,6 @@ impl From<InsightSeverityArg> for InsightSeverity {
     }
 }
 
-fn failing_insight_count(
-    report: &codegraph_analysis::InsightReport,
-    fail_on: InsightSeverity,
-) -> usize {
-    report
-        .by_severity
-        .iter()
-        .filter_map(|(severity, count)| {
-            parse_report_severity(severity)
-                .filter(|severity| *severity >= fail_on)
-                .map(|_| *count)
-        })
-        .sum()
-}
-
-fn parse_report_severity(value: &str) -> Option<InsightSeverity> {
-    match value {
-        "info" => Some(InsightSeverity::Info),
-        "warning" => Some(InsightSeverity::Warning),
-        "error" => Some(InsightSeverity::Error),
-        _ => None,
-    }
-}
-
-fn severity_label(severity: InsightSeverity) -> &'static str {
-    match severity {
-        InsightSeverity::Info => "info",
-        InsightSeverity::Warning => "warning",
-        InsightSeverity::Error => "error",
-    }
-}
-
 fn print_graph(graph: &codegraph_core::CodeGraph, format: OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(graph)?),
@@ -850,28 +804,4 @@ fn benchmark_scans(args: BenchmarkArgs, max_file_size: u64) -> Result<BenchmarkR
         measurements,
         summary: summarize(&graph),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::BTreeMap;
-
-    #[test]
-    fn failing_insight_count_respects_thresholds() {
-        let report = codegraph_analysis::InsightReport {
-            total: 6,
-            by_severity: BTreeMap::from([
-                ("info".to_string(), 3),
-                ("warning".to_string(), 2),
-                ("error".to_string(), 1),
-            ]),
-            by_kind: BTreeMap::new(),
-            insights: Vec::new(),
-        };
-
-        assert_eq!(failing_insight_count(&report, InsightSeverity::Error), 1);
-        assert_eq!(failing_insight_count(&report, InsightSeverity::Warning), 3);
-        assert_eq!(failing_insight_count(&report, InsightSeverity::Info), 6);
-    }
 }

@@ -8,13 +8,13 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
-    ConfigTraceRequest, ConfigTraceResult, EntrypointTraceReport, EntrypointTraceRequest,
-    ErrorTraceRequest, ErrorTraceResult, ExplainEdgeRequest, FocusRequest, GraphSlice,
-    GraphSliceRequest, InsightFilter, InsightReport, InsightSeverity, NodeContext,
-    SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, entrypoints, explain_edge,
-    export_dot, export_ndjson, filter_insight_report, focus_subgraph, insights, node_context,
-    query_graph, search_source, slice_graph, summarize, trace, trace_config, trace_dependents,
-    trace_entrypoints, trace_errors,
+    CheckReport, ConfigTraceRequest, ConfigTraceResult, EntrypointTraceReport,
+    EntrypointTraceRequest, ErrorTraceRequest, ErrorTraceResult, ExplainEdgeRequest, FocusRequest,
+    GraphSlice, GraphSliceRequest, InsightFilter, InsightReport, InsightSeverity, NodeContext,
+    SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, check_insights, entrypoints,
+    explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph, insights,
+    node_context, query_graph, search_source, slice_graph, summarize, trace, trace_config,
+    trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{DEFAULT_MAX_FILE_SIZE, IndexOptions};
@@ -171,6 +171,15 @@ struct ExplainEdgeQuery {
 struct InsightQuery {
     path: Option<PathBuf>,
     severity: Option<String>,
+    kind: Option<String>,
+    search: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CheckQuery {
+    path: Option<PathBuf>,
+    fail_on: Option<String>,
     kind: Option<String>,
     search: Option<String>,
     limit: Option<usize>,
@@ -358,6 +367,7 @@ async fn main() -> Result<()> {
         .route("/api/entrypoints", get(entrypoints_api))
         .route("/api/entrypoint-traces", get(entrypoint_traces_api))
         .route("/api/insights", get(insights_api))
+        .route("/api/check", get(check_api))
         .route("/api/query", get(query_api))
         .route("/api/explain-edge", get(explain_edge_api))
         .route("/api/trace", get(trace_api))
@@ -756,6 +766,27 @@ async fn insights_api(
         report,
         &insight_filter_from_query(query)?,
     )))
+}
+
+async fn check_api(
+    State(state): State<AppState>,
+    Query(query): Query<CheckQuery>,
+) -> Result<Json<CheckReport>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let fail_on = normalize_query_string(query.fail_on)
+        .map(|value| parse_insight_severity(&value))
+        .transpose()?
+        .unwrap_or(InsightSeverity::Error);
+    let report = filter_insight_report(
+        insights(&graph),
+        &InsightFilter {
+            severity: None,
+            kind: normalize_query_string(query.kind),
+            search: normalize_query_string(query.search),
+            limit: query.limit.unwrap_or(50),
+        },
+    );
+    Ok(Json(check_insights(report, fail_on)))
 }
 
 async fn query_api(

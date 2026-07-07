@@ -760,14 +760,44 @@ button:disabled {
   height: 34px;
 }
 
-.insight-filters label:nth-child(3) {
-  grid-column: 1 / -1;
-}
-
 .insight-filters button {
-  grid-column: 1 / -1;
   padding: 0 10px;
   font-size: 13px;
+}
+
+.check-result {
+  min-height: 0;
+}
+
+.check-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-2);
+}
+
+.check-card.passed {
+  border-color: rgba(92, 200, 167, 0.45);
+}
+
+.check-card.failed {
+  border-color: rgba(224, 108, 117, 0.5);
+}
+
+.check-card strong {
+  grid-column: 1 / -1;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.check-card span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .insight-list {

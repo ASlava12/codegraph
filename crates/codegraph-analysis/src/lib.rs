@@ -465,6 +465,14 @@ pub struct Insight {
     pub edges: Vec<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckReport {
+    pub passed: bool,
+    pub fail_on: String,
+    pub failing_insights: usize,
+    pub report: InsightReport,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InsightSeverity {
@@ -701,6 +709,37 @@ pub fn filter_insight_report(report: InsightReport, filter: &InsightFilter) -> I
         by_severity,
         by_kind,
         insights,
+    }
+}
+
+pub fn check_insights(report: InsightReport, fail_on: InsightSeverity) -> CheckReport {
+    let failing_insights = failing_insight_count(&report, fail_on);
+    CheckReport {
+        passed: failing_insights == 0,
+        fail_on: severity_name(fail_on).to_string(),
+        failing_insights,
+        report,
+    }
+}
+
+fn failing_insight_count(report: &InsightReport, fail_on: InsightSeverity) -> usize {
+    report
+        .by_severity
+        .iter()
+        .filter_map(|(severity, count)| {
+            parse_report_severity(severity)
+                .filter(|severity| *severity >= fail_on)
+                .map(|_| *count)
+        })
+        .sum()
+}
+
+fn parse_report_severity(value: &str) -> Option<InsightSeverity> {
+    match value {
+        "info" => Some(InsightSeverity::Info),
+        "warning" => Some(InsightSeverity::Warning),
+        "error" => Some(InsightSeverity::Error),
+        _ => None,
     }
 }
 
@@ -5291,6 +5330,39 @@ mod tests {
         assert_eq!(filtered.by_kind.get("parse_error"), None);
         assert_eq!(filtered.insights.len(), 1);
         assert_eq!(filtered.insights[0].kind, "dependency_cycle");
+    }
+
+    #[test]
+    fn check_insights_respects_severity_thresholds() {
+        let report = InsightReport {
+            total: 6,
+            by_severity: BTreeMap::from([
+                ("info".to_string(), 3),
+                ("warning".to_string(), 2),
+                ("error".to_string(), 1),
+            ]),
+            by_kind: BTreeMap::new(),
+            insights: Vec::new(),
+        };
+
+        let error_check = check_insights(report.clone(), InsightSeverity::Error);
+        assert!(!error_check.passed);
+        assert_eq!(error_check.fail_on, "error");
+        assert_eq!(error_check.failing_insights, 1);
+
+        let warning_check = check_insights(report.clone(), InsightSeverity::Warning);
+        assert!(!warning_check.passed);
+        assert_eq!(warning_check.failing_insights, 3);
+
+        let clean_report = InsightReport {
+            total: 3,
+            by_severity: BTreeMap::from([("info".to_string(), 3)]),
+            by_kind: BTreeMap::new(),
+            insights: Vec::new(),
+        };
+        let clean_check = check_insights(clean_report, InsightSeverity::Warning);
+        assert!(clean_check.passed);
+        assert_eq!(clean_check.failing_insights, 0);
     }
 
     #[test]

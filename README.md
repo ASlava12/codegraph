@@ -48,7 +48,7 @@ Implemented now:
 - Server-backed web insights for project-wide findings while browsing paged graph slices.
 - Insight reports include severity and kind breakdowns for triage.
 - Server-side insight filters for severity, kind, search, and capped agent/UI reads.
-- CI/agent check command for failing builds on insight severity thresholds.
+- CI/agent check command, API, and web quality gate for failing on insight severity thresholds.
 - Insight focus API and web interaction for turning findings into focused graph views.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - Web project selector backed by an explicit server-side allowlist for opening local repositories.
@@ -336,6 +336,7 @@ curl 'http://127.0.0.1:3765/api/focus?path=.&node_ids=1,2&edge_indexes=0&edge_li
 curl 'http://127.0.0.1:3765/api/summary?path=.'
 curl 'http://127.0.0.1:3765/api/entrypoints?path=.'
 curl 'http://127.0.0.1:3765/api/entrypoint-traces?path=.&search=server&depth=4'
+curl 'http://127.0.0.1:3765/api/check?path=.&fail_on=warning&kind=dependency'
 curl 'http://127.0.0.1:3765/api/insights?path=.'
 curl 'http://127.0.0.1:3765/api/insights?path=.&severity=warning&kind=dependency&limit=25'
 curl --get 'http://127.0.0.1:3765/api/query' \

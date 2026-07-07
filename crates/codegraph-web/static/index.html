@@ -240,6 +240,10 @@
               <input id="insightSeverityInput" type="text" autocomplete="off" />
             </label>
             <label class="field compact">
+              <span>Fail On</span>
+              <input id="checkFailOnInput" type="text" value="error" autocomplete="off" />
+            </label>
+            <label class="field compact">
               <span>Kind</span>
               <input id="insightKindInput" type="text" autocomplete="off" />
             </label>
@@ -248,7 +252,9 @@
               <input id="insightSearchInput" type="text" autocomplete="off" />
             </label>
             <button id="insightFilterButton" type="button">Apply</button>
+            <button id="checkButton" type="button">Run Check</button>
           </div>
+          <div id="checkResult" class="check-result"></div>
           <div id="insightList" class="insight-list"></div>
         </section>
 
