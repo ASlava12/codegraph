@@ -130,6 +130,7 @@ Implemented now:
 - Dependency consistency insights for external imports/CommonJS requires that are not backed by declared manifest dependencies.
 - Dependency consistency insights for runtime manifest dependencies with no matching import.
 - Dependency consistency insights for package declarations with conflicting manifest constraints.
+- Focused package graph queries that connect manifest declarations, import sites, and source files for mixed-language dependency investigation.
 - Framework route insights for duplicate HTTP method/path declarations.
 - Framework config convention facts for common web/service stacks across mixed-language repositories.
 - Repository custom rule insights from `.codegraph/rules.toml`.
@@ -336,6 +337,7 @@ cargo run -p codegraph-cli -- query 'dependents label:load_config depth:3' .
 cargo run -p codegraph-cli -- query 'neighbors label:main direction:out depth:2 edge_kind:calls' .
 cargo run -p codegraph-cli -- query 'entrypoints language:rust' .
 cargo run -p codegraph-cli -- query 'routes method:GET path:/health depth:3 edge_limit:300' .
+cargo run -p codegraph-cli -- query 'packages package:serde ecosystem:cargo edge_limit:300' .
 cargo run -p codegraph-cli -- query 'configs target:DATABASE_URL depth:6' .
 cargo run -p codegraph-cli -- query 'errors target:panic depth:6' .
 cargo run -p codegraph-cli -- query 'cycles edge_kind:calls' .

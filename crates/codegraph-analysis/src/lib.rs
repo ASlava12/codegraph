@@ -1605,6 +1605,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "neighbors" | "neighbor" | "neighborhood" => query_neighbors(graph, spec),
         "entrypoints" | "entrypoint" | "starts" | "startup" => query_entrypoints(graph, spec),
         "routes" | "route" | "endpoints" | "endpoint" => query_routes(graph, spec),
+        "packages" | "package" | "deps" | "external" | "externals" => query_packages(graph, spec),
         "configs" | "config" | "environment" | "env" => query_configs(graph, spec),
         "errors" | "error" | "exceptions" | "exception" => query_errors(graph, spec),
         "cycles" | "cycle" => query_cycles(graph, spec),
@@ -1616,7 +1617,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         }
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, entrypoints, routes, configs, errors, cycles, hotspots, unreachable, diagnostics, insights, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, insights, or path"
         ))),
     }
 }
@@ -2399,6 +2400,93 @@ fn query_routes(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, Q
     })
 }
 
+fn query_packages(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    if let Some(first) = spec.positional.first() {
+        spec.terms
+            .entry("package".to_string())
+            .or_insert(first.clone());
+    }
+    validate_package_terms(&spec)?;
+    let edge_limit = spec
+        .terms
+        .get("edge_limit")
+        .map(|value| parse_limit(value).map(|value| value.clamp(1, 2_000)))
+        .transpose()?
+        .unwrap_or(500);
+    let path_index = node_path_index(graph);
+    let matched: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            is_package_query_node(node) && package_query_matches(graph, node, &spec, &path_index)
+        })
+        .cloned()
+        .collect();
+
+    let mut selected_ids: BTreeSet<_> = matched
+        .iter()
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let package_keys: BTreeSet<_> = matched
+        .iter()
+        .take(spec.limit)
+        .filter_map(package_node_key)
+        .collect();
+    if !package_keys.is_empty() {
+        for node in graph
+            .nodes
+            .iter()
+            .filter(|node| is_package_query_node(node))
+        {
+            if package_node_key(node).is_some_and(|key| package_keys.contains(&key)) {
+                selected_ids.insert(node.id);
+            }
+        }
+    }
+
+    let mut edge_indexes = BTreeSet::new();
+    let mut node_ids = selected_ids.clone();
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if !matches!(edge.kind, EdgeKind::Imports | EdgeKind::DependsOn) {
+            continue;
+        }
+        if !package_edge_query_matches(graph, edge, &spec, &path_index) {
+            continue;
+        }
+        if selected_ids.contains(&edge.source) || selected_ids.contains(&edge.target) {
+            edge_indexes.insert(index);
+            node_ids.insert(edge.source);
+            node_ids.insert(edge.target);
+        }
+    }
+
+    let total_edges = edge_indexes.len();
+    let edges = graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| edge_indexes.contains(index))
+        .take(edge_limit)
+        .map(|(_, edge)| edge.clone())
+        .collect::<Vec<_>>();
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| node_ids.contains(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    Ok(QueryResult {
+        query: spec.original,
+        total_nodes: nodes.len(),
+        total_edges,
+        truncated: matched.len() > spec.limit || total_edges > edge_limit,
+        nodes,
+        edges,
+    })
+}
+
 fn query_configs(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
     if let Some(first) = spec.positional.first() {
         spec.terms
@@ -3093,6 +3181,44 @@ fn validate_route_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     Ok(())
 }
 
+fn validate_package_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if matches!(
+            key.as_str(),
+            "id" | "node_id"
+                | "label"
+                | "search"
+                | "package"
+                | "package_id"
+                | "ecosystem"
+                | "language"
+                | "kind"
+                | "item_kind"
+                | "source"
+                | "dependency_source"
+                | "dependency_kind"
+                | "version"
+                | "dependency_version"
+                | "path"
+                | "source_path"
+                | "file"
+                | "file_path"
+                | "path_prefix"
+                | "edge_kind"
+                | "kind_edge"
+                | "confidence"
+                | "edge_limit"
+        ) || key.starts_with("metadata.")
+        {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported packages query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_config_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     for key in spec.terms.keys() {
         if matches!(
@@ -3434,6 +3560,152 @@ fn route_trace_should_expand(edge: &Edge) -> bool {
         .metadata
         .values()
         .any(|value| matches!(value.as_str(), "framework_route_file" | "entrypoint_file"))
+}
+
+fn is_package_query_node(node: &Node) -> bool {
+    node.kind == NodeKind::ExternalDependency
+        && node
+            .metadata
+            .get("item_kind")
+            .is_some_and(|kind| matches!(kind.as_str(), "dependency" | "import"))
+}
+
+fn package_query_matches(
+    graph: &CodeGraph,
+    node: &Node,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
+    spec.terms.iter().all(|(key, expected)| match key.as_str() {
+        "id" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        "label" => text_matches(&node.label, expected),
+        "search" => package_search_matches(node, expected),
+        "package" | "package_id" => package_identifier_matches(node, expected),
+        "ecosystem" => package_ecosystem(node).is_some_and(|value| text_matches(&value, expected)),
+        "language" => {
+            metadata_matches(node, "language", expected)
+                || package_source_nodes(graph, node.id)
+                    .iter()
+                    .any(|source| metadata_matches(source, "language", expected))
+        }
+        "kind" => text_matches(&kind_name(&node.kind), expected),
+        "item_kind" => metadata_matches(node, "item_kind", expected),
+        "source" | "dependency_source" => {
+            metadata_matches(node, "source", expected)
+                || package_incoming_edges(graph, node.id)
+                    .iter()
+                    .any(|edge| edge_metadata_matches(edge, "source", expected))
+        }
+        "dependency_kind" => package_incoming_edges(graph, node.id)
+            .iter()
+            .any(|edge| edge_metadata_matches(edge, "dependency_kind", expected)),
+        "version" | "dependency_version" => package_incoming_edges(graph, node.id)
+            .iter()
+            .any(|edge| edge_metadata_matches(edge, "dependency_version", expected)),
+        "path" | "source_path" | "file" | "file_path" | "path_prefix" => {
+            node_path_matches(node, path_index, expected)
+                || package_source_nodes(graph, node.id)
+                    .iter()
+                    .any(|source| node_path_matches(source, path_index, expected))
+        }
+        "edge_kind" | "kind_edge" | "confidence" | "edge_limit" => true,
+        key if key.starts_with("metadata.") => node
+            .metadata
+            .get(key.trim_start_matches("metadata."))
+            .is_some_and(|value| text_matches(value, expected)),
+        _ => false,
+    })
+}
+
+fn package_edge_query_matches(
+    graph: &CodeGraph,
+    edge: &Edge,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
+    spec.terms.iter().all(|(key, expected)| match key.as_str() {
+        "edge_kind" | "kind_edge" => text_matches(&edge_kind_name(&edge.kind), expected),
+        "confidence" => text_matches(&confidence_name(edge.confidence), expected),
+        "source" | "dependency_source" => edge_metadata_matches(edge, "source", expected),
+        "dependency_kind" => edge_metadata_matches(edge, "dependency_kind", expected),
+        "version" | "dependency_version" => {
+            edge_metadata_matches(edge, "dependency_version", expected)
+        }
+        "path" | "source_path" | "file" | "file_path" | "path_prefix" => graph
+            .nodes
+            .iter()
+            .find(|node| node.id == edge.source)
+            .is_some_and(|node| node_path_matches(node, path_index, expected)),
+        _ => true,
+    })
+}
+
+fn package_search_matches(node: &Node, expected: &str) -> bool {
+    text_matches(&node.label, expected)
+        || node
+            .metadata
+            .values()
+            .any(|value| text_matches(value, expected))
+        || package_node_key(node).is_some_and(|key| text_matches(&key, expected))
+}
+
+fn package_identifier_matches(node: &Node, expected: &str) -> bool {
+    let expected = expected.trim();
+    let label_matches = node
+        .metadata
+        .get("item_kind")
+        .is_some_and(|kind| kind == "dependency")
+        && node.label.eq_ignore_ascii_case(expected);
+    label_matches
+        || node
+            .metadata
+            .get("package_id")
+            .is_some_and(|value| package_key_matches(value, expected))
+        || package_node_key(node).is_some_and(|key| package_key_matches(&key, expected))
+}
+
+fn package_key_matches(key: &str, expected: &str) -> bool {
+    key.eq_ignore_ascii_case(expected)
+        || key
+            .split_once(':')
+            .is_some_and(|(_, package)| package.eq_ignore_ascii_case(expected))
+}
+
+fn package_node_key(node: &Node) -> Option<String> {
+    if let Some(package_id) = node.metadata.get("package_id") {
+        return Some(package_id.clone());
+    }
+    let language = node.metadata.get("language")?;
+    let package = import_package_candidate(language, &node.label)?;
+    Some(package_id(&package.ecosystem, &package.package))
+}
+
+fn package_ecosystem(node: &Node) -> Option<String> {
+    node.metadata.get("ecosystem").cloned().or_else(|| {
+        package_node_key(node)
+            .and_then(|key| key.split_once(':').map(|(value, _)| value.to_string()))
+    })
+}
+
+fn package_id(ecosystem: &str, package: &str) -> String {
+    format!("{}:{}", ecosystem.trim(), package.trim())
+}
+
+fn package_incoming_edges(graph: &CodeGraph, node_id: NodeId) -> Vec<&Edge> {
+    graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.target == node_id && matches!(edge.kind, EdgeKind::Imports | EdgeKind::DependsOn)
+        })
+        .collect()
+}
+
+fn package_source_nodes(graph: &CodeGraph, node_id: NodeId) -> Vec<&Node> {
+    package_incoming_edges(graph, node_id)
+        .iter()
+        .filter_map(|edge| graph.nodes.iter().find(|node| node.id == edge.source))
+        .collect()
 }
 
 fn config_query_matches(
@@ -6986,6 +7258,144 @@ mod tests {
         assert_eq!(incoming.total_edges, 1);
         assert!(incoming.nodes.iter().any(|node| node.id == caller));
         assert!(!incoming.nodes.iter().any(|node| node.id == helper));
+    }
+
+    #[test]
+    fn query_packages_returns_manifest_and_import_context() {
+        let mut graph = CodeGraph::new("repo");
+        let cargo_manifest = graph.add_node_with_metadata(
+            NodeKind::File,
+            "Cargo.toml",
+            None,
+            BTreeMap::from([("language".to_string(), "toml".to_string())]),
+        );
+        let rust_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/main.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let js_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "web/app.js",
+            None,
+            BTreeMap::from([("language".to_string(), "javascript".to_string())]),
+        );
+        let serde_dependency = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "serde",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "dependency".to_string()),
+                ("ecosystem".to_string(), "cargo".to_string()),
+                ("package_id".to_string(), "cargo:serde".to_string()),
+                ("source".to_string(), "manifest".to_string()),
+            ]),
+        );
+        let serde_import = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "use serde::Deserialize;",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "import".to_string()),
+                ("language".to_string(), "rust".to_string()),
+            ]),
+        );
+        let express_import = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "import express from 'express';",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "import".to_string()),
+                ("language".to_string(), "javascript".to_string()),
+            ]),
+        );
+        let serde_json_dependency = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "serde_json",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "dependency".to_string()),
+                ("ecosystem".to_string(), "cargo".to_string()),
+                ("package_id".to_string(), "cargo:serde_json".to_string()),
+                ("source".to_string(), "manifest".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            cargo_manifest,
+            serde_dependency,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "runtime".to_string()),
+                ("dependency_version".to_string(), "1".to_string()),
+                ("source".to_string(), "manifest".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            cargo_manifest,
+            serde_json_dependency,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "runtime".to_string()),
+                ("dependency_version".to_string(), "1".to_string()),
+                ("source".to_string(), "manifest".to_string()),
+            ]),
+        );
+        graph.add_edge(
+            rust_file,
+            serde_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            js_file,
+            express_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+
+        let result = query_graph(&graph, "packages serde ecosystem:cargo").unwrap();
+
+        assert!(result.nodes.iter().any(|node| node.id == cargo_manifest));
+        assert!(result.nodes.iter().any(|node| node.id == rust_file));
+        assert!(result.nodes.iter().any(|node| node.id == serde_dependency));
+        assert!(result.nodes.iter().any(|node| node.id == serde_import));
+        assert!(
+            !result
+                .nodes
+                .iter()
+                .any(|node| node.id == serde_json_dependency)
+        );
+        assert!(!result.nodes.iter().any(|node| node.id == express_import));
+        assert!(result.edges.iter().any(|edge| {
+            edge.source == cargo_manifest
+                && edge.target == serde_dependency
+                && edge.kind == EdgeKind::DependsOn
+        }));
+        assert!(result.edges.iter().any(|edge| {
+            edge.source == rust_file
+                && edge.target == serde_import
+                && edge.kind == EdgeKind::Imports
+        }));
+
+        let path_limited = query_graph(&graph, "packages package:serde path:src").unwrap();
+        assert_eq!(path_limited.total_edges, 1);
+        assert!(
+            path_limited
+                .edges
+                .iter()
+                .all(|edge| edge.kind == EdgeKind::Imports)
+        );
+
+        let error = query_graph(&graph, "packages unsupported:value")
+            .expect_err("invalid packages term should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported packages query term")
+        );
     }
 
     #[test]
