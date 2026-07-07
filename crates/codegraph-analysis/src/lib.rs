@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
+use std::fs;
+use std::path::Path;
+use walkdir::{DirEntry, WalkDir};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphSummary {
@@ -16,6 +19,45 @@ pub struct GraphSummary {
     pub languages: BTreeMap<String, usize>,
     pub annotation_facets: BTreeMap<String, BTreeMap<String, usize>>,
     pub entrypoints: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceSearchRequest {
+    pub query: String,
+    pub path_filter: Option<String>,
+    pub case_sensitive: bool,
+    pub limit: usize,
+    pub context: usize,
+    pub include_hidden: bool,
+    pub include_ignored: bool,
+    pub max_file_size: u64,
+    pub ignored_names: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceSearchResult {
+    pub query: String,
+    pub path_filter: Option<String>,
+    pub case_sensitive: bool,
+    pub total_matches: usize,
+    pub matches: Vec<SourceSearchMatch>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceSearchMatch {
+    pub path: String,
+    pub line: u32,
+    pub column: u32,
+    pub line_text: String,
+    pub context: Vec<SourceSearchLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceSearchLine {
+    pub number: u32,
+    pub text: String,
+    pub highlight: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,6 +285,159 @@ impl fmt::Display for QueryError {
 }
 
 impl std::error::Error for QueryError {}
+
+pub fn search_source(root: &Path, request: &SourceSearchRequest) -> SourceSearchResult {
+    let query = request.query.trim();
+    if query.is_empty() {
+        return SourceSearchResult {
+            query: request.query.clone(),
+            path_filter: request.path_filter.clone(),
+            case_sensitive: request.case_sensitive,
+            total_matches: 0,
+            matches: Vec::new(),
+            truncated: false,
+        };
+    }
+
+    let needle = if request.case_sensitive {
+        query.to_string()
+    } else {
+        query.to_ascii_lowercase()
+    };
+    let path_filter = request
+        .path_filter
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            if request.case_sensitive {
+                value.to_string()
+            } else {
+                value.to_ascii_lowercase()
+            }
+        });
+    let limit = request.limit.clamp(1, 1_000);
+    let context = request.context.min(20);
+    let mut matches = Vec::new();
+    let mut total_matches = 0usize;
+
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| should_search_entry(entry, request))
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path == root || !entry.file_type().is_file() {
+            continue;
+        }
+        if !is_searchable_file(path, request.max_file_size) {
+            continue;
+        }
+        let label = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if path_filter.as_deref().is_some_and(|filter| {
+            let haystack = if request.case_sensitive {
+                label.clone()
+            } else {
+                label.to_ascii_lowercase()
+            };
+            !haystack.contains(filter)
+        }) {
+            continue;
+        }
+
+        let Ok(bytes) = fs::read(path) else {
+            continue;
+        };
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            continue;
+        };
+        let lines = text.lines().collect::<Vec<_>>();
+        for (line_index, line) in lines.iter().enumerate() {
+            let haystack = if request.case_sensitive {
+                line.to_string()
+            } else {
+                line.to_ascii_lowercase()
+            };
+            let mut search_from = 0usize;
+            while let Some(offset) = haystack[search_from..].find(&needle) {
+                total_matches += 1;
+                if matches.len() < limit {
+                    let column = search_from + offset + 1;
+                    matches.push(SourceSearchMatch {
+                        path: label.clone(),
+                        line: line_index as u32 + 1,
+                        column: column as u32,
+                        line_text: (*line).to_string(),
+                        context: source_search_context(&lines, line_index, context),
+                    });
+                }
+                search_from += offset + needle.len().max(1);
+            }
+        }
+    }
+
+    SourceSearchResult {
+        query: request.query.clone(),
+        path_filter: request.path_filter.clone(),
+        case_sensitive: request.case_sensitive,
+        total_matches,
+        truncated: total_matches > matches.len(),
+        matches,
+    }
+}
+
+fn source_search_context(
+    lines: &[&str],
+    line_index: usize,
+    context: usize,
+) -> Vec<SourceSearchLine> {
+    let start = line_index.saturating_sub(context);
+    let end = (line_index + context + 1).min(lines.len());
+    lines[start..end]
+        .iter()
+        .enumerate()
+        .map(|(offset, line)| {
+            let index = start + offset;
+            SourceSearchLine {
+                number: index as u32 + 1,
+                text: (*line).to_string(),
+                highlight: index == line_index,
+            }
+        })
+        .collect()
+}
+
+fn should_search_entry(entry: &DirEntry, request: &SourceSearchRequest) -> bool {
+    if !request.include_hidden && is_hidden_entry(entry) {
+        return false;
+    }
+    if !request.include_ignored
+        && entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| request.ignored_names.contains(name))
+    {
+        return false;
+    }
+    true
+}
+
+fn is_hidden_entry(entry: &DirEntry) -> bool {
+    entry
+        .file_name()
+        .to_str()
+        .is_some_and(|name| name.starts_with('.') && name != "." && name != "..")
+}
+
+fn is_searchable_file(path: &Path, max_file_size: u64) -> bool {
+    path.metadata()
+        .map(|metadata| metadata.len() <= max_file_size)
+        .unwrap_or(false)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InsightReport {
@@ -3436,6 +3631,73 @@ mod tests {
     }
 
     #[test]
+    fn source_search_filters_limits_and_returns_context() {
+        let root = temp_analysis_root();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("target")).unwrap();
+        std::fs::write(
+            root.join("src").join("app.py"),
+            "def main():\n    token = load_secret()\n    return token\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src").join("config.py"),
+            "SECRET_NAME = 'token'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("target").join("generated.py"),
+            "token = 'ignored'\n",
+        )
+        .unwrap();
+
+        let result = search_source(
+            &root,
+            &SourceSearchRequest {
+                query: "TOKEN".to_string(),
+                path_filter: Some("src/".to_string()),
+                case_sensitive: false,
+                limit: 2,
+                context: 1,
+                include_hidden: false,
+                include_ignored: false,
+                max_file_size: 1024,
+                ignored_names: BTreeSet::from(["target".to_string()]),
+            },
+        );
+
+        assert_eq!(result.total_matches, 3);
+        assert_eq!(result.matches.len(), 2);
+        assert!(result.truncated);
+        assert!(
+            result
+                .matches
+                .iter()
+                .all(|item| item.path.starts_with("src/"))
+        );
+        assert!(
+            !result
+                .matches
+                .iter()
+                .any(|item| item.path.contains("target"))
+        );
+        let app_match = result
+            .matches
+            .iter()
+            .find(|item| item.path == "src/app.py" && item.line == 2)
+            .expect("missing app.py token match");
+        assert_eq!(app_match.column, 5);
+        assert!(
+            app_match
+                .context
+                .iter()
+                .any(|line| line.highlight && line.text.contains("token = load_secret()"))
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn exports_dot_and_ndjson() {
         let mut graph = CodeGraph::new("repo");
         let main = graph.add_node(NodeKind::Function, "main");
@@ -5073,5 +5335,13 @@ mod tests {
         metadata.insert("item_kind".to_string(), "dependency".to_string());
         metadata.insert("package_id".to_string(), package_id.to_string());
         graph.add_node_with_metadata(NodeKind::ExternalDependency, label, None, metadata)
+    }
+
+    fn temp_analysis_root() -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("codegraph-analysis-test-{nanos}"))
     }
 }

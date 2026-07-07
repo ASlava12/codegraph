@@ -210,6 +210,7 @@ dependencies = [
  "codegraph-core",
  "serde",
  "serde_json",
+ "walkdir",
 ]
 
 [[package]]

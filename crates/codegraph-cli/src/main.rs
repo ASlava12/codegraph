@@ -2,9 +2,9 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
     ConfigTraceRequest, EntrypointTraceRequest, ErrorTraceRequest, ExplainEdgeRequest,
-    InsightFilter, InsightSeverity, TraceRequest, TraceStart, entrypoints, explain_edge,
-    filter_insight_report, insights, query_graph, summarize, trace, trace_config, trace_dependents,
-    trace_entrypoints, trace_errors,
+    InsightFilter, InsightSeverity, SourceSearchRequest, TraceRequest, TraceStart, entrypoints,
+    explain_edge, filter_insight_report, insights, query_graph, search_source, summarize, trace,
+    trace_config, trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_analysis::{export_dot, export_ndjson};
 use codegraph_indexer::{IndexOptions, scan_project};
@@ -78,6 +78,9 @@ enum Command {
         #[command(flatten)]
         cache: CacheArgs,
     },
+
+    /// Search source text and emit compact matching snippets as JSON.
+    SourceSearch(SourceSearchArgs),
 
     /// Explain why an edge exists and show confidence/provenance evidence.
     ExplainEdge {
@@ -322,6 +325,40 @@ struct InsightArgs {
     limit: usize,
 }
 
+#[derive(Debug, Args)]
+struct SourceSearchArgs {
+    /// Text to search in source files.
+    query: String,
+
+    /// Project root to search.
+    #[arg(default_value = ".")]
+    path: PathBuf,
+
+    /// Restrict results to paths containing this substring.
+    #[arg(long)]
+    path_filter: Option<String>,
+
+    /// Match case exactly.
+    #[arg(long)]
+    case_sensitive: bool,
+
+    /// Maximum matches to return.
+    #[arg(long, default_value_t = 50)]
+    limit: usize,
+
+    /// Context lines before and after each match.
+    #[arg(long, default_value_t = 2)]
+    context: usize,
+
+    /// Include hidden files and directories.
+    #[arg(long)]
+    include_hidden: bool,
+
+    /// Include default ignored directories such as target and node_modules.
+    #[arg(long)]
+    include_ignored: bool,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutputFormat {
     Json,
@@ -423,6 +460,28 @@ fn main() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&query_graph(&graph, &expression)?)?
             );
+        }
+        Command::SourceSearch(args) => {
+            let options = IndexOptions {
+                include_hidden: args.include_hidden,
+                include_ignored: args.include_ignored,
+                ..IndexOptions::default()
+            };
+            let result = search_source(
+                &args.path,
+                &SourceSearchRequest {
+                    query: args.query,
+                    path_filter: args.path_filter,
+                    case_sensitive: args.case_sensitive,
+                    limit: args.limit,
+                    context: args.context,
+                    include_hidden: options.include_hidden,
+                    include_ignored: options.include_ignored,
+                    max_file_size: options.max_file_size,
+                    ignored_names: options.ignored_names,
+                },
+            );
+            println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Command::ExplainEdge {
             path,

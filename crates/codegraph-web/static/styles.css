@@ -418,6 +418,7 @@ button:disabled {
 }
 
 .query,
+.source-search,
 .path-query,
 .config-trace,
 .error-trace {
@@ -430,6 +431,7 @@ button:disabled {
   align-items: end;
 }
 
+.source-search header,
 .path-query header,
 .config-trace header,
 .error-trace header {
@@ -438,6 +440,7 @@ button:disabled {
   justify-content: space-between;
 }
 
+.source-search h2,
 .path-query h2,
 .config-trace h2,
 .error-trace h2 {
@@ -448,6 +451,7 @@ button:disabled {
   text-transform: uppercase;
 }
 
+.source-search-fields,
 .path-fields,
 .config-trace-fields,
 .error-trace-fields {
@@ -456,12 +460,14 @@ button:disabled {
   gap: 8px;
 }
 
+.source-search-fields input,
 .path-fields input,
 .config-trace-fields input,
 .error-trace-fields input {
   height: 34px;
 }
 
+.source-search > button,
 .path-query > button,
 .config-trace > button,
 .error-trace > button {
@@ -524,6 +530,34 @@ button:disabled {
   min-width: 0;
   border-radius: 6px;
   background: var(--panel-2);
+}
+
+.source-match {
+  display: grid;
+  gap: 5px;
+}
+
+.source-match .query-item {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.source-match .source-context {
+  max-height: 118px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0d0f10;
+}
+
+.source-match .source-context code {
+  display: block;
+  min-width: max-content;
+  padding: 4px 0;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .edge-row {

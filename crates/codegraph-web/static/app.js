@@ -19,6 +19,7 @@ const state = {
   edgeExplainRequest: 0,
   entryFlowRequest: 0,
   queryRequest: 0,
+  sourceSearchRequest: 0,
   pathRequest: 0,
   configTraceRequest: 0,
   errorTraceRequest: 0,
@@ -102,6 +103,10 @@ const pageNextButton = document.querySelector("#pageNextButton");
 const queryInput = document.querySelector("#queryInput");
 const queryButton = document.querySelector("#queryButton");
 const queryResult = document.querySelector("#queryResult");
+const sourceSearchInput = document.querySelector("#sourceSearchInput");
+const sourcePathFilterInput = document.querySelector("#sourcePathFilterInput");
+const sourceSearchButton = document.querySelector("#sourceSearchButton");
+const sourceSearchResult = document.querySelector("#sourceSearchResult");
 const pathFromInput = document.querySelector("#pathFromInput");
 const pathToInput = document.querySelector("#pathToInput");
 const pathDepthInput = document.querySelector("#pathDepthInput");
@@ -152,6 +157,12 @@ queryButton.addEventListener("click", () => runGraphQuery());
 queryInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runGraphQuery();
 });
+sourceSearchButton.addEventListener("click", () => runSourceSearch());
+for (const input of [sourceSearchInput, sourcePathFilterInput]) {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") runSourceSearch();
+  });
+}
 entryFlowButton.addEventListener("click", () => runEntryFlowTrace());
 for (const input of [entryFlowSearchInput, entryFlowDepthInput]) {
   input.addEventListener("keydown", (event) => {
@@ -943,6 +954,46 @@ async function runGraphQuery() {
   }
 }
 
+async function runSourceSearch() {
+  const query = sourceSearchInput.value.trim();
+  if (!query) {
+    sourceSearchResult.innerHTML = '<p class="empty">Enter source text.</p>';
+    return;
+  }
+
+  state.sourceSearchRequest += 1;
+  const requestId = state.sourceSearchRequest;
+  sourceSearchButton.disabled = true;
+  sourceSearchResult.innerHTML = '<p class="empty">Searching source...</p>';
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    q: query,
+    limit: "50",
+    context: "2",
+  });
+  const pathFilter = sourcePathFilterInput.value.trim();
+  if (pathFilter) params.set("path_filter", pathFilter);
+
+  try {
+    const response = await fetch(`/api/source-search?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.sourceSearchRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "source search failed");
+    }
+    sourceSearchResult.innerHTML = renderSourceSearchResult(body);
+    attachSourceSearchActions(sourceSearchResult, body);
+  } catch (error) {
+    if (requestId !== state.sourceSearchRequest) return;
+    sourceSearchResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.sourceSearchRequest) {
+      sourceSearchButton.disabled = false;
+    }
+  }
+}
+
 async function runPathQuery() {
   const from = pathFromInput.value.trim();
   const to = pathToInput.value.trim();
@@ -1252,6 +1303,82 @@ function attachErrorTraceActions(container, result) {
       showFocusedGraph(focused, `Error: ${match.error.label}`, selectedId);
     });
   });
+}
+
+function renderSourceSearchResult(result) {
+  const summary = `
+    <div class="query-summary">
+      <span>${result.total_matches} matches</span>
+      ${result.truncated ? "<span>truncated</span>" : ""}
+      <span class="query-expression">${escapeHtml(result.query)}</span>
+    </div>
+  `;
+  const rows = (result.matches || [])
+    .map((match, index) => renderSourceSearchMatch(match, index))
+    .join("");
+  return `
+    ${summary}
+    ${rows ? `<ul class="query-list">${rows}</ul>` : '<p class="empty">No source matches.</p>'}
+  `;
+}
+
+function renderSourceSearchMatch(match, index) {
+  const context = (match.context || []).map(renderSourceLine).join("");
+  return `
+    <li class="source-match">
+      <button class="query-item" type="button" data-source-match="${index}">
+        <span>${escapeHtml(match.path)}:${match.line}:${match.column}</span>
+        <strong>${escapeHtml(match.line_text || " ")}</strong>
+      </button>
+      ${context ? `<pre class="source-context"><code>${context}</code></pre>` : ""}
+    </li>
+  `;
+}
+
+function attachSourceSearchActions(container, result) {
+  container.querySelectorAll("[data-source-match]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const match = result.matches?.[Number(button.dataset.sourceMatch)];
+      if (match) openSourceSearchMatch(match);
+    });
+  });
+}
+
+async function openSourceSearchMatch(match) {
+  state.selectionRequest += 1;
+  const requestId = state.selectionRequest;
+  state.selectedId = null;
+  selectionTitle.textContent = "Source Match";
+  selectionBody.innerHTML = `
+    <section class="source-preview">
+      <header>
+        <span>Source</span>
+        <strong>${escapeHtml(match.path)}:${match.line}</strong>
+      </header>
+      <pre id="sourceMatchPreview"><code>Loading...</code></pre>
+    </section>
+  `;
+  const preview = selectionBody.querySelector("#sourceMatchPreview code");
+  const params = new URLSearchParams({
+    root: pathInput.value.trim() || ".",
+    path: match.path,
+    start_line: String(match.line),
+    end_line: String(match.line),
+    context: "5",
+  });
+
+  try {
+    const response = await fetch(`/api/source?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.selectionRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "failed to load source");
+    }
+    preview.innerHTML = body.lines.map(renderSourceLine).join("");
+  } catch (error) {
+    if (requestId !== state.selectionRequest) return;
+    preview.innerHTML = `<span class="source-error">${escapeHtml(error.message)}</span>`;
+  }
 }
 
 function renderQueryResult(result, options = {}) {

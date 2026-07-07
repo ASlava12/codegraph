@@ -10,10 +10,11 @@ use clap::Parser;
 use codegraph_analysis::{
     ConfigTraceRequest, ConfigTraceResult, EntrypointTraceReport, EntrypointTraceRequest,
     ErrorTraceRequest, ErrorTraceResult, ExplainEdgeRequest, FocusRequest, GraphSlice,
-    GraphSliceRequest, InsightFilter, InsightReport, InsightSeverity, NodeContext, TraceRequest,
-    TraceStart, entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report,
-    focus_subgraph, insights, node_context, query_graph, slice_graph, summarize, trace,
-    trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    GraphSliceRequest, InsightFilter, InsightReport, InsightSeverity, NodeContext,
+    SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, entrypoints, explain_edge,
+    export_dot, export_ndjson, filter_insight_report, focus_subgraph, insights, node_context,
+    query_graph, search_source, slice_graph, summarize, trace, trace_config, trace_dependents,
+    trace_entrypoints, trace_errors,
 };
 use codegraph_core::CodeGraph;
 use codegraph_indexer::IndexOptions;
@@ -97,6 +98,16 @@ struct SourceQuery {
     start_line: Option<u32>,
     end_line: Option<u32>,
     context: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SourceSearchQuery {
+    path: Option<PathBuf>,
+    q: String,
+    path_filter: Option<String>,
+    case_sensitive: Option<bool>,
+    limit: Option<usize>,
+    context: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -341,6 +352,7 @@ async fn main() -> Result<()> {
         .route("/api/trace-config", get(trace_config_api))
         .route("/api/trace-errors", get(trace_errors_api))
         .route("/api/source", get(source))
+        .route("/api/source-search", get(source_search_api))
         .fallback(not_found)
         .with_state(state);
 
@@ -881,6 +893,33 @@ async fn source(
     .map_err(|error| ApiError::internal(format!("source task failed: {error}")))??;
 
     Ok(Json(response))
+}
+
+async fn source_search_api(
+    State(state): State<AppState>,
+    Query(query): Query<SourceSearchQuery>,
+) -> Result<Json<SourceSearchResult>, ApiError> {
+    let search_root = resolve_scan_root(&state, query.path.as_deref())?;
+    let search_text = query.q.trim().to_string();
+    if search_text.is_empty() {
+        return Err(ApiError::bad_request("source-search requires q"));
+    }
+    let options = state.options.clone();
+    let request = SourceSearchRequest {
+        query: search_text,
+        path_filter: normalize_query_string(query.path_filter),
+        case_sensitive: query.case_sensitive.unwrap_or(false),
+        limit: query.limit.unwrap_or(50).clamp(1, 1_000),
+        context: query.context.unwrap_or(2).min(20),
+        include_hidden: options.include_hidden,
+        include_ignored: options.include_ignored,
+        max_file_size: options.max_file_size,
+        ignored_names: options.ignored_names,
+    };
+    let result = tokio::task::spawn_blocking(move || search_source(&search_root, &request))
+        .await
+        .map_err(|error| ApiError::internal(format!("source-search task failed: {error}")))?;
+    Ok(Json(result))
 }
 
 async fn scan_graph(state: &AppState, requested: Option<&Path>) -> Result<CodeGraph, ApiError> {

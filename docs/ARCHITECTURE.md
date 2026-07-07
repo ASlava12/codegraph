@@ -126,6 +126,7 @@ Responsibilities:
 - provide graph query endpoints
 - provide edge explanation endpoints for confidence and provenance evidence
 - provide neighborhood query expansion for local incoming/outgoing graph context
+- provide source search endpoints for compact text matches and source-preview handoff
 - provide graph slice endpoints with server-side paging and filtering
 - provide node context endpoints for paged detail exploration
 - provide source preview endpoints for graph spans
@@ -133,7 +134,7 @@ Responsibilities:
 - constrain scan paths to configured project roots by default
 - expose configured local project roots to the web UI for project switching
 - serve the static web application
-- keep UI graph pages, query focus, path navigation/highlighting, trace, entrypoint trace, config trace, error trace, source, insight, and agent clients on the same JSON graph model
+- keep UI graph pages, query focus, path navigation/highlighting, trace, entrypoint trace, config trace, error trace, source search, insight, and agent clients on the same JSON graph model
 
 Future crate: optionally `codegraph-ui`.
 

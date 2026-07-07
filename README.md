@@ -35,6 +35,7 @@ Implemented now:
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
+- Agent-friendly source search command, API, and web panel for compact matching snippets.
 - Edge explanation command, API, and web controls for confidence/provenance evidence.
 - Path queries for finding directed dependency paths between labels or node ids.
 - Confidence-aware edge queries and UI edge labels for fact provenance.
@@ -184,6 +185,12 @@ cargo run -p codegraph-cli -- query 'path from:main to:load_config depth:6' .
 cargo run -p codegraph-cli -- query 'nodes metadata.annotation.domain:payments' .
 ```
 
+Search source text with compact snippets:
+
+```bash
+cargo run -p codegraph-cli -- source-search DATABASE_URL . --path-filter src --limit 20
+```
+
 Trace outgoing dependencies from a label:
 
 ```bash
@@ -319,6 +326,10 @@ curl --get 'http://127.0.0.1:3765/api/query' \
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=path from:main to:load_config depth:6'
+curl --get 'http://127.0.0.1:3765/api/source-search' \
+  --data-urlencode 'path=.' \
+  --data-urlencode 'q=DATABASE_URL' \
+  --data-urlencode 'path_filter=src'
 curl --get 'http://127.0.0.1:3765/api/explain-edge' \
   --data-urlencode 'path=.' \
   --data-urlencode 'source=main' \

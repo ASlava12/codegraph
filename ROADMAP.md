@@ -108,6 +108,7 @@ Goal: answer practical code investigation questions.
 - [x] Add web path navigation with visual dependency-path highlighting.
 - [x] Add richer query language with neighborhood expansion.
 - [x] Add reverse dependent traces for impact analysis.
+- [x] Add source text search across CLI, API, and web for focused code snippets.
 - [x] Add edge explanation for confidence and provenance evidence across CLI, API, and web.
 
 Example commands:
