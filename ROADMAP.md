@@ -215,7 +215,7 @@ Goal: handle real repositories efficiently.
 - [x] Add repository-owned glob path excludes for generated files and fixtures.
 - [x] Add scan coverage reports for indexed files and skip reasons.
 - [x] Add cache reuse estimates for incremental scan planning.
-- [x] Add explicit incremental scan planning reports.
+- [x] Add explicit incremental scan planning reports with cached graph impact scopes.
 - Add persistent index storage with partial graph reuse.
 - Incrementally update changed files.
 - [x] Cache parser facts.

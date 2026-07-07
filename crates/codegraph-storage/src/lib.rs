@@ -1,4 +1,4 @@
-use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
+use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph, Edge, Node, NodeKind};
 use codegraph_indexer::{IndexError, IndexOptions, is_index_relevant_file, scan_project};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
@@ -116,6 +116,10 @@ pub struct IncrementalScanPlan {
     pub scan_paths: Vec<String>,
     pub removed_paths: Vec<String>,
     pub reusable_paths: Vec<String>,
+    pub impacted_nodes: usize,
+    pub impacted_edges: usize,
+    pub impacted_node_ids: Vec<u64>,
+    pub impacted_edge_indexes: Vec<usize>,
     pub limit: usize,
     pub truncated: bool,
 }
@@ -346,6 +350,7 @@ impl GraphCache {
         Ok(incremental_plan_from_fingerprints(
             self,
             &record.fingerprint,
+            &record.graph,
             current,
             limit,
         ))
@@ -633,6 +638,10 @@ fn incremental_plan_without_record(
         scan_paths,
         removed_paths: Vec::new(),
         reusable_paths: Vec::new(),
+        impacted_nodes: 0,
+        impacted_edges: 0,
+        impacted_node_ids: Vec::new(),
+        impacted_edge_indexes: Vec::new(),
         limit,
         truncated,
     }
@@ -641,6 +650,7 @@ fn incremental_plan_without_record(
 fn incremental_plan_from_fingerprints(
     cache: &GraphCache,
     previous: &ProjectFingerprint,
+    graph: &CodeGraph,
     current: ProjectFingerprint,
     limit: usize,
 ) -> IncrementalScanPlan {
@@ -664,6 +674,7 @@ fn incremental_plan_from_fingerprints(
     let mut reusable_files = 0usize;
     let mut changed_current_bytes = 0u64;
     let mut reusable_bytes = 0u64;
+    let mut impacted_paths = BTreeSet::new();
 
     for (path, current_entry) in &current_entries {
         match previous_entries.get(path) {
@@ -680,6 +691,7 @@ fn incremental_plan_from_fingerprints(
             Some(_) | None => {
                 rescan_files += 1;
                 changed_current_bytes = changed_current_bytes.saturating_add(current_entry.bytes);
+                impacted_paths.insert((*path).to_string());
                 if scan_paths.len() < limit {
                     scan_paths.push((*path).to_string());
                 }
@@ -690,11 +702,19 @@ fn incremental_plan_from_fingerprints(
     for path in previous_entries.keys() {
         if !current_entries.contains_key(path) {
             removed_files += 1;
+            impacted_paths.insert((*path).to_string());
             if removed_paths.len() < limit {
                 removed_paths.push((*path).to_string());
             }
         }
     }
+    let (
+        impacted_nodes,
+        impacted_edges,
+        impacted_node_ids,
+        impacted_edge_indexes,
+        impact_truncated,
+    ) = graph_impact(graph, &impacted_paths, limit);
 
     let changed_files = rescan_files + removed_files;
     let action = if changed_files == 0 {
@@ -715,7 +735,8 @@ fn incremental_plan_from_fingerprints(
             "no current files match the cached fingerprint; scan all indexed files".to_string()
         }
     };
-    let truncated = scan_paths.len() < rescan_files
+    let truncated = impact_truncated
+        || scan_paths.len() < rescan_files
         || removed_paths.len() < removed_files
         || reusable_paths.len() < reusable_files;
 
@@ -742,9 +763,63 @@ fn incremental_plan_from_fingerprints(
         scan_paths,
         removed_paths,
         reusable_paths,
+        impacted_nodes,
+        impacted_edges,
+        impacted_node_ids,
+        impacted_edge_indexes,
         limit,
         truncated,
     }
+}
+
+fn graph_impact(
+    graph: &CodeGraph,
+    paths: &BTreeSet<String>,
+    limit: usize,
+) -> (usize, usize, Vec<u64>, Vec<usize>, bool) {
+    if paths.is_empty() {
+        return (0, 0, Vec::new(), Vec::new(), false);
+    }
+
+    let impacted_node_set = graph
+        .nodes
+        .iter()
+        .filter(|node| node_matches_any_path(node, paths))
+        .map(|node| node.id.0)
+        .collect::<BTreeSet<_>>();
+    let impacted_edge_set = graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| edge_touches_nodes(edge, &impacted_node_set))
+        .map(|(index, _)| index)
+        .collect::<BTreeSet<_>>();
+    let impacted_nodes = impacted_node_set.len();
+    let impacted_edges = impacted_edge_set.len();
+    let impacted_node_ids = impacted_node_set.iter().copied().take(limit).collect();
+    let impacted_edge_indexes = impacted_edge_set.iter().copied().take(limit).collect();
+    let truncated = impacted_nodes > limit || impacted_edges > limit;
+
+    (
+        impacted_nodes,
+        impacted_edges,
+        impacted_node_ids,
+        impacted_edge_indexes,
+        truncated,
+    )
+}
+
+fn node_matches_any_path(node: &Node, paths: &BTreeSet<String>) -> bool {
+    if matches!(node.kind, NodeKind::File) && paths.contains(&node.label) {
+        return true;
+    }
+    node.span
+        .as_ref()
+        .is_some_and(|span| paths.contains(&span.path))
+}
+
+fn edge_touches_nodes(edge: &Edge, node_ids: &BTreeSet<u64>) -> bool {
+    node_ids.contains(&edge.source.0) || node_ids.contains(&edge.target.0)
 }
 
 fn ratio_basis_points(part: u64, total: u64) -> u16 {
@@ -1089,6 +1164,8 @@ mod tests {
         assert_eq!(missing_plan.action, IncrementalPlanAction::FullScan);
         assert_eq!(missing_plan.rescan_files, 2);
         assert_eq!(missing_plan.scan_paths.len(), 2);
+        assert_eq!(missing_plan.impacted_nodes, 0);
+        assert_eq!(missing_plan.impacted_edges, 0);
 
         let first = scan_project_cached(&root, &options, Some(&cache)).unwrap();
         assert_eq!(first.cache.status, CacheStatus::Miss);
@@ -1137,6 +1214,10 @@ mod tests {
                 .iter()
                 .any(|path| path == "src/old.rs")
         );
+        assert!(full_plan.impacted_nodes > 0);
+        assert!(full_plan.impacted_edges > 0);
+        assert!(!full_plan.impacted_node_ids.is_empty());
+        assert!(!full_plan.impacted_edge_indexes.is_empty());
 
         let second = scan_project_cached(&root, &options, Some(&cache)).unwrap();
         assert_eq!(second.cache.status, CacheStatus::Miss);
@@ -1152,6 +1233,8 @@ mod tests {
         assert_eq!(clean_plan.reusable_files, 3);
         assert_eq!(clean_plan.scan_paths.len(), 0);
         assert_eq!(clean_plan.reusable_paths.len(), 3);
+        assert_eq!(clean_plan.impacted_nodes, 0);
+        assert_eq!(clean_plan.impacted_edges, 0);
 
         std::thread::sleep(std::time::Duration::from_millis(2));
         fs::write(root.join("src").join("new.rs"), "pub fn newer() {}\n").unwrap();
@@ -1171,6 +1254,8 @@ mod tests {
         assert_eq!(partial_plan.reusable_files, 2);
         assert_eq!(partial_plan.scan_paths, vec!["src/new.rs".to_string()]);
         assert!(partial_plan.reusable_paths.len() >= 2);
+        assert!(partial_plan.impacted_nodes > 0);
+        assert!(partial_plan.impacted_edges > 0);
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();

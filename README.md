@@ -89,7 +89,7 @@ Implemented now:
 - Persistent per-file parser fact cache reused during graph-cache misses.
 - Cache fingerprint diff diagnostics in CLI, API, and web UI for explaining cache misses by added, removed, and modified files.
 - Cache reuse estimates in CLI, API, and web UI for planning incremental scans from unchanged files and bytes.
-- Incremental scan planning reports in CLI, API, and web UI with rescan, removed, and reusable path sets.
+- Incremental scan planning reports in CLI, API, and web UI with rescan, removed, reusable path sets, and impacted graph node/edge ids.
 - Scan coverage reports in CLI, API, and web overview for indexed files, policy skips, large-file skips, and non-indexed files.
 - CLI scan benchmark reports with timing and graph-size metrics for regression tracking.
 - Configurable scan file-size budget for CLI/server scans, with skipped large source files kept visible in summaries, insights, and the web stats panel.

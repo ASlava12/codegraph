@@ -2898,6 +2898,8 @@ function renderIncrementalPlan(plan) {
   const scanPaths = plan.scan_paths || [];
   const removedPaths = plan.removed_paths || [];
   const reusablePaths = plan.reusable_paths || [];
+  const impactedNodeIds = plan.impacted_node_ids || [];
+  const impactedEdgeIndexes = plan.impacted_edge_indexes || [];
   const summary = `
     <div class="query-summary">
       <span>${escapeHtml(formatKind(plan.action || "unknown"))}</span>
@@ -2906,6 +2908,8 @@ function renderIncrementalPlan(plan) {
       <span>${Number(plan.rescan_files || 0)} rescan</span>
       <span>${Number(plan.removed_files || 0)} removed</span>
       <span>${Number(plan.reusable_files || 0)} reusable</span>
+      <span>${Number(plan.impacted_nodes || 0)} graph nodes</span>
+      <span>${Number(plan.impacted_edges || 0)} graph edges</span>
       <span>${formatBasisPoints(plan.reuse_file_ratio_basis_points)} file reuse</span>
       <span>${formatBasisPoints(plan.reuse_byte_ratio_basis_points)} byte reuse</span>
       <span>${formatBytes(plan.changed_current_bytes)} changed current</span>
@@ -2918,6 +2922,8 @@ function renderIncrementalPlan(plan) {
     renderCacheDiffGroup("Scan", scanPaths, renderPlanPath),
     renderCacheDiffGroup("Removed", removedPaths, renderPlanPath),
     renderCacheDiffGroup("Reusable", reusablePaths, renderPlanPath),
+    renderCacheDiffGroup("Node IDs", impactedNodeIds, renderPlanScalar),
+    renderCacheDiffGroup("Edge Indexes", impactedEdgeIndexes, renderPlanScalar),
   ]
     .filter(Boolean)
     .join("");
@@ -2934,6 +2940,15 @@ function renderPlanPath(path) {
     <div class="query-item cache-diff-item">
       <span>path</span>
       <strong>${escapeHtml(path || "")}</strong>
+    </div>
+  `;
+}
+
+function renderPlanScalar(value) {
+  return `
+    <div class="query-item cache-diff-item">
+      <span>id</span>
+      <strong>${escapeHtml(String(value ?? ""))}</strong>
     </div>
   `;
 }

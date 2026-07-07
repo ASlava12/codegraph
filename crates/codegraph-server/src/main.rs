@@ -2676,7 +2676,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/incremental-plan",
-                    "Plan incremental scan work from the persistent cache fingerprint without scanning the full graph.",
+                    "Plan incremental scan work and impacted cached graph nodes/edges from the persistent cache fingerprint without scanning the full graph.",
                     vec![
                         path_param(),
                         query_param(
