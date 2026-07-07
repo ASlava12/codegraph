@@ -3008,6 +3008,25 @@ fn api_schema_response() -> ApiSchemaResponse {
             ("insight_severity", vec!["info", "warning", "error"]),
             ("insight_kind", KNOWN_INSIGHT_KINDS.to_vec()),
             (
+                "risk_grade",
+                vec!["clean", "low", "medium", "high", "critical"],
+            ),
+            (
+                "project_report_section",
+                vec![
+                    "summary",
+                    "entrypoints",
+                    "insights",
+                    "risk_summary",
+                    "quality_gate",
+                    "architecture",
+                    "language_dependencies",
+                    "hotspots",
+                    "cache",
+                    "coverage",
+                ],
+            ),
+            (
                 "semantic_work_status",
                 vec!["ready", "missing_server", "unsupported_language"],
             ),
@@ -4817,6 +4836,20 @@ mod tests {
                 && kinds.contains(&"dependency_cycle")
                 && kinds.contains(&"custom_rule_*")
         }));
+        assert!(
+            schema
+                .enum_values
+                .get("risk_grade")
+                .is_some_and(|grades| grades.contains(&"clean") && grades.contains(&"critical"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("project_report_section")
+                .is_some_and(|sections| sections.contains(&"risk_summary")
+                    && sections.contains(&"quality_gate")
+                    && sections.contains(&"coverage"))
+        );
         assert!(
             schema
                 .enum_values
