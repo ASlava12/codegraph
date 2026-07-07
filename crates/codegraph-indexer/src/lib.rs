@@ -5802,6 +5802,42 @@ PORT = os.getenv("PORT", "8000")
         )
         .unwrap();
         fs::write(
+            root.join("main.go"),
+            r#"package main
+
+import (
+    "cmp"
+    "os"
+)
+
+func main() {
+    port := cmp.Or(os.Getenv("PORT"), "9090")
+    _ = port
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("main.c"),
+            r#"#include <stdlib.h>
+int main(void) {
+    const char *port = getenv("PORT") ?: "9091";
+    return port ? 0 : 1;
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("main.cpp"),
+            r#"#include <cstdlib>
+int main() {
+    auto port = std::getenv("PORT") ?: "9092";
+    return port ? 0 : 1;
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
             root.join("index.php"),
             r#"<?php
 $port = getenv('PORT') ?: '8080';
@@ -5826,7 +5862,9 @@ PORT="${PORT:-5000}"
 
         assert_eq!(
             defaults,
-            BTreeSet::from(["3000", "5000", "7000", "8000", "8080"])
+            BTreeSet::from([
+                "3000", "5000", "7000", "8000", "8080", "9090", "9091", "9092"
+            ])
         );
 
         fs::remove_dir_all(root).unwrap();

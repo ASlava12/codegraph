@@ -655,9 +655,9 @@ fn effect_metadata(
         Language::JavaScript | Language::TypeScript | Language::Tsx => {
             javascript_env_default_value(node, source)
         }
-        Language::Php => getenv_default_value(node, source),
+        Language::Go => go_env_default_value(node, source),
+        Language::C | Language::Cpp | Language::Php => getenv_default_value(node, source),
         Language::Bash => bash_env_default_value(node, source),
-        _ => None,
     };
 
     if let Some(default_value) = default_value {
@@ -727,6 +727,13 @@ fn getenv_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
     let expression = short_ancestor_text(node, source, |text| {
         text.contains("getenv")
             && (text.contains("?:") || text.contains("??") || text.contains("||"))
+    })?;
+    quoted_string_values(&expression).into_iter().nth(1)
+}
+
+fn go_env_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let expression = short_ancestor_text(node, source, |text| {
+        text.contains("os.Getenv") && text.contains("cmp.Or")
     })?;
     quoted_string_values(&expression).into_iter().nth(1)
 }
@@ -1383,6 +1390,84 @@ PORT="${PORT:-5000}"
         assert_eq!(
             port.metadata.get("default_value").map(String::as_str),
             Some("5000")
+        );
+    }
+
+    #[test]
+    fn parses_go_environment_default_values() {
+        let parsed = parse_source(
+            "main.go",
+            br#"package main
+
+import (
+    "cmp"
+    "os"
+)
+
+func main() {
+    port := cmp.Or(os.Getenv("PORT"), "9090")
+    _ = port
+}
+"#,
+            Language::Go,
+        )
+        .unwrap();
+
+        let port = parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "PORT")
+            .expect("missing PORT env read");
+
+        assert_eq!(
+            port.metadata.get("default_value").map(String::as_str),
+            Some("9090")
+        );
+    }
+
+    #[test]
+    fn parses_c_family_environment_default_values() {
+        let c = parse_source(
+            "main.c",
+            br#"#include <stdlib.h>
+int main(void) {
+    const char *port = getenv("PORT") ?: "9091";
+    return port ? 0 : 1;
+}
+"#,
+            Language::C,
+        )
+        .unwrap();
+        let cpp = parse_source(
+            "main.cpp",
+            br#"#include <cstdlib>
+int main() {
+    auto port = std::getenv("PORT") ?: "9092";
+    return port ? 0 : 1;
+}
+"#,
+            Language::Cpp,
+        )
+        .unwrap();
+
+        let c_port = c
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "PORT")
+            .expect("missing C PORT env read");
+        let cpp_port = cpp
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "PORT")
+            .expect("missing C++ PORT env read");
+
+        assert_eq!(
+            c_port.metadata.get("default_value").map(String::as_str),
+            Some("9091")
+        );
+        assert_eq!(
+            cpp_port.metadata.get("default_value").map(String::as_str),
+            Some("9092")
         );
     }
 
