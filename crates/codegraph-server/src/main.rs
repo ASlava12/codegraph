@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use async_stream::stream;
-use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::extract::{Path as AxumPath, Query, Request, State};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -767,7 +768,8 @@ async fn main() -> Result<()> {
         .route("/api/source", get(source))
         .route("/api/source-search", get(source_search_api))
         .fallback(not_found)
-        .with_state(state);
+        .with_state(state)
+        .layer(middleware::from_fn(security_headers));
 
     let listener = TcpListener::bind(bind_addr)
         .await
@@ -775,6 +777,37 @@ async fn main() -> Result<()> {
     println!("CodeGraph listening on http://{bind_addr}");
     axum::serve(listener, app).await.context("server failed")?;
     Ok(())
+}
+
+async fn security_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    apply_security_headers(response.headers_mut());
+    response
+}
+
+fn apply_security_headers(headers: &mut HeaderMap) {
+    headers.insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static(
+            "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:",
+        ),
+    );
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        HeaderName::from_static("x-frame-options"),
+        HeaderValue::from_static("DENY"),
+    );
+    headers.insert(
+        HeaderName::from_static("referrer-policy"),
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=(), payment=()"),
+    );
 }
 
 async fn start_scan_job(
@@ -4291,6 +4324,38 @@ mod tests {
         ] {
             assert!(languages.contains(&language), "missing {language}");
         }
+    }
+
+    #[test]
+    fn security_headers_are_attached_to_responses() {
+        let mut headers = HeaderMap::new();
+        apply_security_headers(&mut headers);
+
+        let csp = headers
+            .get("content-security-policy")
+            .and_then(|value| value.to_str().ok())
+            .expect("content-security-policy should be present");
+        assert!(csp.contains("default-src 'self'"));
+        assert!(csp.contains("frame-ancestors 'none'"));
+        assert!(csp.contains("connect-src 'self'"));
+        assert_eq!(
+            headers.get("x-content-type-options"),
+            Some(&HeaderValue::from_static("nosniff"))
+        );
+        assert_eq!(
+            headers.get("x-frame-options"),
+            Some(&HeaderValue::from_static("DENY"))
+        );
+        assert_eq!(
+            headers.get("referrer-policy"),
+            Some(&HeaderValue::from_static("no-referrer"))
+        );
+        assert_eq!(
+            headers.get("permissions-policy"),
+            Some(&HeaderValue::from_static(
+                "camera=(), microphone=(), geolocation=(), payment=()"
+            ))
+        );
     }
 
     #[test]
