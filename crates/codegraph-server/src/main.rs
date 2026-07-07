@@ -17,7 +17,7 @@ use codegraph_analysis::{
     trace_entrypoints, trace_errors,
 };
 use codegraph_core::CodeGraph;
-use codegraph_indexer::IndexOptions;
+use codegraph_indexer::{DEFAULT_MAX_FILE_SIZE, IndexOptions};
 use codegraph_storage::{
     CacheInfo, CacheStatus, GraphCache, default_cache_dir, scan_project_cached,
 };
@@ -61,6 +61,10 @@ struct Args {
     /// Include default ignored directories such as target and node_modules.
     #[arg(long)]
     include_ignored: bool,
+
+    /// Maximum bytes to read from any single file during scans.
+    #[arg(long, default_value_t = DEFAULT_MAX_FILE_SIZE)]
+    max_file_size: u64,
 
     /// Allow scanning paths outside the configured root.
     #[arg(long)]
@@ -270,6 +274,7 @@ struct ProjectResponse {
 struct HealthResponse {
     status: &'static str,
     root: String,
+    max_file_size: u64,
     cache_dir: Option<String>,
 }
 
@@ -318,6 +323,7 @@ async fn main() -> Result<()> {
         options: IndexOptions {
             include_hidden: args.include_hidden,
             include_ignored: args.include_ignored,
+            max_file_size: args.max_file_size,
             ..IndexOptions::default()
         },
         allow_any_path: args.allow_any_path,
@@ -567,6 +573,7 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
         root: state.root.display().to_string(),
+        max_file_size: state.options.max_file_size,
         cache_dir: state
             .cache
             .as_ref()

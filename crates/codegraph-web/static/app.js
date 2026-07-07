@@ -76,6 +76,7 @@ const envCount = document.querySelector("#envCount");
 const configCount = document.querySelector("#configCount");
 const errorCount = document.querySelector("#errorCount");
 const entryCount = document.querySelector("#entryCount");
+const skippedCount = document.querySelector("#skippedCount");
 const overviewTotals = document.querySelector("#overviewTotals");
 const languageList = document.querySelector("#languageList");
 const confidenceList = document.querySelector("#confidenceList");
@@ -537,6 +538,7 @@ function renderOverview() {
   overviewTotals.textContent = summary
     ? `${summary.nodes} nodes · ${summary.edges} edges`
     : "0 nodes";
+  skippedCount.textContent = String(summary?.skipped_files || 0);
 
   const languages = Object.entries(summary?.languages || {})
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
@@ -1671,6 +1673,7 @@ function applyFilters() {
   entryCount.textContent = String(
     state.graph.edges.filter((edge) => edge.kind === "entrypoint").length,
   );
+  skippedCount.textContent = String(state.summary?.skipped_files || 0);
   renderViewportControls();
   renderInsights();
 

@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
 
+pub const DEFAULT_MAX_FILE_SIZE: u64 = 2 * 1024 * 1024;
+
 #[derive(Debug, Error)]
 pub enum IndexError {
     #[error("failed to walk project tree at {path}: {source}")]
@@ -176,7 +178,7 @@ impl Default for IndexOptions {
         Self {
             include_hidden: false,
             include_ignored: false,
-            max_file_size: 2 * 1024 * 1024,
+            max_file_size: DEFAULT_MAX_FILE_SIZE,
             ignored_names: default_ignored_names(),
         }
     }
@@ -241,8 +243,15 @@ pub fn scan_project(
             continue;
         }
 
-        if entry.file_type().is_file() && is_probably_source_file(path, options.max_file_size) {
-            index_file(&mut context, path, &label);
+        if entry.file_type().is_file() {
+            match entry.metadata() {
+                Ok(metadata) if metadata.len() > options.max_file_size => {
+                    if is_index_relevant_file(path) {
+                        index_skipped_file(&mut context, path, &label, metadata.len(), options);
+                    }
+                }
+                _ => index_file(&mut context, path, &label),
+            }
         }
     }
 
@@ -253,6 +262,37 @@ pub fn scan_project(
     apply_custom_rules(&mut context);
 
     Ok(context.graph)
+}
+
+fn index_skipped_file(
+    context: &mut IndexContext,
+    path: &Path,
+    label: &str,
+    bytes: u64,
+    options: &IndexOptions,
+) {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("skipped".to_string(), "true".to_string());
+    metadata.insert("skipped_reason".to_string(), "max_file_size".to_string());
+    metadata.insert("file_size_bytes".to_string(), bytes.to_string());
+    metadata.insert(
+        "max_file_size_bytes".to_string(),
+        options.max_file_size.to_string(),
+    );
+    if let Some(language) = Language::detect(path) {
+        metadata.insert("language".to_string(), language.to_string());
+    }
+
+    let file_id = context
+        .graph
+        .add_node_with_metadata(NodeKind::File, label, None, metadata);
+    context.file_nodes.insert(label.to_string(), file_id);
+    context.graph.add_edge(
+        context.graph.root,
+        file_id,
+        EdgeKind::Contains,
+        Confidence::Exact,
+    );
 }
 
 fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
@@ -4351,11 +4391,30 @@ fn default_ignored_names() -> BTreeSet<String> {
     .collect()
 }
 
+pub fn is_index_relevant_file(path: &Path) -> bool {
+    if Language::detect(path).is_some() {
+        return true;
+    }
+
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(
+            "Cargo.toml"
+                | "package.json"
+                | "go.mod"
+                | "pyproject.toml"
+                | "setup.py"
+                | "requirements.txt"
+                | "composer.json"
+                | "CMakeLists.txt"
+                | "compile_commands.json"
+        )
+    )
+}
+
 fn is_probably_source_file(path: &Path, max_file_size: u64) -> bool {
-    let Ok(metadata) = path.metadata() else {
-        return false;
-    };
-    metadata.len() <= max_file_size
+    path.metadata()
+        .is_ok_and(|metadata| metadata.len() <= max_file_size)
 }
 
 #[cfg(test)]
@@ -4385,6 +4444,51 @@ mod tests {
         assert!(!labels.contains(&"target/debug.log"));
         assert!(!labels.contains(&".codegraph"));
         assert!(!labels.contains(&".codegraph/graph.json"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_reports_large_source_files_as_skipped() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("huge.rs"), "fn main() {}\n").unwrap();
+        fs::write(root.join("large.bin"), "not source but also large\n").unwrap();
+
+        let graph = scan_project(
+            &root,
+            &IndexOptions {
+                max_file_size: 4,
+                ..IndexOptions::default()
+            },
+        )
+        .unwrap();
+
+        let skipped = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "src/huge.rs")
+            .expect("large source file should remain visible");
+        assert_eq!(skipped.kind, NodeKind::File);
+        assert_eq!(
+            skipped.metadata.get("skipped").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            skipped.metadata.get("skipped_reason").map(String::as_str),
+            Some("max_file_size")
+        );
+        assert_eq!(
+            skipped
+                .metadata
+                .get("max_file_size_bytes")
+                .map(String::as_str),
+            Some("4")
+        );
+        assert!(
+            graph.nodes.iter().all(|node| node.label != "large.bin"),
+            "large non-source assets should not flood the graph"
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

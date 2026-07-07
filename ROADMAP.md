@@ -170,6 +170,7 @@ Goal: handle real repositories efficiently.
 - [x] Add first persistent graph cache for server scans.
 - [x] Share persistent graph cache between server and CLI graph commands.
 - [x] Add cache fingerprint diff diagnostics across CLI, API, and web UI for explaining cache misses.
+- [x] Add configurable scan file-size budgets with skipped large-file visibility.
 - Add persistent index storage with partial graph reuse.
 - Incrementally update changed files.
 - Cache parser and LSP facts.

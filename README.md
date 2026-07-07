@@ -56,6 +56,7 @@ Implemented now:
 - Persistent CLI graph cache using the same project fingerprinting and cache records as the server.
 - Cache fingerprint diff diagnostics in CLI, API, and web UI for explaining cache misses by added, removed, and modified files.
 - CLI scan benchmark reports with timing and graph-size metrics for regression tracking.
+- Configurable scan file-size budget for CLI/server scans, with skipped large source files kept visible in summaries, insights, and the web stats panel.
 - CI checks for formatting, clippy, tests, UI syntax, CLI scan, and server cache smoke tests.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Investigation insights for manifest entrypoints whose declared target cannot be resolved to a file or function.
@@ -84,6 +85,12 @@ Run the initial scanner:
 
 ```bash
 cargo run -p codegraph-cli -- scan .
+```
+
+Limit per-file scan reads for very large repositories:
+
+```bash
+cargo run -p codegraph-cli -- --max-file-size 1048576 scan .
 ```
 
 Export for Graphviz or streaming agent use:
@@ -269,6 +276,9 @@ The server stores persistent graph cache records outside the project by default
 (`CODEGRAPH_CACHE_DIR`, `XDG_CACHE_HOME/codegraph`, `~/Library/Caches/codegraph`
 on macOS, or a temp fallback). Use `--cache-dir <path>` to choose a directory or
 `--no-cache` to force every request to rescan.
+Use `--max-file-size <bytes>` to cap per-file reads. Source/manifest files above
+the limit remain visible as skipped file nodes and produce `skipped_large_file`
+insights.
 
 Expose multiple local repositories to the web project selector by repeating
 `--project`. Requests remain constrained to the configured roots unless

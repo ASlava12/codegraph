@@ -7,7 +7,7 @@ use codegraph_analysis::{
     trace_config, trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_analysis::{export_dot, export_ndjson};
-use codegraph_indexer::{IndexOptions, scan_project};
+use codegraph_indexer::{DEFAULT_MAX_FILE_SIZE, IndexOptions, scan_project};
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -17,6 +17,10 @@ use std::time::Instant;
 #[command(name = "codegraph")]
 #[command(about = "Build and inspect code knowledge graphs")]
 struct Cli {
+    /// Maximum bytes to read from any single file during scans.
+    #[arg(long, global = true, default_value_t = DEFAULT_MAX_FILE_SIZE)]
+    max_file_size: u64,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -405,6 +409,7 @@ struct BenchmarkReport {
     runs: usize,
     include_hidden: bool,
     include_ignored: bool,
+    max_file_size: u64,
     fastest_ms: f64,
     slowest_ms: f64,
     average_ms: f64,
@@ -422,6 +427,7 @@ struct BenchmarkMeasurement {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let max_file_size = cli.max_file_size;
 
     match cli.command {
         Command::Scan {
@@ -431,7 +437,8 @@ fn main() -> Result<()> {
             format,
             cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
             print_graph(&graph, format)?;
         }
         Command::Summary(args) => {
@@ -439,18 +446,20 @@ fn main() -> Result<()> {
                 args.path,
                 args.include_hidden,
                 args.include_ignored,
+                max_file_size,
                 &args.cache,
             )?;
             println!("{}", serde_json::to_string_pretty(&summarize(&graph))?);
         }
         Command::Benchmark(args) => {
-            let report = benchmark_scans(args)?;
+            let report = benchmark_scans(args, max_file_size)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::CacheDiff(args) => {
             let options = IndexOptions {
                 include_hidden: args.include_hidden,
                 include_ignored: args.include_ignored,
+                max_file_size,
                 ..IndexOptions::default()
             };
             let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
@@ -462,6 +471,7 @@ fn main() -> Result<()> {
                 args.path,
                 args.include_hidden,
                 args.include_ignored,
+                max_file_size,
                 &args.cache,
             )?;
             println!("{}", serde_json::to_string_pretty(&entrypoints(&graph))?);
@@ -471,6 +481,7 @@ fn main() -> Result<()> {
                 args.scan.path,
                 args.scan.include_hidden,
                 args.scan.include_ignored,
+                max_file_size,
                 &args.scan.cache,
             )?;
             let report = filter_insight_report(
@@ -491,7 +502,8 @@ fn main() -> Result<()> {
             include_ignored,
             cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&query_graph(&graph, &expression)?)?
@@ -501,6 +513,7 @@ fn main() -> Result<()> {
             let options = IndexOptions {
                 include_hidden: args.include_hidden,
                 include_ignored: args.include_ignored,
+                max_file_size,
                 ..IndexOptions::default()
             };
             let result = search_source(
@@ -529,7 +542,8 @@ fn main() -> Result<()> {
             include_ignored,
             cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
             let result = explain_edge(
                 &graph,
                 ExplainEdgeRequest {
@@ -549,7 +563,8 @@ fn main() -> Result<()> {
             include_ignored,
             cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
             let result = trace(
                 &graph,
                 TraceRequest {
@@ -567,7 +582,8 @@ fn main() -> Result<()> {
             include_ignored,
             cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
             let result = trace_dependents(
                 &graph,
                 TraceRequest {
@@ -586,7 +602,8 @@ fn main() -> Result<()> {
             include_ignored,
             cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
             let report = trace_entrypoints(
                 &graph,
                 EntrypointTraceRequest {
@@ -606,7 +623,8 @@ fn main() -> Result<()> {
             include_ignored,
             cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
             let result = trace_config(
                 &graph,
                 ConfigTraceRequest {
@@ -626,7 +644,8 @@ fn main() -> Result<()> {
             include_ignored,
             cache,
         } => {
-            let graph = scan_with_options(path, include_hidden, include_ignored, &cache)?;
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
             let result = trace_errors(
                 &graph,
                 ErrorTraceRequest {
@@ -665,11 +684,13 @@ fn scan_with_options(
     path: PathBuf,
     include_hidden: bool,
     include_ignored: bool,
+    max_file_size: u64,
     cache_args: &CacheArgs,
 ) -> Result<codegraph_core::CodeGraph> {
     let options = IndexOptions {
         include_hidden,
         include_ignored,
+        max_file_size,
         ..IndexOptions::default()
     };
     let cache = (!cache_args.no_cache).then(|| {
@@ -683,11 +704,12 @@ fn scan_with_options(
     Ok(scan_project_cached(path, &options, cache.as_ref())?.graph)
 }
 
-fn benchmark_scans(args: BenchmarkArgs) -> Result<BenchmarkReport> {
+fn benchmark_scans(args: BenchmarkArgs, max_file_size: u64) -> Result<BenchmarkReport> {
     let runs = args.runs.clamp(1, 100);
     let options = IndexOptions {
         include_hidden: args.include_hidden,
         include_ignored: args.include_ignored,
+        max_file_size,
         ..IndexOptions::default()
     };
     let mut measurements = Vec::with_capacity(runs);
@@ -726,6 +748,7 @@ fn benchmark_scans(args: BenchmarkArgs) -> Result<BenchmarkReport> {
         runs,
         include_hidden: args.include_hidden,
         include_ignored: args.include_ignored,
+        max_file_size,
         fastest_ms,
         slowest_ms,
         average_ms,

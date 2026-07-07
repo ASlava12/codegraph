@@ -1,5 +1,5 @@
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
-use codegraph_indexer::{IndexError, IndexOptions, scan_project};
+use codegraph_indexer::{IndexError, IndexOptions, is_index_relevant_file, scan_project};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
@@ -162,7 +162,7 @@ impl GraphCache {
                     });
                 }
             };
-            if metadata.len() > options.max_file_size {
+            if metadata.len() > options.max_file_size && !is_index_relevant_file(path) {
                 continue;
             }
 
@@ -641,6 +641,43 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn cache_misses_after_skipped_large_source_changes() {
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("huge.rs"), "fn main() {}\n").unwrap();
+        let options = IndexOptions {
+            max_file_size: 4,
+            ..IndexOptions::default()
+        };
+        let cache = GraphCache::new(&cache_dir);
+
+        let first = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(first.cache.status, CacheStatus::Miss);
+        assert!(first.graph.nodes.iter().any(|node| {
+            node.label == "src/huge.rs"
+                && node
+                    .metadata
+                    .get("skipped_reason")
+                    .is_some_and(|reason| reason == "max_file_size")
+        }));
+        let second = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(second.cache.status, CacheStatus::Hit);
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        fs::write(
+            root.join("src").join("huge.rs"),
+            "fn main() {}\nfn changed() {}\n",
+        )
+        .unwrap();
+        let third = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(third.cache.status, CacheStatus::Miss);
+
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();
     }

@@ -19,6 +19,7 @@ pub struct GraphSummary {
     pub languages: BTreeMap<String, usize>,
     pub annotation_facets: BTreeMap<String, BTreeMap<String, usize>>,
     pub entrypoints: usize,
+    pub skipped_files: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -543,9 +544,18 @@ pub fn summarize(graph: &CodeGraph) -> GraphSummary {
     let mut edge_sources = BTreeMap::new();
     let mut languages = BTreeMap::new();
     let mut annotation_facets: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    let mut skipped_files = 0;
 
     for node in &graph.nodes {
         *node_kinds.entry(kind_name(&node.kind)).or_insert(0) += 1;
+        if matches!(node.kind, NodeKind::File)
+            && node
+                .metadata
+                .get("skipped")
+                .is_some_and(|value| value == "true")
+        {
+            skipped_files += 1;
+        }
         if let Some(language) = node.metadata.get("language") {
             *languages.entry(language.clone()).or_insert(0) += 1;
         }
@@ -599,6 +609,7 @@ pub fn summarize(graph: &CodeGraph) -> GraphSummary {
             .iter()
             .filter(|edge| edge.kind == EdgeKind::Entrypoint)
             .count(),
+        skipped_files,
     }
 }
 
@@ -2307,7 +2318,32 @@ fn split_query_tokens(expression: &str) -> Result<Vec<String>, QueryError> {
 
 fn add_parse_error_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     for node in &graph.nodes {
-        if node.metadata.contains_key("parse_error") {
+        if node
+            .metadata
+            .get("skipped_reason")
+            .is_some_and(|reason| reason == "max_file_size")
+        {
+            let file_size = node
+                .metadata
+                .get("file_size_bytes")
+                .map(String::as_str)
+                .unwrap_or("unknown");
+            let max_file_size = node
+                .metadata
+                .get("max_file_size_bytes")
+                .map(String::as_str)
+                .unwrap_or("unknown");
+            insights.push(Insight {
+                kind: "skipped_large_file".to_string(),
+                severity: InsightSeverity::Warning,
+                message: format!(
+                    "{} skipped because size {file_size} exceeds max file size {max_file_size}",
+                    node.label
+                ),
+                nodes: vec![node.id],
+                edges: Vec::new(),
+            });
+        } else if node.metadata.contains_key("parse_error") {
             insights.push(Insight {
                 kind: "parse_error".to_string(),
                 severity: InsightSeverity::Error,
@@ -5255,6 +5291,32 @@ mod tests {
         assert_eq!(filtered.by_kind.get("parse_error"), None);
         assert_eq!(filtered.insights.len(), 1);
         assert_eq!(filtered.insights[0].kind, "dependency_cycle");
+    }
+
+    #[test]
+    fn insights_report_skipped_large_files() {
+        let mut graph = CodeGraph::new("repo");
+        let mut metadata = BTreeMap::new();
+        metadata.insert("skipped".to_string(), "true".to_string());
+        metadata.insert("skipped_reason".to_string(), "max_file_size".to_string());
+        metadata.insert("file_size_bytes".to_string(), "8192".to_string());
+        metadata.insert("max_file_size_bytes".to_string(), "4096".to_string());
+        let file = graph.add_node_with_metadata(NodeKind::File, "src/huge.rs", None, metadata);
+
+        let summary = summarize(&graph);
+        assert_eq!(summary.skipped_files, 1);
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "skipped_large_file")
+            .expect("expected skipped large file insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.message.contains("src/huge.rs"));
+        assert!(insight.message.contains("8192"));
+        assert!(insight.nodes.contains(&file));
     }
 
     #[test]
