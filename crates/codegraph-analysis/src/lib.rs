@@ -403,6 +403,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     let mut insights = Vec::new();
     add_parse_error_insights(graph, &mut insights);
     add_unresolved_call_insights(graph, &mut insights);
+    add_unresolved_local_import_insights(graph, &mut insights);
     add_duplicate_function_insights(graph, &mut insights);
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
@@ -2132,6 +2133,54 @@ fn add_unresolved_call_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) 
                 edges: incoming_edge_indexes(graph, node.id, EdgeKind::Calls),
             });
         }
+    }
+}
+
+fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::ExternalDependency
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "import")
+            || node
+                .metadata
+                .get("import_scope")
+                .is_none_or(|scope| scope != "local")
+            || node
+                .metadata
+                .get("resolution")
+                .is_none_or(|resolution| resolution != "unresolved")
+        {
+            continue;
+        }
+        let target = node
+            .metadata
+            .get("import_target")
+            .map(String::as_str)
+            .unwrap_or(node.label.as_str());
+        let edges = incoming_edge_indexes(graph, node.id, EdgeKind::Imports);
+        let source = edges
+            .first()
+            .and_then(|index| graph.edges.get(*index))
+            .and_then(|edge| node_label(graph, edge.source))
+            .unwrap_or("unknown");
+
+        insights.push(Insight {
+            kind: "unresolved_local_import".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "`{source}` imports local target `{target}` but no matching file was found"
+            ),
+            nodes: std::iter::once(node.id)
+                .chain(
+                    edges
+                        .iter()
+                        .filter_map(|index| graph.edges.get(*index).map(|edge| edge.source)),
+                )
+                .collect(),
+            edges,
+        });
     }
 }
 
@@ -4170,6 +4219,50 @@ mod tests {
         assert!(report.insights.iter().any(|insight| {
             insight.kind == "orphan_function" && insight.nodes.contains(&orphan)
         }));
+    }
+
+    #[test]
+    fn insights_report_unresolved_local_imports() {
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node(NodeKind::File, "src/app.js");
+        let import = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "import missing from './missing.js';",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "import".to_string()),
+                ("language".to_string(), "javascript".to_string()),
+                ("import_scope".to_string(), "local".to_string()),
+                ("import_target".to_string(), "./missing.js".to_string()),
+                ("resolution".to_string(), "unresolved".to_string()),
+            ]),
+        );
+        let external = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "import express from 'express';",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "import".to_string()),
+                ("language".to_string(), "javascript".to_string()),
+            ]),
+        );
+        graph.add_edge(file, import, EdgeKind::Imports, Confidence::Syntactic);
+        graph.add_edge(file, external, EdgeKind::Imports, Confidence::Syntactic);
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_local_import")
+            .expect("expected unresolved local import insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.message.contains("src/app.js"));
+        assert!(insight.message.contains("./missing.js"));
+        assert!(insight.nodes.contains(&file));
+        assert!(insight.nodes.contains(&import));
+        assert!(!insight.nodes.contains(&external));
+        assert_eq!(insight.edges.len(), 1);
     }
 
     #[test]

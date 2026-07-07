@@ -30,6 +30,7 @@ Goal: extract language-independent structure from source files.
 - [x] Extract files, modules, imports, top-level declarations, functions, and classes/types.
 - [x] Support Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash at syntax level.
 - [x] Extract approximate call sites.
+- [x] Resolve local import/include file dependencies where syntax-level paths are explicit.
 - [x] Detect config and environment reads.
 - [x] Detect basic error/exception constructs.
 - [x] Detect manifest-defined entrypoints from project metadata.
@@ -90,6 +91,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect conflicting manifest dependency constraints for the same package.
 - [x] Detect duplicate framework route method/path declarations.
 - [x] Detect framework routes whose named handler cannot be resolved.
+- [x] Detect local imports/includes whose target file cannot be resolved.
 - [x] Detect custom architectural boundary violations on graph edges.
 - [x] Detect config and environment reads that are not reachable from entrypoints.
 - [x] Back web insights with server analysis during paged graph exploration.
