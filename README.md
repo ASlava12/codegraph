@@ -148,6 +148,7 @@ Implemented now:
 - Investigation insights for non-test source files with code symbols that are not reachable from any detected entrypoint.
 - Investigation insights for config/environment keys that are read with conflicting fallback defaults, including common inline Rust, Python, JavaScript/TypeScript, Go, C, C++, PHP, and Bash environment-read patterns.
 - Investigation insights for config/environment keys that are read both as required and with fallback defaults.
+- Investigation insights for sensitive config/environment keys that have non-empty fallback defaults, without echoing the fallback value in reports.
 - Dependency consistency insights for external imports/CommonJS requires that are not backed by declared manifest dependencies.
 - Dependency consistency insights for runtime manifest dependencies with no matching import.
 - Dependency consistency insights for package declarations with conflicting manifest constraints.
@@ -265,6 +266,7 @@ List investigation insights:
 cargo run -p codegraph-cli -- insights .
 cargo run -p codegraph-cli -- insights . --severity warning --kind dependency --limit 25
 cargo run -p codegraph-cli -- insights . --kind custom_rule
+cargo run -p codegraph-cli -- insights . --kind sensitive_config_default
 ```
 
 Fail CI or agent workflows when findings meet a severity threshold:
@@ -372,6 +374,7 @@ cargo run -p codegraph-cli -- query 'unreachable language:rust' .
 cargo run -p codegraph-cli -- query 'unreachable kind:function label:legacy_worker' .
 cargo run -p codegraph-cli -- query 'diagnostics severity:error language:rust' .
 cargo run -p codegraph-cli -- query 'insights severity:error kind:dependency' .
+cargo run -p codegraph-cli -- query 'insights kind:sensitive_config_default' .
 cargo run -p codegraph-cli -- query 'nodes metadata.annotation.domain:payments' .
 ```
 

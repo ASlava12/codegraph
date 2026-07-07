@@ -1276,6 +1276,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unreachable_source_file_insights(graph, &mut insights);
     add_conflicting_config_default_insights(graph, &mut insights);
     add_mixed_config_requirement_insights(graph, &mut insights);
+    add_sensitive_config_default_insights(graph, &mut insights);
     add_undeclared_import_insights(graph, &mut insights);
     add_unused_dependency_insights(graph, &mut insights);
     add_conflicting_dependency_insights(graph, &mut insights);
@@ -6121,6 +6122,93 @@ fn add_mixed_config_requirement_insights(graph: &CodeGraph, insights: &mut Vec<I
     }
 }
 
+fn add_sensitive_config_default_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if !matches!(node.kind, NodeKind::Config | NodeKind::Environment) {
+            continue;
+        }
+        let Some(default_value) = node
+            .metadata
+            .get("default_value")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        if !sensitive_config_default_candidate(&node.label, default_value) {
+            continue;
+        }
+
+        let edge_kind = if node.kind == NodeKind::Environment {
+            EdgeKind::ReadsEnvironment
+        } else {
+            EdgeKind::ReadsConfig
+        };
+        let edges = incoming_edge_indexes(graph, node.id, edge_kind);
+        if edges.is_empty() {
+            continue;
+        }
+
+        let kind = kind_name(&node.kind);
+        insights.push(Insight {
+            kind: "sensitive_config_default".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "{kind} `{}` looks sensitive and has a non-empty fallback value",
+                node.label
+            ),
+            nodes: std::iter::once(node.id)
+                .chain(
+                    edges
+                        .iter()
+                        .filter_map(|index| graph.edges.get(*index).map(|edge| edge.source)),
+                )
+                .collect(),
+            edges,
+        });
+    }
+}
+
+fn sensitive_config_default_candidate(label: &str, default_value: &str) -> bool {
+    sensitive_config_label(label) || credential_like_default(default_value)
+}
+
+fn sensitive_config_label(label: &str) -> bool {
+    let normalized = label.to_ascii_lowercase();
+    if normalized.contains("public_key")
+        && !normalized.contains("private_key")
+        && !normalized.contains("secret")
+    {
+        return false;
+    }
+
+    [
+        "password",
+        "passwd",
+        "passphrase",
+        "secret",
+        "token",
+        "credential",
+        "private_key",
+        "api_key",
+        "access_key",
+        "signing_key",
+        "encryption_key",
+        "jwt",
+    ]
+    .iter()
+    .any(|indicator| normalized.contains(indicator))
+}
+
+fn credential_like_default(default_value: &str) -> bool {
+    let normalized = default_value.to_ascii_lowercase();
+    (normalized.contains("://") && normalized.contains('@'))
+        || normalized.contains("password=")
+        || normalized.contains("passwd=")
+        || normalized.contains("token=")
+        || normalized.contains("secret=")
+}
+
 fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let declared = declared_package_ids(graph);
     let declared_ecosystems: BTreeSet<_> = declared
@@ -8866,6 +8954,38 @@ mod tests {
     }
 
     #[test]
+    fn query_insights_returns_sensitive_config_default_context() {
+        let mut graph = CodeGraph::new("repo");
+        let load_config = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "load_config",
+            None,
+            BTreeMap::from([("language".to_string(), "python".to_string())]),
+        );
+        let token = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "API_TOKEN",
+            None,
+            BTreeMap::from([("default_value".to_string(), "local-token".to_string())]),
+        );
+        graph.add_edge(
+            load_config,
+            token,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+
+        let result = query_graph(&graph, "insights kind:sensitive_config_default").unwrap();
+
+        assert_eq!(result.total_nodes, 2);
+        assert_eq!(result.total_edges, 1);
+        assert!(result.nodes.iter().any(|node| node.id == load_config));
+        assert!(result.nodes.iter().any(|node| node.id == token));
+        assert_eq!(result.edges[0].source, load_config);
+        assert_eq!(result.edges[0].target, token);
+    }
+
+    #[test]
     fn query_entrypoints_returns_start_context() {
         let mut graph = CodeGraph::new("repo");
         let cargo = graph.add_node_with_metadata(
@@ -10261,6 +10381,89 @@ mod tests {
         assert!(!insight.nodes.contains(&unused_required_port));
         assert_eq!(insight.edges.len(), 2);
         assert_eq!(report.by_kind.get("mixed_config_requirement"), Some(&1));
+    }
+
+    #[test]
+    fn insights_report_sensitive_config_defaults_without_leaking_values() {
+        let mut graph = CodeGraph::new("repo");
+        let api = graph.add_node(NodeKind::Function, "api_server");
+        let worker = graph.add_node(NodeKind::Function, "worker");
+        let secret = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "API_TOKEN",
+            None,
+            BTreeMap::from([("default_value".to_string(), "dev-super-secret".to_string())]),
+        );
+        let database_url = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "DATABASE_URL",
+            None,
+            BTreeMap::from([(
+                "default_value".to_string(),
+                "postgres://demo:password@localhost/app".to_string(),
+            )]),
+        );
+        let port = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "PORT",
+            None,
+            BTreeMap::from([("default_value".to_string(), "8080".to_string())]),
+        );
+        let public_key = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "PUBLIC_KEY",
+            None,
+            BTreeMap::from([("default_value".to_string(), "public-demo-key".to_string())]),
+        );
+        graph.add_edge(
+            api,
+            secret,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            api,
+            database_url,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            worker,
+            port,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            worker,
+            public_key,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+
+        let report = insights(&graph);
+        let sensitive = report
+            .insights
+            .iter()
+            .filter(|insight| insight.kind == "sensitive_config_default")
+            .collect::<Vec<_>>();
+
+        assert_eq!(sensitive.len(), 2);
+        assert!(sensitive.iter().any(|insight| {
+            insight.nodes.contains(&secret)
+                && insight.nodes.contains(&api)
+                && insight.message.contains("API_TOKEN")
+                && !insight.message.contains("dev-super-secret")
+        }));
+        assert!(sensitive.iter().any(|insight| {
+            insight.nodes.contains(&database_url)
+                && insight.message.contains("DATABASE_URL")
+                && !insight.message.contains("postgres://")
+        }));
+        assert!(!sensitive
+            .iter()
+            .any(|insight| insight.nodes.contains(&port) || insight.nodes.contains(&public_key)));
+        assert_eq!(report.by_kind.get("sensitive_config_default"), Some(&2));
+        assert_eq!(report.by_severity.get("warning"), Some(&2));
     }
 
     #[test]
