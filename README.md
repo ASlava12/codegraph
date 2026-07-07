@@ -51,7 +51,7 @@ Implemented now:
 - Source preview API and UI panel for parsed symbols plus framework route/config facts with source spans.
 - Enriched selected-node cards with summary metadata, source snippets, neighboring dependencies, trace actions, and related risks.
 - Initial English/Russian web UI localization with a persistent language selector.
-- Collision-aware graph labels with strict zoom budgets and adaptive placement so node cards stay readable without covering the graph.
+- Minimal-by-default graph labels with collision-aware Auto/Focus modes so node cards stay readable without covering the graph.
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
 - Reverse dependency/dependent traces for impact analysis from CLI, API, query language, and web detail panels.
 - Entrypoint trace API, CLI command, and web panel for comparing startup flows from manifest/code entrypoints.
