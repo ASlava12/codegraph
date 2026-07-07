@@ -5786,18 +5786,29 @@ PORT = os.getenv("PORT", "8000")
 "#,
         )
         .unwrap();
+        fs::write(
+            root.join("server.js"),
+            r#"const port = process.env.PORT || "3000";
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("index.php"),
+            r#"<?php
+$port = getenv('PORT') ?: '8080';
+"#,
+        )
+        .unwrap();
 
         let graph = scan_project(&root, &IndexOptions::default()).unwrap();
-        let port = graph
+        let defaults = graph
             .nodes
             .iter()
-            .find(|node| node.kind == NodeKind::Environment && node.label == "PORT")
-            .expect("missing PORT environment node");
+            .filter(|node| node.kind == NodeKind::Environment && node.label == "PORT")
+            .filter_map(|node| node.metadata.get("default_value").map(String::as_str))
+            .collect::<BTreeSet<_>>();
 
-        assert_eq!(
-            port.metadata.get("default_value").map(String::as_str),
-            Some("8000")
-        );
+        assert_eq!(defaults, BTreeSet::from(["3000", "8000", "8080"]));
 
         fs::remove_dir_all(root).unwrap();
     }

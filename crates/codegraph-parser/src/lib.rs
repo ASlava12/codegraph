@@ -448,7 +448,7 @@ fn classify_effect(
     function_name: Option<&str>,
 ) -> Option<ParsedItem> {
     let (kind, label, metadata) = if is_environment_read(language, node, source) {
-        effect_label(node, source).map(|label| {
+        effect_label(language, ParsedItemKind::EnvironmentRead, node, source).map(|label| {
             (
                 ParsedItemKind::EnvironmentRead,
                 label,
@@ -456,7 +456,7 @@ fn classify_effect(
             )
         })
     } else if is_config_read(language, node, source) {
-        effect_label(node, source).map(|label| {
+        effect_label(language, ParsedItemKind::ConfigRead, node, source).map(|label| {
             (
                 ParsedItemKind::ConfigRead,
                 label,
@@ -464,7 +464,7 @@ fn classify_effect(
             )
         })
     } else if is_error_construct(language, node, source) {
-        effect_label(node, source).map(|label| {
+        effect_label(language, ParsedItemKind::Error, node, source).map(|label| {
             (
                 ParsedItemKind::Error,
                 label,
@@ -617,7 +617,22 @@ fn is_error_construct(language: Language, node: Node<'_>, source: &[u8]) -> bool
     }
 }
 
-fn effect_label(node: Node<'_>, source: &[u8]) -> Option<String> {
+fn effect_label(
+    language: Language,
+    kind: ParsedItemKind,
+    node: Node<'_>,
+    source: &[u8],
+) -> Option<String> {
+    if kind == ParsedItemKind::EnvironmentRead
+        && matches!(
+            language,
+            Language::JavaScript | Language::TypeScript | Language::Tsx
+        )
+        && let Some(key) = javascript_env_key(node, source)
+    {
+        return Some(truncate_label(key, 120));
+    }
+
     first_string_literal(node, source)
         .or_else(|| node_text(node, source).map(compact_label))
         .map(|value| truncate_label(value, 120))
@@ -630,10 +645,20 @@ fn effect_metadata(
     source: &[u8],
 ) -> BTreeMap<String, String> {
     let mut metadata = BTreeMap::new();
-    if kind == ParsedItemKind::EnvironmentRead
-        && language == Language::Python
-        && let Some(default_value) = python_env_default_value(node, source)
-    {
+    if kind != ParsedItemKind::EnvironmentRead {
+        return metadata;
+    }
+
+    let default_value = match language {
+        Language::Python => python_env_default_value(node, source),
+        Language::JavaScript | Language::TypeScript | Language::Tsx => {
+            javascript_env_default_value(node, source)
+        }
+        Language::Php => getenv_default_value(node, source),
+        _ => None,
+    };
+
+    if let Some(default_value) = default_value {
         metadata.insert(
             "default_value".to_string(),
             truncate_label(default_value, 120),
@@ -644,10 +669,66 @@ fn effect_metadata(
 
 fn python_env_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
     let text = short_node_text(node, source)?;
-    if !text.contains("os.getenv") {
+    if !(text.contains("os.getenv") || text.contains("os.environ.get")) {
         return None;
     }
     all_string_literals(node, source).into_iter().nth(1)
+}
+
+fn javascript_env_key(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let text = short_node_text(node, source)?;
+    let compact = text
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    if let Some(after_env) = compact.strip_prefix("process.env.") {
+        return after_env
+            .split(|character: char| !is_identifier_part(character))
+            .next()
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+    }
+    if compact.starts_with("process.env[") {
+        return first_string_literal(node, source);
+    }
+    None
+}
+
+fn javascript_env_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let expression = short_ancestor_text(node, source, |text| {
+        text.contains("process.env") && (text.contains("||") || text.contains("??"))
+    })?;
+    let literals = quoted_string_values(&expression);
+    if expression.contains("process.env[") {
+        literals.into_iter().nth(1)
+    } else {
+        literals.into_iter().next()
+    }
+}
+
+fn getenv_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let expression = short_ancestor_text(node, source, |text| {
+        text.contains("getenv")
+            && (text.contains("?:") || text.contains("??") || text.contains("||"))
+    })?;
+    quoted_string_values(&expression).into_iter().nth(1)
+}
+
+fn short_ancestor_text(
+    node: Node<'_>,
+    source: &[u8],
+    predicate: impl Fn(&str) -> bool,
+) -> Option<String> {
+    let mut current = Some(node);
+    while let Some(candidate) = current {
+        if let Some(text) = short_node_text(candidate, source)
+            && predicate(&text)
+        {
+            return Some(text);
+        }
+        current = candidate.parent();
+    }
+    None
 }
 
 fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) -> bool {
@@ -777,6 +858,36 @@ fn collect_string_literals(node: Node<'_>, source: &[u8], values: &mut Vec<Strin
     }
 }
 
+fn quoted_string_values(value: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut quote = None;
+    let mut current = String::new();
+    let mut escaped = false;
+
+    for character in value.chars() {
+        match quote {
+            Some(_) if escaped => {
+                current.push(character);
+                escaped = false;
+            }
+            Some(_) if character == '\\' => {
+                escaped = true;
+            }
+            Some(current_quote) if character == current_quote => {
+                values.push(std::mem::take(&mut current));
+                quote = None;
+            }
+            Some(_) => current.push(character),
+            None if character == '"' || character == '\'' || character == '`' => {
+                quote = Some(character);
+            }
+            None => {}
+        }
+    }
+
+    values
+}
+
 fn node_text(node: Node<'_>, source: &[u8]) -> Option<String> {
     node.utf8_text(source).ok().map(|value| value.to_string())
 }
@@ -818,6 +929,10 @@ fn simple_name(value: &str) -> &str {
         .rsplit([':', '.', '\\', '>'])
         .find(|part| !part.is_empty() && *part != "-")
         .unwrap_or(value)
+}
+
+fn is_identifier_part(character: char) -> bool {
+    character == '_' || character == '$' || character.is_ascii_alphanumeric()
 }
 
 fn looks_like_config_text(value: &str) -> bool {
@@ -1081,7 +1196,7 @@ func main() {}
             "app.py",
             br#"import os
 PORT = os.getenv("PORT", "8000")
-DATABASE_URL = os.environ.get("DATABASE_URL")
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///local.db")
 "#,
             Language::Python,
         )
@@ -1097,9 +1212,75 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
             port.metadata.get("default_value").map(String::as_str),
             Some("8000")
         );
-        assert!(parsed.items.iter().any(|item| {
-            item.kind == ParsedItemKind::EnvironmentRead && item.label == "DATABASE_URL"
-        }));
+        let database_url = parsed
+            .items
+            .iter()
+            .find(|item| {
+                item.kind == ParsedItemKind::EnvironmentRead && item.label == "DATABASE_URL"
+            })
+            .expect("missing DATABASE_URL env read");
+        assert_eq!(
+            database_url
+                .metadata
+                .get("default_value")
+                .map(String::as_str),
+            Some("sqlite:///local.db")
+        );
+    }
+
+    #[test]
+    fn parses_javascript_environment_default_values() {
+        let parsed = parse_source(
+            "app.js",
+            br#"const port = process.env.PORT || "3000";
+const token = process.env["TOKEN"] ?? "dev-token";
+"#,
+            Language::JavaScript,
+        )
+        .unwrap();
+
+        let port = parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "PORT")
+            .expect("missing PORT env read");
+        let token = parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "TOKEN")
+            .expect("missing TOKEN env read");
+
+        assert_eq!(
+            port.metadata.get("default_value").map(String::as_str),
+            Some("3000")
+        );
+        assert_eq!(
+            token.metadata.get("default_value").map(String::as_str),
+            Some("dev-token")
+        );
+    }
+
+    #[test]
+    fn parses_php_environment_default_values() {
+        let parsed = parse_source(
+            "index.php",
+            br#"<?php
+$port = getenv('PORT') ?: '8080';
+"#,
+            Language::Php,
+        )
+        .unwrap();
+
+        let port = parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "PORT")
+            .expect("missing PORT env read");
+
+        assert_eq!(
+            port.metadata.get("default_value").map(String::as_str),
+            Some("8080")
+        );
     }
 
     #[test]

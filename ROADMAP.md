@@ -111,7 +111,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect local imports/includes whose target file cannot be resolved.
 - [x] Detect custom architectural boundary violations on graph edges.
 - [x] Detect config and environment reads that are not reachable from entrypoints.
-- [x] Detect config and environment keys that are read with conflicting fallback defaults.
+- [x] Detect config and environment keys that are read with conflicting fallback defaults across common Python, JavaScript/TypeScript, and PHP patterns.
 - [x] Back web insights with server analysis during paged graph exploration.
 - [x] Add CLI, server-side, and web filters for insight severity, kind, and search.
 - [x] Add insight severity and kind breakdowns for triage.
