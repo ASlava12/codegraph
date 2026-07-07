@@ -71,6 +71,23 @@ jobs:
           done
           test "$ready" = "1"
 
+          curl -fsS 'http://127.0.0.1:3765/' -o /tmp/codegraph-index.html
+          grep '<script src="/label-policy.js"></script>' /tmp/codegraph-index.html
+          grep '<script src="/app.js"></script>' /tmp/codegraph-index.html
+          label_line="$(grep -n '<script src="/label-policy.js"></script>' /tmp/codegraph-index.html | cut -d: -f1)"
+          app_line="$(grep -n '<script src="/app.js"></script>' /tmp/codegraph-index.html | cut -d: -f1)"
+          test "$label_line" -lt "$app_line"
+
+          curl -fsS -D /tmp/codegraph-label-policy.headers 'http://127.0.0.1:3765/label-policy.js' -o /tmp/codegraph-label-policy.js
+          grep -i '^content-type: application/javascript' /tmp/codegraph-label-policy.headers
+          node --check /tmp/codegraph-label-policy.js
+          curl -fsS -D /tmp/codegraph-app.headers 'http://127.0.0.1:3765/app.js' -o /tmp/codegraph-app.js
+          grep -i '^content-type: application/javascript' /tmp/codegraph-app.headers
+          node --check /tmp/codegraph-app.js
+          curl -fsS -D /tmp/codegraph-styles.headers 'http://127.0.0.1:3765/styles.css' -o /tmp/codegraph-styles.css
+          grep -i '^content-type: text/css' /tmp/codegraph-styles.headers
+          grep '.graph-stage' /tmp/codegraph-styles.css
+
           first="$(curl -fsS 'http://127.0.0.1:3765/api/scan?path=.' | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(JSON.parse(input).cache.status));')"
           second="$(curl -fsS 'http://127.0.0.1:3765/api/scan?path=.' | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(JSON.parse(input).cache.status));')"
           test "$first" = "miss"
