@@ -819,6 +819,7 @@ const state = {
   },
   locale: getInitialLocale(),
   labelMode: getInitialLabelMode(),
+  pendingSelectionLink: null,
 };
 
 const colors = {
@@ -1139,7 +1140,7 @@ function applyLocale() {
     statusEl.textContent = t("status.idle");
   }
   if (!state.projects.length) renderProjects();
-  if (!state.selectedId && selectionTitle.dataset.i18nFallback) {
+  if (state.selectedId == null && selectionTitle.dataset.i18nFallback) {
     selectionTitle.textContent = t(selectionTitle.dataset.i18nFallback);
   }
   renderViewportControls();
@@ -1154,8 +1155,125 @@ function applyLocale() {
 
 async function init() {
   await Promise.all([loadProjects(), loadCapabilities(), loadApiSchema(), loadMetrics()]);
+  applyUrlState();
   loadJobQueue();
   scan();
+}
+
+function applyUrlState() {
+  const link = readSelectionLinkFromUrl();
+  if (link.path) {
+    pathInput.value = link.path;
+    if ([...projectSelect.options].some((option) => option.value === link.path)) {
+      projectSelect.value = link.path;
+    }
+  }
+  if (link.nodeId != null || link.edgeIndex != null) {
+    state.pendingSelectionLink = link;
+  }
+}
+
+function readSelectionLinkFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return {
+      path: params.get("path") || "",
+      nodeId: parseUrlInteger(params.get("node")),
+      edgeIndex: parseUrlInteger(params.get("edge")),
+    };
+  } catch (error) {
+    return { path: "", nodeId: null, edgeIndex: null };
+  }
+}
+
+function parseUrlInteger(value) {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0 ? number : null;
+}
+
+function syncSelectionUrl() {
+  try {
+    const url = new URL(window.location.href);
+    const root = pathInput.value.trim();
+    if (root && root !== ".") {
+      url.searchParams.set("path", root);
+    } else {
+      url.searchParams.delete("path");
+    }
+
+    if (state.selectedId != null) {
+      url.searchParams.set("node", String(state.selectedId));
+      url.searchParams.delete("edge");
+    } else if (state.selectedEdgeKey) {
+      const edgeIndex = selectedEdgeIndexFromKey(state.selectedEdgeKey);
+      if (edgeIndex == null) {
+        url.searchParams.delete("edge");
+      } else {
+        url.searchParams.set("edge", String(edgeIndex));
+      }
+      url.searchParams.delete("node");
+    } else {
+      url.searchParams.delete("node");
+      url.searchParams.delete("edge");
+    }
+
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  } catch (error) {
+    // URL state is a sharing convenience; selection still works without History API.
+  }
+}
+
+function selectedEdgeIndexFromKey(selectionKey) {
+  const edgeRecord = selectedEdge();
+  const edgeIndex = edgeIndexOf(edgeRecord?.edge);
+  if (edgeIndex != null) return edgeIndex;
+  const match = String(selectionKey || "").match(/^edge:(\d+)$/);
+  return match ? Number(match[1]) : null;
+}
+
+function selectNodeById(nodeId, options = {}) {
+  const id = Number(nodeId);
+  if (!Number.isInteger(id) || id < 0) return;
+  const syncUrl = options.syncUrl !== false;
+  state.selectedEdgeKey = null;
+  state.selectedId = id;
+  if (syncUrl) syncSelectionUrl();
+  renderSelection();
+  draw();
+}
+
+function clearSelection(options = {}) {
+  const syncUrl = options.syncUrl !== false;
+  state.selectedId = null;
+  state.selectedEdgeKey = null;
+  if (syncUrl) syncSelectionUrl();
+  if (options.render !== false) renderSelection();
+}
+
+async function restorePendingSelectionLink() {
+  const link = state.pendingSelectionLink || readSelectionLinkFromUrl();
+  state.pendingSelectionLink = null;
+  if (link.edgeIndex != null) {
+    const edge = findEdgeByIndex(link.edgeIndex);
+    if (edge) {
+      selectEdgeByKey(edgeSelectionKey(edge), { syncUrl: false });
+    } else {
+      await focusEdgeIndex(link.edgeIndex, { syncUrl: false });
+    }
+    return;
+  }
+  if (link.nodeId != null) {
+    selectNodeById(link.nodeId, { syncUrl: false });
+  }
+}
+
+function findEdgeByIndex(edgeIndex) {
+  return (
+    state.visibleEdges.find((edge) => edgeIndexOf(edge) === edgeIndex) ||
+    state.graph.edges.find((edge) => edgeIndexOf(edge) === edgeIndex) ||
+    null
+  );
 }
 
 async function loadProjects() {
@@ -1479,7 +1597,7 @@ async function scan() {
   scanCancelButton.disabled = true;
   selectionTitle.textContent = t("selection.title");
   selectionBody.innerHTML = "";
-  state.selectedEdgeKey = null;
+  clearSelection({ syncUrl: !state.pendingSelectionLink, render: false });
   state.insightRequest += 1;
   state.overviewRequest += 1;
   state.summary = null;
@@ -1734,8 +1852,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     state.graphPage.edgeLimit = body.edge_limit;
     state.graphPage.truncatedNodes = body.truncated_nodes;
     state.graphPage.root = root || state.graphPage.root || pathInput.value.trim() || ".";
-    state.selectedId = null;
-    state.selectedEdgeKey = null;
+    clearSelection({ syncUrl: false, render: false });
     state.hoveredId = null;
     state.queryFocus = null;
     state.insightReport = null;
@@ -1748,6 +1865,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     errorTraceResult.innerHTML = "";
     rootLabel.textContent = state.graphPage.root;
     initializeGraph({ preserveView: !resetLayout });
+    await restorePendingSelectionLink();
     loadProjectOverview();
     loadInsights();
     setStatus("ready");
@@ -2058,8 +2176,7 @@ function applySemanticEnrichResult(result, root) {
   state.graphPage.totalNodes = state.graph.nodes.length;
   state.graphPage.totalEdges = state.graph.edges.length;
   state.graphPage.truncatedNodes = false;
-  state.selectedId = null;
-  state.selectedEdgeKey = null;
+  clearSelection({ render: false });
   state.edgeSelectionCache.clear();
   state.edgeSelectionNodeCache.clear();
   state.hoveredId = null;
@@ -2655,7 +2772,7 @@ async function focusSemanticWorkItem(item) {
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "focus failed"));
     }
-    const selectedId = item.node?.id || item.target?.id || null;
+    const selectedId = item.node?.id ?? item.target?.id ?? null;
     showFocusedGraph(body, `Semantic: ${formatKind(item.capability || item.kind)}`, selectedId);
   } catch (error) {
     if (requestId !== state.insightFocusRequest) return;
@@ -3091,8 +3208,7 @@ function initializeGraph(options = {}) {
   const previousPan = { ...state.pan };
   const previousZoom = state.zoom;
 
-  state.selectedId = null;
-  state.selectedEdgeKey = null;
+  clearSelection({ syncUrl: false, render: false });
   state.edgeSelectionCache.clear();
   state.edgeSelectionNodeCache.clear();
   state.hoveredId = null;
@@ -3766,8 +3882,7 @@ function showIncrementalScanGraph(scan) {
   state.graphPage.totalNodes = state.graph.nodes.length;
   state.graphPage.totalEdges = state.graph.edges.length;
   state.graphPage.truncatedNodes = false;
-  state.selectedId = null;
-  state.selectedEdgeKey = null;
+  clearSelection({ render: false });
   state.hoveredId = null;
   state.queryFocus = null;
   rootLabel.textContent = t("cache.changedGraph", { action: formatKind(plan.action || "scan") });
@@ -3789,8 +3904,7 @@ function showIncrementalMergePreviewGraph(preview) {
   state.graphPage.totalNodes = state.graph.nodes.length;
   state.graphPage.totalEdges = state.graph.edges.length;
   state.graphPage.truncatedNodes = false;
-  state.selectedId = null;
-  state.selectedEdgeKey = null;
+  clearSelection({ render: false });
   state.hoveredId = null;
   state.queryFocus = null;
   rootLabel.textContent = merge.complete_graph ? t("cache.incrementalComplete") : t("cache.incrementalPreview");
@@ -4087,7 +4201,7 @@ function attachConfigTraceActions(container, result) {
         total_edges: path.edges.length,
         truncated: false,
       };
-      const selectedId = path.nodes[path.nodes.length - 1]?.id || null;
+      const selectedId = path.nodes[path.nodes.length - 1]?.id ?? null;
       showFocusedGraph(focused, `Config: ${match.target.label}`, selectedId);
     });
   });
@@ -4215,7 +4329,7 @@ function attachErrorTraceActions(container, result) {
         total_edges: path.edges.length,
         truncated: false,
       };
-      const selectedId = path.nodes[path.nodes.length - 1]?.id || null;
+      const selectedId = path.nodes[path.nodes.length - 1]?.id ?? null;
       showFocusedGraph(focused, `Error: ${match.error.label}`, selectedId);
     });
   });
@@ -4263,8 +4377,7 @@ function attachSourceSearchActions(container, result) {
 async function openSourceSearchMatch(match) {
   state.selectionRequest += 1;
   const requestId = state.selectionRequest;
-  state.selectedId = null;
-  state.selectedEdgeKey = null;
+  clearSelection({ render: false });
   selectionTitle.textContent = "Source Match";
   selectionBody.innerHTML = `
     <section class="source-preview">
@@ -4410,9 +4523,7 @@ function attachQueryNavigation(container) {
     button.addEventListener("click", () => {
       const nodeId = Number(button.dataset.nodeId);
       if (!nodeId) return;
-      state.selectedEdgeKey = null;
-      state.selectedId = nodeId;
-      renderSelection();
+      selectNodeById(nodeId);
     });
   });
 }
@@ -4532,12 +4643,16 @@ function applyFilters() {
   renderViewportControls();
   renderInsights();
 
-  if (state.selectedId && !visibleIds.has(state.selectedId)) {
+  let selectionChanged = false;
+  if (state.selectedId != null && !visibleIds.has(state.selectedId)) {
     state.selectedId = null;
+    selectionChanged = true;
   }
   if (state.selectedEdgeKey && !state.visibleEdges.some((edge) => edgeSelectionKey(edge) === state.selectedEdgeKey)) {
     state.selectedEdgeKey = null;
+    selectionChanged = true;
   }
+  if (selectionChanged) syncSelectionUrl();
   renderSelection();
 }
 
@@ -4711,12 +4826,11 @@ function severityRank(severity) {
 async function focusInsight(insight) {
   const nodeIds = insightNodeIds(insight);
   const edgeIndexes = insightEdgeIndexes(insight);
-  const selectedId = nodeIds[0] || null;
+  const selectedId = nodeIds[0] ?? null;
   if (nodeIds.length === 0 && edgeIndexes.length === 0) return;
 
-  if (selectedId) {
-    state.selectedId = selectedId;
-    renderSelection();
+  if (selectedId != null) {
+    selectNodeById(selectedId);
   }
 
   state.insightFocusRequest += 1;
@@ -4745,8 +4859,7 @@ async function focusInsight(insight) {
 
 async function focusNodeId(nodeId, label) {
   if (!nodeId) return;
-  state.selectedId = nodeId;
-  renderSelection();
+  selectNodeById(nodeId);
 
   state.insightFocusRequest += 1;
   const requestId = state.insightFocusRequest;
@@ -4770,7 +4883,7 @@ async function focusNodeId(nodeId, label) {
   }
 }
 
-async function focusEdgeIndex(edgeIndex) {
+async function focusEdgeIndex(edgeIndex, options = {}) {
   if (!Number.isInteger(edgeIndex) || edgeIndex < 0) return;
   state.insightFocusRequest += 1;
   const requestId = state.insightFocusRequest;
@@ -4787,10 +4900,8 @@ async function focusEdgeIndex(edgeIndex) {
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "focus edge failed"));
     }
-    showFocusedGraph(body, `Edge ${edgeIndex}`);
-    state.selectedEdgeKey = `edge:${edgeIndex}`;
-    renderSelection();
-    draw();
+    showFocusedGraph(body, `Edge ${edgeIndex}`, null, { syncUrl: false });
+    selectEdgeByKey(`edge:${edgeIndex}`, { syncUrl: options.syncUrl !== false });
   } catch (error) {
     if (requestId !== state.insightFocusRequest) return;
     queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
@@ -4804,7 +4915,7 @@ async function runEdgeIndexQuery(edgeIndex) {
   queryResult.scrollIntoView({ block: "nearest" });
 }
 
-function showFocusedGraph(result, label, selectedId = null) {
+function showFocusedGraph(result, label, selectedId = null, options = {}) {
   state.graph = { nodes: result.nodes, edges: result.edges };
   state.graphPage.nodeOffset = 0;
   state.graphPage.totalNodes = result.total_nodes;
@@ -4822,9 +4933,10 @@ function showFocusedGraph(result, label, selectedId = null) {
   pagePrevButton.disabled = true;
   pageNextButton.disabled = true;
   pageReloadButton.disabled = false;
-  if (selectedId) {
-    state.selectedId = selectedId;
-    renderSelection();
+  if (selectedId != null) {
+    selectNodeById(selectedId, { syncUrl: options.syncUrl !== false });
+  } else if (options.syncUrl !== false) {
+    syncSelectionUrl();
   }
 }
 
@@ -5775,7 +5887,7 @@ function renderSelection() {
   }
   const node = state.graph.nodes.find((candidate) => candidate.id === state.selectedId);
   if (!node) {
-    if (state.selectedId) {
+    if (state.selectedId != null) {
       selectionTitle.textContent = `${t("selection.node")} ${state.selectedId}`;
       selectionBody.innerHTML = `<p class="empty">${escapeHtml(t("selection.loading"))}</p>`;
       loadNodeContext(state.selectedId, requestId);
@@ -6046,8 +6158,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
 
   selectionBody.querySelectorAll(".neighbor").forEach((button) => {
     button.addEventListener("click", () => {
-      state.selectedId = Number(button.dataset.nodeId);
-      renderSelection();
+      selectNodeById(button.dataset.nodeId);
     });
   });
 
@@ -6504,9 +6615,7 @@ function attachTraceNavigation(container) {
     button.addEventListener("click", () => {
       const nodeId = Number(button.dataset.nodeId);
       if (!nodeId) return;
-      state.selectedEdgeKey = null;
-      state.selectedId = nodeId;
-      renderSelection();
+      selectNodeById(nodeId);
     });
   });
 }
@@ -6614,10 +6723,12 @@ function registerEdgeSelection(edge, source = null, target = null) {
   return selectionKey;
 }
 
-function selectEdgeByKey(selectionKey) {
+function selectEdgeByKey(selectionKey, options = {}) {
   if (!selectionKey) return;
+  const syncUrl = options.syncUrl !== false;
   state.selectedId = null;
   state.selectedEdgeKey = selectionKey;
+  if (syncUrl) syncSelectionUrl();
   renderSelection();
   draw();
 }
@@ -6766,17 +6877,12 @@ function onPointerDown(event) {
   const hit = findNodeAt(world);
   state.lastPointer = { x: event.offsetX, y: event.offsetY };
   if (hit) {
-    state.selectedEdgeKey = null;
-    state.selectedId = hit.id;
+    selectNodeById(hit.id);
     state.draggingId = hit.id;
-    renderSelection();
   } else {
     const edgeHit = findEdgeAt(world);
     if (edgeHit) {
-      state.selectedId = null;
-      state.selectedEdgeKey = edgeSelectionKey(edgeHit);
-      renderSelection();
-      draw();
+      selectEdgeByKey(edgeSelectionKey(edgeHit));
     }
     state.draggingId = null;
   }
