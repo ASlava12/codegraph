@@ -36,6 +36,7 @@ const I18N = {
     "selection.configTrace": "Config Trace",
     "selection.errorTrace": "Error Trace",
     "selection.packageGraph": "Packages",
+    "selection.fileGraph": "File Graph",
     "selection.trace": "Trace",
     "selection.dependents": "Dependents",
     "selection.traceDepth": "Depth",
@@ -246,6 +247,7 @@ const I18N = {
     "selection.configTrace": "Трасса конфига",
     "selection.errorTrace": "Трасса ошибок",
     "selection.packageGraph": "Пакеты",
+    "selection.fileGraph": "Граф файла",
     "selection.trace": "Трассировать",
     "selection.dependents": "Зависимые",
     "selection.traceDepth": "Глубина",
@@ -5290,7 +5292,10 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
   const metadataRows = renderNodeMetadataRows(node);
   const nodeIssues = (card?.insights || nodeInsightsForNode(node.id)).slice(0, 8);
   const sourceLines = card?.source?.lines || null;
+  const sourcePath = card?.source?.path || node.span?.path || "";
+  const sourceLineSuffix = node.span ? `:${node.span.start_line}` : "";
   const packageGraphQuery = packageGraphQueryForNode(node);
+  const fileGraphQuery = fileGraphQueryForNode(node);
   const neighborRows = loading
     ? `<p class="empty">${escapeHtml(t("selection.loading"))}</p>`
     : edges.length > 0
@@ -5334,6 +5339,11 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
         ${
           packageGraphQuery
             ? `<button type="button" data-package-graph-query>${escapeHtml(t("selection.packageGraph"))}</button>`
+            : ""
+        }
+        ${
+          fileGraphQuery
+            ? `<button type="button" data-file-graph-query>${escapeHtml(t("selection.fileGraph"))}</button>`
             : ""
         }
       </div>
@@ -5385,11 +5395,11 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
         <div id="traceResult" class="trace-result"></div>
       </section>
       ${
-        node.span
+        sourceLines || node.span
           ? `<section class="source-preview">
             <header>
               <span>${escapeHtml(t("selection.source"))}</span>
-              <strong>${escapeHtml(node.span.path)}:${node.span.start_line}</strong>
+              <strong>${escapeHtml(`${sourcePath}${sourceLineSuffix}`)}</strong>
               ${card?.source?.truncated ? `<span>${escapeHtml(t("selection.sourceTruncated"))}</span>` : ""}
             </header>
             <pre id="sourcePreview"><code>${
@@ -5442,6 +5452,11 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
     packageGraphTarget.addEventListener("click", () => runPackageGraphQuery(packageGraphQuery));
   }
 
+  const fileGraphTarget = selectionBody.querySelector("[data-file-graph-query]");
+  if (fileGraphTarget && fileGraphQuery) {
+    fileGraphTarget.addEventListener("click", () => runFileGraphQuery(fileGraphQuery));
+  }
+
   const traceButton = document.querySelector("#traceButton");
   if (traceButton) {
     traceButton.addEventListener("click", () => loadTrace(node));
@@ -5472,6 +5487,7 @@ function renderNodeSummaryRows(node) {
   ];
   if (node.metadata?.language) rows.push([t("label.language"), node.metadata.language]);
   if (node.metadata?.item_kind) rows.push([t("label.item"), formatKind(node.metadata.item_kind)]);
+  if (node.kind === "file") rows.push([t("selection.path"), node.label]);
   if (node.span) {
     rows.push([t("selection.path"), node.span.path]);
     rows.push([t("selection.lines"), `${node.span.start_line}-${node.span.end_line}`]);
@@ -5531,7 +5547,18 @@ function packageGraphQueryForNode(node) {
   return `packages package:${quoteQueryValue(candidate.package)} ecosystem:${quoteQueryValue(candidate.ecosystem)} edge_limit:300`;
 }
 
+function fileGraphQueryForNode(node) {
+  if (node.kind !== "file") return null;
+  return `files path:${quoteQueryValue(node.label)} direction:out edge_limit:300`;
+}
+
 async function runPackageGraphQuery(expression) {
+  queryInput.value = expression;
+  await runGraphQuery({ focus: true });
+  queryResult.scrollIntoView({ block: "nearest" });
+}
+
+async function runFileGraphQuery(expression) {
   queryInput.value = expression;
   await runGraphQuery({ focus: true });
   queryResult.scrollIntoView({ block: "nearest" });

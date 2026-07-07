@@ -1905,15 +1905,9 @@ pub fn node_card(
     let Some(context) = node_context(graph, node_id, edge_limit) else {
         return Ok(None);
     };
-    let source = match (root, context.node.span.as_ref()) {
-        (Some(root), Some(span)) => Some(read_source_preview(
-            root,
-            Path::new(&span.path),
-            span.start_line,
-            span.end_line,
-            source_context,
-        )?),
-        _ => None,
+    let source = match root {
+        Some(root) => node_source_preview(root, &context.node, source_context)?,
+        None => None,
     };
     let insight_limit = insight_limit.clamp(1, 500);
     let related_insights = insights(graph)
@@ -1932,6 +1926,38 @@ pub fn node_card(
         insight_limit,
         truncated_insights: insight_limit < total_insights,
     }))
+}
+
+fn node_source_preview(
+    root: &Path,
+    node: &Node,
+    source_context: u32,
+) -> io::Result<Option<SourcePreview>> {
+    if let Some(span) = node.span.as_ref() {
+        return read_source_preview(
+            root,
+            Path::new(&span.path),
+            span.start_line,
+            span.end_line,
+            source_context,
+        )
+        .map(Some);
+    }
+
+    if node.kind == NodeKind::File {
+        return read_file_source_preview(root, Path::new(&node.label)).map(Some);
+    }
+
+    Ok(None)
+}
+
+fn read_file_source_preview(root: &Path, path: &Path) -> io::Result<SourcePreview> {
+    let mut source = read_source_preview(root, path, 1, u32::MAX, 0)?;
+    source.end_line = source.lines.last().map(|line| line.number).unwrap_or(1);
+    for line in &mut source.lines {
+        line.highlight = false;
+    }
+    Ok(source)
 }
 
 pub fn read_source_preview(
@@ -7261,6 +7287,24 @@ mod tests {
             card.insights
                 .iter()
                 .any(|insight| insight.kind == "orphan_function")
+        );
+
+        let file_card = node_card(&graph, Some(&root), file, 10, 1, 10)
+            .unwrap()
+            .expect("expected file node card");
+        assert_eq!(file_card.context.node.id, file);
+        assert_eq!(
+            file_card.source.as_ref().map(|source| source.path.as_str()),
+            Some("src/main.rs")
+        );
+        assert!(
+            file_card
+                .source
+                .as_ref()
+                .unwrap()
+                .lines
+                .iter()
+                .any(|line| !line.highlight && line.text.contains("fn main"))
         );
 
         std::fs::remove_dir_all(root).unwrap();
