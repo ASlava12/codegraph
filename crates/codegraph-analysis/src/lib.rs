@@ -1592,9 +1592,12 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "neighbors" | "neighbor" | "neighborhood" => query_neighbors(graph, spec),
         "unreachable" | "dead" => query_unreachable(graph, spec),
         "diagnostics" | "diagnostic" => query_diagnostics(graph, spec),
+        "insights" | "insight" | "risks" | "risk" | "findings" | "finding" => {
+            query_insights(graph, spec)
+        }
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, unreachable, diagnostics, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, unreachable, diagnostics, insights, or path"
         ))),
     }
 }
@@ -2342,6 +2345,49 @@ fn query_diagnostics(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, 
     })
 }
 
+fn query_insights(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    validate_insight_terms(&spec)?;
+    let path_index = node_path_index(graph);
+    let matched: Vec<_> = insights(graph)
+        .insights
+        .into_iter()
+        .filter(|insight| insight_query_matches(graph, insight, &spec, &path_index))
+        .collect();
+    let total_insights = matched.len();
+    let mut node_ids = BTreeSet::new();
+    let mut edge_indexes = BTreeSet::new();
+
+    for insight in matched.iter().take(spec.limit) {
+        node_ids.extend(insight.nodes.iter().copied());
+        edge_indexes.extend(insight.edges.iter().copied());
+    }
+
+    let mut edges = Vec::new();
+    for edge_index in edge_indexes {
+        if let Some(edge) = graph.edges.get(edge_index).cloned() {
+            node_ids.insert(edge.source);
+            node_ids.insert(edge.target);
+            edges.push(edge);
+        }
+    }
+
+    let nodes: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| node_ids.contains(&node.id))
+        .cloned()
+        .collect();
+
+    Ok(QueryResult {
+        query: spec.original,
+        total_nodes: nodes.len(),
+        total_edges: edges.len(),
+        truncated: total_insights > spec.limit,
+        nodes,
+        edges,
+    })
+}
+
 fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
     validate_path_terms(&spec)?;
     let max_depth = spec
@@ -2539,6 +2585,32 @@ fn validate_diagnostic_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     Ok(())
 }
 
+fn validate_insight_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if matches!(
+            key.as_str(),
+            "severity"
+                | "kind"
+                | "message"
+                | "search"
+                | "node"
+                | "node_id"
+                | "id"
+                | "edge"
+                | "edge_index"
+                | "path"
+                | "path_prefix"
+                | "language"
+        ) {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported insights query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 fn is_node_term(key: &str) -> bool {
     matches!(
         key,
@@ -2619,6 +2691,53 @@ fn diagnostic_source_nodes(graph: &CodeGraph, diagnostic_id: NodeId) -> Vec<Node
         })
         .map(|edge| edge.source)
         .collect()
+}
+
+fn insight_query_matches(
+    graph: &CodeGraph,
+    insight: &Insight,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
+    spec.terms.iter().all(|(key, expected)| match key.as_str() {
+        "severity" => text_matches(severity_name(insight.severity), expected),
+        "kind" => text_matches(&insight.kind, expected),
+        "message" => text_matches(&insight.message, expected),
+        "search" => insight_search_matches(insight, &expected.to_ascii_lowercase()),
+        "node" | "node_id" | "id" => insight_node_matches(graph, insight, expected),
+        "edge" | "edge_index" => expected
+            .parse::<usize>()
+            .is_ok_and(|edge_index| insight.edges.contains(&edge_index)),
+        "path" | "path_prefix" => insight.nodes.iter().any(|node_id| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == *node_id)
+                .is_some_and(|node| node_path_matches(node, path_index, expected))
+        }),
+        "language" => insight.nodes.iter().any(|node_id| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == *node_id)
+                .is_some_and(|node| metadata_matches(node, "language", expected))
+        }),
+        _ => false,
+    })
+}
+
+fn insight_node_matches(graph: &CodeGraph, insight: &Insight, expected: &str) -> bool {
+    parse_node_id(expected).is_ok_and(|id| insight.nodes.contains(&id))
+        || insight.nodes.iter().any(|node_id| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == *node_id)
+                .is_some_and(|node| {
+                    text_matches(&node.label, expected)
+                        || text_matches(&kind_name(&node.kind), expected)
+                })
+        })
 }
 
 fn diagnostic_path_matches(node: &Node, expected: &str) -> bool {
@@ -6028,6 +6147,39 @@ mod tests {
             error
                 .to_string()
                 .contains("unsupported diagnostics query term")
+        );
+    }
+
+    #[test]
+    fn query_insights_returns_risk_context() {
+        let mut graph = CodeGraph::new("repo");
+        let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let orphan = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "legacy_worker",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(entry, main, EdgeKind::References, Confidence::Exact);
+
+        let result =
+            query_graph(&graph, "insights severity:info kind:orphan language:rust").unwrap();
+
+        assert_eq!(result.total_nodes, 1);
+        assert!(result.nodes.iter().any(|node| node.id == orphan));
+        assert!(result.edges.is_empty());
+
+        let by_node = query_graph(&graph, "risks node:legacy_worker").unwrap();
+        assert!(by_node.nodes.iter().any(|node| node.id == orphan));
+
+        let error = query_graph(&graph, "insights nope:value")
+            .expect_err("invalid insights term should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported insights query term")
         );
     }
 
