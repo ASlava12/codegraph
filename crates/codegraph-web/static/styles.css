@@ -1112,6 +1112,13 @@ button.cancel-action:hover:not(:disabled) {
   align-items: stretch;
 }
 
+.edge-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  width: 76px;
+}
+
 .query-item {
   display: grid;
   grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
@@ -1169,9 +1176,10 @@ button.cancel-action:hover:not(:disabled) {
   font-weight: 600;
 }
 
-.edge-explain-button {
+.edge-explain-button,
+.edge-card-button {
   align-self: stretch;
-  width: 72px;
+  width: 100%;
   height: auto;
   min-height: 30px;
   padding: 0 8px;
@@ -1181,9 +1189,15 @@ button.cancel-action:hover:not(:disabled) {
   font-size: 11px;
 }
 
-.edge-explain-button:hover {
+.edge-explain-button:hover,
+.edge-card-button:hover {
   border-color: rgba(92, 200, 167, 0.7);
   background: rgba(92, 200, 167, 0.16);
+}
+
+.edge-card-button {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .edge-explanation {

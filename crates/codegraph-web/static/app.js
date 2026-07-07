@@ -119,6 +119,7 @@ const I18N = {
     "button.labelsMinimal": "Off",
     "button.labelsAuto": "Auto",
     "button.labelsFocus": "Focus",
+    "button.card": "Card",
     "button.explain": "Explain",
     "option.any": "Any",
     "option.ready": "Ready",
@@ -357,6 +358,7 @@ const I18N = {
     "button.labelsMinimal": "Выкл",
     "button.labelsAuto": "Авто",
     "button.labelsFocus": "Фокус",
+    "button.card": "Карточка",
     "button.explain": "Пояснить",
     "option.any": "Любой",
     "option.ready": "Готово",
@@ -588,6 +590,8 @@ const state = {
   riskByNode: new Map(),
   riskSeverities: new Set(),
   activeRiskSeverity: null,
+  edgeSelectionCache: new Map(),
+  edgeSelectionNodeCache: new Map(),
   projects: [],
   queryFocus: null,
   scanJobId: null,
@@ -1864,6 +1868,8 @@ function applySemanticEnrichResult(result, root) {
   state.graphPage.truncatedNodes = false;
   state.selectedId = null;
   state.selectedEdgeKey = null;
+  state.edgeSelectionCache.clear();
+  state.edgeSelectionNodeCache.clear();
   state.hoveredId = null;
   state.queryFocus = null;
   state.insightReport = null;
@@ -2808,6 +2814,8 @@ function initializeGraph(options = {}) {
 
   state.selectedId = null;
   state.selectedEdgeKey = null;
+  state.edgeSelectionCache.clear();
+  state.edgeSelectionNodeCache.clear();
   state.hoveredId = null;
   state.positions.clear();
   state.velocities.clear();
@@ -3999,7 +4007,7 @@ function renderQueryEdge(edge, nodeMap) {
           <em>${escapeHtml(target?.label || String(edge.target))}</em>
           ${facts}
         </button>
-        ${renderExplainEdgeButton(edge)}
+        ${renderEdgeActions(edge, source, target)}
       </div>
       <div class="edge-explanation" data-edge-explanation hidden></div>
     </li>
@@ -4034,6 +4042,9 @@ function attachQueryFocusActions(container, result) {
 }
 
 function attachEdgeExplainActions(container) {
+  container.querySelectorAll("[data-select-edge]").forEach((button) => {
+    button.addEventListener("click", () => selectEdgeByKey(button.dataset.edgeSelectionKey));
+  });
   container.querySelectorAll("[data-explain-edge]").forEach((button) => {
     button.addEventListener("click", () => explainEdge(button));
   });
@@ -5315,9 +5326,9 @@ function renderSelection() {
   state.selectionRequest += 1;
   const requestId = state.selectionRequest;
   if (state.selectedEdgeKey) {
-    const edge = selectedEdge();
-    if (edge) {
-      renderEdgeSelectionPanel(edge);
+    const edgeRecord = selectedEdge();
+    if (edgeRecord) {
+      renderEdgeSelectionPanel(edgeRecord.edge, edgeRecord.source, edgeRecord.target);
     } else {
       selectionTitle.textContent = t("selection.edge");
       selectionBody.innerHTML = `<p class="empty">${escapeHtml(t("selection.noEdge"))}</p>`;
@@ -5344,16 +5355,21 @@ function renderSelection() {
 function selectedEdge() {
   const key = state.selectedEdgeKey;
   if (!key) return null;
-  return (
+  const edge =
+    state.edgeSelectionCache.get(key) ||
     state.visibleEdges.find((edge) => edgeSelectionKey(edge) === key) ||
     state.graph.edges.find((edge) => edgeSelectionKey(edge) === key) ||
-    null
-  );
+    null;
+  if (!edge) return null;
+  const cachedNodes = state.edgeSelectionNodeCache.get(key) || {};
+  return {
+    edge,
+    source: cachedNodes.source || state.graph.nodes.find((node) => node.id === edge.source),
+    target: cachedNodes.target || state.graph.nodes.find((node) => node.id === edge.target),
+  };
 }
 
-function renderEdgeSelectionPanel(edge) {
-  const source = state.graph.nodes.find((node) => node.id === edge.source);
-  const target = state.graph.nodes.find((node) => node.id === edge.target);
+function renderEdgeSelectionPanel(edge, source = null, target = null) {
   const edgeIndex = edgeIndexOf(edge);
   const metadataRows = Object.entries(edge.metadata || {})
     .filter(([key]) => key !== "edge_index")
@@ -6026,7 +6042,7 @@ function renderTraceEdge(edge, nodeMap) {
           <em>${escapeHtml(target?.label || String(edge.target))}</em>
           ${facts}
         </button>
-        ${renderExplainEdgeButton(edge)}
+        ${renderEdgeActions(edge, source, target)}
       </div>
       <div class="edge-explanation" data-edge-explanation hidden></div>
     </li>
@@ -6090,7 +6106,7 @@ function renderNeighbor(edge, selectedId, nodeMap = null) {
           <span>${escapeHtml(other ? other.label : String(otherId))}</span>
           ${facts}
         </button>
-        ${renderExplainEdgeButton(edge)}
+        ${renderEdgeActions(edge, nodeMap?.get(edge.source), nodeMap?.get(edge.target))}
       </div>
       <div class="edge-explanation" data-edge-explanation hidden></div>
     </div>
@@ -6101,6 +6117,27 @@ function renderEdgeFacts(edge) {
   const facts = edgeFacts(edge);
   if (facts.length === 0) return "";
   return `<span class="edge-facts">${facts.map((fact) => escapeHtml(fact)).join(" · ")}</span>`;
+}
+
+function renderEdgeActions(edge, source = null, target = null) {
+  return `
+    <div class="edge-actions">
+      ${renderSelectEdgeButton(edge, source, target)}
+      ${renderExplainEdgeButton(edge)}
+    </div>
+  `;
+}
+
+function renderSelectEdgeButton(edge, source = null, target = null) {
+  const selectionKey = registerEdgeSelection(edge, source, target);
+  return `
+    <button
+      class="edge-card-button"
+      type="button"
+      data-select-edge
+      data-edge-selection-key="${escapeHtml(selectionKey)}"
+    >${escapeHtml(t("button.card"))}</button>
+  `;
 }
 
 function renderExplainEdgeButton(edge) {
@@ -6116,6 +6153,23 @@ function renderExplainEdgeButton(edge) {
       data-edge-kind="${escapeHtml(edge.kind)}"
     >${escapeHtml(t("button.explain"))}</button>
   `;
+}
+
+function registerEdgeSelection(edge, source = null, target = null) {
+  const selectionKey = edgeSelectionKey(edge);
+  state.edgeSelectionCache.set(selectionKey, edge);
+  if (source || target) {
+    state.edgeSelectionNodeCache.set(selectionKey, { source, target });
+  }
+  return selectionKey;
+}
+
+function selectEdgeByKey(selectionKey) {
+  if (!selectionKey) return;
+  state.selectedId = null;
+  state.selectedEdgeKey = selectionKey;
+  renderSelection();
+  draw();
 }
 
 async function explainEdge(button) {
