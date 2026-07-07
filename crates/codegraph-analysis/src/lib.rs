@@ -411,6 +411,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_undeclared_import_insights(graph, &mut insights);
     add_unused_dependency_insights(graph, &mut insights);
     add_conflicting_dependency_insights(graph, &mut insights);
+    add_unresolved_framework_route_handler_insights(graph, &mut insights);
     add_duplicate_framework_route_insights(graph, &mut insights);
     add_custom_rule_violation_insights(graph, &mut insights);
     add_dependency_cycle_insights(graph, &mut insights);
@@ -2527,6 +2528,72 @@ fn add_duplicate_framework_route_insights(graph: &CodeGraph, insights: &mut Vec<
     }
 }
 
+fn add_unresolved_framework_route_handler_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Entrypoint
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "framework_route")
+        {
+            continue;
+        }
+        let Some(handler) = node
+            .metadata
+            .get("handler")
+            .map(|handler| handler.trim())
+            .filter(|handler| !handler.is_empty())
+        else {
+            continue;
+        };
+
+        let resolved = graph.edges.iter().any(|edge| {
+            edge.source == node.id
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|resolution| resolution == "framework_route_handler")
+        });
+        if resolved {
+            continue;
+        }
+
+        let method = node
+            .metadata
+            .get("method")
+            .map(|method| method.trim())
+            .filter(|method| !method.is_empty())
+            .unwrap_or("ROUTE");
+        let path = node
+            .metadata
+            .get("path")
+            .map(|path| path.trim())
+            .filter(|path| !path.is_empty())
+            .unwrap_or(&node.label);
+        let framework = node
+            .metadata
+            .get("framework")
+            .map(|framework| framework.trim())
+            .filter(|framework| !framework.is_empty())
+            .unwrap_or("framework");
+        let mut edges = incoming_edge_indexes(graph, node.id, EdgeKind::Entrypoint);
+        edges.extend(outgoing_edge_indexes(graph, node.id, EdgeKind::References));
+        edges.sort_unstable();
+        edges.dedup();
+
+        insights.push(Insight {
+            kind: "unresolved_framework_route_handler".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "{framework} route `{method} {path}` references handler `{handler}` but no matching function was found"
+            ),
+            nodes: vec![node.id],
+            edges,
+        });
+    }
+}
+
 fn add_custom_rule_violation_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     for node in &graph.nodes {
         if node
@@ -4530,6 +4597,102 @@ mod tests {
         assert!(duplicate.nodes.contains(&second));
         assert!(!duplicate.nodes.contains(&post));
         assert_eq!(duplicate.edges.len(), 2);
+    }
+
+    #[test]
+    fn insights_report_unresolved_framework_route_handlers() {
+        let mut graph = CodeGraph::new("repo");
+        let unresolved = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "route GET /missing",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "framework_route".to_string()),
+                ("framework".to_string(), "fastapi".to_string()),
+                ("method".to_string(), "GET".to_string()),
+                ("path".to_string(), "/missing".to_string()),
+                ("handler".to_string(), "missing_handler".to_string()),
+            ]),
+        );
+        let resolved = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "route POST /users",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "framework_route".to_string()),
+                ("framework".to_string(), "fastapi".to_string()),
+                ("method".to_string(), "POST".to_string()),
+                ("path".to_string(), "/users".to_string()),
+                ("handler".to_string(), "create_user".to_string()),
+            ]),
+        );
+        let inline = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "route GET /inline",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "framework_route".to_string()),
+                ("framework".to_string(), "express".to_string()),
+                ("method".to_string(), "GET".to_string()),
+                ("path".to_string(), "/inline".to_string()),
+            ]),
+        );
+        let file = graph.add_node(NodeKind::File, "api.py");
+        let handler = graph.add_node(NodeKind::Function, "create_user");
+        graph.add_edge(
+            graph.root,
+            unresolved,
+            EdgeKind::Entrypoint,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            graph.root,
+            resolved,
+            EdgeKind::Entrypoint,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            graph.root,
+            inline,
+            EdgeKind::Entrypoint,
+            Confidence::Syntactic,
+        );
+        graph.add_edge_with_metadata(
+            unresolved,
+            file,
+            EdgeKind::References,
+            Confidence::Syntactic,
+            BTreeMap::from([("resolution".to_string(), "framework_route_file".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            resolved,
+            handler,
+            EdgeKind::References,
+            Confidence::Syntactic,
+            BTreeMap::from([(
+                "resolution".to_string(),
+                "framework_route_handler".to_string(),
+            )]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_framework_route_handler")
+            .expect("expected unresolved route handler insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.message.contains("GET /missing"));
+        assert!(insight.message.contains("missing_handler"));
+        assert!(insight.nodes.contains(&unresolved));
+        assert!(!insight.nodes.contains(&resolved));
+        assert!(!insight.nodes.contains(&inline));
+        assert_eq!(insight.edges.len(), 2);
+        assert_eq!(
+            report.by_kind.get("unresolved_framework_route_handler"),
+            Some(&1)
+        );
     }
 
     #[test]
