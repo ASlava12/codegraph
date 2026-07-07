@@ -20,7 +20,7 @@ Implemented now:
 - Framework route entrypoints for common Python, JavaScript/TypeScript, Rust, Go, and PHP web route declarations.
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
-- Local import/include resolution for relative JavaScript/TypeScript imports and CommonJS requires, Python relative imports, quoted C/C++ includes, PHP include/require paths, Bash source paths, and common Rust module paths.
+- Local import/include resolution for relative JavaScript/TypeScript imports and CommonJS requires, Python relative/absolute project imports, quoted C/C++ includes, PHP include/require paths, Bash source paths, and common Rust module paths.
 - Manifest dependency extraction from Cargo, npm, Go, Python, and Composer projects.
 - Heuristic config reads, environment reads, and potential error/exception constructs.
 - CLI command that emits graph JSON.

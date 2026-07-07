@@ -2397,6 +2397,13 @@ fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>
         let Some(import_node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
             continue;
         };
+        if import_node
+            .metadata
+            .get("import_scope")
+            .is_some_and(|scope| scope == "local")
+        {
+            continue;
+        }
         let Some(language) = import_node.metadata.get("language").map(String::as_str) else {
             continue;
         };
@@ -4527,6 +4534,17 @@ mod tests {
         let express_import =
             import_node(&mut graph, "import express from \"express\";", "typescript");
         let lodash_require = import_node(&mut graph, "require(\"lodash\")", "javascript");
+        let local_python_import = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "import service",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "import".to_string()),
+                ("language".to_string(), "python".to_string()),
+                ("import_scope".to_string(), "local".to_string()),
+                ("resolution".to_string(), "resolved".to_string()),
+            ]),
+        );
         let fs_import = import_node(&mut graph, "import fs from \"node:fs\";", "typescript");
         graph.add_edge(file, react_import, EdgeKind::Imports, Confidence::Syntactic);
         graph.add_edge(
@@ -4541,6 +4559,12 @@ mod tests {
             EdgeKind::Imports,
             Confidence::Syntactic,
         );
+        graph.add_edge(
+            file,
+            local_python_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
         graph.add_edge(file, fs_import, EdgeKind::Imports, Confidence::Syntactic);
 
         let report = insights(&graph);
@@ -4552,6 +4576,9 @@ mod tests {
         }));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "undeclared_external_import" && insight.message.contains("react")
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "undeclared_external_import" && insight.message.contains("service")
         }));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "undeclared_external_import" && insight.message.contains("node:fs")

@@ -48,6 +48,7 @@ struct PendingLocalImport {
     import_node: NodeId,
     target: String,
     candidates: Vec<String>,
+    mark_unresolved: bool,
 }
 
 struct PendingEntrypointTarget {
@@ -321,6 +322,12 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
                     } else {
                         None
                     };
+                    let possible_local_import =
+                        if local_import.is_none() && item.kind == ParsedItemKind::Import {
+                            possible_local_import_target(language, label, &item.label)
+                        } else {
+                            None
+                        };
                     if let Some(local_import) = local_import.as_ref() {
                         item_metadata.insert("import_scope".to_string(), "local".to_string());
                         item_metadata
@@ -346,6 +353,14 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
                             import_node: item_id,
                             target: local_import.target,
                             candidates: local_import.candidates,
+                            mark_unresolved: true,
+                        });
+                    } else if let Some(possible_local_import) = possible_local_import {
+                        context.pending_local_imports.push(PendingLocalImport {
+                            import_node: item_id,
+                            target: possible_local_import.target,
+                            candidates: possible_local_import.candidates,
+                            mark_unresolved: false,
                         });
                     }
 
@@ -660,6 +675,7 @@ fn index_commonjs_require_imports(
                 import_node: import_id,
                 target: local_import.target,
                 candidates: local_import.candidates,
+                mark_unresolved: true,
             });
         }
     }
@@ -2870,6 +2886,17 @@ fn local_import_target(
     }
 }
 
+fn possible_local_import_target(
+    language: Language,
+    source_label: &str,
+    import_label: &str,
+) -> Option<LocalImportTarget> {
+    match language {
+        Language::Python => python_absolute_local_import_target(source_label, import_label),
+        _ => None,
+    }
+}
+
 fn js_local_import_target(source_label: &str, import_label: &str) -> Option<LocalImportTarget> {
     let module = first_quoted_value(import_label)?;
     if !(module.starts_with("./") || module.starts_with("../")) {
@@ -2882,6 +2909,61 @@ fn js_local_import_target(source_label: &str, import_label: &str) -> Option<Loca
             &module,
             &["js", "ts", "tsx", "mjs", "cjs"],
         ),
+    })
+}
+
+fn python_absolute_local_import_target(
+    source_label: &str,
+    import_label: &str,
+) -> Option<LocalImportTarget> {
+    let value = import_label.trim();
+    let (module, imported) = if let Some(rest) = value.strip_prefix("import ") {
+        (
+            rest.split([',', ' ', '\n', '\t'])
+                .find(|part| !part.is_empty())?,
+            None,
+        )
+    } else if let Some(rest) = value.strip_prefix("from ") {
+        let module = rest.split_whitespace().next()?;
+        if module.starts_with('.') {
+            return None;
+        }
+        let imported = rest.split_once(" import ").and_then(|(_, imported)| {
+            imported
+                .split([',', ' ', '\n', '\t'])
+                .find(|part| !part.is_empty())
+        });
+        (module, imported)
+    } else {
+        return None;
+    };
+    if module.is_empty() || module.starts_with('.') {
+        return None;
+    }
+
+    let relative = module.replace('.', "/");
+    let mut candidates = Vec::new();
+    if let Some(imported) = imported {
+        candidates.extend(python_module_candidates(&format!(
+            "{relative}/{}",
+            imported.replace('.', "/")
+        )));
+    }
+    candidates.extend(python_module_candidates(&relative));
+    if let Some(dir) = path_dir(source_label) {
+        if let Some(imported) = imported {
+            candidates.extend(python_module_candidates(&join_path(
+                Some(&dir),
+                &format!("{relative}/{}", imported.replace('.', "/")),
+            )));
+        }
+        candidates.extend(python_module_candidates(&join_path(Some(&dir), &relative)));
+    }
+    dedup_preserving_order(&mut candidates);
+
+    Some(LocalImportTarget {
+        target: module.to_string(),
+        candidates,
     })
 }
 
@@ -2920,12 +3002,22 @@ fn python_local_import_target(source_label: &str, import_label: &str) -> Option<
     }
     let relative = target.replace('.', "/");
     let module_path = join_path(base.as_deref(), &relative);
-    let mut candidates = with_file_extensions(&module_path, &["py"]);
-    candidates.push(normalize_path(&format!("{module_path}/__init__.py")));
+    let candidates = python_module_candidates(&module_path);
     Some(LocalImportTarget {
         target: format!("{}{}", ".".repeat(dot_count), target),
         candidates,
     })
+}
+
+fn python_module_candidates(module_path: &str) -> Vec<String> {
+    let mut candidates = with_file_extensions(module_path, &["py"]);
+    candidates.push(normalize_path(&format!("{module_path}/__init__.py")));
+    candidates
+}
+
+fn dedup_preserving_order(values: &mut Vec<String>) {
+    let mut seen = BTreeSet::new();
+    values.retain(|value| seen.insert(value.clone()));
 }
 
 fn c_local_import_target(source_label: &str, import_label: &str) -> Option<LocalImportTarget> {
@@ -3160,6 +3252,18 @@ fn resolve_pending_local_imports(context: &mut IndexContext) {
             add_node_metadata(
                 &mut context.graph,
                 import.import_node,
+                "import_scope",
+                "local",
+            );
+            add_node_metadata(
+                &mut context.graph,
+                import.import_node,
+                "import_target",
+                import.target.clone(),
+            );
+            add_node_metadata(
+                &mut context.graph,
+                import.import_node,
                 "resolution",
                 "resolved",
             );
@@ -3182,7 +3286,7 @@ fn resolve_pending_local_imports(context: &mut IndexContext) {
                 Confidence::Syntactic,
                 metadata,
             );
-        } else {
+        } else if import.mark_unresolved {
             add_node_metadata(
                 &mut context.graph,
                 import.import_node,
@@ -4000,6 +4104,87 @@ mod tests {
                 .get("candidate_paths")
                 .is_some_and(|value| value.contains("src/missing.js"))
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_resolves_python_absolute_local_imports() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("app").join("services")).unwrap();
+        fs::write(
+            root.join("app").join("main.py"),
+            "import utils\nfrom app.services import auth\nfrom requests import Session\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("app").join("utils.py"),
+            "def helper():\n    pass\n",
+        )
+        .unwrap();
+        fs::write(root.join("app").join("__init__.py"), "").unwrap();
+        fs::write(root.join("app").join("services").join("__init__.py"), "").unwrap();
+        fs::write(
+            root.join("app").join("services").join("auth.py"),
+            "def login():\n    pass\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let utils_import = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "import utils")
+            .expect("missing utils import node");
+        let auth_import = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "from app.services import auth")
+            .expect("missing auth import node");
+        let requests_import = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "from requests import Session")
+            .expect("missing requests import node");
+        let utils_file = node_id(&graph, NodeKind::File, "app/utils.py");
+        let auth_file = node_id(&graph, NodeKind::File, "app/services/auth.py");
+
+        assert_eq!(
+            utils_import
+                .metadata
+                .get("import_scope")
+                .map(String::as_str),
+            Some("local")
+        );
+        assert_eq!(
+            utils_import
+                .metadata
+                .get("resolved_path")
+                .map(String::as_str),
+            Some("app/utils.py")
+        );
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == utils_import.id
+                && edge.target == utils_file
+                && edge.kind == EdgeKind::References
+        }));
+        assert_eq!(
+            auth_import.metadata.get("import_scope").map(String::as_str),
+            Some("local")
+        );
+        assert_eq!(
+            auth_import
+                .metadata
+                .get("resolved_path")
+                .map(String::as_str),
+            Some("app/services/auth.py")
+        );
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == auth_import.id
+                && edge.target == auth_file
+                && edge.kind == EdgeKind::References
+        }));
+        assert!(!requests_import.metadata.contains_key("import_scope"));
 
         fs::remove_dir_all(root).unwrap();
     }
