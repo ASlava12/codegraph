@@ -516,6 +516,46 @@ struct CapabilitiesResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct ApiSchemaResponse {
+    name: &'static str,
+    api_version: u32,
+    graph_schema_version: u32,
+    description: &'static str,
+    groups: Vec<ApiSchemaGroup>,
+    enum_values: BTreeMap<&'static str, Vec<&'static str>>,
+}
+
+#[derive(Debug, Serialize)]
+struct ApiSchemaGroup {
+    group: &'static str,
+    endpoints: Vec<ApiEndpointSpec>,
+}
+
+#[derive(Debug, Serialize)]
+struct ApiEndpointSpec {
+    method: &'static str,
+    path: &'static str,
+    summary: &'static str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    parameters: Vec<ApiParameterSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body: Option<&'static str>,
+    response: &'static str,
+    streaming: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ApiParameterSpec {
+    name: &'static str,
+    location: &'static str,
+    required: bool,
+    value_type: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default: Option<&'static str>,
+    description: &'static str,
+}
+
+#[derive(Debug, Serialize)]
 struct EndpointGroupResponse {
     group: &'static str,
     endpoints: Vec<&'static str>,
@@ -664,6 +704,7 @@ async fn main() -> Result<()> {
         .route("/app.js", get(app_js))
         .route("/styles.css", get(styles_css))
         .route("/api/capabilities", get(capabilities_api))
+        .route("/api/schema", get(api_schema_api))
         .route("/api/health", get(health))
         .route("/api/metrics", get(metrics_api))
         .route("/api/languages", get(languages_api))
@@ -1110,6 +1151,10 @@ async fn capabilities_api(
                 .map(|cache| cache.dir().display().to_string()),
         },
     }))
+}
+
+async fn api_schema_api() -> Json<ApiSchemaResponse> {
+    Json(api_schema_response())
 }
 
 async fn languages_api() -> Json<Vec<LanguageResponse>> {
@@ -2492,9 +2537,920 @@ fn language_responses() -> Vec<LanguageResponse> {
         .collect()
 }
 
+fn api_schema_response() -> ApiSchemaResponse {
+    ApiSchemaResponse {
+        name: "CodeGraph API",
+        api_version: 1,
+        graph_schema_version: CODEGRAPH_SCHEMA_VERSION,
+        description: "Machine-readable API contract for CodeGraph clients and agents.",
+        groups: api_schema_groups(),
+        enum_values: BTreeMap::from([
+            ("export_format", vec!["json", "dot", "ndjson"]),
+            (
+                "job_status",
+                vec!["queued", "running", "complete", "failed", "canceled"],
+            ),
+            ("insight_severity", vec!["info", "warning", "error"]),
+            (
+                "semantic_work_status",
+                vec!["ready", "missing_server", "unsupported"],
+            ),
+            (
+                "semantic_work_capability",
+                vec![
+                    "definitions",
+                    "diagnostics",
+                    "symbols",
+                    "workspace_symbols",
+                    "references",
+                ],
+            ),
+        ]),
+    }
+}
+
+fn api_schema_groups() -> Vec<ApiSchemaGroup> {
+    vec![
+        ApiSchemaGroup {
+            group: "system",
+            endpoints: vec![
+                api_get(
+                    "/api/capabilities",
+                    "Discover server features, limits, route groups, cache state, and configured projects.",
+                    vec![],
+                    "CapabilitiesResponse",
+                ),
+                api_get(
+                    "/api/schema",
+                    "Discover this machine-readable endpoint contract.",
+                    vec![],
+                    "ApiSchemaResponse",
+                ),
+                api_get(
+                    "/api/health",
+                    "Read runtime health, retained job-store counts, and concurrency slots.",
+                    vec![],
+                    "HealthResponse",
+                ),
+                api_get(
+                    "/api/metrics",
+                    "Read runtime metrics including versions, cache state, job stores, and concurrency.",
+                    vec![],
+                    "MetricsResponse",
+                ),
+                api_get(
+                    "/api/projects",
+                    "List configured project roots available to the server.",
+                    vec![],
+                    "ProjectResponse[]",
+                ),
+                api_get(
+                    "/api/languages",
+                    "List built-in language adapters and detection patterns.",
+                    vec![],
+                    "LanguageResponse[]",
+                ),
+                api_get(
+                    "/api/lsp",
+                    "List semantic language server discovery results.",
+                    vec![],
+                    "LspDiscoveryReport",
+                ),
+                api_get(
+                    "/api/scan-options",
+                    "Show effective scan policy for a project root.",
+                    vec![path_param()],
+                    "ScanOptionsResponse",
+                ),
+            ],
+        },
+        ApiSchemaGroup {
+            group: "scan",
+            endpoints: vec![
+                api_get(
+                    "/api/scan",
+                    "Scan a project and return the full graph plus cache status.",
+                    vec![path_param()],
+                    "ScanResponse",
+                ),
+                api_get(
+                    "/api/coverage",
+                    "Explain scan coverage, indexed files, skip counts, and language counts.",
+                    vec![path_param()],
+                    "ScanCoverageReport",
+                ),
+                api_get(
+                    "/api/cache-diff",
+                    "Explain cache fingerprint changes and reusable file/byte estimates without a full graph scan.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            Some("100"),
+                            "Maximum changed entries per list.",
+                        ),
+                    ],
+                    "CacheDiffReport",
+                ),
+                api_post(
+                    "/api/scan-jobs",
+                    "Queue a long-running scan job.",
+                    vec![],
+                    Some("ScanJobRequest { path?: string }"),
+                    "ScanJob",
+                    false,
+                ),
+                api_get(
+                    "/api/scan-jobs",
+                    "List retained scan jobs, optionally filtered by status.",
+                    vec![
+                        job_status_param(),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            Some("50"),
+                            "Maximum jobs to return.",
+                        ),
+                    ],
+                    "ScanJobListResponse",
+                ),
+                api_get(
+                    "/api/scan-jobs/{id}",
+                    "Read retained scan job status by id.",
+                    vec![id_param()],
+                    "ScanJob",
+                ),
+                api_delete(
+                    "/api/scan-jobs/{id}",
+                    "Cancel a queued or running scan job.",
+                    vec![id_param()],
+                    "ScanJob",
+                ),
+                api_get_stream(
+                    "/api/scan-jobs/{id}/events",
+                    "Stream scan job status events with server-sent events.",
+                    vec![id_param()],
+                    "SSE<ScanJob>",
+                ),
+                api_get(
+                    "/api/scan-jobs/{id}/result",
+                    "Return graph result for a completed scan job.",
+                    vec![id_param()],
+                    "ScanJobResult",
+                ),
+            ],
+        },
+        ApiSchemaGroup {
+            group: "semantic",
+            endpoints: vec![
+                api_get(
+                    "/api/semantic-readiness",
+                    "Report language coverage by available semantic language servers.",
+                    vec![path_param()],
+                    "SemanticReadinessReport",
+                ),
+                api_get(
+                    "/api/semantic-plan",
+                    "Plan semantic LSP work with optional work item filters.",
+                    semantic_filter_params(),
+                    "SemanticEnrichmentPlan",
+                ),
+                api_get(
+                    "/api/semantic-batch",
+                    "Group semantic LSP work into executable language-server batches.",
+                    semantic_filter_params(),
+                    "SemanticExecutionBatch",
+                ),
+                api_post(
+                    "/api/semantic-patch",
+                    "Map semantic LSP responses into graph patch operations.",
+                    vec![],
+                    Some("SemanticPatchRequest"),
+                    "SemanticGraphPatch",
+                    false,
+                ),
+                api_post(
+                    "/api/semantic-apply",
+                    "Apply semantic LSP responses and return enriched graph plus report.",
+                    vec![],
+                    Some("SemanticPatchRequest"),
+                    "SemanticGraphApplyResult",
+                    false,
+                ),
+                api_post(
+                    "/api/semantic-enrich",
+                    "Run ready semantic LSP work synchronously and return enriched graph plus report.",
+                    vec![],
+                    Some("SemanticEnrichRequest"),
+                    "SemanticEnrichResponse",
+                    false,
+                ),
+                api_post(
+                    "/api/semantic-jobs",
+                    "Queue semantic enrichment as a retained async job.",
+                    vec![],
+                    Some("SemanticEnrichRequest"),
+                    "SemanticJob",
+                    false,
+                ),
+                api_get(
+                    "/api/semantic-jobs",
+                    "List retained semantic jobs, optionally filtered by status.",
+                    vec![
+                        job_status_param(),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            Some("50"),
+                            "Maximum jobs to return.",
+                        ),
+                    ],
+                    "SemanticJobListResponse",
+                ),
+                api_get(
+                    "/api/semantic-jobs/{id}",
+                    "Read retained semantic job status by id.",
+                    vec![id_param()],
+                    "SemanticJob",
+                ),
+                api_delete(
+                    "/api/semantic-jobs/{id}",
+                    "Cancel a queued or running semantic job.",
+                    vec![id_param()],
+                    "SemanticJob",
+                ),
+                api_get_stream(
+                    "/api/semantic-jobs/{id}/events",
+                    "Stream semantic job status events with server-sent events.",
+                    vec![id_param()],
+                    "SSE<SemanticJob>",
+                ),
+                api_get(
+                    "/api/semantic-jobs/{id}/result",
+                    "Return enriched graph result for a completed semantic job.",
+                    vec![id_param()],
+                    "SemanticJobResult",
+                ),
+            ],
+        },
+        ApiSchemaGroup {
+            group: "graph",
+            endpoints: vec![
+                api_get(
+                    "/api/export",
+                    "Export a full graph as JSON, DOT, or NDJSON.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "format",
+                            false,
+                            "export_format",
+                            Some("json"),
+                            "Export format.",
+                        ),
+                    ],
+                    "CodeGraph | DOT | NDJSON",
+                ),
+                api_get(
+                    "/api/graph",
+                    "Read a server-side paged and filtered graph slice.",
+                    graph_slice_params(),
+                    "GraphSlice",
+                ),
+                api_get(
+                    "/api/node-context",
+                    "Read selected node context with neighboring edges.",
+                    vec![
+                        path_param(),
+                        query_param("node_id", true, "u64", None, "Node numeric id."),
+                        query_param(
+                            "edge_limit",
+                            false,
+                            "usize",
+                            Some("80"),
+                            "Maximum context edges.",
+                        ),
+                    ],
+                    "NodeContext",
+                ),
+                api_get(
+                    "/api/focus",
+                    "Build a focused subgraph from node ids and edge indexes.",
+                    vec![
+                        path_param(),
+                        query_param("node_ids", false, "csv<u64>", None, "Node ids to include."),
+                        query_param(
+                            "edge_indexes",
+                            false,
+                            "csv<usize>",
+                            None,
+                            "Edge indexes to include.",
+                        ),
+                        query_param(
+                            "edge_limit",
+                            false,
+                            "usize",
+                            Some("200"),
+                            "Maximum incident edges.",
+                        ),
+                    ],
+                    "QueryResult",
+                ),
+                api_get(
+                    "/api/summary",
+                    "Summarize graph node/edge facts and facets.",
+                    vec![path_param()],
+                    "GraphSummary",
+                ),
+                api_get(
+                    "/api/query",
+                    "Run a focused graph query expression.",
+                    vec![
+                        path_param(),
+                        query_param("q", true, "string", None, "Graph query expression."),
+                    ],
+                    "QueryResult",
+                ),
+                api_get(
+                    "/api/explain-edge",
+                    "Explain why an edge exists with confidence and provenance evidence.",
+                    vec![
+                        path_param(),
+                        query_param("edge_index", false, "usize", None, "Exact edge index."),
+                        query_param(
+                            "source",
+                            false,
+                            "string",
+                            None,
+                            "Source id or label substring.",
+                        ),
+                        query_param(
+                            "target",
+                            false,
+                            "string",
+                            None,
+                            "Target id or label substring.",
+                        ),
+                        query_param("kind", false, "string", None, "Edge kind substring."),
+                    ],
+                    "EdgeExplanation?",
+                ),
+            ],
+        },
+        ApiSchemaGroup {
+            group: "analysis",
+            endpoints: vec![
+                api_get(
+                    "/api/report",
+                    "Return a production project report snapshot with cache, coverage, summary, quality gate, topology, and hotspots.",
+                    report_params(),
+                    "ProjectReportResponse",
+                ),
+                api_get(
+                    "/api/architecture",
+                    "Group files and cross-area dependencies by top-level project area.",
+                    vec![
+                        path_param(),
+                        query_param("group_limit", false, "usize", Some("50"), "Maximum groups."),
+                        query_param(
+                            "edge_limit",
+                            false,
+                            "usize",
+                            Some("200"),
+                            "Maximum inter-group edges.",
+                        ),
+                    ],
+                    "ArchitectureMap",
+                ),
+                api_get(
+                    "/api/language-dependencies",
+                    "Summarize mixed-language dependency links.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            Some("50"),
+                            "Maximum language links.",
+                        ),
+                    ],
+                    "LanguageDependencyReport",
+                ),
+                api_get(
+                    "/api/hotspots",
+                    "List high-degree files, functions, entrypoints, and config nodes.",
+                    vec![
+                        path_param(),
+                        query_param("limit", false, "usize", Some("25"), "Maximum hotspots."),
+                    ],
+                    "HotspotReport",
+                ),
+                api_get(
+                    "/api/entrypoints",
+                    "List detected entrypoint candidate nodes.",
+                    vec![path_param()],
+                    "Node[]",
+                ),
+                api_get(
+                    "/api/entrypoint-traces",
+                    "Trace outgoing dependency flows from entrypoints.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "search",
+                            false,
+                            "string",
+                            None,
+                            "Filter entrypoints by label/kind/language/metadata.",
+                        ),
+                        query_param("depth", false, "usize", Some("3"), "Maximum trace depth."),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            Some("25"),
+                            "Maximum entrypoint traces.",
+                        ),
+                    ],
+                    "EntrypointTraceReport",
+                ),
+                api_get(
+                    "/api/insights",
+                    "List investigation insights with severity, kind, and search filters.",
+                    insight_params(),
+                    "InsightReport",
+                ),
+                api_get(
+                    "/api/check",
+                    "Run a quality gate over insights.",
+                    check_params(),
+                    "CheckReport",
+                ),
+                api_get(
+                    "/api/trace",
+                    "Trace outgoing dependencies from a node id or label.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "label",
+                            false,
+                            "string",
+                            None,
+                            "Start node label substring.",
+                        ),
+                        query_param("node_id", false, "u64", None, "Start node id."),
+                        query_param("depth", false, "usize", Some("2"), "Maximum trace depth."),
+                    ],
+                    "TraceResult?",
+                ),
+                api_get(
+                    "/api/dependents",
+                    "Trace incoming dependents that can reach a node.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "label",
+                            false,
+                            "string",
+                            None,
+                            "Target node label substring.",
+                        ),
+                        query_param("node_id", false, "u64", None, "Target node id."),
+                        query_param("depth", false, "usize", Some("3"), "Maximum trace depth."),
+                    ],
+                    "TraceResult?",
+                ),
+                api_get(
+                    "/api/trace-config",
+                    "Trace config/environment readers and paths from entrypoints.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "target",
+                            true,
+                            "string",
+                            None,
+                            "Config or environment target.",
+                        ),
+                        query_param(
+                            "depth",
+                            false,
+                            "usize",
+                            Some("6"),
+                            "Maximum upstream depth.",
+                        ),
+                        query_param("limit", false, "usize", Some("50"), "Maximum paths."),
+                    ],
+                    "ConfigTraceResult",
+                ),
+                api_get(
+                    "/api/trace-errors",
+                    "Trace potential error/exception paths back to sources and entrypoints.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "target",
+                            true,
+                            "string",
+                            None,
+                            "Error label or metadata substring.",
+                        ),
+                        query_param(
+                            "depth",
+                            false,
+                            "usize",
+                            Some("6"),
+                            "Maximum upstream depth.",
+                        ),
+                        query_param("limit", false, "usize", Some("50"), "Maximum paths."),
+                    ],
+                    "ErrorTraceResult",
+                ),
+            ],
+        },
+        ApiSchemaGroup {
+            group: "source",
+            endpoints: vec![
+                api_get(
+                    "/api/source",
+                    "Read a source snippet by project root, path, and line span.",
+                    vec![
+                        query_param("root", false, "path", Some("."), "Project root."),
+                        query_param("path", true, "path", None, "Source path inside root."),
+                        query_param("start_line", false, "u32", None, "First line."),
+                        query_param("end_line", false, "u32", None, "Last line."),
+                        query_param("context", false, "u32", None, "Context lines around span."),
+                    ],
+                    "SourceResponse",
+                ),
+                api_get(
+                    "/api/source-search",
+                    "Search source text with compact context snippets.",
+                    vec![
+                        path_param(),
+                        query_param("q", true, "string", None, "Search text."),
+                        query_param(
+                            "path_filter",
+                            false,
+                            "string",
+                            None,
+                            "Only paths containing substring.",
+                        ),
+                        query_param(
+                            "case_sensitive",
+                            false,
+                            "bool",
+                            Some("false"),
+                            "Match case exactly.",
+                        ),
+                        query_param("limit", false, "usize", Some("50"), "Maximum matches."),
+                        query_param(
+                            "context",
+                            false,
+                            "usize",
+                            Some("2"),
+                            "Context lines per match.",
+                        ),
+                    ],
+                    "SourceSearchResult",
+                ),
+            ],
+        },
+    ]
+}
+
+fn graph_slice_params() -> Vec<ApiParameterSpec> {
+    vec![
+        path_param(),
+        query_param(
+            "node_offset",
+            false,
+            "usize",
+            Some("0"),
+            "Node page offset.",
+        ),
+        query_param("node_limit", false, "usize", Some("250"), "Node page size."),
+        query_param(
+            "edge_offset",
+            false,
+            "usize",
+            Some("0"),
+            "Edge page offset.",
+        ),
+        query_param("edge_limit", false, "usize", Some("500"), "Edge page size."),
+        query_param(
+            "path_prefix",
+            false,
+            "string",
+            None,
+            "Restrict nodes by path prefix.",
+        ),
+        query_param("kind", false, "string", None, "Restrict nodes by kind."),
+        query_param(
+            "search",
+            false,
+            "string",
+            None,
+            "Search labels, ids, and metadata.",
+        ),
+        query_param(
+            "language",
+            false,
+            "string",
+            None,
+            "Restrict nodes by language metadata.",
+        ),
+        query_param(
+            "item_kind",
+            false,
+            "string",
+            None,
+            "Restrict nodes by item_kind metadata.",
+        ),
+        query_param(
+            "edge_kind",
+            false,
+            "string",
+            None,
+            "Restrict edges by kind.",
+        ),
+        query_param(
+            "confidence",
+            false,
+            "string",
+            None,
+            "Restrict edges by confidence.",
+        ),
+        query_param(
+            "edge_relation",
+            false,
+            "string",
+            None,
+            "Restrict edges by relation metadata.",
+        ),
+        query_param(
+            "edge_source",
+            false,
+            "string",
+            None,
+            "Restrict edges by source metadata.",
+        ),
+    ]
+}
+
+fn report_params() -> Vec<ApiParameterSpec> {
+    vec![
+        path_param(),
+        query_param(
+            "architecture_group_limit",
+            false,
+            "usize",
+            Some("50"),
+            "Maximum architecture groups.",
+        ),
+        query_param(
+            "architecture_edge_limit",
+            false,
+            "usize",
+            Some("200"),
+            "Maximum architecture edges.",
+        ),
+        query_param(
+            "language_link_limit",
+            false,
+            "usize",
+            Some("50"),
+            "Maximum language dependency links.",
+        ),
+        query_param(
+            "hotspot_limit",
+            false,
+            "usize",
+            Some("25"),
+            "Maximum hotspots.",
+        ),
+        query_param(
+            "insight_limit",
+            false,
+            "usize",
+            Some("50"),
+            "Maximum returned insights; total counts stay complete.",
+        ),
+        query_param(
+            "fail_on",
+            false,
+            "insight_severity",
+            Some("error"),
+            "Quality gate threshold.",
+        ),
+    ]
+}
+
+fn insight_params() -> Vec<ApiParameterSpec> {
+    vec![
+        path_param(),
+        query_param(
+            "severity",
+            false,
+            "insight_severity",
+            None,
+            "Filter by exact severity.",
+        ),
+        query_param(
+            "kind",
+            false,
+            "string",
+            None,
+            "Filter insight kind by substring.",
+        ),
+        query_param(
+            "search",
+            false,
+            "string",
+            None,
+            "Filter kind, message, node ids, or edge indexes.",
+        ),
+        query_param(
+            "limit",
+            false,
+            "usize",
+            Some("50"),
+            "Maximum returned insights.",
+        ),
+    ]
+}
+
+fn check_params() -> Vec<ApiParameterSpec> {
+    vec![
+        path_param(),
+        query_param(
+            "fail_on",
+            false,
+            "insight_severity",
+            Some("error"),
+            "Quality gate threshold.",
+        ),
+        query_param(
+            "kind",
+            false,
+            "string",
+            None,
+            "Restrict insight kinds by substring.",
+        ),
+        query_param(
+            "search",
+            false,
+            "string",
+            None,
+            "Restrict insights by kind, message, node ids, or edge indexes.",
+        ),
+        query_param(
+            "limit",
+            false,
+            "usize",
+            Some("50"),
+            "Maximum insights in nested report.",
+        ),
+    ]
+}
+
+fn semantic_filter_params() -> Vec<ApiParameterSpec> {
+    vec![
+        path_param(),
+        query_param(
+            "work_item_limit",
+            false,
+            "usize",
+            Some("25"),
+            "Maximum semantic work items.",
+        ),
+        query_param(
+            "work_language",
+            false,
+            "string",
+            None,
+            "Restrict work items by language.",
+        ),
+        query_param(
+            "work_status",
+            false,
+            "semantic_work_status",
+            None,
+            "Restrict work items by status.",
+        ),
+        query_param(
+            "work_capability",
+            false,
+            "semantic_work_capability",
+            None,
+            "Restrict work items by capability.",
+        ),
+    ]
+}
+
+fn api_get(
+    path: &'static str,
+    summary: &'static str,
+    parameters: Vec<ApiParameterSpec>,
+    response: &'static str,
+) -> ApiEndpointSpec {
+    api_endpoint("GET", path, summary, parameters, None, response, false)
+}
+
+fn api_get_stream(
+    path: &'static str,
+    summary: &'static str,
+    parameters: Vec<ApiParameterSpec>,
+    response: &'static str,
+) -> ApiEndpointSpec {
+    api_endpoint("GET", path, summary, parameters, None, response, true)
+}
+
+fn api_post(
+    path: &'static str,
+    summary: &'static str,
+    parameters: Vec<ApiParameterSpec>,
+    body: Option<&'static str>,
+    response: &'static str,
+    streaming: bool,
+) -> ApiEndpointSpec {
+    api_endpoint("POST", path, summary, parameters, body, response, streaming)
+}
+
+fn api_delete(
+    path: &'static str,
+    summary: &'static str,
+    parameters: Vec<ApiParameterSpec>,
+    response: &'static str,
+) -> ApiEndpointSpec {
+    api_endpoint("DELETE", path, summary, parameters, None, response, false)
+}
+
+fn api_endpoint(
+    method: &'static str,
+    path: &'static str,
+    summary: &'static str,
+    parameters: Vec<ApiParameterSpec>,
+    body: Option<&'static str>,
+    response: &'static str,
+    streaming: bool,
+) -> ApiEndpointSpec {
+    ApiEndpointSpec {
+        method,
+        path,
+        summary,
+        parameters,
+        body,
+        response,
+        streaming,
+    }
+}
+
+fn path_param() -> ApiParameterSpec {
+    query_param("path", false, "path", Some("."), "Project root path.")
+}
+
+fn id_param() -> ApiParameterSpec {
+    ApiParameterSpec {
+        name: "id",
+        location: "path",
+        required: true,
+        value_type: "string",
+        default: None,
+        description: "Retained job id.",
+    }
+}
+
+fn job_status_param() -> ApiParameterSpec {
+    query_param("status", false, "job_status", None, "Filter by job status.")
+}
+
+fn query_param(
+    name: &'static str,
+    required: bool,
+    value_type: &'static str,
+    default: Option<&'static str>,
+    description: &'static str,
+) -> ApiParameterSpec {
+    ApiParameterSpec {
+        name,
+        location: "query",
+        required,
+        value_type,
+        default,
+        description,
+    }
+}
+
 fn capability_features(cache_enabled: bool) -> Vec<&'static str> {
     let mut features = vec![
         "multi_project_roots",
+        "api_schema",
         "repository_scan_policy",
         "mixed_language_syntax_graph",
         "source_preview",
@@ -2535,6 +3491,7 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
             group: "system",
             endpoints: vec![
                 "GET /api/capabilities",
+                "GET /api/schema",
                 "GET /api/health",
                 "GET /api/metrics",
                 "GET /api/projects",
@@ -2750,6 +3707,7 @@ mod tests {
         let without_cache = capability_features(false);
         let with_cache = capability_features(true);
 
+        assert!(without_cache.contains(&"api_schema"));
         assert!(without_cache.contains(&"async_scan_jobs"));
         assert!(without_cache.contains(&"job_cancellation"));
         assert!(without_cache.contains(&"runtime_metrics"));
@@ -2767,12 +3725,44 @@ mod tests {
             .collect();
 
         assert!(endpoints.contains(&"GET /api/capabilities"));
+        assert!(endpoints.contains(&"GET /api/schema"));
         assert!(endpoints.contains(&"GET /api/metrics"));
         assert!(endpoints.contains(&"GET /api/report"));
         assert!(endpoints.contains(&"GET /api/query"));
         assert!(endpoints.contains(&"GET /api/node-context"));
         assert!(endpoints.contains(&"POST /api/scan-jobs"));
         assert!(endpoints.contains(&"POST /api/semantic-jobs"));
+    }
+
+    #[test]
+    fn api_schema_lists_agent_contracts() {
+        let schema = api_schema_response();
+        let endpoints: Vec<_> = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .map(|endpoint| (endpoint.method, endpoint.path))
+            .collect();
+
+        assert_eq!(schema.api_version, 1);
+        assert!(schema.enum_values.contains_key("export_format"));
+        assert!(endpoints.contains(&("GET", "/api/schema")));
+        assert!(endpoints.contains(&("GET", "/api/report")));
+        assert!(endpoints.contains(&("GET", "/api/cache-diff")));
+        assert!(endpoints.contains(&("GET", "/api/query")));
+        assert!(endpoints.contains(&("POST", "/api/scan-jobs")));
+        assert!(endpoints.contains(&("GET", "/api/scan-jobs/{id}/events")));
+        assert!(
+            schema
+                .groups
+                .iter()
+                .flat_map(|group| group.endpoints.iter())
+                .find(|endpoint| endpoint.path == "/api/query")
+                .is_some_and(|endpoint| endpoint
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.name == "q" && parameter.required))
+        );
     }
 
     #[test]

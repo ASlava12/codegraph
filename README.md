@@ -38,6 +38,7 @@ Implemented now:
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
 - API capabilities endpoint for discovering supported languages, exports, features, limits, cache state, and route groups.
+- Machine-readable API schema endpoint for agents and integrations.
 - Runtime metrics endpoint for uptime, API/schema versions, roots, language/feature counts, cache state, job stores, and concurrency.
 - Project report snapshots in CLI, API, and web export for summary, quality gate, insights, topology reports, cache, and scan coverage.
 - Web overview chips for server capabilities, API/schema versions, cache state, supported language/export counts, job limits, and route groups.
@@ -421,6 +422,7 @@ Scan API:
 ```bash
 curl 'http://127.0.0.1:3765/api/projects'
 curl 'http://127.0.0.1:3765/api/capabilities'
+curl 'http://127.0.0.1:3765/api/schema'
 curl 'http://127.0.0.1:3765/api/health'
 curl 'http://127.0.0.1:3765/api/metrics'
 curl 'http://127.0.0.1:3765/api/scan-options?path=.'
