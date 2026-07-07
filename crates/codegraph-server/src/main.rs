@@ -2758,6 +2758,30 @@ fn api_schema_response() -> ApiSchemaResponse {
                 ],
             ),
             (
+                "graph_query_node_term",
+                vec![
+                    "id",
+                    "kind",
+                    "label",
+                    "language",
+                    "item_kind",
+                    "package_id",
+                    "metadata.*",
+                ],
+            ),
+            (
+                "graph_query_edge_term",
+                vec![
+                    "edge",
+                    "edge_index",
+                    "kind",
+                    "source",
+                    "target",
+                    "confidence",
+                    "metadata.*",
+                ],
+            ),
+            (
                 "graph_query_cycle_term",
                 vec![
                     "id",
@@ -4386,6 +4410,18 @@ mod tests {
                 .enum_values
                 .get("graph_query_entrypoint_term")
                 .is_some_and(|terms| terms.contains(&"search") && terms.contains(&"language"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_node_term")
+                .is_some_and(|terms| terms.contains(&"metadata.*") && terms.contains(&"label"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_edge_term")
+                .is_some_and(|terms| terms.contains(&"edge_index") && terms.contains(&"confidence"))
         );
         assert!(
             schema

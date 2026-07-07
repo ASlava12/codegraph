@@ -40,7 +40,7 @@ Implemented now:
 - HTTP API and embedded web UI for interactive graph exploration.
 - API capabilities endpoint for discovering supported languages, exports, features, limits, cache state, and route groups.
 - Machine-readable API schema endpoint for agents and integrations.
-- API schema enum values document supported graph query commands and diagnostic query terms.
+- API schema enum values document supported graph query commands and query terms, including exact edge index lookups.
 - API schema enum values document graph node kinds, edge kinds, and confidence levels used by graph filters.
 - API schema enum values stay aligned with semantic work statuses and capabilities used by LSP work queues.
 - Runtime metrics endpoint for uptime, API/schema versions, roots, language/feature counts, cache state, job stores, and concurrency.
@@ -344,6 +344,7 @@ Query focused graph slices:
 ```bash
 cargo run -p codegraph-cli -- query 'nodes kind:function label:main' .
 cargo run -p codegraph-cli -- query 'edges kind:calls source:main' .
+cargo run -p codegraph-cli -- query 'edges edge_index:0' .
 cargo run -p codegraph-cli -- query 'edges confidence:heuristic' .
 cargo run -p codegraph-cli -- query 'calls(function:main)' .
 cargo run -p codegraph-cli -- query 'trace label:main depth:3' .

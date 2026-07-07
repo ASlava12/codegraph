@@ -2502,11 +2502,15 @@ fn query_edges(
     let matched: Vec<_> = graph
         .edges
         .iter()
-        .filter(|edge| edge_matches(graph, edge, &spec.terms))
-        .cloned()
+        .enumerate()
+        .filter(|(edge_index, edge)| edge_matches(graph, *edge_index, edge, &spec.terms))
         .collect();
     let total_edges = matched.len();
-    let edges: Vec<_> = matched.into_iter().take(spec.limit).collect();
+    let edges: Vec<_> = matched
+        .into_iter()
+        .take(spec.limit)
+        .map(|(edge_index, edge)| edge_with_index(edge_index, edge))
+        .collect();
     let nodes = endpoint_nodes(graph, &edges);
     let total_nodes = nodes.len();
 
@@ -4159,7 +4163,10 @@ fn is_node_term(key: &str) -> bool {
 }
 
 fn is_edge_term(key: &str) -> bool {
-    matches!(key, "kind" | "source" | "target" | "confidence") || key.starts_with("metadata.")
+    matches!(
+        key,
+        "kind" | "source" | "target" | "confidence" | "edge" | "edge_index"
+    ) || key.starts_with("metadata.")
 }
 
 fn is_lsp_diagnostic_node(node: &Node) -> bool {
@@ -4859,8 +4866,16 @@ fn node_search_matches(node: &Node, expected: &str) -> bool {
             .any(|(key, value)| text_matches(key, expected) || text_matches(value, expected))
 }
 
-fn edge_matches(graph: &CodeGraph, edge: &Edge, terms: &BTreeMap<String, String>) -> bool {
+fn edge_matches(
+    graph: &CodeGraph,
+    edge_index: usize,
+    edge: &Edge,
+    terms: &BTreeMap<String, String>,
+) -> bool {
     terms.iter().all(|(key, expected)| match key.as_str() {
+        "edge" | "edge_index" => expected
+            .parse::<usize>()
+            .is_ok_and(|expected_index| edge_index == expected_index),
         "kind" => text_matches(&edge_kind_name(&edge.kind), expected),
         "source" => endpoint_matches(graph, edge.source, expected),
         "target" => endpoint_matches(graph, edge.target, expected),
@@ -8052,7 +8067,20 @@ mod tests {
         assert_eq!(result.total_edges, 1);
         assert_eq!(result.edges[0].source, main);
         assert_eq!(result.edges[0].target, helper);
+        assert_eq!(
+            result.edges[0].metadata.get("edge_index"),
+            Some(&"0".to_string())
+        );
         assert_eq!(result.nodes.len(), 2);
+
+        let by_index = query_graph(&graph, "edges edge_index:1").unwrap();
+        assert_eq!(by_index.total_edges, 1);
+        assert_eq!(by_index.edges[0].source, other);
+        assert_eq!(by_index.edges[0].target, helper);
+        assert_eq!(
+            by_index.edges[0].metadata.get("edge_index"),
+            Some(&"1".to_string())
+        );
     }
 
     #[test]
