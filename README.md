@@ -60,6 +60,7 @@ Implemented now:
 - Dependency consistency insights for external imports that are not backed by declared manifest dependencies.
 - Dependency consistency insights for runtime manifest dependencies with no matching import.
 - Dependency consistency insights for package declarations with conflicting manifest constraints.
+- Framework route insights for duplicate HTTP method/path declarations.
 - Dependency cycle insights for circular calls, imports, references, and manifest dependency edges.
 
 Planned next:

@@ -398,6 +398,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_undeclared_import_insights(graph, &mut insights);
     add_unused_dependency_insights(graph, &mut insights);
     add_conflicting_dependency_insights(graph, &mut insights);
+    add_duplicate_framework_route_insights(graph, &mut insights);
     add_dependency_cycle_insights(graph, &mut insights);
     insights.sort_by(|left, right| {
         right
@@ -2431,6 +2432,76 @@ fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &mut Vec<Ins
     }
 }
 
+fn add_duplicate_framework_route_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let mut groups: BTreeMap<(String, String), Vec<NodeId>> = BTreeMap::new();
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Entrypoint
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "framework_route")
+        {
+            continue;
+        }
+        let Some(path) = node
+            .metadata
+            .get("path")
+            .map(|path| path.trim())
+            .filter(|path| !path.is_empty())
+        else {
+            continue;
+        };
+        let method = node
+            .metadata
+            .get("method")
+            .map(|method| method.trim())
+            .filter(|method| !method.is_empty())
+            .unwrap_or("ROUTE")
+            .to_ascii_uppercase();
+        groups
+            .entry((method, path.to_string()))
+            .or_default()
+            .push(node.id);
+    }
+
+    for ((method, path), nodes) in groups {
+        if nodes.len() < 2 {
+            continue;
+        }
+
+        let handlers = nodes
+            .iter()
+            .filter_map(|id| graph.nodes.iter().find(|node| node.id == *id))
+            .filter_map(|node| node.metadata.get("handler").map(String::as_str))
+            .collect::<BTreeSet<_>>();
+        let handler_text = if handlers.is_empty() {
+            "multiple handlers".to_string()
+        } else {
+            handlers
+                .iter()
+                .take(5)
+                .map(|handler| format!("`{handler}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let edge_indexes = nodes
+            .iter()
+            .flat_map(|node| outgoing_edge_indexes(graph, *node, EdgeKind::References))
+            .collect();
+
+        insights.push(Insight {
+            kind: "duplicate_framework_route".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Route `{method} {path}` is declared {} times ({handler_text})",
+                nodes.len()
+            ),
+            nodes,
+            edges: edge_indexes,
+        });
+    }
+}
+
 fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     const MAX_CYCLE_INSIGHTS: usize = 50;
 
@@ -2919,6 +2990,21 @@ fn incoming_edge_indexes(graph: &CodeGraph, target: NodeId, kind: EdgeKind) -> V
         .enumerate()
         .filter_map(|(index, edge)| {
             if edge.target == target && edge.kind == kind {
+                Some(index)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn outgoing_edge_indexes(graph: &CodeGraph, source: NodeId, kind: EdgeKind) -> Vec<usize> {
+    graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter_map(|(index, edge)| {
+            if edge.source == source && edge.kind == kind {
                 Some(index)
             } else {
                 None
@@ -4278,6 +4364,74 @@ mod tests {
         assert!(conflict.nodes.contains(&serde));
         assert!(!conflict.nodes.contains(&anyhow));
         assert_eq!(conflict.edges.len(), 2);
+    }
+
+    #[test]
+    fn insights_report_duplicate_framework_routes() {
+        let mut graph = CodeGraph::new("repo");
+        let first = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "route GET /users",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "framework_route".to_string()),
+                ("method".to_string(), "GET".to_string()),
+                ("path".to_string(), "/users".to_string()),
+                ("handler".to_string(), "list_users".to_string()),
+            ]),
+        );
+        let second = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "route GET /users",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "framework_route".to_string()),
+                ("method".to_string(), "GET".to_string()),
+                ("path".to_string(), "/users".to_string()),
+                ("handler".to_string(), "legacy_users".to_string()),
+            ]),
+        );
+        let post = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "route POST /users",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "framework_route".to_string()),
+                ("method".to_string(), "POST".to_string()),
+                ("path".to_string(), "/users".to_string()),
+                ("handler".to_string(), "create_user".to_string()),
+            ]),
+        );
+        let list_users = graph.add_node(NodeKind::Function, "list_users");
+        let legacy_users = graph.add_node(NodeKind::Function, "legacy_users");
+        graph.add_edge(
+            first,
+            list_users,
+            EdgeKind::References,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            second,
+            legacy_users,
+            EdgeKind::References,
+            Confidence::Syntactic,
+        );
+
+        let report = insights(&graph);
+        let duplicate = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "duplicate_framework_route")
+            .expect("expected duplicate route insight");
+
+        assert_eq!(duplicate.severity, InsightSeverity::Warning);
+        assert!(duplicate.message.contains("GET /users"));
+        assert!(duplicate.message.contains("list_users"));
+        assert!(duplicate.message.contains("legacy_users"));
+        assert!(duplicate.nodes.contains(&first));
+        assert!(duplicate.nodes.contains(&second));
+        assert!(!duplicate.nodes.contains(&post));
+        assert_eq!(duplicate.edges.len(), 2);
     }
 
     #[test]
