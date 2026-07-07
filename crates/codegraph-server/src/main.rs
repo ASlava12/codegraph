@@ -55,6 +55,10 @@ const DEFAULT_JOB_LIST_LIMIT: usize = 50;
 const MAX_JOB_LIST_LIMIT: usize = 500;
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
+tokio::task_local! {
+    static CURRENT_REQUEST_ID: String;
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "codegraph-server")]
 #[command(about = "Serve the CodeGraph API and web interface")]
@@ -657,6 +661,8 @@ struct ProjectReportResponse {
 #[derive(Debug, Serialize)]
 struct ErrorBody {
     error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_id: Option<String>,
 }
 
 #[tokio::main]
@@ -843,7 +849,9 @@ async fn request_id_header(mut request: Request, next: Next) -> Response {
     request
         .extensions_mut()
         .insert(RequestId(request_id.clone()));
-    let mut response = next.run(request).await;
+    let mut response = CURRENT_REQUEST_ID
+        .scope(request_id.clone(), next.run(request))
+        .await;
     if let Ok(value) = HeaderValue::from_str(&request_id) {
         response
             .headers_mut()
@@ -886,6 +894,10 @@ fn incoming_request_id(request: &Request) -> Option<String> {
 
 fn next_request_id() -> String {
     format!("req-{}", NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed))
+}
+
+fn current_request_id() -> Option<String> {
+    CURRENT_REQUEST_ID.try_with(Clone::clone).ok()
 }
 
 fn is_valid_request_id(value: &str) -> bool {
@@ -2512,6 +2524,7 @@ async fn not_found() -> impl IntoResponse {
         StatusCode::NOT_FOUND,
         Json(ErrorBody {
             error: "not found".to_string(),
+            request_id: current_request_id(),
         }),
     )
 }
@@ -4375,6 +4388,7 @@ impl IntoResponse for ApiError {
             self.status,
             Json(ErrorBody {
                 error: self.message,
+                request_id: current_request_id(),
             }),
         )
             .into_response()
@@ -4510,6 +4524,19 @@ mod tests {
         assert!(!is_valid_request_id("contains space"));
         assert!(!is_valid_request_id("bad\nheader"));
         assert!(!is_valid_request_id(&"x".repeat(129)));
+    }
+
+    #[tokio::test]
+    async fn current_request_id_reads_task_local_scope() {
+        assert_eq!(current_request_id(), None);
+
+        CURRENT_REQUEST_ID
+            .scope("req-test".to_string(), async {
+                assert_eq!(current_request_id(), Some("req-test".to_string()));
+            })
+            .await;
+
+        assert_eq!(current_request_id(), None);
     }
 
     #[test]
