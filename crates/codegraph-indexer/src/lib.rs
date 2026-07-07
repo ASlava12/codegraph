@@ -82,6 +82,15 @@ struct FrameworkRoute {
     line: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct FrameworkConfig {
+    framework: String,
+    label: String,
+    config_kind: String,
+    value: Option<String>,
+    line: u32,
+}
+
 impl Default for IndexOptions {
     fn default() -> Self {
         Self {
@@ -194,6 +203,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
     if let Some(source) = source_text.as_deref() {
         script_entrypoint = index_script_entrypoint(context, file_id, label, source);
         index_manifest_facts(context, file_id, path, label, source);
+        index_framework_configs(context, file_id, label, language, source);
     }
 
     if let Some((language, parse_result)) = parse_result {
@@ -498,6 +508,70 @@ fn framework_routes(language: Language, source: &str) -> Vec<FrameworkRoute> {
         Language::Php => php_framework_routes(source),
         Language::C | Language::Cpp | Language::Bash => Vec::new(),
     }
+}
+
+fn index_framework_configs(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    language: Option<Language>,
+    source: &str,
+) {
+    for config in framework_configs(label, language, source) {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "framework_config".to_string());
+        metadata.insert("source".to_string(), "framework".to_string());
+        metadata.insert("framework".to_string(), config.framework.clone());
+        metadata.insert("config_kind".to_string(), config.config_kind.clone());
+        metadata.insert("target".to_string(), label.to_string());
+        metadata.insert("line".to_string(), config.line.to_string());
+        if let Some(language) = language {
+            metadata.insert("language".to_string(), language.to_string());
+        }
+        if let Some(value) = config.value.as_deref() {
+            metadata.insert("value".to_string(), value.to_string());
+        }
+
+        let config_id =
+            context
+                .graph
+                .add_node_with_metadata(NodeKind::Config, config.label, None, metadata);
+        let mut edge_metadata = BTreeMap::new();
+        edge_metadata.insert("source".to_string(), "framework".to_string());
+        edge_metadata.insert("framework".to_string(), config.framework);
+        edge_metadata.insert("config_kind".to_string(), config.config_kind);
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            file_id,
+            config_id,
+            EdgeKind::ReadsConfig,
+            Confidence::Syntactic,
+            edge_metadata,
+        );
+    }
+}
+
+fn framework_configs(
+    label: &str,
+    language: Option<Language>,
+    source: &str,
+) -> Vec<FrameworkConfig> {
+    let mut configs = BTreeSet::new();
+    configs.extend(file_framework_configs(label));
+
+    match language {
+        Some(Language::Python) => configs.extend(python_framework_configs(source)),
+        Some(Language::JavaScript | Language::TypeScript | Language::Tsx) => {
+            configs.extend(js_framework_configs(source))
+        }
+        Some(Language::Rust) => configs.extend(rust_framework_configs(source)),
+        Some(Language::Go) => configs.extend(go_framework_configs(source)),
+        Some(Language::Php) => configs.extend(php_framework_configs(source)),
+        Some(Language::Bash) => configs.extend(bash_framework_configs(source)),
+        Some(Language::C | Language::Cpp) | None => {}
+    }
+
+    configs.into_iter().collect()
 }
 
 fn index_manifest_dependencies(
@@ -1103,6 +1177,350 @@ fn shebang_language(source: &str) -> Option<Language> {
     }
 }
 
+fn file_framework_configs(label: &str) -> Vec<FrameworkConfig> {
+    let mut configs = Vec::new();
+    let file_name = Path::new(label)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(label);
+    let lower_label = label.to_ascii_lowercase();
+    let lower_name = file_name.to_ascii_lowercase();
+
+    if lower_name == "settings.py" {
+        configs.push(framework_config(
+            "django",
+            format!("django settings:{label}"),
+            "settings_module",
+            Some(label.to_string()),
+            1,
+        ));
+    }
+
+    for (prefix, framework, kind) in [
+        ("next.config.", "nextjs", "config_file"),
+        ("vite.config.", "vite", "config_file"),
+        ("nuxt.config.", "nuxt", "config_file"),
+        ("webpack.config.", "webpack", "config_file"),
+        ("svelte.config.", "sveltekit", "config_file"),
+    ] {
+        if lower_name.starts_with(prefix) {
+            configs.push(framework_config(
+                framework,
+                format!("{framework} config:{label}"),
+                kind,
+                Some(label.to_string()),
+                1,
+            ));
+        }
+    }
+
+    if lower_label.starts_with("config/") && lower_label.ends_with(".php") {
+        configs.push(framework_config(
+            "laravel",
+            format!("laravel config:{label}"),
+            "config_file",
+            Some(label.to_string()),
+            1,
+        ));
+    }
+
+    if lower_label.starts_with("config/packages/")
+        && (lower_label.ends_with(".yaml")
+            || lower_label.ends_with(".yml")
+            || lower_label.ends_with(".xml")
+            || lower_label.ends_with(".php"))
+    {
+        configs.push(framework_config(
+            "symfony",
+            format!("symfony config:{label}"),
+            "config_file",
+            Some(label.to_string()),
+            1,
+        ));
+    }
+
+    configs
+}
+
+fn python_framework_configs(source: &str) -> Vec<FrameworkConfig> {
+    let mut configs = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+
+        if lower.contains(".config.from_pyfile(")
+            && let Some(value) = first_quoted_value(trimmed)
+        {
+            configs.push(framework_config(
+                "flask",
+                format!("flask config:{value}"),
+                "config_file",
+                Some(value),
+                line_number,
+            ));
+        }
+
+        if lower.contains(".config.from_object(")
+            && let Some(value) = first_quoted_value(trimmed)
+        {
+            configs.push(framework_config(
+                "flask",
+                format!("flask config object:{value}"),
+                "config_object",
+                Some(value),
+                line_number,
+            ));
+        }
+
+        if lower.contains("settingsconfigdict(")
+            && lower.contains("env_file")
+            && let Some(value) = first_quoted_value(trimmed)
+        {
+            configs.push(framework_config(
+                "pydantic",
+                format!("pydantic env file:{value}"),
+                "env_file",
+                Some(value),
+                line_number,
+            ));
+        }
+
+        if lower.starts_with("class ")
+            && lower.contains("basesettings")
+            && let Some(class_name) = trimmed
+                .strip_prefix("class ")
+                .and_then(|rest| rest.split_once('(').map(|(name, _)| name.trim()))
+                .filter(|name| !name.is_empty())
+        {
+            configs.push(framework_config(
+                "pydantic",
+                format!("pydantic settings:{class_name}"),
+                "settings_class",
+                Some(class_name.to_string()),
+                line_number,
+            ));
+        }
+    }
+    configs
+}
+
+fn js_framework_configs(source: &str) -> Vec<FrameworkConfig> {
+    let mut configs = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+
+        if lower.contains("dotenv.config(") {
+            let value = first_quoted_value(trimmed).unwrap_or_else(|| ".env".to_string());
+            configs.push(framework_config(
+                "dotenv",
+                format!("dotenv config:{value}"),
+                "env_file",
+                Some(value),
+                line_number,
+            ));
+        }
+
+        if let Some(setting) = express_setting(trimmed) {
+            configs.push(framework_config(
+                "express",
+                format!("express setting:{setting}"),
+                "setting",
+                Some(setting),
+                line_number,
+            ));
+        }
+    }
+    configs
+}
+
+fn rust_framework_configs(source: &str) -> Vec<FrameworkConfig> {
+    let mut configs = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+
+        if lower.contains("dotenv") && lower.contains("dotenv(") {
+            configs.push(framework_config(
+                "dotenv",
+                "dotenv config:.env".to_string(),
+                "env_file",
+                Some(".env".to_string()),
+                line_number,
+            ));
+        }
+
+        if lower.contains("environment::with_prefix(")
+            && let Some(value) = first_quoted_value_after(trimmed, "Environment::with_prefix(")
+        {
+            configs.push(framework_config(
+                "config-rs",
+                format!("config-rs env prefix:{value}"),
+                "env_prefix",
+                Some(value),
+                line_number,
+            ));
+        }
+    }
+    configs
+}
+
+fn go_framework_configs(source: &str) -> Vec<FrameworkConfig> {
+    let mut configs = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+
+        if lower.contains("viper.setconfigname(")
+            && let Some(value) = first_quoted_value_after(trimmed, "SetConfigName(")
+        {
+            configs.push(framework_config(
+                "viper",
+                format!("viper config:{value}"),
+                "config_name",
+                Some(value),
+                line_number,
+            ));
+        }
+
+        if lower.contains("viper.addconfigpath(")
+            && let Some(value) = first_quoted_value_after(trimmed, "AddConfigPath(")
+        {
+            configs.push(framework_config(
+                "viper",
+                format!("viper config path:{value}"),
+                "config_path",
+                Some(value),
+                line_number,
+            ));
+        }
+
+        if lower.contains("godotenv.load(") {
+            let value =
+                first_quoted_value_after(trimmed, "Load(").unwrap_or_else(|| ".env".to_string());
+            configs.push(framework_config(
+                "godotenv",
+                format!("godotenv config:{value}"),
+                "env_file",
+                Some(value),
+                line_number,
+            ));
+        }
+    }
+    configs
+}
+
+fn php_framework_configs(source: &str) -> Vec<FrameworkConfig> {
+    let mut configs = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+
+        if lower.contains("config(")
+            && let Some(value) = first_quoted_value_after(trimmed, "config(")
+        {
+            configs.push(framework_config(
+                "laravel",
+                format!("laravel config key:{value}"),
+                "config_key",
+                Some(value),
+                line_number,
+            ));
+        }
+
+        if lower.contains("->configure(")
+            && let Some(value) = first_quoted_value_after(trimmed, "->configure(")
+        {
+            configs.push(framework_config(
+                "lumen",
+                format!("lumen config:{value}"),
+                "config_file",
+                Some(value),
+                line_number,
+            ));
+        }
+    }
+    configs
+}
+
+fn bash_framework_configs(source: &str) -> Vec<FrameworkConfig> {
+    let mut configs = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let trimmed = line.trim();
+        if let Some(value) = sourced_shell_config(trimmed) {
+            configs.push(framework_config(
+                "shell",
+                format!("shell config:{value}"),
+                "source_file",
+                Some(value),
+                line_number,
+            ));
+        }
+    }
+    configs
+}
+
+fn framework_config(
+    framework: &str,
+    label: String,
+    config_kind: &str,
+    value: Option<String>,
+    line: u32,
+) -> FrameworkConfig {
+    FrameworkConfig {
+        framework: framework.to_string(),
+        label,
+        config_kind: config_kind.to_string(),
+        value,
+        line,
+    }
+}
+
+fn express_setting(line: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    let setting_index = lower
+        .find(".set(")
+        .or_else(|| lower.find("app.set("))
+        .or_else(|| lower.find("server.set("))?;
+    let receiver = line[..setting_index]
+        .rsplit(|character: char| {
+            !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
+        })
+        .next()
+        .unwrap_or("")
+        .trim_start_matches('$');
+    if !["app", "server", "router"].iter().any(|allowed| {
+        receiver.eq_ignore_ascii_case(allowed)
+            || lower[setting_index..].starts_with(&format!("{allowed}.set("))
+    }) {
+        return None;
+    }
+    first_quoted_value(line)
+}
+
+fn sourced_shell_config(line: &str) -> Option<String> {
+    let without_comment = line.split('#').next().unwrap_or("").trim();
+    let rest = without_comment
+        .strip_prefix("source ")
+        .or_else(|| without_comment.strip_prefix(". "))?
+        .trim();
+    let value = rest
+        .split_whitespace()
+        .next()
+        .map(|value| value.trim_matches(['"', '\'']).to_string())?;
+    if value.contains("env") || value.contains("config") || value.ends_with(".conf") {
+        Some(value)
+    } else {
+        None
+    }
+}
+
 fn python_framework_routes(source: &str) -> Vec<FrameworkRoute> {
     let mut routes = Vec::new();
     let mut pending = Vec::new();
@@ -1385,6 +1803,13 @@ fn first_quoted_value(value: &str) -> Option<String> {
     let rest = &value[quote_index + quote.len_utf8()..];
     let end = rest.find(quote)?;
     Some(rest[..end].to_string())
+}
+
+fn first_quoted_value_after(value: &str, needle: &str) -> Option<String> {
+    let lower_value = value.to_ascii_lowercase();
+    let lower_needle = needle.to_ascii_lowercase();
+    let start = lower_value.find(&lower_needle)?;
+    first_quoted_value(&value[start + needle.len()..])
 }
 
 fn route_methods() -> &'static [&'static str] {
@@ -2964,6 +3389,89 @@ add_executable(imported_tool IMPORTED)
                 "entrypoint_function",
                 Confidence::Syntactic,
             ));
+        }
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_adds_framework_config_conventions() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("app")).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::write(root.join("app").join("settings.py"), "SECRET_KEY = 'dev'\n").unwrap();
+        fs::write(
+            root.join("app.py"),
+            "from pydantic_settings import BaseSettings, SettingsConfigDict\napp.config.from_pyfile('settings.toml')\nclass Settings(BaseSettings):\n    model_config = SettingsConfigDict(env_file='.env.local')\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("server.js"),
+            "const dotenv = require('dotenv');\ndotenv.config({ path: '.env.test' });\napp.set('view engine', 'pug');\n",
+        )
+        .unwrap();
+        fs::write(root.join("next.config.ts"), "export default {};\n").unwrap();
+        fs::write(
+            root.join("main.go"),
+            "package main\nfunc main() { viper.SetConfigName(\"service\"); viper.AddConfigPath(\"/etc/demo\"); godotenv.Load(\".env.go\") }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("config").join("app.php"),
+            "<?php\nreturn ['name' => config('app.name')];\n",
+        )
+        .unwrap();
+        fs::write(root.join("deploy.sh"), "source config/runtime.env\n").unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let expected = [
+            (
+                "django settings:app/settings.py",
+                "django",
+                "settings_module",
+            ),
+            ("flask config:settings.toml", "flask", "config_file"),
+            ("pydantic settings:Settings", "pydantic", "settings_class"),
+            ("pydantic env file:.env.local", "pydantic", "env_file"),
+            ("dotenv config:.env.test", "dotenv", "env_file"),
+            ("express setting:view engine", "express", "setting"),
+            ("nextjs config:next.config.ts", "nextjs", "config_file"),
+            ("viper config:service", "viper", "config_name"),
+            ("viper config path:/etc/demo", "viper", "config_path"),
+            ("godotenv config:.env.go", "godotenv", "env_file"),
+            ("laravel config:config/app.php", "laravel", "config_file"),
+            ("laravel config key:app.name", "laravel", "config_key"),
+            ("shell config:config/runtime.env", "shell", "source_file"),
+        ];
+
+        for (label, framework, config_kind) in expected {
+            let config_id = node_id(&graph, NodeKind::Config, label);
+            let node = graph
+                .nodes
+                .iter()
+                .find(|node| node.id == config_id)
+                .expect("missing framework config node");
+            assert_eq!(
+                node.metadata.get("item_kind").map(String::as_str),
+                Some("framework_config")
+            );
+            assert_eq!(
+                node.metadata.get("framework").map(String::as_str),
+                Some(framework)
+            );
+            assert_eq!(
+                node.metadata.get("config_kind").map(String::as_str),
+                Some(config_kind)
+            );
+            assert!(graph.edges.iter().any(|edge| {
+                edge.target == config_id
+                    && edge.kind == EdgeKind::ReadsConfig
+                    && edge.confidence == Confidence::Syntactic
+                    && edge
+                        .metadata
+                        .get("source")
+                        .is_some_and(|value| value == "framework")
+            }));
         }
 
         fs::remove_dir_all(root).unwrap();
