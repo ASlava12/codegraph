@@ -2742,6 +2742,7 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "trace",
                     "dependents",
                     "neighbors",
+                    "symbols",
                     "entrypoints",
                     "routes",
                     "packages",
@@ -2808,6 +2809,28 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "confidence",
                     "direction",
                     "dir",
+                    "edge_limit",
+                    "metadata.*",
+                ],
+            ),
+            (
+                "graph_query_symbol_term",
+                vec![
+                    "id",
+                    "node",
+                    "node_id",
+                    "label",
+                    "search",
+                    "language",
+                    "kind",
+                    "node_kind",
+                    "item_kind",
+                    "path",
+                    "path_prefix",
+                    "direction",
+                    "dir",
+                    "edge_kind",
+                    "confidence",
                     "edge_limit",
                     "metadata.*",
                 ],
@@ -3359,7 +3382,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/query",
-                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, or insights. QueryResult includes returned counts and facets for node kinds, edge kinds, languages, item kinds, and confidence.",
+                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, symbols, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, or insights. QueryResult includes returned counts and facets for node kinds, edge kinds, languages, item kinds, and confidence.",
                     vec![
                         path_param(),
                         query_param(
@@ -3367,7 +3390,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Graph query expression, for example `entrypoints language:rust`, `routes method:GET path:/users`, `packages package:serde ecosystem:cargo`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable language:rust`, `diagnostics severity:error language:rust`, or `insights severity:error`.",
+                            "Graph query expression, for example `symbols label:load_config direction:out`, `entrypoints language:rust`, `routes method:GET path:/users`, `packages package:serde ecosystem:cargo`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable language:rust`, `diagnostics severity:error language:rust`, or `insights severity:error`.",
                         ),
                     ],
                     "QueryResult",
@@ -4320,6 +4343,7 @@ mod tests {
                 .get("graph_query_command")
                 .is_some_and(|commands| {
                     commands.contains(&"entrypoints")
+                        && commands.contains(&"symbols")
                         && commands.contains(&"routes")
                         && commands.contains(&"packages")
                         && commands.contains(&"configs")
@@ -4341,6 +4365,12 @@ mod tests {
                 .enum_values
                 .get("graph_query_route_term")
                 .is_some_and(|terms| terms.contains(&"method") && terms.contains(&"edge_limit"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_symbol_term")
+                .is_some_and(|terms| terms.contains(&"direction") && terms.contains(&"path"))
         );
         assert!(
             schema

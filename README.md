@@ -66,6 +66,7 @@ Implemented now:
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, trace, diagnostic, insight/risk, and unreachable-code slices.
 - Focused query responses include returned counts and facets for node kinds, edge kinds, languages, item kinds, and confidence.
+- Agent-friendly symbol graph queries for focused function/type/module context with containing files and nearby dependency edges.
 - Agent-friendly entrypoint graph queries for focused startup slices with immediate trace edges.
 - Agent-friendly route graph queries for focused HTTP/framework route and handler slices.
 - Agent-friendly config graph queries for focused configuration/environment reader slices and entrypoint paths.
@@ -337,6 +338,7 @@ cargo run -p codegraph-cli -- query 'calls(function:main)' .
 cargo run -p codegraph-cli -- query 'trace label:main depth:3' .
 cargo run -p codegraph-cli -- query 'dependents label:load_config depth:3' .
 cargo run -p codegraph-cli -- query 'neighbors label:main direction:out depth:2 edge_kind:calls' .
+cargo run -p codegraph-cli -- query 'symbols label:load_config direction:out edge_limit:300' .
 cargo run -p codegraph-cli -- query 'entrypoints language:rust' .
 cargo run -p codegraph-cli -- query 'routes method:GET path:/health depth:3 edge_limit:300' .
 cargo run -p codegraph-cli -- query 'packages package:serde ecosystem:cargo edge_limit:300' .

@@ -1677,6 +1677,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "trace" => query_trace(graph, spec),
         "dependents" | "impact" | "incoming" => query_dependents(graph, spec),
         "neighbors" | "neighbor" | "neighborhood" => query_neighbors(graph, spec),
+        "symbols" | "symbol" | "defs" | "definitions" => query_symbols(graph, spec),
         "entrypoints" | "entrypoint" | "starts" | "startup" => query_entrypoints(graph, spec),
         "routes" | "route" | "endpoints" | "endpoint" => query_routes(graph, spec),
         "packages" | "package" | "deps" | "external" | "externals" => query_packages(graph, spec),
@@ -1691,7 +1692,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         }
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, insights, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, symbols, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, insights, or path"
         ))),
     }
 }
@@ -2314,6 +2315,96 @@ fn query_neighbors(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, Qu
         visited_nodes.len(),
         total_edges,
         truncated,
+    ))
+}
+
+fn query_symbols(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    if let Some(first) = spec.positional.first() {
+        spec.terms
+            .entry("search".to_string())
+            .or_insert(first.clone());
+    }
+    validate_symbol_terms(&spec)?;
+    let path_index = node_path_index(graph);
+    let edge_kind = spec.terms.get("edge_kind");
+    let confidence = spec.terms.get("confidence");
+    let direction = spec
+        .terms
+        .get("direction")
+        .or_else(|| spec.terms.get("dir"))
+        .map(|value| parse_neighbor_direction(value, "symbols"))
+        .transpose()?
+        .unwrap_or(NeighborDirection::Both);
+    let edge_limit = spec
+        .terms
+        .get("edge_limit")
+        .map(|value| parse_limit(value).map(|value| value.clamp(1, 2_000)))
+        .transpose()?
+        .unwrap_or(300);
+    let matched: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| is_code_symbol(&node.kind) && symbol_query_matches(node, &spec, &path_index))
+        .cloned()
+        .collect();
+    let selected_ids: BTreeSet<_> = matched
+        .iter()
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let mut node_ids = selected_ids.clone();
+    let mut edge_indexes = BTreeSet::new();
+
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if symbol_definition_edge_matches(edge, &selected_ids, edge_kind.map(String::as_str)) {
+            edge_indexes.insert(index);
+            node_ids.insert(edge.source);
+            node_ids.insert(edge.target);
+            continue;
+        }
+        if !is_trace_edge(&edge.kind) {
+            continue;
+        }
+        if !hotspot_edge_touches_selected(edge, &selected_ids, direction) {
+            continue;
+        }
+        if edge_kind.is_some_and(|expected| !text_matches(&edge_kind_name(&edge.kind), expected)) {
+            continue;
+        }
+        if confidence
+            .is_some_and(|expected| !text_matches(&confidence_name(edge.confidence), expected))
+        {
+            continue;
+        }
+        edge_indexes.insert(index);
+        node_ids.insert(edge.source);
+        node_ids.insert(edge.target);
+    }
+
+    let total_edges = edge_indexes.len();
+    let edges = graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| edge_indexes.contains(index))
+        .take(edge_limit)
+        .map(|(_, edge)| edge.clone())
+        .collect::<Vec<_>>();
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| node_ids.contains(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let total_nodes = nodes.len();
+
+    Ok(QueryResult::new(
+        spec.original,
+        nodes,
+        edges,
+        total_nodes,
+        total_edges,
+        matched.len() > spec.limit || total_edges > edge_limit,
     ))
 }
 
@@ -3218,6 +3309,36 @@ fn validate_neighbor_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     Ok(())
 }
 
+fn validate_symbol_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if matches!(
+            key.as_str(),
+            "id" | "node"
+                | "node_id"
+                | "label"
+                | "search"
+                | "language"
+                | "kind"
+                | "node_kind"
+                | "item_kind"
+                | "path"
+                | "path_prefix"
+                | "direction"
+                | "dir"
+                | "edge_kind"
+                | "confidence"
+                | "edge_limit"
+        ) || key.starts_with("metadata.")
+        {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported symbols query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_entrypoint_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     for key in spec.terms.keys() {
         if matches!(
@@ -3623,6 +3744,37 @@ fn entrypoint_query_matches(
             .is_some_and(|value| text_matches(value, expected)),
         _ => false,
     })
+}
+
+fn symbol_query_matches(
+    node: &Node,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
+    spec.terms.iter().all(|(key, expected)| match key.as_str() {
+        "id" | "node" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        "label" => text_matches(&node.label, expected),
+        "search" => node_search_matches(node, expected),
+        "language" | "item_kind" => metadata_matches(node, key, expected),
+        "kind" | "node_kind" => text_matches(&kind_name(&node.kind), expected),
+        "path" | "path_prefix" => node_path_matches(node, path_index, expected),
+        "direction" | "dir" | "edge_kind" | "confidence" | "edge_limit" => true,
+        key if key.starts_with("metadata.") => node
+            .metadata
+            .get(key.trim_start_matches("metadata."))
+            .is_some_and(|value| text_matches(value, expected)),
+        _ => false,
+    })
+}
+
+fn symbol_definition_edge_matches(
+    edge: &Edge,
+    selected_ids: &BTreeSet<NodeId>,
+    edge_kind: Option<&str>,
+) -> bool {
+    selected_ids.contains(&edge.target)
+        && matches!(edge.kind, EdgeKind::Contains | EdgeKind::Defines)
+        && edge_kind.is_none_or(|expected| text_matches(&edge_kind_name(&edge.kind), expected))
 }
 
 fn route_query_matches(
@@ -7356,6 +7508,61 @@ mod tests {
         assert_eq!(incoming.total_edges, 1);
         assert!(incoming.nodes.iter().any(|node| node.id == caller));
         assert!(!incoming.nodes.iter().any(|node| node.id == helper));
+    }
+
+    #[test]
+    fn query_symbols_returns_file_and_dependency_context() {
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/config.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let load_config = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "load_config",
+            None,
+            BTreeMap::from([
+                ("language".to_string(), "rust".to_string()),
+                ("item_kind".to_string(), "function".to_string()),
+            ]),
+        );
+        let helper = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "parse_config",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let caller = graph.add_node(NodeKind::Function, "main");
+        let unrelated = graph.add_node(NodeKind::Function, "render");
+        graph.add_edge(file, load_config, EdgeKind::Contains, Confidence::Syntactic);
+        graph.add_edge(load_config, helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(caller, load_config, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(caller, unrelated, EdgeKind::Calls, Confidence::Heuristic);
+
+        let result = query_graph(&graph, "symbols load_config direction:out").unwrap();
+
+        assert!(result.nodes.iter().any(|node| node.id == file));
+        assert!(result.nodes.iter().any(|node| node.id == load_config));
+        assert!(result.nodes.iter().any(|node| node.id == helper));
+        assert!(!result.nodes.iter().any(|node| node.id == caller));
+        assert!(!result.nodes.iter().any(|node| node.id == unrelated));
+        assert!(result.edges.iter().any(|edge| {
+            edge.source == file && edge.target == load_config && edge.kind == EdgeKind::Contains
+        }));
+        assert!(result.edges.iter().any(|edge| {
+            edge.source == load_config && edge.target == helper && edge.kind == EdgeKind::Calls
+        }));
+        assert_eq!(result.facets.node_kinds.get("function"), Some(&2));
+        assert_eq!(result.facets.edge_kinds.get("calls"), Some(&1));
+
+        let by_path = query_graph(&graph, "symbols path:src/config.rs").unwrap();
+        assert!(by_path.nodes.iter().any(|node| node.id == load_config));
+
+        let error = query_graph(&graph, "symbols nope:value")
+            .expect_err("invalid symbols term should fail");
+        assert!(error.to_string().contains("unsupported symbols query term"));
     }
 
     #[test]
