@@ -4132,7 +4132,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         .with_capability_limit("max_report_architecture_edge_limit"),
                     ],
                     "ArchitectureMap",
-                ),
+                )
+                .with_response_fields(architecture_map_response_fields()),
                 api_get(
                     "/api/language-dependencies",
                     "Summarize mixed-language dependency links.",
@@ -4149,7 +4150,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         .with_capability_limit("max_report_language_link_limit"),
                     ],
                     "LanguageDependencyReport",
-                ),
+                )
+                .with_response_fields(language_dependency_response_fields()),
                 api_get(
                     "/api/hotspots",
                     "List high-degree files, functions, entrypoints, and config nodes.",
@@ -4160,7 +4162,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             .with_capability_limit("max_report_hotspot_limit"),
                     ],
                     "HotspotReport",
-                ),
+                )
+                .with_response_fields(hotspot_response_fields()),
                 api_get(
                     "/api/entrypoints",
                     "List detected entrypoint candidate nodes.",
@@ -4191,19 +4194,22 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         .with_range(1, 500),
                     ],
                     "EntrypointTraceReport",
-                ),
+                )
+                .with_response_fields(entrypoint_trace_response_fields()),
                 api_get(
                     "/api/insights",
                     "List investigation insights with severity, kind, and search filters.",
                     insight_params(),
                     "InsightReport",
-                ),
+                )
+                .with_response_fields(insight_report_response_fields()),
                 api_get(
                     "/api/check",
                     "Run a quality gate over insights.",
                     check_params(),
                     "CheckReport",
-                ),
+                )
+                .with_response_fields(check_report_response_fields()),
                 api_get(
                     "/api/trace",
                     "Trace outgoing dependencies from a node id or label.",
@@ -4221,7 +4227,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             .with_range(1, 8),
                     ],
                     "TraceResult?",
-                ),
+                )
+                .with_response_fields(trace_result_response_fields()),
                 api_get(
                     "/api/dependents",
                     "Trace incoming dependents that can reach a node.",
@@ -4239,7 +4246,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             .with_range(1, 16),
                     ],
                     "TraceResult?",
-                ),
+                )
+                .with_response_fields(trace_result_response_fields()),
                 api_get(
                     "/api/trace-config",
                     "Trace config/environment readers and paths from entrypoints.",
@@ -4264,7 +4272,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             .with_range(1, 500),
                     ],
                     "ConfigTraceResult",
-                ),
+                )
+                .with_response_fields(config_trace_response_fields()),
                 api_get(
                     "/api/trace-errors",
                     "Trace potential error/exception paths back to sources and entrypoints.",
@@ -4289,7 +4298,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             .with_range(1, 500),
                     ],
                     "ErrorTraceResult",
-                ),
+                )
+                .with_response_fields(error_trace_response_fields()),
             ],
         },
         ApiSchemaGroup {
@@ -4308,7 +4318,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             .with_capability_limit("max_source_context"),
                     ],
                     "SourceResponse",
-                ),
+                )
+                .with_response_fields(source_preview_response_fields()),
                 api_get(
                     "/api/source-search",
                     "Search source text with compact context snippets.",
@@ -4345,7 +4356,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         .with_capability_limit("max_source_search_context"),
                     ],
                     "SourceSearchResult",
-                ),
+                )
+                .with_response_fields(source_search_response_fields()),
             ],
         },
     ]
@@ -5090,6 +5102,342 @@ fn project_report_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "ProjectReport",
             "Production project report with summary, risks, quality gate, topology, and hotspots.",
+        ),
+    ]
+}
+
+fn architecture_map_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "groups",
+            true,
+            "ArchitectureGroup[]",
+            "Top-level project area groups.",
+        ),
+        response_field(
+            "edges",
+            true,
+            "ArchitectureEdge[]",
+            "Cross-area dependency edges with edge_indexes.",
+        ),
+        response_field(
+            "total_groups",
+            true,
+            "usize",
+            "Total architecture groups before limiting.",
+        ),
+        response_field(
+            "total_edges",
+            true,
+            "usize",
+            "Total cross-area edges before limiting.",
+        ),
+        response_field(
+            "truncated_groups",
+            true,
+            "bool",
+            "Whether more groups exist beyond the limit.",
+        ),
+        response_field(
+            "truncated_edges",
+            true,
+            "bool",
+            "Whether more cross-area edges exist beyond the limit.",
+        ),
+    ]
+}
+
+fn language_dependency_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "links",
+            true,
+            "LanguageDependency[]",
+            "Language-to-language dependency links.",
+        ),
+        response_field(
+            "total_links",
+            true,
+            "usize",
+            "Total language links before limiting.",
+        ),
+        response_field(
+            "total_edges",
+            true,
+            "usize",
+            "Total dependency edges represented by language links.",
+        ),
+        response_field(
+            "cross_language_edges",
+            true,
+            "usize",
+            "Dependency edges crossing language boundaries.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether more links exist beyond the limit.",
+        ),
+    ]
+}
+
+fn hotspot_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "hotspots",
+            true,
+            "Hotspot[]",
+            "High-degree files, functions, entrypoints, and config nodes.",
+        ),
+        response_field(
+            "total_candidates",
+            true,
+            "usize",
+            "Total hotspot candidates before limiting.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether more hotspots exist beyond the limit.",
+        ),
+    ]
+}
+
+fn entrypoint_trace_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("max_depth", true, "usize", "Applied trace depth limit."),
+        response_field(
+            "total_entrypoints",
+            true,
+            "usize",
+            "Total detected entrypoints before limiting.",
+        ),
+        response_field(
+            "traces",
+            true,
+            "TraceResult[]",
+            "Outgoing dependency traces from entrypoints.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether more entrypoint traces exist beyond the limit.",
+        ),
+    ]
+}
+
+fn trace_result_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("start", true, "Node", "Trace start node."),
+        response_field("max_depth", true, "usize", "Applied trace depth limit."),
+        response_field(
+            "nodes",
+            true,
+            "TraceNode[]",
+            "Reached trace nodes with depth.",
+        ),
+        response_field(
+            "edges",
+            true,
+            "Edge[]",
+            "Trace edges with metadata.edge_index values.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether the trace was capped by depth or traversal limits.",
+        ),
+    ]
+}
+
+fn config_trace_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "target",
+            true,
+            "string",
+            "Requested config/environment target.",
+        ),
+        response_field("max_depth", true, "usize", "Applied upstream depth limit."),
+        response_field(
+            "matches",
+            true,
+            "ConfigTraceMatch[]",
+            "Matched config/environment facts with readers and entrypoint paths.",
+        ),
+        response_field(
+            "total_matches",
+            true,
+            "usize",
+            "Total matched config/environment facts.",
+        ),
+        response_field(
+            "total_readers",
+            true,
+            "usize",
+            "Total reader edges across matches.",
+        ),
+        response_field(
+            "total_paths",
+            true,
+            "usize",
+            "Total entrypoint paths across matches.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether readers or paths were capped by limits.",
+        ),
+    ]
+}
+
+fn error_trace_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "target",
+            true,
+            "string",
+            "Requested error label or metadata target.",
+        ),
+        response_field("max_depth", true, "usize", "Applied upstream depth limit."),
+        response_field(
+            "matches",
+            true,
+            "ErrorTraceMatch[]",
+            "Matched error facts with sources and entrypoint paths.",
+        ),
+        response_field("total_matches", true, "usize", "Total matched error facts."),
+        response_field(
+            "total_sources",
+            true,
+            "usize",
+            "Total error source edges across matches.",
+        ),
+        response_field(
+            "total_paths",
+            true,
+            "usize",
+            "Total entrypoint paths across matches.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether sources or paths were capped by limits.",
+        ),
+    ]
+}
+
+fn insight_report_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "total",
+            true,
+            "usize",
+            "Total matching insights before limiting.",
+        ),
+        response_field(
+            "by_severity",
+            true,
+            "map<string,usize>",
+            "Insight counts by severity.",
+        ),
+        response_field(
+            "by_kind",
+            true,
+            "map<string,usize>",
+            "Insight counts by kind.",
+        ),
+        response_field(
+            "insights",
+            true,
+            "Insight[]",
+            "Returned investigation insights.",
+        ),
+    ]
+}
+
+fn check_report_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("passed", true, "bool", "Whether the quality gate passed."),
+        response_field(
+            "fail_on",
+            true,
+            "risk_severity",
+            "Quality gate severity threshold.",
+        ),
+        response_field(
+            "failing_insights",
+            true,
+            "usize",
+            "Number of insights at or above the threshold.",
+        ),
+        response_field(
+            "report",
+            true,
+            "InsightReport",
+            "Filtered insight report used by the gate.",
+        ),
+    ]
+}
+
+fn source_preview_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("path", true, "path", "Source path inside the project root."),
+        response_field("start_line", true, "u32", "First returned line."),
+        response_field("end_line", true, "u32", "Last returned line."),
+        response_field(
+            "lines",
+            true,
+            "SourcePreviewLine[]",
+            "Returned source lines with highlight markers.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether the source preview was capped.",
+        ),
+    ]
+}
+
+fn source_search_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("query", true, "string", "Normalized searched text."),
+        response_field(
+            "path_filter",
+            false,
+            "string?",
+            "Optional path substring filter.",
+        ),
+        response_field(
+            "case_sensitive",
+            true,
+            "bool",
+            "Whether search matched case exactly.",
+        ),
+        response_field(
+            "total_matches",
+            true,
+            "usize",
+            "Total matching source locations before limiting.",
+        ),
+        response_field(
+            "matches",
+            true,
+            "SourceSearchMatch[]",
+            "Returned source matches with compact context.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether more matches exist beyond the limit.",
         ),
     ]
 }
@@ -6315,6 +6663,15 @@ mod tests {
             architecture_group_limit.capability_limit,
             Some("max_report_architecture_group_limit")
         );
+        assert!(architecture_endpoint.response_fields.iter().any(|field| {
+            field.name == "groups" && field.value_type == "ArchitectureGroup[]" && field.required
+        }));
+        assert!(
+            architecture_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "truncated_edges" && field.value_type == "bool" })
+        );
         let language_dependencies_endpoint = schema
             .groups
             .iter()
@@ -6329,6 +6686,12 @@ mod tests {
         assert_eq!(
             language_link_limit.capability_limit,
             Some("max_report_language_link_limit")
+        );
+        assert!(
+            language_dependencies_endpoint
+                .response_fields
+                .iter()
+                .any(|field| field.name == "cross_language_edges" && field.value_type == "usize")
         );
         let hotspots_endpoint = schema
             .groups
@@ -6345,6 +6708,60 @@ mod tests {
             hotspot_limit.capability_limit,
             Some("max_report_hotspot_limit")
         );
+        assert!(
+            hotspots_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "hotspots" && field.value_type == "Hotspot[]" })
+        );
+        let entrypoint_traces_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/entrypoint-traces")
+            .expect("schema should list entrypoint-traces endpoint");
+        assert!(
+            entrypoint_traces_endpoint
+                .response_fields
+                .iter()
+                .any(|field| field.name == "traces" && field.value_type == "TraceResult[]")
+        );
+        let trace_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/trace")
+            .expect("schema should list trace endpoint");
+        assert!(
+            trace_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "edges" && field.value_type == "Edge[]" })
+        );
+        let config_trace_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/trace-config")
+            .expect("schema should list trace-config endpoint");
+        assert!(
+            config_trace_endpoint
+                .response_fields
+                .iter()
+                .any(|field| field.name == "matches" && field.value_type == "ConfigTraceMatch[]")
+        );
+        let error_trace_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/trace-errors")
+            .expect("schema should list trace-errors endpoint");
+        assert!(
+            error_trace_endpoint
+                .response_fields
+                .iter()
+                .any(|field| field.name == "matches" && field.value_type == "ErrorTraceMatch[]")
+        );
         let insights_endpoint = schema
             .groups
             .iter()
@@ -6358,6 +6775,9 @@ mod tests {
             .expect("insights limit");
         assert_eq!(insight_limit.maximum, Some(MAX_INSIGHT_LIMIT));
         assert_eq!(insight_limit.capability_limit, Some("max_insight_limit"));
+        assert!(insights_endpoint.response_fields.iter().any(|field| {
+            field.name == "by_severity" && field.value_type == "map<string,usize>"
+        }));
         let check_endpoint = schema
             .groups
             .iter()
@@ -6371,6 +6791,20 @@ mod tests {
             .expect("check limit");
         assert_eq!(check_limit.maximum, Some(MAX_INSIGHT_LIMIT));
         assert_eq!(check_limit.capability_limit, Some("max_insight_limit"));
+        assert!(check_endpoint.response_fields.iter().any(|field| {
+            field.name == "passed" && field.value_type == "bool" && field.required
+        }));
+        let source_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/source")
+            .expect("schema should list source endpoint");
+        assert!(
+            source_endpoint.response_fields.iter().any(|field| {
+                field.name == "lines" && field.value_type == "SourcePreviewLine[]"
+            })
+        );
         let source_search_endpoint = schema
             .groups
             .iter()
@@ -6389,6 +6823,11 @@ mod tests {
         assert_eq!(
             source_search_query.capability_limit,
             Some("max_source_search_query_length")
+        );
+        assert!(
+            source_search_endpoint.response_fields.iter().any(|field| {
+                field.name == "matches" && field.value_type == "SourceSearchMatch[]"
+            })
         );
     }
 
