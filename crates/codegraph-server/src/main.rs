@@ -86,6 +86,8 @@ const MAX_SOURCE_SEARCH_LIMIT: usize = 1000;
 const MAX_SOURCE_SEARCH_QUERY_LENGTH: usize = 4096;
 const DEFAULT_SOURCE_SEARCH_CONTEXT: usize = 2;
 const MAX_SOURCE_SEARCH_CONTEXT: usize = 20;
+const STATIC_ASSET_CACHE_CONTROL: &str = "no-cache";
+const DYNAMIC_CACHE_CONTROL: &str = "no-store";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -937,6 +939,7 @@ async fn main() -> Result<()> {
         .route("/api/source-search", get(source_search_api))
         .fallback(not_found)
         .with_state(state)
+        .layer(middleware::from_fn(cache_headers))
         .layer(middleware::from_fn(security_headers));
     let app = if api_auth.enabled() {
         app.layer(middleware::from_fn_with_state(
@@ -1001,6 +1004,13 @@ async fn shutdown_signal() {
 async fn security_headers(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     apply_security_headers(response.headers_mut());
+    response
+}
+
+async fn cache_headers(request: Request, next: Next) -> Response {
+    let path = request.uri().path().to_string();
+    let mut response = next.run(request).await;
+    apply_cache_headers_for_path(&path, response.headers_mut());
     response
 }
 
@@ -1188,6 +1198,19 @@ fn apply_security_headers(headers: &mut HeaderMap) {
         HeaderName::from_static("permissions-policy"),
         HeaderValue::from_static("camera=(), microphone=(), geolocation=(), payment=()"),
     );
+}
+
+fn apply_cache_headers_for_path(path: &str, headers: &mut HeaderMap) {
+    let value = if is_static_asset_path(path) {
+        STATIC_ASSET_CACHE_CONTROL
+    } else {
+        DYNAMIC_CACHE_CONTROL
+    };
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(value));
+}
+
+fn is_static_asset_path(path: &str) -> bool {
+    matches!(path, "/app.js" | "/label-policy.js" | "/styles.css")
 }
 
 async fn start_scan_job(
@@ -6016,6 +6039,34 @@ mod tests {
                 "camera=(), microphone=(), geolocation=(), payment=()"
             ))
         );
+    }
+
+    #[test]
+    fn cache_headers_keep_runtime_responses_uncached() {
+        for path in ["/", "/api/graph", "/api/health", "/missing"] {
+            let mut headers = HeaderMap::new();
+            apply_cache_headers_for_path(path, &mut headers);
+
+            assert_eq!(
+                headers.get(header::CACHE_CONTROL),
+                Some(&HeaderValue::from_static(DYNAMIC_CACHE_CONTROL)),
+                "{path} should not be cached"
+            );
+        }
+    }
+
+    #[test]
+    fn cache_headers_force_revalidation_for_unversioned_web_assets() {
+        for path in ["/app.js", "/label-policy.js", "/styles.css"] {
+            let mut headers = HeaderMap::new();
+            apply_cache_headers_for_path(path, &mut headers);
+
+            assert_eq!(
+                headers.get(header::CACHE_CONTROL),
+                Some(&HeaderValue::from_static(STATIC_ASSET_CACHE_CONTROL)),
+                "{path} should be revalidated"
+            );
+        }
     }
 
     #[test]

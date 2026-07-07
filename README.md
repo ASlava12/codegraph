@@ -67,6 +67,7 @@ Implemented now:
 - Per-response `x-request-id` correlation headers mirrored in access logs and JSON error bodies.
 - Graceful HTTP server shutdown on Ctrl-C and SIGTERM.
 - Server-wide security headers for the embedded web UI and API responses.
+- Server cache-control headers keep runtime/API responses uncacheable and force browser revalidation for unversioned embedded web assets.
 - Optional API bearer-token protection through `--api-token` or `CODEGRAPH_API_TOKEN`, with same-origin web UI token prompting.
 - Project report snapshots in CLI, API, and web export for summary, full-risk scoring, quality gate, insights, topology reports, cache, and scan coverage.
 - Web overview chips for server package version, server capabilities, API/schema versions, cache state, supported language/export counts, job limits, and route groups.
