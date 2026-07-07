@@ -72,6 +72,7 @@ Goal: improve precision where language tooling exists.
 - [x] Add workspace symbol work items and request planning.
 - [x] Add semantic LSP response mapping into graph patch reports.
 - [x] Add semantic graph patch application into enriched graph reports.
+- [x] Add first CLI semantic LSP batch runner over stdio.
 - Use LSP definitions, references, document symbols, workspace symbols, and diagnostics.
 - Add Rust enrichment through `rust-analyzer`.
 - Add TypeScript/JavaScript enrichment through tsserver-compatible tooling.

@@ -1490,6 +1490,8 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
+
     #[test]
     fn resolve_scan_root_allows_configured_projects() {
         let temp = temp_server_root();
@@ -1553,6 +1555,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("codegraph-server-test-{nanos}"))
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("codegraph-server-test-{nanos}-{id}"))
     }
 }

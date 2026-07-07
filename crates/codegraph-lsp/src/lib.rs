@@ -3,7 +3,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
+use std::fs;
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub const DEFAULT_SEMANTIC_WORK_ITEM_LIMIT: usize = 100;
 
@@ -116,6 +122,40 @@ pub struct SemanticLspError {
     pub code: i64,
     pub message: String,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticLspRunOptions {
+    pub request_timeout: Duration,
+}
+
+impl Default for SemanticLspRunOptions {
+    fn default() -> Self {
+        Self {
+            request_timeout: Duration::from_secs(30),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticLspRunError {
+    message: String,
+}
+
+impl SemanticLspRunError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for SemanticLspRunError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for SemanticLspRunError {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SemanticGraphPatch {
@@ -355,7 +395,7 @@ pub fn discover_lsp_servers() -> LspDiscoveryReport {
     let servers: Vec<_> = LSP_SERVER_SPECS
         .iter()
         .map(|spec| {
-            let path = find_executable(spec.command);
+            let path = find_lsp_server_executable(spec);
             LspServerStatus {
                 id: spec.id,
                 languages: spec.languages,
@@ -420,6 +460,35 @@ pub fn semantic_execution_batch(
         work_item_limit,
         work_item_filter,
     )
+}
+
+pub fn run_semantic_execution_batch(
+    batch: &SemanticExecutionBatch,
+    options: &SemanticLspRunOptions,
+) -> Result<Vec<SemanticLspResponse>, SemanticLspRunError> {
+    let workspace_root = Path::new(&batch.workspace_root);
+    let mut responses = Vec::new();
+    let mut ready_batches = 0;
+
+    for server_batch in &batch.server_batches {
+        if server_batch.status != "ready" || !server_batch.installed {
+            continue;
+        }
+        ready_batches += 1;
+        responses.extend(run_semantic_server_batch(
+            workspace_root,
+            server_batch,
+            options,
+        )?);
+    }
+
+    if ready_batches == 0 {
+        return Err(SemanticLspRunError::new(
+            "semantic run has no ready language-server batches",
+        ));
+    }
+
+    Ok(responses)
 }
 
 pub fn semantic_readiness_with_discovery(
@@ -865,6 +934,388 @@ pub fn apply_semantic_graph_patch(
     }
 
     SemanticGraphApplyResult { graph, report }
+}
+
+fn run_semantic_server_batch(
+    workspace_root: &Path,
+    server_batch: &SemanticServerBatch,
+    options: &SemanticLspRunOptions,
+) -> Result<Vec<SemanticLspResponse>, SemanticLspRunError> {
+    let executable = server_batch
+        .path
+        .as_deref()
+        .unwrap_or(server_batch.command.as_str());
+    let mut child = Command::new(executable)
+        .args(&server_batch.args)
+        .current_dir(workspace_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|error| {
+            SemanticLspRunError::new(format!(
+                "failed to start language server `{}`: {error}",
+                server_batch.server
+            ))
+        })?;
+
+    let mut stdin = child.stdin.take().ok_or_else(|| {
+        SemanticLspRunError::new(format!(
+            "language server `{}` did not expose stdin",
+            server_batch.server
+        ))
+    })?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        SemanticLspRunError::new(format!(
+            "language server `{}` did not expose stdout",
+            server_batch.server
+        ))
+    })?;
+    let receiver = spawn_lsp_reader(server_batch.server.clone(), stdout);
+    let mut opened_documents = BTreeSet::new();
+    let mut responses = Vec::new();
+
+    for request in &server_batch.requests {
+        if request.request_kind == "request" {
+            open_request_document(
+                workspace_root,
+                server_batch,
+                request,
+                &mut opened_documents,
+                &mut stdin,
+            )?;
+            write_lsp_request(&mut stdin, request)?;
+            let response = read_lsp_response(
+                server_batch,
+                &receiver,
+                &mut stdin,
+                request,
+                options.request_timeout,
+            )?;
+            if request.work_item_id.is_some() {
+                responses.push(response);
+            }
+        } else if request.request_kind == "notification" {
+            write_lsp_notification(&mut stdin, request.method, request.params.clone())?;
+        }
+    }
+
+    shutdown_lsp_server(server_batch, &receiver, &mut stdin, options.request_timeout)?;
+    wait_for_lsp_exit(&mut child, &server_batch.server, options.request_timeout)?;
+    Ok(responses)
+}
+
+fn spawn_lsp_reader(
+    server: String,
+    stdout: impl Read + Send + 'static,
+) -> Receiver<Result<Value, SemanticLspRunError>> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        loop {
+            match read_lsp_message(&mut reader) {
+                Ok(Some(message)) => {
+                    if sender.send(Ok(message)).is_err() {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    let _ = sender.send(Err(SemanticLspRunError::new(format!(
+                        "failed to read language server `{server}` response: {error}"
+                    ))));
+                    break;
+                }
+            }
+        }
+    });
+    receiver
+}
+
+fn open_request_document(
+    workspace_root: &Path,
+    server_batch: &SemanticServerBatch,
+    request: &SemanticLspRequest,
+    opened_documents: &mut BTreeSet<String>,
+    stdin: &mut ChildStdin,
+) -> Result<(), SemanticLspRunError> {
+    let Some(uri) = request.document_uri.as_ref() else {
+        return Ok(());
+    };
+    if !opened_documents.insert(uri.clone()) {
+        return Ok(());
+    }
+    let Some(path) = request.path.as_deref() else {
+        return Ok(());
+    };
+    let absolute_path = workspace_root.join(path);
+    let bytes = fs::read(&absolute_path).map_err(|error| {
+        SemanticLspRunError::new(format!(
+            "failed to read `{}` for LSP didOpen: {error}",
+            absolute_path.display()
+        ))
+    })?;
+    let text = String::from_utf8_lossy(&bytes).to_string();
+    write_lsp_notification(
+        stdin,
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": lsp_language_id(server_batch, path),
+                "version": 1,
+                "text": text,
+            },
+        }),
+    )
+}
+
+fn read_lsp_response(
+    server_batch: &SemanticServerBatch,
+    receiver: &Receiver<Result<Value, SemanticLspRunError>>,
+    stdin: &mut ChildStdin,
+    request: &SemanticLspRequest,
+    timeout: Duration,
+) -> Result<SemanticLspResponse, SemanticLspRunError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(SemanticLspRunError::new(format!(
+                "timed out waiting for `{}` response from `{}`",
+                request.method, server_batch.server
+            )));
+        }
+        let message = receiver.recv_timeout(remaining).map_err(|error| {
+            SemanticLspRunError::new(format!(
+                "language server `{}` closed before `{}` response: {error}",
+                server_batch.server, request.method
+            ))
+        })??;
+
+        if is_server_request(&message) {
+            write_lsp_server_request_response(stdin, &message)?;
+            continue;
+        }
+        if !lsp_response_id_matches(&message, &request.id) {
+            continue;
+        }
+        return Ok(semantic_lsp_response_from_message(request, &message));
+    }
+}
+
+fn shutdown_lsp_server(
+    server_batch: &SemanticServerBatch,
+    receiver: &Receiver<Result<Value, SemanticLspRunError>>,
+    stdin: &mut ChildStdin,
+    timeout: Duration,
+) -> Result<(), SemanticLspRunError> {
+    let shutdown = SemanticLspRequest {
+        id: format!("lsp:{}:shutdown", server_batch.server),
+        work_item_id: None,
+        request_kind: "request",
+        method: "shutdown",
+        params: Value::Null,
+        document_uri: None,
+        path: None,
+        line: None,
+        column: None,
+        expected_result: "null",
+    };
+    write_lsp_request(stdin, &shutdown)?;
+    let _ = read_lsp_response(server_batch, receiver, stdin, &shutdown, timeout)?;
+    write_lsp_notification(stdin, "exit", Value::Null)
+}
+
+fn wait_for_lsp_exit(
+    child: &mut Child,
+    server: &str,
+    timeout: Duration,
+) -> Result<(), SemanticLspRunError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait().map_err(|error| {
+            SemanticLspRunError::new(format!("failed to poll `{server}` exit: {error}"))
+        })? {
+            if !status.success() {
+                return Err(SemanticLspRunError::new(format!(
+                    "language server `{server}` exited with {status}"
+                )));
+            }
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            child.kill().map_err(|error| {
+                SemanticLspRunError::new(format!(
+                    "failed to stop `{server}` after shutdown timeout: {error}"
+                ))
+            })?;
+            let _ = child.wait();
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn write_lsp_request<W: Write>(
+    writer: &mut W,
+    request: &SemanticLspRequest,
+) -> Result<(), SemanticLspRunError> {
+    write_lsp_json(
+        writer,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": request.id.clone(),
+            "method": request.method,
+            "params": request.params.clone(),
+        }),
+    )
+}
+
+fn write_lsp_notification<W: Write>(
+    writer: &mut W,
+    method: &str,
+    params: Value,
+) -> Result<(), SemanticLspRunError> {
+    write_lsp_json(
+        writer,
+        &json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        }),
+    )
+}
+
+fn write_lsp_server_request_response<W: Write>(
+    writer: &mut W,
+    request: &Value,
+) -> Result<(), SemanticLspRunError> {
+    let id = request.get("id").cloned().unwrap_or(Value::Null);
+    write_lsp_json(
+        writer,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": Value::Null,
+        }),
+    )
+}
+
+fn write_lsp_json<W: Write>(writer: &mut W, message: &Value) -> Result<(), SemanticLspRunError> {
+    let bytes = serde_json::to_vec(message).map_err(|error| {
+        SemanticLspRunError::new(format!("failed to encode LSP message: {error}"))
+    })?;
+    write!(writer, "Content-Length: {}\r\n\r\n", bytes.len()).map_err(|error| {
+        SemanticLspRunError::new(format!("failed to write LSP header: {error}"))
+    })?;
+    writer
+        .write_all(&bytes)
+        .map_err(|error| SemanticLspRunError::new(format!("failed to write LSP body: {error}")))?;
+    writer
+        .flush()
+        .map_err(|error| SemanticLspRunError::new(format!("failed to flush LSP message: {error}")))
+}
+
+fn read_lsp_message<R: BufRead>(reader: &mut R) -> io::Result<Option<Value>> {
+    let mut content_length = None;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            return Ok(None);
+        }
+        let header = line.trim_end_matches(['\r', '\n']);
+        if header.is_empty() {
+            break;
+        }
+        if let Some(value) = header.strip_prefix("Content-Length:") {
+            content_length = value.trim().parse::<usize>().ok();
+        }
+    }
+
+    let Some(content_length) = content_length else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "missing LSP Content-Length header",
+        ));
+    };
+    let mut body = vec![0; content_length];
+    reader.read_exact(&mut body)?;
+    serde_json::from_slice(&body).map(Some).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid LSP JSON message: {error}"),
+        )
+    })
+}
+
+fn semantic_lsp_response_from_message(
+    request: &SemanticLspRequest,
+    message: &Value,
+) -> SemanticLspResponse {
+    SemanticLspResponse {
+        request_id: request.id.clone(),
+        method: request.method.to_string(),
+        result: message.get("result").cloned().unwrap_or(Value::Null),
+        error: message.get("error").map(lsp_error_from_message),
+    }
+}
+
+fn lsp_error_from_message(value: &Value) -> SemanticLspError {
+    SemanticLspError {
+        code: value.get("code").and_then(Value::as_i64).unwrap_or(0),
+        message: value
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("language server error")
+            .to_string(),
+    }
+}
+
+fn is_server_request(message: &Value) -> bool {
+    message.get("method").and_then(Value::as_str).is_some()
+        && message.get("id").is_some()
+        && message.get("result").is_none()
+        && message.get("error").is_none()
+}
+
+fn lsp_response_id_matches(message: &Value, expected: &str) -> bool {
+    message
+        .get("id")
+        .and_then(Value::as_str)
+        .is_some_and(|id| id == expected)
+}
+
+fn lsp_language_id(server_batch: &SemanticServerBatch, path: &str) -> String {
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let language = match extension.as_str() {
+        "rs" => "rust",
+        "py" => "python",
+        "js" | "mjs" | "cjs" => "javascript",
+        "jsx" => "javascriptreact",
+        "ts" | "mts" | "cts" => "typescript",
+        "tsx" => "typescriptreact",
+        "go" => "go",
+        "c" => "c",
+        "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" => "cpp",
+        "php" => "php",
+        "sh" | "bash" => "shellscript",
+        _ => server_batch
+            .languages
+            .first()
+            .map(String::as_str)
+            .unwrap_or("text"),
+    };
+    if language == "bash" {
+        "shellscript".to_string()
+    } else {
+        language.to_string()
+    }
 }
 
 fn semantic_edge_from_patch(edge_patch: &SemanticEdgePatch) -> Edge {
@@ -2061,6 +2512,28 @@ fn find_executable(command: &str) -> Option<PathBuf> {
     find_executable_with_path(command, env::var_os("PATH").as_deref())
 }
 
+fn find_lsp_server_executable(spec: &LspServerSpec) -> Option<PathBuf> {
+    let path = find_executable(spec.command)?;
+    if lsp_server_executable_is_usable(spec, &path) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn lsp_server_executable_is_usable(spec: &LspServerSpec, path: &Path) -> bool {
+    if spec.id != "rust-analyzer" {
+        return true;
+    }
+    Command::new(path)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 fn find_executable_with_path(command: &str, path_var: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
     let path_var = path_var?;
     for dir in env::split_paths(path_var) {
@@ -2093,6 +2566,7 @@ mod tests {
     use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeKind, SourceSpan};
     use std::collections::BTreeMap;
     use std::fs;
+    use std::io::Cursor;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -2125,6 +2599,72 @@ mod tests {
 
         assert_eq!(found, Some(dir.join("rust-analyzer")));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn lsp_wire_round_trips_content_length_messages() {
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": "request-1",
+            "result": { "ok": true },
+        });
+        let mut bytes = Vec::new();
+        write_lsp_json(&mut bytes, &message).unwrap();
+
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.starts_with("Content-Length: "));
+        assert!(text.contains("\r\n\r\n"));
+
+        let mut reader = BufReader::new(Cursor::new(bytes));
+        let parsed = read_lsp_message(&mut reader).unwrap().unwrap();
+        assert_eq!(parsed, message);
+    }
+
+    #[test]
+    fn lsp_server_requests_are_acknowledged_with_null_result() {
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": "server-request-1",
+            "method": "client/registerCapability",
+            "params": {},
+        });
+        let mut bytes = Vec::new();
+        write_lsp_server_request_response(&mut bytes, &request).unwrap();
+
+        let mut reader = BufReader::new(Cursor::new(bytes));
+        let parsed = read_lsp_message(&mut reader).unwrap().unwrap();
+        assert_eq!(parsed["id"], "server-request-1");
+        assert!(parsed["result"].is_null());
+    }
+
+    #[test]
+    fn lsp_error_messages_map_to_semantic_responses() {
+        let request = SemanticLspRequest {
+            id: "lsp:rust-analyzer:definitions:rust:edge:1".to_string(),
+            work_item_id: Some("definitions:rust:edge:1".to_string()),
+            request_kind: "request",
+            method: "textDocument/definition",
+            params: json!({}),
+            document_uri: None,
+            path: None,
+            line: None,
+            column: None,
+            expected_result: "Definition | LocationLink[]",
+        };
+
+        let response = semantic_lsp_response_from_message(
+            &request,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": "lsp:rust-analyzer:definitions:rust:edge:1",
+                "error": { "code": -32601, "message": "not supported" },
+            }),
+        );
+
+        assert_eq!(response.request_id, request.id);
+        assert_eq!(response.method, "textDocument/definition");
+        assert!(response.result.is_null());
+        assert_eq!(response.error.unwrap().code, -32601);
     }
 
     #[test]

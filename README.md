@@ -6,7 +6,7 @@ The project goal is to turn source code into a typed knowledge graph that can be
 
 ## Current Status
 
-This repository is at the bootstrap stage.
+This repository is an active production-oriented prototype.
 
 Implemented now:
 
@@ -17,6 +17,7 @@ Implemented now:
 - Project semantic readiness reports showing which scanned languages are covered by installed LSP servers.
 - Semantic enrichment plans showing ready, blocked, and unsupported LSP work by language, including capped concrete work queues with stable ids and priorities for agents.
 - Semantic execution batch reports that group filtered LSP work by language server command and include executable LSP request descriptors for semantic runners.
+- CLI semantic runner that executes ready LSP batches over stdio and emits reusable response JSON for graph patching or enrichment.
 - Semantic LSP response patch reports that map definitions, references, and diagnostics back onto graph nodes.
 - Semantic graph patch application that emits enriched graphs with semantic edges and diagnostic nodes.
 - Filesystem scanner with default build/vendor ignore rules.
@@ -125,11 +126,12 @@ cargo run -p codegraph-cli -- semantic-plan . --work-item-limit 25
 cargo run -p codegraph-cli -- semantic-plan . --work-status ready --work-capability definitions
 cargo run -p codegraph-cli -- semantic-batch . --work-status ready --work-capability definitions
 cargo run -p codegraph-cli -- semantic-batch . --work-status ready --work-capability workspace_symbols
+cargo run -p codegraph-cli -- semantic-run . --work-status ready --work-capability definitions > responses.json
 cargo run -p codegraph-cli -- semantic-patch . --work-status ready --work-capability definitions --responses responses.json
 cargo run -p codegraph-cli -- semantic-apply . --work-status ready --work-capability definitions --responses responses.json
 ```
 
-`responses.json` for CLI commands is a JSON array of LSP response objects.
+`semantic-run` requires the matching language server to be installed and startable. `responses.json` for CLI commands is a JSON array of LSP response objects.
 
 Limit per-file scan reads for very large repositories:
 
