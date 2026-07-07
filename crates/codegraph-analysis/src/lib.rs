@@ -1589,9 +1589,10 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "trace" => query_trace(graph, spec),
         "dependents" | "impact" | "incoming" => query_dependents(graph, spec),
         "neighbors" | "neighbor" | "neighborhood" => query_neighbors(graph, spec),
+        "unreachable" | "dead" => query_unreachable(graph, spec),
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, unreachable, or path"
         ))),
     }
 }
@@ -2213,6 +2214,82 @@ fn query_neighbors(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, Qu
     })
 }
 
+fn query_unreachable(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    validate_unreachable_terms(&spec)?;
+    let reachable = entrypoint_reachable_nodes(graph);
+    if reachable.is_empty() {
+        return Ok(QueryResult {
+            query: spec.original,
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            total_nodes: 0,
+            total_edges: 0,
+            truncated: false,
+        });
+    }
+
+    let path_index = node_path_index(graph);
+    let node_terms = unreachable_node_terms(&spec);
+    let source_scope = unreachable_uses_source_file_scope(&spec)?;
+    let matched: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            if source_scope {
+                is_source_file_candidate(graph, node)
+                    && !reachable.contains(&node.id)
+                    && !file_has_reachable_code(graph, node.id, &reachable)
+            } else {
+                node.id != graph.root && !reachable.contains(&node.id)
+            }
+        })
+        .filter(|node| node_matches(node, &node_terms))
+        .filter(|node| {
+            spec.terms
+                .get("path_prefix")
+                .is_none_or(|expected| node_path_matches(node, &path_index, expected))
+        })
+        .map(|node| node.id)
+        .collect();
+    let total_matches = matched.len();
+    let selected: BTreeSet<_> = matched.iter().take(spec.limit).copied().collect();
+    let edge_limit = spec.limit.saturating_mul(4).clamp(1, 1000);
+
+    let mut result_node_ids = selected.clone();
+    let mut matched_edges = Vec::new();
+    let mut total_edges = 0usize;
+    for edge in graph.edges.iter().filter(|edge| {
+        (selected.contains(&edge.source) && edge.kind == EdgeKind::Contains)
+            || ((selected.contains(&edge.source) || selected.contains(&edge.target))
+                && is_trace_edge(&edge.kind))
+    }) {
+        total_edges += 1;
+        if matched_edges.len() >= edge_limit {
+            continue;
+        }
+        result_node_ids.insert(edge.source);
+        result_node_ids.insert(edge.target);
+        matched_edges.push(edge.clone());
+    }
+
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| result_node_ids.contains(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let truncated = total_matches > spec.limit || total_edges > edge_limit;
+
+    Ok(QueryResult {
+        query: spec.original,
+        total_nodes: nodes.len(),
+        total_edges,
+        truncated,
+        nodes,
+        edges: matched_edges,
+    })
+}
+
 fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
     validate_path_terms(&spec)?;
     let max_depth = spec
@@ -2373,6 +2450,18 @@ fn validate_neighbor_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     Ok(())
 }
 
+fn validate_unreachable_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if is_node_term(key) || matches!(key.as_str(), "path_prefix" | "scope") {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported unreachable query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 fn is_node_term(key: &str) -> bool {
     matches!(
         key,
@@ -2382,6 +2471,31 @@ fn is_node_term(key: &str) -> bool {
 
 fn is_edge_term(key: &str) -> bool {
     matches!(key, "kind" | "source" | "target" | "confidence") || key.starts_with("metadata.")
+}
+
+fn unreachable_node_terms(spec: &QuerySpec) -> BTreeMap<String, String> {
+    spec.terms
+        .iter()
+        .filter(|(key, _)| !matches!(key.as_str(), "path_prefix" | "scope"))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+fn unreachable_uses_source_file_scope(spec: &QuerySpec) -> Result<bool, QueryError> {
+    if let Some(scope) = spec.terms.get("scope") {
+        return match scope.trim().to_ascii_lowercase().as_str() {
+            "source" | "sources" | "source_file" | "source_files" | "file" | "files" => Ok(true),
+            "any" | "all" | "node" | "nodes" => Ok(false),
+            other => Err(QueryError::new(format!(
+                "invalid unreachable scope `{other}`; expected source_files or any"
+            ))),
+        };
+    }
+
+    Ok(!spec.terms.keys().any(|key| {
+        matches!(key.as_str(), "id" | "kind" | "item_kind" | "package_id")
+            || key.starts_with("metadata.")
+    }))
 }
 
 fn node_matches(node: &Node, terms: &BTreeMap<String, String>) -> bool {
@@ -5479,6 +5593,106 @@ mod tests {
         assert_eq!(incoming.total_edges, 1);
         assert!(incoming.nodes.iter().any(|node| node.id == caller));
         assert!(!incoming.nodes.iter().any(|node| node.id == helper));
+    }
+
+    #[test]
+    fn query_unreachable_returns_source_file_focus() {
+        let mut graph = CodeGraph::new("repo");
+        let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        let live_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/main.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let live_main = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "main",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let legacy_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/legacy.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let legacy_fn = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "legacy_worker",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let test_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "tests/legacy_test.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let test_fn = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "legacy_test",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(
+            live_file,
+            live_main,
+            EdgeKind::Contains,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(entry, live_main, EdgeKind::References, Confidence::Exact);
+        graph.add_edge(
+            legacy_file,
+            legacy_fn,
+            EdgeKind::Contains,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            test_file,
+            test_fn,
+            EdgeKind::Contains,
+            Confidence::Syntactic,
+        );
+
+        let result = query_graph(&graph, "unreachable language:rust").unwrap();
+
+        assert!(result.nodes.iter().any(|node| node.id == legacy_file));
+        assert!(result.nodes.iter().any(|node| node.id == legacy_fn));
+        assert!(result.edges.iter().any(|edge| {
+            edge.source == legacy_file
+                && edge.target == legacy_fn
+                && edge.kind == EdgeKind::Contains
+        }));
+        assert!(!result.nodes.iter().any(|node| node.id == live_file));
+        assert!(!result.nodes.iter().any(|node| node.id == live_main));
+        assert!(!result.nodes.iter().any(|node| node.id == test_file));
+    }
+
+    #[test]
+    fn query_unreachable_supports_general_node_scope() {
+        let mut graph = CodeGraph::new("repo");
+        let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let unused = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "legacy_worker",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(entry, main, EdgeKind::References, Confidence::Exact);
+
+        let result = query_graph(&graph, "unreachable kind:function label:legacy_worker").unwrap();
+
+        assert_eq!(result.total_nodes, 1);
+        assert_eq!(result.nodes[0].id, unused);
+        assert!(result.edges.is_empty());
+
+        let error =
+            query_graph(&graph, "unreachable scope:maybe").expect_err("invalid scope should fail");
+        assert!(error.to_string().contains("invalid unreachable scope"));
     }
 
     #[test]

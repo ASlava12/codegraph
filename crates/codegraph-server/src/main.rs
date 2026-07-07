@@ -3090,10 +3090,16 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/query",
-                    "Run a focused graph query expression.",
+                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, or unreachable.",
                     vec![
                         path_param(),
-                        query_param("q", true, "string", None, "Graph query expression."),
+                        query_param(
+                            "q",
+                            true,
+                            "string",
+                            None,
+                            "Graph query expression, for example `unreachable language:rust`.",
+                        ),
                     ],
                     "QueryResult",
                 ),

@@ -58,7 +58,7 @@ Implemented now:
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
-- Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
+- Agent-friendly graph query command and API for focused node, edge, call, dependency, trace, and unreachable-code slices.
 - Agent-friendly source search command, API, and web panel for compact matching snippets.
 - Edge explanation command, API, and web controls for confidence/provenance evidence.
 - Path queries for finding directed dependency paths between labels or node ids.
@@ -316,6 +316,8 @@ cargo run -p codegraph-cli -- query 'trace label:main depth:3' .
 cargo run -p codegraph-cli -- query 'dependents label:load_config depth:3' .
 cargo run -p codegraph-cli -- query 'neighbors label:main direction:out depth:2 edge_kind:calls' .
 cargo run -p codegraph-cli -- query 'path from:main to:load_config depth:6' .
+cargo run -p codegraph-cli -- query 'unreachable language:rust' .
+cargo run -p codegraph-cli -- query 'unreachable kind:function label:legacy_worker' .
 cargo run -p codegraph-cli -- query 'nodes metadata.annotation.domain:payments' .
 ```
 
@@ -534,6 +536,9 @@ curl --get 'http://127.0.0.1:3765/api/query' \
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=path from:main to:load_config depth:6'
+curl --get 'http://127.0.0.1:3765/api/query' \
+  --data-urlencode 'path=.' \
+  --data-urlencode 'q=unreachable language:rust'
 curl --get 'http://127.0.0.1:3765/api/source-search' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=DATABASE_URL' \
