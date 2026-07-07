@@ -48,6 +48,7 @@ Implemented now:
 - Per-response `x-request-id` correlation headers mirrored in access logs and JSON error bodies.
 - Graceful HTTP server shutdown on Ctrl-C and SIGTERM.
 - Server-wide security headers for the embedded web UI and API responses.
+- Optional API bearer-token protection through `--api-token` or `CODEGRAPH_API_TOKEN`, with same-origin web UI token prompting.
 - Project report snapshots in CLI, API, and web export for summary, quality gate, insights, topology reports, cache, and scan coverage.
 - Web overview chips for server capabilities, API/schema versions, cache state, supported language/export counts, job limits, and route groups.
 - Web runtime panel for uptime, cache state, scan/semantic slots, and retained job-store totals.
@@ -493,6 +494,16 @@ Expose multiple local repositories to the web project selector by repeating
 ```bash
 cargo run -p codegraph-server -- --root . --project ../service-a --project ../tooling
 ```
+
+Protect API routes with a URL-safe token when binding beyond trusted local use:
+
+```bash
+CODEGRAPH_API_TOKEN=change-me cargo run -p codegraph-server -- --root . --host 127.0.0.1
+curl -H 'authorization: Bearer change-me' 'http://127.0.0.1:3765/api/health'
+```
+
+When token protection is enabled, the embedded web UI prompts for the token and
+stores it in browser local storage for later same-origin API and SSE requests.
 
 Scan API:
 

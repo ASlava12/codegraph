@@ -4,11 +4,13 @@ const LABEL_MODES = new Set(["minimal", "focus", "auto"]);
 const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
 const LABEL_MODE_STORAGE_VERSION = "8";
+const API_TOKEN_STORAGE_KEY = "codegraph.apiToken";
 
 const I18N = {
   en: {
     "root.empty": "No project loaded",
     "project.currentRoot": "Current root",
+    "auth.prompt": "CodeGraph API token",
     "selection.title": "Selection",
     "selection.noNode": "No node selected.",
     "selection.edge": "Dependency",
@@ -342,6 +344,7 @@ const I18N = {
   ru: {
     "root.empty": "Проект не загружен",
     "project.currentRoot": "Текущий каталог",
+    "auth.prompt": "Токен CodeGraph API",
     "selection.title": "Выбор",
     "selection.noNode": "Узел не выбран.",
     "selection.edge": "Зависимость",
@@ -1063,6 +1066,7 @@ canvas.addEventListener("pointerleave", onPointerUp);
 canvas.addEventListener("wheel", onWheel, { passive: false });
 window.addEventListener("resize", resizeCanvas);
 
+syncApiTokenCookie();
 applyLocale();
 resizeCanvas();
 init();
@@ -1140,7 +1144,7 @@ async function init() {
 
 async function loadProjects() {
   try {
-    const response = await fetch("/api/projects");
+    const response = await apiFetch("/api/projects");
     const body = await response.json();
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "projects failed"));
@@ -1155,7 +1159,7 @@ async function loadProjects() {
 
 async function loadCapabilities() {
   try {
-    const response = await fetch("/api/capabilities");
+    const response = await apiFetch("/api/capabilities");
     const body = await response.json();
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "capabilities failed"));
@@ -1172,7 +1176,7 @@ async function loadApiSchema() {
   const requestId = state.apiSchemaRequest;
 
   try {
-    const response = await fetch("/api/schema");
+    const response = await apiFetch("/api/schema");
     const body = await response.json();
     if (requestId !== state.apiSchemaRequest) return;
     if (!response.ok) {
@@ -1209,7 +1213,7 @@ async function loadMetrics() {
   metricsRefreshButton.disabled = true;
 
   try {
-    const response = await fetch("/api/metrics");
+    const response = await apiFetch("/api/metrics");
     const body = await response.json();
     if (requestId !== state.metricsRequest) return;
     if (!response.ok) {
@@ -1276,7 +1280,7 @@ async function loadJobQueue() {
 
 async function fetchJobList(kind) {
   const endpoint = kind === "semantic" ? "/api/semantic-jobs" : "/api/scan-jobs";
-  const response = await fetch(`${endpoint}?limit=8`);
+  const response = await apiFetch(`${endpoint}?limit=8`);
   const body = await response.json();
   if (!response.ok) {
     throw new Error(apiErrorMessage(body, response, `${kind} jobs failed`));
@@ -1394,7 +1398,7 @@ async function cancelJobFromList(kind, jobId, button) {
   button.disabled = true;
   const endpoint = kind === "semantic" ? "/api/semantic-jobs" : "/api/scan-jobs";
   try {
-    const response = await fetch(`${endpoint}/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+    const response = await apiFetch(`${endpoint}/${encodeURIComponent(jobId)}`, { method: "DELETE" });
     const body = await response.json();
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "job cancel failed"));
@@ -1488,7 +1492,7 @@ async function scan() {
   }
 
   try {
-    const response = await fetch("/api/scan-jobs", {
+    const response = await apiFetch("/api/scan-jobs", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ path: pathInput.value.trim() || "." }),
@@ -1519,7 +1523,7 @@ async function cancelScanJob() {
 
   scanCancelButton.disabled = true;
   try {
-    const response = await fetch(`/api/scan-jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+    const response = await apiFetch(`/api/scan-jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
     const body = await response.json();
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "failed to cancel scan"));
@@ -1548,7 +1552,7 @@ async function watchScanJob(jobId) {
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    const events = new EventSource(`/api/scan-jobs/${encodeURIComponent(jobId)}/events`);
+    const events = authenticatedEventSource(`/api/scan-jobs/${encodeURIComponent(jobId)}/events`);
     state.scanEvents = events;
 
     const finish = async (job) => {
@@ -1624,7 +1628,7 @@ async function watchScanJob(jobId) {
 
 async function pollScanJob(jobId) {
   while (state.scanJobId === jobId) {
-    const response = await fetch(`/api/scan-jobs/${encodeURIComponent(jobId)}`);
+    const response = await apiFetch(`/api/scan-jobs/${encodeURIComponent(jobId)}`);
     const body = await response.json();
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "scan status failed"));
@@ -1698,7 +1702,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
   if (edgeSource) params.set("edge_source", edgeSource);
 
   try {
-    const response = await fetch(`/api/graph?${params.toString()}`);
+    const response = await apiFetch(`/api/graph?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.pageRequest) return;
     if (!response.ok) {
@@ -1767,16 +1771,16 @@ async function loadProjectOverview() {
       languageDependenciesResponse,
       hotspotsResponse,
     ] = await Promise.all([
-      fetch(`/api/summary?${params.toString()}`),
-      fetch(`/api/entrypoints?${params.toString()}`),
-      fetch(`/api/scan-options?${params.toString()}`),
-      fetch(`/api/coverage?${params.toString()}`),
-      fetch("/api/lsp"),
-      fetch(`/api/semantic-readiness?${params.toString()}`),
-      fetch(`/api/semantic-plan?${semanticParams.toString()}`),
-      fetch(`/api/architecture?${params.toString()}&group_limit=8&edge_limit=40`),
-      fetch(`/api/language-dependencies?${params.toString()}&limit=8`),
-      fetch(`/api/hotspots?${params.toString()}&limit=8`),
+      apiFetch(`/api/summary?${params.toString()}`),
+      apiFetch(`/api/entrypoints?${params.toString()}`),
+      apiFetch(`/api/scan-options?${params.toString()}`),
+      apiFetch(`/api/coverage?${params.toString()}`),
+      apiFetch("/api/lsp"),
+      apiFetch(`/api/semantic-readiness?${params.toString()}`),
+      apiFetch(`/api/semantic-plan?${semanticParams.toString()}`),
+      apiFetch(`/api/architecture?${params.toString()}&group_limit=8&edge_limit=40`),
+      apiFetch(`/api/language-dependencies?${params.toString()}&limit=8`),
+      apiFetch(`/api/hotspots?${params.toString()}&limit=8`),
     ]);
     const summary = await summaryResponse.json();
     const entrypoints = await entrypointsResponse.json();
@@ -1876,7 +1880,7 @@ async function runSemanticEnrich() {
   }
 
   try {
-    const response = await fetch("/api/semantic-jobs", {
+    const response = await apiFetch("/api/semantic-jobs", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -1911,7 +1915,7 @@ async function cancelSemanticJob() {
 
   semanticCancelButton.disabled = true;
   try {
-    const response = await fetch(`/api/semantic-jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+    const response = await apiFetch(`/api/semantic-jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
     const body = await response.json();
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "failed to cancel semantic enrichment"));
@@ -1940,7 +1944,7 @@ async function watchSemanticJob(jobId, requestId) {
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    const events = new EventSource(`/api/semantic-jobs/${encodeURIComponent(jobId)}/events`);
+    const events = authenticatedEventSource(`/api/semantic-jobs/${encodeURIComponent(jobId)}/events`);
     state.semanticEvents = events;
 
     const finish = async () => {
@@ -2013,7 +2017,7 @@ async function watchSemanticJob(jobId, requestId) {
 
 async function pollSemanticJob(jobId, requestId) {
   while (state.semanticJobId === jobId && requestId === state.semanticEnrichRequest) {
-    const response = await fetch(`/api/semantic-jobs/${encodeURIComponent(jobId)}`);
+    const response = await apiFetch(`/api/semantic-jobs/${encodeURIComponent(jobId)}`);
     const job = await response.json();
     if (!response.ok) {
       throw new Error(apiErrorMessage(job, response, "semantic status failed"));
@@ -2039,7 +2043,7 @@ async function pollSemanticJob(jobId, requestId) {
 }
 
 async function loadSemanticJobResult(jobId, requestId) {
-  const response = await fetch(`/api/semantic-jobs/${encodeURIComponent(jobId)}/result`);
+  const response = await apiFetch(`/api/semantic-jobs/${encodeURIComponent(jobId)}/result`);
   const body = await response.json();
   if (requestId !== state.semanticEnrichRequest || state.semanticJobId !== jobId) return;
   if (!response.ok) {
@@ -2560,7 +2564,7 @@ async function focusSemanticWorkItem(item) {
   if (edgeIndexes.length > 0) params.set("edge_indexes", edgeIndexes.join(","));
 
   try {
-    const response = await fetch(`/api/focus?${params.toString()}`);
+    const response = await apiFetch(`/api/focus?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.insightFocusRequest) return;
     if (!response.ok) {
@@ -2645,7 +2649,7 @@ async function focusArchitectureEdge(edge) {
   });
 
   try {
-    const response = await fetch(`/api/focus?${params.toString()}`);
+    const response = await apiFetch(`/api/focus?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.insightFocusRequest) return;
     if (!response.ok) {
@@ -2701,7 +2705,7 @@ async function focusLanguageDependency(link) {
   });
 
   try {
-    const response = await fetch(`/api/focus?${params.toString()}`);
+    const response = await apiFetch(`/api/focus?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.insightFocusRequest) return;
     if (!response.ok) {
@@ -2824,7 +2828,7 @@ async function runEntryFlowTrace() {
   if (search) params.set("search", search);
 
   try {
-    const response = await fetch(`/api/entrypoint-traces?${params.toString()}`);
+    const response = await apiFetch(`/api/entrypoint-traces?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.entryFlowRequest) return;
     if (!response.ok) {
@@ -2926,7 +2930,7 @@ async function loadInsights() {
   insightFilterButton.disabled = true;
 
   try {
-    const response = await fetch(`/api/insights?${params.toString()}`);
+    const response = await apiFetch(`/api/insights?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.insightRequest) return;
     if (!response.ok) {
@@ -2967,7 +2971,7 @@ async function runCheck() {
   checkResult.innerHTML = '<p class="empty">Running check...</p>';
 
   try {
-    const response = await fetch(`/api/check?${params.toString()}`);
+    const response = await apiFetch(`/api/check?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.checkRequest) return;
     if (!response.ok) {
@@ -3055,7 +3059,7 @@ async function runGraphQuery(options = {}) {
   });
 
   try {
-    const response = await fetch(`/api/query?${params.toString()}`);
+    const response = await apiFetch(`/api/query?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.queryRequest) return;
     if (!response.ok) {
@@ -3103,7 +3107,7 @@ async function runSourceSearch() {
   if (pathFilter) params.set("path_filter", pathFilter);
 
   try {
-    const response = await fetch(`/api/source-search?${params.toString()}`);
+    const response = await apiFetch(`/api/source-search?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.sourceSearchRequest) return;
     if (!response.ok) {
@@ -3136,7 +3140,7 @@ async function loadCacheDiff() {
   });
 
   try {
-    const response = await fetch(`/api/cache-diff?${params.toString()}`);
+    const response = await apiFetch(`/api/cache-diff?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.cacheDiffRequest) return;
     if (!response.ok) {
@@ -3170,7 +3174,7 @@ async function loadCacheChunks() {
   });
 
   try {
-    const response = await fetch(`/api/cache-chunks?${params.toString()}`);
+    const response = await apiFetch(`/api/cache-chunks?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.cacheChunksRequest) return;
     if (!response.ok) {
@@ -3204,7 +3208,7 @@ async function loadIncrementalPlan() {
   });
 
   try {
-    const response = await fetch(`/api/incremental-plan?${params.toString()}`);
+    const response = await apiFetch(`/api/incremental-plan?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.incrementalPlanRequest) return;
     if (!response.ok) {
@@ -3238,7 +3242,7 @@ async function loadIncrementalScan() {
   });
 
   try {
-    const response = await fetch(`/api/incremental-scan?${params.toString()}`);
+    const response = await apiFetch(`/api/incremental-scan?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.incrementalScanRequest) return;
     if (!response.ok) {
@@ -3274,7 +3278,7 @@ async function loadIncrementalMergePreview() {
   });
 
   try {
-    const response = await fetch(`/api/incremental-merge-preview?${params.toString()}`);
+    const response = await apiFetch(`/api/incremental-merge-preview?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.incrementalMergeRequest) return;
     if (!response.ok) {
@@ -3310,7 +3314,7 @@ async function loadIncrementalUpdate() {
   });
 
   try {
-    const response = await fetch(`/api/incremental-update?${params.toString()}`, { method: "POST" });
+    const response = await apiFetch(`/api/incremental-update?${params.toString()}`, { method: "POST" });
     const body = await response.json();
     if (requestId !== state.incrementalUpdateRequest) return;
     if (!response.ok) {
@@ -3351,7 +3355,7 @@ async function runGraphExport() {
   }
 
   try {
-    const response = await fetch(`${metadata.endpoint}?${params.toString()}`);
+    const response = await apiFetch(`${metadata.endpoint}?${params.toString()}`);
     if (requestId !== state.exportRequest) return;
     if (!response.ok) {
       throw new Error(await responseErrorMessage(response, "export failed"));
@@ -3390,6 +3394,74 @@ async function responseErrorMessage(response, fallback) {
   }
   const text = await response.text();
   return apiErrorMessage(null, response, text.trim() || fallback);
+}
+
+async function apiFetch(input, init = {}) {
+  let response = await window.fetch(input, withApiAuth(init));
+  if (response.status !== 401 || !isApiRequest(input)) {
+    return response;
+  }
+
+  const token = requestApiToken();
+  if (!token) {
+    return response;
+  }
+  response = await window.fetch(input, withApiAuth(init));
+  return response;
+}
+
+function withApiAuth(init = {}) {
+  const headers = new Headers(init.headers || {});
+  const token = storedApiToken();
+  if (token && !headers.has("authorization") && !headers.has("x-codegraph-token")) {
+    headers.set("authorization", `Bearer ${token}`);
+  }
+  return { ...init, headers };
+}
+
+function isApiRequest(input) {
+  const url = typeof input === "string" ? input : input?.url || "";
+  if (url.startsWith("/api/")) return true;
+  try {
+    const parsed = new URL(url, window.location.href);
+    return parsed.origin === window.location.origin && parsed.pathname.startsWith("/api/");
+  } catch (error) {
+    return false;
+  }
+}
+
+function requestApiToken() {
+  const token = window.prompt(t("auth.prompt"), storedApiToken() || "");
+  if (!token) return null;
+  storeApiToken(token);
+  return token;
+}
+
+function storedApiToken() {
+  try {
+    return window.localStorage?.getItem(API_TOKEN_STORAGE_KEY) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function storeApiToken(token) {
+  try {
+    window.localStorage?.setItem(API_TOKEN_STORAGE_KEY, token);
+  } catch (error) {
+    // Local storage can be disabled; the cookie still covers same-origin requests.
+  }
+  syncApiTokenCookie(token);
+}
+
+function syncApiTokenCookie(token = storedApiToken()) {
+  if (!token) return;
+  document.cookie = `codegraph_api_token=${encodeURIComponent(token)}; path=/; SameSite=Strict`;
+}
+
+function authenticatedEventSource(url) {
+  syncApiTokenCookie();
+  return new EventSource(url);
 }
 
 function apiErrorMessage(body, response, fallback) {
@@ -3785,7 +3857,7 @@ async function runPathQuery() {
   });
 
   try {
-    const response = await fetch(`/api/query?${params.toString()}`);
+    const response = await apiFetch(`/api/query?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.pathRequest) return;
     if (!response.ok) {
@@ -3830,7 +3902,7 @@ async function runConfigTrace() {
   });
 
   try {
-    const response = await fetch(`/api/trace-config?${params.toString()}`);
+    const response = await apiFetch(`/api/trace-config?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.configTraceRequest) return;
     if (!response.ok) {
@@ -3958,7 +4030,7 @@ async function runErrorTrace() {
   });
 
   try {
-    const response = await fetch(`/api/trace-errors?${params.toString()}`);
+    const response = await apiFetch(`/api/trace-errors?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.errorTraceRequest) return;
     if (!response.ok) {
@@ -4128,7 +4200,7 @@ async function openSourceSearchMatch(match) {
   });
 
   try {
-    const response = await fetch(`/api/source?${params.toString()}`);
+    const response = await apiFetch(`/api/source?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.selectionRequest) return;
     if (!response.ok) {
@@ -4572,7 +4644,7 @@ async function focusInsight(insight) {
   if (edgeIndexes.length > 0) params.set("edge_indexes", edgeIndexes.join(","));
 
   try {
-    const response = await fetch(`/api/focus?${params.toString()}`);
+    const response = await apiFetch(`/api/focus?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.insightFocusRequest) return;
     if (!response.ok) {
@@ -4600,7 +4672,7 @@ async function focusNodeId(nodeId, label) {
   });
 
   try {
-    const response = await fetch(`/api/focus?${params.toString()}`);
+    const response = await apiFetch(`/api/focus?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.insightFocusRequest) return;
     if (!response.ok) {
@@ -4624,7 +4696,7 @@ async function focusEdgeIndex(edgeIndex) {
   });
 
   try {
-    const response = await fetch(`/api/focus?${params.toString()}`);
+    const response = await apiFetch(`/api/focus?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.insightFocusRequest) return;
     if (!response.ok) {
@@ -5717,7 +5789,7 @@ async function loadNodeContext(nodeId, requestId) {
   });
 
   try {
-    const response = await fetch(`/api/node-card?${params.toString()}`);
+    const response = await apiFetch(`/api/node-card?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.selectionRequest || state.selectedId !== nodeId) return;
     if (!response.ok) {
@@ -6207,7 +6279,7 @@ async function loadTrace(node) {
   });
 
   try {
-    const response = await fetch(`/api/trace?${params.toString()}`);
+    const response = await apiFetch(`/api/trace?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.traceRequest) return;
     if (!response.ok) {
@@ -6240,7 +6312,7 @@ async function loadDependents(node) {
   });
 
   try {
-    const response = await fetch(`/api/dependents?${params.toString()}`);
+    const response = await apiFetch(`/api/dependents?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.dependentsRequest) return;
     if (!response.ok) {
@@ -6354,7 +6426,7 @@ async function loadSourcePreview(node, requestId) {
   });
 
   try {
-    const response = await fetch(`/api/source?${params.toString()}`);
+    const response = await apiFetch(`/api/source?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.selectionRequest) return;
     if (!response.ok) {
@@ -6474,7 +6546,7 @@ async function explainEdge(button) {
   }
 
   try {
-    const response = await fetch(`/api/explain-edge?${params.toString()}`);
+    const response = await apiFetch(`/api/explain-edge?${params.toString()}`);
     const body = await response.json();
     if (button.dataset.explainToken !== requestId) return;
     if (!response.ok) {

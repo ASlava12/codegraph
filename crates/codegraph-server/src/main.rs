@@ -38,6 +38,7 @@ use codegraph_storage::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::convert::Infallible;
+use std::env;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -122,6 +123,10 @@ struct Args {
     /// Disable per-request access logs on stderr.
     #[arg(long)]
     quiet_access_log: bool,
+
+    /// Require a token for all /api/* routes. Also read from CODEGRAPH_API_TOKEN.
+    #[arg(long)]
+    api_token: Option<String>,
 }
 
 #[derive(Clone)]
@@ -142,6 +147,23 @@ struct AppState {
     scan_permits: Arc<Semaphore>,
     semantic_permits: Arc<Semaphore>,
     next_job_id: Arc<AtomicU64>,
+}
+
+#[derive(Clone)]
+struct ApiAuth {
+    token: Option<Arc<str>>,
+}
+
+impl ApiAuth {
+    fn new(token: Option<String>) -> Self {
+        Self {
+            token: token.map(Arc::<str>::from),
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        self.token.is_some()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -676,6 +698,7 @@ async fn main() -> Result<()> {
     let bind_addr: SocketAddr = format!("{}:{}", args.host, args.port)
         .parse()
         .with_context(|| format!("invalid bind address {}:{}", args.host, args.port))?;
+    let api_auth = ApiAuth::new(configured_api_token(args.api_token.clone()));
 
     let max_scan_concurrency = args.max_scan_concurrency.max(1);
     let max_semantic_concurrency = args.max_semantic_concurrency.max(1);
@@ -783,6 +806,14 @@ async fn main() -> Result<()> {
         .fallback(not_found)
         .with_state(state)
         .layer(middleware::from_fn(security_headers));
+    let app = if api_auth.enabled() {
+        app.layer(middleware::from_fn_with_state(
+            api_auth,
+            api_auth_middleware,
+        ))
+    } else {
+        app
+    };
     let app = if args.quiet_access_log {
         app
     } else {
@@ -841,6 +872,23 @@ async fn security_headers(request: Request, next: Next) -> Response {
     response
 }
 
+async fn api_auth_middleware(
+    State(auth): State<ApiAuth>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if !request.uri().path().starts_with("/api/") || api_request_authorized(&request, &auth) {
+        return next.run(request).await;
+    }
+
+    let mut response = ApiError::unauthorized("authentication required").into_response();
+    response.headers_mut().insert(
+        header::WWW_AUTHENTICATE,
+        HeaderValue::from_static("Bearer realm=\"CodeGraph API\""),
+    );
+    response
+}
+
 #[derive(Debug, Clone)]
 struct RequestId(String);
 
@@ -890,6 +938,69 @@ fn incoming_request_id(request: &Request) -> Option<String> {
         .map(str::trim)
         .filter(|value| is_valid_request_id(value))
         .map(ToOwned::to_owned)
+}
+
+fn configured_api_token(arg_token: Option<String>) -> Option<String> {
+    arg_token
+        .or_else(|| env::var("CODEGRAPH_API_TOKEN").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn api_request_authorized(request: &Request, auth: &ApiAuth) -> bool {
+    let Some(expected) = auth.token.as_deref() else {
+        return true;
+    };
+    request_api_token(request).is_some_and(|candidate| constant_time_eq(candidate, expected))
+}
+
+fn request_api_token(request: &Request) -> Option<&str> {
+    bearer_token(request)
+        .or_else(|| header_token(request, "x-codegraph-token"))
+        .or_else(|| cookie_token(request))
+}
+
+fn bearer_token(request: &Request) -> Option<&str> {
+    let value = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())?
+        .trim();
+    value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+}
+
+fn header_token<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
+    request
+        .headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+}
+
+fn cookie_token(request: &Request) -> Option<&str> {
+    request
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())?
+        .split(';')
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find_map(|(name, value)| (name.trim() == "codegraph_api_token").then_some(value.trim()))
+        .filter(|token| !token.is_empty())
+}
+
+fn constant_time_eq(left: &str, right: &str) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.bytes()
+        .zip(right.bytes())
+        .fold(0_u8, |diff, (left, right)| diff | (left ^ right))
+        == 0
 }
 
 fn next_request_id() -> String {
@@ -2536,6 +2647,13 @@ struct ApiError {
 }
 
 impl ApiError {
+    fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message: message.into(),
+        }
+    }
+
     fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
@@ -4525,6 +4643,50 @@ mod tests {
         assert!(!is_valid_request_id("contains space"));
         assert!(!is_valid_request_id("bad\nheader"));
         assert!(!is_valid_request_id(&"x".repeat(129)));
+    }
+
+    #[test]
+    fn configured_api_token_trims_empty_values() {
+        assert_eq!(
+            configured_api_token(Some(" secret ".to_string())),
+            Some("secret".to_string())
+        );
+        assert_eq!(configured_api_token(Some("   ".to_string())), None);
+    }
+
+    #[test]
+    fn api_auth_accepts_bearer_header_token_and_cookie() {
+        let auth = ApiAuth::new(Some("secret-token".to_string()));
+        let bearer = Request::builder()
+            .uri("/api/health")
+            .header(header::AUTHORIZATION, "Bearer secret-token")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let header = Request::builder()
+            .uri("/api/health")
+            .header("x-codegraph-token", "secret-token")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let cookie = Request::builder()
+            .uri("/api/health")
+            .header(
+                header::COOKIE,
+                "theme=dark; codegraph_api_token=secret-token",
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let wrong = Request::builder()
+            .uri("/api/health")
+            .header(header::AUTHORIZATION, "Bearer wrong")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let disabled = ApiAuth::new(None);
+
+        assert!(api_request_authorized(&bearer, &auth));
+        assert!(api_request_authorized(&header, &auth));
+        assert!(api_request_authorized(&cookie, &auth));
+        assert!(!api_request_authorized(&wrong, &auth));
+        assert!(api_request_authorized(&wrong, &disabled));
     }
 
     #[tokio::test]

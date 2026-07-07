@@ -232,6 +232,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add graceful HTTP server shutdown for Ctrl-C and SIGTERM.
 - [x] Surface server capabilities in the web overview.
 - [x] Add server-wide security headers for embedded web and API responses.
+- [x] Add optional API bearer-token protection with web UI token handling.
 - [x] Add project report snapshots across CLI, API, and web export.
 - Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
 - [x] Add source preview.
