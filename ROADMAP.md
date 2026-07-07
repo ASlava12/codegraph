@@ -180,6 +180,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add initial multi-language UI support with English and Russian.
 - [x] Reduce graph label clutter with zoom thresholds and collision-aware label drawing.
 - [x] Add bounded server retention for scan and semantic jobs with health counters.
+- [x] Add configurable server concurrency limits for scan and semantic jobs with health counters.
 - Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
 - [x] Add source preview.
 - [x] Add trace panels.

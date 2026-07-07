@@ -21,6 +21,7 @@ Implemented now:
 - HTTP/API and web semantic enrichment action that can run ready LSP batches and render an enriched graph in the browser.
 - Async semantic enrichment job API with status, SSE events, and result retrieval for long-running LSP work.
 - Bounded in-memory scan and semantic job retention with job-store counters in the health API.
+- Configurable scan and semantic job concurrency limits with active/available counters in the health API.
 - Semantic LSP response patch reports that map definitions, references, and diagnostics back onto graph nodes.
 - Semantic graph patch application that emits enriched graphs with semantic edges and diagnostic nodes.
 - Filesystem scanner with default build/vendor ignore rules.
@@ -385,6 +386,11 @@ Completed scan and semantic enrichment jobs are retained in bounded in-memory
 stores so large graph results do not accumulate without limit. Use
 `--max-scan-jobs <count>` and `--max-semantic-jobs <count>` to tune the retained
 history; active queued/running jobs are not pruned.
+Scan and semantic enrichment jobs also have independent concurrency limits. Use
+`--max-scan-concurrency <count>` and `--max-semantic-concurrency <count>` to tune
+how many long-running scans and LSP enrichment runs may execute at once; excess
+jobs stay queued until a slot is available. `/api/health` reports active and
+available slots for both pools.
 
 Expose multiple local repositories to the web project selector by repeating
 `--project`. Requests remain constrained to the configured roots unless

@@ -43,11 +43,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use tokio::time::sleep;
 
 const DEFAULT_MAX_SCAN_JOBS: usize = 64;
 const DEFAULT_MAX_SEMANTIC_JOBS: usize = 64;
+const DEFAULT_MAX_SCAN_CONCURRENCY: usize = 2;
+const DEFAULT_MAX_SEMANTIC_CONCURRENCY: usize = 1;
 
 #[derive(Debug, Parser)]
 #[command(name = "codegraph-server")]
@@ -100,6 +102,14 @@ struct Args {
     /// Maximum in-memory semantic enrichment jobs retained after completion.
     #[arg(long, default_value_t = DEFAULT_MAX_SEMANTIC_JOBS)]
     max_semantic_jobs: usize,
+
+    /// Maximum scan jobs allowed to run at the same time.
+    #[arg(long, default_value_t = DEFAULT_MAX_SCAN_CONCURRENCY)]
+    max_scan_concurrency: usize,
+
+    /// Maximum semantic enrichment jobs allowed to run at the same time.
+    #[arg(long, default_value_t = DEFAULT_MAX_SEMANTIC_CONCURRENCY)]
+    max_semantic_concurrency: usize,
 }
 
 #[derive(Clone)]
@@ -113,6 +123,10 @@ struct AppState {
     semantic_jobs: Arc<RwLock<BTreeMap<String, SemanticJob>>>,
     max_scan_jobs: usize,
     max_semantic_jobs: usize,
+    max_scan_concurrency: usize,
+    max_semantic_concurrency: usize,
+    scan_permits: Arc<Semaphore>,
+    semantic_permits: Arc<Semaphore>,
     next_job_id: Arc<AtomicU64>,
 }
 
@@ -412,8 +426,10 @@ struct HealthResponse {
     cache_dir: Option<String>,
     max_scan_jobs: usize,
     scan_jobs: JobStoreHealth,
+    scan_concurrency: ConcurrencyHealth,
     max_semantic_jobs: usize,
     semantic_jobs: JobStoreHealth,
+    semantic_concurrency: ConcurrencyHealth,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -423,6 +439,13 @@ struct JobStoreHealth {
     running: usize,
     complete: usize,
     failed: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct ConcurrencyHealth {
+    limit: usize,
+    active: usize,
+    available: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -483,6 +506,8 @@ async fn main() -> Result<()> {
         .parse()
         .with_context(|| format!("invalid bind address {}:{}", args.host, args.port))?;
 
+    let max_scan_concurrency = args.max_scan_concurrency.max(1);
+    let max_semantic_concurrency = args.max_semantic_concurrency.max(1);
     let state = AppState {
         root,
         projects,
@@ -503,6 +528,10 @@ async fn main() -> Result<()> {
         semantic_jobs: Arc::new(RwLock::new(BTreeMap::new())),
         max_scan_jobs: args.max_scan_jobs.max(1),
         max_semantic_jobs: args.max_semantic_jobs.max(1),
+        max_scan_concurrency,
+        max_semantic_concurrency,
+        scan_permits: Arc::new(Semaphore::new(max_scan_concurrency)),
+        semantic_permits: Arc::new(Semaphore::new(max_semantic_concurrency)),
         next_job_id: Arc::new(AtomicU64::new(1)),
     };
 
@@ -575,7 +604,7 @@ async fn start_scan_job(
         id: id.clone(),
         status: ScanJobStatus::Queued,
         path: path.clone(),
-        message: "queued".to_string(),
+        message: "queued; waiting for scan slot".to_string(),
         created_at_unix: now,
         updated_at_unix: now,
         finished_at_unix: None,
@@ -589,7 +618,25 @@ async fn start_scan_job(
     let options = scan_options(&state, &root)?;
     let cache = state.cache.clone();
     let max_jobs = state.max_scan_jobs;
+    let scan_permits = Arc::clone(&state.scan_permits);
     tokio::spawn(async move {
+        let Ok(permit) = scan_permits.acquire_owned().await else {
+            update_scan_job(
+                &jobs,
+                &id,
+                ScanJobUpdate {
+                    status: ScanJobStatus::Failed,
+                    message: "scan concurrency limiter was closed".to_string(),
+                    cache: None,
+                    summary: None,
+                    graph: None,
+                },
+                max_jobs,
+            )
+            .await;
+            return;
+        };
+
         update_scan_job(
             &jobs,
             &id,
@@ -609,6 +656,7 @@ async fn start_scan_job(
             scan_project_cached(scan_root, &options, cache.as_ref())
         })
         .await;
+        drop(permit);
         match result {
             Ok(Ok(output)) => {
                 let graph = output.graph;
@@ -792,8 +840,13 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, A
             .map(|cache| cache.dir().display().to_string()),
         max_scan_jobs: state.max_scan_jobs,
         scan_jobs,
+        scan_concurrency: concurrency_health(&state.scan_permits, state.max_scan_concurrency),
         max_semantic_jobs: state.max_semantic_jobs,
         semantic_jobs,
+        semantic_concurrency: concurrency_health(
+            &state.semantic_permits,
+            state.max_semantic_concurrency,
+        ),
     }))
 }
 
@@ -943,7 +996,7 @@ async fn start_semantic_job(
         id: id.clone(),
         status: ScanJobStatus::Queued,
         path: path.clone(),
-        message: "queued".to_string(),
+        message: "queued; waiting for semantic slot".to_string(),
         created_at_unix: now,
         updated_at_unix: now,
         finished_at_unix: None,
@@ -959,7 +1012,23 @@ async fn start_semantic_job(
     let options = scan_options(&state, &root)?;
     let cache = state.cache.clone();
     let max_jobs = state.max_semantic_jobs;
+    let semantic_permits = Arc::clone(&state.semantic_permits);
     tokio::spawn(async move {
+        let Ok(permit) = semantic_permits.acquire_owned().await else {
+            update_semantic_job(
+                &jobs,
+                &id,
+                SemanticJobUpdate {
+                    status: ScanJobStatus::Failed,
+                    message: "semantic concurrency limiter was closed".to_string(),
+                    result: None,
+                },
+                max_jobs,
+            )
+            .await;
+            return;
+        };
+
         update_semantic_job(
             &jobs,
             &id,
@@ -980,6 +1049,7 @@ async fn start_semantic_job(
                 .map_err(|error| error.to_string())
         })
         .await;
+        drop(permit);
 
         match result {
             Ok(Ok(result)) => {
@@ -1949,6 +2019,16 @@ fn job_store_health(statuses: impl IntoIterator<Item = ScanJobStatus>) -> JobSto
     health
 }
 
+fn concurrency_health(semaphore: &Semaphore, limit: usize) -> ConcurrencyHealth {
+    let limit = limit.max(1);
+    let available = semaphore.available_permits().min(limit);
+    ConcurrencyHealth {
+        limit,
+        active: limit.saturating_sub(available),
+        available,
+    }
+}
+
 fn unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2095,6 +2175,18 @@ mod tests {
         assert_eq!(health.failed, 1);
     }
 
+    #[test]
+    fn concurrency_health_counts_active_and_available_permits() {
+        let semaphore = Semaphore::new(3);
+        let _permit = semaphore.try_acquire().unwrap();
+
+        let health = concurrency_health(&semaphore, 3);
+
+        assert_eq!(health.limit, 3);
+        assert_eq!(health.active, 1);
+        assert_eq!(health.available, 2);
+    }
+
     fn test_state(root: PathBuf, additional: Vec<PathBuf>, allow_any_path: bool) -> AppState {
         AppState {
             projects: Arc::new(project_roots(&root, additional).unwrap()),
@@ -2106,6 +2198,10 @@ mod tests {
             semantic_jobs: Arc::new(RwLock::new(BTreeMap::new())),
             max_scan_jobs: DEFAULT_MAX_SCAN_JOBS,
             max_semantic_jobs: DEFAULT_MAX_SEMANTIC_JOBS,
+            max_scan_concurrency: DEFAULT_MAX_SCAN_CONCURRENCY,
+            max_semantic_concurrency: DEFAULT_MAX_SEMANTIC_CONCURRENCY,
+            scan_permits: Arc::new(Semaphore::new(DEFAULT_MAX_SCAN_CONCURRENCY)),
+            semantic_permits: Arc::new(Semaphore::new(DEFAULT_MAX_SEMANTIC_CONCURRENCY)),
             next_job_id: Arc::new(AtomicU64::new(1)),
         }
     }
