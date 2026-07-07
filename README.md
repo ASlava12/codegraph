@@ -33,7 +33,7 @@ Implemented now:
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, and trace slices.
-- Edge explanation command and API for confidence/provenance evidence.
+- Edge explanation command, API, and web controls for confidence/provenance evidence.
 - Path queries for finding directed dependency paths between labels or node ids.
 - Confidence-aware edge queries and UI edge labels for fact provenance.
 - Server-side graph paging and filtering endpoint for large repository exploration.

@@ -16,6 +16,7 @@ const state = {
   selectionRequest: 0,
   traceRequest: 0,
   dependentsRequest: 0,
+  edgeExplainRequest: 0,
   entryFlowRequest: 0,
   queryRequest: 0,
   pathRequest: 0,
@@ -798,6 +799,7 @@ async function runGraphQuery() {
     }
     queryResult.innerHTML = renderQueryResult(body);
     attachQueryNavigation(queryResult);
+    attachEdgeExplainActions(queryResult);
     attachQueryFocusActions(queryResult, body);
   } catch (error) {
     if (requestId !== state.queryRequest) return;
@@ -849,6 +851,7 @@ async function runPathQuery() {
     }
     pathResult.innerHTML = renderQueryResult(body, { label: "Path" });
     attachQueryNavigation(pathResult);
+    attachEdgeExplainActions(pathResult);
     attachQueryFocusActions(pathResult, body);
     if (body.nodes.length > 0 || body.edges.length > 0) {
       focusQueryResult(body, pathResult, { mode: "path" });
@@ -1173,12 +1176,16 @@ function renderQueryEdge(edge, nodeMap) {
   const facts = renderEdgeFacts(edge);
   return `
     <li>
-      <button class="query-item query-edge" type="button" data-node-id="${edge.target}">
-        <span>${escapeHtml(formatKind(edge.kind))}</span>
-        <strong>${escapeHtml(source?.label || String(edge.source))}</strong>
-        <em>${escapeHtml(target?.label || String(edge.target))}</em>
-        ${facts}
-      </button>
+      <div class="edge-row">
+        <button class="query-item query-edge" type="button" data-node-id="${edge.target}">
+          <span>${escapeHtml(formatKind(edge.kind))}</span>
+          <strong>${escapeHtml(source?.label || String(edge.source))}</strong>
+          <em>${escapeHtml(target?.label || String(edge.target))}</em>
+          ${facts}
+        </button>
+        ${renderExplainEdgeButton(edge)}
+      </div>
+      <div class="edge-explanation" data-edge-explanation hidden></div>
     </li>
   `;
 }
@@ -1207,6 +1214,12 @@ function attachQueryFocusActions(container, result) {
       clearQueryFocus();
     });
   }
+}
+
+function attachEdgeExplainActions(container) {
+  container.querySelectorAll("[data-explain-edge]").forEach((button) => {
+    button.addEventListener("click", () => explainEdge(button));
+  });
 }
 
 function focusQueryResult(result, container = queryResult, options = {}) {
@@ -1467,6 +1480,7 @@ function showFocusedGraph(result, label, selectedId = null) {
   state.queryFocus = null;
   queryResult.innerHTML = renderQueryResult(result);
   attachQueryNavigation(queryResult);
+  attachEdgeExplainActions(queryResult);
   attachQueryFocusActions(queryResult, result);
   rootLabel.textContent = label;
   initializeGraph({ preserveView: false });
@@ -2287,6 +2301,8 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
   if (node.span) {
     loadSourcePreview(node, requestId);
   }
+
+  attachEdgeExplainActions(selectionBody);
 }
 
 async function loadTrace(node) {
@@ -2315,6 +2331,7 @@ async function loadTrace(node) {
     }
     target.innerHTML = renderTrace(body);
     attachTraceNavigation(target);
+    attachEdgeExplainActions(target);
   } catch (error) {
     if (requestId !== state.traceRequest) return;
     target.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
@@ -2347,6 +2364,7 @@ async function loadDependents(node) {
     }
     target.innerHTML = renderTrace(body, { empty: "No incoming dependents.", label: "Dependents" });
     attachTraceNavigation(target);
+    attachEdgeExplainActions(target);
   } catch (error) {
     if (requestId !== state.dependentsRequest) return;
     target.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
@@ -2410,12 +2428,16 @@ function renderTraceEdge(edge, nodeMap) {
   const facts = renderEdgeFacts(edge);
   return `
     <li>
-      <button class="trace-edge" type="button" data-node-id="${edge.target}">
-        <span>${escapeHtml(formatKind(edge.kind))}</span>
-        <strong>${escapeHtml(source?.label || String(edge.source))}</strong>
-        <em>${escapeHtml(target?.label || String(edge.target))}</em>
-        ${facts}
-      </button>
+      <div class="edge-row">
+        <button class="trace-edge" type="button" data-node-id="${edge.target}">
+          <span>${escapeHtml(formatKind(edge.kind))}</span>
+          <strong>${escapeHtml(source?.label || String(edge.source))}</strong>
+          <em>${escapeHtml(target?.label || String(edge.target))}</em>
+          ${facts}
+        </button>
+        ${renderExplainEdgeButton(edge)}
+      </div>
+      <div class="edge-explanation" data-edge-explanation hidden></div>
     </li>
   `;
 }
@@ -2469,11 +2491,17 @@ function renderNeighbor(edge, selectedId, nodeMap = null) {
   const direction = edge.source === selectedId ? "out" : "in";
   const facts = renderEdgeFacts(edge);
   return `
-    <button type="button" class="neighbor" data-node-id="${otherId}">
-      <span>${escapeHtml(direction)} ${escapeHtml(formatKind(edge.kind))}</span>
-      <span>${escapeHtml(other ? other.label : String(otherId))}</span>
-      ${facts}
-    </button>
+    <div>
+      <div class="edge-row">
+        <button type="button" class="neighbor" data-node-id="${otherId}">
+          <span>${escapeHtml(direction)} ${escapeHtml(formatKind(edge.kind))}</span>
+          <span>${escapeHtml(other ? other.label : String(otherId))}</span>
+          ${facts}
+        </button>
+        ${renderExplainEdgeButton(edge)}
+      </div>
+      <div class="edge-explanation" data-edge-explanation hidden></div>
+    </div>
   `;
 }
 
@@ -2481,6 +2509,79 @@ function renderEdgeFacts(edge) {
   const facts = edgeFacts(edge);
   if (facts.length === 0) return "";
   return `<span class="edge-facts">${facts.map((fact) => escapeHtml(fact)).join(" · ")}</span>`;
+}
+
+function renderExplainEdgeButton(edge) {
+  return `
+    <button
+      class="edge-explain-button"
+      type="button"
+      data-explain-edge
+      data-edge-source="n${edge.source}"
+      data-edge-target="n${edge.target}"
+      data-edge-kind="${escapeHtml(edge.kind)}"
+    >Explain</button>
+  `;
+}
+
+async function explainEdge(button) {
+  const container = button.closest("li") || button.closest(".edge-row")?.parentElement;
+  const target = container?.querySelector("[data-edge-explanation]");
+  if (!target) return;
+
+  state.edgeExplainRequest += 1;
+  const requestId = String(state.edgeExplainRequest);
+  button.dataset.explainToken = requestId;
+  target.hidden = false;
+  target.innerHTML = '<p class="empty">Explaining edge...</p>';
+  button.disabled = true;
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    source: button.dataset.edgeSource || "",
+    target: button.dataset.edgeTarget || "",
+    kind: button.dataset.edgeKind || "",
+  });
+
+  try {
+    const response = await fetch(`/api/explain-edge?${params.toString()}`);
+    const body = await response.json();
+    if (button.dataset.explainToken !== requestId) return;
+    if (!response.ok) {
+      throw new Error(body.error || "edge explanation failed");
+    }
+    target.innerHTML = renderEdgeExplanation(body);
+  } catch (error) {
+    if (button.dataset.explainToken !== requestId) return;
+    target.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (button.dataset.explainToken === requestId) {
+      button.disabled = false;
+      delete button.dataset.explainToken;
+    }
+  }
+}
+
+function renderEdgeExplanation(explanation) {
+  if (!explanation) {
+    return '<p class="empty">No matching edge explanation.</p>';
+  }
+  const evidence = (explanation.evidence || [])
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join("");
+  const matchNote =
+    explanation.total_matches > 1
+      ? `<span>${explanation.total_matches} matches, showing first</span>`
+      : "";
+
+  return `
+    <div class="edge-explanation-summary">
+      <strong>${escapeHtml(explanation.summary)}</strong>
+      <span>edge ${explanation.edge_index}</span>
+      ${matchNote}
+    </div>
+    ${evidence ? `<ul>${evidence}</ul>` : '<p class="empty">No evidence metadata.</p>'}
+  `;
 }
 
 function edgeFacts(edge) {

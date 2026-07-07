@@ -503,6 +503,13 @@ button:disabled {
   background: var(--panel-2);
 }
 
+.edge-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: stretch;
+}
+
 .query-item {
   display: grid;
   grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
@@ -558,6 +565,63 @@ button:disabled {
 
 .trace-edge .edge-facts {
   font-weight: 600;
+}
+
+.edge-explain-button {
+  align-self: stretch;
+  width: 72px;
+  height: auto;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid rgba(92, 200, 167, 0.35);
+  background: rgba(92, 200, 167, 0.1);
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.edge-explain-button:hover {
+  border-color: rgba(92, 200, 167, 0.7);
+  background: rgba(92, 200, 167, 0.16);
+}
+
+.edge-explanation {
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.edge-explanation-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.edge-explanation-summary strong {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.edge-explanation-summary span {
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.edge-explanation ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 16px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 .query-edge em::before {
