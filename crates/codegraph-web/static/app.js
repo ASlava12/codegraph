@@ -3,7 +3,7 @@ const DEFAULT_LABEL_MODE = "minimal";
 const LABEL_MODES = new Set(["minimal", "focus", "auto"]);
 const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
-const LABEL_MODE_STORAGE_VERSION = "7";
+const LABEL_MODE_STORAGE_VERSION = "8";
 
 const I18N = {
   en: {
@@ -1142,7 +1142,7 @@ async function loadProjects() {
     const response = await fetch("/api/projects");
     const body = await response.json();
     if (!response.ok) {
-      throw new Error(body.error || "projects failed");
+      throw new Error(apiErrorMessage(body, response, "projects failed"));
     }
     state.projects = body;
     renderProjects();
@@ -1157,7 +1157,7 @@ async function loadCapabilities() {
     const response = await fetch("/api/capabilities");
     const body = await response.json();
     if (!response.ok) {
-      throw new Error(body.error || "capabilities failed");
+      throw new Error(apiErrorMessage(body, response, "capabilities failed"));
     }
     state.capabilities = body;
   } catch (error) {
@@ -1175,7 +1175,7 @@ async function loadApiSchema() {
     const body = await response.json();
     if (requestId !== state.apiSchemaRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "schema failed");
+      throw new Error(apiErrorMessage(body, response, "schema failed"));
     }
     state.apiSchema = body;
   } catch (error) {
@@ -1211,7 +1211,7 @@ async function loadMetrics() {
     const body = await response.json();
     if (requestId !== state.metricsRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "metrics failed");
+      throw new Error(apiErrorMessage(body, response, "metrics failed"));
     }
     state.metrics = body;
     renderRuntimeMetrics();
@@ -1277,7 +1277,7 @@ async function fetchJobList(kind) {
   const response = await fetch(`${endpoint}?limit=8`);
   const body = await response.json();
   if (!response.ok) {
-    throw new Error(body.error || `${kind} jobs failed`);
+    throw new Error(apiErrorMessage(body, response, `${kind} jobs failed`));
   }
   return body;
 }
@@ -1395,7 +1395,7 @@ async function cancelJobFromList(kind, jobId, button) {
     const response = await fetch(`${endpoint}/${encodeURIComponent(jobId)}`, { method: "DELETE" });
     const body = await response.json();
     if (!response.ok) {
-      throw new Error(body.error || "job cancel failed");
+      throw new Error(apiErrorMessage(body, response, "job cancel failed"));
     }
     if (kind === "scan" && state.scanJobId === jobId) {
       state.scanJobId = null;
@@ -1493,7 +1493,7 @@ async function scan() {
     });
     const body = await response.json();
     if (!response.ok) {
-      throw new Error(body.error || "failed to start scan");
+      throw new Error(apiErrorMessage(body, response, "failed to start scan"));
     }
 
     state.scanJobId = body.id;
@@ -1520,7 +1520,7 @@ async function cancelScanJob() {
     const response = await fetch(`/api/scan-jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
     const body = await response.json();
     if (!response.ok) {
-      throw new Error(body.error || "failed to cancel scan");
+      throw new Error(apiErrorMessage(body, response, "failed to cancel scan"));
     }
     state.scanJobId = null;
     if (state.scanEvents) {
@@ -1625,7 +1625,7 @@ async function pollScanJob(jobId) {
     const response = await fetch(`/api/scan-jobs/${encodeURIComponent(jobId)}`);
     const body = await response.json();
     if (!response.ok) {
-      throw new Error(body.error || "scan status failed");
+      throw new Error(apiErrorMessage(body, response, "scan status failed"));
     }
 
     if (body.status === "queued" || body.status === "running") {
@@ -1700,7 +1700,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     const body = await response.json();
     if (requestId !== state.pageRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "graph page failed");
+      throw new Error(apiErrorMessage(body, response, "graph page failed"));
     }
 
     state.graph = { nodes: body.nodes, edges: body.edges };
@@ -1788,34 +1788,34 @@ async function loadProjectOverview() {
     const hotspots = await hotspotsResponse.json();
     if (requestId !== state.overviewRequest) return;
     if (!summaryResponse.ok) {
-      throw new Error(summary.error || "summary failed");
+      throw new Error(apiErrorMessage(summary, summaryResponse, "summary failed"));
     }
     if (!entrypointsResponse.ok) {
-      throw new Error(entrypoints.error || "entrypoints failed");
+      throw new Error(apiErrorMessage(entrypoints, entrypointsResponse, "entrypoints failed"));
     }
     if (!scanOptionsResponse.ok) {
-      throw new Error(scanOptions.error || "scan options failed");
+      throw new Error(apiErrorMessage(scanOptions, scanOptionsResponse, "scan options failed"));
     }
     if (!coverageResponse.ok) {
-      throw new Error(coverage.error || "coverage failed");
+      throw new Error(apiErrorMessage(coverage, coverageResponse, "coverage failed"));
     }
     if (!lspResponse.ok) {
-      throw new Error(lsp.error || "lsp status failed");
+      throw new Error(apiErrorMessage(lsp, lspResponse, "lsp status failed"));
     }
     if (!semanticReadinessResponse.ok) {
-      throw new Error(semanticReadiness.error || "semantic readiness failed");
+      throw new Error(apiErrorMessage(semanticReadiness, semanticReadinessResponse, "semantic readiness failed"));
     }
     if (!semanticPlanResponse.ok) {
-      throw new Error(semanticPlan.error || "semantic plan failed");
+      throw new Error(apiErrorMessage(semanticPlan, semanticPlanResponse, "semantic plan failed"));
     }
     if (!architectureResponse.ok) {
-      throw new Error(architecture.error || "architecture failed");
+      throw new Error(apiErrorMessage(architecture, architectureResponse, "architecture failed"));
     }
     if (!languageDependenciesResponse.ok) {
-      throw new Error(languageDependencies.error || "language dependencies failed");
+      throw new Error(apiErrorMessage(languageDependencies, languageDependenciesResponse, "language dependencies failed"));
     }
     if (!hotspotsResponse.ok) {
-      throw new Error(hotspots.error || "hotspots failed");
+      throw new Error(apiErrorMessage(hotspots, hotspotsResponse, "hotspots failed"));
     }
     state.summary = summary;
     state.scanOptions = scanOptions;
@@ -1882,7 +1882,7 @@ async function runSemanticEnrich() {
     const job = await response.json();
     if (requestId !== state.semanticEnrichRequest) return;
     if (!response.ok) {
-      throw new Error(job.error || "semantic enrichment failed");
+      throw new Error(apiErrorMessage(job, response, "semantic enrichment failed"));
     }
 
     state.semanticJobId = job.id;
@@ -1912,7 +1912,7 @@ async function cancelSemanticJob() {
     const response = await fetch(`/api/semantic-jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
     const body = await response.json();
     if (!response.ok) {
-      throw new Error(body.error || "failed to cancel semantic enrichment");
+      throw new Error(apiErrorMessage(body, response, "failed to cancel semantic enrichment"));
     }
     state.semanticJobId = null;
     if (state.semanticEvents) {
@@ -2014,7 +2014,7 @@ async function pollSemanticJob(jobId, requestId) {
     const response = await fetch(`/api/semantic-jobs/${encodeURIComponent(jobId)}`);
     const job = await response.json();
     if (!response.ok) {
-      throw new Error(job.error || "semantic status failed");
+      throw new Error(apiErrorMessage(job, response, "semantic status failed"));
     }
     if (job.status === "queued" || job.status === "running") {
       setStatus("semantic", "busy");
@@ -2041,7 +2041,7 @@ async function loadSemanticJobResult(jobId, requestId) {
   const body = await response.json();
   if (requestId !== state.semanticEnrichRequest || state.semanticJobId !== jobId) return;
   if (!response.ok) {
-    throw new Error(body.error || "semantic result failed");
+    throw new Error(apiErrorMessage(body, response, "semantic result failed"));
   }
   applySemanticEnrichResult(body.result, body.root || pathInput.value.trim() || ".");
 }
@@ -2562,7 +2562,7 @@ async function focusSemanticWorkItem(item) {
     const body = await response.json();
     if (requestId !== state.insightFocusRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "focus failed");
+      throw new Error(apiErrorMessage(body, response, "focus failed"));
     }
     const selectedId = item.node?.id || item.target?.id || null;
     showFocusedGraph(body, `Semantic: ${formatKind(item.capability || item.kind)}`, selectedId);
@@ -2647,7 +2647,7 @@ async function focusArchitectureEdge(edge) {
     const body = await response.json();
     if (requestId !== state.insightFocusRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "focus failed");
+      throw new Error(apiErrorMessage(body, response, "focus failed"));
     }
     showFocusedGraph(body, `Focus: ${edge.source || "area"} -> ${edge.target || "area"}`);
   } catch (error) {
@@ -2703,7 +2703,7 @@ async function focusLanguageDependency(link) {
     const body = await response.json();
     if (requestId !== state.insightFocusRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "focus failed");
+      throw new Error(apiErrorMessage(body, response, "focus failed"));
     }
     showFocusedGraph(
       body,
@@ -2826,7 +2826,7 @@ async function runEntryFlowTrace() {
     const body = await response.json();
     if (requestId !== state.entryFlowRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "entrypoint trace failed");
+      throw new Error(apiErrorMessage(body, response, "entrypoint trace failed"));
     }
     entryFlowResult.innerHTML = renderEntryFlowReport(body);
     attachEntryFlowActions(entryFlowResult, body);
@@ -2928,7 +2928,7 @@ async function loadInsights() {
     const body = await response.json();
     if (requestId !== state.insightRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "insights failed");
+      throw new Error(apiErrorMessage(body, response, "insights failed"));
     }
     state.insightReport = body;
     refreshRiskIndex();
@@ -2969,7 +2969,7 @@ async function runCheck() {
     const body = await response.json();
     if (requestId !== state.checkRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "check failed");
+      throw new Error(apiErrorMessage(body, response, "check failed"));
     }
     checkResult.innerHTML = renderCheckReport(body);
   } catch (error) {
@@ -3057,7 +3057,7 @@ async function runGraphQuery(options = {}) {
     const body = await response.json();
     if (requestId !== state.queryRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "query failed");
+      throw new Error(apiErrorMessage(body, response, "query failed"));
     }
     queryResult.innerHTML = renderQueryResult(body);
     attachQueryNavigation(queryResult);
@@ -3105,7 +3105,7 @@ async function runSourceSearch() {
     const body = await response.json();
     if (requestId !== state.sourceSearchRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "source search failed");
+      throw new Error(apiErrorMessage(body, response, "source search failed"));
     }
     sourceSearchResult.innerHTML = renderSourceSearchResult(body);
     attachSourceSearchActions(sourceSearchResult, body);
@@ -3138,7 +3138,7 @@ async function loadCacheDiff() {
     const body = await response.json();
     if (requestId !== state.cacheDiffRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "cache diff failed");
+      throw new Error(apiErrorMessage(body, response, "cache diff failed"));
     }
     cacheDiffStatus.textContent = formatKind(body.cache_record || "unknown");
     cacheDiffResult.innerHTML = renderCacheDiff(body);
@@ -3172,7 +3172,7 @@ async function loadCacheChunks() {
     const body = await response.json();
     if (requestId !== state.cacheChunksRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "cache chunks failed");
+      throw new Error(apiErrorMessage(body, response, "cache chunks failed"));
     }
     cacheDiffStatus.textContent = formatKind(body.cache_record || "unknown");
     cacheDiffResult.innerHTML = renderCacheChunks(body);
@@ -3206,7 +3206,7 @@ async function loadIncrementalPlan() {
     const body = await response.json();
     if (requestId !== state.incrementalPlanRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "incremental plan failed");
+      throw new Error(apiErrorMessage(body, response, "incremental plan failed"));
     }
     cacheDiffStatus.textContent = formatKind(body.action || "unknown");
     cacheDiffResult.innerHTML = renderIncrementalPlan(body);
@@ -3240,7 +3240,7 @@ async function loadIncrementalScan() {
     const body = await response.json();
     if (requestId !== state.incrementalScanRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "incremental scan failed");
+      throw new Error(apiErrorMessage(body, response, "incremental scan failed"));
     }
     const plan = body.plan || {};
     cacheDiffStatus.textContent = formatKind(plan.action || "unknown");
@@ -3276,7 +3276,7 @@ async function loadIncrementalMergePreview() {
     const body = await response.json();
     if (requestId !== state.incrementalMergeRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "incremental merge preview failed");
+      throw new Error(apiErrorMessage(body, response, "incremental merge preview failed"));
     }
     const plan = body.plan || {};
     cacheDiffStatus.textContent = formatKind(plan.action || "unknown");
@@ -3312,7 +3312,7 @@ async function loadIncrementalUpdate() {
     const body = await response.json();
     if (requestId !== state.incrementalUpdateRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "incremental update failed");
+      throw new Error(apiErrorMessage(body, response, "incremental update failed"));
     }
     const plan = body.preview?.plan || {};
     cacheDiffStatus.textContent = body.cache?.stored
@@ -3381,13 +3381,19 @@ async function responseErrorMessage(response, fallback) {
   if (contentType.includes("application/json")) {
     try {
       const body = await response.json();
-      return body.error || fallback;
+      return apiErrorMessage(body, response, fallback);
     } catch (error) {
-      return fallback;
+      return apiErrorMessage(null, response, fallback);
     }
   }
   const text = await response.text();
-  return text.trim() || fallback;
+  return apiErrorMessage(null, response, text.trim() || fallback);
+}
+
+function apiErrorMessage(body, response, fallback) {
+  const message = body?.error || fallback;
+  const requestId = body?.request_id || response?.headers?.get?.("x-request-id") || "";
+  return requestId ? `${message} [request ${requestId}]` : message;
 }
 
 function exportFormatMetadata(format) {
@@ -3781,7 +3787,7 @@ async function runPathQuery() {
     const body = await response.json();
     if (requestId !== state.pathRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "path query failed");
+      throw new Error(apiErrorMessage(body, response, "path query failed"));
     }
     pathResult.innerHTML = renderQueryResult(body, { label: "Path" });
     attachQueryNavigation(pathResult);
@@ -3826,7 +3832,7 @@ async function runConfigTrace() {
     const body = await response.json();
     if (requestId !== state.configTraceRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "config trace failed");
+      throw new Error(apiErrorMessage(body, response, "config trace failed"));
     }
     configTraceResult.innerHTML = renderConfigTrace(body);
     attachConfigTraceActions(configTraceResult, body);
@@ -3954,7 +3960,7 @@ async function runErrorTrace() {
     const body = await response.json();
     if (requestId !== state.errorTraceRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "error trace failed");
+      throw new Error(apiErrorMessage(body, response, "error trace failed"));
     }
     errorTraceResult.innerHTML = renderErrorTrace(body);
     attachErrorTraceActions(errorTraceResult, body);
@@ -4124,7 +4130,7 @@ async function openSourceSearchMatch(match) {
     const body = await response.json();
     if (requestId !== state.selectionRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "failed to load source");
+      throw new Error(apiErrorMessage(body, response, "failed to load source"));
     }
     preview.innerHTML = body.lines.map(renderSourceLine).join("");
   } catch (error) {
@@ -4568,7 +4574,7 @@ async function focusInsight(insight) {
     const body = await response.json();
     if (requestId !== state.insightFocusRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "focus failed");
+      throw new Error(apiErrorMessage(body, response, "focus failed"));
     }
     const label = `Focus: ${formatKind(insight.kind)}`;
     showFocusedGraph(body, label, selectedId);
@@ -4596,7 +4602,7 @@ async function focusNodeId(nodeId, label) {
     const body = await response.json();
     if (requestId !== state.insightFocusRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "focus failed");
+      throw new Error(apiErrorMessage(body, response, "focus failed"));
     }
     showFocusedGraph(body, label, nodeId);
   } catch (error) {
@@ -4620,7 +4626,7 @@ async function focusEdgeIndex(edgeIndex) {
     const body = await response.json();
     if (requestId !== state.insightFocusRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "focus edge failed");
+      throw new Error(apiErrorMessage(body, response, "focus edge failed"));
     }
     showFocusedGraph(body, `Edge ${edgeIndex}`);
     state.selectedEdgeKey = `edge:${edgeIndex}`;
@@ -5713,7 +5719,7 @@ async function loadNodeContext(nodeId, requestId) {
     const body = await response.json();
     if (requestId !== state.selectionRequest || state.selectedId !== nodeId) return;
     if (!response.ok) {
-      throw new Error(body.error || "node card failed");
+      throw new Error(apiErrorMessage(body, response, "node card failed"));
     }
     const context = body.context || {};
     const nodeMap = new Map((context.nodes || []).map((node) => [node.id, node]));
@@ -6203,7 +6209,7 @@ async function loadTrace(node) {
     const body = await response.json();
     if (requestId !== state.traceRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "trace failed");
+      throw new Error(apiErrorMessage(body, response, "trace failed"));
     }
     target.innerHTML = renderTrace(body);
     attachTraceNavigation(target);
@@ -6236,7 +6242,7 @@ async function loadDependents(node) {
     const body = await response.json();
     if (requestId !== state.dependentsRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "dependents trace failed");
+      throw new Error(apiErrorMessage(body, response, "dependents trace failed"));
     }
     target.innerHTML = renderTrace(body, {
       empty: t("trace.noDependents"),
@@ -6350,7 +6356,7 @@ async function loadSourcePreview(node, requestId) {
     const body = await response.json();
     if (requestId !== state.selectionRequest) return;
     if (!response.ok) {
-      throw new Error(body.error || "failed to load source");
+      throw new Error(apiErrorMessage(body, response, "failed to load source"));
     }
     preview.innerHTML = body.lines.map(renderSourceLine).join("");
   } catch (error) {
@@ -6470,7 +6476,7 @@ async function explainEdge(button) {
     const body = await response.json();
     if (button.dataset.explainToken !== requestId) return;
     if (!response.ok) {
-      throw new Error(body.error || "edge explanation failed");
+      throw new Error(apiErrorMessage(body, response, "edge explanation failed"));
     }
     target.innerHTML = renderEdgeExplanation(body);
     attachEdgeExplanationInsights(target, body);

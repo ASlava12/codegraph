@@ -41,20 +41,21 @@
       priority = 8,
     } = options || {};
 
-    if (selected || hovered) return true;
+    if (selected) return true;
     if (labelMode === "minimal") return false;
+    if (hovered) return zoom >= 1.8 && visibleCount <= 45;
     if (labelMode === "focus") return focused && zoom >= 2.35;
     if (focused) return zoom >= 2.65;
 
     if (hasSearch) {
-      if (visibleCount <= 18) return zoom >= 2.65 && priority <= 2;
-      if (visibleCount <= 35) return zoom >= 3.1 && priority <= 1;
+      if (visibleCount <= 12) return zoom >= 3.25 && priority <= 1;
+      if (visibleCount <= 24) return zoom >= 3.8 && priority <= 1;
       return false;
     }
-    if (zoom < 3.25) return false;
-    if (visibleCount > 25) return false;
-    if (visibleCount > 12) return zoom >= 3.6 && priority <= 1;
-    return priority <= 2;
+    if (zoom < 3.8) return false;
+    if (visibleCount > 12) return false;
+    if (visibleCount > 8) return priority <= 1;
+    return priority <= 1;
   }
 
   function nodeLabelBudget(options) {
@@ -71,12 +72,11 @@
       return visibleCount <= 25 ? 1 : 0;
     }
     if (hasSearch) {
-      if (zoom < 2.65) return 0;
-      return visibleCount <= 18 ? 2 : visibleCount <= 35 ? 1 : 0;
+      if (zoom < 3.25) return 0;
+      return visibleCount <= 12 ? 1 : visibleCount <= 24 && zoom >= 3.8 ? 1 : 0;
     }
-    if (zoom < 3.25) return 0;
-    if (visibleCount > 25) return 0;
-    if (visibleCount <= 12 && zoom >= 4) return 1;
+    if (zoom < 3.8) return 0;
+    if (visibleCount > 12) return 0;
     return 1;
   }
 

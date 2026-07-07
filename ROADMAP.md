@@ -210,6 +210,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Reduce graph label clutter with zoom thresholds and collision-aware label drawing.
 - [x] Tighten graph label budgets and adaptive label placement so node captions do not cover dense graphs.
 - [x] Make minimal node labels the default and keep dense captions behind explicit Focus/Auto modes.
+- [x] Reset saved web label mode and make Auto labels sparse enough for dense graph exploration.
 - [x] Add web label policy regression tests for caption density and interaction labels.
 - [x] Add embedded web asset smoke checks for script order, content types, and static JS validity.
 - [x] Add clickable risk severity legend filters for graph triage.
@@ -225,6 +226,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Surface runtime metrics in the web UI.
 - [x] Add built-in HTTP access logs with latency and quiet-mode control.
 - [x] Add `x-request-id` response headers, JSON error fields, and access-log correlation.
+- [x] Surface request ids in web error messages for access-log correlation.
 - [x] Add graceful HTTP server shutdown for Ctrl-C and SIGTERM.
 - [x] Surface server capabilities in the web overview.
 - [x] Add server-wide security headers for embedded web and API responses.

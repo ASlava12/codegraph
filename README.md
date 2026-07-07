@@ -71,8 +71,9 @@ Implemented now:
 - Dependency cards can focus or query their exact `edge_index` for fast canvas narrowing and agent handoff.
 - Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
 - Initial English/Russian web UI localization with a persistent language selector.
-- Minimal-by-default graph labels with collision-aware Auto/Focus modes so node cards stay readable without covering the graph.
-- Dependency-free web label policy tests guard graph caption density and interaction label behavior.
+- Minimal-by-default graph labels with collision-aware, sparse Auto/Focus modes so node cards stay readable without captions covering the graph.
+- Dependency-free web label policy tests guard caption density, saved-mode resets, and interaction label behavior.
+- Web API error messages include request ids when available so UI failures can be correlated with server access logs.
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
 - Reverse dependency/dependent traces for impact analysis from CLI, API, query language, and web detail panels.
 - Entrypoint trace API, CLI command, and web panel for comparing startup flows from manifest/code entrypoints.
