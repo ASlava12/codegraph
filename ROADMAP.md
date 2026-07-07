@@ -165,6 +165,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add web project overview for languages, edge confidence, and entrypoints.
 - [x] Add web semantic work queue for prioritized LSP enrichment tasks.
 - [x] Add web filters for semantic work queue language, status, and capability.
+- [x] Add API and web action for running ready semantic enrichment batches.
 - [x] Add architecture map overview for top-level project areas and dependencies.
 - [x] Add language dependency matrix overview for mixed-language coupling.
 - [x] Add UI graph focusing from architecture overview areas.

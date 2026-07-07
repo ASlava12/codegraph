@@ -10,11 +10,11 @@ use clap::Parser;
 use codegraph_analysis::{
     CheckReport, ConfigTraceRequest, ConfigTraceResult, EntrypointTraceReport,
     EntrypointTraceRequest, ErrorTraceRequest, ErrorTraceResult, ExplainEdgeRequest, FocusRequest,
-    GraphSlice, GraphSliceRequest, InsightFilter, InsightReport, InsightSeverity, NodeContext,
-    SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, architecture_map,
-    check_insights, entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report,
-    focus_subgraph, hotspots, insights, language_dependencies, node_context, query_graph,
-    search_source, slice_graph, summarize, trace, trace_config, trace_dependents,
+    GraphSlice, GraphSliceRequest, GraphSummary, InsightFilter, InsightReport, InsightSeverity,
+    NodeContext, SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart,
+    architecture_map, check_insights, entrypoints, explain_edge, export_dot, export_ndjson,
+    filter_insight_report, focus_subgraph, hotspots, insights, language_dependencies, node_context,
+    query_graph, search_source, slice_graph, summarize, trace, trace_config, trace_dependents,
     trace_entrypoints, trace_errors,
 };
 use codegraph_core::CodeGraph;
@@ -23,8 +23,9 @@ use codegraph_indexer::{
 };
 use codegraph_lsp::{
     DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, LspDiscoveryReport, SemanticEnrichmentPlan,
-    SemanticGraphApplyResult, SemanticGraphPatch, SemanticLspResponse, SemanticReadinessReport,
-    SemanticWorkItemFilter, apply_semantic_graph_patch, discover_lsp_servers,
+    SemanticGraphApplyReport, SemanticGraphApplyResult, SemanticGraphPatch, SemanticLspResponse,
+    SemanticLspRunOptions, SemanticReadinessReport, SemanticWorkItemFilter,
+    apply_semantic_graph_patch, discover_lsp_servers, run_semantic_execution_batch,
     semantic_enrichment_plan_with_filter, semantic_execution_batch,
     semantic_graph_patch_from_responses, semantic_readiness,
 };
@@ -123,6 +124,26 @@ struct SemanticPatchRequest {
     work_status: Option<String>,
     work_capability: Option<String>,
     responses: Vec<SemanticLspResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SemanticEnrichRequest {
+    path: Option<PathBuf>,
+    work_item_limit: Option<usize>,
+    work_language: Option<String>,
+    work_status: Option<String>,
+    work_capability: Option<String>,
+    request_timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct SemanticEnrichResponse {
+    graph: CodeGraph,
+    summary: GraphSummary,
+    report: SemanticGraphApplyReport,
+    responses: usize,
+    response_errors: usize,
+    unmatched_locations: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -432,6 +453,7 @@ async fn main() -> Result<()> {
         .route("/api/semantic-batch", get(semantic_batch_api))
         .route("/api/semantic-patch", post(semantic_patch_api))
         .route("/api/semantic-apply", post(semantic_apply_api))
+        .route("/api/semantic-enrich", post(semantic_enrich_api))
         .route("/api/projects", get(projects_api))
         .route("/api/scan-options", get(scan_options_api))
         .route("/api/coverage", get(coverage_api))
@@ -791,6 +813,63 @@ async fn semantic_apply_api(
     );
     let patch = semantic_graph_patch_from_responses(&root, &graph, &batch, &request.responses);
     Ok(Json(apply_semantic_graph_patch(&graph, &patch)))
+}
+
+async fn semantic_enrich_api(
+    State(state): State<AppState>,
+    Json(request): Json<SemanticEnrichRequest>,
+) -> Result<Json<SemanticEnrichResponse>, ApiError> {
+    let root = resolve_scan_root(&state, request.path.as_deref())?;
+    let graph = scan_graph(&state, Some(root.as_path())).await?;
+    let timeout = Duration::from_millis(
+        request
+            .request_timeout_ms
+            .unwrap_or(30_000)
+            .clamp(1, 300_000),
+    );
+    let batch = semantic_execution_batch(
+        &root,
+        &graph,
+        request
+            .work_item_limit
+            .unwrap_or(DEFAULT_SEMANTIC_WORK_ITEM_LIMIT),
+        SemanticWorkItemFilter {
+            language: request.work_language,
+            status: request.work_status,
+            capability: request.work_capability,
+        },
+    );
+
+    let result = tokio::task::spawn_blocking(move || {
+        let responses = run_semantic_execution_batch(
+            &batch,
+            &SemanticLspRunOptions {
+                request_timeout: timeout,
+            },
+        )?;
+        let patch = semantic_graph_patch_from_responses(&root, &graph, &batch, &responses);
+        let apply_result = apply_semantic_graph_patch(&graph, &patch);
+        Ok::<_, codegraph_lsp::SemanticLspRunError>((
+            apply_result,
+            responses.len(),
+            patch.response_errors.len(),
+            patch.unmatched_locations.len(),
+        ))
+    })
+    .await
+    .map_err(|error| ApiError::internal(format!("semantic enrichment task failed: {error}")))?
+    .map_err(|error| ApiError::bad_request(format!("semantic enrichment failed: {error}")))?;
+
+    let (apply_result, responses, response_errors, unmatched_locations) = result;
+    let summary = summarize(&apply_result.graph);
+    Ok(Json(SemanticEnrichResponse {
+        graph: apply_result.graph,
+        summary,
+        report: apply_result.report,
+        responses,
+        response_errors,
+        unmatched_locations,
+    }))
 }
 
 async fn projects_api(State(state): State<AppState>) -> Json<Vec<ProjectResponse>> {

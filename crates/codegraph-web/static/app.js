@@ -61,6 +61,7 @@ const I18N = {
     "label.failOn": "Fail On",
     "button.scan": "Scan",
     "button.apply": "Apply",
+    "button.semanticEnrich": "Enrich",
     "button.traceEntrypoints": "Trace Entrypoints",
     "button.run": "Run",
     "button.searchSource": "Search Source",
@@ -114,10 +115,20 @@ const I18N = {
     "trace.tracingDependents": "Tracing dependents...",
     "trace.noDependents": "No incoming dependents.",
     "trace.dependents": "Dependents",
+    "semantic.running": "Running semantic enrichment...",
+    "semantic.report": "Semantic enrichment",
+    "semantic.responses": "responses",
+    "semantic.edges": "Semantic edges",
+    "semantic.replaced": "Replaced",
+    "semantic.added": "Added",
+    "semantic.diagnostics": "Diagnostics",
+    "semantic.errors": "Errors",
+    "semantic.unmatched": "Unmatched",
     "status.idle": "idle",
     "status.queue": "queue",
     "status.scan": "scan",
     "status.page": "page",
+    "status.semantic": "semantic",
     "status.ready": "ready",
     "status.error": "error",
     "kind.error": "error",
@@ -181,6 +192,7 @@ const I18N = {
     "label.failOn": "Порог",
     "button.scan": "Сканировать",
     "button.apply": "Применить",
+    "button.semanticEnrich": "Обогатить",
     "button.traceEntrypoints": "Трассировать входы",
     "button.run": "Запустить",
     "button.searchSource": "Искать в коде",
@@ -234,10 +246,20 @@ const I18N = {
     "trace.tracingDependents": "Трассирую зависимые узлы...",
     "trace.noDependents": "Входящих зависимых нет.",
     "trace.dependents": "Зависимые",
+    "semantic.running": "Запускаю семантическое обогащение...",
+    "semantic.report": "Семантическое обогащение",
+    "semantic.responses": "ответов",
+    "semantic.edges": "Семантические связи",
+    "semantic.replaced": "Заменено",
+    "semantic.added": "Добавлено",
+    "semantic.diagnostics": "Диагностика",
+    "semantic.errors": "Ошибки",
+    "semantic.unmatched": "Без совпадения",
     "status.idle": "ожидание",
     "status.queue": "очередь",
     "status.scan": "скан",
     "status.page": "страница",
+    "status.semantic": "семантика",
     "status.ready": "готово",
     "status.error": "ошибка",
     "kind.error": "ошибка",
@@ -320,6 +342,7 @@ const state = {
   overviewRequest: 0,
   insightRequest: 0,
   insightFocusRequest: 0,
+  semanticEnrichRequest: 0,
   checkRequest: 0,
   summary: null,
   scanOptions: null,
@@ -394,6 +417,7 @@ const semanticWorkLanguageInput = document.querySelector("#semanticWorkLanguageI
 const semanticWorkStatusInput = document.querySelector("#semanticWorkStatusInput");
 const semanticWorkCapabilityInput = document.querySelector("#semanticWorkCapabilityInput");
 const semanticWorkFilterButton = document.querySelector("#semanticWorkFilterButton");
+const semanticEnrichButton = document.querySelector("#semanticEnrichButton");
 const semanticWorkList = document.querySelector("#semanticWorkList");
 const architectureList = document.querySelector("#architectureList");
 const languageDependencyList = document.querySelector("#languageDependencyList");
@@ -530,6 +554,7 @@ checkFailOnInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runCheck();
 });
 semanticWorkFilterButton.addEventListener("click", () => loadProjectOverview());
+semanticEnrichButton.addEventListener("click", () => runSemanticEnrich());
 for (const input of [semanticWorkLanguageInput, semanticWorkStatusInput, semanticWorkCapabilityInput]) {
   input.addEventListener("change", () => loadProjectOverview());
 }
@@ -1009,6 +1034,86 @@ async function loadProjectOverview() {
     annotationList.innerHTML = "";
     entrypointList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   }
+}
+
+async function runSemanticEnrich() {
+  state.semanticEnrichRequest += 1;
+  const requestId = state.semanticEnrichRequest;
+  const workLanguage = semanticWorkLanguageInput.value.trim();
+  const workStatus = semanticWorkStatusInput.value.trim();
+  const workCapability = semanticWorkCapabilityInput.value.trim();
+  const body = {
+    path: pathInput.value.trim() || ".",
+    work_item_limit: Number(state.semanticPlan?.work_item_limit || 100),
+    work_status: workStatus || "ready",
+    request_timeout_ms: 30_000,
+  };
+  if (workLanguage) body.work_language = workLanguage;
+  if (workCapability) body.work_capability = workCapability;
+
+  setStatus("semantic", "busy");
+  semanticEnrichButton.disabled = true;
+  semanticWorkFilterButton.disabled = true;
+  semanticWorkList.innerHTML = `<p class="empty">${escapeHtml(t("semantic.running"))}</p>`;
+
+  try {
+    const response = await fetch("/api/semantic-enrich", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const result = await response.json();
+    if (requestId !== state.semanticEnrichRequest) return;
+    if (!response.ok) {
+      throw new Error(result.error || "semantic enrichment failed");
+    }
+
+    state.graph = result.graph || { nodes: [], edges: [] };
+    state.summary = result.summary || null;
+    state.graphPage.root = body.path;
+    state.graphPage.nodeOffset = 0;
+    state.graphPage.totalNodes = state.graph.nodes.length;
+    state.graphPage.totalEdges = state.graph.edges.length;
+    state.graphPage.truncatedNodes = false;
+    state.selectedId = null;
+    state.hoveredId = null;
+    state.queryFocus = null;
+    state.insightReport = null;
+    queryResult.innerHTML = "";
+    checkResult.innerHTML = "";
+    rootLabel.textContent = state.graphPage.root;
+    initializeGraph({ preserveView: false });
+    renderOverview();
+    renderSemanticEnrichReport(result);
+    setStatus("ready");
+  } catch (error) {
+    if (requestId !== state.semanticEnrichRequest) return;
+    setStatus("error", "error");
+    semanticWorkList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.semanticEnrichRequest) {
+      semanticEnrichButton.disabled = false;
+      semanticWorkFilterButton.disabled = false;
+    }
+  }
+}
+
+function renderSemanticEnrichReport(result) {
+  const report = result.report || {};
+  semanticWorkList.innerHTML = `
+    <div class="semantic-work-summary">
+      <strong>${escapeHtml(t("semantic.report"))}</strong>
+      <span>${Number(result.responses || 0)} ${escapeHtml(t("semantic.responses"))}</span>
+    </div>
+    <div class="semantic-enrich-report">
+      <div><span>${escapeHtml(t("semantic.edges"))}</span><strong>${Number(report.semantic_edges || 0)}</strong></div>
+      <div><span>${escapeHtml(t("semantic.replaced"))}</span><strong>${Number(report.replaced_edges || 0)}</strong></div>
+      <div><span>${escapeHtml(t("semantic.added"))}</span><strong>${Number(report.added_edges || 0)}</strong></div>
+      <div><span>${escapeHtml(t("semantic.diagnostics"))}</span><strong>${Number(report.diagnostic_nodes || 0)}</strong></div>
+      <div><span>${escapeHtml(t("semantic.errors"))}</span><strong>${Number(result.response_errors || 0)}</strong></div>
+      <div><span>${escapeHtml(t("semantic.unmatched"))}</span><strong>${Number(result.unmatched_locations || 0)}</strong></div>
+    </div>
+  `;
 }
 
 function renderOverview() {
