@@ -18,8 +18,9 @@ use codegraph_indexer::{
 use codegraph_lsp::{
     DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, SemanticLspCache, SemanticLspResponse, SemanticLspRunOptions,
     SemanticWorkItemFilter, apply_semantic_graph_patch, discover_lsp_servers,
-    run_semantic_execution_batch_cached, semantic_enrichment_plan_with_filter,
-    semantic_execution_batch, semantic_graph_patch_from_responses, semantic_readiness,
+    normalize_semantic_work_item_limit, run_semantic_execution_batch_cached,
+    semantic_enrichment_plan_with_filter, semantic_execution_batch,
+    semantic_graph_patch_from_responses, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
@@ -389,7 +390,7 @@ struct SemanticPlanArgs {
     #[command(flatten)]
     scan: ScanArgs,
 
-    /// Maximum concrete semantic work items to include.
+    /// Maximum concrete semantic work items to include; larger values are capped.
     #[arg(long, default_value_t = DEFAULT_SEMANTIC_WORK_ITEM_LIMIT)]
     work_item_limit: usize,
 
@@ -707,6 +708,7 @@ fn main() -> Result<()> {
             );
         }
         Command::SemanticPlan(args) => {
+            let work_item_limit = normalize_semantic_work_item_limit(args.work_item_limit);
             let filter = SemanticWorkItemFilter {
                 language: args.work_language,
                 status: args.work_status,
@@ -723,12 +725,13 @@ fn main() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&semantic_enrichment_plan_with_filter(
                     &graph,
-                    args.work_item_limit,
+                    work_item_limit,
                     filter
                 ))?
             );
         }
         Command::SemanticBatch(args) => {
+            let work_item_limit = normalize_semantic_work_item_limit(args.work_item_limit);
             let path = args.scan.path;
             let workspace_root = canonical_workspace_root(&path);
             let filter = SemanticWorkItemFilter {
@@ -748,12 +751,13 @@ fn main() -> Result<()> {
                 serde_json::to_string_pretty(&semantic_execution_batch(
                     &workspace_root,
                     &graph,
-                    args.work_item_limit,
+                    work_item_limit,
                     filter
                 ))?
             );
         }
         Command::SemanticRun(args) => {
+            let work_item_limit = normalize_semantic_work_item_limit(args.plan.work_item_limit);
             let path = args.plan.scan.path;
             let workspace_root = canonical_workspace_root(&path);
             let filter = SemanticWorkItemFilter {
@@ -768,12 +772,7 @@ fn main() -> Result<()> {
                 max_file_size,
                 &args.plan.scan.cache,
             )?;
-            let batch = semantic_execution_batch(
-                &workspace_root,
-                &graph,
-                args.plan.work_item_limit,
-                filter,
-            );
+            let batch = semantic_execution_batch(&workspace_root, &graph, work_item_limit, filter);
             let semantic_cache = semantic_cache_from_args(&args.plan.scan.cache);
             let run = run_semantic_execution_batch_cached(
                 semantic_cache.as_ref(),
@@ -785,6 +784,7 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&run.responses)?);
         }
         Command::SemanticPatch(args) => {
+            let work_item_limit = normalize_semantic_work_item_limit(args.plan.work_item_limit);
             let path = args.plan.scan.path;
             let workspace_root = canonical_workspace_root(&path);
             let filter = SemanticWorkItemFilter {
@@ -799,12 +799,7 @@ fn main() -> Result<()> {
                 max_file_size,
                 &args.plan.scan.cache,
             )?;
-            let batch = semantic_execution_batch(
-                &workspace_root,
-                &graph,
-                args.plan.work_item_limit,
-                filter,
-            );
+            let batch = semantic_execution_batch(&workspace_root, &graph, work_item_limit, filter);
             let response_text = std::fs::read_to_string(&args.responses)?;
             let responses: Vec<SemanticLspResponse> = serde_json::from_str(&response_text)?;
             println!(
@@ -818,6 +813,7 @@ fn main() -> Result<()> {
             );
         }
         Command::SemanticApply(args) => {
+            let work_item_limit = normalize_semantic_work_item_limit(args.plan.work_item_limit);
             let path = args.plan.scan.path;
             let workspace_root = canonical_workspace_root(&path);
             let filter = SemanticWorkItemFilter {
@@ -832,12 +828,7 @@ fn main() -> Result<()> {
                 max_file_size,
                 &args.plan.scan.cache,
             )?;
-            let batch = semantic_execution_batch(
-                &workspace_root,
-                &graph,
-                args.plan.work_item_limit,
-                filter,
-            );
+            let batch = semantic_execution_batch(&workspace_root, &graph, work_item_limit, filter);
             let response_text = std::fs::read_to_string(&args.responses)?;
             let responses: Vec<SemanticLspResponse> = serde_json::from_str(&response_text)?;
             let patch =

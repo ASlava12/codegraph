@@ -12,6 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_SEMANTIC_WORK_ITEM_LIMIT: usize = 100;
+pub const MAX_SEMANTIC_WORK_ITEM_LIMIT: usize = 1_000;
 const SEMANTIC_CACHE_SCHEMA_VERSION: u32 = 1;
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
@@ -738,6 +739,7 @@ pub fn semantic_enrichment_plan_with_discovery_and_filter(
     work_item_limit: usize,
     work_item_filter: SemanticWorkItemFilter,
 ) -> SemanticEnrichmentPlan {
+    let work_item_limit = normalize_semantic_work_item_limit(work_item_limit);
     let mut languages: BTreeMap<String, LanguagePlanAccumulator> = BTreeMap::new();
 
     for node in &graph.nodes {
@@ -883,6 +885,10 @@ pub fn semantic_enrichment_plan_with_discovery_and_filter(
         work_items,
         missing_servers: missing_servers.into_iter().collect(),
     }
+}
+
+pub fn normalize_semantic_work_item_limit(work_item_limit: usize) -> usize {
+    work_item_limit.clamp(1, MAX_SEMANTIC_WORK_ITEM_LIMIT)
 }
 
 pub fn semantic_execution_batch_with_discovery(
@@ -3117,6 +3123,29 @@ mod tests {
                 capability: Some("definitions".to_string()),
             }
         );
+
+        let minimum_limited = semantic_enrichment_plan_with_discovery_and_filter(
+            &graph,
+            &discovery,
+            0,
+            SemanticWorkItemFilter::default(),
+        );
+        assert_eq!(minimum_limited.work_item_limit, 1);
+        assert_eq!(minimum_limited.work_items.len(), 1);
+        assert!(minimum_limited.truncated_work_items);
+
+        let maximum_limited = semantic_enrichment_plan_with_discovery_and_filter(
+            &graph,
+            &discovery,
+            usize::MAX,
+            SemanticWorkItemFilter::default(),
+        );
+        assert_eq!(
+            maximum_limited.work_item_limit,
+            MAX_SEMANTIC_WORK_ITEM_LIMIT
+        );
+        assert_eq!(maximum_limited.total_work_items, 8);
+        assert_eq!(maximum_limited.work_items.len(), 8);
 
         let batch = semantic_execution_batch_with_discovery(
             Path::new("/workspace/repo"),

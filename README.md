@@ -45,6 +45,7 @@ Implemented now:
 - API and web UI enforce the published maximum source-search text length before scanning source files.
 - Machine-readable API schema endpoint for agents and integrations.
 - API schema parameters expose structured minimum, maximum, maximum string length, and matching capability-limit keys where runtime bounds exist.
+- Semantic work queues clamp and publish maximum work item limits across CLI, API, schema, and web capabilities.
 - API schema enum values document supported graph query commands and query terms, including exact edge index lookups.
 - API schema enum values document graph node kinds, edge kinds, insight kinds, and confidence levels used by graph filters.
 - API schema enum values document project report sections and risk grades used by report consumers.

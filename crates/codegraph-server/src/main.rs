@@ -28,12 +28,13 @@ use codegraph_indexer::{
     IndexOptionOverrides, IndexOptions, configured_index_options, scan_coverage,
 };
 use codegraph_lsp::{
-    DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, LspDiscoveryReport, SemanticEnrichmentPlan,
-    SemanticGraphApplyReport, SemanticGraphApplyResult, SemanticGraphPatch, SemanticLspCache,
-    SemanticLspCacheInfo, SemanticLspResponse, SemanticLspRunOptions, SemanticReadinessReport,
-    SemanticWorkItemFilter, apply_semantic_graph_patch, discover_lsp_servers,
-    run_semantic_execution_batch_cached, semantic_enrichment_plan_with_filter,
-    semantic_execution_batch, semantic_graph_patch_from_responses, semantic_readiness,
+    DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, LspDiscoveryReport, MAX_SEMANTIC_WORK_ITEM_LIMIT,
+    SemanticEnrichmentPlan, SemanticGraphApplyReport, SemanticGraphApplyResult, SemanticGraphPatch,
+    SemanticLspCache, SemanticLspCacheInfo, SemanticLspResponse, SemanticLspRunOptions,
+    SemanticReadinessReport, SemanticWorkItemFilter, apply_semantic_graph_patch,
+    discover_lsp_servers, run_semantic_execution_batch_cached,
+    semantic_enrichment_plan_with_filter, semantic_execution_batch,
+    semantic_graph_patch_from_responses, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{
@@ -674,6 +675,8 @@ struct RuntimeLimitsResponse {
     max_semantic_concurrency: usize,
     default_job_list_limit: usize,
     max_job_list_limit: usize,
+    default_semantic_work_item_limit: usize,
+    max_semantic_work_item_limit: usize,
     default_incremental_report_limit: usize,
     max_incremental_report_limit: usize,
     default_graph_node_limit: usize,
@@ -1529,6 +1532,8 @@ async fn capabilities_api(
             max_semantic_concurrency: state.max_semantic_concurrency,
             default_job_list_limit: DEFAULT_JOB_LIST_LIMIT,
             max_job_list_limit: MAX_JOB_LIST_LIMIT,
+            default_semantic_work_item_limit: DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+            max_semantic_work_item_limit: MAX_SEMANTIC_WORK_ITEM_LIMIT,
             default_incremental_report_limit: DEFAULT_INCREMENTAL_REPORT_LIMIT,
             max_incremental_report_limit: MAX_INCREMENTAL_REPORT_LIMIT,
             default_graph_node_limit: DEFAULT_GRAPH_NODE_LIMIT,
@@ -4460,9 +4465,11 @@ fn semantic_filter_params() -> Vec<ApiParameterSpec> {
             "work_item_limit",
             false,
             "usize",
-            Some("25"),
+            Some("100"),
             "Maximum semantic work items.",
-        ),
+        )
+        .with_range(1, MAX_SEMANTIC_WORK_ITEM_LIMIT)
+        .with_capability_limit("max_semantic_work_item_limit"),
         query_param(
             "work_language",
             false,
@@ -5017,6 +5024,8 @@ mod tests {
 
         assert_eq!(response.limits.default_incremental_report_limit, 100);
         assert_eq!(response.limits.max_incremental_report_limit, 10000);
+        assert_eq!(response.limits.default_semantic_work_item_limit, 100);
+        assert_eq!(response.limits.max_semantic_work_item_limit, 1000);
         assert_eq!(response.limits.default_graph_node_limit, 250);
         assert_eq!(response.limits.max_graph_node_limit, 1000);
         assert_eq!(response.limits.default_graph_edge_limit, 500);
@@ -5392,6 +5401,27 @@ mod tests {
         assert_eq!(
             graph_node_limit.capability_limit,
             Some("max_graph_node_limit")
+        );
+        let semantic_plan_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/semantic-plan")
+            .expect("schema should list semantic-plan endpoint");
+        let semantic_work_item_limit = semantic_plan_endpoint
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "work_item_limit")
+            .expect("semantic work_item_limit");
+        assert_eq!(semantic_work_item_limit.default, Some("100"));
+        assert_eq!(semantic_work_item_limit.minimum, Some(1));
+        assert_eq!(
+            semantic_work_item_limit.maximum,
+            Some(MAX_SEMANTIC_WORK_ITEM_LIMIT)
+        );
+        assert_eq!(
+            semantic_work_item_limit.capability_limit,
+            Some("max_semantic_work_item_limit")
         );
         let query_endpoint = schema
             .groups
