@@ -4526,6 +4526,7 @@ mod tests {
         let react_import = import_node(&mut graph, "import React from \"react\";", "typescript");
         let express_import =
             import_node(&mut graph, "import express from \"express\";", "typescript");
+        let lodash_require = import_node(&mut graph, "require(\"lodash\")", "javascript");
         let fs_import = import_node(&mut graph, "import fs from \"node:fs\";", "typescript");
         graph.add_edge(file, react_import, EdgeKind::Imports, Confidence::Syntactic);
         graph.add_edge(
@@ -4534,11 +4535,20 @@ mod tests {
             EdgeKind::Imports,
             Confidence::Syntactic,
         );
+        graph.add_edge(
+            file,
+            lodash_require,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
         graph.add_edge(file, fs_import, EdgeKind::Imports, Confidence::Syntactic);
 
         let report = insights(&graph);
         assert!(report.insights.iter().any(|insight| {
             insight.kind == "undeclared_external_import" && insight.message.contains("express")
+        }));
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "undeclared_external_import" && insight.message.contains("lodash")
         }));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "undeclared_external_import" && insight.message.contains("react")

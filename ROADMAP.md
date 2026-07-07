@@ -31,6 +31,7 @@ Goal: extract language-independent structure from source files.
 - [x] Support Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash at syntax level.
 - [x] Extract approximate call sites.
 - [x] Resolve local import/include file dependencies where syntax-level paths are explicit.
+- [x] Detect CommonJS `require(...)` imports for dependency and local-file analysis.
 - [x] Detect config and environment reads.
 - [x] Detect basic error/exception constructs.
 - [x] Detect manifest-defined entrypoints from project metadata.

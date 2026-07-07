@@ -283,6 +283,9 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
         script_entrypoint = index_script_entrypoint(context, file_id, label, source);
         index_manifest_facts(context, file_id, path, label, source);
         index_framework_configs(context, file_id, label, language, source);
+        if let Some(language) = language {
+            index_commonjs_require_imports(context, file_id, label, language, source);
+        }
     }
 
     if let Some((language, parse_result)) = parse_result {
@@ -605,6 +608,80 @@ fn framework_routes(language: Language, source: &str) -> Vec<FrameworkRoute> {
         Language::Php => php_framework_routes(source),
         Language::C | Language::Cpp | Language::Bash => Vec::new(),
     }
+}
+
+fn index_commonjs_require_imports(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    language: Language,
+    source: &str,
+) {
+    if !matches!(
+        language,
+        Language::JavaScript | Language::TypeScript | Language::Tsx
+    ) {
+        return;
+    }
+
+    for (index, line) in source.lines().enumerate() {
+        let Some(require_call) = commonjs_require_call(line) else {
+            continue;
+        };
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("language".to_string(), language.to_string());
+        metadata.insert("parser".to_string(), "syntax-pattern".to_string());
+        metadata.insert("item_kind".to_string(), "import".to_string());
+        metadata.insert("import_style".to_string(), "commonjs".to_string());
+
+        let local_import = local_import_target(language, label, &require_call);
+        if let Some(local_import) = local_import.as_ref() {
+            metadata.insert("import_scope".to_string(), "local".to_string());
+            metadata.insert("import_target".to_string(), local_import.target.clone());
+            metadata.insert("resolution".to_string(), "pending".to_string());
+        }
+
+        let import_id = context.graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            require_call,
+            Some(line_span(label, source, index as u32 + 1)),
+            metadata,
+        );
+        add_edge_once(
+            &mut context.graph,
+            file_id,
+            import_id,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        if let Some(local_import) = local_import {
+            context.pending_local_imports.push(PendingLocalImport {
+                import_node: import_id,
+                target: local_import.target,
+                candidates: local_import.candidates,
+            });
+        }
+    }
+}
+
+fn commonjs_require_call(line: &str) -> Option<String> {
+    let mut search_start = 0;
+    while let Some(offset) = line[search_start..].find("require(") {
+        let start = search_start + offset;
+        let before = line[..start].chars().next_back();
+        if before.is_none_or(|character| !is_identifier_or_member_character(character)) {
+            let rest = &line[start..];
+            let module = first_quoted_value_after(rest, "require(")?;
+            return Some(format!("require(\"{module}\")"));
+        }
+        search_start = start + "require(".len();
+    }
+    None
+}
+
+fn is_identifier_or_member_character(character: char) -> bool {
+    character == '_' || character == '$' || character == '.' || character.is_ascii_alphanumeric()
 }
 
 fn index_framework_configs(
@@ -3827,7 +3904,7 @@ mod tests {
         fs::create_dir_all(root.join("src")).unwrap();
         fs::write(
             root.join("src").join("app.js"),
-            "import { helper } from './util.js';\nimport missing from './missing.js';\nhelper();\n",
+            "import { helper } from './util.js';\nimport missing from './missing.js';\nconst util = require('./util');\nconst express = require('express');\nhelper();\n",
         )
         .unwrap();
         fs::write(
@@ -3847,6 +3924,16 @@ mod tests {
             .iter()
             .find(|node| node.label == "import missing from './missing.js';")
             .expect("missing unresolved import node");
+        let require_import = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "require(\"./util\")")
+            .expect("missing CommonJS local require node");
+        let express_require = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "require(\"express\")")
+            .expect("missing CommonJS package require node");
         let util_file = node_id(&graph, NodeKind::File, "src/util.js");
 
         assert_eq!(
@@ -3873,6 +3960,33 @@ mod tests {
                     .get("relation")
                     .is_some_and(|value| value == "local_import_file")
         }));
+        assert_eq!(
+            require_import
+                .metadata
+                .get("import_style")
+                .map(String::as_str),
+            Some("commonjs")
+        );
+        assert_eq!(
+            require_import
+                .metadata
+                .get("resolved_path")
+                .map(String::as_str),
+            Some("src/util.js")
+        );
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == require_import.id
+                && edge.target == util_file
+                && edge.kind == EdgeKind::References
+        }));
+        assert_eq!(
+            express_require
+                .metadata
+                .get("import_style")
+                .map(String::as_str),
+            Some("commonjs")
+        );
+        assert!(!express_require.metadata.contains_key("import_scope"));
         assert_eq!(
             missing_import
                 .metadata
