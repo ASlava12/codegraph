@@ -133,6 +133,25 @@ Custom rules currently support forbidden manifest dependencies and required
 config/environment targets. Violations are emitted as normal graph facts and
 show up in CLI, API, and web insight reports.
 
+Add user-owned graph metadata with `.codegraph/annotations.toml`:
+
+```toml
+[[annotations.node]]
+id = "payments-files"
+kind = "file"
+label = "payments"
+
+[annotations.node.set]
+domain = "payments"
+owner = "team-payments"
+critical = true
+```
+
+Node annotations match existing graph nodes by `kind`, `label`, `language`,
+`item_kind`, and optional `[annotations.node.metadata]` conditions. Values from
+`set` are stored as `annotation.*` metadata and can be queried by humans,
+agents, API clients, and the web UI.
+
 Query focused graph slices:
 
 ```bash
@@ -144,6 +163,7 @@ cargo run -p codegraph-cli -- query 'trace label:main depth:3' .
 cargo run -p codegraph-cli -- query 'dependents label:load_config depth:3' .
 cargo run -p codegraph-cli -- query 'neighbors label:main direction:out depth:2 edge_kind:calls' .
 cargo run -p codegraph-cli -- query 'path from:main to:load_config depth:6' .
+cargo run -p codegraph-cli -- query 'nodes metadata.annotation.domain:payments' .
 ```
 
 Trace outgoing dependencies from a label:

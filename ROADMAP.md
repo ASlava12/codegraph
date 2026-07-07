@@ -177,7 +177,7 @@ Goal: make language and framework knowledge extensible.
 - [x] Add first framework route detectors for entrypoints.
 - [x] Add framework detectors for config conventions.
 - [x] Add custom rules for repositories.
-- Support user-defined graph annotations.
+- [x] Support user-defined graph annotations.
 
 Exit criteria:
 

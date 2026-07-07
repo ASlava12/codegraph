@@ -31,6 +31,7 @@ struct IndexContext {
     external_dependencies: BTreeMap<String, NodeId>,
     cargo_workspace_dependencies: BTreeMap<String, Option<String>>,
     custom_rules: CustomRules,
+    annotations: GraphAnnotations,
     pending_calls: Vec<PendingCall>,
     pending_entrypoint_targets: Vec<PendingEntrypointTarget>,
 }
@@ -116,6 +117,23 @@ struct RequiredConfigRule {
     message: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct GraphAnnotations {
+    node_annotations: Vec<NodeAnnotationRule>,
+    parse_errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NodeAnnotationRule {
+    id: String,
+    kind: Option<String>,
+    label: Option<String>,
+    language: Option<String>,
+    item_kind: Option<String>,
+    metadata: BTreeMap<String, String>,
+    set: BTreeMap<String, String>,
+}
+
 impl Default for IndexOptions {
     fn default() -> Self {
         Self {
@@ -138,6 +156,7 @@ pub fn scan_project(
         .unwrap_or(".");
     let cargo_workspace_dependencies = cargo_workspace_dependencies(root);
     let custom_rules = custom_rules(root);
+    let annotations = graph_annotations(root);
     let mut context = IndexContext {
         graph: CodeGraph::new(root_label),
         function_symbols: BTreeMap::new(),
@@ -145,6 +164,7 @@ pub fn scan_project(
         external_dependencies: BTreeMap::new(),
         cargo_workspace_dependencies,
         custom_rules,
+        annotations,
         pending_calls: Vec::new(),
         pending_entrypoint_targets: Vec::new(),
     };
@@ -186,6 +206,7 @@ pub fn scan_project(
 
     resolve_pending_calls(&mut context);
     resolve_pending_entrypoint_targets(&mut context);
+    apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
 
     Ok(context.graph)
@@ -600,6 +621,199 @@ fn framework_configs(
     }
 
     configs.into_iter().collect()
+}
+
+fn apply_graph_annotations(context: &mut IndexContext) {
+    let annotations = context.annotations.clone();
+    for message in annotations.parse_errors {
+        add_annotation_parse_error(&mut context.graph, message);
+    }
+
+    for annotation in annotations.node_annotations {
+        for node in &mut context.graph.nodes {
+            if !node_annotation_matches(node, &annotation) {
+                continue;
+            }
+            let ids = append_metadata_list(
+                node.metadata.remove("annotation_ids"),
+                annotation.id.as_str(),
+            );
+            node.metadata.insert("annotation_ids".to_string(), ids);
+            node.metadata
+                .insert("annotation_source".to_string(), "user".to_string());
+            for (key, value) in &annotation.set {
+                node.metadata
+                    .insert(format!("annotation.{key}"), value.clone());
+            }
+        }
+    }
+}
+
+fn add_annotation_parse_error(graph: &mut CodeGraph, message: String) {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("item_kind".to_string(), "annotation_error".to_string());
+    metadata.insert("source".to_string(), "annotation".to_string());
+    metadata.insert("message".to_string(), message);
+    let id =
+        graph.add_node_with_metadata(NodeKind::Unknown, "annotation parse error", None, metadata);
+    let root_id = graph.root;
+    add_edge_once(graph, root_id, id, EdgeKind::Contains, Confidence::Exact);
+}
+
+fn node_annotation_matches(node: &codegraph_core::Node, annotation: &NodeAnnotationRule) -> bool {
+    annotation
+        .kind
+        .as_deref()
+        .is_none_or(|expected| text_matches(node_kind_name(&node.kind), expected))
+        && annotation
+            .label
+            .as_deref()
+            .is_none_or(|expected| text_matches(&node.label, expected))
+        && annotation.language.as_deref().is_none_or(|expected| {
+            node.metadata
+                .get("language")
+                .is_some_and(|value| text_matches(value, expected))
+        })
+        && annotation.item_kind.as_deref().is_none_or(|expected| {
+            node.metadata
+                .get("item_kind")
+                .is_some_and(|value| text_matches(value, expected))
+        })
+        && annotation.metadata.iter().all(|(key, expected)| {
+            node.metadata
+                .get(key)
+                .is_some_and(|value| text_matches(value, expected))
+        })
+}
+
+fn append_metadata_list(existing: Option<String>, value: &str) -> String {
+    let mut values: BTreeSet<String> = existing
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect();
+    values.insert(value.to_string());
+    values.into_iter().collect::<Vec<_>>().join(",")
+}
+
+fn graph_annotations(root: &Path) -> GraphAnnotations {
+    let path = root.join(".codegraph").join("annotations.toml");
+    if !path.is_file() {
+        return GraphAnnotations::default();
+    }
+
+    let Ok(source) = fs::read_to_string(&path) else {
+        return GraphAnnotations {
+            parse_errors: vec![format!(
+                "Could not read graph annotations from {}",
+                path.display()
+            )],
+            ..GraphAnnotations::default()
+        };
+    };
+
+    let Ok(value) = toml::from_str::<toml::Value>(&source) else {
+        return GraphAnnotations {
+            parse_errors: vec![format!(
+                "Could not parse graph annotations from {}",
+                path.display()
+            )],
+            ..GraphAnnotations::default()
+        };
+    };
+
+    let annotations = value.get("annotations").unwrap_or(&value);
+    GraphAnnotations {
+        node_annotations: rule_array(annotations, "node")
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, value)| node_annotation_rule(value, index + 1))
+            .collect(),
+        parse_errors: Vec::new(),
+    }
+}
+
+fn node_annotation_rule(value: &toml::Value, index: usize) -> Option<NodeAnnotationRule> {
+    let set = string_table(value.get("set")?)?;
+    if set.is_empty() {
+        return None;
+    }
+
+    let id = value
+        .get("id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("node:{index}"));
+
+    Some(NodeAnnotationRule {
+        id,
+        kind: optional_string(value, "kind"),
+        label: optional_string(value, "label"),
+        language: optional_string(value, "language"),
+        item_kind: optional_string(value, "item_kind"),
+        metadata: value
+            .get("metadata")
+            .and_then(string_table)
+            .unwrap_or_default(),
+        set,
+    })
+}
+
+fn optional_string(value: &toml::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn string_table(value: &toml::Value) -> Option<BTreeMap<String, String>> {
+    Some(
+        value
+            .as_table()?
+            .iter()
+            .filter_map(|(key, value)| {
+                toml_scalar_to_string(value).map(|value| (key.to_string(), value))
+            })
+            .collect(),
+    )
+}
+
+fn toml_scalar_to_string(value: &toml::Value) -> Option<String> {
+    match value {
+        toml::Value::String(value) => Some(value.clone()),
+        toml::Value::Integer(value) => Some(value.to_string()),
+        toml::Value::Float(value) => Some(value.to_string()),
+        toml::Value::Boolean(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn text_matches(actual: &str, expected: &str) -> bool {
+    let actual = actual.to_ascii_lowercase();
+    let expected = expected.trim().to_ascii_lowercase();
+    !expected.is_empty() && (actual == expected || actual.contains(&expected))
+}
+
+fn node_kind_name(kind: &NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Repository => "repository",
+        NodeKind::Directory => "directory",
+        NodeKind::File => "file",
+        NodeKind::Module => "module",
+        NodeKind::Function => "function",
+        NodeKind::Entrypoint => "entrypoint",
+        NodeKind::Type => "type",
+        NodeKind::Config => "config",
+        NodeKind::Environment => "environment",
+        NodeKind::ExternalDependency => "external_dependency",
+        NodeKind::Unknown => "unknown",
+    }
 }
 
 fn apply_custom_rules(context: &mut IndexContext) {
@@ -3797,6 +4011,97 @@ add_executable(imported_tool IMPORTED)
                         .is_some_and(|value| value == "framework")
             }));
         }
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_applies_user_graph_annotations() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join(".codegraph")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join(".codegraph").join("annotations.toml"),
+            r#"[[annotations.node]]
+id = "payments-files"
+kind = "file"
+label = "payments"
+
+[annotations.node.set]
+domain = "payments"
+owner = "team-payments"
+critical = true
+
+[[annotations.node]]
+id = "rust-functions"
+kind = "function"
+language = "rust"
+
+[annotations.node.set]
+runtime = "native"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("payments.rs"),
+            "fn charge_card() {}\nfn refund() {}\n",
+        )
+        .unwrap();
+        fs::write(root.join("src").join("users.rs"), "fn list_users() {}\n").unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let payments_file = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::File && node.label == "src/payments.rs")
+            .expect("missing payments file");
+        assert_eq!(
+            payments_file
+                .metadata
+                .get("annotation.domain")
+                .map(String::as_str),
+            Some("payments")
+        );
+        assert_eq!(
+            payments_file
+                .metadata
+                .get("annotation.owner")
+                .map(String::as_str),
+            Some("team-payments")
+        );
+        assert_eq!(
+            payments_file
+                .metadata
+                .get("annotation.critical")
+                .map(String::as_str),
+            Some("true")
+        );
+        assert!(
+            payments_file
+                .metadata
+                .get("annotation_ids")
+                .is_some_and(|value| value.contains("payments-files"))
+        );
+
+        let users_file = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::File && node.label == "src/users.rs")
+            .expect("missing users file");
+        assert!(!users_file.metadata.contains_key("annotation.domain"));
+
+        let charge_card = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == "charge_card")
+            .expect("missing charge_card function");
+        assert_eq!(
+            charge_card
+                .metadata
+                .get("annotation.runtime")
+                .map(String::as_str),
+            Some("native")
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
