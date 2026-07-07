@@ -95,6 +95,7 @@ const edgeSourceList = document.querySelector("#edgeSourceList");
 const scanPolicyList = document.querySelector("#scanPolicyList");
 const coverageList = document.querySelector("#coverageList");
 const lspList = document.querySelector("#lspList");
+const semanticWorkList = document.querySelector("#semanticWorkList");
 const architectureList = document.querySelector("#architectureList");
 const languageDependencyList = document.querySelector("#languageDependencyList");
 const hotspotList = document.querySelector("#hotspotList");
@@ -623,6 +624,7 @@ async function loadProjectOverview() {
     scanPolicyList.innerHTML = "";
     coverageList.innerHTML = "";
     lspList.innerHTML = "";
+    semanticWorkList.innerHTML = "";
     architectureList.innerHTML = "";
     languageDependencyList.innerHTML = "";
     hotspotList.innerHTML = "";
@@ -693,6 +695,7 @@ function renderOverview() {
   renderScanPolicy(state.scanOptions);
   renderCoverage(state.coverage);
   renderLspStatus(state.lsp, state.semanticReadiness, state.semanticPlan);
+  renderSemanticWork(state.semanticPlan);
   renderArchitecture(state.architecture);
   renderLanguageDependencies(state.languageDependencies);
   renderHotspots(state.hotspots);
@@ -952,6 +955,83 @@ function renderLspStatus(report, readiness, plan) {
     `);
   });
   lspList.innerHTML = chips.join("");
+}
+
+function renderSemanticWork(plan) {
+  const items = Array.isArray(plan?.work_items) ? plan.work_items.slice(0, 8) : [];
+  if (items.length === 0) {
+    semanticWorkList.innerHTML = "";
+    return;
+  }
+
+  const truncated = plan.truncated_work_items
+    ? `<span>${items.length}/${Number(plan.total_work_items || items.length)} shown</span>`
+    : `<span>${items.length} queued</span>`;
+  semanticWorkList.innerHTML = `
+    <div class="semantic-work-summary">
+      <strong>Semantic work</strong>
+      ${truncated}
+    </div>
+    <ul class="semantic-work-items">
+      ${items.map(renderSemanticWorkItem).join("")}
+    </ul>
+  `;
+  semanticWorkList.querySelectorAll("[data-semantic-work-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = items[Number(button.dataset.semanticWorkIndex)];
+      if (item) focusSemanticWorkItem(item);
+    });
+  });
+}
+
+function renderSemanticWorkItem(item, index) {
+  const target = item.target?.label
+    ? ` -> ${item.target.label}`
+    : item.node?.label
+      ? ` ${item.node.label}`
+      : "";
+  const location = item.path ? ` · ${item.path}${item.line ? `:${item.line}` : ""}` : "";
+  const disabled = item.edge_index == null && !item.node?.id ? "disabled" : "";
+  return `
+    <li>
+      <button class="semantic-work-item" type="button" data-semantic-work-index="${index}" ${disabled}>
+        <span>${Number(item.priority || 100)}</span>
+        <strong>${escapeHtml(formatKind(item.capability || item.kind))}${escapeHtml(target)}</strong>
+        <em>${escapeHtml(item.reason || formatKind(item.status || "work"))}${escapeHtml(location)}</em>
+      </button>
+    </li>
+  `;
+}
+
+async function focusSemanticWorkItem(item) {
+  const nodeIds = [];
+  if (item.node?.id) nodeIds.push(item.node.id);
+  if (item.target?.id) nodeIds.push(item.target.id);
+  const edgeIndexes = item.edge_index == null ? [] : [item.edge_index];
+  if (nodeIds.length === 0 && edgeIndexes.length === 0) return;
+
+  state.insightFocusRequest += 1;
+  const requestId = state.insightFocusRequest;
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    edge_limit: "300",
+  });
+  if (nodeIds.length > 0) params.set("node_ids", nodeIds.join(","));
+  if (edgeIndexes.length > 0) params.set("edge_indexes", edgeIndexes.join(","));
+
+  try {
+    const response = await fetch(`/api/focus?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.insightFocusRequest) return;
+    if (!response.ok) {
+      throw new Error(body.error || "focus failed");
+    }
+    const selectedId = item.node?.id || item.target?.id || null;
+    showFocusedGraph(body, `Semantic: ${formatKind(item.capability || item.kind)}`, selectedId);
+  } catch (error) {
+    if (requestId !== state.insightFocusRequest) return;
+    queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
 }
 
 function renderArchitecture(architecture) {

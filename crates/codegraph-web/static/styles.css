@@ -335,6 +335,80 @@ button:disabled {
   background: rgba(223, 126, 126, 0.08);
 }
 
+.semantic-work-list {
+  display: grid;
+  gap: 6px;
+}
+
+.semantic-work-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.semantic-work-summary strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.semantic-work-items {
+  display: grid;
+  gap: 5px;
+  max-height: 176px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.semantic-work-item {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 4px 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(103, 183, 220, 0.08);
+  color: var(--text);
+  text-align: left;
+}
+
+.semantic-work-item:hover:not(:disabled) {
+  border-color: rgba(92, 200, 167, 0.55);
+  background: rgba(92, 200, 167, 0.08);
+}
+
+.semantic-work-item:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.semantic-work-item span {
+  grid-row: span 2;
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.semantic-work-item strong,
+.semantic-work-item em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.semantic-work-item em {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .architecture-chip {
   max-width: 100%;
   background: rgba(184, 142, 230, 0.1);
