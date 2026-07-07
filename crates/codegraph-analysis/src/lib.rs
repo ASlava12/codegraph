@@ -1049,6 +1049,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_parse_error_insights(graph, &mut insights);
     add_unresolved_call_insights(graph, &mut insights);
     add_unresolved_local_import_insights(graph, &mut insights);
+    add_cross_language_heuristic_edge_insights(graph, &mut insights);
     add_duplicate_function_insights(graph, &mut insights);
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
@@ -2968,6 +2969,48 @@ fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: &mut Vec<In
     }
 }
 
+fn add_cross_language_heuristic_edge_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let nodes_by_id: BTreeMap<NodeId, &Node> =
+        graph.nodes.iter().map(|node| (node.id, node)).collect();
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
+        if !is_architecture_dependency_edge(&edge.kind)
+            || !matches!(
+                edge.confidence,
+                codegraph_core::Confidence::Heuristic | codegraph_core::Confidence::Unknown
+            )
+        {
+            continue;
+        }
+        let source_language = node_language(&nodes_by_id, edge.source);
+        let target_language = node_language(&nodes_by_id, edge.target);
+        if source_language == "unknown"
+            || target_language == "unknown"
+            || source_language == target_language
+        {
+            continue;
+        }
+        let source = nodes_by_id
+            .get(&edge.source)
+            .map(|node| node.label.as_str())
+            .unwrap_or("unknown");
+        let target = nodes_by_id
+            .get(&edge.target)
+            .map(|node| node.label.as_str())
+            .unwrap_or("unknown");
+        insights.push(Insight {
+            kind: "cross_language_heuristic_edge".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "`{source}` ({source_language}) {} `{target}` ({target_language}) with {} confidence",
+                edge_kind_name(&edge.kind),
+                confidence_name(edge.confidence)
+            ),
+            nodes: vec![edge.source, edge.target],
+            edges: vec![edge_index],
+        });
+    }
+}
+
 fn add_duplicate_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let mut groups: BTreeMap<&str, Vec<NodeId>> = BTreeMap::new();
     for node in &graph.nodes {
@@ -4331,6 +4374,63 @@ mod tests {
         assert_eq!(cross.edge_kinds.get("calls"), Some(&1));
         assert_eq!(cross.confidences.get("heuristic"), Some(&1));
         assert_eq!(cross.edge_indexes, vec![0]);
+    }
+
+    #[test]
+    fn insights_report_cross_language_heuristic_edges() {
+        let mut graph = CodeGraph::new("repo");
+        let rust_main = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "main",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let python_helper = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "helper",
+            None,
+            BTreeMap::from([("language".to_string(), "python".to_string())]),
+        );
+        let rust_helper = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "helper_rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        graph.add_edge(
+            rust_main,
+            python_helper,
+            EdgeKind::Calls,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            rust_main,
+            rust_helper,
+            EdgeKind::Calls,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            python_helper,
+            rust_helper,
+            EdgeKind::References,
+            Confidence::Exact,
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "cross_language_heuristic_edge")
+            .expect("expected cross-language heuristic insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert_eq!(insight.edges, vec![0]);
+        assert!(insight.nodes.contains(&rust_main));
+        assert!(insight.nodes.contains(&python_helper));
+        assert_eq!(
+            report.by_kind.get("cross_language_heuristic_edge"),
+            Some(&1)
+        );
     }
 
     #[test]

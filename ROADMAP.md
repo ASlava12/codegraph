@@ -108,6 +108,7 @@ Goal: answer practical code investigation questions.
 - [x] Add first graph query language for nodes, edges, calls, dependencies, and traces.
 - [x] Add directed path queries between graph labels or node ids.
 - [x] Add confidence-aware edge queries and UI provenance labels.
+- [x] Warn on heuristic cross-language dependency edges.
 - [x] Add web path navigation with visual dependency-path highlighting.
 - [x] Add richer query language with neighborhood expansion.
 - [x] Add reverse dependent traces for impact analysis.
