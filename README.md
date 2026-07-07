@@ -38,6 +38,7 @@ Implemented now:
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
 - API capabilities endpoint for discovering supported languages, exports, features, limits, cache state, and route groups.
+- Runtime metrics endpoint for uptime, API/schema versions, roots, language/feature counts, cache state, job stores, and concurrency.
 - Web overview chips for server capabilities, API/schema versions, cache state, supported language/export counts, job limits, and route groups.
 - Async scan job API for long-running repository scans.
 - SSE scan job status stream for live web progress updates.
@@ -412,6 +413,7 @@ Scan API:
 curl 'http://127.0.0.1:3765/api/projects'
 curl 'http://127.0.0.1:3765/api/capabilities'
 curl 'http://127.0.0.1:3765/api/health'
+curl 'http://127.0.0.1:3765/api/metrics'
 curl 'http://127.0.0.1:3765/api/scan-options?path=.'
 curl 'http://127.0.0.1:3765/api/languages'
 curl 'http://127.0.0.1:3765/api/lsp'

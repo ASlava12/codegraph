@@ -41,7 +41,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::sync::{RwLock, Semaphore};
 use tokio::time::sleep;
@@ -117,6 +117,7 @@ struct Args {
 #[derive(Clone)]
 struct AppState {
     root: PathBuf,
+    started_at: Instant,
     projects: Arc<Vec<ProjectRoot>>,
     option_overrides: IndexOptionOverrides,
     allow_any_path: bool,
@@ -465,6 +466,29 @@ struct HealthResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct MetricsResponse {
+    status: &'static str,
+    api_version: u32,
+    graph_schema_version: u32,
+    uptime_seconds: u64,
+    root: String,
+    projects: usize,
+    languages: usize,
+    features: usize,
+    max_file_size: u64,
+    cache: CacheCapabilityResponse,
+    scan_jobs: JobPoolMetricsResponse,
+    semantic_jobs: JobPoolMetricsResponse,
+}
+
+#[derive(Debug, Serialize)]
+struct JobPoolMetricsResponse {
+    max_retained: usize,
+    store: JobStoreHealth,
+    concurrency: ConcurrencyHealth,
+}
+
+#[derive(Debug, Serialize)]
 struct CapabilitiesResponse {
     name: &'static str,
     api_version: u32,
@@ -589,6 +613,7 @@ async fn main() -> Result<()> {
     let max_semantic_concurrency = args.max_semantic_concurrency.max(1);
     let state = AppState {
         root,
+        started_at: Instant::now(),
         projects,
         option_overrides: IndexOptionOverrides {
             include_hidden: args.include_hidden,
@@ -620,6 +645,7 @@ async fn main() -> Result<()> {
         .route("/styles.css", get(styles_css))
         .route("/api/capabilities", get(capabilities_api))
         .route("/api/health", get(health))
+        .route("/api/metrics", get(metrics_api))
         .route("/api/languages", get(languages_api))
         .route("/api/lsp", get(lsp_api))
         .route("/api/semantic-readiness", get(semantic_readiness_api))
@@ -981,6 +1007,49 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, A
             &state.semantic_permits,
             state.max_semantic_concurrency,
         ),
+    }))
+}
+
+async fn metrics_api(State(state): State<AppState>) -> Result<Json<MetricsResponse>, ApiError> {
+    let options = scan_options(&state, &state.root)?;
+    let scan_jobs = {
+        let jobs = state.jobs.read().await;
+        job_store_health(jobs.values().map(|job| job.status))
+    };
+    let semantic_jobs = {
+        let jobs = state.semantic_jobs.read().await;
+        job_store_health(jobs.values().map(|job| job.status))
+    };
+    Ok(Json(MetricsResponse {
+        status: "ok",
+        api_version: 1,
+        graph_schema_version: CODEGRAPH_SCHEMA_VERSION,
+        uptime_seconds: state.started_at.elapsed().as_secs(),
+        root: state.root.display().to_string(),
+        projects: state.projects.len(),
+        languages: language_adapters().len(),
+        features: capability_features(state.cache.is_some()).len(),
+        max_file_size: options.max_file_size,
+        cache: CacheCapabilityResponse {
+            enabled: state.cache.is_some(),
+            dir: state
+                .cache
+                .as_ref()
+                .map(|cache| cache.dir().display().to_string()),
+        },
+        scan_jobs: JobPoolMetricsResponse {
+            max_retained: state.max_scan_jobs,
+            store: scan_jobs,
+            concurrency: concurrency_health(&state.scan_permits, state.max_scan_concurrency),
+        },
+        semantic_jobs: JobPoolMetricsResponse {
+            max_retained: state.max_semantic_jobs,
+            store: semantic_jobs,
+            concurrency: concurrency_health(
+                &state.semantic_permits,
+                state.max_semantic_concurrency,
+            ),
+        },
     }))
 }
 
@@ -2378,6 +2447,7 @@ fn capability_features(cache_enabled: bool) -> Vec<&'static str> {
         "async_semantic_jobs",
         "job_listing",
         "job_cancellation",
+        "runtime_metrics",
         "sse_job_events",
         "semantic_lsp",
         "web_canvas",
@@ -2398,6 +2468,7 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
             endpoints: vec![
                 "GET /api/capabilities",
                 "GET /api/health",
+                "GET /api/metrics",
                 "GET /api/projects",
                 "GET /api/languages",
                 "GET /api/scan-options",
@@ -2612,6 +2683,7 @@ mod tests {
 
         assert!(without_cache.contains(&"async_scan_jobs"));
         assert!(without_cache.contains(&"job_cancellation"));
+        assert!(without_cache.contains(&"runtime_metrics"));
         assert!(without_cache.contains(&"semantic_lsp"));
         assert!(!without_cache.contains(&"persistent_graph_cache"));
         assert!(with_cache.contains(&"persistent_graph_cache"));
@@ -2625,6 +2697,7 @@ mod tests {
             .collect();
 
         assert!(endpoints.contains(&"GET /api/capabilities"));
+        assert!(endpoints.contains(&"GET /api/metrics"));
         assert!(endpoints.contains(&"GET /api/query"));
         assert!(endpoints.contains(&"GET /api/node-context"));
         assert!(endpoints.contains(&"POST /api/scan-jobs"));
@@ -2808,6 +2881,7 @@ mod tests {
         AppState {
             projects: Arc::new(project_roots(&root, additional).unwrap()),
             root,
+            started_at: Instant::now(),
             option_overrides: IndexOptionOverrides::default(),
             allow_any_path,
             cache: None,
