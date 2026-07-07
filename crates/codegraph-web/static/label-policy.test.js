@@ -37,12 +37,11 @@ test("minimal mode keeps all graph labels hidden", () => {
 });
 
 test("auto mode only allows labels in very sparse, highly zoomed graphs", () => {
-  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 3.5, visibleCount: 20 }), 0);
-  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 4.1, visibleCount: 8 }), 0);
-  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 4.3, visibleCount: 8 }), 1);
-  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 4.3, visibleCount: 10 }), 0);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 4.9, visibleCount: 6 }), 0);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 5, visibleCount: 6 }), 1);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 5, visibleCount: 7 }), 0);
   assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 3.5, visibleCount: 60 }), 0);
-  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 2.4, visibleCount: 15 }), 0);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 3.2, visibleCount: 15 }), 0);
 });
 
 test("auto mode prioritizes entrypoints and risks over low-signal nodes", () => {
@@ -52,8 +51,8 @@ test("auto mode prioritizes entrypoints and risks over low-signal nodes", () => 
   assert.equal(
     policy.shouldShowNodeLabel({
       labelMode: "auto",
-      zoom: 4.3,
-      visibleCount: 8,
+      zoom: 5,
+      visibleCount: 6,
       priority: entrypointPriority,
     }),
     true,
@@ -61,8 +60,8 @@ test("auto mode prioritizes entrypoints and risks over low-signal nodes", () => 
   assert.equal(
     policy.shouldShowNodeLabel({
       labelMode: "auto",
-      zoom: 4.3,
-      visibleCount: 8,
+      zoom: 5,
+      visibleCount: 6,
       priority: functionPriority,
     }),
     false,
@@ -74,7 +73,7 @@ test("auto mode keeps hover labels out of very dense views", () => {
     policy.shouldShowNodeLabel({
       labelMode: "auto",
       hovered: true,
-      zoom: 2.2,
+      zoom: 3.1,
       visibleCount: 80,
       priority: 1,
     }),
@@ -84,8 +83,8 @@ test("auto mode keeps hover labels out of very dense views", () => {
     policy.shouldShowNodeLabel({
       labelMode: "auto",
       hovered: true,
-      zoom: 2.25,
-      visibleCount: 20,
+      zoom: 3.2,
+      visibleCount: 12,
       priority: 9,
     }),
     true,
@@ -94,8 +93,8 @@ test("auto mode keeps hover labels out of very dense views", () => {
     policy.shouldShowNodeLabel({
       labelMode: "auto",
       hovered: true,
-      zoom: 2.6,
-      visibleCount: 26,
+      zoom: 3.4,
+      visibleCount: 13,
       priority: 1,
     }),
     false,
@@ -107,7 +106,7 @@ test("selected labels stay out of dense low-zoom views", () => {
     policy.shouldShowNodeLabel({
       labelMode: "auto",
       selected: true,
-      zoom: 1.5,
+      zoom: 2,
       visibleCount: 20,
       priority: 1,
     }),
@@ -117,8 +116,8 @@ test("selected labels stay out of dense low-zoom views", () => {
     policy.shouldShowNodeLabel({
       labelMode: "auto",
       selected: true,
-      zoom: 1.55,
-      visibleCount: 35,
+      zoom: 2.1,
+      visibleCount: 18,
       priority: 1,
     }),
     true,
@@ -127,8 +126,8 @@ test("selected labels stay out of dense low-zoom views", () => {
     policy.shouldShowNodeLabel({
       labelMode: "auto",
       selected: true,
-      zoom: 2,
-      visibleCount: 36,
+      zoom: 2.2,
+      visibleCount: 19,
       priority: 1,
     }),
     false,
@@ -140,7 +139,7 @@ test("focus mode only labels focused nodes at high zoom", () => {
     policy.shouldShowNodeLabel({
       labelMode: "focus",
       focused: true,
-      zoom: 2.7,
+      zoom: 3.3,
       visibleCount: 10,
       priority: 1,
     }),
@@ -150,7 +149,7 @@ test("focus mode only labels focused nodes at high zoom", () => {
     policy.shouldShowNodeLabel({
       labelMode: "focus",
       focused: true,
-      zoom: 2.75,
+      zoom: 3.4,
       visibleCount: 10,
       priority: 1,
     }),
@@ -160,13 +159,13 @@ test("focus mode only labels focused nodes at high zoom", () => {
     policy.shouldShowNodeLabel({
       labelMode: "focus",
       focused: true,
-      zoom: 3,
-      visibleCount: 19,
+      zoom: 3.5,
+      visibleCount: 11,
       priority: 1,
     }),
     false,
   );
-  assert.equal(policy.nodeLabelBudget({ labelMode: "focus", zoom: 2.8, visibleCount: 80 }), 0);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "focus", zoom: 3.5, visibleCount: 80 }), 0);
 });
 
 test("graph labels are truncated to stable compact text", () => {
