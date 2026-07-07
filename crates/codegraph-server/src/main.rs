@@ -6395,6 +6395,20 @@ mod tests {
     }
 
     #[test]
+    fn embedded_web_assets_surface_graph_viewport_hud() {
+        let index = include_str!("../../codegraph-web/static/index.html");
+        let app = include_str!("../../codegraph-web/static/app.js");
+        let styles = include_str!("../../codegraph-web/static/styles.css");
+
+        assert!(index.contains("graphHud"));
+        assert!(index.contains("graph-hud"));
+        assert!(app.contains("renderGraphHud"));
+        assert!(app.contains("\"graph.zoom\""));
+        assert!(app.contains("\"graph.layout\""));
+        assert!(styles.contains(".graph-hud"));
+    }
+
+    #[test]
     fn api_schema_lists_agent_contracts() {
         let schema = api_schema_response();
         let endpoints: Vec<_> = schema

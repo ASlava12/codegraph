@@ -78,6 +78,10 @@ const I18N = {
     "label.depth": "Depth",
     "label.nodes": "Nodes",
     "label.edges": "Edges",
+    "graph.zoom": "Zoom",
+    "graph.layout": "Layout",
+    "graph.running": "Running",
+    "graph.paused": "Paused",
     "label.kind": "Kind",
     "label.item": "Item",
     "label.language": "Language",
@@ -432,6 +436,10 @@ const I18N = {
     "label.depth": "Глубина",
     "label.nodes": "Узлы",
     "label.edges": "Связи",
+    "graph.zoom": "Масштаб",
+    "graph.layout": "Раскладка",
+    "graph.running": "Идет",
+    "graph.paused": "Пауза",
     "label.kind": "Тип",
     "label.item": "Элемент",
     "label.language": "Язык",
@@ -975,6 +983,7 @@ const kindFilters = document.querySelector("#kindFilters");
 const selectionTitle = document.querySelector("#selectionTitle");
 const selectionBody = document.querySelector("#selectionBody");
 const legend = document.querySelector("#legend");
+const graphHud = document.querySelector("#graphHud");
 const zoomOutButton = document.querySelector("#zoomOutButton");
 const zoomInButton = document.querySelector("#zoomInButton");
 const fitGraphButton = document.querySelector("#fitGraphButton");
@@ -5539,6 +5548,7 @@ function startAnimation() {
 
 function renderViewportControls() {
   viewportInfo.textContent = `${state.visibleNodes.length} ${t("stat.nodes").toLowerCase()} / ${state.visibleEdges.length} ${t("stat.edges").toLowerCase()}`;
+  renderGraphHud();
   toggleLayoutButton.textContent = state.layoutPaused ? t("button.resume") : t("button.pause");
   toggleLayoutButton.setAttribute(
     "aria-label",
@@ -5556,6 +5566,27 @@ function renderViewportControls() {
   });
 }
 
+function renderGraphHud() {
+  const zoom = `${Math.round(state.zoom * 100)}%`;
+  const layout = state.layoutPaused ? t("graph.paused") : t("graph.running");
+  const items = [
+    [t("label.nodes"), formatNumber(state.visibleNodes.length)],
+    [t("label.edges"), formatNumber(state.visibleEdges.length)],
+    [t("graph.zoom"), zoom],
+    [t("graph.layout"), layout],
+  ];
+  graphHud.innerHTML = items
+    .map(
+      ([label, value]) => `
+        <span>
+          <em>${escapeHtml(label)}</em>
+          <strong>${escapeHtml(value)}</strong>
+        </span>
+      `,
+    )
+    .join("");
+}
+
 function zoomAtCanvasCenter(scale) {
   zoomAt(canvas.width / 2, canvas.height / 2, scale);
 }
@@ -5566,6 +5597,7 @@ function zoomAt(screenX, screenY, scale) {
   const after = screenToWorld(screenX, screenY);
   state.pan.x += (after.x - before.x) * state.zoom;
   state.pan.y += (after.y - before.y) * state.zoom;
+  renderGraphHud();
   draw();
 }
 
@@ -5598,6 +5630,7 @@ function fitVisibleGraph() {
     x: canvas.width / 2 - ((minX + maxX) / 2) * state.zoom,
     y: canvas.height / 2 - ((minY + maxY) / 2) * state.zoom,
   };
+  renderGraphHud();
   draw();
 }
 
