@@ -233,6 +233,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add machine-readable API schema endpoint for agents and integrations.
 - [x] Publish structured parameter bounds in the API schema for bounded agent requests.
 - [x] Publish structured POST body fields in the API schema for scan and semantic job requests.
+- [x] Enforce and publish configurable API request body limits.
 - [x] Publish structured system response fields in the API schema for runtime clients.
 - [x] Publish structured graph investigation response fields in the API schema for agents.
 - [x] Publish structured analysis and source response fields in the API schema for agents.

@@ -42,6 +42,7 @@ Implemented now:
 - HTTP API and embedded web UI for interactive graph exploration.
 - API capabilities endpoint for discovering supported languages, exports, features, limits, cache state, and route groups.
 - API capabilities limits include graph page, node-card, focus, query, report, source preview, and source-search ceilings for production clients.
+- API capabilities publish the effective maximum JSON API request body size for POST clients.
 - API capabilities publish insight/check result limits and API schema parameters link overview/report limits to matching capability keys.
 - API capabilities publish bounded project report snapshot limits for architecture groups, architecture edges, language links, hotspots, and returned insights.
 - API and web UI enforce the published maximum graph query expression length before running repository scans.
@@ -49,6 +50,7 @@ Implemented now:
 - Machine-readable API schema endpoint for agents and integrations.
 - API schema parameters expose structured minimum, maximum, maximum string length, and matching capability-limit keys where runtime bounds exist.
 - API schema POST endpoints expose structured body fields for scan jobs and semantic enrichment requests.
+- API schema POST endpoints link to the published maximum API request body size enforced by the server.
 - API schema system endpoints expose structured response fields for probes, health, and runtime metrics.
 - API schema graph investigation endpoints expose structured response fields for graph slices, node cards, queries, edge explanations, and reports.
 - API schema analysis and source endpoints expose structured response fields for topology, traces, insights, checks, source previews, and source search.
@@ -532,6 +534,8 @@ Scan and semantic enrichment jobs also have independent concurrency limits. Use
 how many long-running scans and LSP enrichment runs may execute at once; excess
 jobs stay queued until a slot is available. `/api/health` reports active and
 available slots for both pools.
+JSON API request bodies are capped by `--max-api-body-bytes <bytes>` and the
+effective limit is published through `/api/capabilities` for clients and agents.
 
 Expose multiple local repositories to the web project selector by repeating
 `--project`. Requests remain constrained to the configured roots unless

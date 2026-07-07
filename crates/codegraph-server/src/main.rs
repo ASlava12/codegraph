@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use async_stream::stream;
-use axum::extract::{Path as AxumPath, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Path as AxumPath, Query, Request, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -86,6 +86,8 @@ const MAX_SOURCE_SEARCH_LIMIT: usize = 1000;
 const MAX_SOURCE_SEARCH_QUERY_LENGTH: usize = 4096;
 const DEFAULT_SOURCE_SEARCH_CONTEXT: usize = 2;
 const MAX_SOURCE_SEARCH_CONTEXT: usize = 20;
+const DEFAULT_API_BODY_BYTES: usize = 16 * 1024 * 1024;
+const MAX_API_BODY_BYTES: usize = 256 * 1024 * 1024;
 const STATIC_ASSET_CACHE_CONTROL: &str = "no-cache";
 const DYNAMIC_CACHE_CONTROL: &str = "no-store";
 const APP_JS: &str = include_str!("../../codegraph-web/static/app.js");
@@ -160,6 +162,10 @@ struct Args {
     #[arg(long, default_value_t = DEFAULT_MAX_SEMANTIC_CONCURRENCY)]
     max_semantic_concurrency: usize,
 
+    /// Maximum accepted HTTP request body bytes for JSON API requests.
+    #[arg(long, default_value_t = DEFAULT_API_BODY_BYTES)]
+    max_api_body_bytes: usize,
+
     /// Disable per-request access logs on stderr.
     #[arg(long)]
     quiet_access_log: bool,
@@ -183,6 +189,7 @@ struct AppState {
     max_semantic_jobs: usize,
     max_scan_concurrency: usize,
     max_semantic_concurrency: usize,
+    max_api_body_bytes: usize,
     access_log_enabled: bool,
     scan_permits: Arc<Semaphore>,
     semantic_permits: Arc<Semaphore>,
@@ -637,6 +644,8 @@ struct ApiEndpointSpec {
     parameters: Vec<ApiParameterSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body_capability_limit: Option<&'static str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     body_fields: Vec<ApiParameterSpec>,
     response: &'static str,
@@ -714,6 +723,9 @@ struct RuntimeLimitsResponse {
     max_semantic_jobs: usize,
     max_scan_concurrency: usize,
     max_semantic_concurrency: usize,
+    default_api_body_bytes: usize,
+    max_api_body_bytes: usize,
+    max_configurable_api_body_bytes: usize,
     default_job_list_limit: usize,
     max_job_list_limit: usize,
     default_semantic_work_item_limit: usize,
@@ -838,6 +850,7 @@ async fn main() -> Result<()> {
 
     let max_scan_concurrency = args.max_scan_concurrency.max(1);
     let max_semantic_concurrency = args.max_semantic_concurrency.max(1);
+    let max_api_body_bytes = normalize_api_body_bytes(args.max_api_body_bytes);
     let state = AppState {
         root,
         started_at: Instant::now(),
@@ -861,6 +874,7 @@ async fn main() -> Result<()> {
         max_semantic_jobs: args.max_semantic_jobs.max(1),
         max_scan_concurrency,
         max_semantic_concurrency,
+        max_api_body_bytes,
         access_log_enabled: !args.quiet_access_log,
         scan_permits: Arc::new(Semaphore::new(max_scan_concurrency)),
         semantic_permits: Arc::new(Semaphore::new(max_semantic_concurrency)),
@@ -943,6 +957,7 @@ async fn main() -> Result<()> {
         .route("/api/source-search", get(source_search_api))
         .fallback(not_found)
         .with_state(state)
+        .layer(DefaultBodyLimit::max(max_api_body_bytes))
         .layer(middleware::from_fn(cache_headers))
         .layer(middleware::from_fn(security_headers));
     let app = if api_auth.enabled() {
@@ -1215,6 +1230,10 @@ fn apply_cache_headers_for_path(path: &str, headers: &mut HeaderMap) {
 
 fn is_static_asset_path(path: &str) -> bool {
     matches!(path, "/app.js" | "/label-policy.js" | "/styles.css")
+}
+
+fn normalize_api_body_bytes(value: usize) -> usize {
+    value.clamp(1, MAX_API_BODY_BYTES)
 }
 
 fn static_asset_response(
@@ -1658,6 +1677,9 @@ async fn capabilities_api(
             max_semantic_jobs: state.max_semantic_jobs,
             max_scan_concurrency: state.max_scan_concurrency,
             max_semantic_concurrency: state.max_semantic_concurrency,
+            default_api_body_bytes: DEFAULT_API_BODY_BYTES,
+            max_api_body_bytes: state.max_api_body_bytes,
+            max_configurable_api_body_bytes: MAX_API_BODY_BYTES,
             default_job_list_limit: DEFAULT_JOB_LIST_LIMIT,
             max_job_list_limit: MAX_JOB_LIST_LIMIT,
             default_semantic_work_item_limit: DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
@@ -5679,6 +5701,7 @@ fn api_endpoint(
         summary,
         parameters,
         body,
+        body_capability_limit: body.map(|_| "max_api_body_bytes"),
         body_fields: Vec::new(),
         response,
         response_fields: Vec::new(),
@@ -5804,6 +5827,7 @@ fn capability_features(cache_enabled: bool, access_log_enabled: bool) -> Vec<&'s
         "runtime_probes",
         "graceful_shutdown",
         "request_ids",
+        "api_body_limits",
         "sse_job_events",
         "semantic_lsp",
         "web_canvas",
@@ -6111,6 +6135,16 @@ mod tests {
     }
 
     #[test]
+    fn api_body_byte_limits_are_clamped() {
+        assert_eq!(normalize_api_body_bytes(0), 1);
+        assert_eq!(
+            normalize_api_body_bytes(DEFAULT_API_BODY_BYTES),
+            DEFAULT_API_BODY_BYTES
+        );
+        assert_eq!(normalize_api_body_bytes(usize::MAX), MAX_API_BODY_BYTES);
+    }
+
+    #[test]
     fn static_asset_etags_are_stable_and_content_sensitive() {
         let etag = static_asset_etag("asset-body");
 
@@ -6248,6 +6282,7 @@ mod tests {
         assert!(without_cache.contains(&"runtime_probes"));
         assert!(without_cache.contains(&"graceful_shutdown"));
         assert!(without_cache.contains(&"request_ids"));
+        assert!(without_cache.contains(&"api_body_limits"));
         assert!(without_cache.contains(&"access_log"));
         assert!(without_cache.contains(&"project_report"));
         assert!(without_cache.contains(&"semantic_lsp"));
@@ -6272,6 +6307,15 @@ mod tests {
         assert_eq!(response.limits.default_incremental_report_limit, 100);
         assert_eq!(response.server_version, SERVER_VERSION);
         assert_eq!(response.limits.max_incremental_report_limit, 10000);
+        assert_eq!(
+            response.limits.default_api_body_bytes,
+            DEFAULT_API_BODY_BYTES
+        );
+        assert_eq!(response.limits.max_api_body_bytes, DEFAULT_API_BODY_BYTES);
+        assert_eq!(
+            response.limits.max_configurable_api_body_bytes,
+            MAX_API_BODY_BYTES
+        );
         assert_eq!(response.limits.default_semantic_work_item_limit, 100);
         assert_eq!(response.limits.max_semantic_work_item_limit, 1000);
         assert_eq!(response.limits.default_semantic_request_timeout_ms, 30000);
@@ -6438,6 +6482,8 @@ mod tests {
         assert!(app.contains("\"risk.gate\""));
         assert!(app.contains("capabilities.server_version"));
         assert!(app.contains("\"cap.server\""));
+        assert!(app.contains("\"cap.apiBody\""));
+        assert!(app.contains("limits.max_api_body_bytes"));
         assert!(app.contains("data-risk-gate"));
         assert!(app.contains("checkFailOnInput.value"));
         for endpoint in [
@@ -6897,6 +6943,18 @@ mod tests {
             .flat_map(|group| group.endpoints.iter())
             .find(|endpoint| endpoint.path == "/api/semantic-patch")
             .expect("schema should list semantic-patch endpoint");
+        assert_eq!(
+            semantic_patch_endpoint.body_capability_limit,
+            Some("max_api_body_bytes")
+        );
+        assert!(
+            schema
+                .groups
+                .iter()
+                .flat_map(|group| group.endpoints.iter())
+                .filter(|endpoint| endpoint.body.is_some())
+                .all(|endpoint| endpoint.body_capability_limit == Some("max_api_body_bytes"))
+        );
         assert!(semantic_patch_endpoint.body_fields.iter().any(|field| {
             field.name == "responses"
                 && field.location == "body"
@@ -7337,6 +7395,7 @@ mod tests {
             max_semantic_jobs: DEFAULT_MAX_SEMANTIC_JOBS,
             max_scan_concurrency: DEFAULT_MAX_SCAN_CONCURRENCY,
             max_semantic_concurrency: DEFAULT_MAX_SEMANTIC_CONCURRENCY,
+            max_api_body_bytes: DEFAULT_API_BODY_BYTES,
             access_log_enabled: true,
             scan_permits: Arc::new(Semaphore::new(DEFAULT_MAX_SCAN_CONCURRENCY)),
             semantic_permits: Arc::new(Semaphore::new(DEFAULT_MAX_SEMANTIC_CONCURRENCY)),
