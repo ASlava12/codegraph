@@ -138,6 +138,7 @@ Responsibilities:
 - limit concurrent scan and semantic jobs independently and expose active/available slots through health checks
 - allow scan and semantic jobs to be canceled from API and web UI while preserving terminal job state
 - expose retained scan and semantic job lists with status filters for humans and agents
+- render retained scan and semantic job history in the web UI with status summaries and cancel controls
 - reuse persistent graph cache records when project fingerprints match
 - provide cache fingerprint diff endpoints and web controls for explaining cache invalidation
 - provide JSON, DOT, and NDJSON export endpoints

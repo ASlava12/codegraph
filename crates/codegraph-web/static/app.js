@@ -61,6 +61,7 @@ const I18N = {
     "label.failOn": "Fail On",
     "button.scan": "Scan",
     "button.cancel": "Cancel",
+    "button.refresh": "Refresh",
     "button.apply": "Apply",
     "button.semanticEnrich": "Enrich",
     "button.traceEntrypoints": "Trace Entrypoints",
@@ -89,6 +90,7 @@ const I18N = {
     "option.references": "References",
     "option.server": "Server",
     "section.overview": "Overview",
+    "section.jobs": "Jobs",
     "section.entryFlows": "Entry Flows",
     "section.graphPage": "Graph Page",
     "section.sourceSearch": "Source Search",
@@ -117,6 +119,15 @@ const I18N = {
     "trace.noDependents": "No incoming dependents.",
     "trace.dependents": "Dependents",
     "semantic.running": "Running semantic enrichment...",
+    "job.scan": "Scan",
+    "job.semantic": "Semantic",
+    "job.empty": "No retained jobs.",
+    "job.updated": "Updated",
+    "job.status.queued": "queued",
+    "job.status.running": "running",
+    "job.status.complete": "complete",
+    "job.status.failed": "failed",
+    "job.status.canceled": "canceled",
     "job.scanCanceled": "Scan canceled.",
     "job.semanticCanceled": "Semantic enrichment canceled.",
     "semantic.report": "Semantic enrichment",
@@ -195,6 +206,7 @@ const I18N = {
     "label.failOn": "Порог",
     "button.scan": "Сканировать",
     "button.cancel": "Отменить",
+    "button.refresh": "Обновить",
     "button.apply": "Применить",
     "button.semanticEnrich": "Обогатить",
     "button.traceEntrypoints": "Трассировать входы",
@@ -223,6 +235,7 @@ const I18N = {
     "option.references": "Ссылки",
     "option.server": "Сервер",
     "section.overview": "Обзор",
+    "section.jobs": "Задачи",
     "section.entryFlows": "Потоки входа",
     "section.graphPage": "Страница графа",
     "section.sourceSearch": "Поиск в коде",
@@ -251,6 +264,15 @@ const I18N = {
     "trace.noDependents": "Входящих зависимых нет.",
     "trace.dependents": "Зависимые",
     "semantic.running": "Запускаю семантическое обогащение...",
+    "job.scan": "Скан",
+    "job.semantic": "Семантика",
+    "job.empty": "Сохранённых задач нет.",
+    "job.updated": "Обновлено",
+    "job.status.queued": "в очереди",
+    "job.status.running": "в работе",
+    "job.status.complete": "готово",
+    "job.status.failed": "ошибка",
+    "job.status.canceled": "отменено",
     "job.scanCanceled": "Сканирование отменено.",
     "job.semanticCanceled": "Семантическое обогащение отменено.",
     "semantic.report": "Семантическое обогащение",
@@ -349,6 +371,7 @@ const state = {
   insightRequest: 0,
   insightFocusRequest: 0,
   semanticEnrichRequest: 0,
+  jobQueueRequest: 0,
   checkRequest: 0,
   summary: null,
   scanOptions: null,
@@ -366,8 +389,10 @@ const state = {
   queryFocus: null,
   scanJobId: null,
   scanEvents: null,
+  scanJobs: null,
   semanticJobId: null,
   semanticEvents: null,
+  semanticJobs: null,
   layoutPaused: false,
   graphPage: {
     nodeOffset: 0,
@@ -414,6 +439,11 @@ const configCount = document.querySelector("#configCount");
 const errorCount = document.querySelector("#errorCount");
 const entryCount = document.querySelector("#entryCount");
 const skippedCount = document.querySelector("#skippedCount");
+const jobRefreshButton = document.querySelector("#jobRefreshButton");
+const scanJobSummary = document.querySelector("#scanJobSummary");
+const semanticJobSummary = document.querySelector("#semanticJobSummary");
+const scanJobList = document.querySelector("#scanJobList");
+const semanticJobList = document.querySelector("#semanticJobList");
 const overviewTotals = document.querySelector("#overviewTotals");
 const languageList = document.querySelector("#languageList");
 const confidenceList = document.querySelector("#confidenceList");
@@ -502,6 +532,9 @@ localeSelect.value = state.locale;
 localeSelect.addEventListener("change", () => setLocale(localeSelect.value));
 scanButton.addEventListener("click", () => scan());
 scanCancelButton.addEventListener("click", () => cancelScanJob());
+jobRefreshButton.addEventListener("click", () => loadJobQueue());
+scanJobList.addEventListener("click", (event) => onJobListClick(event, "scan"));
+semanticJobList.addEventListener("click", (event) => onJobListClick(event, "semantic"));
 projectSelect.addEventListener("change", () => {
   const selected = projectSelect.value;
   if (selected) {
@@ -665,6 +698,7 @@ function applyLocale() {
   }
   renderViewportControls();
   renderOverview();
+  renderJobQueue();
   renderInsights();
   renderSelection();
   draw();
@@ -672,6 +706,7 @@ function applyLocale() {
 
 async function init() {
   await loadProjects();
+  loadJobQueue();
   scan();
 }
 
@@ -711,6 +746,143 @@ function renderProjects() {
     projectSelect.value = selected.path;
     pathInput.value = selected.path;
   }
+}
+
+async function loadJobQueue() {
+  state.jobQueueRequest += 1;
+  const requestId = state.jobQueueRequest;
+  jobRefreshButton.disabled = true;
+
+  try {
+    const [scanJobs, semanticJobs] = await Promise.all([fetchJobList("scan"), fetchJobList("semantic")]);
+    if (requestId !== state.jobQueueRequest) return;
+    state.scanJobs = scanJobs;
+    state.semanticJobs = semanticJobs;
+    renderJobQueue();
+  } catch (error) {
+    if (requestId !== state.jobQueueRequest) return;
+    scanJobList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+    semanticJobList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.jobQueueRequest) {
+      jobRefreshButton.disabled = false;
+    }
+  }
+}
+
+async function fetchJobList(kind) {
+  const endpoint = kind === "semantic" ? "/api/semantic-jobs" : "/api/scan-jobs";
+  const response = await fetch(`${endpoint}?limit=8`);
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(body.error || `${kind} jobs failed`);
+  }
+  return body;
+}
+
+function renderJobQueue() {
+  renderJobSummary(scanJobSummary, state.scanJobs);
+  renderJobSummary(semanticJobSummary, state.semanticJobs);
+  scanJobList.innerHTML = renderJobList(state.scanJobs, "scan");
+  semanticJobList.innerHTML = renderJobList(state.semanticJobs, "semantic");
+}
+
+function renderJobSummary(target, list) {
+  const summary = list?.summary;
+  if (!summary) {
+    target.textContent = "0";
+    return;
+  }
+  const active = (summary.queued || 0) + (summary.running || 0);
+  target.textContent = active ? `${active}/${summary.total}` : String(summary.total || 0);
+}
+
+function renderJobList(list, kind) {
+  const jobs = list?.jobs || [];
+  if (!jobs.length) {
+    return `<p class="empty">${escapeHtml(t("job.empty"))}</p>`;
+  }
+  return jobs.map((job) => renderJobCard(job, kind)).join("");
+}
+
+function renderJobCard(job, kind) {
+  const canCancel = job.status === "queued" || job.status === "running";
+  const cancelButton = canCancel
+    ? `<button class="job-cancel-button cancel-action" type="button" data-job-id="${escapeHtml(job.id)}">${escapeHtml(t("button.cancel"))}</button>`
+    : "";
+  const updated = formatJobTime(job.updated_at_unix);
+  return `
+    <article class="job-card ${escapeHtml(job.status || "unknown")}">
+      <header>
+        <strong>${escapeHtml(job.id)}</strong>
+        <span>${escapeHtml(formatJobStatus(job.status))}</span>
+      </header>
+      <p>${escapeHtml(job.message || "")}</p>
+      <footer>
+        <span>${escapeHtml(kind === "semantic" ? t("job.semantic") : t("job.scan"))}</span>
+        <span>${escapeHtml(t("job.updated"))}: ${escapeHtml(updated)}</span>
+        ${cancelButton}
+      </footer>
+    </article>
+  `;
+}
+
+async function onJobListClick(event, kind) {
+  const button = event.target.closest("[data-job-id]");
+  if (!button) return;
+  await cancelJobFromList(kind, button.dataset.jobId, button);
+}
+
+async function cancelJobFromList(kind, jobId, button) {
+  if (!jobId) return;
+  button.disabled = true;
+  const endpoint = kind === "semantic" ? "/api/semantic-jobs" : "/api/scan-jobs";
+  try {
+    const response = await fetch(`${endpoint}/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.error || "job cancel failed");
+    }
+    if (kind === "scan" && state.scanJobId === jobId) {
+      state.scanJobId = null;
+      if (state.scanEvents) {
+        state.scanEvents.close();
+        state.scanEvents = null;
+      }
+      scanCancelButton.disabled = true;
+      selectionTitle.textContent = t("status.ready");
+      selectionBody.innerHTML = `<p class="empty">${escapeHtml(t("job.scanCanceled"))}</p>`;
+    }
+    if (kind === "semantic" && state.semanticJobId === jobId) {
+      state.semanticJobId = null;
+      if (state.semanticEvents) {
+        state.semanticEvents.close();
+        state.semanticEvents = null;
+      }
+      semanticCancelButton.disabled = true;
+      semanticWorkList.innerHTML = `<p class="empty">${escapeHtml(t("job.semanticCanceled"))}</p>`;
+    }
+    setStatus("ready");
+    await loadJobQueue();
+  } catch (error) {
+    button.disabled = false;
+    setStatus("error", "error");
+    button.closest(".job-card")?.insertAdjacentHTML(
+      "beforeend",
+      `<p class="error-text">${escapeHtml(error.message)}</p>`,
+    );
+  }
+}
+
+function formatJobStatus(status) {
+  return translate(`job.status.${status}`, formatKind(status || "unknown"));
+}
+
+function formatJobTime(seconds) {
+  if (!seconds) return "";
+  const date = new Date(Number(seconds) * 1000);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString(state.locale, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 async function scan() {
@@ -758,6 +930,7 @@ async function scan() {
 
     state.scanJobId = body.id;
     scanCancelButton.disabled = false;
+    loadJobQueue();
     await watchScanJob(body.id);
   } catch (error) {
     setStatus("error", "error");
@@ -766,6 +939,7 @@ async function scan() {
   } finally {
     scanButton.disabled = false;
     scanCancelButton.disabled = true;
+    loadJobQueue();
   }
 }
 
@@ -788,6 +962,7 @@ async function cancelScanJob() {
     setStatus("ready");
     selectionTitle.textContent = t("status.ready");
     selectionBody.innerHTML = `<p class="empty">${escapeHtml(t("job.scanCanceled"))}</p>`;
+    loadJobQueue();
   } catch (error) {
     setStatus("error", "error");
     selectionTitle.textContent = t("status.error");
@@ -1141,6 +1316,7 @@ async function runSemanticEnrich() {
 
     state.semanticJobId = job.id;
     semanticCancelButton.disabled = false;
+    loadJobQueue();
     await watchSemanticJob(job.id, requestId);
   } catch (error) {
     if (requestId !== state.semanticEnrichRequest) return;
@@ -1151,6 +1327,7 @@ async function runSemanticEnrich() {
       semanticEnrichButton.disabled = false;
       semanticCancelButton.disabled = true;
       semanticWorkFilterButton.disabled = false;
+      loadJobQueue();
     }
   }
 }
@@ -1175,6 +1352,7 @@ async function cancelSemanticJob() {
     semanticWorkList.innerHTML = `<p class="empty">${escapeHtml(t("job.semanticCanceled"))}</p>`;
     semanticEnrichButton.disabled = false;
     semanticWorkFilterButton.disabled = false;
+    loadJobQueue();
   } catch (error) {
     setStatus("error", "error");
     semanticWorkList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;

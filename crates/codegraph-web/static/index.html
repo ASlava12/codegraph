@@ -51,6 +51,27 @@
           <div><strong id="skippedCount">0</strong><span data-i18n="stat.skipped">Skipped</span></div>
         </section>
 
+        <section class="job-queue" aria-label="Jobs">
+          <header>
+            <h2 data-i18n="section.jobs">Jobs</h2>
+            <button id="jobRefreshButton" type="button" data-i18n="button.refresh">Refresh</button>
+          </header>
+          <div class="job-summary">
+            <div><strong id="scanJobSummary">0</strong><span data-i18n="job.scan">Scan</span></div>
+            <div><strong id="semanticJobSummary">0</strong><span data-i18n="job.semantic">Semantic</span></div>
+          </div>
+          <div class="job-columns">
+            <section>
+              <h3 data-i18n="job.scan">Scan</h3>
+              <div id="scanJobList" class="job-list"></div>
+            </section>
+            <section>
+              <h3 data-i18n="job.semantic">Semantic</h3>
+              <div id="semanticJobList" class="job-list"></div>
+            </section>
+          </div>
+        </section>
+
         <section class="overview" aria-label="Project overview">
           <header>
             <h2 data-i18n="section.overview">Overview</h2>

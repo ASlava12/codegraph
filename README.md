@@ -41,6 +41,7 @@ Implemented now:
 - SSE scan job status stream for live web progress updates.
 - Cancelable scan and semantic enrichment jobs for stopping queued or running long work.
 - Job listing APIs for inspecting retained scan and semantic job history by status.
+- Web job monitor for retained scan and semantic jobs with refresh, status summaries, and cancellation actions.
 - Source preview API and UI panel for parsed symbols plus framework route/config facts with source spans.
 - Enriched selected-node cards with summary metadata, source snippets, neighboring dependencies, trace actions, and related risks.
 - Initial English/Russian web UI localization with a persistent language selector.

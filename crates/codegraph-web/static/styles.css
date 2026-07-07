@@ -239,6 +239,162 @@ button.cancel-action:hover:not(:disabled) {
   font-size: 12px;
 }
 
+.job-queue {
+  display: grid;
+  gap: 8px;
+}
+
+.job-queue header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.job-queue h2,
+.job-queue h3 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.job-queue h3 {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.job-queue header button {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.job-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.job-summary div {
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  background: var(--panel-2);
+}
+
+.job-summary div + div {
+  border-left: 1px solid var(--line);
+}
+
+.job-summary strong {
+  font-size: 17px;
+}
+
+.job-summary span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.job-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.job-columns > section,
+.job-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.job-card {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.job-card.running,
+.job-card.queued {
+  border-color: rgba(229, 180, 84, 0.4);
+  background: rgba(229, 180, 84, 0.08);
+}
+
+.job-card.complete {
+  border-color: rgba(92, 200, 167, 0.35);
+}
+
+.job-card.failed,
+.job-card.canceled {
+  border-color: rgba(223, 126, 126, 0.36);
+}
+
+.job-card header,
+.job-card footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.job-card strong,
+.job-card p,
+.job-card span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.job-card header span {
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--bg);
+  background: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.job-card.running header span,
+.job-card.queued header span {
+  background: var(--warn);
+}
+
+.job-card.complete header span {
+  background: var(--accent);
+}
+
+.job-card.failed header span,
+.job-card.canceled header span {
+  color: #f6d8d8;
+  background: rgba(223, 126, 126, 0.28);
+}
+
+.job-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.job-card footer {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.job-card footer button {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
 .overview {
   display: grid;
   gap: 9px;
@@ -1748,6 +1904,10 @@ button.cancel-action:hover:not(:disabled) {
 
   .semantic-work-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .job-columns {
+    grid-template-columns: 1fr;
   }
 
   .graph-controls {
