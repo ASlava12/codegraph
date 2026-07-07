@@ -58,6 +58,8 @@ const DEFAULT_MAX_SCAN_CONCURRENCY: usize = 2;
 const DEFAULT_MAX_SEMANTIC_CONCURRENCY: usize = 1;
 const DEFAULT_JOB_LIST_LIMIT: usize = 50;
 const MAX_JOB_LIST_LIMIT: usize = 500;
+const DEFAULT_INCREMENTAL_REPORT_LIMIT: usize = 100;
+const MAX_INCREMENTAL_REPORT_LIMIT: usize = 10_000;
 const DEFAULT_GRAPH_NODE_LIMIT: usize = 250;
 const MAX_GRAPH_NODE_LIMIT: usize = 1000;
 const DEFAULT_GRAPH_EDGE_LIMIT: usize = 500;
@@ -621,7 +623,33 @@ struct ApiParameterSpec {
     value_type: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     default: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    minimum: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maximum: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_length: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capability_limit: Option<&'static str>,
     description: &'static str,
+}
+
+impl ApiParameterSpec {
+    fn with_range(mut self, minimum: usize, maximum: usize) -> Self {
+        self.minimum = Some(minimum);
+        self.maximum = Some(maximum);
+        self
+    }
+
+    fn with_max_length(mut self, max_length: usize) -> Self {
+        self.max_length = Some(max_length);
+        self
+    }
+
+    fn with_capability_limit(mut self, capability_limit: &'static str) -> Self {
+        self.capability_limit = Some(capability_limit);
+        self
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -646,6 +674,8 @@ struct RuntimeLimitsResponse {
     max_semantic_concurrency: usize,
     default_job_list_limit: usize,
     max_job_list_limit: usize,
+    default_incremental_report_limit: usize,
+    max_incremental_report_limit: usize,
     default_graph_node_limit: usize,
     max_graph_node_limit: usize,
     default_graph_edge_limit: usize,
@@ -1499,6 +1529,8 @@ async fn capabilities_api(
             max_semantic_concurrency: state.max_semantic_concurrency,
             default_job_list_limit: DEFAULT_JOB_LIST_LIMIT,
             max_job_list_limit: MAX_JOB_LIST_LIMIT,
+            default_incremental_report_limit: DEFAULT_INCREMENTAL_REPORT_LIMIT,
+            max_incremental_report_limit: MAX_INCREMENTAL_REPORT_LIMIT,
             default_graph_node_limit: DEFAULT_GRAPH_NODE_LIMIT,
             max_graph_node_limit: MAX_GRAPH_NODE_LIMIT,
             default_graph_edge_limit: DEFAULT_GRAPH_EDGE_LIMIT,
@@ -1974,7 +2006,10 @@ async fn cache_diff_api(
         ));
     };
     let options = scan_options(&state, &root)?;
-    let limit = query.limit.unwrap_or(100).clamp(1, 10_000);
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_INCREMENTAL_REPORT_LIMIT)
+        .clamp(1, MAX_INCREMENTAL_REPORT_LIMIT);
     let report = tokio::task::spawn_blocking(move || cache.diff(&root, &options, limit))
         .await
         .map_err(|error| ApiError::internal(format!("cache diff task failed: {error}")))?
@@ -1993,7 +2028,10 @@ async fn cache_chunks_api(
         ));
     };
     let options = scan_options(&state, &root)?;
-    let limit = query.limit.unwrap_or(100).clamp(1, 10_000);
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_INCREMENTAL_REPORT_LIMIT)
+        .clamp(1, MAX_INCREMENTAL_REPORT_LIMIT);
     let report = tokio::task::spawn_blocking(move || cache.chunks(&root, &options, limit))
         .await
         .map_err(|error| ApiError::internal(format!("cache chunks task failed: {error}")))?
@@ -2012,7 +2050,10 @@ async fn incremental_plan_api(
         ));
     };
     let options = scan_options(&state, &root)?;
-    let limit = query.limit.unwrap_or(100).clamp(1, 10_000);
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_INCREMENTAL_REPORT_LIMIT)
+        .clamp(1, MAX_INCREMENTAL_REPORT_LIMIT);
     let plan = tokio::task::spawn_blocking(move || cache.incremental_plan(&root, &options, limit))
         .await
         .map_err(|error| ApiError::internal(format!("incremental plan task failed: {error}")))?
@@ -2031,7 +2072,10 @@ async fn incremental_scan_api(
         ));
     };
     let options = scan_options(&state, &root)?;
-    let limit = query.limit.unwrap_or(100).clamp(1, 10_000);
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_INCREMENTAL_REPORT_LIMIT)
+        .clamp(1, MAX_INCREMENTAL_REPORT_LIMIT);
     let scan = tokio::task::spawn_blocking(move || cache.incremental_scan(&root, &options, limit))
         .await
         .map_err(|error| ApiError::internal(format!("incremental scan task failed: {error}")))?
@@ -2050,7 +2094,10 @@ async fn incremental_merge_preview_api(
         ));
     };
     let options = scan_options(&state, &root)?;
-    let limit = query.limit.unwrap_or(100).clamp(1, 10_000);
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_INCREMENTAL_REPORT_LIMIT)
+        .clamp(1, MAX_INCREMENTAL_REPORT_LIMIT);
     let preview = tokio::task::spawn_blocking(move || {
         cache.incremental_merge_preview(&root, &options, limit)
     })
@@ -2071,7 +2118,10 @@ async fn incremental_update_api(
         ));
     };
     let options = scan_options(&state, &root)?;
-    let limit = query.limit.unwrap_or(100).clamp(1, 10_000);
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_INCREMENTAL_REPORT_LIMIT)
+        .clamp(1, MAX_INCREMENTAL_REPORT_LIMIT);
     let update =
         tokio::task::spawn_blocking(move || cache.incremental_update(&root, &options, limit))
             .await
@@ -3534,7 +3584,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("100"),
                             "Maximum changed entries per list.",
-                        ),
+                        )
+                        .with_range(1, MAX_INCREMENTAL_REPORT_LIMIT)
+                        .with_capability_limit("max_incremental_report_limit"),
                     ],
                     "CacheDiffReport",
                 ),
@@ -3549,7 +3601,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("100"),
                             "Maximum chunk entries to return.",
-                        ),
+                        )
+                        .with_range(1, MAX_INCREMENTAL_REPORT_LIMIT)
+                        .with_capability_limit("max_incremental_report_limit"),
                     ],
                     "CacheChunkReport",
                 ),
@@ -3564,7 +3618,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("100"),
                             "Maximum paths per plan list.",
-                        ),
+                        )
+                        .with_range(1, MAX_INCREMENTAL_REPORT_LIMIT)
+                        .with_capability_limit("max_incremental_report_limit"),
                     ],
                     "IncrementalScanPlan",
                 ),
@@ -3579,7 +3635,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("100"),
                             "Maximum changed current paths to include in the focused scan.",
-                        ),
+                        )
+                        .with_range(1, MAX_INCREMENTAL_REPORT_LIMIT)
+                        .with_capability_limit("max_incremental_report_limit"),
                     ],
                     "IncrementalScan",
                 ),
@@ -3594,7 +3652,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("100"),
                             "Maximum changed current paths to include in the merge preview.",
-                        ),
+                        )
+                        .with_range(1, MAX_INCREMENTAL_REPORT_LIMIT)
+                        .with_capability_limit("max_incremental_report_limit"),
                     ],
                     "IncrementalMergePreview",
                 ),
@@ -3609,7 +3669,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("100"),
                             "Maximum changed paths to inspect while planning the update.",
-                        ),
+                        )
+                        .with_range(1, MAX_INCREMENTAL_REPORT_LIMIT)
+                        .with_capability_limit("max_incremental_report_limit"),
                     ],
                     None,
                     "IncrementalUpdate",
@@ -3626,7 +3688,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("100"),
                             "Maximum changed paths to inspect while planning the update.",
-                        ),
+                        )
+                        .with_range(1, MAX_INCREMENTAL_REPORT_LIMIT)
+                        .with_capability_limit("max_incremental_report_limit"),
                     ],
                     "IncrementalUpdate",
                 ),
@@ -3649,7 +3713,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("50"),
                             "Maximum jobs to return.",
-                        ),
+                        )
+                        .with_range(1, MAX_JOB_LIST_LIMIT)
+                        .with_capability_limit("max_job_list_limit"),
                     ],
                     "ScanJobListResponse",
                 ),
@@ -3743,7 +3809,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("50"),
                             "Maximum jobs to return.",
-                        ),
+                        )
+                        .with_range(1, MAX_JOB_LIST_LIMIT)
+                        .with_capability_limit("max_job_list_limit"),
                     ],
                     "SemanticJobListResponse",
                 ),
@@ -3809,7 +3877,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("80"),
                             "Maximum context edges.",
-                        ),
+                        )
+                        .with_range(1, MAX_NODE_CONTEXT_EDGE_LIMIT)
+                        .with_capability_limit("max_node_context_edge_limit"),
                     ],
                     "NodeContext",
                 ),
@@ -3825,21 +3895,27 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("80"),
                             "Maximum context edges.",
-                        ),
+                        )
+                        .with_range(1, MAX_NODE_CONTEXT_EDGE_LIMIT)
+                        .with_capability_limit("max_node_context_edge_limit"),
                         query_param(
                             "source_context",
                             false,
                             "u32",
                             Some("5"),
                             "Source context lines around the node span.",
-                        ),
+                        )
+                        .with_range(0, MAX_NODE_CARD_SOURCE_CONTEXT as usize)
+                        .with_capability_limit("max_node_card_source_context"),
                         query_param(
                             "insight_limit",
                             false,
                             "usize",
                             Some("8"),
                             "Maximum related risks.",
-                        ),
+                        )
+                        .with_range(1, MAX_NODE_CARD_INSIGHT_LIMIT)
+                        .with_capability_limit("max_node_card_insight_limit"),
                     ],
                     "NodeCard",
                 ),
@@ -3862,7 +3938,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("200"),
                             "Maximum incident edges.",
-                        ),
+                        )
+                        .with_range(1, MAX_FOCUS_EDGE_LIMIT)
+                        .with_capability_limit("max_focus_edge_limit"),
                     ],
                     "QueryResult",
                 ),
@@ -3883,7 +3961,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "string",
                             None,
                             "Graph query expression, for example `symbols label:load_config direction:out`, `files path:src/main.rs direction:out`, `entrypoints language:rust`, `routes method:GET path:/users`, `packages package:serde ecosystem:cargo`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable language:rust`, `diagnostics severity:error language:rust`, or `insights severity:error`.",
-                        ),
+                        )
+                        .with_max_length(MAX_GRAPH_QUERY_LENGTH)
+                        .with_capability_limit("max_graph_query_length"),
                     ],
                     "QueryResult",
                 ),
@@ -3927,14 +4007,16 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Group files and cross-area dependencies by top-level project area.",
                     vec![
                         path_param(),
-                        query_param("group_limit", false, "usize", Some("50"), "Maximum groups."),
+                        query_param("group_limit", false, "usize", Some("50"), "Maximum groups.")
+                            .with_range(1, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT),
                         query_param(
                             "edge_limit",
                             false,
                             "usize",
                             Some("200"),
                             "Maximum inter-group edges.",
-                        ),
+                        )
+                        .with_range(1, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT),
                     ],
                     "ArchitectureMap",
                 ),
@@ -3949,7 +4031,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("50"),
                             "Maximum language links.",
-                        ),
+                        )
+                        .with_range(1, MAX_REPORT_LANGUAGE_LINK_LIMIT),
                     ],
                     "LanguageDependencyReport",
                 ),
@@ -3958,7 +4041,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "List high-degree files, functions, entrypoints, and config nodes.",
                     vec![
                         path_param(),
-                        query_param("limit", false, "usize", Some("25"), "Maximum hotspots."),
+                        query_param("limit", false, "usize", Some("25"), "Maximum hotspots.")
+                            .with_range(1, MAX_REPORT_HOTSPOT_LIMIT),
                     ],
                     "HotspotReport",
                 ),
@@ -3980,14 +4064,16 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             None,
                             "Filter entrypoints by label/kind/language/metadata.",
                         ),
-                        query_param("depth", false, "usize", Some("3"), "Maximum trace depth."),
+                        query_param("depth", false, "usize", Some("3"), "Maximum trace depth.")
+                            .with_range(1, 32),
                         query_param(
                             "limit",
                             false,
                             "usize",
                             Some("25"),
                             "Maximum entrypoint traces.",
-                        ),
+                        )
+                        .with_range(1, 500),
                     ],
                     "EntrypointTraceReport",
                 ),
@@ -4016,7 +4102,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "Start node label substring.",
                         ),
                         query_param("node_id", false, "u64", None, "Start node id."),
-                        query_param("depth", false, "usize", Some("2"), "Maximum trace depth."),
+                        query_param("depth", false, "usize", Some("2"), "Maximum trace depth.")
+                            .with_range(1, 8),
                     ],
                     "TraceResult?",
                 ),
@@ -4033,7 +4120,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "Target node label substring.",
                         ),
                         query_param("node_id", false, "u64", None, "Target node id."),
-                        query_param("depth", false, "usize", Some("3"), "Maximum trace depth."),
+                        query_param("depth", false, "usize", Some("3"), "Maximum trace depth.")
+                            .with_range(1, 16),
                     ],
                     "TraceResult?",
                 ),
@@ -4055,8 +4143,10 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("6"),
                             "Maximum upstream depth.",
-                        ),
-                        query_param("limit", false, "usize", Some("50"), "Maximum paths."),
+                        )
+                        .with_range(1, 32),
+                        query_param("limit", false, "usize", Some("50"), "Maximum paths.")
+                            .with_range(1, 500),
                     ],
                     "ConfigTraceResult",
                 ),
@@ -4078,8 +4168,10 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "usize",
                             Some("6"),
                             "Maximum upstream depth.",
-                        ),
-                        query_param("limit", false, "usize", Some("50"), "Maximum paths."),
+                        )
+                        .with_range(1, 32),
+                        query_param("limit", false, "usize", Some("50"), "Maximum paths.")
+                            .with_range(1, 500),
                     ],
                     "ErrorTraceResult",
                 ),
@@ -4096,7 +4188,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         query_param("path", true, "path", None, "Source path inside root."),
                         query_param("start_line", false, "u32", None, "First line."),
                         query_param("end_line", false, "u32", None, "Last line."),
-                        query_param("context", false, "u32", None, "Context lines around span."),
+                        query_param("context", false, "u32", None, "Context lines around span.")
+                            .with_range(0, MAX_SOURCE_CONTEXT as usize)
+                            .with_capability_limit("max_source_context"),
                     ],
                     "SourceResponse",
                 ),
@@ -4105,7 +4199,9 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Search source text with compact context snippets.",
                     vec![
                         path_param(),
-                        query_param("q", true, "string", None, "Search text."),
+                        query_param("q", true, "string", None, "Search text.")
+                            .with_max_length(MAX_SOURCE_SEARCH_QUERY_LENGTH)
+                            .with_capability_limit("max_source_search_query_length"),
                         query_param(
                             "path_filter",
                             false,
@@ -4120,14 +4216,18 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             Some("false"),
                             "Match case exactly.",
                         ),
-                        query_param("limit", false, "usize", Some("50"), "Maximum matches."),
+                        query_param("limit", false, "usize", Some("50"), "Maximum matches.")
+                            .with_range(1, MAX_SOURCE_SEARCH_LIMIT)
+                            .with_capability_limit("max_source_search_limit"),
                         query_param(
                             "context",
                             false,
                             "usize",
                             Some("2"),
                             "Context lines per match.",
-                        ),
+                        )
+                        .with_range(0, MAX_SOURCE_SEARCH_CONTEXT)
+                        .with_capability_limit("max_source_search_context"),
                     ],
                     "SourceSearchResult",
                 ),
@@ -4146,7 +4246,9 @@ fn graph_slice_params() -> Vec<ApiParameterSpec> {
             Some("0"),
             "Node page offset.",
         ),
-        query_param("node_limit", false, "usize", Some("250"), "Node page size."),
+        query_param("node_limit", false, "usize", Some("250"), "Node page size.")
+            .with_range(1, MAX_GRAPH_NODE_LIMIT)
+            .with_capability_limit("max_graph_node_limit"),
         query_param(
             "edge_offset",
             false,
@@ -4154,7 +4256,9 @@ fn graph_slice_params() -> Vec<ApiParameterSpec> {
             Some("0"),
             "Edge page offset.",
         ),
-        query_param("edge_limit", false, "usize", Some("500"), "Edge page size."),
+        query_param("edge_limit", false, "usize", Some("500"), "Edge page size.")
+            .with_range(1, MAX_GRAPH_EDGE_LIMIT)
+            .with_capability_limit("max_graph_edge_limit"),
         query_param(
             "path_prefix",
             false,
@@ -4230,35 +4334,45 @@ fn report_params() -> Vec<ApiParameterSpec> {
             "usize",
             Some("50"),
             "Maximum architecture groups, capped by server capabilities.",
-        ),
+        )
+        .with_range(1, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT)
+        .with_capability_limit("max_report_architecture_group_limit"),
         query_param(
             "architecture_edge_limit",
             false,
             "usize",
             Some("200"),
             "Maximum architecture edges, capped by server capabilities.",
-        ),
+        )
+        .with_range(1, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT)
+        .with_capability_limit("max_report_architecture_edge_limit"),
         query_param(
             "language_link_limit",
             false,
             "usize",
             Some("50"),
             "Maximum language dependency links, capped by server capabilities.",
-        ),
+        )
+        .with_range(1, MAX_REPORT_LANGUAGE_LINK_LIMIT)
+        .with_capability_limit("max_report_language_link_limit"),
         query_param(
             "hotspot_limit",
             false,
             "usize",
             Some("25"),
             "Maximum hotspots, capped by server capabilities.",
-        ),
+        )
+        .with_range(1, MAX_REPORT_HOTSPOT_LIMIT)
+        .with_capability_limit("max_report_hotspot_limit"),
         query_param(
             "insight_limit",
             false,
             "usize",
             Some("50"),
             "Maximum returned insights, capped by server capabilities; total counts stay complete.",
-        ),
+        )
+        .with_range(1, MAX_REPORT_INSIGHT_LIMIT)
+        .with_capability_limit("max_report_insight_limit"),
         query_param(
             "fail_on",
             false,
@@ -4299,7 +4413,8 @@ fn insight_params() -> Vec<ApiParameterSpec> {
             "usize",
             Some("50"),
             "Maximum returned insights.",
-        ),
+        )
+        .with_range(1, 500),
     ]
 }
 
@@ -4333,7 +4448,8 @@ fn check_params() -> Vec<ApiParameterSpec> {
             "usize",
             Some("50"),
             "Maximum insights in nested report.",
-        ),
+        )
+        .with_range(1, 500),
     ]
 }
 
@@ -4440,6 +4556,10 @@ fn id_param() -> ApiParameterSpec {
         required: true,
         value_type: "string",
         default: None,
+        minimum: None,
+        maximum: None,
+        max_length: None,
+        capability_limit: None,
         description: "Retained job id.",
     }
 }
@@ -4461,6 +4581,10 @@ fn query_param(
         required,
         value_type,
         default,
+        minimum: None,
+        maximum: None,
+        max_length: None,
+        capability_limit: None,
         description,
     }
 }
@@ -4891,6 +5015,8 @@ mod tests {
             .await
             .expect("capabilities response");
 
+        assert_eq!(response.limits.default_incremental_report_limit, 100);
+        assert_eq!(response.limits.max_incremental_report_limit, 10000);
         assert_eq!(response.limits.default_graph_node_limit, 250);
         assert_eq!(response.limits.max_graph_node_limit, 1000);
         assert_eq!(response.limits.default_graph_edge_limit, 500);
@@ -5256,16 +5382,67 @@ mod tests {
         assert!(graph_endpoint.parameters.iter().any(|parameter| {
             parameter.name == "confidence" && parameter.value_type == "graph_confidence"
         }));
+        let graph_node_limit = graph_endpoint
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "node_limit")
+            .expect("graph node_limit");
+        assert_eq!(graph_node_limit.minimum, Some(1));
+        assert_eq!(graph_node_limit.maximum, Some(MAX_GRAPH_NODE_LIMIT));
+        assert_eq!(
+            graph_node_limit.capability_limit,
+            Some("max_graph_node_limit")
+        );
+        let query_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/query")
+            .expect("schema should list query endpoint");
         assert!(
-            schema
-                .groups
+            query_endpoint
+                .parameters
                 .iter()
-                .flat_map(|group| group.endpoints.iter())
-                .find(|endpoint| endpoint.path == "/api/query")
-                .is_some_and(|endpoint| endpoint
-                    .parameters
-                    .iter()
-                    .any(|parameter| parameter.name == "q" && parameter.required))
+                .any(|parameter| parameter.name == "q"
+                    && parameter.required
+                    && parameter.max_length == Some(MAX_GRAPH_QUERY_LENGTH)
+                    && parameter.capability_limit == Some("max_graph_query_length"))
+        );
+        let report_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/report")
+            .expect("schema should list report endpoint");
+        let report_insight_limit = report_endpoint
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "insight_limit")
+            .expect("report insight_limit");
+        assert_eq!(report_insight_limit.minimum, Some(1));
+        assert_eq!(report_insight_limit.maximum, Some(MAX_REPORT_INSIGHT_LIMIT));
+        assert_eq!(
+            report_insight_limit.capability_limit,
+            Some("max_report_insight_limit")
+        );
+        let source_search_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/source-search")
+            .expect("schema should list source-search endpoint");
+        let source_search_query = source_search_endpoint
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "q")
+            .expect("source-search q");
+        assert_eq!(
+            source_search_query.max_length,
+            Some(MAX_SOURCE_SEARCH_QUERY_LENGTH)
+        );
+        assert_eq!(
+            source_search_query.capability_limit,
+            Some("max_source_search_query_length")
         );
     }
 

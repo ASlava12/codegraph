@@ -227,6 +227,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Publish graph, query, report, source, and card runtime limits in API capabilities.
 - [x] Publish bounded project report snapshot topology and risk list limits in API capabilities.
 - [x] Add machine-readable API schema endpoint for agents and integrations.
+- [x] Publish structured parameter bounds in the API schema for bounded agent requests.
 - [x] Publish known insight kinds in the API schema for agent discovery and web filter suggestions.
 - [x] Use API schema enum values as web graph filter suggestions.
 - [x] Enforce and publish graph query expression length limits for production clients.
