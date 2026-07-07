@@ -1,8 +1,8 @@
-use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph, Edge, Node, NodeKind};
+use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph, NodeKind};
 use codegraph_indexer::{IndexError, IndexOptions, is_index_relevant_file, scan_project};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
 
-const CACHE_SCHEMA_VERSION: u32 = 2;
+const CACHE_SCHEMA_VERSION: u32 = 3;
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
 
@@ -148,7 +148,20 @@ struct CacheRecord {
     root: String,
     options_hash: String,
     fingerprint: ProjectFingerprint,
+    #[serde(default)]
+    impact_index: GraphImpactIndex,
     graph: CodeGraph,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct GraphImpactIndex {
+    by_path: BTreeMap<String, GraphImpactScope>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct GraphImpactScope {
+    node_ids: Vec<u64>,
+    edge_indexes: Vec<usize>,
 }
 
 #[derive(Debug, Error)]
@@ -350,7 +363,7 @@ impl GraphCache {
         Ok(incremental_plan_from_fingerprints(
             self,
             &record.fingerprint,
-            &record.graph,
+            &record.impact_index,
             current,
             limit,
         ))
@@ -382,6 +395,7 @@ impl GraphCache {
             root: cache_root(root),
             options_hash: options_hash(options),
             fingerprint,
+            impact_index: build_graph_impact_index(graph),
             graph: graph.clone(),
         };
         let bytes = serde_json::to_vec_pretty(&record)?;
@@ -650,7 +664,7 @@ fn incremental_plan_without_record(
 fn incremental_plan_from_fingerprints(
     cache: &GraphCache,
     previous: &ProjectFingerprint,
-    graph: &CodeGraph,
+    impact_index: &GraphImpactIndex,
     current: ProjectFingerprint,
     limit: usize,
 ) -> IncrementalScanPlan {
@@ -714,7 +728,7 @@ fn incremental_plan_from_fingerprints(
         impacted_node_ids,
         impacted_edge_indexes,
         impact_truncated,
-    ) = graph_impact(graph, &impacted_paths, limit);
+    ) = graph_impact_from_index(impact_index, &impacted_paths, limit);
 
     let changed_files = rescan_files + removed_files;
     let action = if changed_files == 0 {
@@ -772,8 +786,59 @@ fn incremental_plan_from_fingerprints(
     }
 }
 
-fn graph_impact(
-    graph: &CodeGraph,
+fn build_graph_impact_index(graph: &CodeGraph) -> GraphImpactIndex {
+    let mut scopes: BTreeMap<String, (BTreeSet<u64>, BTreeSet<usize>)> = BTreeMap::new();
+    let mut node_paths: BTreeMap<u64, BTreeSet<String>> = BTreeMap::new();
+
+    for node in &graph.nodes {
+        let mut paths = BTreeSet::new();
+        if matches!(node.kind, NodeKind::File) {
+            paths.insert(node.label.clone());
+        }
+        if let Some(span) = &node.span {
+            paths.insert(span.path.clone());
+        }
+
+        for path in &paths {
+            scopes.entry(path.clone()).or_default().0.insert(node.id.0);
+        }
+        if !paths.is_empty() {
+            node_paths.insert(node.id.0, paths);
+        }
+    }
+
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
+        let mut paths = BTreeSet::new();
+        if let Some(source_paths) = node_paths.get(&edge.source.0) {
+            paths.extend(source_paths.iter().cloned());
+        }
+        if let Some(target_paths) = node_paths.get(&edge.target.0) {
+            paths.extend(target_paths.iter().cloned());
+        }
+
+        for path in paths {
+            scopes.entry(path).or_default().1.insert(edge_index);
+        }
+    }
+
+    GraphImpactIndex {
+        by_path: scopes
+            .into_iter()
+            .map(|(path, (node_ids, edge_indexes))| {
+                (
+                    path,
+                    GraphImpactScope {
+                        node_ids: node_ids.into_iter().collect(),
+                        edge_indexes: edge_indexes.into_iter().collect(),
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
+fn graph_impact_from_index(
+    index: &GraphImpactIndex,
     paths: &BTreeSet<String>,
     limit: usize,
 ) -> (usize, usize, Vec<u64>, Vec<usize>, bool) {
@@ -781,19 +846,16 @@ fn graph_impact(
         return (0, 0, Vec::new(), Vec::new(), false);
     }
 
-    let impacted_node_set = graph
-        .nodes
-        .iter()
-        .filter(|node| node_matches_any_path(node, paths))
-        .map(|node| node.id.0)
-        .collect::<BTreeSet<_>>();
-    let impacted_edge_set = graph
-        .edges
-        .iter()
-        .enumerate()
-        .filter(|(_, edge)| edge_touches_nodes(edge, &impacted_node_set))
-        .map(|(index, _)| index)
-        .collect::<BTreeSet<_>>();
+    let mut impacted_node_set = BTreeSet::new();
+    let mut impacted_edge_set = BTreeSet::new();
+    for path in paths {
+        let Some(scope) = index.by_path.get(path) else {
+            continue;
+        };
+        impacted_node_set.extend(scope.node_ids.iter().copied());
+        impacted_edge_set.extend(scope.edge_indexes.iter().copied());
+    }
+
     let impacted_nodes = impacted_node_set.len();
     let impacted_edges = impacted_edge_set.len();
     let impacted_node_ids = impacted_node_set.iter().copied().take(limit).collect();
@@ -807,19 +869,6 @@ fn graph_impact(
         impacted_edge_indexes,
         truncated,
     )
-}
-
-fn node_matches_any_path(node: &Node, paths: &BTreeSet<String>) -> bool {
-    if matches!(node.kind, NodeKind::File) && paths.contains(&node.label) {
-        return true;
-    }
-    node.span
-        .as_ref()
-        .is_some_and(|span| paths.contains(&span.path))
-}
-
-fn edge_touches_nodes(edge: &Edge, node_ids: &BTreeSet<u64>) -> bool {
-    node_ids.contains(&edge.source.0) || node_ids.contains(&edge.target.0)
 }
 
 fn ratio_basis_points(part: u64, total: u64) -> u16 {
@@ -997,7 +1046,7 @@ impl StableHasher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codegraph_core::NodeKind;
+    use codegraph_core::{Confidence, EdgeKind, NodeKind, SourceSpan};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
@@ -1023,6 +1072,33 @@ mod tests {
         assert_eq!(loaded, graph);
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn graph_impact_index_maps_file_spans_to_edges() {
+        let mut graph = CodeGraph::new("demo");
+        let file = graph.add_node(NodeKind::File, "src/main.rs");
+        let function = graph.add_node_with_span(
+            NodeKind::Function,
+            "main",
+            SourceSpan {
+                path: "src/main.rs".to_string(),
+                start_line: 1,
+                start_column: 1,
+                end_line: 1,
+                end_column: 12,
+            },
+        );
+        graph.add_edge(file, function, EdgeKind::Contains, Confidence::Exact);
+
+        let index = build_graph_impact_index(&graph);
+        let scope = index
+            .by_path
+            .get("src/main.rs")
+            .expect("expected impact scope for source file");
+
+        assert_eq!(scope.node_ids, vec![file.0, function.0]);
+        assert_eq!(scope.edge_indexes, vec![0]);
     }
 
     #[test]
@@ -1075,6 +1151,38 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn older_cache_record_without_impact_index_is_incompatible_not_invalid() {
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(&cache_dir).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        let options = IndexOptions::default();
+        let fingerprint = GraphCache::fingerprint_project(&root, &options).unwrap();
+        let mut graph = CodeGraph::new("demo");
+        graph.add_node(NodeKind::File, "src/main.rs");
+        let cache = GraphCache::new(&cache_dir);
+        let path = cache.cache_path(&root, &options);
+        let old_record = serde_json::json!({
+            "cache_schema_version": CACHE_SCHEMA_VERSION - 1,
+            "graph_schema_version": graph.schema_version,
+            "root": cache_root(&root),
+            "options_hash": options_hash(&options),
+            "fingerprint": fingerprint.clone(),
+            "graph": graph,
+        });
+        fs::write(&path, serde_json::to_vec_pretty(&old_record).unwrap()).unwrap();
+
+        assert!(cache.load(&root, &options, &fingerprint).unwrap().is_none());
+        let plan = cache.incremental_plan(&root, &options, 10).unwrap();
+        assert_eq!(plan.cache_record, CacheRecordStatus::Incompatible);
+        assert_eq!(plan.action, IncrementalPlanAction::FullScan);
+
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();
     }
