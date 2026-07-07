@@ -786,8 +786,45 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("failed to bind {bind_addr}"))?;
     println!("CodeGraph listening on http://{bind_addr}");
-    axum::serve(listener, app).await.context("server failed")?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .context("server failed")?;
+    println!("CodeGraph stopped");
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            eprintln!("failed to install Ctrl-C handler: {error}");
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        let terminate = async {
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(mut signal) => {
+                    signal.recv().await;
+                }
+                Err(error) => {
+                    eprintln!("failed to install SIGTERM handler: {error}");
+                    std::future::pending::<()>().await;
+                }
+            }
+        };
+
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = terminate => {},
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await;
+    }
 }
 
 async fn security_headers(request: Request, next: Next) -> Response {
@@ -4122,6 +4159,7 @@ fn capability_features(cache_enabled: bool, access_log_enabled: bool) -> Vec<&'s
         "job_listing",
         "job_cancellation",
         "runtime_metrics",
+        "graceful_shutdown",
         "sse_job_events",
         "semantic_lsp",
         "web_canvas",
@@ -4424,6 +4462,7 @@ mod tests {
         assert!(without_cache.contains(&"async_scan_jobs"));
         assert!(without_cache.contains(&"job_cancellation"));
         assert!(without_cache.contains(&"runtime_metrics"));
+        assert!(without_cache.contains(&"graceful_shutdown"));
         assert!(without_cache.contains(&"access_log"));
         assert!(without_cache.contains(&"project_report"));
         assert!(without_cache.contains(&"semantic_lsp"));
