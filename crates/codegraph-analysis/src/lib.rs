@@ -1119,6 +1119,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_error_flow_insights(graph, &mut insights);
     add_unresolved_entrypoint_insights(graph, &mut insights);
     add_unreachable_config_read_insights(graph, &mut insights);
+    add_unreachable_source_file_insights(graph, &mut insights);
     add_conflicting_config_default_insights(graph, &mut insights);
     add_undeclared_import_insights(graph, &mut insights);
     add_unused_dependency_insights(graph, &mut insights);
@@ -3385,6 +3386,39 @@ fn add_unreachable_config_read_insights(graph: &CodeGraph, insights: &mut Vec<In
     }
 }
 
+fn add_unreachable_source_file_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let reachable = entrypoint_reachable_nodes(graph);
+    if reachable.is_empty() {
+        return;
+    }
+
+    let source_files = graph
+        .nodes
+        .iter()
+        .filter(|node| is_source_file_candidate(graph, node));
+    for file in source_files {
+        if reachable.contains(&file.id) || file_has_reachable_code(graph, file.id, &reachable) {
+            continue;
+        }
+
+        let language = file
+            .metadata
+            .get("language")
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        insights.push(Insight {
+            kind: "unreachable_source_file".to_string(),
+            severity: InsightSeverity::Info,
+            message: format!(
+                "`{}` contains {language} code but is not reachable from any entrypoint",
+                file.label
+            ),
+            nodes: vec![file.id],
+            edges: contained_code_edge_indexes(graph, file.id),
+        });
+    }
+}
+
 fn add_conflicting_config_default_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let mut groups: BTreeMap<(String, String), Vec<(NodeId, String)>> = BTreeMap::new();
     for node in &graph.nodes {
@@ -4391,6 +4425,80 @@ fn entrypoint_reachable_nodes(graph: &CodeGraph) -> BTreeSet<NodeId> {
     }
 
     reachable
+}
+
+fn is_source_file_candidate(graph: &CodeGraph, node: &Node) -> bool {
+    node.kind == NodeKind::File
+        && node.metadata.contains_key("language")
+        && !node.metadata.contains_key("skipped_reason")
+        && !is_test_like_source_path(&node.label)
+        && graph.edges.iter().any(|edge| {
+            edge.source == node.id
+                && edge.kind == EdgeKind::Contains
+                && graph
+                    .nodes
+                    .iter()
+                    .any(|child| child.id == edge.target && is_code_symbol(&child.kind))
+        })
+}
+
+fn file_has_reachable_code(
+    graph: &CodeGraph,
+    file_id: NodeId,
+    reachable: &BTreeSet<NodeId>,
+) -> bool {
+    graph.edges.iter().any(|edge| {
+        edge.source == file_id
+            && edge.kind == EdgeKind::Contains
+            && reachable.contains(&edge.target)
+    })
+}
+
+fn contained_code_edge_indexes(graph: &CodeGraph, file_id: NodeId) -> Vec<usize> {
+    graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter_map(|(index, edge)| {
+            (edge.source == file_id && edge.kind == EdgeKind::Contains).then_some(index)
+        })
+        .collect()
+}
+
+fn is_code_symbol(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Function | NodeKind::Type | NodeKind::Module | NodeKind::Entrypoint
+    )
+}
+
+fn is_test_like_source_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    let file_name = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
+    normalized.split('/').any(|part| {
+        matches!(
+            part,
+            "test"
+                | "tests"
+                | "__tests__"
+                | "spec"
+                | "specs"
+                | "fixture"
+                | "fixtures"
+                | "example"
+                | "examples"
+                | "sample"
+                | "samples"
+                | "mock"
+                | "mocks"
+        )
+    }) || file_name.ends_with("_test.go")
+        || file_name.ends_with("_test.rs")
+        || file_name.ends_with("_test.py")
+        || file_name.ends_with(".test.js")
+        || file_name.ends_with(".test.ts")
+        || file_name.ends_with(".spec.js")
+        || file_name.ends_with(".spec.ts")
 }
 
 fn node_label(graph: &CodeGraph, id: NodeId) -> Option<&str> {
@@ -6038,6 +6146,85 @@ mod tests {
         assert!(insight.message.contains("unused_loader"));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unreachable_config_read" && insight.nodes.contains(&main)
+        }));
+    }
+
+    #[test]
+    fn insights_report_unreachable_source_files() {
+        let mut graph = CodeGraph::new("repo");
+        let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        let live_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/main.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let live_main = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "main",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let legacy_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/legacy.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let legacy_fn = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "legacy_worker",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let test_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "tests/legacy_test.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let test_fn = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "legacy_test",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(
+            live_file,
+            live_main,
+            EdgeKind::Contains,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(entry, live_main, EdgeKind::References, Confidence::Exact);
+        graph.add_edge(
+            legacy_file,
+            legacy_fn,
+            EdgeKind::Contains,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            test_file,
+            test_fn,
+            EdgeKind::Contains,
+            Confidence::Syntactic,
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unreachable_source_file")
+            .expect("expected unreachable source file insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Info);
+        assert_eq!(insight.nodes, vec![legacy_file]);
+        assert!(insight.message.contains("src/legacy.rs"));
+        assert!(insight.message.contains("rust"));
+        assert_eq!(insight.edges.len(), 1);
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unreachable_source_file"
+                && (insight.nodes.contains(&live_file) || insight.nodes.contains(&test_file))
         }));
     }
 

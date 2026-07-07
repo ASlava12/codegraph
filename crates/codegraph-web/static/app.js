@@ -183,6 +183,7 @@ const I18N = {
     "kind.error": "error",
     "kind.warning": "warning",
     "kind.info": "info",
+    "kind.unreachable_source_file": "unreachable source file",
   },
   ru: {
     "root.empty": "Проект не загружен",
@@ -385,6 +386,7 @@ const I18N = {
     "kind.orphan_function": "изолированная функция",
     "kind.potential_error_flow": "потенциальный поток ошибки",
     "kind.undeclared_external_import": "импорт без зависимости",
+    "kind.unreachable_source_file": "недостижимый файл с кодом",
   },
 };
 

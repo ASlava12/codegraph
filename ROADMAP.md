@@ -111,6 +111,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect local imports/includes whose target file cannot be resolved.
 - [x] Detect custom architectural boundary violations on graph edges.
 - [x] Detect config and environment reads that are not reachable from entrypoints.
+- [x] Detect non-test source files with code symbols that are not reachable from entrypoints.
 - [x] Detect config and environment keys that are read with conflicting fallback defaults across common inline Rust, Python, JavaScript/TypeScript, Go, C, C++, PHP, and Bash patterns.
 - [x] Back web insights with server analysis during paged graph exploration.
 - [x] Add CLI, server-side, and web filters for insight severity, kind, and search.
