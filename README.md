@@ -58,6 +58,7 @@ Implemented now:
 - Cache fingerprint diff diagnostics in CLI, API, and web UI for explaining cache misses by added, removed, and modified files.
 - CLI scan benchmark reports with timing and graph-size metrics for regression tracking.
 - Configurable scan file-size budget for CLI/server scans, with skipped large source files kept visible in summaries, insights, and the web stats panel.
+- Repository-owned scan policy from `.codegraph/config.toml` for file-size budgets and ignored names.
 - CI checks for formatting, clippy, tests, UI syntax, CLI scan, and server cache smoke tests.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Investigation insights for manifest entrypoints whose declared target cannot be resolved to a file or function.
@@ -137,6 +138,21 @@ cargo run -p codegraph-cli -- check . --fail-on warning --kind dependency
 
 `check` prints a JSON report and exits with code `2` when matching insights are
 at or above the configured severity.
+
+Pin repository scan policy with `.codegraph/config.toml`:
+
+```toml
+[scan]
+max_file_size = 1048576
+include_hidden = false
+include_ignored = false
+extra_ignored_names = ["coverage", "generated"]
+```
+
+`ignored_names = [...]` replaces the default ignored directory list, while
+`extra_ignored_names = [...]` extends it. CLI/server flags such as
+`--include-hidden`, `--include-ignored`, and `--max-file-size` override the
+repository config for that run.
 
 Add repository-specific architecture checks with `.codegraph/rules.toml`:
 
@@ -289,7 +305,8 @@ on macOS, or a temp fallback). Use `--cache-dir <path>` to choose a directory or
 `--no-cache` to force every request to rescan.
 Use `--max-file-size <bytes>` to cap per-file reads. Source/manifest files above
 the limit remain visible as skipped file nodes and produce `skipped_large_file`
-insights.
+insights. When a selected project has `.codegraph/config.toml`, the server uses
+that repository-owned scan policy for API and web requests.
 
 Expose multiple local repositories to the web project selector by repeating
 `--project`. Requests remain constrained to the configured roots unless

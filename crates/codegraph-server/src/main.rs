@@ -17,7 +17,7 @@ use codegraph_analysis::{
     trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_core::CodeGraph;
-use codegraph_indexer::{DEFAULT_MAX_FILE_SIZE, IndexOptions};
+use codegraph_indexer::{IndexOptionOverrides, IndexOptions, configured_index_options};
 use codegraph_storage::{
     CacheInfo, CacheStatus, GraphCache, default_cache_dir, scan_project_cached,
 };
@@ -63,8 +63,8 @@ struct Args {
     include_ignored: bool,
 
     /// Maximum bytes to read from any single file during scans.
-    #[arg(long, default_value_t = DEFAULT_MAX_FILE_SIZE)]
-    max_file_size: u64,
+    #[arg(long)]
+    max_file_size: Option<u64>,
 
     /// Allow scanning paths outside the configured root.
     #[arg(long)]
@@ -83,7 +83,7 @@ struct Args {
 struct AppState {
     root: PathBuf,
     projects: Arc<Vec<ProjectRoot>>,
-    options: IndexOptions,
+    option_overrides: IndexOptionOverrides,
     allow_any_path: bool,
     cache: Option<GraphCache>,
     jobs: Arc<RwLock<BTreeMap<String, ScanJob>>>,
@@ -329,11 +329,10 @@ async fn main() -> Result<()> {
     let state = AppState {
         root,
         projects,
-        options: IndexOptions {
+        option_overrides: IndexOptionOverrides {
             include_hidden: args.include_hidden,
             include_ignored: args.include_ignored,
             max_file_size: args.max_file_size,
-            ..IndexOptions::default()
         },
         allow_any_path: args.allow_any_path,
         cache: if args.no_cache {
@@ -406,7 +405,7 @@ async fn start_scan_job(
     state.jobs.write().await.insert(id.clone(), job.clone());
 
     let jobs = Arc::clone(&state.jobs);
-    let options = state.options.clone();
+    let options = scan_options(&state, &root)?;
     let cache = state.cache.clone();
     tokio::spawn(async move {
         update_scan_job(
@@ -579,16 +578,17 @@ async fn styles_css() -> impl IntoResponse {
     )
 }
 
-async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
-    Json(HealthResponse {
+async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, ApiError> {
+    let options = scan_options(&state, &state.root)?;
+    Ok(Json(HealthResponse {
         status: "ok",
         root: state.root.display().to_string(),
-        max_file_size: state.options.max_file_size,
+        max_file_size: options.max_file_size,
         cache_dir: state
             .cache
             .as_ref()
             .map(|cache| cache.dir().display().to_string()),
-    })
+    }))
 }
 
 async fn projects_api(State(state): State<AppState>) -> Json<Vec<ProjectResponse>> {
@@ -610,7 +610,7 @@ async fn scan(
     Query(query): Query<ScanQuery>,
 ) -> Result<Json<ScanResponse>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
-    let options = state.options.clone();
+    let options = scan_options(&state, &root)?;
     let cache = state.cache.clone();
     let root_label = root.display().to_string();
     let output =
@@ -636,7 +636,7 @@ async fn cache_diff_api(
             "cache diff requires server cache; restart without --no-cache",
         ));
     };
-    let options = state.options.clone();
+    let options = scan_options(&state, &root)?;
     let limit = query.limit.unwrap_or(100).clamp(1, 10_000);
     let report = tokio::task::spawn_blocking(move || cache.diff(&root, &options, limit))
         .await
@@ -968,7 +968,7 @@ async fn source_search_api(
     if search_text.is_empty() {
         return Err(ApiError::bad_request("source-search requires q"));
     }
-    let options = state.options.clone();
+    let options = scan_options(&state, &search_root)?;
     let request = SourceSearchRequest {
         query: search_text,
         path_filter: normalize_query_string(query.path_filter),
@@ -988,12 +988,17 @@ async fn source_search_api(
 
 async fn scan_graph(state: &AppState, requested: Option<&Path>) -> Result<CodeGraph, ApiError> {
     let root = resolve_scan_root(state, requested)?;
-    let options = state.options.clone();
+    let options = scan_options(state, &root)?;
     let cache = state.cache.clone();
     tokio::task::spawn_blocking(move || scan_project_cached(root, &options, cache.as_ref()))
         .await
         .map_err(|error| ApiError::internal(format!("scanner task failed: {error}")))?
         .map(|output| output.graph)
+        .map_err(|error| ApiError::internal(error.to_string()))
+}
+
+fn scan_options(state: &AppState, root: &Path) -> Result<IndexOptions, ApiError> {
+    configured_index_options(root, &state.option_overrides)
         .map_err(|error| ApiError::internal(error.to_string()))
 }
 
@@ -1267,7 +1272,7 @@ mod tests {
         AppState {
             projects: Arc::new(project_roots(&root, additional).unwrap()),
             root,
-            options: IndexOptions::default(),
+            option_overrides: IndexOptionOverrides::default(),
             allow_any_path,
             cache: None,
             jobs: Arc::new(RwLock::new(BTreeMap::new())),

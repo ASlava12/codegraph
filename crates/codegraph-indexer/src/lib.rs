@@ -16,6 +16,20 @@ pub enum IndexError {
         #[source]
         source: walkdir::Error,
     },
+    #[error("failed to read project config at {path}: {source}")]
+    ConfigRead {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to parse project config at {path}: {source}")]
+    ConfigParse {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
+    #[error("invalid project config at {path}: {message}")]
+    ConfigInvalid { path: PathBuf, message: String },
 }
 
 #[derive(Debug, Clone)]
@@ -24,6 +38,13 @@ pub struct IndexOptions {
     pub include_ignored: bool,
     pub max_file_size: u64,
     pub ignored_names: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct IndexOptionOverrides {
+    pub include_hidden: bool,
+    pub include_ignored: bool,
+    pub max_file_size: Option<u64>,
 }
 
 struct IndexContext {
@@ -181,6 +202,153 @@ impl Default for IndexOptions {
             max_file_size: DEFAULT_MAX_FILE_SIZE,
             ignored_names: default_ignored_names(),
         }
+    }
+}
+
+pub fn configured_index_options(
+    root: impl AsRef<Path>,
+    overrides: &IndexOptionOverrides,
+) -> Result<IndexOptions, IndexError> {
+    let root = root.as_ref();
+    let mut options = IndexOptions::default();
+    let path = root.join(".codegraph").join("config.toml");
+    if path.is_file() {
+        let source = fs::read_to_string(&path).map_err(|source| IndexError::ConfigRead {
+            path: path.clone(),
+            source,
+        })?;
+        let value = toml::Value::Table(source.parse::<toml::Table>().map_err(|source| {
+            IndexError::ConfigParse {
+                path: path.clone(),
+                source,
+            }
+        })?);
+        apply_project_config(&mut options, &path, &value)?;
+    }
+
+    if overrides.include_hidden {
+        options.include_hidden = true;
+    }
+    if overrides.include_ignored {
+        options.include_ignored = true;
+    }
+    if let Some(max_file_size) = overrides.max_file_size {
+        if max_file_size == 0 {
+            return Err(IndexError::ConfigInvalid {
+                path,
+                message: "max_file_size must be greater than zero".to_string(),
+            });
+        }
+        options.max_file_size = max_file_size;
+    }
+
+    Ok(options)
+}
+
+fn apply_project_config(
+    options: &mut IndexOptions,
+    path: &Path,
+    value: &toml::Value,
+) -> Result<(), IndexError> {
+    let Some(scan) = value.get("scan") else {
+        return Ok(());
+    };
+    let Some(scan) = scan.as_table() else {
+        return Err(config_invalid(path, "[scan] must be a table"));
+    };
+
+    if let Some(include_hidden) = optional_bool(path, scan, "include_hidden")? {
+        options.include_hidden = include_hidden;
+    }
+    if let Some(include_ignored) = optional_bool(path, scan, "include_ignored")? {
+        options.include_ignored = include_ignored;
+    }
+    if let Some(max_file_size) = optional_u64(path, scan, "max_file_size")? {
+        if max_file_size == 0 {
+            return Err(config_invalid(
+                path,
+                "scan.max_file_size must be greater than zero",
+            ));
+        }
+        options.max_file_size = max_file_size;
+    }
+    if let Some(ignored_names) = optional_string_array(path, scan, "ignored_names")? {
+        options.ignored_names = ignored_names.into_iter().collect();
+    }
+    if let Some(extra_ignored_names) = optional_string_array(path, scan, "extra_ignored_names")? {
+        options.ignored_names.extend(extra_ignored_names);
+    }
+
+    Ok(())
+}
+
+fn optional_bool(
+    path: &Path,
+    table: &toml::map::Map<String, toml::Value>,
+    key: &str,
+) -> Result<Option<bool>, IndexError> {
+    table
+        .get(key)
+        .map(|value| {
+            value
+                .as_bool()
+                .ok_or_else(|| config_invalid(path, &format!("scan.{key} must be a boolean")))
+        })
+        .transpose()
+}
+
+fn optional_u64(
+    path: &Path,
+    table: &toml::map::Map<String, toml::Value>,
+    key: &str,
+) -> Result<Option<u64>, IndexError> {
+    table
+        .get(key)
+        .map(|value| {
+            value
+                .as_integer()
+                .and_then(|value| u64::try_from(value).ok())
+                .ok_or_else(|| {
+                    config_invalid(path, &format!("scan.{key} must be a positive integer"))
+                })
+        })
+        .transpose()
+}
+
+fn optional_string_array(
+    path: &Path,
+    table: &toml::map::Map<String, toml::Value>,
+    key: &str,
+) -> Result<Option<Vec<String>>, IndexError> {
+    table
+        .get(key)
+        .map(|value| {
+            let Some(values) = value.as_array() else {
+                return Err(config_invalid(
+                    path,
+                    &format!("scan.{key} must be an array"),
+                ));
+            };
+            values
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(|value| value.trim().to_string())
+                        .ok_or_else(|| {
+                            config_invalid(path, &format!("scan.{key} entries must be strings"))
+                        })
+                })
+                .filter(|value| value.as_ref().is_ok_and(|value| !value.is_empty()))
+                .collect()
+        })
+        .transpose()
+}
+
+fn config_invalid(path: &Path, message: &str) -> IndexError {
+    IndexError::ConfigInvalid {
+        path: path.to_path_buf(),
+        message: message.to_string(),
     }
 }
 
@@ -4444,6 +4612,50 @@ mod tests {
         assert!(!labels.contains(&"target/debug.log"));
         assert!(!labels.contains(&".codegraph"));
         assert!(!labels.contains(&".codegraph/graph.json"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_index_options_loads_project_scan_config() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join(".codegraph")).unwrap();
+        fs::write(
+            root.join(".codegraph").join("config.toml"),
+            "[scan]\nmax_file_size = 7\nextra_ignored_names = [\"generated\"]\ninclude_hidden = true\n",
+        )
+        .unwrap();
+
+        let options = configured_index_options(&root, &IndexOptionOverrides::default()).unwrap();
+
+        assert_eq!(options.max_file_size, 7);
+        assert!(options.include_hidden);
+        assert!(options.ignored_names.contains("generated"));
+        assert!(options.ignored_names.contains("target"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_index_options_allows_cli_budget_override() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join(".codegraph")).unwrap();
+        fs::write(
+            root.join(".codegraph").join("config.toml"),
+            "[scan]\nmax_file_size = 7\n",
+        )
+        .unwrap();
+
+        let options = configured_index_options(
+            &root,
+            &IndexOptionOverrides {
+                max_file_size: Some(42),
+                ..IndexOptionOverrides::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(options.max_file_size, 42);
 
         fs::remove_dir_all(root).unwrap();
     }
