@@ -821,6 +821,17 @@ pub struct ProjectRiskKindSummary {
     pub count: usize,
 }
 
+pub const DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT: usize = 50;
+pub const MAX_REPORT_ARCHITECTURE_GROUP_LIMIT: usize = 500;
+pub const DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT: usize = 200;
+pub const MAX_REPORT_ARCHITECTURE_EDGE_LIMIT: usize = 2_000;
+pub const DEFAULT_REPORT_LANGUAGE_LINK_LIMIT: usize = 50;
+pub const MAX_REPORT_LANGUAGE_LINK_LIMIT: usize = 500;
+pub const DEFAULT_REPORT_HOTSPOT_LIMIT: usize = 25;
+pub const MAX_REPORT_HOTSPOT_LIMIT: usize = 500;
+pub const DEFAULT_REPORT_INSIGHT_LIMIT: usize = 50;
+pub const MAX_REPORT_INSIGHT_LIMIT: usize = 500;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectReportLimits {
     pub architecture_group_limit: usize,
@@ -834,11 +845,11 @@ pub struct ProjectReportLimits {
 impl Default for ProjectReportLimits {
     fn default() -> Self {
         Self {
-            architecture_group_limit: 50,
-            architecture_edge_limit: 200,
-            language_link_limit: 50,
-            hotspot_limit: 25,
-            insight_limit: 50,
+            architecture_group_limit: DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT,
+            architecture_edge_limit: DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
+            language_link_limit: DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
+            hotspot_limit: DEFAULT_REPORT_HOTSPOT_LIMIT,
+            insight_limit: DEFAULT_REPORT_INSIGHT_LIMIT,
             fail_on: InsightSeverity::Error,
         }
     }
@@ -1497,11 +1508,17 @@ fn risk_grade(score: usize) -> &'static str {
 
 fn normalize_project_report_limits(limits: ProjectReportLimits) -> ProjectReportLimits {
     ProjectReportLimits {
-        architecture_group_limit: limits.architecture_group_limit.clamp(1, 500),
-        architecture_edge_limit: limits.architecture_edge_limit.clamp(1, 2_000),
-        language_link_limit: limits.language_link_limit.clamp(1, 500),
-        hotspot_limit: limits.hotspot_limit.clamp(1, 500),
-        insight_limit: limits.insight_limit.clamp(1, 500),
+        architecture_group_limit: limits
+            .architecture_group_limit
+            .clamp(1, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT),
+        architecture_edge_limit: limits
+            .architecture_edge_limit
+            .clamp(1, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT),
+        language_link_limit: limits
+            .language_link_limit
+            .clamp(1, MAX_REPORT_LANGUAGE_LINK_LIMIT),
+        hotspot_limit: limits.hotspot_limit.clamp(1, MAX_REPORT_HOTSPOT_LIMIT),
+        insight_limit: limits.insight_limit.clamp(1, MAX_REPORT_INSIGHT_LIMIT),
         fail_on: limits.fail_on,
     }
 }

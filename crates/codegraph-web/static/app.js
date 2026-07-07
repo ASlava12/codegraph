@@ -270,6 +270,7 @@ const I18N = {
     "cap.focus": "Focus",
     "cap.queryLimit": "Query Limit",
     "cap.querySize": "Query Size",
+    "cap.report": "Report",
     "cap.sourceSearchSize": "Source Search",
     "cap.routes": "Routes",
     "cap.on": "on",
@@ -620,6 +621,7 @@ const I18N = {
     "cap.focus": "Фокус",
     "cap.queryLimit": "Лимит запроса",
     "cap.querySize": "Размер запроса",
+    "cap.report": "Отчет",
     "cap.sourceSearchSize": "Размер поиска",
     "cap.routes": "Маршруты",
     "cap.on": "вкл",
@@ -2562,6 +2564,18 @@ function renderCapabilities(capabilities) {
     [t("cap.focus"), String(Number(limits.max_focus_edge_limit || 0))],
     [t("cap.queryLimit"), String(Number(limits.max_graph_query_limit || 0))],
     [t("cap.querySize"), String(Number(limits.max_graph_query_length || 0))],
+    [
+      t("cap.report"),
+      [
+        limits.max_report_architecture_group_limit,
+        limits.max_report_architecture_edge_limit,
+        limits.max_report_language_link_limit,
+        limits.max_report_hotspot_limit,
+        limits.max_report_insight_limit,
+      ]
+        .map((value) => String(Number(value || 0)))
+        .join("/"),
+    ],
     [t("cap.sourceSearchSize"), String(Number(limits.max_source_search_query_length || 0))],
     [t("cap.routes"), String(endpoints.length)],
   ];

@@ -9,15 +9,19 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
-    CheckReport, ConfigTraceRequest, ConfigTraceResult, EntrypointTraceReport,
+    CheckReport, ConfigTraceRequest, ConfigTraceResult, DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
+    DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_HOTSPOT_LIMIT,
+    DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, EntrypointTraceReport,
     EntrypointTraceRequest, ErrorTraceRequest, ErrorTraceResult, ExplainEdgeRequest, FocusRequest,
     GraphSlice, GraphSliceRequest, GraphSummary, InsightFilter, InsightReport, InsightSeverity,
-    KNOWN_INSIGHT_KINDS, NodeCard, NodeContext, ProjectReport, ProjectReportLimits, SourcePreview,
-    SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, architecture_map,
-    check_insights, entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report,
-    focus_subgraph, hotspots, insights, language_dependencies, node_card, node_context,
-    project_report, query_graph, read_source_preview, search_source, slice_graph, summarize, trace,
-    trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    KNOWN_INSIGHT_KINDS, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
+    MAX_REPORT_HOTSPOT_LIMIT, MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, NodeCard,
+    NodeContext, ProjectReport, ProjectReportLimits, SourcePreview, SourceSearchRequest,
+    SourceSearchResult, TraceRequest, TraceStart, architecture_map, check_insights, entrypoints,
+    explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots,
+    insights, language_dependencies, node_card, node_context, project_report, query_graph,
+    read_source_preview, search_source, slice_graph, summarize, trace, trace_config,
+    trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -69,8 +73,6 @@ const MAX_FOCUS_EDGE_LIMIT: usize = 1000;
 const DEFAULT_GRAPH_QUERY_LIMIT: usize = 100;
 const MAX_GRAPH_QUERY_LIMIT: usize = 1000;
 const MAX_GRAPH_QUERY_LENGTH: usize = 4096;
-const DEFAULT_REPORT_INSIGHT_LIMIT: usize = 50;
-const MAX_REPORT_INSIGHT_LIMIT: usize = 500;
 const DEFAULT_SOURCE_CONTEXT: u32 = 4;
 const MAX_SOURCE_CONTEXT: u32 = 40;
 const DEFAULT_SOURCE_SEARCH_LIMIT: usize = 50;
@@ -659,6 +661,14 @@ struct RuntimeLimitsResponse {
     default_graph_query_limit: usize,
     max_graph_query_limit: usize,
     max_graph_query_length: usize,
+    default_report_architecture_group_limit: usize,
+    max_report_architecture_group_limit: usize,
+    default_report_architecture_edge_limit: usize,
+    max_report_architecture_edge_limit: usize,
+    default_report_language_link_limit: usize,
+    max_report_language_link_limit: usize,
+    default_report_hotspot_limit: usize,
+    max_report_hotspot_limit: usize,
     default_report_insight_limit: usize,
     max_report_insight_limit: usize,
     default_source_context: u32,
@@ -1504,6 +1514,14 @@ async fn capabilities_api(
             default_graph_query_limit: DEFAULT_GRAPH_QUERY_LIMIT,
             max_graph_query_limit: MAX_GRAPH_QUERY_LIMIT,
             max_graph_query_length: MAX_GRAPH_QUERY_LENGTH,
+            default_report_architecture_group_limit: DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT,
+            max_report_architecture_group_limit: MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
+            default_report_architecture_edge_limit: DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
+            max_report_architecture_edge_limit: MAX_REPORT_ARCHITECTURE_EDGE_LIMIT,
+            default_report_language_link_limit: DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
+            max_report_language_link_limit: MAX_REPORT_LANGUAGE_LINK_LIMIT,
+            default_report_hotspot_limit: DEFAULT_REPORT_HOTSPOT_LIMIT,
+            max_report_hotspot_limit: MAX_REPORT_HOTSPOT_LIMIT,
             default_report_insight_limit: DEFAULT_REPORT_INSIGHT_LIMIT,
             max_report_insight_limit: MAX_REPORT_INSIGHT_LIMIT,
             default_source_context: DEFAULT_SOURCE_CONTEXT,
@@ -2664,11 +2682,26 @@ fn project_report_limits_from_query(
     query: &ProjectReportQuery,
 ) -> Result<ProjectReportLimits, ApiError> {
     Ok(ProjectReportLimits {
-        architecture_group_limit: query.architecture_group_limit.unwrap_or(50),
-        architecture_edge_limit: query.architecture_edge_limit.unwrap_or(200),
-        language_link_limit: query.language_link_limit.unwrap_or(50),
-        hotspot_limit: query.hotspot_limit.unwrap_or(25),
-        insight_limit: query.insight_limit.unwrap_or(DEFAULT_REPORT_INSIGHT_LIMIT),
+        architecture_group_limit: query
+            .architecture_group_limit
+            .unwrap_or(DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT)
+            .clamp(1, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT),
+        architecture_edge_limit: query
+            .architecture_edge_limit
+            .unwrap_or(DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT)
+            .clamp(1, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT),
+        language_link_limit: query
+            .language_link_limit
+            .unwrap_or(DEFAULT_REPORT_LANGUAGE_LINK_LIMIT)
+            .clamp(1, MAX_REPORT_LANGUAGE_LINK_LIMIT),
+        hotspot_limit: query
+            .hotspot_limit
+            .unwrap_or(DEFAULT_REPORT_HOTSPOT_LIMIT)
+            .clamp(1, MAX_REPORT_HOTSPOT_LIMIT),
+        insight_limit: query
+            .insight_limit
+            .unwrap_or(DEFAULT_REPORT_INSIGHT_LIMIT)
+            .clamp(1, MAX_REPORT_INSIGHT_LIMIT),
         fail_on: normalize_query_string(query.fail_on.clone())
             .map(|value| parse_insight_severity(&value))
             .transpose()?
@@ -4196,35 +4229,35 @@ fn report_params() -> Vec<ApiParameterSpec> {
             false,
             "usize",
             Some("50"),
-            "Maximum architecture groups.",
+            "Maximum architecture groups, capped by server capabilities.",
         ),
         query_param(
             "architecture_edge_limit",
             false,
             "usize",
             Some("200"),
-            "Maximum architecture edges.",
+            "Maximum architecture edges, capped by server capabilities.",
         ),
         query_param(
             "language_link_limit",
             false,
             "usize",
             Some("50"),
-            "Maximum language dependency links.",
+            "Maximum language dependency links, capped by server capabilities.",
         ),
         query_param(
             "hotspot_limit",
             false,
             "usize",
             Some("25"),
-            "Maximum hotspots.",
+            "Maximum hotspots, capped by server capabilities.",
         ),
         query_param(
             "insight_limit",
             false,
             "usize",
             Some("50"),
-            "Maximum returned insights; total counts stay complete.",
+            "Maximum returned insights, capped by server capabilities; total counts stay complete.",
         ),
         query_param(
             "fail_on",
@@ -4873,10 +4906,44 @@ mod tests {
         assert_eq!(response.limits.default_graph_query_limit, 100);
         assert_eq!(response.limits.max_graph_query_limit, 1000);
         assert_eq!(response.limits.max_graph_query_length, 4096);
+        assert_eq!(response.limits.default_report_architecture_group_limit, 50);
+        assert_eq!(response.limits.max_report_architecture_group_limit, 500);
+        assert_eq!(response.limits.default_report_architecture_edge_limit, 200);
+        assert_eq!(response.limits.max_report_architecture_edge_limit, 2000);
+        assert_eq!(response.limits.default_report_language_link_limit, 50);
+        assert_eq!(response.limits.max_report_language_link_limit, 500);
+        assert_eq!(response.limits.default_report_hotspot_limit, 25);
+        assert_eq!(response.limits.max_report_hotspot_limit, 500);
         assert_eq!(response.limits.default_report_insight_limit, 50);
         assert_eq!(response.limits.max_report_insight_limit, 500);
         assert_eq!(response.limits.max_source_search_query_length, 4096);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_report_query_limits_are_clamped_to_capabilities() {
+        let limits = project_report_limits_from_query(&ProjectReportQuery {
+            path: None,
+            architecture_group_limit: Some(usize::MAX),
+            architecture_edge_limit: Some(usize::MAX),
+            language_link_limit: Some(usize::MAX),
+            hotspot_limit: Some(usize::MAX),
+            insight_limit: Some(usize::MAX),
+            fail_on: None,
+        })
+        .expect("report limits");
+
+        assert_eq!(
+            limits.architecture_group_limit,
+            MAX_REPORT_ARCHITECTURE_GROUP_LIMIT
+        );
+        assert_eq!(
+            limits.architecture_edge_limit,
+            MAX_REPORT_ARCHITECTURE_EDGE_LIMIT
+        );
+        assert_eq!(limits.language_link_limit, MAX_REPORT_LANGUAGE_LINK_LIMIT);
+        assert_eq!(limits.hotspot_limit, MAX_REPORT_HOTSPOT_LIMIT);
+        assert_eq!(limits.insight_limit, MAX_REPORT_INSIGHT_LIMIT);
     }
 
     #[tokio::test]

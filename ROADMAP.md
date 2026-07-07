@@ -225,6 +225,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add web job monitor for scan and semantic job history.
 - [x] Add API capabilities endpoint for agent and UI runtime discovery.
 - [x] Publish graph, query, report, source, and card runtime limits in API capabilities.
+- [x] Publish bounded project report snapshot topology and risk list limits in API capabilities.
 - [x] Add machine-readable API schema endpoint for agents and integrations.
 - [x] Publish known insight kinds in the API schema for agent discovery and web filter suggestions.
 - [x] Use API schema enum values as web graph filter suggestions.

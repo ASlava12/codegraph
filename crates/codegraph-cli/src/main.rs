@@ -1,12 +1,14 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
-    ConfigTraceRequest, EntrypointTraceRequest, ErrorTraceRequest, ExplainEdgeRequest,
-    InsightFilter, InsightSeverity, ProjectReport, ProjectReportLimits, SourceSearchRequest,
-    TraceRequest, TraceStart, architecture_map, check_insights, entrypoints, explain_edge,
-    filter_insight_report, hotspots, insights, language_dependencies, project_report, query_graph,
-    search_source, summarize, trace, trace_config, trace_dependents, trace_entrypoints,
-    trace_errors,
+    ConfigTraceRequest, DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
+    DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_HOTSPOT_LIMIT,
+    DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, EntrypointTraceRequest,
+    ErrorTraceRequest, ExplainEdgeRequest, InsightFilter, InsightSeverity, ProjectReport,
+    ProjectReportLimits, SourceSearchRequest, TraceRequest, TraceStart, architecture_map,
+    check_insights, entrypoints, explain_edge, filter_insight_report, hotspots, insights,
+    language_dependencies, project_report, query_graph, search_source, summarize, trace,
+    trace_config, trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -358,23 +360,23 @@ struct ReportArgs {
     scan: ScanArgs,
 
     /// Maximum architecture groups to include.
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, default_value_t = DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT)]
     architecture_group_limit: usize,
 
     /// Maximum architecture edges to include.
-    #[arg(long, default_value_t = 200)]
+    #[arg(long, default_value_t = DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT)]
     architecture_edge_limit: usize,
 
     /// Maximum language dependency links to include.
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, default_value_t = DEFAULT_REPORT_LANGUAGE_LINK_LIMIT)]
     language_link_limit: usize,
 
     /// Maximum hotspots to include.
-    #[arg(long, default_value_t = 25)]
+    #[arg(long, default_value_t = DEFAULT_REPORT_HOTSPOT_LIMIT)]
     hotspot_limit: usize,
 
     /// Maximum insights to include while keeping full insight counts.
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, default_value_t = DEFAULT_REPORT_INSIGHT_LIMIT)]
     insight_limit: usize,
 
     /// Mark the quality gate as failed when an insight has this severity or higher.
