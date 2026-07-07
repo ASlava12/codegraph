@@ -101,6 +101,11 @@ const I18N = {
     "option.workspaceSymbols": "Workspace Symbols",
     "option.references": "References",
     "option.server": "Server",
+    "queryPreset.unreachable": "Unreachable",
+    "queryPreset.deadFunctions": "Dead Functions",
+    "queryPreset.mainCalls": "Main Calls",
+    "queryPreset.heuristic": "Heuristic",
+    "queryPreset.dependencies": "Dependencies",
     "section.overview": "Overview",
     "section.jobs": "Jobs",
     "section.runtime": "Runtime",
@@ -280,6 +285,11 @@ const I18N = {
     "option.workspaceSymbols": "Символы workspace",
     "option.references": "Ссылки",
     "option.server": "Сервер",
+    "queryPreset.unreachable": "Недостижимые",
+    "queryPreset.deadFunctions": "Мёртвые функции",
+    "queryPreset.mainCalls": "Вызовы main",
+    "queryPreset.heuristic": "Эвристика",
+    "queryPreset.dependencies": "Зависимости",
     "section.overview": "Обзор",
     "section.jobs": "Задачи",
     "section.runtime": "Рантайм",
@@ -644,6 +654,12 @@ searchInput.addEventListener("input", () => {
 queryButton.addEventListener("click", () => runGraphQuery());
 queryInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runGraphQuery();
+});
+document.querySelectorAll("[data-query-preset]").forEach((button) => {
+  button.addEventListener("click", () => {
+    queryInput.value = button.dataset.queryPreset || "";
+    runGraphQuery();
+  });
 });
 sourceSearchButton.addEventListener("click", () => runSourceSearch());
 for (const input of [sourceSearchInput, sourcePathFilterInput]) {

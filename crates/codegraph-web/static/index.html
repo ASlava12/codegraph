@@ -213,6 +213,23 @@
             <input id="queryInput" type="text" value="nodes kind:function label:main" autocomplete="off" />
           </label>
           <button id="queryButton" type="button" data-i18n="button.run">Run</button>
+          <div class="query-presets" aria-label="Query presets">
+            <button type="button" data-query-preset="unreachable" data-i18n="queryPreset.unreachable">
+              Unreachable
+            </button>
+            <button type="button" data-query-preset="unreachable kind:function" data-i18n="queryPreset.deadFunctions">
+              Dead Functions
+            </button>
+            <button type="button" data-query-preset="neighbors label:main direction:out depth:2 edge_kind:calls" data-i18n="queryPreset.mainCalls">
+              Main Calls
+            </button>
+            <button type="button" data-query-preset="edges confidence:heuristic" data-i18n="queryPreset.heuristic">
+              Heuristic
+            </button>
+            <button type="button" data-query-preset="edges kind:depends_on" data-i18n="queryPreset.dependencies">
+              Dependencies
+            </button>
+          </div>
           <div id="queryResult" class="query-result"></div>
         </section>
 

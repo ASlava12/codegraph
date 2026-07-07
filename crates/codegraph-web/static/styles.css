@@ -868,6 +868,30 @@ button.cancel-action:hover:not(:disabled) {
   align-items: end;
 }
 
+.query-presets {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.query-presets button {
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid rgba(92, 200, 167, 0.26);
+  border-radius: 6px;
+  color: var(--muted);
+  background: rgba(32, 38, 42, 0.72);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.query-presets button:hover {
+  border-color: rgba(92, 200, 167, 0.68);
+  color: var(--text);
+  background: rgba(92, 200, 167, 0.12);
+}
+
 .source-search header,
 .cache-diff header,
 .graph-export header,
