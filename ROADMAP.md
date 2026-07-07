@@ -176,6 +176,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add web project overview facets for edge relation and provenance sources.
 - [x] Add web path navigation, focused graph views, and visual highlighting for dependency paths.
 - [x] Add node context API for paged graph detail panels.
+- [x] Add unified node card contracts across CLI, API, and web UI with source preview and related risks.
 - [x] Add insight focus API and web interaction for opening findings as focused graph views.
 - [x] Add enriched node cards with summary, code preview, dependencies, and related risks.
 - [x] Add initial multi-language UI support with English and Russian.

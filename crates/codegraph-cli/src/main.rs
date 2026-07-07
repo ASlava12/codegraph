@@ -8,7 +8,8 @@ use codegraph_analysis::{
     search_source, summarize, trace, trace_config, trace_dependents, trace_entrypoints,
     trace_errors,
 };
-use codegraph_analysis::{export_dot, export_ndjson};
+use codegraph_analysis::{export_dot, export_ndjson, node_card};
+use codegraph_core::NodeId;
 use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
 };
@@ -150,6 +151,9 @@ enum Command {
         #[command(flatten)]
         cache: CacheArgs,
     },
+
+    /// Emit an investigation card for one graph node as JSON.
+    NodeCard(NodeCardArgs),
 
     /// Search source text and emit compact matching snippets as JSON.
     SourceSearch(SourceSearchArgs),
@@ -561,6 +565,28 @@ struct CheckArgs {
     /// Maximum insights to include in the JSON report.
     #[arg(long, default_value_t = 50)]
     limit: usize,
+}
+
+#[derive(Debug, Args)]
+struct NodeCardArgs {
+    #[command(flatten)]
+    scan: ScanArgs,
+
+    /// Numeric graph node id to inspect.
+    #[arg(long)]
+    node_id: u64,
+
+    /// Maximum neighboring edges to include.
+    #[arg(long, default_value_t = 80)]
+    edge_limit: usize,
+
+    /// Source context lines around the node span.
+    #[arg(long, default_value_t = 5)]
+    source_context: u32,
+
+    /// Maximum related insights to include.
+    #[arg(long, default_value_t = 8)]
+    insight_limit: usize,
 }
 
 #[derive(Debug, Args)]
@@ -1007,6 +1033,25 @@ fn main() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&query_graph(&graph, &expression)?)?
             );
+        }
+        Command::NodeCard(args) => {
+            let graph = scan_with_options(
+                args.scan.path.clone(),
+                args.scan.include_hidden,
+                args.scan.include_ignored,
+                max_file_size,
+                &args.scan.cache,
+            )?;
+            let card = node_card(
+                &graph,
+                Some(&args.scan.path),
+                NodeId(args.node_id),
+                args.edge_limit,
+                args.source_context,
+                args.insight_limit,
+            )?
+            .ok_or_else(|| anyhow::anyhow!("node {} not found", args.node_id))?;
+            println!("{}", serde_json::to_string_pretty(&card)?);
         }
         Command::SourceSearch(args) => {
             let options = configured_index_options(

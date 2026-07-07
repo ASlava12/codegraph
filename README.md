@@ -317,6 +317,12 @@ cargo run -p codegraph-cli -- query 'path from:main to:load_config depth:6' .
 cargo run -p codegraph-cli -- query 'nodes metadata.annotation.domain:payments' .
 ```
 
+Inspect a node card with context, source preview, and related risks:
+
+```bash
+cargo run -p codegraph-cli -- node-card . --node-id 1
+```
+
 Search source text with compact snippets:
 
 ```bash
@@ -500,6 +506,7 @@ Analysis APIs:
 ```bash
 curl 'http://127.0.0.1:3765/api/graph?path=.&node_limit=250&kind=function'
 curl 'http://127.0.0.1:3765/api/node-context?path=.&node_id=1&edge_limit=80'
+curl 'http://127.0.0.1:3765/api/node-card?path=.&node_id=1&edge_limit=80&source_context=5&insight_limit=8'
 curl 'http://127.0.0.1:3765/api/focus?path=.&node_ids=1,2&edge_indexes=0&edge_limit=200'
 curl 'http://127.0.0.1:3765/api/summary?path=.'
 curl 'http://127.0.0.1:3765/api/architecture?path=.&group_limit=50&edge_limit=200'

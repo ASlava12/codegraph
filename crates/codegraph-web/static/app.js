@@ -28,6 +28,7 @@ const I18N = {
     "selection.contextEdgesLimited": "{count} edges, first {limit}",
     "selection.issueHint": "Open finding",
     "selection.noSource": "No source span is attached to this node.",
+    "selection.sourceTruncated": "preview truncated",
     "selection.incoming": "incoming",
     "selection.outgoing": "outgoing",
     "selection.from": "From",
@@ -203,6 +204,7 @@ const I18N = {
     "selection.contextEdgesLimited": "{count} связей, первые {limit}",
     "selection.issueHint": "Открыть находку",
     "selection.noSource": "К этому узлу не привязан фрагмент кода.",
+    "selection.sourceTruncated": "фрагмент обрезан",
     "selection.incoming": "входящая",
     "selection.outgoing": "исходящая",
     "selection.from": "Отсюда",
@@ -4904,18 +4906,21 @@ async function loadNodeContext(nodeId, requestId) {
     path: pathInput.value.trim() || ".",
     node_id: String(nodeId),
     edge_limit: "80",
+    source_context: "5",
+    insight_limit: "8",
   });
 
   try {
-    const response = await fetch(`/api/node-context?${params.toString()}`);
+    const response = await fetch(`/api/node-card?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.selectionRequest || state.selectedId !== nodeId) return;
     if (!response.ok) {
-      throw new Error(body.error || "node context failed");
+      throw new Error(body.error || "node card failed");
     }
-    const nodeMap = new Map(body.nodes.map((node) => [node.id, node]));
-    nodeMap.set(body.node.id, body.node);
-    renderSelectionPanel(body.node, body.edges, nodeMap, requestId, false, body);
+    const context = body.context || {};
+    const nodeMap = new Map((context.nodes || []).map((node) => [node.id, node]));
+    nodeMap.set(context.node.id, context.node);
+    renderSelectionPanel(context.node, context.edges || [], nodeMap, requestId, false, context, body);
   } catch (error) {
     if (requestId !== state.selectionRequest || state.selectedId !== nodeId) return;
     const node = state.graph.nodes.find((candidate) => candidate.id === nodeId);
@@ -4932,11 +4937,12 @@ async function loadNodeContext(nodeId, requestId) {
   }
 }
 
-function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, context = null) {
+function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, context = null, card = null) {
   selectionTitle.textContent = node.label;
   const summaryRows = renderNodeSummaryRows(node);
   const metadataRows = renderNodeMetadataRows(node);
-  const nodeIssues = nodeInsightsForNode(node.id).slice(0, 8);
+  const nodeIssues = (card?.insights || nodeInsightsForNode(node.id)).slice(0, 8);
+  const sourceLines = card?.source?.lines || null;
   const neighborRows = loading
     ? `<p class="empty">${escapeHtml(t("selection.loading"))}</p>`
     : edges.length > 0
@@ -5031,8 +5037,11 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
             <header>
               <span>${escapeHtml(t("selection.source"))}</span>
               <strong>${escapeHtml(node.span.path)}:${node.span.start_line}</strong>
+              ${card?.source?.truncated ? `<span>${escapeHtml(t("selection.sourceTruncated"))}</span>` : ""}
             </header>
-            <pre id="sourcePreview"><code>${escapeHtml(t("empty.loadingSource"))}</code></pre>
+            <pre id="sourcePreview"><code>${
+              sourceLines ? sourceLines.map(renderSourceLine).join("") : escapeHtml(t("empty.loadingSource"))
+            }</code></pre>
           </section>`
           : `<section class="source-preview">
               <header>
@@ -5091,7 +5100,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
     });
   });
 
-  if (node.span) {
+  if (node.span && !loading && !sourceLines) {
     loadSourcePreview(node, requestId);
   }
 

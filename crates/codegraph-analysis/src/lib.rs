@@ -5,8 +5,11 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::fs;
+use std::io;
 use std::path::Path;
 use walkdir::{DirEntry, WalkDir};
+
+const SOURCE_PREVIEW_LINE_LIMIT: usize = 240;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphSummary {
@@ -333,6 +336,32 @@ pub struct NodeContext {
     pub total_edges: usize,
     pub edge_limit: usize,
     pub truncated_edges: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourcePreview {
+    pub path: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub lines: Vec<SourcePreviewLine>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourcePreviewLine {
+    pub number: u32,
+    pub text: String,
+    pub highlight: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeCard {
+    pub context: NodeContext,
+    pub source: Option<SourcePreview>,
+    pub insights: Vec<Insight>,
+    pub total_insights: usize,
+    pub insight_limit: usize,
+    pub truncated_insights: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1740,6 +1769,101 @@ pub fn node_context(graph: &CodeGraph, node_id: NodeId, edge_limit: usize) -> Op
         total_edges,
         edge_limit,
         truncated_edges: edge_limit < total_edges,
+    })
+}
+
+pub fn node_card(
+    graph: &CodeGraph,
+    root: Option<&Path>,
+    node_id: NodeId,
+    edge_limit: usize,
+    source_context: u32,
+    insight_limit: usize,
+) -> io::Result<Option<NodeCard>> {
+    let Some(context) = node_context(graph, node_id, edge_limit) else {
+        return Ok(None);
+    };
+    let source = match (root, context.node.span.as_ref()) {
+        (Some(root), Some(span)) => Some(read_source_preview(
+            root,
+            Path::new(&span.path),
+            span.start_line,
+            span.end_line,
+            source_context,
+        )?),
+        _ => None,
+    };
+    let insight_limit = insight_limit.clamp(1, 500);
+    let related_insights = insights(graph)
+        .insights
+        .into_iter()
+        .filter(|insight| insight.nodes.contains(&node_id))
+        .collect::<Vec<_>>();
+    let total_insights = related_insights.len();
+    let insights = related_insights.into_iter().take(insight_limit).collect();
+
+    Ok(Some(NodeCard {
+        context,
+        source,
+        insights,
+        total_insights,
+        insight_limit,
+        truncated_insights: insight_limit < total_insights,
+    }))
+}
+
+pub fn read_source_preview(
+    root: &Path,
+    path: &Path,
+    start_line: u32,
+    end_line: u32,
+    context: u32,
+) -> io::Result<SourcePreview> {
+    let requested_start = start_line.max(1);
+    let requested_end = end_line.max(requested_start);
+    let context = context.min(40);
+    let visible_start = requested_start.saturating_sub(context).max(1);
+    let visible_end = requested_end.saturating_add(context);
+    let full_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+    let display_path = full_path
+        .strip_prefix(root)
+        .unwrap_or(&full_path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let bytes = fs::read(full_path)?;
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines = Vec::new();
+    let mut truncated = false;
+
+    for (index, line) in text.lines().enumerate() {
+        let number = index as u32 + 1;
+        if number < visible_start {
+            continue;
+        }
+        if number > visible_end {
+            break;
+        }
+        if lines.len() >= SOURCE_PREVIEW_LINE_LIMIT {
+            truncated = true;
+            break;
+        }
+        lines.push(SourcePreviewLine {
+            number,
+            text: line.to_string(),
+            highlight: number >= requested_start && number <= requested_end,
+        });
+    }
+
+    Ok(SourcePreview {
+        path: display_path,
+        start_line: requested_start,
+        end_line: requested_end,
+        lines,
+        truncated,
     })
 }
 
@@ -4315,7 +4439,7 @@ fn serde_json_name<T: Serialize>(value: &T) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeKind};
+    use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeKind, SourceSpan};
 
     #[test]
     fn summary_counts_graph_facts() {
@@ -4668,6 +4792,63 @@ mod tests {
 
         assert_eq!(result.total_matches, 1);
         assert_eq!(result.matches[0].path, "src/domain/keep.py");
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn node_card_includes_context_source_and_related_insights() {
+        let root = temp_analysis_root();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() {\n    missing();\n}\n",
+        )
+        .unwrap();
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node(NodeKind::File, "src/main.rs");
+        let function = graph.add_node_with_span(
+            NodeKind::Function,
+            "main",
+            SourceSpan {
+                path: "src/main.rs".to_string(),
+                start_line: 1,
+                start_column: 1,
+                end_line: 3,
+                end_column: 2,
+            },
+        );
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "call".to_string());
+        metadata.insert("unresolved".to_string(), "true".to_string());
+        let call = graph.add_node_with_metadata(NodeKind::Unknown, "missing", None, metadata);
+        graph.add_edge(file, function, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(function, call, EdgeKind::Calls, Confidence::Heuristic);
+
+        let card = node_card(&graph, Some(&root), function, 10, 1, 10)
+            .unwrap()
+            .expect("expected node card");
+
+        assert_eq!(card.context.node.id, function);
+        assert_eq!(card.context.edges.len(), 2);
+        assert_eq!(
+            card.source.as_ref().map(|source| source.path.as_str()),
+            Some("src/main.rs")
+        );
+        assert!(
+            card.source
+                .as_ref()
+                .unwrap()
+                .lines
+                .iter()
+                .any(|line| line.highlight && line.text.contains("missing"))
+        );
+        assert_eq!(card.total_insights, 1);
+        assert!(
+            card.insights
+                .iter()
+                .any(|insight| insight.kind == "orphan_function")
+        );
 
         std::fs::remove_dir_all(root).unwrap();
     }

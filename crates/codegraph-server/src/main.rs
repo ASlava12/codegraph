@@ -11,11 +11,12 @@ use codegraph_analysis::{
     CheckReport, ConfigTraceRequest, ConfigTraceResult, EntrypointTraceReport,
     EntrypointTraceRequest, ErrorTraceRequest, ErrorTraceResult, ExplainEdgeRequest, FocusRequest,
     GraphSlice, GraphSliceRequest, GraphSummary, InsightFilter, InsightReport, InsightSeverity,
-    NodeContext, ProjectReport, ProjectReportLimits, SourceSearchRequest, SourceSearchResult,
-    TraceRequest, TraceStart, architecture_map, check_insights, entrypoints, explain_edge,
-    export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots, insights,
-    language_dependencies, node_context, project_report, query_graph, search_source, slice_graph,
-    summarize, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    NodeCard, NodeContext, ProjectReport, ProjectReportLimits, SourcePreview, SourceSearchRequest,
+    SourceSearchResult, TraceRequest, TraceStart, architecture_map, check_insights, entrypoints,
+    explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots,
+    insights, language_dependencies, node_card, node_context, project_report, query_graph,
+    read_source_preview, search_source, slice_graph, summarize, trace, trace_config,
+    trace_dependents, trace_entrypoints, trace_errors,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -36,7 +37,6 @@ use codegraph_storage::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::convert::Infallible;
-use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -363,6 +363,15 @@ struct NodeContextQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct NodeCardQuery {
+    path: Option<PathBuf>,
+    node_id: u64,
+    edge_limit: Option<usize>,
+    source_context: Option<u32>,
+    insight_limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct FocusQuery {
     path: Option<PathBuf>,
     node_ids: Option<String>,
@@ -638,21 +647,6 @@ struct ProjectReportResponse {
 }
 
 #[derive(Debug, Serialize)]
-struct SourceResponse {
-    path: String,
-    start_line: u32,
-    end_line: u32,
-    lines: Vec<SourceLine>,
-}
-
-#[derive(Debug, Serialize)]
-struct SourceLine {
-    number: u32,
-    text: String,
-    highlight: bool,
-}
-
-#[derive(Debug, Serialize)]
 struct ErrorBody {
     error: String,
 }
@@ -747,6 +741,7 @@ async fn main() -> Result<()> {
         .route("/api/export", get(export_api))
         .route("/api/graph", get(graph_api))
         .route("/api/node-context", get(node_context_api))
+        .route("/api/node-card", get(node_card_api))
         .route("/api/focus", get(focus_api))
         .route("/api/report", get(report_api))
         .route("/api/summary", get(summary))
@@ -1733,6 +1728,37 @@ async fn node_context_api(
     Ok(Json(context))
 }
 
+async fn node_card_api(
+    State(state): State<AppState>,
+    Query(query): Query<NodeCardQuery>,
+) -> Result<Json<NodeCard>, ApiError> {
+    let root = resolve_scan_root(&state, query.path.as_deref())?;
+    let options = scan_options(&state, &root)?;
+    let cache = state.cache.clone();
+    let edge_limit = query.edge_limit.unwrap_or(80);
+    let source_context = query.source_context.unwrap_or(5).min(40);
+    let insight_limit = query.insight_limit.unwrap_or(8);
+    let node_id = codegraph_core::NodeId(query.node_id);
+    let card = tokio::task::spawn_blocking(move || {
+        let output = scan_project_cached(root.clone(), &options, cache.as_ref())
+            .map_err(|error| error.to_string())?;
+        node_card(
+            &output.graph,
+            Some(&root),
+            node_id,
+            edge_limit,
+            source_context,
+            insight_limit,
+        )
+        .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| ApiError::internal(format!("node card task failed: {error}")))?
+    .map_err(ApiError::internal)?
+    .ok_or_else(|| ApiError::not_found("node not found"))?;
+    Ok(Json(card))
+}
+
 async fn focus_api(
     State(state): State<AppState>,
     Query(query): Query<FocusQuery>,
@@ -2003,7 +2029,7 @@ async fn trace_errors_api(
 async fn source(
     State(state): State<AppState>,
     Query(query): Query<SourceQuery>,
-) -> Result<Json<SourceResponse>, ApiError> {
+) -> Result<Json<SourcePreview>, ApiError> {
     let source_root = resolve_scan_root(&state, query.root.as_deref())?;
     let path = resolve_path(&state, &source_root, &query.path)?;
     if !path.is_file() {
@@ -2016,41 +2042,10 @@ async fn source(
         .unwrap_or(requested_start)
         .max(requested_start);
     let context = query.context.unwrap_or(4).min(40);
-    let visible_start = requested_start.saturating_sub(context).max(1);
-    let visible_end = requested_end.saturating_add(context);
-    let display_path = path
-        .strip_prefix(&source_root)
-        .unwrap_or(&path)
-        .to_string_lossy()
-        .replace('\\', "/");
 
     let response = tokio::task::spawn_blocking(move || {
-        let bytes = fs::read(&path)
-            .map_err(|error| ApiError::internal(format!("failed to read source: {error}")))?;
-        let text = String::from_utf8_lossy(&bytes);
-        let mut lines = Vec::new();
-
-        for (index, line) in text.lines().enumerate() {
-            let number = index as u32 + 1;
-            if number < visible_start {
-                continue;
-            }
-            if number > visible_end {
-                break;
-            }
-            lines.push(SourceLine {
-                number,
-                text: line.to_string(),
-                highlight: number >= requested_start && number <= requested_end,
-            });
-        }
-
-        Ok(SourceResponse {
-            path: display_path,
-            start_line: requested_start,
-            end_line: requested_end,
-            lines,
-        })
+        read_source_preview(&source_root, &path, requested_start, requested_end, context)
+            .map_err(|error| ApiError::internal(format!("failed to read source: {error}")))
     })
     .await
     .map_err(|error| ApiError::internal(format!("source task failed: {error}")))??;
@@ -2983,6 +2978,36 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "NodeContext",
                 ),
                 api_get(
+                    "/api/node-card",
+                    "Read selected node investigation card with neighboring edges, source preview, and related risks.",
+                    vec![
+                        path_param(),
+                        query_param("node_id", true, "u64", None, "Node numeric id."),
+                        query_param(
+                            "edge_limit",
+                            false,
+                            "usize",
+                            Some("80"),
+                            "Maximum context edges.",
+                        ),
+                        query_param(
+                            "source_context",
+                            false,
+                            "u32",
+                            Some("5"),
+                            "Source context lines around the node span.",
+                        ),
+                        query_param(
+                            "insight_limit",
+                            false,
+                            "usize",
+                            Some("8"),
+                            "Maximum related risks.",
+                        ),
+                    ],
+                    "NodeCard",
+                ),
+                api_get(
                     "/api/focus",
                     "Build a focused subgraph from node ids and edge indexes.",
                     vec![
@@ -3604,6 +3629,7 @@ fn capability_features(cache_enabled: bool) -> Vec<&'static str> {
         "source_preview",
         "graph_paging",
         "node_context",
+        "node_cards",
         "focused_subgraphs",
         "query_language",
         "entrypoint_traces",
@@ -3689,6 +3715,7 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
             endpoints: vec![
                 "GET /api/graph",
                 "GET /api/node-context",
+                "GET /api/node-card",
                 "GET /api/focus",
                 "GET /api/summary",
                 "GET /api/query",
@@ -3784,6 +3811,7 @@ impl IntoResponse for ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
@@ -3869,6 +3897,7 @@ mod tests {
         assert!(without_cache.contains(&"runtime_metrics"));
         assert!(without_cache.contains(&"project_report"));
         assert!(without_cache.contains(&"semantic_lsp"));
+        assert!(without_cache.contains(&"node_cards"));
         assert!(!without_cache.contains(&"persistent_graph_cache"));
         assert!(!without_cache.contains(&"persistent_graph_chunks"));
         assert!(with_cache.contains(&"persistent_graph_cache"));
@@ -3892,6 +3921,7 @@ mod tests {
         assert!(endpoints.contains(&"GET /api/cache-chunks"));
         assert!(endpoints.contains(&"GET /api/query"));
         assert!(endpoints.contains(&"GET /api/node-context"));
+        assert!(endpoints.contains(&"GET /api/node-card"));
         assert!(endpoints.contains(&"POST /api/scan-jobs"));
         assert!(endpoints.contains(&"POST /api/semantic-jobs"));
     }
@@ -3915,6 +3945,7 @@ mod tests {
         assert!(endpoints.contains(&("GET", "/api/incremental-plan")));
         assert!(endpoints.contains(&("GET", "/api/incremental-scan")));
         assert!(endpoints.contains(&("GET", "/api/incremental-merge-preview")));
+        assert!(endpoints.contains(&("GET", "/api/node-card")));
         assert!(endpoints.contains(&("GET", "/api/query")));
         assert!(endpoints.contains(&("POST", "/api/scan-jobs")));
         assert!(endpoints.contains(&("GET", "/api/scan-jobs/{id}/events")));
