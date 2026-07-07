@@ -161,6 +161,80 @@ const I18N = {
     "section.configTrace": "Config Trace",
     "section.errorTrace": "Error Trace",
     "section.insights": "Insights",
+    "cache.loadingDiff": "Loading cache diagnostics...",
+    "cache.loadingChunks": "Loading cache chunks...",
+    "cache.planningIncremental": "Planning incremental scan...",
+    "cache.scanningChanged": "Scanning changed files...",
+    "cache.buildingMerge": "Building merge preview...",
+    "cache.updating": "Updating graph cache...",
+    "cache.noFingerprint": "no previous fingerprint",
+    "cache.noChanges": "No file fingerprint changes detected.",
+    "cache.noChunks": "No cached graph chunks available.",
+    "cache.noIncrementalWork": "No incremental scan work needed.",
+    "cache.previous": "previous",
+    "cache.current": "current",
+    "cache.files": "files",
+    "cache.changed": "changed",
+    "cache.rescan": "rescan",
+    "cache.removed": "removed",
+    "cache.reusable": "reusable",
+    "cache.listed": "listed",
+    "cache.truncated": "truncated",
+    "cache.limitedScope": "limited scope",
+    "cache.fileReuse": "file reuse",
+    "cache.byteReuse": "byte reuse",
+    "cache.changedCurrent": "changed current",
+    "cache.graphNodes": "graph nodes",
+    "cache.graphEdges": "graph edges",
+    "cache.previewNodes": "preview nodes",
+    "cache.previewEdges": "preview edges",
+    "cache.reusedNodes": "reused nodes",
+    "cache.reusedEdges": "reused edges",
+    "cache.removedCachedNodes": "removed cached nodes",
+    "cache.removedCachedEdges": "removed cached edges",
+    "cache.chunkNodes": "chunk nodes",
+    "cache.chunkEdges": "chunk edges",
+    "cache.scannedNodes": "scanned nodes",
+    "cache.scannedEdges": "scanned edges",
+    "cache.replacedPaths": "replaced paths",
+    "cache.incomingBlockers": "incoming blockers",
+    "cache.surfaceAdded": "surface added",
+    "cache.surfaceRemoved": "surface removed",
+    "cache.removedPaths": "removed paths",
+    "cache.blockers": "blockers",
+    "cache.complete": "complete",
+    "cache.preview": "preview",
+    "cache.stored": "stored",
+    "cache.notStored": "not stored",
+    "cache.none": "none",
+    "cache.updateAlreadyCurrent": "Cache already matches the current project fingerprint.",
+    "cache.updateStored": "Stored a complete graph under the current project fingerprint.",
+    "cache.updateIncomplete": "Incremental merge is incomplete; cache record was not updated.",
+    "cache.addedGroup": "Added",
+    "cache.modifiedGroup": "Modified",
+    "cache.removedGroup": "Removed",
+    "cache.chunksGroup": "Chunks",
+    "cache.scanGroup": "Scan",
+    "cache.reusableGroup": "Reusable",
+    "cache.nodeIdsGroup": "Node IDs",
+    "cache.edgeIndexesGroup": "Edge Indexes",
+    "cache.completenessBlockersGroup": "Completeness blockers",
+    "cache.path": "path",
+    "cache.id": "id",
+    "cache.nodes": "nodes",
+    "cache.edges": "edges",
+    "cache.changedGraph": "Changed: {action}",
+    "cache.incrementalComplete": "Incremental: complete",
+    "cache.incrementalPreview": "Incremental: merge preview",
+    "cache.changedPageInfo": "changed {nodes} / {files}",
+    "cache.previewPageInfo": "preview {nodes} / {reused} reused",
+    "cache.blocker.removed_paths": "Partial merge includes removed files; run a full scan before storing the graph cache.",
+    "cache.blocker.incoming_cross_file_edges":
+      "Partial merge would drop {count} incoming cross-file edge(s); run a full scan before storing the graph cache.",
+    "cache.blocker.graph_surface_added":
+      "Partial merge adds graph-surface nodes; run a full scan before storing the graph cache.",
+    "cache.blocker.graph_surface_removed":
+      "Partial merge removes graph-surface nodes; run a full scan before storing the graph cache.",
     "stat.nodes": "Nodes",
     "stat.edges": "Edges",
     "stat.calls": "Calls",
@@ -241,9 +315,27 @@ const I18N = {
     "status.semantic": "semantic",
     "status.ready": "ready",
     "status.error": "error",
+    "status.loading": "loading",
+    "status.chunks": "chunks",
+    "status.planning": "planning",
+    "status.scanning": "scanning",
+    "status.merging": "merging",
+    "status.updating": "updating",
+    "status.stored": "stored",
+    "status.skipped": "skipped",
     "kind.error": "error",
     "kind.warning": "warning",
     "kind.info": "info",
+    "kind.full_scan": "full scan",
+    "kind.partial_rescan": "partial rescan",
+    "kind.noop": "no changes",
+    "kind.full_reuse": "full reuse",
+    "kind.partial_reuse": "partial reuse",
+    "kind.no_changes": "no changes",
+    "kind.removed_paths": "removed paths",
+    "kind.incoming_cross_file_edges": "incoming cross-file edges",
+    "kind.graph_surface_added": "graph surface added",
+    "kind.graph_surface_removed": "graph surface removed",
     "kind.semantic_diagnostic": "semantic diagnostic",
     "kind.unreachable_source_file": "unreachable source file",
   },
@@ -402,6 +494,80 @@ const I18N = {
     "section.configTrace": "Трасса конфига",
     "section.errorTrace": "Трасса ошибок",
     "section.insights": "Находки",
+    "cache.loadingDiff": "Загружаю диагностику кеша...",
+    "cache.loadingChunks": "Загружаю фрагменты кеша...",
+    "cache.planningIncremental": "Планирую инкрементальный скан...",
+    "cache.scanningChanged": "Сканирую изменённые файлы...",
+    "cache.buildingMerge": "Собираю предпросмотр merge...",
+    "cache.updating": "Обновляю кеш графа...",
+    "cache.noFingerprint": "предыдущего fingerprint нет",
+    "cache.noChanges": "Изменений fingerprint файлов нет.",
+    "cache.noChunks": "Фрагменты графа в кеше не найдены.",
+    "cache.noIncrementalWork": "Инкрементальный скан не нужен.",
+    "cache.previous": "предыдущий",
+    "cache.current": "текущий",
+    "cache.files": "файлов",
+    "cache.changed": "изменено",
+    "cache.rescan": "перескан",
+    "cache.removed": "удалено",
+    "cache.reusable": "повторно",
+    "cache.listed": "показано",
+    "cache.truncated": "обрезано",
+    "cache.limitedScope": "ограниченная область",
+    "cache.fileReuse": "reuse файлов",
+    "cache.byteReuse": "reuse байт",
+    "cache.changedCurrent": "изменено сейчас",
+    "cache.graphNodes": "узлов графа",
+    "cache.graphEdges": "связей графа",
+    "cache.previewNodes": "узлов preview",
+    "cache.previewEdges": "связей preview",
+    "cache.reusedNodes": "узлов повторно",
+    "cache.reusedEdges": "связей повторно",
+    "cache.removedCachedNodes": "удалено кеш-узлов",
+    "cache.removedCachedEdges": "удалено кеш-связей",
+    "cache.chunkNodes": "узлов фрагмента",
+    "cache.chunkEdges": "связей фрагмента",
+    "cache.scannedNodes": "узлов скана",
+    "cache.scannedEdges": "связей скана",
+    "cache.replacedPaths": "заменено путей",
+    "cache.incomingBlockers": "входящих блокеров",
+    "cache.surfaceAdded": "surface добавлено",
+    "cache.surfaceRemoved": "surface удалено",
+    "cache.removedPaths": "удалённых путей",
+    "cache.blockers": "блокеров",
+    "cache.complete": "полный",
+    "cache.preview": "preview",
+    "cache.stored": "сохранено",
+    "cache.notStored": "не сохранено",
+    "cache.none": "нет",
+    "cache.updateAlreadyCurrent": "Кеш уже соответствует текущему fingerprint проекта.",
+    "cache.updateStored": "Полный граф сохранён под текущим fingerprint проекта.",
+    "cache.updateIncomplete": "Инкрементальный merge неполный; запись кеша не обновлена.",
+    "cache.addedGroup": "Добавлено",
+    "cache.modifiedGroup": "Изменено",
+    "cache.removedGroup": "Удалено",
+    "cache.chunksGroup": "Фрагменты",
+    "cache.scanGroup": "Скан",
+    "cache.reusableGroup": "Повторно",
+    "cache.nodeIdsGroup": "ID узлов",
+    "cache.edgeIndexesGroup": "Индексы связей",
+    "cache.completenessBlockersGroup": "Блокеры полноты",
+    "cache.path": "путь",
+    "cache.id": "id",
+    "cache.nodes": "узлов",
+    "cache.edges": "связей",
+    "cache.changedGraph": "Изменения: {action}",
+    "cache.incrementalComplete": "Инкремент: полный",
+    "cache.incrementalPreview": "Инкремент: preview merge",
+    "cache.changedPageInfo": "изменено {nodes} / {files}",
+    "cache.previewPageInfo": "preview {nodes} / {reused} повторно",
+    "cache.blocker.removed_paths": "Partial merge включает удалённые файлы; перед сохранением кеша графа нужен полный скан.",
+    "cache.blocker.incoming_cross_file_edges":
+      "Partial merge потеряет входящие межфайловые связи: {count}; перед сохранением кеша графа нужен полный скан.",
+    "cache.blocker.graph_surface_added":
+      "Partial merge добавляет узлы поверхности графа; перед сохранением кеша графа нужен полный скан.",
+    "cache.blocker.graph_surface_removed":
+      "Partial merge удаляет узлы поверхности графа; перед сохранением кеша графа нужен полный скан.",
     "stat.nodes": "Узлы",
     "stat.edges": "Связи",
     "stat.calls": "Вызовы",
@@ -482,9 +648,27 @@ const I18N = {
     "status.semantic": "семантика",
     "status.ready": "готово",
     "status.error": "ошибка",
+    "status.loading": "загрузка",
+    "status.chunks": "фрагменты",
+    "status.planning": "планирование",
+    "status.scanning": "сканирование",
+    "status.merging": "merge",
+    "status.updating": "обновление",
+    "status.stored": "сохранено",
+    "status.skipped": "пропущено",
     "kind.error": "ошибка",
     "kind.warning": "предупреждение",
     "kind.info": "инфо",
+    "kind.full_scan": "полный скан",
+    "kind.partial_rescan": "частичный перескан",
+    "kind.noop": "без изменений",
+    "kind.full_reuse": "полный reuse",
+    "kind.partial_reuse": "частичный reuse",
+    "kind.no_changes": "без изменений",
+    "kind.removed_paths": "удалённые пути",
+    "kind.incoming_cross_file_edges": "входящие межфайловые связи",
+    "kind.graph_surface_added": "surface графа добавлен",
+    "kind.graph_surface_removed": "surface графа удалён",
     "kind.function": "функция",
     "kind.file": "файл",
     "kind.directory": "каталог",
@@ -2941,8 +3125,8 @@ async function loadCacheDiff() {
   state.cacheDiffRequest += 1;
   const requestId = state.cacheDiffRequest;
   cacheDiffButton.disabled = true;
-  cacheDiffStatus.textContent = "loading";
-  cacheDiffResult.innerHTML = '<p class="empty">Loading cache diagnostics...</p>';
+  cacheDiffStatus.textContent = t("status.loading");
+  cacheDiffResult.innerHTML = `<p class="empty">${escapeHtml(t("cache.loadingDiff"))}</p>`;
 
   const params = new URLSearchParams({
     path: pathInput.value.trim() || ".",
@@ -2975,8 +3159,8 @@ async function loadCacheChunks() {
   state.cacheChunksRequest += 1;
   const requestId = state.cacheChunksRequest;
   cacheChunksButton.disabled = true;
-  cacheDiffStatus.textContent = "chunks";
-  cacheDiffResult.innerHTML = '<p class="empty">Loading cache chunks...</p>';
+  cacheDiffStatus.textContent = t("status.chunks");
+  cacheDiffResult.innerHTML = `<p class="empty">${escapeHtml(t("cache.loadingChunks"))}</p>`;
 
   const params = new URLSearchParams({
     path: pathInput.value.trim() || ".",
@@ -3009,8 +3193,8 @@ async function loadIncrementalPlan() {
   state.incrementalPlanRequest += 1;
   const requestId = state.incrementalPlanRequest;
   incrementalPlanButton.disabled = true;
-  cacheDiffStatus.textContent = "planning";
-  cacheDiffResult.innerHTML = '<p class="empty">Planning incremental scan...</p>';
+  cacheDiffStatus.textContent = t("status.planning");
+  cacheDiffResult.innerHTML = `<p class="empty">${escapeHtml(t("cache.planningIncremental"))}</p>`;
 
   const params = new URLSearchParams({
     path: pathInput.value.trim() || ".",
@@ -3043,8 +3227,8 @@ async function loadIncrementalScan() {
   state.incrementalScanRequest += 1;
   const requestId = state.incrementalScanRequest;
   incrementalScanButton.disabled = true;
-  cacheDiffStatus.textContent = "scanning";
-  cacheDiffResult.innerHTML = '<p class="empty">Scanning changed files...</p>';
+  cacheDiffStatus.textContent = t("status.scanning");
+  cacheDiffResult.innerHTML = `<p class="empty">${escapeHtml(t("cache.scanningChanged"))}</p>`;
 
   const params = new URLSearchParams({
     path: pathInput.value.trim() || ".",
@@ -3079,8 +3263,8 @@ async function loadIncrementalMergePreview() {
   state.incrementalMergeRequest += 1;
   const requestId = state.incrementalMergeRequest;
   incrementalMergeButton.disabled = true;
-  cacheDiffStatus.textContent = "merging";
-  cacheDiffResult.innerHTML = '<p class="empty">Building merge preview...</p>';
+  cacheDiffStatus.textContent = t("status.merging");
+  cacheDiffResult.innerHTML = `<p class="empty">${escapeHtml(t("cache.buildingMerge"))}</p>`;
 
   const params = new URLSearchParams({
     path: pathInput.value.trim() || ".",
@@ -3115,8 +3299,8 @@ async function loadIncrementalUpdate() {
   state.incrementalUpdateRequest += 1;
   const requestId = state.incrementalUpdateRequest;
   incrementalUpdateButton.disabled = true;
-  cacheDiffStatus.textContent = "updating";
-  cacheDiffResult.innerHTML = '<p class="empty">Updating graph cache...</p>';
+  cacheDiffStatus.textContent = t("status.updating");
+  cacheDiffResult.innerHTML = `<p class="empty">${escapeHtml(t("cache.updating"))}</p>`;
 
   const params = new URLSearchParams({
     path: pathInput.value.trim() || ".",
@@ -3131,7 +3315,11 @@ async function loadIncrementalUpdate() {
       throw new Error(body.error || "incremental update failed");
     }
     const plan = body.preview?.plan || {};
-    cacheDiffStatus.textContent = body.cache?.stored ? "stored" : formatKind(plan.action || "skipped");
+    cacheDiffStatus.textContent = body.cache?.stored
+      ? t("status.stored")
+      : plan.action
+        ? formatKind(plan.action)
+        : t("status.skipped");
     cacheDiffResult.innerHTML = renderIncrementalUpdate(body);
     if (body.preview?.graph) {
       showIncrementalMergePreviewGraph(body.preview);
@@ -3240,7 +3428,7 @@ function renderCacheDiff(report) {
   const added = report.added || [];
   const modified = report.modified || [];
   const removed = report.removed || [];
-  const previousHash = report.previous_hash || "no previous fingerprint";
+  const previousHash = report.previous_hash || t("cache.noFingerprint");
   const changedCount = added.length + modified.length + removed.length;
   const totalChanged = Number(report.changed_files ?? changedCount);
   const reusableFiles = Number(report.reusable_files ?? report.unchanged ?? 0);
@@ -3249,31 +3437,31 @@ function renderCacheDiff(report) {
     <div class="query-summary">
       <span>${escapeHtml(formatKind(report.cache_record || "unknown"))}</span>
       <span>${escapeHtml(formatKind(report.reuse_strategy || "unknown"))}</span>
-      <span>${report.previous_files ?? 0} -> ${report.current_files ?? 0} files</span>
+      <span>${report.previous_files ?? 0} -> ${report.current_files ?? 0} ${escapeHtml(t("cache.files"))}</span>
       <span>${formatBytes(report.previous_bytes)} -> ${formatBytes(report.current_bytes)}</span>
-      <span>${totalChanged} changed</span>
-      <span>${reusableFiles}/${currentFiles} reusable</span>
-      <span>${formatBasisPoints(report.reuse_file_ratio_basis_points)} file reuse</span>
-      <span>${formatBasisPoints(report.reuse_byte_ratio_basis_points)} byte reuse</span>
-      <span>${formatBytes(report.changed_current_bytes)} changed current</span>
-      <span>${formatBytes(report.reusable_bytes)} reusable</span>
-      <span>${changedCount} listed</span>
-      ${report.truncated ? "<span>truncated</span>" : ""}
-      <span class="query-expression">previous ${escapeHtml(previousHash)}</span>
-      <span class="query-expression">current ${escapeHtml(report.current_hash || "unknown")}</span>
+      <span>${totalChanged} ${escapeHtml(t("cache.changed"))}</span>
+      <span>${reusableFiles}/${currentFiles} ${escapeHtml(t("cache.reusable"))}</span>
+      <span>${formatBasisPoints(report.reuse_file_ratio_basis_points)} ${escapeHtml(t("cache.fileReuse"))}</span>
+      <span>${formatBasisPoints(report.reuse_byte_ratio_basis_points)} ${escapeHtml(t("cache.byteReuse"))}</span>
+      <span>${formatBytes(report.changed_current_bytes)} ${escapeHtml(t("cache.changedCurrent"))}</span>
+      <span>${formatBytes(report.reusable_bytes)} ${escapeHtml(t("cache.reusable"))}</span>
+      <span>${changedCount} ${escapeHtml(t("cache.listed"))}</span>
+      ${report.truncated ? `<span>${escapeHtml(t("cache.truncated"))}</span>` : ""}
+      <span class="query-expression">${escapeHtml(t("cache.previous"))} ${escapeHtml(previousHash)}</span>
+      <span class="query-expression">${escapeHtml(t("cache.current"))} ${escapeHtml(report.current_hash || "unknown")}</span>
     </div>
   `;
 
   const groups = [
-    renderCacheDiffGroup("Added", added, renderCacheDiffEntry),
-    renderCacheDiffGroup("Modified", modified, renderCacheDiffChange),
-    renderCacheDiffGroup("Removed", removed, renderCacheDiffEntry),
+    renderCacheDiffGroup(t("cache.addedGroup"), added, renderCacheDiffEntry),
+    renderCacheDiffGroup(t("cache.modifiedGroup"), modified, renderCacheDiffChange),
+    renderCacheDiffGroup(t("cache.removedGroup"), removed, renderCacheDiffEntry),
   ]
     .filter(Boolean)
     .join("");
 
   if (!groups) {
-    return `${summary}<p class="empty">No file fingerprint changes detected.</p>`;
+    return `${summary}<p class="empty">${escapeHtml(t("cache.noChanges"))}</p>`;
   }
 
   return `${summary}${groups}`;
@@ -3281,24 +3469,24 @@ function renderCacheDiff(report) {
 
 function renderCacheChunks(report) {
   const chunks = report.chunks || [];
-  const previousHash = report.previous_hash || "no previous fingerprint";
+  const previousHash = report.previous_hash || t("cache.noFingerprint");
   const listed = chunks.length;
   const summary = `
     <div class="query-summary">
       <span>${escapeHtml(formatKind(report.cache_record || "unknown"))}</span>
-      <span>${Number(report.total_chunks || 0)} chunks</span>
-      <span>${Number(report.total_chunk_nodes || 0)} unique nodes</span>
-      <span>${Number(report.total_chunk_edges || 0)} unique edges</span>
-      <span>${listed}/${Number(report.total_chunks || 0)} listed</span>
-      <span>${report.previous_files ?? 0} -> ${report.current_files ?? 0} files</span>
-      ${report.truncated ? "<span>truncated</span>" : ""}
-      <span class="query-expression">previous ${escapeHtml(previousHash)}</span>
-      <span class="query-expression">current ${escapeHtml(report.current_hash || "unknown")}</span>
+      <span>${Number(report.total_chunks || 0)} ${escapeHtml(t("cache.chunksGroup").toLowerCase())}</span>
+      <span>${Number(report.total_chunk_nodes || 0)} ${escapeHtml(t("cache.nodes"))}</span>
+      <span>${Number(report.total_chunk_edges || 0)} ${escapeHtml(t("cache.edges"))}</span>
+      <span>${listed}/${Number(report.total_chunks || 0)} ${escapeHtml(t("cache.listed"))}</span>
+      <span>${report.previous_files ?? 0} -> ${report.current_files ?? 0} ${escapeHtml(t("cache.files"))}</span>
+      ${report.truncated ? `<span>${escapeHtml(t("cache.truncated"))}</span>` : ""}
+      <span class="query-expression">${escapeHtml(t("cache.previous"))} ${escapeHtml(previousHash)}</span>
+      <span class="query-expression">${escapeHtml(t("cache.current"))} ${escapeHtml(report.current_hash || "unknown")}</span>
     </div>
   `;
-  const groups = renderCacheDiffGroup("Chunks", chunks, renderCacheChunkEntry);
+  const groups = renderCacheDiffGroup(t("cache.chunksGroup"), chunks, renderCacheChunkEntry);
   if (!groups) {
-    return `${summary}<p class="empty">No cached graph chunks available.</p>`;
+    return `${summary}<p class="empty">${escapeHtml(t("cache.noChunks"))}</p>`;
   }
   return `${summary}${groups}`;
 }
@@ -3313,32 +3501,32 @@ function renderIncrementalPlan(plan) {
     <div class="query-summary">
       <span>${escapeHtml(formatKind(plan.action || "unknown"))}</span>
       <span>${escapeHtml(formatKind(plan.cache_record || "unknown"))}</span>
-      <span>${Number(plan.changed_files || 0)} changed</span>
-      <span>${Number(plan.rescan_files || 0)} rescan</span>
-      <span>${Number(plan.removed_files || 0)} removed</span>
-      <span>${Number(plan.reusable_files || 0)} reusable</span>
-      <span>${Number(plan.impacted_nodes || 0)} graph nodes</span>
-      <span>${Number(plan.impacted_edges || 0)} graph edges</span>
-      <span>${formatBasisPoints(plan.reuse_file_ratio_basis_points)} file reuse</span>
-      <span>${formatBasisPoints(plan.reuse_byte_ratio_basis_points)} byte reuse</span>
-      <span>${formatBytes(plan.changed_current_bytes)} changed current</span>
-      <span>${formatBytes(plan.reusable_bytes)} reusable</span>
-      ${plan.truncated ? "<span>truncated</span>" : ""}
+      <span>${Number(plan.changed_files || 0)} ${escapeHtml(t("cache.changed"))}</span>
+      <span>${Number(plan.rescan_files || 0)} ${escapeHtml(t("cache.rescan"))}</span>
+      <span>${Number(plan.removed_files || 0)} ${escapeHtml(t("cache.removed"))}</span>
+      <span>${Number(plan.reusable_files || 0)} ${escapeHtml(t("cache.reusable"))}</span>
+      <span>${Number(plan.impacted_nodes || 0)} ${escapeHtml(t("cache.graphNodes"))}</span>
+      <span>${Number(plan.impacted_edges || 0)} ${escapeHtml(t("cache.graphEdges"))}</span>
+      <span>${formatBasisPoints(plan.reuse_file_ratio_basis_points)} ${escapeHtml(t("cache.fileReuse"))}</span>
+      <span>${formatBasisPoints(plan.reuse_byte_ratio_basis_points)} ${escapeHtml(t("cache.byteReuse"))}</span>
+      <span>${formatBytes(plan.changed_current_bytes)} ${escapeHtml(t("cache.changedCurrent"))}</span>
+      <span>${formatBytes(plan.reusable_bytes)} ${escapeHtml(t("cache.reusable"))}</span>
+      ${plan.truncated ? `<span>${escapeHtml(t("cache.truncated"))}</span>` : ""}
       <span class="query-expression">${escapeHtml(plan.reason || "")}</span>
     </div>
   `;
   const groups = [
-    renderCacheDiffGroup("Scan", scanPaths, renderPlanPath),
-    renderCacheDiffGroup("Removed", removedPaths, renderPlanPath),
-    renderCacheDiffGroup("Reusable", reusablePaths, renderPlanPath),
-    renderCacheDiffGroup("Node IDs", impactedNodeIds, renderPlanScalar),
-    renderCacheDiffGroup("Edge Indexes", impactedEdgeIndexes, renderPlanScalar),
+    renderCacheDiffGroup(t("cache.scanGroup"), scanPaths, renderPlanPath),
+    renderCacheDiffGroup(t("cache.removedGroup"), removedPaths, renderPlanPath),
+    renderCacheDiffGroup(t("cache.reusableGroup"), reusablePaths, renderPlanPath),
+    renderCacheDiffGroup(t("cache.nodeIdsGroup"), impactedNodeIds, renderPlanScalar),
+    renderCacheDiffGroup(t("cache.edgeIndexesGroup"), impactedEdgeIndexes, renderPlanScalar),
   ]
     .filter(Boolean)
     .join("");
 
   if (!groups) {
-    return `${summary}<p class="empty">No incremental scan work needed.</p>`;
+    return `${summary}<p class="empty">${escapeHtml(t("cache.noIncrementalWork"))}</p>`;
   }
 
   return `${summary}${groups}`;
@@ -3349,10 +3537,10 @@ function renderIncrementalScan(scan) {
   const plan = scan.plan || {};
   const graphSummary = `
     <div class="query-summary">
-      <span>${Number(graph.nodes?.length || 0)} scanned nodes</span>
-      <span>${Number(graph.edges?.length || 0)} scanned edges</span>
-      <span>${Number(plan.scan_paths?.length || 0)} listed paths</span>
-      ${plan.truncated ? "<span>limited scope</span>" : ""}
+      <span>${Number(graph.nodes?.length || 0)} ${escapeHtml(t("cache.scannedNodes"))}</span>
+      <span>${Number(graph.edges?.length || 0)} ${escapeHtml(t("cache.scannedEdges"))}</span>
+      <span>${Number(plan.scan_paths?.length || 0)} ${escapeHtml(t("cache.listed"))} ${escapeHtml(t("cache.path"))}</span>
+      ${plan.truncated ? `<span>${escapeHtml(t("cache.limitedScope"))}</span>` : ""}
     </div>
   `;
   return `${graphSummary}${renderIncrementalPlan(plan)}`;
@@ -3364,28 +3552,28 @@ function renderIncrementalMergePreview(preview) {
   const merge = preview.merge || {};
   const blockers = merge.completeness_blockers || [];
   const warning = merge.warning
-    ? `<p class="empty">${escapeHtml(merge.warning)}</p>`
+    ? `<p class="empty">${escapeHtml(localizedMergeWarning(merge))}</p>`
     : "";
-  const blockerGroup = renderCacheDiffGroup("Completeness blockers", blockers, renderMergeBlocker);
+  const blockerGroup = renderCacheDiffGroup(t("cache.completenessBlockersGroup"), blockers, renderMergeBlocker);
   const graphSummary = `
     <div class="query-summary">
-      <span>${Number(graph.nodes?.length || 0)} preview nodes</span>
-      <span>${Number(graph.edges?.length || 0)} preview edges</span>
-      <span>${Number(merge.reused_nodes || 0)} reused nodes</span>
-      <span>${Number(merge.reused_edges || 0)} reused edges</span>
-      <span>${Number(merge.removed_cached_nodes || 0)} removed cached nodes</span>
-      <span>${Number(merge.removed_cached_edges || 0)} removed cached edges</span>
-      <span>${Number(merge.chunk_removed_nodes || 0)} chunk nodes</span>
-      <span>${Number(merge.chunk_removed_edges || 0)} chunk edges</span>
-      <span>${Number(merge.scanned_nodes || 0)} scanned nodes</span>
-      <span>${Number(merge.scanned_edges || 0)} scanned edges</span>
-      <span>${Number(merge.replaced_paths || 0)} replaced paths</span>
-      <span>${Number(merge.incoming_cross_file_edges || 0)} incoming blockers</span>
-      <span>${Number(merge.graph_surface_added || 0)} surface added</span>
-      <span>${Number(merge.graph_surface_removed || 0)} surface removed</span>
-      <span>${Number(merge.removed_paths_blocking || 0)} removed paths</span>
-      <span>${Number(blockers.length || 0)} blockers</span>
-      <span>${merge.complete_graph ? "complete" : "preview"}</span>
+      <span>${Number(graph.nodes?.length || 0)} ${escapeHtml(t("cache.previewNodes"))}</span>
+      <span>${Number(graph.edges?.length || 0)} ${escapeHtml(t("cache.previewEdges"))}</span>
+      <span>${Number(merge.reused_nodes || 0)} ${escapeHtml(t("cache.reusedNodes"))}</span>
+      <span>${Number(merge.reused_edges || 0)} ${escapeHtml(t("cache.reusedEdges"))}</span>
+      <span>${Number(merge.removed_cached_nodes || 0)} ${escapeHtml(t("cache.removedCachedNodes"))}</span>
+      <span>${Number(merge.removed_cached_edges || 0)} ${escapeHtml(t("cache.removedCachedEdges"))}</span>
+      <span>${Number(merge.chunk_removed_nodes || 0)} ${escapeHtml(t("cache.chunkNodes"))}</span>
+      <span>${Number(merge.chunk_removed_edges || 0)} ${escapeHtml(t("cache.chunkEdges"))}</span>
+      <span>${Number(merge.scanned_nodes || 0)} ${escapeHtml(t("cache.scannedNodes"))}</span>
+      <span>${Number(merge.scanned_edges || 0)} ${escapeHtml(t("cache.scannedEdges"))}</span>
+      <span>${Number(merge.replaced_paths || 0)} ${escapeHtml(t("cache.replacedPaths"))}</span>
+      <span>${Number(merge.incoming_cross_file_edges || 0)} ${escapeHtml(t("cache.incomingBlockers"))}</span>
+      <span>${Number(merge.graph_surface_added || 0)} ${escapeHtml(t("cache.surfaceAdded"))}</span>
+      <span>${Number(merge.graph_surface_removed || 0)} ${escapeHtml(t("cache.surfaceRemoved"))}</span>
+      <span>${Number(merge.removed_paths_blocking || 0)} ${escapeHtml(t("cache.removedPaths"))}</span>
+      <span>${Number(blockers.length || 0)} ${escapeHtml(t("cache.blockers"))}</span>
+      <span>${merge.complete_graph ? escapeHtml(t("cache.complete")) : escapeHtml(t("cache.preview"))}</span>
     </div>
   `;
   return `${graphSummary}${warning}${blockerGroup}${renderIncrementalPlan(plan)}`;
@@ -3393,13 +3581,13 @@ function renderIncrementalMergePreview(preview) {
 
 function renderIncrementalUpdate(update) {
   const cache = update.cache || {};
-  const status = cache.stored ? "stored" : "not stored";
+  const status = cache.stored ? t("cache.stored") : t("cache.notStored");
   const summary = `
     <div class="query-summary">
       <span>${escapeHtml(status)}</span>
-      <span>${escapeHtml(cache.reason || "")}</span>
-      <span class="query-expression">previous ${escapeHtml(cache.previous_hash || "none")}</span>
-      <span class="query-expression">current ${escapeHtml(cache.current_hash || "unknown")}</span>
+      <span>${escapeHtml(localizedIncrementalUpdateReason(update))}</span>
+      <span class="query-expression">${escapeHtml(t("cache.previous"))} ${escapeHtml(cache.previous_hash || t("cache.none"))}</span>
+      <span class="query-expression">${escapeHtml(t("cache.current"))} ${escapeHtml(cache.current_hash || "unknown")}</span>
     </div>
   `;
   return `${summary}${renderIncrementalMergePreview(update.preview || {})}`;
@@ -3417,9 +3605,12 @@ function showIncrementalScanGraph(scan) {
   state.selectedEdgeKey = null;
   state.hoveredId = null;
   state.queryFocus = null;
-  rootLabel.textContent = `Changed: ${formatKind(plan.action || "scan")}`;
+  rootLabel.textContent = t("cache.changedGraph", { action: formatKind(plan.action || "scan") });
   initializeGraph({ preserveView: false });
-  pageInfo.textContent = `changed ${state.graph.nodes.length} / ${Number(plan.rescan_files || 0)}`;
+  pageInfo.textContent = t("cache.changedPageInfo", {
+    nodes: state.graph.nodes.length,
+    files: Number(plan.rescan_files || 0),
+  });
   pagePrevButton.disabled = true;
   pageNextButton.disabled = true;
   pageReloadButton.disabled = false;
@@ -3437,9 +3628,12 @@ function showIncrementalMergePreviewGraph(preview) {
   state.selectedEdgeKey = null;
   state.hoveredId = null;
   state.queryFocus = null;
-  rootLabel.textContent = merge.complete_graph ? "Incremental: complete" : "Incremental: merge preview";
+  rootLabel.textContent = merge.complete_graph ? t("cache.incrementalComplete") : t("cache.incrementalPreview");
   initializeGraph({ preserveView: false });
-  pageInfo.textContent = `preview ${state.graph.nodes.length} / ${Number(merge.reused_nodes || 0)} reused`;
+  pageInfo.textContent = t("cache.previewPageInfo", {
+    nodes: state.graph.nodes.length,
+    reused: Number(merge.reused_nodes || 0),
+  });
   pagePrevButton.disabled = true;
   pageNextButton.disabled = true;
   pageReloadButton.disabled = false;
@@ -3448,7 +3642,7 @@ function showIncrementalMergePreviewGraph(preview) {
 function renderPlanPath(path) {
   return `
     <div class="query-item cache-diff-item">
-      <span>path</span>
+      <span>${escapeHtml(t("cache.path"))}</span>
       <strong>${escapeHtml(path || "")}</strong>
     </div>
   `;
@@ -3457,7 +3651,7 @@ function renderPlanPath(path) {
 function renderPlanScalar(value) {
   return `
     <div class="query-item cache-diff-item">
-      <span>id</span>
+      <span>${escapeHtml(t("cache.id"))}</span>
       <strong>${escapeHtml(String(value ?? ""))}</strong>
     </div>
   `;
@@ -3468,9 +3662,37 @@ function renderMergeBlocker(blocker) {
     <div class="query-item cache-diff-item">
       <span>${Number(blocker.count || 0)}</span>
       <strong>${escapeHtml(formatKind(blocker.kind || "blocker"))}</strong>
-      <span>${escapeHtml(blocker.message || "")}</span>
+      <span>${escapeHtml(localizedMergeBlockerMessage(blocker))}</span>
     </div>
   `;
+}
+
+function localizedMergeWarning(merge) {
+  const blockers = merge.completeness_blockers || [];
+  return blockers.length ? localizedMergeBlockerMessage(blockers[0]) : merge.warning || "";
+}
+
+function localizedMergeBlockerMessage(blocker) {
+  const key = `cache.blocker.${blocker?.kind || ""}`;
+  const fallback = blocker?.message || "";
+  return translate(key, fallback, { count: Number(blocker?.count || 0) });
+}
+
+function localizedIncrementalUpdateReason(update) {
+  const cache = update?.cache || {};
+  if (cache.stored) return t("cache.updateStored");
+  const blockers = update?.preview?.merge?.completeness_blockers || [];
+  if (blockers.length) return localizedMergeBlockerMessage(blockers[0]);
+  switch (cache.reason) {
+    case "cache already matches the current project fingerprint":
+      return t("cache.updateAlreadyCurrent");
+    case "stored complete graph under the current project fingerprint":
+      return t("cache.updateStored");
+    case "incremental merge is incomplete; cache record was not updated":
+      return t("cache.updateIncomplete");
+    default:
+      return cache.reason || "";
+  }
 }
 
 function renderCacheChunkEntry(chunk) {
@@ -3481,7 +3703,7 @@ function renderCacheChunkEntry(chunk) {
     .join(" | ");
   return `
     <div class="query-item cache-diff-item">
-      <span>${Number(chunk.nodes || 0)} nodes / ${Number(chunk.edges || 0)} edges</span>
+      <span>${Number(chunk.nodes || 0)} ${escapeHtml(t("cache.nodes"))} / ${Number(chunk.edges || 0)} ${escapeHtml(t("cache.edges"))}</span>
       <strong>${escapeHtml(chunk.path || "")}</strong>
       ${preview ? `<span>${escapeHtml(preview)}</span>` : ""}
     </div>
