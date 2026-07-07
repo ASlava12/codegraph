@@ -803,6 +803,24 @@ pub struct CheckReport {
     pub report: InsightReport,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectRiskSummary {
+    pub score: usize,
+    pub grade: String,
+    pub total: usize,
+    pub errors: usize,
+    pub warnings: usize,
+    pub infos: usize,
+    pub top_kinds: Vec<ProjectRiskKindSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectRiskKindSummary {
+    pub kind: String,
+    pub severity: String,
+    pub count: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectReportLimits {
     pub architecture_group_limit: usize,
@@ -832,6 +850,7 @@ pub struct ProjectReport {
     pub summary: GraphSummary,
     pub entrypoints: Vec<Node>,
     pub insights: InsightReport,
+    pub risk_summary: ProjectRiskSummary,
     pub quality_gate: CheckReport,
     pub architecture: ArchitectureMap,
     pub language_dependencies: LanguageDependencyReport,
@@ -1382,8 +1401,11 @@ pub fn check_insights(report: InsightReport, fail_on: InsightSeverity) -> CheckR
 
 pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> ProjectReport {
     let limits = normalize_project_report_limits(limits);
+    let full_insight_report = insights(graph);
+    let risk_summary = project_risk_summary(&full_insight_report);
+    let quality_gate = check_insights(full_insight_report.clone(), limits.fail_on);
     let insight_report = filter_insight_report(
-        insights(graph),
+        full_insight_report,
         &InsightFilter {
             severity: None,
             kind: None,
@@ -1391,13 +1413,13 @@ pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> Project
             limit: limits.insight_limit,
         },
     );
-    let quality_gate = check_insights(insight_report.clone(), limits.fail_on);
 
     ProjectReport {
         graph_schema_version: graph.schema_version,
         summary: summarize(graph),
         entrypoints: entrypoints(graph),
         insights: insight_report,
+        risk_summary,
         quality_gate,
         architecture: architecture_map(
             graph,
@@ -1406,6 +1428,70 @@ pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> Project
         ),
         language_dependencies: language_dependencies(graph, limits.language_link_limit),
         hotspots: hotspots(graph, limits.hotspot_limit),
+    }
+}
+
+fn project_risk_summary(report: &InsightReport) -> ProjectRiskSummary {
+    let errors = severity_count(report, InsightSeverity::Error);
+    let warnings = severity_count(report, InsightSeverity::Warning);
+    let infos = severity_count(report, InsightSeverity::Info);
+    let score = errors * 100 + warnings * 10 + infos;
+    let mut kind_severities: BTreeMap<String, InsightSeverity> = BTreeMap::new();
+    for insight in &report.insights {
+        kind_severities
+            .entry(insight.kind.clone())
+            .and_modify(|severity| *severity = (*severity).max(insight.severity))
+            .or_insert(insight.severity);
+    }
+    let mut top_kinds: Vec<_> = report
+        .by_kind
+        .iter()
+        .map(|(kind, count)| ProjectRiskKindSummary {
+            kind: kind.clone(),
+            severity: severity_name(
+                kind_severities
+                    .get(kind)
+                    .copied()
+                    .unwrap_or(InsightSeverity::Info),
+            )
+            .to_string(),
+            count: *count,
+        })
+        .collect();
+    top_kinds.sort_by(|left, right| {
+        parse_report_severity(&right.severity)
+            .cmp(&parse_report_severity(&left.severity))
+            .then_with(|| right.count.cmp(&left.count))
+            .then_with(|| left.kind.cmp(&right.kind))
+    });
+    top_kinds.truncate(10);
+
+    ProjectRiskSummary {
+        score,
+        grade: risk_grade(score).to_string(),
+        total: report.total,
+        errors,
+        warnings,
+        infos,
+        top_kinds,
+    }
+}
+
+fn severity_count(report: &InsightReport, severity: InsightSeverity) -> usize {
+    report
+        .by_severity
+        .get(severity_name(severity))
+        .copied()
+        .unwrap_or(0)
+}
+
+fn risk_grade(score: usize) -> &'static str {
+    match score {
+        0 => "clean",
+        1..=19 => "low",
+        20..=99 => "medium",
+        100..=499 => "high",
+        _ => "critical",
     }
 }
 
@@ -7434,10 +7520,27 @@ mod tests {
     fn project_report_combines_summary_quality_and_limited_views() {
         let mut graph = CodeGraph::new("repo");
         let file = graph.add_node(NodeKind::File, "src/main.rs");
+        graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/broken.rs",
+            None,
+            BTreeMap::from([("parse_error".to_string(), "unexpected token".to_string())]),
+        );
         let main = graph.add_node(NodeKind::Function, "main");
+        graph.add_node(NodeKind::Function, "orphan");
         let config = graph.add_node(NodeKind::Config, "DATABASE_URL");
+        let unresolved = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "missing",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "call".to_string()),
+                ("resolution".to_string(), "unresolved".to_string()),
+            ]),
+        );
         graph.add_edge(file, main, EdgeKind::Defines, Confidence::Exact);
         graph.add_edge(file, main, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(main, unresolved, EdgeKind::Calls, Confidence::Heuristic);
         graph.add_edge(main, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
 
         let report = project_report(
@@ -7447,7 +7550,7 @@ mod tests {
                 architecture_edge_limit: 5,
                 language_link_limit: 5,
                 hotspot_limit: 1,
-                insight_limit: 10,
+                insight_limit: 1,
                 fail_on: InsightSeverity::Warning,
             },
         );
@@ -7457,7 +7560,26 @@ mod tests {
         assert_eq!(report.entrypoints.len(), 1);
         assert_eq!(report.hotspots.hotspots.len(), 1);
         assert_eq!(report.quality_gate.fail_on, "warning");
+        assert_eq!(report.insights.insights.len(), 1);
         assert_eq!(report.insights.total, report.quality_gate.report.total);
+        assert_eq!(report.risk_summary.total, report.quality_gate.report.total);
+        assert_eq!(report.risk_summary.errors, 1);
+        assert_eq!(report.risk_summary.warnings, 1);
+        assert!(report.risk_summary.infos >= 1);
+        assert_eq!(
+            report.risk_summary.score,
+            100 + 10 + report.risk_summary.infos
+        );
+        assert_eq!(report.risk_summary.grade, "high");
+        assert!(!report.quality_gate.passed);
+        assert_eq!(report.quality_gate.failing_insights, 2);
+        assert!(
+            report
+                .risk_summary
+                .top_kinds
+                .iter()
+                .any(|risk| risk.kind == "parse_error" && risk.severity == "error")
+        );
     }
 
     #[test]

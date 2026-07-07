@@ -49,7 +49,7 @@ Implemented now:
 - Graceful HTTP server shutdown on Ctrl-C and SIGTERM.
 - Server-wide security headers for the embedded web UI and API responses.
 - Optional API bearer-token protection through `--api-token` or `CODEGRAPH_API_TOKEN`, with same-origin web UI token prompting.
-- Project report snapshots in CLI, API, and web export for summary, quality gate, insights, topology reports, cache, and scan coverage.
+- Project report snapshots in CLI, API, and web export for summary, full-risk scoring, quality gate, insights, topology reports, cache, and scan coverage.
 - Web overview chips for server capabilities, API/schema versions, cache state, supported language/export counts, job limits, and route groups.
 - Web runtime panel for uptime, cache state, scan/semantic slots, and retained job-store totals.
 - Async scan job API for long-running repository scans.
@@ -241,6 +241,8 @@ Create a production-oriented project report snapshot:
 ```bash
 cargo run -p codegraph-cli -- report . --fail-on warning --insight-limit 100
 ```
+
+The report includes a `risk_summary` with total findings, severity counts, a weighted score, a grade, and the top insight kinds. The quality gate is calculated from the full insight set even when the returned insight list is capped with `--insight-limit`.
 
 Explain scan coverage before or after a full graph scan:
 

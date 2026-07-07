@@ -3766,7 +3766,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
             endpoints: vec![
                 api_get(
                     "/api/report",
-                    "Return a production project report snapshot with cache, coverage, summary, quality gate, topology, and hotspots.",
+                    "Return a production project report snapshot with cache, coverage, summary, full-project risk scoring, quality gate, topology, and hotspots.",
                     report_params(),
                     "ProjectReportResponse",
                 ),
