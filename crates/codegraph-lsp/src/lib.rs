@@ -13,6 +13,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_SEMANTIC_WORK_ITEM_LIMIT: usize = 100;
 pub const MAX_SEMANTIC_WORK_ITEM_LIMIT: usize = 1_000;
+pub const DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS: u64 = 30_000;
+pub const MAX_SEMANTIC_REQUEST_TIMEOUT_MS: u64 = 300_000;
 const SEMANTIC_CACHE_SCHEMA_VERSION: u32 = 1;
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
@@ -168,7 +170,7 @@ pub struct SemanticLspRunOptions {
 impl Default for SemanticLspRunOptions {
     fn default() -> Self {
         Self {
-            request_timeout: Duration::from_secs(30),
+            request_timeout: Duration::from_millis(DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS),
         }
     }
 }
@@ -889,6 +891,10 @@ pub fn semantic_enrichment_plan_with_discovery_and_filter(
 
 pub fn normalize_semantic_work_item_limit(work_item_limit: usize) -> usize {
     work_item_limit.clamp(1, MAX_SEMANTIC_WORK_ITEM_LIMIT)
+}
+
+pub fn normalize_semantic_request_timeout_ms(request_timeout_ms: u64) -> u64 {
+    request_timeout_ms.clamp(1, MAX_SEMANTIC_REQUEST_TIMEOUT_MS)
 }
 
 pub fn semantic_execution_batch_with_discovery(
@@ -3239,6 +3245,23 @@ mod tests {
         assert_eq!(
             blocked_batch.blocked_items[0].id,
             "language_support:markdown"
+        );
+    }
+
+    #[test]
+    fn semantic_request_timeout_is_clamped_to_runtime_bounds() {
+        assert_eq!(normalize_semantic_request_timeout_ms(0), 1);
+        assert_eq!(
+            normalize_semantic_request_timeout_ms(DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS),
+            DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS
+        );
+        assert_eq!(
+            normalize_semantic_request_timeout_ms(u64::MAX),
+            MAX_SEMANTIC_REQUEST_TIMEOUT_MS
+        );
+        assert_eq!(
+            SemanticLspRunOptions::default().request_timeout,
+            Duration::from_millis(DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS)
         );
     }
 

@@ -16,8 +16,9 @@ use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
 };
 use codegraph_lsp::{
-    DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, SemanticLspCache, SemanticLspResponse, SemanticLspRunOptions,
-    SemanticWorkItemFilter, apply_semantic_graph_patch, discover_lsp_servers,
+    DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS, DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, SemanticLspCache,
+    SemanticLspResponse, SemanticLspRunOptions, SemanticWorkItemFilter, apply_semantic_graph_patch,
+    discover_lsp_servers, normalize_semantic_request_timeout_ms,
     normalize_semantic_work_item_limit, run_semantic_execution_batch_cached,
     semantic_enrichment_plan_with_filter, semantic_execution_batch,
     semantic_graph_patch_from_responses, semantic_readiness,
@@ -422,8 +423,8 @@ struct SemanticRunArgs {
     #[command(flatten)]
     plan: SemanticPlanArgs,
 
-    /// Milliseconds to wait for each language-server response.
-    #[arg(long, default_value_t = 30_000)]
+    /// Milliseconds to wait for each language-server response; larger values are capped.
+    #[arg(long, default_value_t = DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS)]
     request_timeout_ms: u64,
 }
 
@@ -778,7 +779,9 @@ fn main() -> Result<()> {
                 semantic_cache.as_ref(),
                 &batch,
                 &SemanticLspRunOptions {
-                    request_timeout: std::time::Duration::from_millis(args.request_timeout_ms),
+                    request_timeout: std::time::Duration::from_millis(
+                        normalize_semantic_request_timeout_ms(args.request_timeout_ms),
+                    ),
                 },
             )?;
             println!("{}", serde_json::to_string_pretty(&run.responses)?);

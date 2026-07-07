@@ -266,6 +266,7 @@ const I18N = {
     "cap.scanJobs": "Scan Jobs",
     "cap.semanticJobs": "Semantic Jobs",
     "cap.semanticWork": "Semantic Work",
+    "cap.semanticTimeout": "LSP Timeout",
     "cap.graphPage": "Graph Page",
     "cap.nodeCard": "Node Card",
     "cap.focus": "Focus",
@@ -618,6 +619,7 @@ const I18N = {
     "cap.scanJobs": "Скан-задачи",
     "cap.semanticJobs": "Сем. задачи",
     "cap.semanticWork": "Сем. работа",
+    "cap.semanticTimeout": "LSP таймаут",
     "cap.graphPage": "Страница графа",
     "cap.nodeCard": "Карточка узла",
     "cap.focus": "Фокус",
@@ -2130,7 +2132,9 @@ async function runSemanticEnrich() {
     path: pathInput.value.trim() || ".",
     work_item_limit: Number(state.semanticPlan?.work_item_limit || 100),
     work_status: workStatus || "ready",
-    request_timeout_ms: 30_000,
+    request_timeout_ms: Number(
+      state.capabilities?.limits?.default_semantic_request_timeout_ms || 30_000,
+    ),
   };
   if (workLanguage) body.work_language = workLanguage;
   if (workCapability) body.work_capability = workCapability;
@@ -2562,6 +2566,7 @@ function renderCapabilities(capabilities) {
     [t("cap.scanJobs"), `${Number(limits.max_scan_concurrency || 0)}/${Number(limits.max_scan_jobs || 0)}`],
     [t("cap.semanticJobs"), `${Number(limits.max_semantic_concurrency || 0)}/${Number(limits.max_semantic_jobs || 0)}`],
     [t("cap.semanticWork"), String(Number(limits.max_semantic_work_item_limit || 0))],
+    [t("cap.semanticTimeout"), String(Number(limits.max_semantic_request_timeout_ms || 0))],
     [t("cap.graphPage"), `${Number(limits.max_graph_node_limit || 0)}/${Number(limits.max_graph_edge_limit || 0)}`],
     [t("cap.nodeCard"), String(Number(limits.max_node_context_edge_limit || 0))],
     [t("cap.focus"), String(Number(limits.max_focus_edge_limit || 0))],

@@ -28,11 +28,12 @@ use codegraph_indexer::{
     IndexOptionOverrides, IndexOptions, configured_index_options, scan_coverage,
 };
 use codegraph_lsp::{
-    DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, LspDiscoveryReport, MAX_SEMANTIC_WORK_ITEM_LIMIT,
-    SemanticEnrichmentPlan, SemanticGraphApplyReport, SemanticGraphApplyResult, SemanticGraphPatch,
-    SemanticLspCache, SemanticLspCacheInfo, SemanticLspResponse, SemanticLspRunOptions,
-    SemanticReadinessReport, SemanticWorkItemFilter, apply_semantic_graph_patch,
-    discover_lsp_servers, run_semantic_execution_batch_cached,
+    DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS, DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, LspDiscoveryReport,
+    MAX_SEMANTIC_REQUEST_TIMEOUT_MS, MAX_SEMANTIC_WORK_ITEM_LIMIT, SemanticEnrichmentPlan,
+    SemanticGraphApplyReport, SemanticGraphApplyResult, SemanticGraphPatch, SemanticLspCache,
+    SemanticLspCacheInfo, SemanticLspResponse, SemanticLspRunOptions, SemanticReadinessReport,
+    SemanticWorkItemFilter, apply_semantic_graph_patch, discover_lsp_servers,
+    normalize_semantic_request_timeout_ms, run_semantic_execution_batch_cached,
     semantic_enrichment_plan_with_filter, semantic_execution_batch,
     semantic_graph_patch_from_responses, semantic_readiness,
 };
@@ -677,6 +678,8 @@ struct RuntimeLimitsResponse {
     max_job_list_limit: usize,
     default_semantic_work_item_limit: usize,
     max_semantic_work_item_limit: usize,
+    default_semantic_request_timeout_ms: u64,
+    max_semantic_request_timeout_ms: u64,
     default_incremental_report_limit: usize,
     max_incremental_report_limit: usize,
     default_graph_node_limit: usize,
@@ -1534,6 +1537,8 @@ async fn capabilities_api(
             max_job_list_limit: MAX_JOB_LIST_LIMIT,
             default_semantic_work_item_limit: DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
             max_semantic_work_item_limit: MAX_SEMANTIC_WORK_ITEM_LIMIT,
+            default_semantic_request_timeout_ms: DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS,
+            max_semantic_request_timeout_ms: MAX_SEMANTIC_REQUEST_TIMEOUT_MS,
             default_incremental_report_limit: DEFAULT_INCREMENTAL_REPORT_LIMIT,
             max_incremental_report_limit: MAX_INCREMENTAL_REPORT_LIMIT,
             default_graph_node_limit: DEFAULT_GRAPH_NODE_LIMIT,
@@ -2972,12 +2977,11 @@ fn run_semantic_enrichment(
     request: SemanticEnrichRequest,
     cache: Option<SemanticLspCache>,
 ) -> Result<SemanticEnrichResponse, codegraph_lsp::SemanticLspRunError> {
-    let timeout = Duration::from_millis(
+    let timeout = Duration::from_millis(normalize_semantic_request_timeout_ms(
         request
             .request_timeout_ms
-            .unwrap_or(30_000)
-            .clamp(1, 300_000),
-    );
+            .unwrap_or(DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS),
+    ));
     let batch = semantic_execution_batch(
         &root,
         &graph,
@@ -5026,6 +5030,8 @@ mod tests {
         assert_eq!(response.limits.max_incremental_report_limit, 10000);
         assert_eq!(response.limits.default_semantic_work_item_limit, 100);
         assert_eq!(response.limits.max_semantic_work_item_limit, 1000);
+        assert_eq!(response.limits.default_semantic_request_timeout_ms, 30000);
+        assert_eq!(response.limits.max_semantic_request_timeout_ms, 300000);
         assert_eq!(response.limits.default_graph_node_limit, 250);
         assert_eq!(response.limits.max_graph_node_limit, 1000);
         assert_eq!(response.limits.default_graph_edge_limit, 500);
