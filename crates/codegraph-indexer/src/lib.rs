@@ -31,7 +31,7 @@ struct IndexContext {
     external_dependencies: BTreeMap<String, NodeId>,
     cargo_workspace_dependencies: BTreeMap<String, Option<String>>,
     go_modules: Vec<GoModuleRoot>,
-    cmake_include_dirs: Vec<String>,
+    c_include_dirs: Vec<String>,
     custom_rules: CustomRules,
     annotations: GraphAnnotations,
     pending_calls: Vec<PendingCall>,
@@ -193,7 +193,7 @@ pub fn scan_project(
         .unwrap_or(".");
     let cargo_workspace_dependencies = cargo_workspace_dependencies(root);
     let go_modules = go_module_roots(root, options);
-    let cmake_include_dirs = cmake_include_dirs(root, options);
+    let c_include_dirs = c_include_dirs(root, options);
     let custom_rules = custom_rules(root);
     let annotations = graph_annotations(root);
     let mut context = IndexContext {
@@ -203,7 +203,7 @@ pub fn scan_project(
         external_dependencies: BTreeMap::new(),
         cargo_workspace_dependencies,
         go_modules,
-        cmake_include_dirs,
+        c_include_dirs,
         custom_rules,
         annotations,
         pending_calls: Vec::new(),
@@ -330,12 +330,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str) {
                         parsed_item_kind_name(item.kind).to_string(),
                     );
                     let local_import = if item.kind == ParsedItemKind::Import {
-                        local_import_target(
-                            language,
-                            label,
-                            &item.label,
-                            &context.cmake_include_dirs,
-                        )
+                        local_import_target(language, label, &item.label, &context.c_include_dirs)
                     } else {
                         None
                     };
@@ -2846,6 +2841,13 @@ fn go_module_roots(root: &Path, options: &IndexOptions) -> Vec<GoModuleRoot> {
     modules
 }
 
+fn c_include_dirs(root: &Path, options: &IndexOptions) -> Vec<String> {
+    let mut dirs = cmake_include_dirs(root, options);
+    dirs.extend(compile_commands_include_dirs(root, options));
+    dedup_preserving_order(&mut dirs);
+    dirs
+}
+
 fn cmake_include_dirs(root: &Path, options: &IndexOptions) -> Vec<String> {
     let mut dirs = Vec::new();
     for entry in WalkDir::new(root)
@@ -2876,6 +2878,174 @@ fn cmake_include_dirs(root: &Path, options: &IndexOptions) -> Vec<String> {
     }
     dedup_preserving_order(&mut dirs);
     dirs
+}
+
+fn compile_commands_include_dirs(root: &Path, options: &IndexOptions) -> Vec<String> {
+    let mut dirs = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| should_enter(entry, options))
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path == root || !entry.file_type().is_file() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) != Some("compile_commands.json")
+            || !is_probably_source_file(path, options.max_file_size)
+        {
+            continue;
+        }
+
+        let Ok(source) = fs::read_to_string(path) else {
+            continue;
+        };
+        let base = path
+            .parent()
+            .and_then(|parent| parent.strip_prefix(root).ok())
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map(|relative| normalize_path(&relative))
+            .filter(|relative| !relative.is_empty());
+        dirs.extend(compile_commands_include_dirs_from_source(
+            root,
+            base.as_deref(),
+            &source,
+        ));
+    }
+    dedup_preserving_order(&mut dirs);
+    dirs
+}
+
+fn compile_commands_include_dirs_from_source(
+    root: &Path,
+    base: Option<&str>,
+    source: &str,
+) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let Some(commands) = value.as_array() else {
+        return Vec::new();
+    };
+
+    let mut dirs = Vec::new();
+    for command in commands {
+        let command_base = compile_command_base(root, base, command);
+        if let Some(arguments) = command.get("arguments").and_then(|value| value.as_array()) {
+            let args = arguments
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect::<Vec<_>>();
+            dirs.extend(include_dirs_from_compiler_args(
+                command_base.as_deref(),
+                &args,
+            ));
+        } else if let Some(command_line) = command.get("command").and_then(|value| value.as_str()) {
+            let args = split_command_tokens(command_line);
+            dirs.extend(include_dirs_from_compiler_args(
+                command_base.as_deref(),
+                &args,
+            ));
+        }
+    }
+    dedup_preserving_order(&mut dirs);
+    dirs
+}
+
+fn compile_command_base(
+    root: &Path,
+    base: Option<&str>,
+    command: &serde_json::Value,
+) -> Option<String> {
+    command
+        .get("directory")
+        .and_then(|value| value.as_str())
+        .and_then(|directory| normalize_compile_command_directory(root, base, directory))
+        .or_else(|| base.map(str::to_string))
+}
+
+fn normalize_compile_command_directory(
+    root: &Path,
+    base: Option<&str>,
+    directory: &str,
+) -> Option<String> {
+    let value = directory.trim();
+    if value.is_empty() {
+        return base.map(str::to_string);
+    }
+    let path = Path::new(value);
+    if path.is_absolute() {
+        return path
+            .strip_prefix(root)
+            .ok()
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map(|relative| normalize_path(&relative))
+            .map(|relative| {
+                if relative.is_empty() {
+                    ".".to_string()
+                } else {
+                    relative
+                }
+            });
+    }
+    Some(join_path(base, value))
+}
+
+fn include_dirs_from_compiler_args(base: Option<&str>, args: &[String]) -> Vec<String> {
+    let mut dirs = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].trim();
+        let mut consumed_next = false;
+        let candidate = if let Some(rest) = arg.strip_prefix("-I") {
+            if rest.is_empty() {
+                consumed_next = true;
+                args.get(index + 1).map(String::as_str)
+            } else {
+                Some(rest)
+            }
+        } else if let Some(rest) = arg.strip_prefix("-isystem") {
+            if rest.is_empty() {
+                consumed_next = true;
+                args.get(index + 1).map(String::as_str)
+            } else {
+                Some(rest)
+            }
+        } else if let Some(rest) = arg.strip_prefix("-iquote") {
+            if rest.is_empty() {
+                consumed_next = true;
+                args.get(index + 1).map(String::as_str)
+            } else {
+                Some(rest)
+            }
+        } else if matches!(arg, "/I" | "-idirafter") {
+            consumed_next = true;
+            args.get(index + 1).map(String::as_str)
+        } else if arg.starts_with("/I") {
+            arg.strip_prefix("/I").filter(|rest| !rest.is_empty())
+        } else {
+            None
+        };
+
+        if let Some(candidate) = candidate.and_then(|value| compiler_include_dir_arg(base, value)) {
+            dirs.push(candidate);
+        }
+        index += if consumed_next { 2 } else { 1 };
+    }
+    dedup_preserving_order(&mut dirs);
+    dirs
+}
+
+fn compiler_include_dir_arg(base: Option<&str>, arg: &str) -> Option<String> {
+    let value = arg.trim().trim_matches(['"', '\'']);
+    if value.is_empty() || value.starts_with('$') || value.starts_with('<') {
+        return None;
+    }
+    if Path::new(value).is_absolute() {
+        return None;
+    }
+    let path = join_path(base, value);
+    if path.is_empty() { None } else { Some(path) }
 }
 
 fn cmake_include_dirs_from_source(base: Option<&str>, source: &str) -> Vec<String> {
@@ -4401,6 +4571,87 @@ mod tests {
                     .metadata
                     .get("relation")
                     .is_some_and(|value| value == "local_import_file")
+        }));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_resolves_compile_commands_include_directories() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("include").join("app")).unwrap();
+        fs::create_dir_all(root.join("extras").join("detail")).unwrap();
+        fs::write(
+            root.join("src").join("main.cpp"),
+            "#include \"app/settings.hpp\"\n#include \"detail/log.hpp\"\nint main() { return SETTING; }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("include").join("app").join("settings.hpp"),
+            "#define SETTING 0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("extras").join("detail").join("log.hpp"),
+            "#pragma once\n",
+        )
+        .unwrap();
+        let commands = serde_json::json!([
+            {
+                "directory": root.to_string_lossy(),
+                "file": "src/main.cpp",
+                "arguments": ["clang++", "-I", "include", "-c", "src/main.cpp"]
+            },
+            {
+                "directory": root.to_string_lossy(),
+                "file": "src/main.cpp",
+                "command": "clang++ -Iextras -c src/main.cpp"
+            }
+        ]);
+        fs::write(
+            root.join("compile_commands.json"),
+            serde_json::to_string_pretty(&commands).unwrap(),
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let settings_include = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "#include \"app/settings.hpp\"")
+            .expect("missing settings include node");
+        let log_include = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "#include \"detail/log.hpp\"")
+            .expect("missing log include node");
+        let settings_header = node_id(&graph, NodeKind::File, "include/app/settings.hpp");
+        let log_header = node_id(&graph, NodeKind::File, "extras/detail/log.hpp");
+
+        assert_eq!(
+            settings_include
+                .metadata
+                .get("resolved_path")
+                .map(String::as_str),
+            Some("include/app/settings.hpp")
+        );
+        assert_eq!(
+            log_include
+                .metadata
+                .get("resolved_path")
+                .map(String::as_str),
+            Some("extras/detail/log.hpp")
+        );
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == settings_include.id
+                && edge.target == settings_header
+                && edge.kind == EdgeKind::References
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == log_include.id
+                && edge.target == log_header
+                && edge.kind == EdgeKind::References
         }));
 
         fs::remove_dir_all(root).unwrap();
