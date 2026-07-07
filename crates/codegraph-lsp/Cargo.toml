@@ -6,4 +6,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+codegraph-core.workspace = true
 serde.workspace = true

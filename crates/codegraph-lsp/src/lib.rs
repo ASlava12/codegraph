@@ -1,3 +1,4 @@
+use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeKind};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -39,6 +40,43 @@ pub struct LanguageReadiness {
     pub server: Option<&'static str>,
     pub installed: bool,
     pub capabilities: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SemanticEnrichmentPlan {
+    pub languages: Vec<LanguageEnrichmentPlan>,
+    pub total_languages: usize,
+    pub ready_languages: usize,
+    pub blocked_languages: usize,
+    pub unsupported_languages: usize,
+    pub semantic_candidate_nodes: usize,
+    pub heuristic_edges_to_upgrade: usize,
+    pub planned_requests: SemanticRequestCounts,
+    pub missing_servers: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LanguageEnrichmentPlan {
+    pub language: String,
+    pub status: &'static str,
+    pub nodes: usize,
+    pub files: usize,
+    pub symbol_nodes: usize,
+    pub heuristic_edges_to_upgrade: usize,
+    pub server: Option<&'static str>,
+    pub command: Option<&'static str>,
+    pub installed: bool,
+    pub capabilities: Vec<&'static str>,
+    pub planned_requests: SemanticRequestCounts,
+    pub blocked_reason: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct SemanticRequestCounts {
+    pub document_symbols: usize,
+    pub definitions: usize,
+    pub references: usize,
+    pub diagnostics: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,6 +200,11 @@ pub fn semantic_readiness(languages: &BTreeMap<String, usize>) -> SemanticReadin
     semantic_readiness_with_discovery(languages, &discovery)
 }
 
+pub fn semantic_enrichment_plan(graph: &CodeGraph) -> SemanticEnrichmentPlan {
+    let discovery = discover_lsp_servers();
+    semantic_enrichment_plan_with_discovery(graph, &discovery)
+}
+
 pub fn semantic_readiness_with_discovery(
     languages: &BTreeMap<String, usize>,
     discovery: &LspDiscoveryReport,
@@ -217,6 +260,147 @@ pub fn semantic_readiness_with_discovery(
     }
 }
 
+pub fn semantic_enrichment_plan_with_discovery(
+    graph: &CodeGraph,
+    discovery: &LspDiscoveryReport,
+) -> SemanticEnrichmentPlan {
+    let mut languages: BTreeMap<String, LanguagePlanAccumulator> = BTreeMap::new();
+
+    for node in &graph.nodes {
+        let Some(language) = node_language(node.metadata.get("language").map(String::as_str))
+        else {
+            continue;
+        };
+        let plan = languages.entry(language.to_string()).or_default();
+        plan.nodes += 1;
+        if node.kind == NodeKind::File {
+            plan.files += 1;
+        }
+        if is_symbol_candidate(&node.kind) && node.span.is_some() {
+            plan.symbol_nodes += 1;
+        }
+    }
+
+    let nodes_by_id: BTreeMap<_, _> = graph.nodes.iter().map(|node| (node.id, node)).collect();
+    for edge in &graph.edges {
+        if !matches!(edge.confidence, Confidence::Heuristic | Confidence::Unknown)
+            || !matches!(
+                edge.kind,
+                EdgeKind::Calls | EdgeKind::Imports | EdgeKind::References
+            )
+        {
+            continue;
+        }
+        if let Some(source) = nodes_by_id.get(&edge.source) {
+            let Some(language) = node_language(source.metadata.get("language").map(String::as_str))
+            else {
+                continue;
+            };
+            languages
+                .entry(language.to_string())
+                .or_default()
+                .heuristic_edges_to_upgrade += 1;
+        }
+    }
+
+    let mut missing_servers = BTreeSet::new();
+    let mut plans = Vec::new();
+    let mut totals = SemanticRequestCounts::default();
+    let mut semantic_candidate_nodes = 0;
+    let mut heuristic_edges_to_upgrade = 0;
+
+    for (language, counts) in languages {
+        let server = discovery
+            .servers
+            .iter()
+            .find(|server| server.languages.contains(&language.as_str()));
+        let installed = server.is_some_and(|server| server.installed);
+        let mut requests = SemanticRequestCounts::default();
+        let capabilities = server
+            .map(|server| server.capabilities.to_vec())
+            .unwrap_or_default();
+        if let Some(server) = server {
+            semantic_candidate_nodes += counts.nodes;
+            heuristic_edges_to_upgrade += counts.heuristic_edges_to_upgrade;
+            if !server.installed {
+                missing_servers.insert(server.id);
+            }
+            if server.installed {
+                if has_capability(server, "document_symbols") {
+                    requests.document_symbols = counts.files;
+                }
+                if has_capability(server, "definitions") {
+                    requests.definitions = counts.heuristic_edges_to_upgrade;
+                }
+                if has_capability(server, "references") {
+                    requests.references = counts.symbol_nodes;
+                }
+                if has_capability(server, "diagnostics") {
+                    requests.diagnostics = counts.files;
+                }
+            }
+        }
+
+        totals.add(requests);
+        let status = if server.is_none() {
+            "unsupported_language"
+        } else if !installed {
+            "missing_server"
+        } else {
+            "ready"
+        };
+        let blocked_reason = match status {
+            "unsupported_language" => Some("no_known_language_server"),
+            "missing_server" => Some("language_server_not_installed"),
+            _ => None,
+        };
+
+        plans.push(LanguageEnrichmentPlan {
+            language,
+            status,
+            nodes: counts.nodes,
+            files: counts.files,
+            symbol_nodes: counts.symbol_nodes,
+            heuristic_edges_to_upgrade: counts.heuristic_edges_to_upgrade,
+            server: server.map(|server| server.id),
+            command: server.map(|server| server.command),
+            installed,
+            capabilities,
+            planned_requests: requests,
+            blocked_reason,
+        });
+    }
+
+    plans.sort_by(|left, right| {
+        status_rank(left.status)
+            .cmp(&status_rank(right.status))
+            .then_with(|| right.nodes.cmp(&left.nodes))
+            .then_with(|| left.language.cmp(&right.language))
+    });
+    let total_languages = plans.len();
+    let ready_languages = plans.iter().filter(|plan| plan.status == "ready").count();
+    let blocked_languages = plans
+        .iter()
+        .filter(|plan| plan.status == "missing_server")
+        .count();
+    let unsupported_languages = plans
+        .iter()
+        .filter(|plan| plan.status == "unsupported_language")
+        .count();
+
+    SemanticEnrichmentPlan {
+        languages: plans,
+        total_languages,
+        ready_languages,
+        blocked_languages,
+        unsupported_languages,
+        semantic_candidate_nodes,
+        heuristic_edges_to_upgrade,
+        planned_requests: totals,
+        missing_servers: missing_servers.into_iter().collect(),
+    }
+}
+
 pub fn server_specs() -> &'static [&'static str] {
     const IDS: &[&str] = &[
         "rust-analyzer",
@@ -228,6 +412,47 @@ pub fn server_specs() -> &'static [&'static str] {
         "bash-language-server",
     ];
     IDS
+}
+
+#[derive(Debug, Default)]
+struct LanguagePlanAccumulator {
+    nodes: usize,
+    files: usize,
+    symbol_nodes: usize,
+    heuristic_edges_to_upgrade: usize,
+}
+
+impl SemanticRequestCounts {
+    fn add(&mut self, other: Self) {
+        self.document_symbols += other.document_symbols;
+        self.definitions += other.definitions;
+        self.references += other.references;
+        self.diagnostics += other.diagnostics;
+    }
+}
+
+fn node_language(language: Option<&str>) -> Option<&str> {
+    language.filter(|language| !language.is_empty())
+}
+
+fn is_symbol_candidate(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Function | NodeKind::Type | NodeKind::Module | NodeKind::Entrypoint
+    )
+}
+
+fn has_capability(server: &LspServerStatus, capability: &str) -> bool {
+    server.capabilities.contains(&capability)
+}
+
+fn status_rank(status: &str) -> usize {
+    match status {
+        "ready" => 0,
+        "missing_server" => 1,
+        "unsupported_language" => 2,
+        _ => 3,
+    }
 }
 
 fn find_executable(command: &str) -> Option<PathBuf> {
@@ -263,6 +488,8 @@ fn executable_candidates(dir: &Path, command: &str) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeKind, SourceSpan};
+    use std::collections::BTreeMap;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -347,6 +574,136 @@ mod tests {
                 .iter()
                 .any(|language| language.language == "unknown" && language.server.is_none())
         );
+    }
+
+    #[test]
+    fn semantic_enrichment_plan_counts_ready_and_blocked_work() {
+        let mut graph = CodeGraph::new("repo");
+        let rust_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/main.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let rust_main = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "main",
+            Some(SourceSpan {
+                path: "src/main.rs".to_string(),
+                start_line: 1,
+                start_column: 1,
+                end_line: 1,
+                end_column: 12,
+            }),
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let rust_helper = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "helper",
+            Some(SourceSpan {
+                path: "src/main.rs".to_string(),
+                start_line: 2,
+                start_column: 1,
+                end_line: 2,
+                end_column: 14,
+            }),
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let python_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "app.py",
+            None,
+            BTreeMap::from([("language".to_string(), "python".to_string())]),
+        );
+        let unknown_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "README.md",
+            None,
+            BTreeMap::from([("language".to_string(), "markdown".to_string())]),
+        );
+        graph.add_edge(
+            rust_file,
+            rust_main,
+            EdgeKind::Defines,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            rust_main,
+            rust_helper,
+            EdgeKind::Calls,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            python_file,
+            unknown_file,
+            EdgeKind::Imports,
+            Confidence::Unknown,
+        );
+
+        let discovery = LspDiscoveryReport {
+            total_servers: 2,
+            available_servers: 1,
+            servers: vec![
+                LspServerStatus {
+                    id: "rust-analyzer",
+                    languages: &["rust"],
+                    command: "rust-analyzer",
+                    args: &[],
+                    capabilities: &["definitions", "references", "document_symbols"],
+                    installed: true,
+                    path: Some("/bin/rust-analyzer".to_string()),
+                },
+                LspServerStatus {
+                    id: "pyright-langserver",
+                    languages: &["python"],
+                    command: "pyright-langserver",
+                    args: &["--stdio"],
+                    capabilities: &["definitions", "diagnostics"],
+                    installed: false,
+                    path: None,
+                },
+            ],
+        };
+
+        let plan = semantic_enrichment_plan_with_discovery(&graph, &discovery);
+        let rust = plan
+            .languages
+            .iter()
+            .find(|language| language.language == "rust")
+            .expect("rust plan");
+        let python = plan
+            .languages
+            .iter()
+            .find(|language| language.language == "python")
+            .expect("python plan");
+        let markdown = plan
+            .languages
+            .iter()
+            .find(|language| language.language == "markdown")
+            .expect("markdown plan");
+
+        assert_eq!(plan.total_languages, 3);
+        assert_eq!(plan.ready_languages, 1);
+        assert_eq!(plan.blocked_languages, 1);
+        assert_eq!(plan.unsupported_languages, 1);
+        assert_eq!(plan.semantic_candidate_nodes, 4);
+        assert_eq!(plan.heuristic_edges_to_upgrade, 2);
+        assert_eq!(plan.missing_servers, vec!["pyright-langserver"]);
+        assert_eq!(plan.planned_requests.document_symbols, 1);
+        assert_eq!(plan.planned_requests.definitions, 1);
+        assert_eq!(plan.planned_requests.references, 2);
+        assert_eq!(plan.planned_requests.diagnostics, 0);
+
+        assert_eq!(rust.status, "ready");
+        assert_eq!(rust.files, 1);
+        assert_eq!(rust.symbol_nodes, 2);
+        assert_eq!(rust.heuristic_edges_to_upgrade, 1);
+        assert_eq!(rust.planned_requests.definitions, 1);
+        assert_eq!(python.status, "missing_server");
+        assert_eq!(python.blocked_reason, Some("language_server_not_installed"));
+        assert_eq!(python.planned_requests.definitions, 0);
+        assert_eq!(markdown.status, "unsupported_language");
+        assert_eq!(markdown.blocked_reason, Some("no_known_language_server"));
     }
 
     fn temp_dir() -> PathBuf {

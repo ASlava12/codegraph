@@ -34,6 +34,7 @@ const state = {
   coverage: null,
   lsp: null,
   semanticReadiness: null,
+  semanticPlan: null,
   architecture: null,
   languageDependencies: null,
   hotspots: null,
@@ -315,6 +316,7 @@ async function scan() {
   state.coverage = null;
   state.lsp = null;
   state.semanticReadiness = null;
+  state.semanticPlan = null;
   state.architecture = null;
   state.languageDependencies = null;
   state.hotspots = null;
@@ -543,6 +545,7 @@ async function loadProjectOverview() {
       coverageResponse,
       lspResponse,
       semanticReadinessResponse,
+      semanticPlanResponse,
       architectureResponse,
       languageDependenciesResponse,
       hotspotsResponse,
@@ -553,6 +556,7 @@ async function loadProjectOverview() {
       fetch(`/api/coverage?${params.toString()}`),
       fetch("/api/lsp"),
       fetch(`/api/semantic-readiness?${params.toString()}`),
+      fetch(`/api/semantic-plan?${params.toString()}`),
       fetch(`/api/architecture?${params.toString()}&group_limit=8&edge_limit=40`),
       fetch(`/api/language-dependencies?${params.toString()}&limit=8`),
       fetch(`/api/hotspots?${params.toString()}&limit=8`),
@@ -563,6 +567,7 @@ async function loadProjectOverview() {
     const coverage = await coverageResponse.json();
     const lsp = await lspResponse.json();
     const semanticReadiness = await semanticReadinessResponse.json();
+    const semanticPlan = await semanticPlanResponse.json();
     const architecture = await architectureResponse.json();
     const languageDependencies = await languageDependenciesResponse.json();
     const hotspots = await hotspotsResponse.json();
@@ -585,6 +590,9 @@ async function loadProjectOverview() {
     if (!semanticReadinessResponse.ok) {
       throw new Error(semanticReadiness.error || "semantic readiness failed");
     }
+    if (!semanticPlanResponse.ok) {
+      throw new Error(semanticPlan.error || "semantic plan failed");
+    }
     if (!architectureResponse.ok) {
       throw new Error(architecture.error || "architecture failed");
     }
@@ -599,6 +607,7 @@ async function loadProjectOverview() {
     state.coverage = coverage;
     state.lsp = lsp;
     state.semanticReadiness = semanticReadiness;
+    state.semanticPlan = semanticPlan;
     state.architecture = architecture;
     state.languageDependencies = languageDependencies;
     state.hotspots = hotspots;
@@ -683,7 +692,7 @@ function renderOverview() {
 
   renderScanPolicy(state.scanOptions);
   renderCoverage(state.coverage);
-  renderLspStatus(state.lsp, state.semanticReadiness);
+  renderLspStatus(state.lsp, state.semanticReadiness, state.semanticPlan);
   renderArchitecture(state.architecture);
   renderLanguageDependencies(state.languageDependencies);
   renderHotspots(state.hotspots);
@@ -843,8 +852,8 @@ function renderCoverage(coverage) {
     .join("");
 }
 
-function renderLspStatus(report, readiness) {
-  if (!report && !readiness) {
+function renderLspStatus(report, readiness, plan) {
+  if (!report && !readiness && !plan) {
     lspList.innerHTML = '<p class="empty">No LSP status.</p>';
     return;
   }
@@ -880,6 +889,26 @@ function renderLspStatus(report, readiness) {
       `,
     );
   }
+  if (plan) {
+    chips.splice(
+      3,
+      0,
+      `
+        <div class="lsp-chip ${Number(plan.blocked_languages || 0) === 0 ? "available" : "missing"}">
+          <span>Semantic plan</span>
+          <strong>${Number(plan.ready_languages || 0)}/${Number(plan.total_languages || 0)}</strong>
+        </div>
+        <div class="lsp-chip">
+          <span>Definitions</span>
+          <strong>${Number(plan.planned_requests?.definitions || 0)}</strong>
+        </div>
+        <div class="lsp-chip">
+          <span>Symbols</span>
+          <strong>${Number(plan.planned_requests?.document_symbols || 0)}</strong>
+        </div>
+      `,
+    );
+  }
   const missingServers = Array.isArray(readiness?.missing_servers)
     ? readiness.missing_servers.slice(0, 4)
     : [];
@@ -899,6 +928,22 @@ function renderLspStatus(report, readiness) {
       <div class="lsp-chip missing">
         <span>${escapeHtml(language.language || "language")}</span>
         <strong>no server</strong>
+      </div>
+    `);
+  });
+  const languagePlans = Array.isArray(plan?.languages) ? plan.languages.slice(0, 6) : [];
+  languagePlans.forEach((language) => {
+    const requests = language.planned_requests || {};
+    const requestCount =
+      Number(requests.document_symbols || 0) +
+      Number(requests.definitions || 0) +
+      Number(requests.references || 0) +
+      Number(requests.diagnostics || 0);
+    const status = language.status === "ready" ? "available" : "missing";
+    chips.push(`
+      <div class="lsp-chip ${status}">
+        <span>${escapeHtml(language.language || "language")}</span>
+        <strong>${language.status === "ready" ? `${requestCount} ops` : escapeHtml(formatKind(language.status || "blocked"))}</strong>
       </div>
     `);
   });

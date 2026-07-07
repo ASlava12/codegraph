@@ -22,7 +22,8 @@ use codegraph_indexer::{
     IndexOptionOverrides, IndexOptions, configured_index_options, scan_coverage,
 };
 use codegraph_lsp::{
-    LspDiscoveryReport, SemanticReadinessReport, discover_lsp_servers, semantic_readiness,
+    LspDiscoveryReport, SemanticEnrichmentPlan, SemanticReadinessReport, discover_lsp_servers,
+    semantic_enrichment_plan, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{
@@ -405,6 +406,7 @@ async fn main() -> Result<()> {
         .route("/api/languages", get(languages_api))
         .route("/api/lsp", get(lsp_api))
         .route("/api/semantic-readiness", get(semantic_readiness_api))
+        .route("/api/semantic-plan", get(semantic_plan_api))
         .route("/api/projects", get(projects_api))
         .route("/api/scan-options", get(scan_options_api))
         .route("/api/coverage", get(coverage_api))
@@ -678,6 +680,14 @@ async fn semantic_readiness_api(
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let summary = summarize(&graph);
     Ok(Json(semantic_readiness(&summary.languages)))
+}
+
+async fn semantic_plan_api(
+    State(state): State<AppState>,
+    Query(query): Query<ScanQuery>,
+) -> Result<Json<SemanticEnrichmentPlan>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    Ok(Json(semantic_enrichment_plan(&graph)))
 }
 
 async fn projects_api(State(state): State<AppState>) -> Json<Vec<ProjectResponse>> {

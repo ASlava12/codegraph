@@ -265,6 +265,7 @@ dependencies = [
 name = "codegraph-lsp"
 version = "0.1.0"
 dependencies = [
+ "codegraph-core",
  "serde",
 ]
 
