@@ -789,6 +789,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unresolved_call",
     "unresolved_compose_command_path",
     "unresolved_compose_env_file_path",
+    "unresolved_compose_volume_source_path",
     "unresolved_dockerfile_command_path",
     "unresolved_entrypoint_target",
     "unresolved_framework_route_handler",
@@ -1345,6 +1346,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unresolved_entrypoint_insights(graph, &mut insights);
     add_unresolved_compose_command_path_insights(graph, &mut insights);
     add_unresolved_compose_env_file_path_insights(graph, &mut insights);
+    add_unresolved_compose_volume_source_path_insights(graph, &mut insights);
     add_unresolved_dockerfile_command_path_insights(graph, &mut insights);
     add_unresolved_makefile_command_path_insights(graph, &mut insights);
     add_entrypoint_dead_end_insights(graph, &mut insights);
@@ -6592,6 +6594,81 @@ fn compose_env_file_reader_ids(graph: &CodeGraph, config: NodeId) -> Vec<NodeId>
                     .metadata
                     .get("relation")
                     .is_some_and(|relation| relation == "compose_env_file")
+        })
+        .map(|edge| edge.source)
+        .collect()
+}
+
+fn add_unresolved_compose_volume_source_path_insights(
+    graph: &CodeGraph,
+    insights: &mut Vec<Insight>,
+) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Config
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "compose_volume")
+        {
+            continue;
+        }
+        let Some(source_path) = node
+            .metadata
+            .get("local_source_path")
+            .map(|path| path.trim())
+            .filter(|path| !path.is_empty())
+        else {
+            continue;
+        };
+        let resolved = graph.edges.iter().any(|edge| {
+            edge.source == node.id
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|value| value == "compose_volume_source_path")
+        });
+        if resolved {
+            continue;
+        }
+
+        let service = node
+            .metadata
+            .get("service")
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        let target_path = node
+            .metadata
+            .get("target_path")
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        let mut nodes = vec![node.id];
+        nodes.extend(compose_volume_reader_ids(graph, node.id));
+        nodes.sort();
+        nodes.dedup();
+        insights.push(Insight {
+            kind: "unresolved_compose_volume_source_path".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Compose service `{service}` mounts local source `{source_path}` to `{target_path}` but the source path was not found"
+            ),
+            nodes,
+            edges: incoming_edge_indexes(graph, node.id, EdgeKind::References),
+        });
+    }
+}
+
+fn compose_volume_reader_ids(graph: &CodeGraph, volume: NodeId) -> Vec<NodeId> {
+    graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.target == volume
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "compose_volume")
         })
         .map(|edge| edge.source)
         .collect()
@@ -12222,6 +12299,89 @@ mod tests {
         assert!(insight.message.contains("config/missing.env"));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unresolved_compose_env_file_path" && insight.nodes.contains(&resolved)
+        }));
+    }
+
+    #[test]
+    fn insights_report_unresolved_compose_volume_source_paths() {
+        let mut graph = CodeGraph::new("repo");
+        let web = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "compose service:web",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "compose_service".to_string())]),
+        );
+        let worker = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "compose service:worker",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "compose_service".to_string())]),
+        );
+        let missing = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "compose volume:config/missing->/app/config",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "compose_volume".to_string()),
+                ("service".to_string(), "web".to_string()),
+                (
+                    "local_source_path".to_string(),
+                    "config/missing".to_string(),
+                ),
+                ("target_path".to_string(), "/app/config".to_string()),
+            ]),
+        );
+        let resolved = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "compose volume:config->/app/config",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "compose_volume".to_string()),
+                ("service".to_string(), "worker".to_string()),
+                ("local_source_path".to_string(), "config".to_string()),
+                ("target_path".to_string(), "/app/config".to_string()),
+            ]),
+        );
+        let config_dir = graph.add_node(NodeKind::Directory, "config");
+        graph.add_edge_with_metadata(
+            web,
+            missing,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "compose_volume".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            worker,
+            resolved,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "compose_volume".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            resolved,
+            config_dir,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([(
+                "resolution".to_string(),
+                "compose_volume_source_path".to_string(),
+            )]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_compose_volume_source_path")
+            .expect("expected unresolved Compose volume source path insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.nodes.contains(&missing));
+        assert!(insight.nodes.contains(&web));
+        assert!(insight.message.contains("config/missing"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_compose_volume_source_path"
+                && insight.nodes.contains(&resolved)
         }));
     }
 

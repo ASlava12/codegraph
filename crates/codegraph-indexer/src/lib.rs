@@ -92,6 +92,7 @@ struct IndexContext {
     graph: CodeGraph,
     function_symbols: BTreeMap<String, Vec<NodeId>>,
     file_nodes: BTreeMap<String, NodeId>,
+    directory_nodes: BTreeMap<String, NodeId>,
     external_dependencies: BTreeMap<String, NodeId>,
     cargo_workspace_dependencies: BTreeMap<String, Option<String>>,
     go_modules: Vec<GoModuleRoot>,
@@ -102,6 +103,7 @@ struct IndexContext {
     pending_local_imports: Vec<PendingLocalImport>,
     pending_entrypoint_targets: Vec<PendingEntrypointTarget>,
     pending_compose_config_targets: Vec<PendingComposeConfigTarget>,
+    pending_compose_volume_targets: Vec<PendingComposeVolumeTarget>,
 }
 
 struct PendingCall {
@@ -132,6 +134,12 @@ struct PendingComposeConfigTarget {
     target: String,
 }
 
+struct PendingComposeVolumeTarget {
+    volume: NodeId,
+    manifest_label: String,
+    target: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MakefileTarget {
     name: String,
@@ -157,6 +165,7 @@ struct ComposeService {
     environment: Vec<ComposeEnvironment>,
     env_files: Vec<ComposeEnvFile>,
     ports: Vec<ComposePort>,
+    volumes: Vec<ComposeVolume>,
     line: u32,
 }
 
@@ -179,6 +188,16 @@ struct ComposePort {
     target: Option<String>,
     protocol: String,
     host_ip: Option<String>,
+    raw: Option<String>,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ComposeVolume {
+    source: Option<String>,
+    target: Option<String>,
+    kind: String,
+    read_only: bool,
     raw: Option<String>,
     line: u32,
 }
@@ -583,6 +602,7 @@ fn scan_project_with_scope(
         graph: CodeGraph::new(root_label),
         function_symbols: BTreeMap::new(),
         file_nodes: BTreeMap::new(),
+        directory_nodes: BTreeMap::new(),
         external_dependencies: BTreeMap::new(),
         cargo_workspace_dependencies,
         go_modules,
@@ -593,6 +613,7 @@ fn scan_project_with_scope(
         pending_local_imports: Vec::new(),
         pending_entrypoint_targets: Vec::new(),
         pending_compose_config_targets: Vec::new(),
+        pending_compose_volume_targets: Vec::new(),
     };
 
     for entry in WalkDir::new(root)
@@ -618,7 +639,8 @@ fn scan_project_with_scope(
             if !scope.is_none_or(|scope| scope.includes_directory(&label)) {
                 continue;
             }
-            let id = context.graph.add_node(NodeKind::Directory, label);
+            let id = context.graph.add_node(NodeKind::Directory, &label);
+            context.directory_nodes.insert(label.to_string(), id);
             context.graph.add_edge(
                 context.graph.root,
                 id,
@@ -647,6 +669,7 @@ fn scan_project_with_scope(
     resolve_pending_local_imports(&mut context);
     resolve_pending_entrypoint_targets(&mut context);
     resolve_pending_compose_config_targets(&mut context);
+    resolve_pending_compose_volume_targets(&mut context);
     apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
 
@@ -2423,6 +2446,12 @@ fn index_compose_entrypoints(
         if !service.ports.is_empty() {
             metadata.insert("port_count".to_string(), service.ports.len().to_string());
         }
+        if !service.volumes.is_empty() {
+            metadata.insert(
+                "volume_count".to_string(),
+                service.volumes.len().to_string(),
+            );
+        }
 
         let entrypoint_id = context.graph.add_node_with_metadata(
             NodeKind::Entrypoint,
@@ -2596,6 +2625,58 @@ fn index_compose_entrypoints(
                 edge_metadata,
             );
         }
+
+        for volume in &service.volumes {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("item_kind".to_string(), "compose_volume".to_string());
+            metadata.insert("source".to_string(), "compose".to_string());
+            metadata.insert("ecosystem".to_string(), "docker-compose".to_string());
+            metadata.insert("service".to_string(), service.name.clone());
+            metadata.insert("line".to_string(), volume.line.to_string());
+            metadata.insert("volume_kind".to_string(), volume.kind.clone());
+            metadata.insert("read_only".to_string(), volume.read_only.to_string());
+            if let Some(raw) = volume.raw.as_deref() {
+                metadata.insert("raw".to_string(), raw.to_string());
+            }
+            if let Some(source) = volume.source.as_deref() {
+                metadata.insert("source_path".to_string(), source.to_string());
+                if let Some(local_source_path) = compose_volume_local_source_path(label, source) {
+                    metadata.insert("local_source_path".to_string(), local_source_path);
+                }
+            }
+            if let Some(target) = volume.target.as_deref() {
+                metadata.insert("target_path".to_string(), target.to_string());
+            }
+            let volume_id = context.graph.add_node_with_metadata(
+                NodeKind::Config,
+                compose_volume_label(volume),
+                Some(line_span(label, source, volume.line)),
+                metadata.clone(),
+            );
+            let mut edge_metadata = BTreeMap::new();
+            edge_metadata.insert("source".to_string(), "compose".to_string());
+            edge_metadata.insert("relation".to_string(), "compose_volume".to_string());
+            edge_metadata.insert("service".to_string(), service.name.clone());
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                service_id,
+                volume_id,
+                EdgeKind::References,
+                Confidence::Exact,
+                edge_metadata,
+            );
+            if let Some(source) = volume.source.as_deref()
+                && compose_volume_local_source_path(label, source).is_some()
+            {
+                context
+                    .pending_compose_volume_targets
+                    .push(PendingComposeVolumeTarget {
+                        volume: volume_id,
+                        manifest_label: label.to_string(),
+                        target: source.to_string(),
+                    });
+            }
+        }
     }
 
     for service in &services {
@@ -2702,6 +2783,7 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
     let mut active_service: Option<ComposeService> = None;
     let mut active_section: Option<(String, usize)> = None;
     let mut active_port: Option<ComposePort> = None;
+    let mut active_volume: Option<ComposeVolume> = None;
 
     for (index, raw_line) in source.lines().enumerate() {
         let trimmed = raw_line.trim();
@@ -2725,6 +2807,7 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
         if indent == services_indent + 2 {
             if let Some(mut service) = active_service.take() {
                 flush_compose_service_port(&mut service, &mut active_port);
+                flush_compose_service_volume(&mut service, &mut active_volume);
                 services.push(service);
             }
             active_section = None;
@@ -2742,6 +2825,7 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
                 environment: Vec::new(),
                 env_files: Vec::new(),
                 ports: Vec::new(),
+                volumes: Vec::new(),
                 line: index as u32 + 1,
             });
             continue;
@@ -2757,6 +2841,12 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
                 .is_some_and(|(section, _)| section == "ports")
             {
                 flush_compose_service_port(service, &mut active_port);
+            }
+            if active_section
+                .as_ref()
+                .is_some_and(|(section, _)| section == "volumes")
+            {
+                flush_compose_service_volume(service, &mut active_volume);
             }
             active_section = None;
             if let Some(value) = yaml_key_value(trimmed, "command") {
@@ -2791,6 +2881,12 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
                     .extend(compose_inline_ports(&value, index as u32 + 1));
             } else if yaml_key(trimmed).is_some_and(|key| key == "ports") {
                 active_section = Some(("ports".to_string(), indent));
+            } else if let Some(value) = yaml_key_value(trimmed, "volumes") {
+                service
+                    .volumes
+                    .extend(compose_inline_volumes(&value, index as u32 + 1));
+            } else if yaml_key(trimmed).is_some_and(|key| key == "volumes") {
+                active_section = Some(("volumes".to_string(), indent));
             }
             continue;
         }
@@ -2864,12 +2960,27 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
                     }
                 }
             }
+            "volumes" => {
+                if let Some(value) = trimmed.strip_prefix("- ") {
+                    flush_compose_service_volume(service, &mut active_volume);
+                    if let Some(volume) = compose_short_volume(value, index as u32 + 1) {
+                        service.volumes.push(volume);
+                    } else if let Some((key, value)) = yaml_key_pair(value) {
+                        active_volume = Some(compose_long_volume(key, value, index as u32 + 1));
+                    }
+                } else if let Some((key, value)) = yaml_key_pair(trimmed) {
+                    if let Some(volume) = active_volume.as_mut() {
+                        apply_compose_volume_field(volume, key, value);
+                    }
+                }
+            }
             _ => {}
         }
     }
 
     if let Some(mut service) = active_service {
         flush_compose_service_port(&mut service, &mut active_port);
+        flush_compose_service_volume(&mut service, &mut active_volume);
         services.push(service);
     }
     dedupe_compose_service_dependencies(&mut services);
@@ -3058,6 +3169,120 @@ fn compose_port_label(port: &ComposePort) -> String {
         (_, Some(published), None) => format!("compose port:{published}/{protocol}"),
         (_, None, Some(target)) => format!("compose port:{target}/{protocol}"),
         _ => "compose port:unknown".to_string(),
+    }
+}
+
+fn compose_inline_volumes(value: &str, line: u32) -> Vec<ComposeVolume> {
+    yaml_inline_list_values(value)
+        .into_iter()
+        .filter_map(|value| compose_short_volume(&value, line))
+        .collect()
+}
+
+fn compose_short_volume(value: &str, line: u32) -> Option<ComposeVolume> {
+    let raw = yaml_clean_scalar(value);
+    if raw.is_empty() || yaml_key_pair(&raw).is_some() {
+        return None;
+    }
+    let parts: Vec<_> = raw.split(':').map(str::trim).collect();
+    let (source, target, read_only) = match parts.as_slice() {
+        [target] if !target.is_empty() => (None, Some((*target).to_string()), false),
+        [source, target] if !source.is_empty() && !target.is_empty() => (
+            Some((*source).to_string()),
+            Some((*target).to_string()),
+            false,
+        ),
+        [source, target, mode] if !source.is_empty() && !target.is_empty() => (
+            Some((*source).to_string()),
+            Some((*target).to_string()),
+            compose_volume_mode_read_only(mode),
+        ),
+        _ => return None,
+    };
+    Some(ComposeVolume {
+        source,
+        target,
+        kind: "volume".to_string(),
+        read_only,
+        raw: Some(raw),
+        line,
+    })
+}
+
+fn compose_long_volume(key: String, value: String, line: u32) -> ComposeVolume {
+    let mut volume = ComposeVolume {
+        source: None,
+        target: None,
+        kind: "volume".to_string(),
+        read_only: false,
+        raw: None,
+        line,
+    };
+    apply_compose_volume_field(&mut volume, key, value);
+    volume
+}
+
+fn apply_compose_volume_field(volume: &mut ComposeVolume, key: String, value: String) {
+    match key.as_str() {
+        "type" if !value.is_empty() => volume.kind = value,
+        "source" if !value.is_empty() => volume.source = Some(value),
+        "target" if !value.is_empty() => volume.target = Some(value),
+        "read_only" | "readonly" => volume.read_only = yaml_truthy(&value),
+        _ => {}
+    }
+}
+
+fn flush_compose_service_volume(
+    service: &mut ComposeService,
+    active_volume: &mut Option<ComposeVolume>,
+) {
+    let Some(volume) = active_volume.take() else {
+        return;
+    };
+    if volume.source.is_some() || volume.target.is_some() {
+        service.volumes.push(volume);
+    }
+}
+
+fn compose_volume_mode_read_only(mode: &str) -> bool {
+    mode.split(',').any(|value| {
+        let value = value.trim();
+        matches!(value, "ro" | "readonly" | "read_only")
+    })
+}
+
+fn yaml_truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "true" | "yes" | "1" | "on"
+    )
+}
+
+fn compose_volume_local_source_path(compose_label: &str, source: &str) -> Option<String> {
+    let source = source.trim();
+    if source.is_empty()
+        || source.starts_with('$')
+        || source.contains("://")
+        || Path::new(source).is_absolute()
+    {
+        return None;
+    }
+    if !source.starts_with('.')
+        && !source.contains('/')
+        && !source.contains('\\')
+        && Path::new(source).extension().is_none()
+    {
+        return None;
+    }
+    normalize_manifest_relative_path(compose_label, source)
+}
+
+fn compose_volume_label(volume: &ComposeVolume) -> String {
+    match (volume.source.as_deref(), volume.target.as_deref()) {
+        (Some(source), Some(target)) => format!("compose volume:{source}->{target}"),
+        (Some(source), None) => format!("compose volume:{source}"),
+        (None, Some(target)) => format!("compose volume:{target}"),
+        _ => "compose volume:unknown".to_string(),
     }
 }
 
@@ -6705,6 +6930,40 @@ fn resolve_pending_compose_config_targets(context: &mut IndexContext) {
     }
 }
 
+fn resolve_pending_compose_volume_targets(context: &mut IndexContext) {
+    let pending_targets = std::mem::take(&mut context.pending_compose_volume_targets);
+
+    for pending in pending_targets {
+        let Some(path) = compose_volume_local_source_path(&pending.manifest_label, &pending.target)
+        else {
+            continue;
+        };
+        let target_id = context
+            .file_nodes
+            .get(&path)
+            .copied()
+            .or_else(|| context.directory_nodes.get(&path).copied());
+        let Some(target_id) = target_id else {
+            continue;
+        };
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), "volume_source".to_string());
+        metadata.insert(
+            "resolution".to_string(),
+            "compose_volume_source_path".to_string(),
+        );
+        metadata.insert("source".to_string(), "compose".to_string());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.volume,
+            target_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
 fn entrypoint_target_candidates(
     pending: &PendingEntrypointTarget,
 ) -> Vec<EntrypointTargetCandidate> {
@@ -9705,6 +9964,7 @@ generated/output.txt:
         let root = temp_project_root();
         fs::create_dir_all(root.join("scripts")).unwrap();
         fs::create_dir_all(root.join("config")).unwrap();
+        fs::create_dir_all(root.join("data")).unwrap();
         fs::write(
             root.join("docker-compose.yml"),
             r#"services:
@@ -9720,6 +9980,9 @@ generated/output.txt:
       DATABASE_URL:
     ports:
       - "8080:80"
+    volumes:
+      - ./config:/app/config:ro
+      - worker.env:/app/worker.env
     depends_on:
       - db
   worker:
@@ -9731,11 +9994,18 @@ generated/output.txt:
       - target: 9000
         published: "19000"
         protocol: udp
+    volumes:
+      - type: bind
+        source: ./scripts
+        target: /app/scripts
+        read_only: true
     depends_on:
       db:
         condition: service_healthy
   db:
     image: postgres:16
+    volumes:
+      - db-data:/var/lib/postgresql/data
 "#,
         )
         .unwrap();
@@ -9760,6 +10030,8 @@ generated/output.txt:
         let graph = scan_project(&root, &IndexOptions::default()).unwrap();
         let compose = node_id(&graph, NodeKind::File, "docker-compose.yml");
         let dockerfile = node_id(&graph, NodeKind::File, "Dockerfile");
+        let config_dir = node_id(&graph, NodeKind::Directory, "config");
+        let scripts_dir = node_id(&graph, NodeKind::Directory, "scripts");
         let web_env_file = node_id(&graph, NodeKind::File, "config/web.env");
         let worker_env_file = node_id(&graph, NodeKind::File, "worker.env");
         let start_script = node_id(&graph, NodeKind::File, "scripts/start.sh");
@@ -9775,6 +10047,26 @@ generated/output.txt:
         let worker_env_config = node_id(&graph, NodeKind::Config, "compose env file:worker.env");
         let web_port = node_id(&graph, NodeKind::Config, "compose port:8080->80/tcp");
         let worker_port = node_id(&graph, NodeKind::Config, "compose port:19000->9000/udp");
+        let web_config_volume = node_id(
+            &graph,
+            NodeKind::Config,
+            "compose volume:./config->/app/config",
+        );
+        let web_file_volume = node_id(
+            &graph,
+            NodeKind::Config,
+            "compose volume:worker.env->/app/worker.env",
+        );
+        let worker_scripts_volume = node_id(
+            &graph,
+            NodeKind::Config,
+            "compose volume:./scripts->/app/scripts",
+        );
+        let db_named_volume = node_id(
+            &graph,
+            NodeKind::Config,
+            "compose volume:db-data->/var/lib/postgresql/data",
+        );
 
         for service in [web, worker, db] {
             assert!(has_entrypoint_reference(
@@ -9859,6 +10151,39 @@ generated/output.txt:
                         .is_some_and(|value| value == "compose_port")
             }));
         }
+        for (service, volume) in [
+            (web, web_config_volume),
+            (web, web_file_volume),
+            (worker, worker_scripts_volume),
+            (db, db_named_volume),
+        ] {
+            assert!(graph.edges.iter().any(|edge| {
+                edge.source == service
+                    && edge.target == volume
+                    && edge.kind == EdgeKind::References
+                    && edge.confidence == Confidence::Exact
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|value| value == "compose_volume")
+            }));
+        }
+        for (volume, target) in [
+            (web_config_volume, config_dir),
+            (web_file_volume, worker_env_file),
+            (worker_scripts_volume, scripts_dir),
+        ] {
+            assert!(graph.edges.iter().any(|edge| {
+                edge.source == volume
+                    && edge.target == target
+                    && edge.kind == EdgeKind::References
+                    && edge.confidence == Confidence::Exact
+                    && edge
+                        .metadata
+                        .get("resolution")
+                        .is_some_and(|value| value == "compose_volume_source_path")
+            }));
+        }
         assert!(graph.edges.iter().any(|edge| {
             edge.source == web
                 && edge.target == db
@@ -9910,6 +10235,10 @@ generated/output.txt:
             web_node.metadata.get("port_count").map(String::as_str),
             Some("1")
         );
+        assert_eq!(
+            web_node.metadata.get("volume_count").map(String::as_str),
+            Some("2")
+        );
         let web_port_node = graph
             .nodes
             .iter()
@@ -9932,6 +10261,33 @@ generated/output.txt:
         assert_eq!(
             web_port_node.metadata.get("protocol").map(String::as_str),
             Some("tcp")
+        );
+        let web_config_volume_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == web_config_volume)
+            .expect("missing web config compose volume");
+        assert_eq!(
+            web_config_volume_node
+                .metadata
+                .get("local_source_path")
+                .map(String::as_str),
+            Some("config")
+        );
+        assert_eq!(
+            web_config_volume_node
+                .metadata
+                .get("read_only")
+                .map(String::as_str),
+            Some("true")
+        );
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == db_named_volume)
+                .and_then(|node| node.metadata.get("local_source_path"))
+                .is_none()
         );
         assert_eq!(
             graph
