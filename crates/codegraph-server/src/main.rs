@@ -6783,6 +6783,7 @@ mod tests {
         assert!(app.contains("data-export-selection-card"));
         assert!(app.contains("\"button.downloadCard\""));
         assert!(app.contains("\"export.selectionCard\""));
+        assert!(app.contains("ambiguous_call_resolution"));
         assert!(app.contains("clientEntrypointReachableIds"));
         assert!(app.contains("unreachable_error_flow"));
         assert!(index.contains("unreachable scope:config"));
@@ -6947,6 +6948,7 @@ mod tests {
         );
         assert!(schema.enum_values.get("insight_kind").is_some_and(|kinds| {
             kinds.contains(&"sensitive_config_default")
+                && kinds.contains(&"ambiguous_call_resolution")
                 && kinds.contains(&"dependency_cycle")
                 && kinds.contains(&"custom_rule_*")
         }));

@@ -4305,13 +4305,26 @@ fn resolve_pending_calls(context: &mut IndexContext) {
             continue;
         }
 
+        let mut metadata = BTreeMap::new();
+        metadata.insert("call_label".to_string(), call.label.clone());
+        metadata.insert(
+            "resolution".to_string(),
+            if targets.len() > 1 {
+                "ambiguous".to_string()
+            } else {
+                "resolved".to_string()
+            },
+        );
+        metadata.insert("language".to_string(), call.language);
+
         for target in targets {
-            add_edge_once(
+            add_edge_once_with_metadata(
                 &mut context.graph,
                 call.caller,
                 target,
                 EdgeKind::Calls,
                 Confidence::Heuristic,
+                metadata.clone(),
             );
         }
     }
@@ -5812,6 +5825,33 @@ mod tests {
                 && edge.target == helper_id
                 && edge.kind == EdgeKind::Calls
                 && edge.confidence == Confidence::Heuristic
+                && edge.metadata.get("call_label").map(String::as_str) == Some("helper")
+                && edge.metadata.get("resolution").map(String::as_str) == Some("resolved")
+        }));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_marks_ambiguous_call_edges() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() { parse(); }\n").unwrap();
+        fs::write(root.join("src").join("left.rs"), "fn parse() {}\n").unwrap();
+        fs::write(root.join("src").join("right.rs"), "fn parse() {}\n").unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let main_id = node_id(&graph, NodeKind::Function, "main");
+        let ambiguous_edges = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.source == main_id && edge.kind == EdgeKind::Calls)
+            .filter(|edge| edge.metadata.get("call_label").map(String::as_str) == Some("parse"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(ambiguous_edges.len(), 2);
+        assert!(ambiguous_edges.iter().all(|edge| {
+            edge.metadata.get("resolution").map(String::as_str) == Some("ambiguous")
         }));
 
         fs::remove_dir_all(root).unwrap();

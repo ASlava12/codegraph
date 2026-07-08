@@ -759,6 +759,7 @@ pub struct InsightFilter {
 }
 
 pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
+    "ambiguous_call_resolution",
     "conflicting_config_default",
     "conflicting_dependency_declaration",
     "cross_language_heuristic_edge",
@@ -1323,6 +1324,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_parse_error_insights(graph, &mut insights);
     add_semantic_diagnostic_insights(graph, &mut insights);
     add_unresolved_call_insights(graph, &mut insights);
+    add_ambiguous_call_resolution_insights(graph, &mut insights);
     add_unresolved_local_import_insights(graph, &mut insights);
     add_cross_language_heuristic_edge_insights(graph, &mut insights);
     add_duplicate_function_insights(graph, &mut insights);
@@ -6058,6 +6060,57 @@ fn add_unresolved_call_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) 
     }
 }
 
+fn add_ambiguous_call_resolution_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let mut groups: BTreeMap<(NodeId, String), Vec<(usize, NodeId)>> = BTreeMap::new();
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind != EdgeKind::Calls {
+            continue;
+        }
+        let Some(call_label) = edge
+            .metadata
+            .get("call_label")
+            .map(|label| label.trim())
+            .filter(|label| !label.is_empty())
+        else {
+            continue;
+        };
+        groups
+            .entry((edge.source, call_label.to_string()))
+            .or_default()
+            .push((index, edge.target));
+    }
+
+    for ((caller_id, call_label), matches) in groups {
+        let targets: BTreeSet<_> = matches.iter().map(|(_, target)| *target).collect();
+        if targets.len() < 2 {
+            continue;
+        }
+
+        let caller = node_label(graph, caller_id).unwrap_or("unknown");
+        let target_labels = targets
+            .iter()
+            .filter_map(|target| node_label(graph, *target))
+            .take(5)
+            .map(|label| format!("`{label}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut nodes = Vec::with_capacity(targets.len() + 1);
+        nodes.push(caller_id);
+        nodes.extend(targets.iter().copied());
+        let edges = matches.iter().map(|(index, _)| *index).collect();
+
+        insights.push(Insight {
+            kind: "ambiguous_call_resolution".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "`{caller}` calls `{call_label}` but it resolves to multiple targets: {target_labels}"
+            ),
+            nodes,
+            edges,
+        });
+    }
+}
+
 fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     for node in &graph.nodes {
         if node.kind != NodeKind::ExternalDependency
@@ -10528,6 +10581,61 @@ mod tests {
         assert!(report.insights.iter().any(|insight| {
             insight.kind == "orphan_function" && insight.nodes.contains(&orphan)
         }));
+    }
+
+    #[test]
+    fn insights_report_ambiguous_call_resolution() {
+        let mut graph = CodeGraph::new("repo");
+        let caller = graph.add_node(NodeKind::Function, "main");
+        let left = graph.add_node(NodeKind::Function, "parse");
+        let right = graph.add_node(NodeKind::Function, "parser::parse");
+        let single = graph.add_node(NodeKind::Function, "load_config");
+        graph.add_edge_with_metadata(
+            caller,
+            left,
+            EdgeKind::Calls,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("call_label".to_string(), "parse".to_string()),
+                ("resolution".to_string(), "ambiguous".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            caller,
+            right,
+            EdgeKind::Calls,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("call_label".to_string(), "parse".to_string()),
+                ("resolution".to_string(), "ambiguous".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            caller,
+            single,
+            EdgeKind::Calls,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("call_label".to_string(), "load_config".to_string()),
+                ("resolution".to_string(), "resolved".to_string()),
+            ]),
+        );
+
+        let report = insights(&graph);
+        let ambiguous = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "ambiguous_call_resolution")
+            .expect("expected ambiguous call insight");
+
+        assert_eq!(ambiguous.severity, InsightSeverity::Warning);
+        assert!(ambiguous.message.contains("main"));
+        assert!(ambiguous.message.contains("parse"));
+        assert!(ambiguous.nodes.contains(&caller));
+        assert!(ambiguous.nodes.contains(&left));
+        assert!(ambiguous.nodes.contains(&right));
+        assert!(!ambiguous.nodes.contains(&single));
+        assert_eq!(ambiguous.edges.len(), 2);
     }
 
     #[test]
