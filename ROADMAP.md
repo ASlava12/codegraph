@@ -210,6 +210,7 @@ Goal: answer practical code investigation questions.
 - [x] Add cycle query slices for focused circular dependency context.
 - [x] Add hotspot query slices for focused high-degree dependency context.
 - [x] Add query result facets for agent and web triage summaries.
+- [x] Add agent-facing natural-language query mode that maps English/Russian questions to bounded graph slices without vector storage.
 - [x] Add reverse dependent traces for impact analysis.
 - [x] Add web entrypoint trace JSON downloads for startup-flow handoff.
 - [x] Add web config/error trace JSON downloads for configuration and exception-flow handoff.

@@ -6,13 +6,14 @@ use codegraph_analysis::{
     DEFAULT_REPORT_FILE_SUMMARY_LIMIT, DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT,
     DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceRequest,
     EntrypointWorkflowRequest, ErrorTraceRequest, ExplainEdgeRequest, InsightFilter,
-    InsightSeverity, ProjectReport, ProjectReportLimits, ProjectReportMarkdownOptions,
-    SourceSearchRequest, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryRequest,
-    WorkflowRequest, architecture_map, check_insights, communities, compact_query_result,
-    entrypoints, explain_edge, filter_insight_report, hotspots, insights, language_dependencies,
-    project_report, project_report_markdown, query_graph, search_source, summarize,
-    surprising_links, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
-    workflow, workflow_entrypoints, workflow_mermaid, workflow_query,
+    InsightSeverity, NaturalQueryRequest, ProjectReport, ProjectReportLimits,
+    ProjectReportMarkdownOptions, SourceSearchRequest, TraceRequest, TraceStart, WorkflowFilters,
+    WorkflowQueryRequest, WorkflowRequest, architecture_map, check_insights, communities,
+    compact_query_result, entrypoints, explain_edge, filter_insight_report, hotspots, insights,
+    language_dependencies, natural_query, project_report, project_report_markdown, query_graph,
+    search_source, summarize, surprising_links, trace, trace_config, trace_dependents,
+    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_mermaid,
+    workflow_query,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -153,6 +154,31 @@ enum Command {
     Query {
         /// Query expression, for example: nodes kind:function label:main or path from:main to:init.
         expression: String,
+
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        /// Collapse repeated low-signal nodes in the query result.
+        #[arg(long)]
+        compact: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Map a natural-language investigation question to a bounded graph query and run it.
+    Ask {
+        /// Question, for example: "Where is DATABASE_URL read?".
+        question: String,
 
         /// Project root to scan.
         #[arg(default_value = ".")]
@@ -1337,6 +1363,19 @@ fn main() -> Result<()> {
                 result
             };
             println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::Ask {
+            question,
+            path,
+            include_hidden,
+            include_ignored,
+            compact,
+            cache,
+        } => {
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
+            let report = natural_query(&graph, NaturalQueryRequest { question, compact })?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::NodeCard(args) => {
             let graph = scan_with_options(

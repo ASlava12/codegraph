@@ -19,14 +19,15 @@ use codegraph_analysis::{
     MAX_REPORT_ARCHITECTURE_EDGE_LIMIT, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
     MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_FILE_SUMMARY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
     MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, MAX_REPORT_NODE_SUMMARY_LIMIT,
-    NodeCard, NodeContext, ProjectReport, ProjectReportLimits, ProjectReportMarkdownOptions,
-    SourcePreview, SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart,
-    WorkflowFilters, WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport, WorkflowRequest,
-    architecture_map, check_insights, communities, compact_query_result, entrypoints, explain_edge,
-    export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots, insights,
-    language_dependencies, node_card, node_context, project_report, project_report_markdown,
-    query_graph, read_source_preview, search_source, slice_graph, summarize, surprising_links,
-    trace, trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
+    NaturalQueryReport, NaturalQueryRequest, NodeCard, NodeContext, ProjectReport,
+    ProjectReportLimits, ProjectReportMarkdownOptions, SourcePreview, SourceSearchRequest,
+    SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryReport,
+    WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map, check_insights,
+    communities, compact_query_result, entrypoints, explain_edge, export_dot, export_ndjson,
+    filter_insight_report, focus_subgraph, hotspots, insights, language_dependencies,
+    natural_query, node_card, node_context, project_report, project_report_markdown, query_graph,
+    read_source_preview, search_source, slice_graph, summarize, surprising_links, trace,
+    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
     workflow_entrypoints, workflow_query,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
@@ -443,6 +444,13 @@ struct ErrorTraceQuery {
 
 #[derive(Debug, Deserialize)]
 struct GraphQuery {
+    path: Option<PathBuf>,
+    q: String,
+    compact: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NaturalGraphQuery {
     path: Option<PathBuf>,
     q: String,
     compact: Option<bool>,
@@ -1053,6 +1061,7 @@ async fn main() -> Result<()> {
         .route("/api/insights", get(insights_api))
         .route("/api/check", get(check_api))
         .route("/api/query", get(query_api))
+        .route("/api/ask", get(ask_api))
         .route("/api/explain-edge", get(explain_edge_api))
         .route("/api/trace", get(trace_api))
         .route("/api/workflow", get(workflow_api))
@@ -2788,6 +2797,27 @@ async fn query_api(
         result
     };
     Ok(Json(result))
+}
+
+async fn ask_api(
+    State(state): State<AppState>,
+    Query(query): Query<NaturalGraphQuery>,
+) -> Result<Json<NaturalQueryReport>, ApiError> {
+    if query.q.len() > MAX_GRAPH_QUERY_LENGTH {
+        return Err(ApiError::bad_request(format!(
+            "natural-language question is too long; maximum is {MAX_GRAPH_QUERY_LENGTH} bytes"
+        )));
+    }
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let report = natural_query(
+        &graph,
+        NaturalQueryRequest {
+            question: query.q,
+            compact: query.compact.unwrap_or(false),
+        },
+    )
+    .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    Ok(Json(report))
 }
 
 async fn explain_edge_api(
@@ -4756,6 +4786,31 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 )
                 .with_response_fields(query_result_response_fields()),
                 api_get(
+                    "/api/ask",
+                    "Map a natural-language investigation question to a deterministic bounded graph query, run it, and return the generated query, rule, confidence, alternatives, and QueryResult.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "q",
+                            true,
+                            "string",
+                            None,
+                            "Natural-language question, for example `Where is DATABASE_URL read?`, `Кто вызывает load_config?`, or `Show path from main to init_db`.",
+                        )
+                        .with_max_length(MAX_GRAPH_QUERY_LENGTH)
+                        .with_capability_limit("max_graph_query_length"),
+                        query_param(
+                            "compact",
+                            false,
+                            "bool",
+                            Some("false"),
+                            "Collapse repeated low-signal nodes in the generated query result.",
+                        ),
+                    ],
+                    "NaturalQueryReport",
+                )
+                .with_response_fields(natural_query_response_fields()),
+                api_get(
                     "/api/explain-edge",
                     "Explain why an edge exists with confidence, provenance evidence, and related edge-scoped risk findings.",
                     vec![
@@ -6144,6 +6199,47 @@ fn query_result_response_fields() -> Vec<ApiParameterSpec> {
     ]
 }
 
+fn natural_query_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "question",
+            true,
+            "string",
+            "Original natural-language question.",
+        ),
+        response_field(
+            "generated_query",
+            true,
+            "string",
+            "Deterministic graph query generated from the question.",
+        ),
+        response_field(
+            "rule",
+            true,
+            "string",
+            "Rule name that selected the generated query.",
+        ),
+        response_field(
+            "confidence",
+            true,
+            "string",
+            "Heuristic confidence for the mapping.",
+        ),
+        response_field(
+            "result",
+            true,
+            "QueryResult",
+            "Result of running the generated graph query.",
+        ),
+        response_field(
+            "alternatives",
+            true,
+            "string[]",
+            "Other deterministic query expressions worth trying.",
+        ),
+    ]
+}
+
 fn edge_explanation_response_fields() -> Vec<ApiParameterSpec> {
     vec![
         response_field("edge_index", true, "usize", "Exact graph edge index."),
@@ -6985,6 +7081,7 @@ fn capability_features(cache_enabled: bool, access_log_enabled: bool) -> Vec<&'s
         "node_cards",
         "focused_subgraphs",
         "query_language",
+        "natural_language_queries",
         "entrypoint_traces",
         "entrypoint_workflows",
         "workflow_filters",
@@ -7088,6 +7185,7 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
                 "GET /api/focus",
                 "GET /api/summary",
                 "GET /api/query",
+                "GET /api/ask",
                 "GET /api/explain-edge",
                 "GET /api/workflow",
                 "GET /api/workflow-query",
@@ -7508,6 +7606,7 @@ mod tests {
         assert!(without_cache.contains(&"project_report"));
         assert!(without_cache.contains(&"semantic_lsp"));
         assert!(without_cache.contains(&"node_cards"));
+        assert!(without_cache.contains(&"natural_language_queries"));
         assert!(!without_cache.contains(&"persistent_graph_cache"));
         assert!(!without_cache.contains(&"persistent_graph_chunks"));
         assert!(!without_cache.contains(&"semantic_lsp_cache"));
@@ -7871,6 +7970,7 @@ fn helper() {}
         assert!(endpoints.contains(&"GET /api/incremental-update"));
         assert!(endpoints.contains(&"GET /api/cache-chunks"));
         assert!(endpoints.contains(&"GET /api/query"));
+        assert!(endpoints.contains(&"GET /api/ask"));
         assert!(endpoints.contains(&"GET /api/node-context"));
         assert!(endpoints.contains(&"GET /api/node-card"));
         assert!(endpoints.contains(&"GET /api/surprising-links"));
@@ -8663,6 +8763,7 @@ fn helper() {}
         assert!(endpoints.contains(&("GET", "/api/incremental-update")));
         assert!(endpoints.contains(&("GET", "/api/node-card")));
         assert!(endpoints.contains(&("GET", "/api/query")));
+        assert!(endpoints.contains(&("GET", "/api/ask")));
         assert!(endpoints.contains(&("POST", "/api/scan-jobs")));
         assert!(endpoints.contains(&("GET", "/api/scan-jobs/{id}/events")));
         let graph_endpoint = schema
@@ -8840,6 +8941,32 @@ fn helper() {}
                 .iter()
                 .any(|field| { field.name == "facets" && field.value_type == "QueryFacets" })
         );
+        let ask_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/ask")
+            .expect("schema should list ask endpoint");
+        assert!(
+            ask_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name == "q"
+                    && parameter.required
+                    && parameter.max_length == Some(MAX_GRAPH_QUERY_LENGTH)
+                    && parameter.capability_limit == Some("max_graph_query_length"))
+        );
+        assert!(ask_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "compact"
+                && parameter.value_type == "bool"
+                && parameter.default.as_deref() == Some("false")
+        }));
+        assert!(ask_endpoint.response_fields.iter().any(|field| {
+            field.name == "generated_query" && field.value_type == "string" && field.required
+        }));
+        assert!(ask_endpoint.response_fields.iter().any(|field| {
+            field.name == "result" && field.value_type == "QueryResult" && field.required
+        }));
         let explain_edge_endpoint = schema
             .groups
             .iter()

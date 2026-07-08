@@ -148,6 +148,7 @@ Implemented now:
 - Web error trace reports can be downloaded as JSON with target, depth, source nodes, and exception-flow paths.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, trace, diagnostic, insight/risk, and unreachable-code slices.
+- Agent-facing natural-language `ask` command and API map English/Russian investigation questions to deterministic bounded graph queries with generated query, rule, confidence, alternatives, and optional compact results.
 - SQL/schema graph query slices for tables, columns, indexes, views, app SQL query cards, code-to-query references, schema references, and missing-table triage.
 - Agent-friendly annotation graph queries for focused user-owned metadata slices from `.codegraph/annotations.toml`.
 - Focused query responses include returned counts and facets for node kinds, edge kinds, languages, item kinds, and confidence.
@@ -486,6 +487,8 @@ cargo run -p codegraph-cli -- query 'entrypoints language:rust' .
 cargo run -p codegraph-cli -- query 'routes method:GET path:/health depth:3 edge_limit:300' .
 cargo run -p codegraph-cli -- query 'packages package:serde ecosystem:cargo edge_limit:300' .
 cargo run -p codegraph-cli -- query 'configs target:DATABASE_URL depth:6' .
+cargo run -p codegraph-cli -- ask 'Where is DATABASE_URL read from the environment?' .
+cargo run -p codegraph-cli -- ask 'Кто вызывает load_config?' . --compact
 cargo run -p codegraph-cli -- query 'errors target:panic depth:6' .
 cargo run -p codegraph-cli -- query 'cycles edge_kind:calls' .
 cargo run -p codegraph-cli -- query 'hotspots language:rust min_score:5 edge_limit:300' .
@@ -787,6 +790,13 @@ curl --get 'http://127.0.0.1:3765/api/query' \
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=insights severity:error'
+curl --get 'http://127.0.0.1:3765/api/ask' \
+  --data-urlencode 'path=.' \
+  --data-urlencode 'q=Where is DATABASE_URL read from the environment?'
+curl --get 'http://127.0.0.1:3765/api/ask' \
+  --data-urlencode 'path=.' \
+  --data-urlencode 'q=Кто вызывает load_config?' \
+  --data-urlencode 'compact=true'
 curl --get 'http://127.0.0.1:3765/api/source-search' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=DATABASE_URL' \
