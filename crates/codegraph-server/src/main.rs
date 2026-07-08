@@ -12,20 +12,22 @@ use codegraph_analysis::{
     CheckReport, ConfigTraceRequest, ConfigTraceResult, DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
     DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_COMMUNITY_LIMIT,
     DEFAULT_REPORT_FILE_SUMMARY_LIMIT, DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT,
-    DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, EntrypointTraceReport, EntrypointTraceRequest,
-    EntrypointWorkflowReport, EntrypointWorkflowRequest, ErrorTraceRequest, ErrorTraceResult,
-    ExplainEdgeRequest, FocusRequest, GraphSlice, GraphSliceRequest, GraphSummary, InsightFilter,
-    InsightReport, InsightSeverity, KNOWN_INSIGHT_KINDS, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT,
-    MAX_REPORT_ARCHITECTURE_GROUP_LIMIT, MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_FILE_SUMMARY_LIMIT,
-    MAX_REPORT_HOTSPOT_LIMIT, MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, NodeCard,
-    NodeContext, ProjectReport, ProjectReportLimits, ProjectReportMarkdownOptions, SourcePreview,
-    SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters,
-    WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map,
-    check_insights, communities, entrypoints, explain_edge, export_dot, export_ndjson,
-    filter_insight_report, focus_subgraph, hotspots, insights, language_dependencies, node_card,
-    node_context, project_report, project_report_markdown, query_graph, read_source_preview,
-    search_source, slice_graph, summarize, surprising_links, trace, trace_config, trace_dependents,
-    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_query,
+    DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceReport,
+    EntrypointTraceRequest, EntrypointWorkflowReport, EntrypointWorkflowRequest, ErrorTraceRequest,
+    ErrorTraceResult, ExplainEdgeRequest, FocusRequest, GraphSlice, GraphSliceRequest,
+    GraphSummary, InsightFilter, InsightReport, InsightSeverity, KNOWN_INSIGHT_KINDS,
+    MAX_REPORT_ARCHITECTURE_EDGE_LIMIT, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
+    MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_FILE_SUMMARY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
+    MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, MAX_REPORT_NODE_SUMMARY_LIMIT,
+    NodeCard, NodeContext, ProjectReport, ProjectReportLimits, ProjectReportMarkdownOptions,
+    SourcePreview, SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart,
+    WorkflowFilters, WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport, WorkflowRequest,
+    architecture_map, check_insights, communities, entrypoints, explain_edge, export_dot,
+    export_ndjson, filter_insight_report, focus_subgraph, hotspots, insights,
+    language_dependencies, node_card, node_context, project_report, project_report_markdown,
+    query_graph, read_source_preview, search_source, slice_graph, summarize, surprising_links,
+    trace, trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
+    workflow_entrypoints, workflow_query,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -480,6 +482,7 @@ struct ProjectReportQuery {
     community_limit: Option<usize>,
     insight_limit: Option<usize>,
     file_summary_limit: Option<usize>,
+    node_summary_limit: Option<usize>,
     fail_on: Option<String>,
 }
 
@@ -853,6 +856,8 @@ struct RuntimeLimitsResponse {
     max_report_insight_limit: usize,
     default_report_file_summary_limit: usize,
     max_report_file_summary_limit: usize,
+    default_report_node_summary_limit: usize,
+    max_report_node_summary_limit: usize,
     default_source_context: u32,
     max_source_context: u32,
     default_source_search_limit: usize,
@@ -1851,6 +1856,8 @@ async fn capabilities_api(
             max_report_insight_limit: MAX_REPORT_INSIGHT_LIMIT,
             default_report_file_summary_limit: DEFAULT_REPORT_FILE_SUMMARY_LIMIT,
             max_report_file_summary_limit: MAX_REPORT_FILE_SUMMARY_LIMIT,
+            default_report_node_summary_limit: DEFAULT_REPORT_NODE_SUMMARY_LIMIT,
+            max_report_node_summary_limit: MAX_REPORT_NODE_SUMMARY_LIMIT,
             default_source_context: DEFAULT_SOURCE_CONTEXT,
             max_source_context: MAX_SOURCE_CONTEXT,
             default_source_search_limit: DEFAULT_SOURCE_SEARCH_LIMIT,
@@ -3202,6 +3209,10 @@ fn project_report_limits_from_query(
             .file_summary_limit
             .unwrap_or(DEFAULT_REPORT_FILE_SUMMARY_LIMIT)
             .clamp(1, MAX_REPORT_FILE_SUMMARY_LIMIT),
+        node_summary_limit: query
+            .node_summary_limit
+            .unwrap_or(DEFAULT_REPORT_NODE_SUMMARY_LIMIT)
+            .clamp(1, MAX_REPORT_NODE_SUMMARY_LIMIT),
         fail_on: normalize_query_string(query.fail_on.clone())
             .map(|value| parse_insight_severity(&value))
             .transpose()?
@@ -3693,6 +3704,7 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "hotspots",
                     "communities",
                     "file_summaries",
+                    "node_summaries",
                     "cache",
                     "coverage",
                 ],
@@ -4743,7 +4755,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
             endpoints: vec![
                 api_get(
                     "/api/report",
-                    "Return a production project report snapshot with cache, coverage, summary, compact file summaries, full-project risk scoring, quality gate, topology, and hotspots.",
+                    "Return a production project report snapshot with cache, coverage, summary, compact node/file summaries, full-project risk scoring, quality gate, topology, and hotspots.",
                     report_params(),
                     "ProjectReportResponse",
                 )
@@ -5409,6 +5421,15 @@ fn report_params() -> Vec<ApiParameterSpec> {
         )
         .with_range(1, MAX_REPORT_FILE_SUMMARY_LIMIT)
         .with_capability_limit("max_report_file_summary_limit"),
+        query_param(
+            "node_summary_limit",
+            false,
+            "usize",
+            Some("25"),
+            "Maximum compact node summaries, capped by server capabilities.",
+        )
+        .with_range(1, MAX_REPORT_NODE_SUMMARY_LIMIT)
+        .with_capability_limit("max_report_node_summary_limit"),
         query_param(
             "fail_on",
             false,
@@ -6122,7 +6143,7 @@ fn project_report_response_fields() -> Vec<ApiParameterSpec> {
             "report",
             true,
             "ProjectReport",
-            "Production project report with summary, compact file summaries, surprising links, risks, quality gate, topology, and hotspots.",
+            "Production project report with summary, compact node/file summaries, surprising links, risks, quality gate, topology, and hotspots.",
         ),
     ]
 }
@@ -7450,6 +7471,8 @@ mod tests {
         assert_eq!(response.limits.max_report_insight_limit, 500);
         assert_eq!(response.limits.default_report_file_summary_limit, 25);
         assert_eq!(response.limits.max_report_file_summary_limit, 500);
+        assert_eq!(response.limits.default_report_node_summary_limit, 25);
+        assert_eq!(response.limits.max_report_node_summary_limit, 500);
         assert_eq!(response.limits.max_source_search_query_length, 4096);
         fs::remove_dir_all(root).unwrap();
     }
@@ -7492,6 +7515,7 @@ mod tests {
             community_limit: Some(usize::MAX),
             insight_limit: Some(usize::MAX),
             file_summary_limit: Some(usize::MAX),
+            node_summary_limit: Some(usize::MAX),
             fail_on: None,
         })
         .expect("report limits");
@@ -7509,6 +7533,7 @@ mod tests {
         assert_eq!(limits.community_limit, MAX_REPORT_COMMUNITY_LIMIT);
         assert_eq!(limits.insight_limit, MAX_REPORT_INSIGHT_LIMIT);
         assert_eq!(limits.file_summary_limit, MAX_REPORT_FILE_SUMMARY_LIMIT);
+        assert_eq!(limits.node_summary_limit, MAX_REPORT_NODE_SUMMARY_LIMIT);
     }
 
     #[tokio::test]
@@ -8736,6 +8761,20 @@ fn helper() {}
         assert_eq!(
             report_file_summary_limit.capability_limit,
             Some("max_report_file_summary_limit")
+        );
+        let report_node_summary_limit = report_endpoint
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "node_summary_limit")
+            .expect("report node_summary_limit");
+        assert_eq!(report_node_summary_limit.minimum, Some(1));
+        assert_eq!(
+            report_node_summary_limit.maximum,
+            Some(MAX_REPORT_NODE_SUMMARY_LIMIT)
+        );
+        assert_eq!(
+            report_node_summary_limit.capability_limit,
+            Some("max_report_node_summary_limit")
         );
         assert!(
             report_endpoint.response_fields.iter().any(|field| {

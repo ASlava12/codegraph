@@ -1030,6 +1030,8 @@ pub const DEFAULT_REPORT_INSIGHT_LIMIT: usize = 50;
 pub const MAX_REPORT_INSIGHT_LIMIT: usize = 500;
 pub const DEFAULT_REPORT_FILE_SUMMARY_LIMIT: usize = 25;
 pub const MAX_REPORT_FILE_SUMMARY_LIMIT: usize = 500;
+pub const DEFAULT_REPORT_NODE_SUMMARY_LIMIT: usize = 25;
+pub const MAX_REPORT_NODE_SUMMARY_LIMIT: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectReportLimits {
@@ -1040,6 +1042,7 @@ pub struct ProjectReportLimits {
     pub community_limit: usize,
     pub insight_limit: usize,
     pub file_summary_limit: usize,
+    pub node_summary_limit: usize,
     pub fail_on: InsightSeverity,
 }
 
@@ -1053,6 +1056,7 @@ impl Default for ProjectReportLimits {
             community_limit: DEFAULT_REPORT_COMMUNITY_LIMIT,
             insight_limit: DEFAULT_REPORT_INSIGHT_LIMIT,
             file_summary_limit: DEFAULT_REPORT_FILE_SUMMARY_LIMIT,
+            node_summary_limit: DEFAULT_REPORT_NODE_SUMMARY_LIMIT,
             fail_on: InsightSeverity::Error,
         }
     }
@@ -1074,6 +1078,22 @@ pub struct ProjectCompactFileSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectCompactNodeSummaryReport {
+    pub nodes: Vec<ProjectCompactNodeSummary>,
+    pub total_nodes: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectCompactNodeSummary {
+    pub node: Node,
+    pub dependency_summary: NodeDependencySummary,
+    pub insight_summary: NodeInsightSummary,
+    pub roles: Vec<String>,
+    pub score: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectReport {
     pub graph_schema_version: u32,
     pub summary: GraphSummary,
@@ -1087,6 +1107,7 @@ pub struct ProjectReport {
     pub hotspots: HotspotReport,
     pub communities: CommunityReport,
     pub file_summaries: ProjectCompactFileSummaryReport,
+    pub node_summaries: ProjectCompactNodeSummaryReport,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2124,6 +2145,8 @@ pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> Project
     let quality_gate = check_insights(full_insight_report.clone(), limits.fail_on);
     let file_summaries =
         compact_file_summaries(graph, &full_insight_report, limits.file_summary_limit);
+    let node_summaries =
+        compact_node_summaries(graph, &full_insight_report, limits.node_summary_limit);
     let insight_report = filter_insight_report(
         full_insight_report,
         &InsightFilter {
@@ -2151,6 +2174,7 @@ pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> Project
         hotspots: hotspots(graph, limits.hotspot_limit),
         communities: communities(graph, limits.community_limit),
         file_summaries,
+        node_summaries,
     }
 }
 
@@ -2231,6 +2255,47 @@ pub fn project_report_markdown(
         &report.summary.edge_confidences,
         12,
     );
+
+    writeln!(output, "\n## Compact Node Summaries").unwrap();
+    if report.node_summaries.nodes.is_empty() {
+        writeln!(output, "No node summaries were found.").unwrap();
+    } else {
+        writeln!(
+            output,
+            "| Score | Node | Kind | Roles | In | Out | Risks | Edge kinds | Source |"
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "| ---: | --- | --- | --- | ---: | ---: | --- | --- | --- |"
+        )
+        .unwrap();
+        for node in report.node_summaries.nodes.iter().take(20) {
+            writeln!(
+                output,
+                "| {} | {} | `{}` | {} | {} | {} | {} | {} | {} |",
+                node.score,
+                node_ref(&node.node),
+                markdown_code(&kind_name(&node.node.kind)),
+                markdown_table_cell(&node.roles.join(", ")),
+                node.dependency_summary.incoming,
+                node.dependency_summary.outgoing,
+                count_map_inline(&node.insight_summary.by_severity, 4),
+                count_map_inline(&node.dependency_summary.edge_kinds, 5),
+                node_span_ref(&node.node)
+            )
+            .unwrap();
+        }
+        if report.node_summaries.truncated {
+            writeln!(
+                output,
+                "\nNode summaries are truncated: showing {} of {} important nodes.",
+                report.node_summaries.nodes.len(),
+                report.node_summaries.total_nodes
+            )
+            .unwrap();
+        }
+    }
 
     writeln!(output, "\n## Compact File Summaries").unwrap();
     if report.file_summaries.files.is_empty() {
@@ -2795,6 +2860,9 @@ fn normalize_project_report_limits(limits: ProjectReportLimits) -> ProjectReport
         file_summary_limit: limits
             .file_summary_limit
             .clamp(1, MAX_REPORT_FILE_SUMMARY_LIMIT),
+        node_summary_limit: limits
+            .node_summary_limit
+            .clamp(1, MAX_REPORT_NODE_SUMMARY_LIMIT),
         fail_on: limits.fail_on,
     }
 }
@@ -2873,6 +2941,198 @@ fn compact_file_summary_score(
         + summary.code_symbols * 5
         + summary.direct_dependencies * 3
         + summary.imports
+}
+
+fn compact_node_summaries(
+    graph: &CodeGraph,
+    insight_report: &InsightReport,
+    limit: usize,
+) -> ProjectCompactNodeSummaryReport {
+    let mut nodes: Vec<ProjectCompactNodeSummary> = graph
+        .nodes
+        .iter()
+        .filter(|node| compact_node_summary_candidate(&node.kind))
+        .filter_map(|node| {
+            let dependency_summary = node_dependency_summary(graph, node.id);
+            let related_insights: Vec<Insight> = insight_report
+                .insights
+                .iter()
+                .filter(|insight| node_card_insight_matches(graph, node, None, insight))
+                .cloned()
+                .collect();
+            let insight_summary = node_insight_summary(&related_insights);
+            let roles = compact_node_summary_roles(node, &dependency_summary, &insight_summary);
+            if roles.is_empty()
+                && dependency_summary.incoming == 0
+                && dependency_summary.outgoing == 0
+                && insight_summary.by_severity.is_empty()
+            {
+                return None;
+            }
+            let score = compact_node_summary_score(node, &dependency_summary, &insight_summary);
+            Some(ProjectCompactNodeSummary {
+                node: node.clone(),
+                dependency_summary,
+                insight_summary,
+                roles,
+                score,
+            })
+        })
+        .collect();
+
+    nodes.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| node_rank(&left.node.kind).cmp(&node_rank(&right.node.kind)))
+            .then_with(|| left.node.label.cmp(&right.node.label))
+            .then_with(|| left.node.id.cmp(&right.node.id))
+    });
+
+    let total_nodes = nodes.len();
+    let truncated = nodes.len() > limit;
+    nodes.truncate(limit);
+
+    ProjectCompactNodeSummaryReport {
+        nodes,
+        total_nodes,
+        truncated,
+    }
+}
+
+fn compact_node_summary_candidate(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Module
+            | NodeKind::Function
+            | NodeKind::Entrypoint
+            | NodeKind::Type
+            | NodeKind::Config
+            | NodeKind::Environment
+            | NodeKind::ExternalDependency
+    )
+}
+
+fn compact_node_summary_roles(
+    node: &Node,
+    dependency_summary: &NodeDependencySummary,
+    insight_summary: &NodeInsightSummary,
+) -> Vec<String> {
+    let mut roles = Vec::new();
+    if node.kind == NodeKind::Entrypoint
+        || dependency_summary
+            .incoming_edge_kinds
+            .contains_key(&edge_kind_name(&EdgeKind::Entrypoint))
+        || dependency_summary
+            .outgoing_edge_kinds
+            .contains_key(&edge_kind_name(&EdgeKind::Entrypoint))
+    {
+        roles.push("entrypoint".to_string());
+    }
+    if !insight_summary.by_severity.is_empty() {
+        roles.push("risk".to_string());
+    }
+    if node.kind == NodeKind::Config
+        || dependency_summary
+            .edge_kinds
+            .contains_key(&edge_kind_name(&EdgeKind::ReadsConfig))
+    {
+        roles.push("config".to_string());
+    }
+    if node.kind == NodeKind::Environment
+        || dependency_summary
+            .edge_kinds
+            .contains_key(&edge_kind_name(&EdgeKind::ReadsEnvironment))
+    {
+        roles.push("environment".to_string());
+    }
+    if node.kind == NodeKind::ExternalDependency
+        || dependency_summary
+            .edge_kinds
+            .contains_key(&edge_kind_name(&EdgeKind::DependsOn))
+        || dependency_summary
+            .edge_kinds
+            .contains_key(&edge_kind_name(&EdgeKind::Imports))
+    {
+        roles.push("external_boundary".to_string());
+    }
+    if dependency_summary
+        .edge_kinds
+        .contains_key(&edge_kind_name(&EdgeKind::MayError))
+    {
+        roles.push("error_flow".to_string());
+    }
+    if dependency_summary.incoming + dependency_summary.outgoing >= 3 {
+        roles.push("hub".to_string());
+    }
+    if roles.is_empty() && is_code_symbol(&node.kind) {
+        roles.push("code_symbol".to_string());
+    }
+    roles
+}
+
+fn compact_node_summary_score(
+    node: &Node,
+    dependency_summary: &NodeDependencySummary,
+    insight_summary: &NodeInsightSummary,
+) -> usize {
+    let risk_score: usize = insight_summary
+        .by_severity
+        .iter()
+        .map(|(severity, count)| match severity.as_str() {
+            "error" => *count * 100,
+            "warning" => *count * 40,
+            "info" => *count * 10,
+            _ => *count,
+        })
+        .sum();
+    let entrypoint_score = if node.kind == NodeKind::Entrypoint
+        || dependency_summary
+            .edge_kinds
+            .contains_key(&edge_kind_name(&EdgeKind::Entrypoint))
+    {
+        50
+    } else {
+        0
+    };
+    let boundary_score = if matches!(
+        node.kind,
+        NodeKind::Config | NodeKind::Environment | NodeKind::ExternalDependency
+    ) {
+        15
+    } else {
+        0
+    };
+
+    risk_score
+        + entrypoint_score
+        + boundary_score
+        + dependency_summary.incoming * 4
+        + dependency_summary.outgoing * 6
+        + dependency_summary
+            .edge_kinds
+            .get(&edge_kind_name(&EdgeKind::Calls))
+            .copied()
+            .unwrap_or(0)
+            * 5
+        + dependency_summary
+            .edge_kinds
+            .get(&edge_kind_name(&EdgeKind::MayError))
+            .copied()
+            .unwrap_or(0)
+            * 10
+        + dependency_summary
+            .edge_kinds
+            .get(&edge_kind_name(&EdgeKind::ReadsConfig))
+            .copied()
+            .unwrap_or(0)
+            * 8
+        + dependency_summary
+            .edge_kinds
+            .get(&edge_kind_name(&EdgeKind::ReadsEnvironment))
+            .copied()
+            .unwrap_or(0)
+            * 8
 }
 
 fn failing_insight_count(report: &InsightReport, fail_on: InsightSeverity) -> usize {
@@ -12421,6 +12681,7 @@ mod tests {
                 community_limit: 5,
                 insight_limit: 1,
                 file_summary_limit: 1,
+                node_summary_limit: 2,
                 fail_on: InsightSeverity::Warning,
             },
         );
@@ -12440,6 +12701,16 @@ mod tests {
         assert_eq!(report.file_summaries.files.len(), 1);
         assert_eq!(report.file_summaries.total_files, 2);
         assert!(report.file_summaries.truncated);
+        assert_eq!(report.node_summaries.nodes.len(), 2);
+        assert!(report.node_summaries.total_nodes >= 3);
+        assert!(report.node_summaries.truncated);
+        assert!(
+            report
+                .node_summaries
+                .nodes
+                .iter()
+                .any(|summary| summary.roles.iter().any(|role| role == "entrypoint"))
+        );
         assert_eq!(report.insights.total, report.quality_gate.report.total);
         assert_eq!(report.risk_summary.total, report.quality_gate.report.total);
         assert_eq!(report.risk_summary.errors, 1);
@@ -12501,6 +12772,7 @@ mod tests {
                 community_limit: 5,
                 insight_limit: 5,
                 file_summary_limit: 5,
+                node_summary_limit: 5,
                 fail_on: InsightSeverity::Warning,
             },
         );
@@ -12516,6 +12788,8 @@ mod tests {
         assert!(markdown.contains("# CodeGraph Project Report"));
         assert!(markdown.contains("- Root: `repo`"));
         assert!(markdown.contains("## Confidence Guide"));
+        assert!(markdown.contains("## Compact Node Summaries"));
+        assert!(markdown.contains("entrypoint"));
         assert!(markdown.contains("## Compact File Summaries"));
         assert!(markdown.contains("src/main.rs"));
         assert!(markdown.contains("| `exact` | extracted |"));

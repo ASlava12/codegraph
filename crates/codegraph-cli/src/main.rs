@@ -4,15 +4,15 @@ use codegraph_analysis::{
     ConfigTraceRequest, DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
     DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_COMMUNITY_LIMIT,
     DEFAULT_REPORT_FILE_SUMMARY_LIMIT, DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT,
-    DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, EntrypointTraceRequest, EntrypointWorkflowRequest,
-    ErrorTraceRequest, ExplainEdgeRequest, InsightFilter, InsightSeverity, ProjectReport,
-    ProjectReportLimits, ProjectReportMarkdownOptions, SourceSearchRequest, TraceRequest,
-    TraceStart, WorkflowFilters, WorkflowQueryRequest, WorkflowRequest, architecture_map,
-    check_insights, communities, entrypoints, explain_edge, filter_insight_report, hotspots,
-    insights, language_dependencies, project_report, project_report_markdown, query_graph,
-    search_source, summarize, surprising_links, trace, trace_config, trace_dependents,
-    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_mermaid,
-    workflow_query,
+    DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceRequest,
+    EntrypointWorkflowRequest, ErrorTraceRequest, ExplainEdgeRequest, InsightFilter,
+    InsightSeverity, ProjectReport, ProjectReportLimits, ProjectReportMarkdownOptions,
+    SourceSearchRequest, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryRequest,
+    WorkflowRequest, architecture_map, check_insights, communities, entrypoints, explain_edge,
+    filter_insight_report, hotspots, insights, language_dependencies, project_report,
+    project_report_markdown, query_graph, search_source, summarize, surprising_links, trace,
+    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
+    workflow_entrypoints, workflow_mermaid, workflow_query,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -575,6 +575,10 @@ struct ReportArgs {
     /// Maximum compact file summaries to include.
     #[arg(long, default_value_t = DEFAULT_REPORT_FILE_SUMMARY_LIMIT)]
     file_summary_limit: usize,
+
+    /// Maximum compact node summaries to include.
+    #[arg(long, default_value_t = DEFAULT_REPORT_NODE_SUMMARY_LIMIT)]
+    node_summary_limit: usize,
 
     /// Mark the quality gate as failed when an insight has this severity or higher.
     #[arg(long, value_enum, default_value = "error")]
@@ -1766,6 +1770,7 @@ fn report_limits_from_args(args: &ReportArgs) -> ProjectReportLimits {
         community_limit: args.community_limit,
         insight_limit: args.insight_limit,
         file_summary_limit: args.file_summary_limit,
+        node_summary_limit: args.node_summary_limit,
         fail_on: InsightSeverity::from(args.fail_on),
     }
 }
