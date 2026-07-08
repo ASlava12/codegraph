@@ -154,6 +154,7 @@ Implemented now:
 - Server-side insight filters for severity, kind, search, and capped agent/UI reads.
 - Web insight findings can be exported as JSON with active filters and severity/kind counts for review or agent handoff.
 - CI/agent check command, API, and web quality gate for failing on insight severity thresholds.
+- Web quality-gate check results can be downloaded as JSON for CI handoff and review records.
 - Insight focus API and web interaction for turning findings into focused graph views.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - Web query panel supports shareable `query` deep-links and copy-link actions for reusable investigations.

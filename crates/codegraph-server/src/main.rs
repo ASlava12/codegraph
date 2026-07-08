@@ -6717,9 +6717,13 @@ mod tests {
         assert!(app.contains("state.report?.quality_gate"));
         assert!(app.contains("\"risk.gate\""));
         assert!(index.contains("insightExportButton"));
+        assert!(index.contains("checkExportButton"));
         assert!(app.contains("exportCurrentInsights"));
         assert!(app.contains("codegraph.insights_export.v1"));
         assert!(app.contains("\"button.downloadInsights\""));
+        assert!(app.contains("exportLastCheckResult"));
+        assert!(app.contains("codegraph.check_result.v1"));
+        assert!(app.contains("\"button.downloadCheck\""));
         assert!(app.contains("capabilities.server_version"));
         assert!(app.contains("\"cap.server\""));
         assert!(app.contains("\"cap.apiBody\""));

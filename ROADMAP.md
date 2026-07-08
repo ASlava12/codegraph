@@ -125,6 +125,7 @@ Goal: answer practical code investigation questions.
 - [x] Make web insight severity breakdown chips clickable triage filters.
 - [x] Add web insight JSON export for filtered findings and triage handoff.
 - [x] Add CI/agent check command, API, and web quality gate for insight severity thresholds.
+- [x] Add web quality-gate check result JSON downloads.
 - [x] Add first graph query language for nodes, edges, calls, dependencies, and traces.
 - [x] Add directed path queries between graph labels or node ids.
 - [x] Add confidence-aware edge queries and UI provenance labels.

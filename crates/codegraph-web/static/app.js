@@ -157,6 +157,7 @@ const I18N = {
     "button.downloadSlice": "Download Slice",
     "button.downloadQueryResult": "Download Result",
     "button.downloadInsights": "Download Insights",
+    "button.downloadCheck": "Download Check",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
     "button.queryEdge": "Query",
@@ -332,6 +333,8 @@ const I18N = {
     "export.slice": "Visible Slice JSON",
     "export.queryResult": "Query Result JSON",
     "export.insights": "Insights JSON",
+    "export.check": "Check Result JSON",
+    "export.noCheck": "Run a quality check before exporting its result.",
     "export.noQueryResult": "Run a graph query before exporting its result.",
     "export.noSlice": "No visible graph slice to export.",
     "trace.tracing": "Tracing...",
@@ -554,6 +557,7 @@ const I18N = {
     "button.downloadSlice": "Скачать срез",
     "button.downloadQueryResult": "Скачать результат",
     "button.downloadInsights": "Скачать insights",
+    "button.downloadCheck": "Скачать проверку",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
     "button.queryEdge": "Запрос",
@@ -729,6 +733,8 @@ const I18N = {
     "export.slice": "JSON видимого среза",
     "export.queryResult": "JSON результата запроса",
     "export.insights": "JSON insights",
+    "export.check": "JSON проверки",
+    "export.noCheck": "Сначала запустите проверку качества.",
     "export.noQueryResult": "Сначала выполните запрос к графу.",
     "export.noSlice": "Нет видимого среза графа для экспорта.",
     "trace.tracing": "Трассирую...",
@@ -954,6 +960,7 @@ const state = {
   labelMode: getInitialLabelMode(),
   queryHistory: getInitialQueryHistory(),
   lastQueryResult: null,
+  lastCheckResult: null,
   pendingSelectionLink: null,
   pendingQueryLink: null,
   pendingGraphPageLink: false,
@@ -1094,6 +1101,7 @@ const insightSearchInput = document.querySelector("#insightSearchInput");
 const insightFilterButton = document.querySelector("#insightFilterButton");
 const insightExportButton = document.querySelector("#insightExportButton");
 const checkButton = document.querySelector("#checkButton");
+const checkExportButton = document.querySelector("#checkExportButton");
 const checkResult = document.querySelector("#checkResult");
 const kindFilters = document.querySelector("#kindFilters");
 const clearCanvasFiltersButton = document.querySelector("#clearCanvasFiltersButton");
@@ -1199,6 +1207,7 @@ for (const input of [insightSeverityInput, insightKindInput, insightSearchInput]
   });
 }
 checkButton.addEventListener("click", () => runCheck());
+checkExportButton.addEventListener("click", () => exportLastCheckResult());
 checkFailOnInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runCheck();
 });
@@ -1326,6 +1335,7 @@ function applyLocale() {
   renderLegend(state.enabledKinds);
   renderQueryHistory();
   renderQueryExportState();
+  renderCheckExportState();
   renderSelection();
   draw();
 }
@@ -2049,6 +2059,7 @@ async function scan() {
   renderOverview();
   state.insightReport = null;
   renderInsights();
+  clearLastCheckResult();
   checkResult.innerHTML = "";
   clearLastQueryResult();
   exportResult.innerHTML = "";
@@ -3747,6 +3758,17 @@ async function runCheck() {
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "check failed"));
     }
+    state.lastCheckResult = {
+      generated_at: new Date().toISOString(),
+      root: pathInput.value.trim() || ".",
+      filters: {
+        fail_on: failOn,
+        kind,
+        search,
+      },
+      result: body,
+    };
+    renderCheckExportState();
     checkResult.innerHTML = renderCheckReport(body);
   } catch (error) {
     if (requestId !== state.checkRequest) return;
@@ -3756,6 +3778,44 @@ async function runCheck() {
       checkButton.disabled = false;
     }
   }
+}
+
+function renderCheckExportState() {
+  checkExportButton.disabled = !state.lastCheckResult;
+}
+
+function clearLastCheckResult() {
+  state.lastCheckResult = null;
+  renderCheckExportState();
+}
+
+function exportLastCheckResult() {
+  if (!state.lastCheckResult) {
+    checkResult.innerHTML = `<p class="empty">${escapeHtml(t("export.noCheck"))}</p>`;
+    renderCheckExportState();
+    return;
+  }
+
+  const payload = {
+    schema: "codegraph.check_result.v1",
+    ...state.lastCheckResult,
+  };
+  const serialized = JSON.stringify(payload, null, 2);
+  const blob = new Blob([serialized], { type: "application/json" });
+  const fileName = `codegraph-${safeFilePart(payload.root)}-check-result.json`;
+  downloadBlob(blob, fileName);
+  checkResult.insertAdjacentHTML(
+    "afterbegin",
+    `
+      <div class="query-summary">
+        <span>${escapeHtml(t("export.check"))}</span>
+        <span>${escapeHtml(formatBytes(blob.size))}</span>
+        <span>${escapeHtml(payload.result?.passed ? "passed" : "failed")}</span>
+        <span>${escapeHtml(formatNumber(payload.result?.failing_insights ?? 0))} failing</span>
+        <span class="query-expression">${escapeHtml(fileName)}</span>
+      </div>
+    `,
+  );
 }
 
 function exportCurrentInsights() {
