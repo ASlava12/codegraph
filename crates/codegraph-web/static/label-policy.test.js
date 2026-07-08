@@ -127,8 +127,8 @@ test("auto mode keeps hover labels out of very dense views", () => {
     policy.shouldShowNodeLabel({
       labelMode: "auto",
       hovered: true,
-      zoom: 3.6,
-      visibleCount: 8,
+      zoom: 3.8,
+      visibleCount: 6,
       priority: 1,
     }),
     true,
@@ -137,81 +137,82 @@ test("auto mode keeps hover labels out of very dense views", () => {
     policy.shouldShowNodeLabel({
       labelMode: "auto",
       hovered: true,
-      zoom: 3.8,
-      visibleCount: 9,
-      priority: 1,
-    }),
-    false,
-  );
-});
-
-test("selected labels stay out of dense low-zoom views", () => {
-  assert.equal(
-    policy.shouldShowNodeLabel({
-      labelMode: "auto",
-      selected: true,
-      zoom: 2,
-      visibleCount: 20,
-      priority: 1,
-    }),
-    false,
-  );
-  assert.equal(
-    policy.shouldShowNodeLabel({
-      labelMode: "auto",
-      selected: true,
-      zoom: 2.6,
-      visibleCount: 12,
-      priority: 1,
-    }),
-    true,
-  );
-  assert.equal(
-    policy.shouldShowNodeLabel({
-      labelMode: "auto",
-      selected: true,
-      zoom: 2.8,
-      visibleCount: 13,
-      priority: 1,
-    }),
-    false,
-  );
-});
-
-test("focus mode only labels focused nodes at high zoom", () => {
-  assert.equal(
-    policy.shouldShowNodeLabel({
-      labelMode: "focus",
-      focused: true,
-      zoom: 3.7,
-      visibleCount: 6,
-      priority: 1,
-    }),
-    false,
-  );
-  assert.equal(
-    policy.shouldShowNodeLabel({
-      labelMode: "focus",
-      focused: true,
-      zoom: 3.8,
-      visibleCount: 6,
-      priority: 1,
-    }),
-    true,
-  );
-  assert.equal(
-    policy.shouldShowNodeLabel({
-      labelMode: "focus",
-      focused: true,
       zoom: 4,
       visibleCount: 7,
       priority: 1,
     }),
     false,
   );
-  assert.equal(policy.nodeLabelBudget({ labelMode: "focus", zoom: 3.7, visibleCount: 6 }), 0);
-  assert.equal(policy.nodeLabelBudget({ labelMode: "focus", zoom: 3.8, visibleCount: 6 }), 1);
-  assert.equal(policy.nodeLabelBudget({ labelMode: "focus", zoom: 3.8, visibleCount: 7 }), 0);
+});
+
+test("auto mode leaves selected node details to the side card", () => {
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "auto",
+      selected: true,
+      zoom: 5,
+      visibleCount: 2,
+      priority: 1,
+    }),
+    false,
+  );
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "auto",
+      selected: true,
+      hovered: true,
+      zoom: 5,
+      visibleCount: 2,
+      priority: 1,
+    }),
+    false,
+  );
+});
+
+test("focus mode labels selected or focused nodes only in sparse high-zoom views", () => {
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "focus",
+      selected: true,
+      zoom: 4.1,
+      visibleCount: 4,
+      priority: 1,
+    }),
+    false,
+  );
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "focus",
+      selected: true,
+      zoom: 4.2,
+      visibleCount: 4,
+      priority: 1,
+    }),
+    true,
+  );
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "focus",
+      focused: true,
+      zoom: 4.2,
+      visibleCount: 4,
+      priority: 1,
+    }),
+    true,
+  );
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "focus",
+      focused: true,
+      zoom: 4.4,
+      visibleCount: 5,
+      priority: 1,
+    }),
+    false,
+  );
+  assert.equal(policy.nodeLabelBudget({ labelMode: "focus", zoom: 4.1, visibleCount: 4 }), 0);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "focus", zoom: 4.2, visibleCount: 4 }), 1);
+  assert.equal(policy.nodeLabelBudget({ labelMode: "focus", zoom: 4.2, visibleCount: 5 }), 0);
 });
 
 test("graph labels are truncated to stable compact text", () => {

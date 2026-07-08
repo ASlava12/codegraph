@@ -117,7 +117,7 @@ Implemented now:
 - Web entrypoint trace workflow uses localized status, counters, empty states, truncation notes, export summary text, and focused graph titles.
 - Web config/error trace workflows use localized status, counters, empty states, truncation notes, and focused graph titles.
 - Off-by-default graph labels with collision-aware, sparse Auto/Focus modes so node cards stay readable without captions covering the graph.
-- Hover labels render only for the node under the pointer, selected-node cards are zoom/density gated, and saved label modes reset when label-density rules change.
+- Hover labels render only for the node under the pointer, selected-node details stay in the side card, and saved label modes reset when label-density rules change.
 - Web graph viewport HUD for visible node/edge counts, zoom, and layout state during canvas exploration.
 - Web graph edges connected to the hovered or selected node are softly highlighted for immediate local dependency context.
 - Web graph selected/hovered-node neighborhoods emphasize adjacent nodes and dim unrelated graph noise while preserving the full canvas.

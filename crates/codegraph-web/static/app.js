@@ -3,7 +3,7 @@ const DEFAULT_LABEL_MODE = "minimal";
 const LABEL_MODES = new Set(["minimal", "hover", "focus", "auto"]);
 const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
-const LABEL_MODE_STORAGE_VERSION = "13";
+const LABEL_MODE_STORAGE_VERSION = "14";
 const API_TOKEN_STORAGE_KEY = "codegraph.apiToken";
 const QUERY_HISTORY_STORAGE_KEY = "codegraph.queryHistory";
 const QUERY_HISTORY_LIMIT = 8;
@@ -7395,9 +7395,9 @@ function draw() {
         selected,
         hovered,
         focused,
-        forced: selected,
+        forced: false,
         priority: nodeLabelPriority(node),
-        bypassBudget: selected || hovered,
+        bypassBudget: state.labelMode === "hover" && hovered,
       });
     }
   });
@@ -7638,10 +7638,10 @@ function drawNodeLabels(candidates) {
 }
 
 function labelGeometry(candidate, occupied, nodeBoxes, edgeBoxes) {
-  const { node, position, radius, forced, selected } = candidate;
+  const { node, position, radius, forced } = candidate;
   const zoom = Math.max(0.18, state.zoom);
   const lines = forced
-    ? compactGraphLabelLines(node.label, selected ? 18 : 14, selected ? 2 : 1)
+    ? compactGraphLabelLines(node.label, 14, 1)
     : [truncateGraphLabel(node.label, state.zoom >= 3.2 ? 12 : 8)];
   const padX = (forced ? 6 : 4) / zoom;
   const padY = (forced ? 4 : 0) / zoom;
@@ -7724,8 +7724,8 @@ function drawLabelGeometry(geometry) {
   ctx.font = geometry.font;
   ctx.textBaseline = "middle";
   if (!geometry.forced) {
-    ctx.lineWidth = 3 / Math.max(0.18, state.zoom);
-    ctx.strokeStyle = "rgba(13, 15, 16, 0.78)";
+    ctx.lineWidth = 2 / Math.max(0.18, state.zoom);
+    ctx.strokeStyle = "rgba(13, 15, 16, 0.64)";
     drawLabelText(geometry, (line, x, y) => ctx.strokeText(line, x, y));
     ctx.fillStyle = "rgba(237, 241, 242, 0.84)";
     drawLabelText(geometry, (line, x, y) => ctx.fillText(line, x, y));
