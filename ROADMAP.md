@@ -493,6 +493,8 @@ Repository knowledge ingestion:
 - [ ] Add document ingestion for Markdown, plain text, PDFs, Office files, and generated Markdown sidecars, with size limits and provenance.
 - [ ] Add optional local or configured-model semantic extraction for non-code documents while keeping code-only scans fully offline.
 - [ ] Add media ingestion hooks for transcripts from audio/video sidecars, with explicit opt-in for transcription backends.
+- [ ] Index MCP configuration files such as `.mcp.json`, `mcp.json`, `mcp_servers.json`, and assistant desktop configs as tool/server dependency facts.
+- [ ] Canonicalize broader package manifests into shared package hub nodes across ecosystems where package identity is stable.
 
 Agent memory and automation:
 
@@ -501,6 +503,7 @@ Agent memory and automation:
 - [ ] Add assistant installation commands for Codex and generic agent-skill instructions, generating project-scoped guidance to query CodeGraph before broad file reads.
 - [ ] Add optional local hooks that nudge agents toward CodeGraph query/path/explain before grep-heavy or raw-file-heavy workflows.
 - [ ] Add MCP stdio server mode for graph query/path/explain/report/card access from external assistants.
+- [ ] Add optional authenticated HTTP MCP transport for shared team graph access.
 
 Update and team workflows:
 
@@ -508,6 +511,7 @@ Update and team workflows:
 - [ ] Add watch mode for automatic local graph refresh while editing.
 - [ ] Add global graph registry for multiple local repositories with cross-project path/query support.
 - [ ] Add graph merge commands for combining project, docs, incident, and external-system graphs.
+- [ ] Add a conflict-safe merge strategy for committed graph artifacts.
 
 Exports and dashboards:
 
