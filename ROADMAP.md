@@ -239,7 +239,7 @@ Goal: answer practical code investigation questions.
 - [ ] Add branch extraction for common if/match/try/catch constructs where parser or LSP facts support it.
 - [ ] Add loop and async/concurrency markers for common constructs where confidence is high.
 - [ ] Add workflow regression fixtures for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, Dart/Flutter, CI, Docker, and Kubernetes runtime paths.
-- [ ] Add remaining workflow export downloads for DOT and visible-slice JSON.
+- [x] Add remaining workflow export downloads for DOT and visible-slice JSON.
 - [ ] Localize workflow UI, commands, schema descriptions, and block labels in English and Russian.
 
 Example commands:

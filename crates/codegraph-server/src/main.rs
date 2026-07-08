@@ -8037,6 +8037,7 @@ fn helper() {}
         assert!(index.contains("entryFlowWorkflowButton"));
         assert!(index.contains("entryFlowWorkflowExportButton"));
         assert!(index.contains("entryFlowWorkflowMermaidExportButton"));
+        assert!(index.contains("entryFlowWorkflowDotExportButton"));
         assert!(index.contains("entryWorkflowEdgeKindInput"));
         assert!(index.contains("entryWorkflowConfidenceInput"));
         assert!(index.contains("entryWorkflowLanguageInput"));
@@ -8046,6 +8047,7 @@ fn helper() {}
         assert!(app.contains("/api/entrypoint-workflows?"));
         assert!(app.contains("exportLastEntryWorkflowReport"));
         assert!(app.contains("entryWorkflowReportToMermaid"));
+        assert!(app.contains("entryWorkflowReportToDot"));
         assert!(app.contains("appendWorkflowFilterParams(params, workflowFilters)"));
         assert!(app.contains("renderWorkflowFilterSummary(report.filters)"));
         assert!(app.contains("renderDatalist(workflowBlockKindOptions"));
@@ -8053,6 +8055,7 @@ fn helper() {}
         assert!(app.contains("\"button.buildEntryWorkflows\""));
         assert!(app.contains("\"button.downloadEntryWorkflows\""));
         assert!(app.contains("\"button.downloadEntryWorkflowMermaid\""));
+        assert!(app.contains("\"button.downloadEntryWorkflowDot\""));
         assert!(index.contains("configTraceExportButton"));
         assert!(app.contains("exportLastConfigTraceReport"));
         assert!(app.contains("codegraph.config_trace.v1"));
@@ -8252,6 +8255,7 @@ fn helper() {}
         assert!(app.contains("workflowButton"));
         assert!(app.contains("workflowJsonExportButton"));
         assert!(app.contains("workflowMermaidExportButton"));
+        assert!(app.contains("workflowDotExportButton"));
         assert!(app.contains("workflowEdgeKindInput"));
         assert!(app.contains("workflowConfidenceInput"));
         assert!(app.contains("workflowLanguageInput"));
@@ -8263,10 +8267,13 @@ fn helper() {}
         assert!(app.contains("renderWorkflow"));
         assert!(app.contains("exportLastWorkflowReport"));
         assert!(app.contains("workflowReportToMermaid"));
+        assert!(app.contains("workflowReportToDot"));
+        assert!(app.contains("text/vnd.graphviz"));
         assert!(app.contains("workflow.blockCount"));
         assert!(app.contains("workflow.transitionCount"));
         assert!(app.contains("\"button.downloadWorkflow\""));
         assert!(app.contains("\"button.downloadWorkflowMermaid\""));
+        assert!(app.contains("\"button.downloadWorkflowDot\""));
         assert!(app.contains("\"selection.flow\""));
         assert!(styles.contains(".workflow-diagram"));
         assert!(styles.contains(".workflow-export-actions"));

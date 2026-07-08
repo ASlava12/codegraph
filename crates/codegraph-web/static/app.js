@@ -197,12 +197,14 @@ const I18N = {
     "button.buildEntryWorkflows": "Build Workflows",
     "button.downloadEntryWorkflows": "Download Workflows",
     "button.downloadEntryWorkflowMermaid": "Download Mermaid",
+    "button.downloadEntryWorkflowDot": "Download DOT",
     "button.downloadPathResult": "Download Path",
     "button.downloadConfigTrace": "Download Config Trace",
     "button.downloadErrorTrace": "Download Error Trace",
     "button.downloadCard": "Download Card",
     "button.downloadWorkflow": "Download Flow",
     "button.downloadWorkflowMermaid": "Download Mermaid",
+    "button.downloadWorkflowDot": "Download DOT",
     "button.graphFile": "Graph File",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
@@ -436,12 +438,14 @@ const I18N = {
     "export.entryFlows": "Entrypoint Traces JSON",
     "export.entryWorkflows": "Entrypoint Workflows JSON",
     "export.entryWorkflowMermaid": "Entrypoint Workflows Mermaid",
+    "export.entryWorkflowDot": "Entrypoint Workflows DOT",
     "export.pathResult": "Path Result JSON",
     "export.configTrace": "Config Trace JSON",
     "export.errorTrace": "Error Trace JSON",
     "export.selectionCard": "Selection Card JSON",
     "export.workflow": "Workflow JSON",
     "export.workflowMermaid": "Workflow Mermaid",
+    "export.workflowDot": "Workflow DOT",
     "export.noEntryFlows": "Trace entrypoints before exporting flows.",
     "export.noEntryWorkflows": "Build entrypoint workflows before exporting.",
     "export.noPathResult": "Find a path before exporting its result.",
@@ -815,12 +819,14 @@ const I18N = {
     "button.buildEntryWorkflows": "Собрать блок-схемы",
     "button.downloadEntryWorkflows": "Скачать блок-схемы",
     "button.downloadEntryWorkflowMermaid": "Скачать Mermaid",
+    "button.downloadEntryWorkflowDot": "Скачать DOT",
     "button.downloadPathResult": "Скачать путь",
     "button.downloadConfigTrace": "Скачать трассу конфига",
     "button.downloadErrorTrace": "Скачать трассу ошибок",
     "button.downloadCard": "Скачать карточку",
     "button.downloadWorkflow": "Скачать Flow",
     "button.downloadWorkflowMermaid": "Скачать Mermaid",
+    "button.downloadWorkflowDot": "Скачать DOT",
     "button.graphFile": "Граф файла",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
@@ -1054,12 +1060,14 @@ const I18N = {
     "export.entryFlows": "JSON потоков входа",
     "export.entryWorkflows": "JSON блок-схем входа",
     "export.entryWorkflowMermaid": "Mermaid блок-схем входа",
+    "export.entryWorkflowDot": "DOT блок-схем входа",
     "export.pathResult": "JSON результата пути",
     "export.configTrace": "JSON трассы конфига",
     "export.errorTrace": "JSON трассы ошибок",
     "export.selectionCard": "JSON карточки выбора",
     "export.workflow": "JSON блок-схемы",
     "export.workflowMermaid": "Mermaid блок-схемы",
+    "export.workflowDot": "DOT блок-схемы",
     "export.noEntryFlows": "Сначала трассируйте точки входа.",
     "export.noEntryWorkflows": "Сначала соберите блок-схемы точек входа.",
     "export.noPathResult": "Сначала найдите путь.",
@@ -1489,6 +1497,7 @@ const entryFlowWorkflowButton = document.querySelector("#entryFlowWorkflowButton
 const entryFlowExportButton = document.querySelector("#entryFlowExportButton");
 const entryFlowWorkflowExportButton = document.querySelector("#entryFlowWorkflowExportButton");
 const entryFlowWorkflowMermaidExportButton = document.querySelector("#entryFlowWorkflowMermaidExportButton");
+const entryFlowWorkflowDotExportButton = document.querySelector("#entryFlowWorkflowDotExportButton");
 const entryFlowResult = document.querySelector("#entryFlowResult");
 const pageInfo = document.querySelector("#pageInfo");
 const pageScope = document.querySelector("#pageScope");
@@ -1649,6 +1658,7 @@ entryFlowWorkflowButton.addEventListener("click", () => runEntryFlowWorkflows())
 entryFlowExportButton.addEventListener("click", () => exportLastEntryFlowReport());
 entryFlowWorkflowExportButton.addEventListener("click", () => exportLastEntryWorkflowReport("json"));
 entryFlowWorkflowMermaidExportButton.addEventListener("click", () => exportLastEntryWorkflowReport("mermaid"));
+entryFlowWorkflowDotExportButton.addEventListener("click", () => exportLastEntryWorkflowReport("dot"));
 for (const input of [entryFlowSearchInput, entryFlowDepthInput]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") runEntryFlowTrace();
@@ -4382,6 +4392,7 @@ function renderEntryFlowExportState() {
 function renderEntryWorkflowExportState() {
   entryFlowWorkflowExportButton.disabled = !state.lastEntryWorkflowReport;
   entryFlowWorkflowMermaidExportButton.disabled = !state.lastEntryWorkflowReport;
+  entryFlowWorkflowDotExportButton.disabled = !state.lastEntryWorkflowReport;
 }
 
 function clearLastEntryFlowReport() {
@@ -4441,6 +4452,14 @@ function exportLastEntryWorkflowReport(format) {
     const fileName = `codegraph-${root}-entrypoint-workflows.mmd`;
     downloadBlob(blob, fileName);
     renderEntryFlowExportNote(fileName, blob.size, t("export.entryWorkflowMermaid"));
+    return;
+  }
+  if (format === "dot") {
+    const dot = entryWorkflowReportToDot(payload.report);
+    const blob = new Blob([dot], { type: "text/vnd.graphviz;charset=utf-8" });
+    const fileName = `codegraph-${root}-entrypoint-workflows.dot`;
+    downloadBlob(blob, fileName);
+    renderEntryFlowExportNote(fileName, blob.size, t("export.entryWorkflowDot"));
     return;
   }
 
@@ -8993,6 +9012,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
         <div class="workflow-export-actions">
           <button id="workflowJsonExportButton" type="button" disabled>${escapeHtml(t("button.downloadWorkflow"))}</button>
           <button id="workflowMermaidExportButton" type="button" disabled>${escapeHtml(t("button.downloadWorkflowMermaid"))}</button>
+          <button id="workflowDotExportButton" type="button" disabled>${escapeHtml(t("button.downloadWorkflowDot"))}</button>
         </div>
         <div id="traceResult" class="trace-result"></div>
       </section>
@@ -9076,6 +9096,10 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
   const workflowMermaidExportButton = document.querySelector("#workflowMermaidExportButton");
   if (workflowMermaidExportButton) {
     workflowMermaidExportButton.addEventListener("click", () => exportLastWorkflowReport("mermaid"));
+  }
+  const workflowDotExportButton = document.querySelector("#workflowDotExportButton");
+  if (workflowDotExportButton) {
+    workflowDotExportButton.addEventListener("click", () => exportLastWorkflowReport("dot"));
   }
   const dependentsButton = document.querySelector("#dependentsButton");
   if (dependentsButton) {
@@ -9514,8 +9538,10 @@ async function loadDependents(node) {
 function renderWorkflowExportState() {
   const jsonButton = document.querySelector("#workflowJsonExportButton");
   const mermaidButton = document.querySelector("#workflowMermaidExportButton");
+  const dotButton = document.querySelector("#workflowDotExportButton");
   if (jsonButton) jsonButton.disabled = !state.lastWorkflowReport;
   if (mermaidButton) mermaidButton.disabled = !state.lastWorkflowReport;
+  if (dotButton) dotButton.disabled = !state.lastWorkflowReport;
 }
 
 function clearLastWorkflowReport() {
@@ -9548,6 +9574,14 @@ function exportLastWorkflowReport(format) {
     const fileName = `codegraph-${root}-${label}-workflow.mmd`;
     downloadBlob(blob, fileName);
     renderWorkflowExportNote(fileName, blob.size, t("export.workflowMermaid"));
+    return;
+  }
+  if (format === "dot") {
+    const dot = workflowReportToDot(payload.report);
+    const blob = new Blob([dot], { type: "text/vnd.graphviz;charset=utf-8" });
+    const fileName = `codegraph-${root}-${label}-workflow.dot`;
+    downloadBlob(blob, fileName);
+    renderWorkflowExportNote(fileName, blob.size, t("export.workflowDot"));
     return;
   }
 
@@ -9603,8 +9637,83 @@ function entryWorkflowReportToMermaid(report) {
     .join("\n");
 }
 
+function workflowReportToDot(report, graphName = "workflow") {
+  const blocks = Array.isArray(report?.blocks) ? report.blocks : [];
+  const transitions = Array.isArray(report?.transitions) ? report.transitions : [];
+  const lines = [
+    `digraph ${workflowDotId(graphName)} {`,
+    "  graph [rankdir=TB, overlap=false, splines=true];",
+    '  node [shape=box, style="rounded,filled", fillcolor="#20262a", color="#5cc8a7", fontname="Inter", fontcolor="#f2f4f3"];',
+    '  edge [color="#6c7680", fontname="Inter", fontcolor="#a5adb3"];',
+  ];
+
+  blocks.forEach((block) => {
+    const node = block.node || {};
+    const parts = [
+      formatKind(block.kind || "unknown"),
+      node.label || node.id || "",
+      node.span?.path ? `${node.span.path}:${node.span.start_line || 1}` : "",
+    ].filter(Boolean);
+    lines.push(
+      `  ${workflowDotId(block.id || node.id)} [label="${dotEscape(parts.join("\\n"))}"];`,
+    );
+  });
+
+  transitions.forEach((transition) => {
+    const edge = transition.edge || {};
+    const source = transition.source || transition.source_node_id || edge.source;
+    const target = transition.target || transition.target_node_id || edge.target;
+    if (source == null || target == null) return;
+    const label = `${formatKind(edge.kind || "unknown")}/${formatKind(edge.confidence || "unknown")}`;
+    lines.push(
+      `  ${workflowDotId(source)} -> ${workflowDotId(target)} [label="${dotEscape(label)}"];`,
+    );
+  });
+
+  lines.push("}");
+  return `${lines.join("\n")}\n`;
+}
+
+function entryWorkflowReportToDot(report) {
+  const workflows = Array.isArray(report?.workflows) ? report.workflows : [];
+  const lines = [
+    "digraph entrypoint_workflows {",
+    "  graph [rankdir=TB, overlap=false, splines=true, compound=true];",
+    '  node [shape=box, style="rounded,filled", fillcolor="#20262a", color="#5cc8a7", fontname="Inter", fontcolor="#f2f4f3"];',
+    '  edge [color="#6c7680", fontname="Inter", fontcolor="#a5adb3"];',
+  ];
+
+  workflows.forEach((workflow, index) => {
+    const clusterId = workflowDotId(`cluster_${index}`);
+    lines.push(`  subgraph ${clusterId} {`);
+    lines.push(`    label="${dotEscape(workflow?.start?.label || `entrypoint ${index + 1}`)}";`);
+    lines.push('    color="#2f4f4a";');
+    const dot = workflowReportToDot(workflow, `workflow_${index}`);
+    dot
+      .split(/\r?\n/)
+      .slice(4, -1)
+      .forEach((line) => lines.push(`  ${line}`));
+    lines.push("  }");
+  });
+
+  lines.push("}");
+  return `${lines.join("\n")}\n`;
+}
+
 function workflowMermaidNodeId(id) {
   return `B${String(id || "unknown").replace(/[^A-Za-z0-9_]/g, "_")}`;
+}
+
+function workflowDotId(id) {
+  const normalized = String(id || "unknown").replace(/[^A-Za-z0-9_]/g, "_");
+  return /^[A-Za-z_]/.test(normalized) ? normalized : `N${normalized}`;
+}
+
+function dotEscape(value) {
+  return String(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\r?\n/g, "\\n");
 }
 
 function mermaidEscape(value) {
