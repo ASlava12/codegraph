@@ -154,6 +154,7 @@ Implemented now:
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - Web query panel supports shareable `query` deep-links and copy-link actions for reusable investigations.
 - Web export panel for downloading full graph snapshots as JSON, DOT, or NDJSON.
+- Full graph exports publish response headers for node count, edge count, and serialized byte size.
 - Web project selector backed by an explicit server-side allowlist for opening local repositories.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
 - Persistent server-side graph cache with project fingerprint invalidation.

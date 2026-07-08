@@ -3827,11 +3827,17 @@ async function runGraphExport() {
     const blob = await response.blob();
     if (requestId !== state.exportRequest) return;
     const fileName = `codegraph-${safeFilePart(pathInput.value.trim() || state.graphPage.root || "project")}.${metadata.extension}`;
+    const exportNodes = response.headers.get("x-codegraph-export-nodes") || "";
+    const exportEdges = response.headers.get("x-codegraph-export-edges") || "";
+    const exportBytes = response.headers.get("x-codegraph-export-bytes") || "";
     downloadBlob(blob, fileName);
     exportResult.innerHTML = `
       <div class="query-summary">
         <span>${escapeHtml(metadata.label)}</span>
         <span>${escapeHtml(formatBytes(blob.size))}</span>
+        ${exportNodes ? `<span>${escapeHtml(exportNodes)} nodes</span>` : ""}
+        ${exportEdges ? `<span>${escapeHtml(exportEdges)} edges</span>` : ""}
+        ${exportBytes && Number(exportBytes) !== blob.size ? `<span>${escapeHtml(formatBytes(Number(exportBytes)))}</span>` : ""}
         <span class="query-expression">${escapeHtml(fileName)}</span>
       </div>
     `;

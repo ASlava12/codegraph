@@ -88,6 +88,9 @@ const DEFAULT_SOURCE_SEARCH_CONTEXT: usize = 2;
 const MAX_SOURCE_SEARCH_CONTEXT: usize = 20;
 const DEFAULT_API_BODY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_API_BODY_BYTES: usize = 256 * 1024 * 1024;
+const EXPORT_NODES_HEADER: &str = "x-codegraph-export-nodes";
+const EXPORT_EDGES_HEADER: &str = "x-codegraph-export-edges";
+const EXPORT_BYTES_HEADER: &str = "x-codegraph-export-bytes";
 const RESPONSE_TIME_HEADER: &str = "x-response-time-ms";
 const STATIC_ASSET_CACHE_CONTROL: &str = "no-cache";
 const DYNAMIC_CACHE_CONTROL: &str = "no-store";
@@ -661,6 +664,8 @@ struct ApiEndpointSpec {
     response: &'static str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     response_fields: Vec<ApiParameterSpec>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    response_headers: Vec<ApiHeaderSpec>,
     streaming: bool,
 }
 
@@ -672,6 +677,11 @@ impl ApiEndpointSpec {
 
     fn with_response_fields(mut self, response_fields: Vec<ApiParameterSpec>) -> Self {
         self.response_fields = response_fields;
+        self
+    }
+
+    fn with_response_headers(mut self, response_headers: Vec<ApiHeaderSpec>) -> Self {
+        self.response_headers = response_headers;
         self
     }
 }
@@ -1218,6 +1228,25 @@ fn access_log_line(
 fn response_time_header_value(elapsed: Duration) -> HeaderValue {
     HeaderValue::from_str(&elapsed.as_millis().to_string())
         .expect("elapsed milliseconds are header-safe")
+}
+
+fn apply_export_headers(headers: &mut HeaderMap, nodes: usize, edges: usize, bytes: usize) {
+    headers.insert(
+        HeaderName::from_static(EXPORT_NODES_HEADER),
+        usize_header_value(nodes),
+    );
+    headers.insert(
+        HeaderName::from_static(EXPORT_EDGES_HEADER),
+        usize_header_value(edges),
+    );
+    headers.insert(
+        HeaderName::from_static(EXPORT_BYTES_HEADER),
+        usize_header_value(bytes),
+    );
+}
+
+fn usize_header_value(value: usize) -> HeaderValue {
+    HeaderValue::from_str(&value.to_string()).expect("usize values are header-safe")
 }
 
 fn apply_security_headers(headers: &mut HeaderMap) {
@@ -2322,6 +2351,8 @@ async fn export_api(
     Query(query): Query<ExportQuery>,
 ) -> Result<Response, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let node_count = graph.nodes.len();
+    let edge_count = graph.edges.len();
     let format = query.format.unwrap_or(ExportFormat::Json);
     let (content_type, body) = match format {
         ExportFormat::Json => (
@@ -2335,11 +2366,14 @@ async fn export_api(
             export_ndjson(&graph).map_err(|error| ApiError::internal(error.to_string()))?,
         ),
     };
-    Ok((
+    let body_bytes = body.len();
+    let mut response = (
         [(header::CONTENT_TYPE, HeaderValue::from_static(content_type))],
         body,
     )
-        .into_response())
+        .into_response();
+    apply_export_headers(response.headers_mut(), node_count, edge_count, body_bytes);
+    Ok(response)
 }
 
 async fn graph_api(
@@ -3799,6 +3833,29 @@ fn api_schema_common_response_headers() -> Vec<ApiHeaderSpec> {
     ]
 }
 
+fn export_response_headers() -> Vec<ApiHeaderSpec> {
+    vec![
+        ApiHeaderSpec {
+            name: EXPORT_NODES_HEADER,
+            value_type: "usize",
+            required: true,
+            description: "Total graph nodes included in the full export response.",
+        },
+        ApiHeaderSpec {
+            name: EXPORT_EDGES_HEADER,
+            value_type: "usize",
+            required: true,
+            description: "Total graph edges included in the full export response.",
+        },
+        ApiHeaderSpec {
+            name: EXPORT_BYTES_HEADER,
+            value_type: "usize_bytes",
+            required: true,
+            description: "Serialized export body size in bytes.",
+        },
+    ]
+}
+
 fn api_schema_groups() -> Vec<ApiSchemaGroup> {
     vec![
         ApiSchemaGroup {
@@ -4177,7 +4234,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         ),
                     ],
                     "CodeGraph | DOT | NDJSON",
-                ),
+                )
+                .with_response_headers(export_response_headers()),
                 api_get(
                     "/api/graph",
                     "Read a server-side paged and filtered graph slice. Returned edges include metadata.edge_index for exact edge explanation and UI selection.",
@@ -5826,6 +5884,7 @@ fn api_endpoint(
         body_fields: Vec::new(),
         response,
         response_fields: Vec::new(),
+        response_headers: Vec::new(),
         streaming,
     }
 }
@@ -6337,6 +6396,25 @@ mod tests {
     }
 
     #[test]
+    fn export_headers_publish_graph_and_body_sizes() {
+        let mut headers = HeaderMap::new();
+        apply_export_headers(&mut headers, 7, 11, 2048);
+
+        assert_eq!(
+            headers.get(EXPORT_NODES_HEADER),
+            Some(&HeaderValue::from_static("7"))
+        );
+        assert_eq!(
+            headers.get(EXPORT_EDGES_HEADER),
+            Some(&HeaderValue::from_static("11"))
+        );
+        assert_eq!(
+            headers.get(EXPORT_BYTES_HEADER),
+            Some(&HeaderValue::from_static("2048"))
+        );
+    }
+
+    #[test]
     fn request_ids_accept_safe_values_and_reject_header_injection() {
         assert!(is_valid_request_id("req-123"));
         assert!(is_valid_request_id("trace.root:span_1"));
@@ -6627,6 +6705,9 @@ mod tests {
         assert!(app.contains("\"runtime.lastApi\""));
         assert!(app.contains("lastApiResponse"));
         assert!(app.contains("x-response-time-ms"));
+        assert!(app.contains("x-codegraph-export-nodes"));
+        assert!(app.contains("x-codegraph-export-edges"));
+        assert!(app.contains("x-codegraph-export-bytes"));
         assert!(index.contains("annotations key:domain edge_limit:300"));
         assert!(app.contains("\"queryPreset.annotations\""));
         assert!(app.contains("limits.max_api_body_bytes"));
@@ -6957,6 +7038,23 @@ mod tests {
         }));
         assert!(schema_endpoint.response_fields.iter().any(|field| {
             field.name == "common_response_headers" && field.value_type == "ApiHeaderSpec[]"
+        }));
+        let export_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/export")
+            .expect("schema should list export endpoint");
+        assert!(export_endpoint.response_headers.iter().any(|header| {
+            header.name == EXPORT_NODES_HEADER && header.value_type == "usize" && header.required
+        }));
+        assert!(export_endpoint.response_headers.iter().any(|header| {
+            header.name == EXPORT_EDGES_HEADER && header.value_type == "usize" && header.required
+        }));
+        assert!(export_endpoint.response_headers.iter().any(|header| {
+            header.name == EXPORT_BYTES_HEADER
+                && header.value_type == "usize_bytes"
+                && header.required
         }));
         assert!(endpoints.contains(&("GET", "/api/live")));
         assert!(endpoints.contains(&("GET", "/api/ready")));
