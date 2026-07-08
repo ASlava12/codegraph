@@ -7812,7 +7812,7 @@ fn import_package_candidates(
         let Some(package) = c_family_include_package(label) else {
             return Vec::new();
         };
-        return ["vcpkg", "conan"]
+        return ["vcpkg", "conan", "cmake"]
             .into_iter()
             .filter(|ecosystem| declared_ecosystems.contains(*ecosystem))
             .map(|ecosystem| ImportPackage {
@@ -7845,7 +7845,7 @@ fn import_matches_package_id(package_id: &str, import: &ImportPackage) -> bool {
         }
         "python" => package == canonical_python_package_name(&import.package),
         "npm" => package == import.package.to_ascii_lowercase(),
-        "vcpkg" | "conan" => package == import.package.to_ascii_lowercase(),
+        "vcpkg" | "conan" | "cmake" => package == import.package.to_ascii_lowercase(),
         _ => package == import.package,
     }
 }
@@ -8072,7 +8072,7 @@ fn is_declared_package(declared: &BTreeSet<String>, ecosystem: &str, package: &s
             canonical_python_package_name(package)
         )),
         "npm" => declared.contains(&format!("npm:{}", package.to_ascii_lowercase())),
-        "vcpkg" | "conan" => {
+        "vcpkg" | "conan" | "cmake" => {
             declared.contains(&format!("{ecosystem}:{}", package.to_ascii_lowercase()))
         }
         _ => declared.contains(&format!("{ecosystem}:{package}")),
@@ -12259,8 +12259,9 @@ mod tests {
         let curl = dependency_node(&mut graph, "curl", "vcpkg:curl");
         let spdlog = dependency_node(&mut graph, "spdlog", "conan:spdlog");
         let cmake = dependency_node(&mut graph, "cmake", "conan:cmake");
+        let openssl = dependency_node(&mut graph, "openssl", "cmake:openssl");
 
-        for dependency in [fmt, zlib, curl, spdlog] {
+        for dependency in [fmt, zlib, curl, spdlog, openssl] {
             graph.add_edge_with_metadata(
                 manifest,
                 dependency,
@@ -12281,6 +12282,7 @@ mod tests {
         let zlib_include = import_node(&mut graph, "#include <zlib.h>", "cpp");
         let spdlog_include = import_node(&mut graph, "#include <spdlog/spdlog.h>", "cpp");
         let cmake_include = import_node(&mut graph, "#include <cmake/tool.h>", "cpp");
+        let openssl_include = import_node(&mut graph, "#include <openssl/ssl.h>", "cpp");
         graph.add_edge(file, fmt_include, EdgeKind::Imports, Confidence::Syntactic);
         graph.add_edge(file, zlib_include, EdgeKind::Imports, Confidence::Syntactic);
         graph.add_edge(
@@ -12292,6 +12294,12 @@ mod tests {
         graph.add_edge(
             file,
             cmake_include,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            file,
+            openssl_include,
             EdgeKind::Imports,
             Confidence::Syntactic,
         );
@@ -12308,6 +12316,9 @@ mod tests {
         }));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unused_declared_dependency" && insight.nodes.contains(&spdlog)
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&openssl)
         }));
         let non_runtime = report
             .insights

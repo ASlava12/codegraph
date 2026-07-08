@@ -2183,6 +2183,7 @@ fn manifest_dependencies(
         Some("composer.json") => composer_dependencies(source),
         Some("vcpkg.json") => vcpkg_dependencies(source),
         Some("conanfile.txt") => conanfile_txt_dependencies(source),
+        Some("CMakeLists.txt") => cmake_dependencies(source),
         _ => Vec::new(),
     }
 }
@@ -3154,6 +3155,60 @@ fn conan_reference_name_and_version(line: &str) -> Option<(String, Option<String
         .filter(|version| !version.is_empty())
         .map(str::to_string);
     Some((name.to_string(), version))
+}
+
+fn cmake_dependencies(source: &str) -> Vec<ManifestDependency> {
+    cmake_command_bodies(source, "find_package")
+        .into_iter()
+        .filter_map(|body| {
+            let args = cmake_command_args(&body);
+            cmake_find_package_dependency(&args)
+        })
+        .collect()
+}
+
+fn cmake_find_package_dependency(args: &[String]) -> Option<ManifestDependency> {
+    let name = args
+        .first()
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .filter(|name| !name.starts_with('$'))?;
+    if is_cmake_find_package_option(name) {
+        return None;
+    }
+    let version = args
+        .iter()
+        .skip(1)
+        .find(|arg| is_cmake_version_argument(arg))
+        .cloned();
+    Some(manifest_dependency(
+        name.to_string(),
+        "runtime",
+        "cmake",
+        version,
+    ))
+}
+
+fn is_cmake_version_argument(value: &str) -> bool {
+    value
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_digit())
+}
+
+fn is_cmake_find_package_option(value: &str) -> bool {
+    matches!(
+        value.to_ascii_uppercase().as_str(),
+        "REQUIRED"
+            | "QUIET"
+            | "MODULE"
+            | "CONFIG"
+            | "NO_MODULE"
+            | "COMPONENTS"
+            | "OPTIONAL_COMPONENTS"
+            | "EXACT"
+    )
 }
 
 fn go_mod_dependencies(source: &str) -> Vec<ManifestDependency> {
@@ -4855,7 +4910,7 @@ fn canonical_package_name(ecosystem: &str, name: &str) -> String {
             }
             normalized
         }
-        "cargo" | "npm" | "composer" | "vcpkg" | "conan" => trimmed.to_ascii_lowercase(),
+        "cargo" | "npm" | "composer" | "vcpkg" | "conan" | "cmake" => trimmed.to_ascii_lowercase(),
         "go" => trimmed.to_string(),
         _ => trimmed.to_string(),
     }
@@ -7174,6 +7229,15 @@ gtest/1.14.0
 "#,
         )
         .unwrap();
+        fs::write(
+            root.join("CMakeLists.txt"),
+            r#"cmake_minimum_required(VERSION 3.20)
+project(demo CXX)
+find_package(OpenSSL 3 REQUIRED)
+find_package(Boost 1.83 REQUIRED COMPONENTS filesystem)
+"#,
+        )
+        .unwrap();
 
         let graph = scan_project(&root, &IndexOptions::default()).unwrap();
         let dependency_labels: BTreeSet<_> = graph
@@ -7224,6 +7288,7 @@ gtest/1.14.0
             "zlib",
             "spdlog",
             "openssl",
+            "boost",
             "cmake",
             "gtest",
         ] {
@@ -7741,6 +7806,44 @@ gtest/1.14.0
                     .get("dependency_version")
                     .is_some_and(|value| value == "1.13.0")
         }));
+        let cmake_openssl_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "cmake:openssl")
+            })
+            .expect("missing CMake OpenSSL dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == cmake_openssl_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "runtime")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "3")
+        }));
+        let cmake_boost_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "cmake:boost")
+            })
+            .expect("missing CMake Boost dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == cmake_boost_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "1.83")
+        }));
         let cmake_dep = graph
             .nodes
             .iter()
@@ -7794,6 +7897,11 @@ gtest/1.14.0
             node.metadata
                 .get("ecosystem")
                 .is_some_and(|value| value == "conan")
+        }));
+        assert!(graph.nodes.iter().any(|node| {
+            node.metadata
+                .get("ecosystem")
+                .is_some_and(|value| value == "cmake")
         }));
 
         fs::remove_dir_all(root).unwrap();
