@@ -103,6 +103,7 @@ Goal: answer practical code investigation questions.
 - [x] Add investigation insights for semantic LSP diagnostics.
 - [x] Detect directed dependency cycles across calls, imports, references, and dependency edges.
 - [x] Detect package manifest dependency boundaries.
+- [x] Detect direct npm `package-lock.json` dependencies with locked versions.
 - [x] Detect legacy Python `setup.py`/`setup.cfg` dependencies and console script entrypoints.
 - [x] Detect Python `Pipfile` runtime and dev package dependencies.
 - [x] Detect C/C++ package manifest dependencies from `vcpkg.json` and `conanfile.txt`.

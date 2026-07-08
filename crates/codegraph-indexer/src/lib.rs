@@ -2172,6 +2172,7 @@ fn manifest_dependencies(
     match path.file_name().and_then(|name| name.to_str()) {
         Some("Cargo.toml") => cargo_dependencies(source, cargo_workspace_dependencies),
         Some("package.json") => package_json_dependencies(source),
+        Some("package-lock.json") => package_lock_dependencies(source),
         Some("go.mod") => go_mod_dependencies(source),
         Some("requirements.txt") => requirements_dependencies(source),
         Some("pyproject.toml") => pyproject_dependencies(source),
@@ -2721,6 +2722,91 @@ fn package_json_dependencies(source: &str) -> Vec<ManifestDependency> {
         &mut dependencies,
     );
     dependencies
+}
+
+fn package_lock_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let Some(root_package) = value
+        .get("packages")
+        .and_then(|packages| packages.get(""))
+        .and_then(|package| package.as_object())
+    else {
+        return Vec::new();
+    };
+
+    let mut dependencies = Vec::new();
+    collect_package_lock_root_dependencies(
+        &value,
+        root_package,
+        "dependencies",
+        "runtime",
+        &mut dependencies,
+    );
+    collect_package_lock_root_dependencies(
+        &value,
+        root_package,
+        "devDependencies",
+        "dev",
+        &mut dependencies,
+    );
+    collect_package_lock_root_dependencies(
+        &value,
+        root_package,
+        "peerDependencies",
+        "peer",
+        &mut dependencies,
+    );
+    collect_package_lock_root_dependencies(
+        &value,
+        root_package,
+        "optionalDependencies",
+        "optional",
+        &mut dependencies,
+    );
+    dependencies
+}
+
+fn collect_package_lock_root_dependencies(
+    value: &serde_json::Value,
+    root_package: &serde_json::Map<String, serde_json::Value>,
+    object_name: &str,
+    dependency_kind: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(object) = root_package
+        .get(object_name)
+        .and_then(|value| value.as_object())
+    else {
+        return;
+    };
+    for (name, declared) in object {
+        let version = package_lock_package_version(value, name).or_else(|| {
+            declared
+                .as_str()
+                .map(str::trim)
+                .filter(|version| !version.is_empty())
+                .map(str::to_string)
+        });
+        dependencies.push(manifest_dependency(
+            name.clone(),
+            dependency_kind,
+            "npm",
+            version,
+        ));
+    }
+}
+
+fn package_lock_package_version(value: &serde_json::Value, name: &str) -> Option<String> {
+    value
+        .get("packages")
+        .and_then(|packages| packages.get(format!("node_modules/{name}")))
+        .and_then(|package| package.get("version"))
+        .and_then(|version| version.as_str())
+        .map(str::trim)
+        .filter(|version| !version.is_empty())
+        .map(str::to_string)
 }
 
 fn composer_dependencies(source: &str) -> Vec<ManifestDependency> {
@@ -5787,6 +5873,7 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
         Some(
             "Cargo.toml"
                 | "package.json"
+                | "package-lock.json"
                 | "go.mod"
                 | "pyproject.toml"
                 | "setup.py"
@@ -6732,6 +6819,32 @@ local-util = { workspace = true }
         )
         .unwrap();
         fs::write(
+            root.join("package-lock.json"),
+            r#"{
+  "name": "demo",
+  "lockfileVersion": 3,
+  "packages": {
+    "": {
+      "dependencies": {
+        "react": "^19.0.0",
+        "lodash": "^4.17.21"
+      },
+      "devDependencies": {
+        "vitest": "^3.2.0"
+      },
+      "optionalDependencies": {
+        "fsevents": "^2.3.3"
+      }
+    },
+    "node_modules/react": { "version": "19.0.0" },
+    "node_modules/lodash": { "version": "4.17.21" },
+    "node_modules/vitest": { "version": "3.2.1" },
+    "node_modules/fsevents": { "version": "2.3.3", "optional": true }
+  }
+}"#,
+        )
+        .unwrap();
+        fs::write(
             root.join("go.mod"),
             "module example.com/demo\n\nrequire github.com/gin-gonic/gin v1.10.0\n",
         )
@@ -6853,6 +6966,9 @@ gtest/1.14.0
             "anyhow",
             "react",
             "vite",
+            "lodash",
+            "vitest",
+            "fsevents",
             "github.com/gin-gonic/gin",
             "fastapi",
             "pydantic",
@@ -6947,6 +7063,77 @@ gtest/1.14.0
             .filter_map(|edge| edge.metadata.get("dependency_kind").map(String::as_str))
             .collect();
         assert_eq!(react_kinds, BTreeSet::from(["dev", "runtime"]));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == react.id
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "19.0.0")
+        }));
+        let lodash_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "npm:lodash")
+            })
+            .expect("missing package-lock lodash dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == lodash_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "runtime")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "4.17.21")
+        }));
+        let vitest_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "npm:vitest")
+            })
+            .expect("missing package-lock vitest dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == vitest_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "dev")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "3.2.1")
+        }));
+        let fsevents_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "npm:fsevents")
+            })
+            .expect("missing package-lock fsevents dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == fsevents_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "optional")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "2.3.3")
+        }));
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == EdgeKind::DependsOn
                 && edge

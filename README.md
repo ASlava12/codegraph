@@ -36,7 +36,7 @@ Implemented now:
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
 - Local import/include resolution for relative JavaScript/TypeScript imports and CommonJS requires, Python relative/absolute project imports, Go module-local imports, quoted C/C++ includes with CMake and compile database include directories, PHP include/require paths, Bash source paths, and common Rust module paths.
-- Manifest dependency extraction from Cargo, npm, Go, Python, setup.py/setup.cfg/Pipfile, Composer, vcpkg, and Conan projects.
+- Manifest dependency extraction from Cargo, npm/package-lock, Go, Python, setup.py/setup.cfg/Pipfile, Composer, vcpkg, and Conan projects.
 - Heuristic config reads, environment reads, and potential error/exception constructs.
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
@@ -762,7 +762,7 @@ At the current stage, supported source languages are detected by extension:
 Supported package manifests:
 
 - Rust/Cargo: `Cargo.toml`
-- JavaScript/TypeScript/npm-compatible: `package.json`
+- JavaScript/TypeScript/npm-compatible: `package.json`, `package-lock.json`
 - Go modules: `go.mod`
 - Python: `requirements.txt`, `pyproject.toml`, `setup.py`, `setup.cfg`, `Pipfile`
 - PHP/Composer: `composer.json`
