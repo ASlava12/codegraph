@@ -778,6 +778,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "parse_error",
     "potential_error_flow",
     "semantic_diagnostic",
+    "sensitive_ci_environment_literal",
     "sensitive_config_default",
     "skipped_large_file",
     "syntax_error",
@@ -1371,6 +1372,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unreachable_source_file_insights(graph, &mut insights);
     add_conflicting_config_default_insights(graph, &mut insights);
     add_mixed_config_requirement_insights(graph, &mut insights);
+    add_sensitive_ci_environment_literal_insights(graph, &mut insights);
     add_sensitive_config_default_insights(graph, &mut insights);
     add_undeclared_import_insights(graph, &mut insights);
     add_unused_dependency_insights(graph, &mut insights);
@@ -7664,6 +7666,54 @@ fn add_sensitive_config_default_insights(graph: &CodeGraph, insights: &mut Vec<I
             severity: InsightSeverity::Warning,
             message: format!(
                 "{kind} `{}` looks sensitive and has a non-empty fallback value",
+                node.label
+            ),
+            nodes: std::iter::once(node.id)
+                .chain(
+                    edges
+                        .iter()
+                        .filter_map(|index| graph.edges.get(*index).map(|edge| edge.source)),
+                )
+                .collect(),
+            edges,
+        });
+    }
+}
+
+fn add_sensitive_ci_environment_literal_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Environment
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "ci_environment")
+            || node
+                .metadata
+                .get("value_kind")
+                .is_none_or(|kind| kind != "literal")
+            || !sensitive_config_label(&node.label)
+        {
+            continue;
+        }
+        let edges = incoming_edge_indexes(graph, node.id, EdgeKind::ReadsEnvironment);
+        if edges.is_empty() {
+            continue;
+        }
+        let source = node
+            .metadata
+            .get("source")
+            .map(String::as_str)
+            .unwrap_or("ci");
+        let scope = node
+            .metadata
+            .get("scope")
+            .map(String::as_str)
+            .unwrap_or("job");
+        insights.push(Insight {
+            kind: "sensitive_ci_environment_literal".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "{source} {scope} environment `{}` looks sensitive and is assigned a literal value",
                 node.label
             ),
             nodes: std::iter::once(node.id)
@@ -14125,6 +14175,77 @@ mod tests {
         );
         assert_eq!(report.by_kind.get("sensitive_config_default"), Some(&3));
         assert_eq!(report.by_severity.get("warning"), Some(&3));
+    }
+
+    #[test]
+    fn insights_report_sensitive_ci_environment_literals_without_leaking_values() {
+        let mut graph = CodeGraph::new("repo");
+        let job = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "github workflow:CI/deploy",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "github_actions_job".to_string())]),
+        );
+        let literal_secret = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "API_TOKEN",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "ci_environment".to_string()),
+                ("source".to_string(), "github-actions".to_string()),
+                ("scope".to_string(), "job".to_string()),
+                ("value_kind".to_string(), "literal".to_string()),
+            ]),
+        );
+        let secret_reference = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "DEPLOY_TOKEN",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "ci_environment".to_string()),
+                ("source".to_string(), "github-actions".to_string()),
+                ("scope".to_string(), "job".to_string()),
+                ("value_kind".to_string(), "secret_reference".to_string()),
+            ]),
+        );
+        let ordinary_literal = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "BUILD_MODE",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "ci_environment".to_string()),
+                ("source".to_string(), "github-actions".to_string()),
+                ("scope".to_string(), "job".to_string()),
+                ("value_kind".to_string(), "literal".to_string()),
+            ]),
+        );
+        for environment in [literal_secret, secret_reference, ordinary_literal] {
+            graph.add_edge_with_metadata(
+                job,
+                environment,
+                EdgeKind::ReadsEnvironment,
+                Confidence::Exact,
+                BTreeMap::from([("relation".to_string(), "ci_environment".to_string())]),
+            );
+        }
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "sensitive_ci_environment_literal")
+            .expect("expected sensitive CI environment literal insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.nodes.contains(&literal_secret));
+        assert!(insight.nodes.contains(&job));
+        assert!(insight.message.contains("API_TOKEN"));
+        assert!(!insight.message.contains("dev-super-secret"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "sensitive_ci_environment_literal"
+                && (insight.nodes.contains(&secret_reference)
+                    || insight.nodes.contains(&ordinary_literal))
+        }));
     }
 
     #[test]

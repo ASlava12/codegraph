@@ -289,6 +289,7 @@ struct GitlabCiScript {
 struct CiEnvironment {
     name: String,
     value_present: bool,
+    value_kind: String,
     scope: String,
     line: u32,
 }
@@ -3356,6 +3357,7 @@ fn index_ci_environment(
         "value_present".to_string(),
         environment.value_present.to_string(),
     );
+    metadata.insert("value_kind".to_string(), environment.value_kind.clone());
     if !environment.value_present {
         metadata.insert("value_source".to_string(), "runner".to_string());
     }
@@ -4763,13 +4765,33 @@ fn gitlab_ci_need_values(value: &str) -> Vec<String> {
 
 fn ci_environment_assignment(trimmed: &str, scope: &str, line: u32) -> Option<CiEnvironment> {
     let name = yaml_key(trimmed)?;
-    let value_present = yaml_key_value(trimmed, &name).is_some();
+    let value = yaml_key_value(trimmed, &name);
+    let value_present = value.is_some();
+    let value_kind = value
+        .as_deref()
+        .map(ci_environment_value_kind)
+        .unwrap_or("runner")
+        .to_string();
     Some(CiEnvironment {
         name,
         value_present,
+        value_kind,
         scope: scope.to_string(),
         line,
     })
+}
+
+fn ci_environment_value_kind(value: &str) -> &'static str {
+    let value = value.trim();
+    if value.contains("secrets.") || value.contains("vault.") {
+        "secret_reference"
+    } else if value.contains("${{") || value.contains("$[") {
+        "expression"
+    } else if value.starts_with('$') || value.contains("${") || value.contains('%') {
+        "variable_reference"
+    } else {
+        "literal"
+    }
 }
 
 fn gitlab_ci_reserved_key(key: &str) -> bool {
@@ -12757,6 +12779,24 @@ jobs:
             graph
                 .nodes
                 .iter()
+                .find(|node| node.id == global_token)
+                .and_then(|node| node.metadata.get("value_kind"))
+                .map(String::as_str),
+            Some("secret_reference")
+        );
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == build_mode)
+                .and_then(|node| node.metadata.get("value_kind"))
+                .map(String::as_str),
+            Some("literal")
+        );
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
                 .find(|node| node.id == run_step)
                 .and_then(|node| node.metadata.get("command_path"))
                 .map(String::as_str),
@@ -12921,6 +12961,14 @@ deploy:
                         .is_some_and(|value| value == "ci_environment")
             }));
         }
+        assert!(graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::Environment
+                && node.label == "TEST_MODE"
+                && node
+                    .metadata
+                    .get("value_kind")
+                    .is_some_and(|value| value == "literal")
+        }));
         assert_eq!(
             graph
                 .nodes

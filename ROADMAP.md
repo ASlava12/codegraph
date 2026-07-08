@@ -168,6 +168,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect config and environment keys that are read with conflicting fallback defaults across common inline Rust, Python, JavaScript/TypeScript, Go, C, C++, PHP, and Bash patterns.
 - [x] Detect config and environment keys that are read both as required and with fallback defaults.
 - [x] Detect sensitive config and environment keys, credential-like values, and placeholder secret defaults without leaking fallback values in reports.
+- [x] Detect literal sensitive CI environment assignments without leaking assigned values in reports.
 - [x] Back web insights with server analysis during paged graph exploration.
 - [x] Add CLI, server-side, and web filters for insight severity, kind, and search.
 - [x] Add insight severity and kind breakdowns for triage.
