@@ -13566,6 +13566,180 @@ CREATE TABLE users (
     }
 
     #[test]
+    fn scan_project_indexes_mixed_language_repository_as_one_graph() {
+        let root = temp_project_root();
+        for dir in [
+            "rust/src",
+            "py",
+            "web",
+            "go/cmd/server",
+            "go/internal/app",
+            "native",
+            "cpp",
+            "public",
+            "scripts",
+        ] {
+            fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        fs::write(
+            root.join("rust").join("src").join("main.rs"),
+            "mod config;\nuse crate::config::load_config;\nfn main() { let _ = std::env::var(\"DATABASE_URL\"); load_config(); }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("rust").join("src").join("config.rs"),
+            "pub fn load_config() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("py").join("app.py"),
+            "import os\nfrom helpers import py_helper\ndef main():\n    os.getenv(\"PY_TOKEN\")\n    py_helper()\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("py").join("helpers.py"),
+            "def py_helper():\n    return True\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("web").join("app.js"),
+            "import { start } from './lib.js';\nfunction main() { start(); return process.env.API_URL; }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("web").join("lib.js"),
+            "export function start() { return true; }\n",
+        )
+        .unwrap();
+        fs::write(root.join("go").join("go.mod"), "module example.com/mixed\n").unwrap();
+        fs::write(
+            root.join("go").join("cmd").join("server").join("main.go"),
+            "package main\nimport (\n  \"fmt\"\n  \"example.com/mixed/internal/app\"\n)\nfunc main() { fmt.Println(app.Name()) }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("go").join("internal").join("app").join("app.go"),
+            "package app\nfunc Name() string { return \"mixed\" }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("native").join("main.c"),
+            "#include \"native.h\"\n#include <stdlib.h>\nint main(void) { getenv(\"C_TOKEN\"); return native_value(); }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("native").join("native.h"),
+            "int native_value(void);\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("cpp").join("service.cpp"),
+            "#include \"service.hpp\"\nint main() { return service_value(); }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("cpp").join("service.hpp"),
+            "int service_value();\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("public").join("index.php"),
+            "<?php\nrequire 'lib.php';\nfunction main() { getenv('PHP_TOKEN'); app_boot(); }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("public").join("lib.php"),
+            "<?php\nfunction app_boot() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("scripts").join("deploy.sh"),
+            "source ./env.sh\nmain() { echo \"$DEPLOY_ENV\"; }\n",
+        )
+        .unwrap();
+        fs::write(root.join("scripts").join("env.sh"), "DEPLOY_ENV=prod\n").unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let labels: BTreeSet<_> = graph.nodes.iter().map(|node| node.label.as_str()).collect();
+        for expected in [
+            "rust/src/main.rs",
+            "py/app.py",
+            "web/app.js",
+            "go/cmd/server/main.go",
+            "native/main.c",
+            "cpp/service.cpp",
+            "public/index.php",
+            "scripts/deploy.sh",
+        ] {
+            assert!(labels.contains(expected), "missing file node `{expected}`");
+        }
+
+        let languages: BTreeSet<_> = graph
+            .nodes
+            .iter()
+            .filter_map(|node| node.metadata.get("language").map(String::as_str))
+            .collect();
+        for expected in [
+            "rust",
+            "python",
+            "javascript",
+            "go",
+            "c",
+            "cpp",
+            "php",
+            "bash",
+        ] {
+            assert!(
+                languages.contains(expected),
+                "missing language facet `{expected}` in {languages:?}"
+            );
+        }
+
+        for expected in [
+            "py/helpers.py",
+            "web/lib.js",
+            "go/internal/app/app.go",
+            "native/native.h",
+            "cpp/service.hpp",
+            "public/lib.php",
+            "scripts/env.sh",
+        ] {
+            assert!(
+                has_resolved_local_import(&graph, expected),
+                "missing resolved local import to `{expected}`"
+            );
+        }
+
+        for expected in [
+            "DATABASE_URL",
+            "PY_TOKEN",
+            "API_URL",
+            "C_TOKEN",
+            "PHP_TOKEN",
+        ] {
+            assert!(
+                graph.nodes.iter().any(|node| matches!(
+                    node.kind,
+                    NodeKind::Config | NodeKind::Environment
+                ) && node.label == expected),
+                "missing config/environment fact `{expected}`"
+            );
+        }
+
+        let entrypoint_edges = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == EdgeKind::Entrypoint)
+            .count();
+        assert!(
+            entrypoint_edges >= 6,
+            "expected several mixed-language entrypoints, found {entrypoint_edges}"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn scan_project_adds_environment_config_and_error_edges() {
         let root = temp_project_root();
         fs::create_dir_all(root.join("src")).unwrap();
@@ -16795,6 +16969,28 @@ message = "UI layer must not call database layer directly"
             })
             .map(|node| node.id)
             .unwrap_or_else(|| panic!("missing function `{label}` in `{path}`"))
+    }
+
+    fn has_resolved_local_import(graph: &CodeGraph, resolved_path: &str) -> bool {
+        graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::ExternalDependency
+                && node
+                    .metadata
+                    .get("item_kind")
+                    .is_some_and(|value| value == "import")
+                && node
+                    .metadata
+                    .get("import_scope")
+                    .is_some_and(|value| value == "local")
+                && node
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|value| value == "resolved")
+                && node
+                    .metadata
+                    .get("resolved_path")
+                    .is_some_and(|value| value == resolved_path)
+        })
     }
 
     fn has_entrypoint_reference(

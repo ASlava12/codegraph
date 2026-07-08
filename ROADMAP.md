@@ -475,7 +475,7 @@ Artifact and report parity:
 - [x] Add project knowledge reports similar to `GRAPH_REPORT.md`: key concepts, communities, surprising links, risks, suggested questions, and exact graph evidence.
 - [x] Add compact node/file summaries for agent navigation without reading raw files.
 - [x] Add query/focus graph compaction for agent navigation without reading raw files.
-- [ ] Add agent-facing natural-language query mode that maps a question to a bounded graph slice without vector storage.
+- [x] Add agent-facing natural-language query mode that maps a question to a bounded graph slice without vector storage.
 - [x] Add confidence wording in reports that maps CodeGraph confidence to extracted, inferred, and ambiguous human labels.
 
 Repository knowledge ingestion:
