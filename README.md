@@ -104,7 +104,7 @@ Implemented now:
 - Dependency cards can focus or query their exact `edge_index` for fast canvas narrowing and agent handoff.
 - Web node and dependency-card selections are reflected in shareable `node` and `edge` URL parameters with copy-link actions for exact human/agent handoff.
 - Web node and dependency cards can be downloaded as JSON with source, dependency, and risk context for portable agent handoff.
-- Web query presets include ambiguous calls, ambiguous entrypoints, dependency-scope/version issues, and sensitive defaults for fast logical inconsistency triage.
+- Web query presets include ambiguous calls, ambiguous entrypoints, dependency-scope/version/runtime-import issues, and sensitive defaults for fast logical inconsistency triage.
 - Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
 - Initial English/Russian web UI localization with a persistent language selector.
 - Static web landmarks and pagination controls expose localized ARIA labels for English/Russian accessibility.
@@ -228,6 +228,7 @@ Implemented now:
 - Dependency consistency insights for runtime manifest dependencies with no matching import.
 - Dependency consistency insights for package declarations with conflicting manifest constraints.
 - Dependency consistency insights for packages declared across multiple dependency scopes such as runtime and dev/build.
+- Dependency consistency insights for production-like source files importing packages declared only in non-runtime scopes.
 - Focused package graph queries that connect manifest declarations, import sites, and source files for mixed-language dependency investigation.
 - Focused file graph queries that connect source files to contained symbols, imports, config/environment reads, potential errors, and nearby dependency edges.
 - Framework route insights for duplicate HTTP method/path declarations.

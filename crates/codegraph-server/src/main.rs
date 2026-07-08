@@ -6796,11 +6796,13 @@ mod tests {
         assert!(index.contains("insights kind:ambiguous_entrypoint_target"));
         assert!(index.contains("insights kind:mixed_dependency_scope"));
         assert!(index.contains("insights kind:conflicting_dependency_declaration"));
+        assert!(index.contains("insights kind:non_runtime_dependency_import"));
         assert!(index.contains("insights kind:sensitive_config_default"));
         assert!(app.contains("\"queryPreset.ambiguousCalls\""));
         assert!(app.contains("\"queryPreset.ambiguousEntrypoints\""));
         assert!(app.contains("\"queryPreset.dependencyScopes\""));
         assert!(app.contains("\"queryPreset.dependencyVersions\""));
+        assert!(app.contains("\"queryPreset.runtimeImports\""));
         assert!(app.contains("\"queryPreset.sensitiveDefaults\""));
         assert!(app.contains("\"check.running\""));
         assert!(app.contains("\"sourceSearch.enterText\""));
@@ -7083,6 +7085,7 @@ mod tests {
                 && kinds.contains(&"ambiguous_entrypoint_target")
                 && kinds.contains(&"dependency_cycle")
                 && kinds.contains(&"mixed_dependency_scope")
+                && kinds.contains(&"non_runtime_dependency_import")
                 && kinds.contains(&"custom_rule_*")
         }));
         assert!(

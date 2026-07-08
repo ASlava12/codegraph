@@ -772,6 +772,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "entrypoint_dead_end",
     "mixed_dependency_scope",
     "mixed_config_requirement",
+    "non_runtime_dependency_import",
     "orphan_function",
     "parse_error",
     "potential_error_flow",
@@ -1346,6 +1347,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unused_dependency_insights(graph, &mut insights);
     add_conflicting_dependency_insights(graph, &mut insights);
     add_mixed_dependency_scope_insights(graph, &mut insights);
+    add_non_runtime_dependency_import_insights(graph, &mut insights);
     add_unresolved_framework_route_handler_insights(graph, &mut insights);
     add_duplicate_framework_route_insights(graph, &mut insights);
     add_custom_rule_violation_insights(graph, &mut insights);
@@ -7118,6 +7120,128 @@ fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &mut Vec<Ins
     }
 }
 
+fn add_non_runtime_dependency_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let declarations = dependency_declarations_by_package(graph);
+    if declarations.is_empty() {
+        return;
+    }
+
+    let path_index = node_path_index(graph);
+    let mut reported = BTreeSet::new();
+    for (import_edge_index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind != EdgeKind::Imports {
+            continue;
+        }
+        let Some(source) = graph.nodes.iter().find(|node| node.id == edge.source) else {
+            continue;
+        };
+        if node_path_matches(source, &path_index, "test")
+            || path_index
+                .get(&source.id)
+                .is_some_and(|path| is_test_like_source_path(path))
+            || is_test_like_source_path(&source.label)
+        {
+            continue;
+        }
+
+        let Some(import_node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+            continue;
+        };
+        if import_node
+            .metadata
+            .get("import_scope")
+            .is_some_and(|scope| scope == "local")
+        {
+            continue;
+        }
+        let Some(language) = import_node.metadata.get("language").map(String::as_str) else {
+            continue;
+        };
+        let Some(import) = import_package_candidate(language, &import_node.label) else {
+            continue;
+        };
+        let Some((package_id, package_declarations)) = declarations
+            .iter()
+            .find(|(package_id, _)| import_matches_package_id(package_id, &import))
+        else {
+            continue;
+        };
+        let scopes: BTreeSet<_> = package_declarations
+            .iter()
+            .map(|declaration| declaration.kind.as_str())
+            .collect();
+        if scopes.contains("runtime") {
+            continue;
+        }
+        if !reported.insert((edge.source, package_id.clone())) {
+            continue;
+        }
+
+        let mut nodes = BTreeSet::from([edge.source, edge.target]);
+        let mut edges = vec![import_edge_index];
+        for declaration in package_declarations {
+            nodes.insert(declaration.source);
+            nodes.insert(declaration.target);
+            edges.push(declaration.edge_index);
+        }
+        let scope_list = format_backtick_list(scopes.iter().copied(), 6);
+        let source_label = node_label(graph, edge.source).unwrap_or("unknown");
+        insights.push(Insight {
+            kind: "non_runtime_dependency_import".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "`{source_label}` imports `{}` from production-like code, but the package is declared only as {scope_list}",
+                import.package
+            ),
+            nodes: nodes.into_iter().collect(),
+            edges,
+        });
+    }
+}
+
+#[derive(Debug)]
+struct DependencyDeclaration {
+    edge_index: usize,
+    source: NodeId,
+    target: NodeId,
+    kind: String,
+}
+
+fn dependency_declarations_by_package(
+    graph: &CodeGraph,
+) -> BTreeMap<String, Vec<DependencyDeclaration>> {
+    let mut declarations: BTreeMap<String, Vec<DependencyDeclaration>> = BTreeMap::new();
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind != EdgeKind::DependsOn {
+            continue;
+        }
+        let Some(kind) = edge
+            .metadata
+            .get("dependency_kind")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let Some(target) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+            continue;
+        };
+        let Some(package_id) = target.metadata.get("package_id") else {
+            continue;
+        };
+        declarations
+            .entry(package_id.clone())
+            .or_default()
+            .push(DependencyDeclaration {
+                edge_index,
+                source: edge.source,
+                target: edge.target,
+                kind: kind.to_string(),
+            });
+    }
+    declarations
+}
+
 fn add_duplicate_framework_route_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let mut groups: BTreeMap<(String, String), Vec<NodeId>> = BTreeMap::new();
     for node in &graph.nodes {
@@ -11884,6 +12008,91 @@ mod tests {
                 .insights
                 .iter()
                 .any(|insight| insight.kind == "conflicting_dependency_declaration")
+        );
+    }
+
+    #[test]
+    fn insights_report_non_runtime_dependency_imports_from_production_sources() {
+        let mut graph = CodeGraph::new("repo");
+        let manifest = graph.add_node(NodeKind::File, "package.json");
+        let app = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/app.ts",
+            None,
+            BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+        );
+        let test = graph.add_node_with_metadata(
+            NodeKind::File,
+            "tests/app.test.ts",
+            None,
+            BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+        );
+        let react = dependency_node(&mut graph, "react", "npm:react");
+        let vite = dependency_node(&mut graph, "vite", "npm:vite");
+        graph.add_edge_with_metadata(
+            manifest,
+            react,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            manifest,
+            vite,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "dev".to_string())]),
+        );
+
+        let app_vite_import = import_node(
+            &mut graph,
+            "import { defineConfig } from \"vite\";",
+            "typescript",
+        );
+        let app_react_import =
+            import_node(&mut graph, "import React from \"react\";", "typescript");
+        let test_vite_import =
+            import_node(&mut graph, "import { test } from \"vite\";", "typescript");
+        graph.add_edge(
+            app,
+            app_vite_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            app,
+            app_react_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            test,
+            test_vite_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "non_runtime_dependency_import")
+            .expect("expected non-runtime dependency import insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.message.contains("src/app.ts"));
+        assert!(insight.message.contains("vite"));
+        assert!(insight.message.contains("`dev`"));
+        assert!(insight.nodes.contains(&app));
+        assert!(insight.nodes.contains(&app_vite_import));
+        assert!(insight.nodes.contains(&manifest));
+        assert!(insight.nodes.contains(&vite));
+        assert!(!insight.nodes.contains(&app_react_import));
+        assert!(!insight.nodes.contains(&test));
+        assert!(!insight.nodes.contains(&test_vite_import));
+        assert_eq!(
+            report.by_kind.get("non_runtime_dependency_import"),
+            Some(&1)
         );
     }
 
