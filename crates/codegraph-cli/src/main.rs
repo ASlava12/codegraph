@@ -5,12 +5,13 @@ use codegraph_analysis::{
     DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_COMMUNITY_LIMIT,
     DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
     EntrypointTraceRequest, EntrypointWorkflowRequest, ErrorTraceRequest, ExplainEdgeRequest,
-    InsightFilter, InsightSeverity, ProjectReport, ProjectReportLimits, SourceSearchRequest,
-    TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryRequest, WorkflowRequest,
-    architecture_map, check_insights, communities, entrypoints, explain_edge,
-    filter_insight_report, hotspots, insights, language_dependencies, project_report, query_graph,
-    search_source, summarize, trace, trace_config, trace_dependents, trace_entrypoints,
-    trace_errors, workflow, workflow_entrypoints, workflow_mermaid, workflow_query,
+    InsightFilter, InsightSeverity, ProjectReport, ProjectReportLimits,
+    ProjectReportMarkdownOptions, SourceSearchRequest, TraceRequest, TraceStart, WorkflowFilters,
+    WorkflowQueryRequest, WorkflowRequest, architecture_map, check_insights, communities,
+    entrypoints, explain_edge, filter_insight_report, hotspots, insights, language_dependencies,
+    project_report, project_report_markdown, query_graph, search_source, summarize, trace,
+    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
+    workflow_entrypoints, workflow_mermaid, workflow_query,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -28,6 +29,7 @@ use codegraph_lsp::{
 use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
 use serde::Serialize;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -94,7 +96,7 @@ enum Command {
     /// Emit graph summary counts as JSON.
     Summary(ScanArgs),
 
-    /// Emit a production-oriented project report snapshot as JSON.
+    /// Emit a production-oriented project report snapshot as JSON or Markdown.
     Report(ReportArgs),
 
     /// Emit a top-level architecture map grouped by project area.
@@ -534,6 +536,14 @@ struct ReportArgs {
     #[command(flatten)]
     scan: ScanArgs,
 
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = ReportFormat::Json)]
+    format: ReportFormat,
+
+    /// Write the report to a file instead of stdout.
+    #[arg(long)]
+    output: Option<PathBuf>,
+
     /// Maximum architecture groups to include.
     #[arg(long, default_value_t = DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT)]
     architecture_group_limit: usize,
@@ -831,6 +841,12 @@ enum WorkflowFormat {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+enum ReportFormat {
+    Json,
+    Markdown,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
 enum InsightSeverityArg {
     Info,
     Warning,
@@ -1056,8 +1072,25 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&summarize(&graph))?);
         }
         Command::Report(args) => {
+            let format = args.format;
+            let output = args.output.clone();
             let snapshot = build_project_report_snapshot(args, max_file_size)?;
-            println!("{}", serde_json::to_string_pretty(&snapshot)?);
+            let rendered = match format {
+                ReportFormat::Json => serde_json::to_string_pretty(&snapshot)?,
+                ReportFormat::Markdown => project_report_markdown(
+                    &snapshot.report,
+                    &ProjectReportMarkdownOptions {
+                        title: "CodeGraph Project Report".to_string(),
+                        root: Some(snapshot.root.clone()),
+                        generated_at_unix: Some(snapshot.generated_at_unix),
+                    },
+                ),
+            };
+            if let Some(output) = output {
+                fs::write(output, rendered)?;
+            } else {
+                println!("{rendered}");
+            }
         }
         Command::Coverage(args) => {
             let options = configured_index_options(

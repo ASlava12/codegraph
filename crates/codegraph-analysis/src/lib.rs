@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
+use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -1039,6 +1040,23 @@ pub struct ProjectReport {
     pub communities: CommunityReport,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectReportMarkdownOptions {
+    pub title: String,
+    pub root: Option<String>,
+    pub generated_at_unix: Option<u64>,
+}
+
+impl Default for ProjectReportMarkdownOptions {
+    fn default() -> Self {
+        Self {
+            title: "CodeGraph Project Report".to_string(),
+            root: None,
+            generated_at_unix: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InsightSeverity {
@@ -1876,6 +1894,447 @@ pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> Project
         hotspots: hotspots(graph, limits.hotspot_limit),
         communities: communities(graph, limits.community_limit),
     }
+}
+
+pub fn project_report_markdown(
+    report: &ProjectReport,
+    options: &ProjectReportMarkdownOptions,
+) -> String {
+    let mut output = String::new();
+    writeln!(output, "# {}", markdown_text(&options.title)).unwrap();
+    writeln!(output).unwrap();
+    if let Some(root) = options.root.as_deref().filter(|value| !value.is_empty()) {
+        writeln!(output, "- Root: `{}`", markdown_code(root)).unwrap();
+    }
+    if let Some(generated_at_unix) = options.generated_at_unix {
+        writeln!(output, "- Generated at unix: `{generated_at_unix}`").unwrap();
+    }
+    writeln!(
+        output,
+        "- Graph schema version: `{}`",
+        report.graph_schema_version
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "- Quality gate: **{}** (`fail_on={}`, failing_insights={})",
+        if report.quality_gate.passed {
+            "passed"
+        } else {
+            "failed"
+        },
+        markdown_code(&report.quality_gate.fail_on),
+        report.quality_gate.failing_insights
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "- Risk: **{}** (score {}, total {}, errors {}, warnings {}, infos {})",
+        markdown_text(&report.risk_summary.grade),
+        report.risk_summary.score,
+        report.risk_summary.total,
+        report.risk_summary.errors,
+        report.risk_summary.warnings,
+        report.risk_summary.infos
+    )
+    .unwrap();
+
+    writeln!(output, "\n## Summary").unwrap();
+    writeln!(output, "| Metric | Count |").unwrap();
+    writeln!(output, "| --- | ---: |").unwrap();
+    writeln!(output, "| Nodes | {} |", report.summary.nodes).unwrap();
+    writeln!(output, "| Edges | {} |", report.summary.edges).unwrap();
+    writeln!(output, "| Entrypoints | {} |", report.summary.entrypoints).unwrap();
+    writeln!(
+        output,
+        "| Skipped files | {} |",
+        report.summary.skipped_files
+    )
+    .unwrap();
+
+    write_count_table(
+        &mut output,
+        "Languages",
+        "Language",
+        &report.summary.languages,
+        12,
+    );
+    write_count_table(
+        &mut output,
+        "Node Kinds",
+        "Kind",
+        &report.summary.node_kinds,
+        12,
+    );
+    write_count_table(
+        &mut output,
+        "Edge Confidence",
+        "Confidence",
+        &report.summary.edge_confidences,
+        12,
+    );
+
+    writeln!(output, "\n## Confidence Guide").unwrap();
+    writeln!(
+        output,
+        "- `exact`: extracted from exact project metadata or compiler-like facts."
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "- `semantic`: resolved through a semantic analyzer or language server."
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "- `syntactic`: extracted directly from source syntax."
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "- `heuristic`: inferred by a named rule and should be reviewed at boundaries."
+    )
+    .unwrap();
+    writeln!(output, "- `unknown`: legacy or ambiguous evidence.").unwrap();
+
+    writeln!(output, "\n## Key Concepts").unwrap();
+    if report.hotspots.hotspots.is_empty() {
+        writeln!(output, "No hotspot candidates were found.").unwrap();
+    } else {
+        writeln!(output, "| Score | Node | Kind | In | Out | Edge kinds |").unwrap();
+        writeln!(output, "| ---: | --- | --- | ---: | ---: | --- |").unwrap();
+        for hotspot in report.hotspots.hotspots.iter().take(15) {
+            writeln!(
+                output,
+                "| {} | {} | `{}` | {} | {} | {} |",
+                hotspot.score,
+                node_ref(&hotspot.node),
+                markdown_code(&kind_name(&hotspot.node.kind)),
+                hotspot.incoming,
+                hotspot.outgoing,
+                count_map_inline(&hotspot.edge_kinds, 6)
+            )
+            .unwrap();
+        }
+        if report.hotspots.truncated {
+            writeln!(
+                output,
+                "\nHotspots are truncated: showing {} of {} candidates.",
+                report.hotspots.hotspots.len(),
+                report.hotspots.total_candidates
+            )
+            .unwrap();
+        }
+    }
+
+    writeln!(output, "\n## Communities").unwrap();
+    if report.communities.communities.is_empty() {
+        writeln!(output, "No graph communities were found.").unwrap();
+    } else {
+        writeln!(
+            output,
+            "| Community | Nodes | Files | Entrypoints | Internal edges | External edges | Languages | Evidence |"
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |"
+        )
+        .unwrap();
+        for community in report.communities.communities.iter().take(12) {
+            let external_edges =
+                community.incoming_external_edges + community.outgoing_external_edges;
+            writeln!(
+                output,
+                "| `{}` | {} | {} | {} | {} | {} | {} | {} |",
+                markdown_code(&community.label),
+                community.node_count,
+                community.files,
+                community.entrypoints,
+                community.internal_edges,
+                external_edges,
+                count_map_inline(&community.languages, 5),
+                edge_index_refs(&community.edge_indexes, 5)
+            )
+            .unwrap();
+        }
+        if report.communities.truncated {
+            writeln!(
+                output,
+                "\nCommunities are truncated: showing {} of {} communities.",
+                report.communities.communities.len(),
+                report.communities.total_communities
+            )
+            .unwrap();
+        }
+    }
+
+    writeln!(output, "\n## Entrypoints").unwrap();
+    if report.entrypoints.is_empty() {
+        writeln!(output, "No entrypoint candidates were found.").unwrap();
+    } else {
+        writeln!(output, "| Node | Kind | Source |").unwrap();
+        writeln!(output, "| --- | --- | --- |").unwrap();
+        for node in report.entrypoints.iter().take(20) {
+            writeln!(
+                output,
+                "| {} | `{}` | {} |",
+                node_ref(node),
+                markdown_code(&kind_name(&node.kind)),
+                node_span_ref(node)
+            )
+            .unwrap();
+        }
+        if report.entrypoints.len() > 20 {
+            writeln!(
+                output,
+                "\nEntrypoints are truncated: showing 20 of {}.",
+                report.entrypoints.len()
+            )
+            .unwrap();
+        }
+    }
+
+    writeln!(output, "\n## Architecture Links").unwrap();
+    if report.architecture.edges.is_empty() {
+        writeln!(output, "No cross-area architecture links were found.").unwrap();
+    } else {
+        writeln!(
+            output,
+            "| Source | Target | Count | Edge kinds | Confidence | Evidence |"
+        )
+        .unwrap();
+        writeln!(output, "| --- | --- | ---: | --- | --- | --- |").unwrap();
+        for edge in report.architecture.edges.iter().take(15) {
+            writeln!(
+                output,
+                "| `{}` | `{}` | {} | {} | {} | {} |",
+                markdown_code(&edge.source),
+                markdown_code(&edge.target),
+                edge.count,
+                count_map_inline(&edge.edge_kinds, 5),
+                count_map_inline(&edge.confidences, 5),
+                edge_index_refs(&edge.edge_indexes, 5)
+            )
+            .unwrap();
+        }
+        if report.architecture.truncated_edges {
+            writeln!(
+                output,
+                "\nArchitecture links are truncated: showing {} of {} links.",
+                report.architecture.edges.len(),
+                report.architecture.total_edges
+            )
+            .unwrap();
+        }
+    }
+
+    writeln!(output, "\n## Risks And Insights").unwrap();
+    if report.risk_summary.top_kinds.is_empty() {
+        writeln!(output, "No investigation insights were reported.").unwrap();
+    } else {
+        writeln!(output, "| Kind | Severity | Count |").unwrap();
+        writeln!(output, "| --- | --- | ---: |").unwrap();
+        for risk in &report.risk_summary.top_kinds {
+            writeln!(
+                output,
+                "| `{}` | `{}` | {} |",
+                markdown_code(&risk.kind),
+                markdown_code(&risk.severity),
+                risk.count
+            )
+            .unwrap();
+        }
+    }
+    if !report.insights.insights.is_empty() {
+        writeln!(output, "\n### Insight Evidence").unwrap();
+        writeln!(output, "| Severity | Kind | Message | Evidence |").unwrap();
+        writeln!(output, "| --- | --- | --- | --- |").unwrap();
+        for insight in report.insights.insights.iter().take(20) {
+            let node_refs = insight
+                .nodes
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let evidence = if insight.edges.is_empty() {
+                markdown_table_cell(&node_refs)
+            } else if node_refs.is_empty() {
+                edge_index_refs(&insight.edges, 8)
+            } else {
+                markdown_table_cell(&format!(
+                    "nodes: {node_refs}; edges: {}",
+                    edge_index_refs(&insight.edges, 8)
+                ))
+            };
+            writeln!(
+                output,
+                "| `{}` | `{}` | {} | {} |",
+                markdown_code(severity_name(insight.severity)),
+                markdown_code(&insight.kind),
+                markdown_table_cell(&insight.message),
+                evidence
+            )
+            .unwrap();
+        }
+        if report.insights.insights.len() < report.insights.total {
+            writeln!(
+                output,
+                "\nInsights are truncated: showing {} of {}.",
+                report.insights.insights.len(),
+                report.insights.total
+            )
+            .unwrap();
+        }
+    }
+
+    writeln!(output, "\n## Suggested Questions").unwrap();
+    for question in project_report_suggested_questions(report).iter().take(6) {
+        writeln!(output, "- {}", markdown_text(question)).unwrap();
+    }
+
+    output
+}
+
+fn write_count_table(
+    output: &mut String,
+    title: &str,
+    label: &str,
+    values: &BTreeMap<String, usize>,
+    limit: usize,
+) {
+    writeln!(output, "\n### {}", markdown_text(title)).unwrap();
+    if values.is_empty() {
+        writeln!(output, "No {} values were found.", title.to_lowercase()).unwrap();
+        return;
+    }
+    writeln!(output, "| {} | Count |", markdown_table_cell(label)).unwrap();
+    writeln!(output, "| --- | ---: |").unwrap();
+    for (key, count) in sorted_count_entries(values).into_iter().take(limit) {
+        writeln!(output, "| `{}` | {} |", markdown_code(key), count).unwrap();
+    }
+    if values.len() > limit {
+        writeln!(output, "\nShowing {} of {} values.", limit, values.len()).unwrap();
+    }
+}
+
+fn sorted_count_entries(values: &BTreeMap<String, usize>) -> Vec<(&String, &usize)> {
+    let mut entries: Vec<_> = values.iter().collect();
+    entries.sort_by(|(left_key, left_count), (right_key, right_count)| {
+        right_count
+            .cmp(left_count)
+            .then_with(|| left_key.cmp(right_key))
+    });
+    entries
+}
+
+fn count_map_inline(values: &BTreeMap<String, usize>, limit: usize) -> String {
+    if values.is_empty() {
+        return "-".to_string();
+    }
+    let mut parts: Vec<_> = sorted_count_entries(values)
+        .into_iter()
+        .take(limit)
+        .map(|(key, count)| format!("`{}`={count}", markdown_code(key)))
+        .collect();
+    if values.len() > limit {
+        parts.push(format!("+{} more", values.len() - limit));
+    }
+    markdown_table_cell(&parts.join(", "))
+}
+
+fn edge_index_refs(indexes: &[usize], limit: usize) -> String {
+    if indexes.is_empty() {
+        return "-".to_string();
+    }
+    let mut refs: Vec<_> = indexes
+        .iter()
+        .take(limit)
+        .map(|index| format!("#{index}"))
+        .collect();
+    if indexes.len() > limit {
+        refs.push(format!("+{} more", indexes.len() - limit));
+    }
+    markdown_table_cell(&refs.join(", "))
+}
+
+fn node_ref(node: &Node) -> String {
+    markdown_table_cell(&format!("`{}` `{}`", node.id, markdown_code(&node.label)))
+}
+
+fn node_span_ref(node: &Node) -> String {
+    node.span
+        .as_ref()
+        .map(|span| {
+            markdown_table_cell(&format!(
+                "`{}:{}-{}`",
+                markdown_code(&span.path),
+                span.start_line,
+                span.end_line
+            ))
+        })
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn project_report_suggested_questions(report: &ProjectReport) -> Vec<String> {
+    let mut questions = Vec::new();
+    if let Some(entrypoint) = report.entrypoints.first() {
+        questions.push(format!(
+            "What startup flow is reachable from {}?",
+            entrypoint.label
+        ));
+    }
+    if let Some(hotspot) = report.hotspots.hotspots.first() {
+        questions.push(format!(
+            "Why is {} a central graph hotspot?",
+            hotspot.node.label
+        ));
+    }
+    if let Some(community) = report.communities.communities.first() {
+        questions.push(format!(
+            "What responsibilities and external dependencies does the {} community have?",
+            community.label
+        ));
+    }
+    if let Some(edge) = report.architecture.edges.first() {
+        questions.push(format!(
+            "What evidence explains the architecture link from {} to {}?",
+            edge.source, edge.target
+        ));
+    }
+    if let Some(risk) = report.risk_summary.top_kinds.first() {
+        questions.push(format!(
+            "Which code paths are involved in {} findings?",
+            risk.kind
+        ));
+    }
+    questions.push(
+        "Which low-confidence or heuristic edges should be reviewed before changing shared code?"
+            .to_string(),
+    );
+    questions
+}
+
+fn markdown_text(value: &str) -> String {
+    value
+        .replace('\n', " ")
+        .replace('\r', " ")
+        .trim()
+        .to_string()
+}
+
+fn markdown_table_cell(value: &str) -> String {
+    let value = markdown_text(value);
+    let value = value.replace('|', "\\|");
+    if value.is_empty() {
+        "-".to_string()
+    } else {
+        value
+    }
+}
+
+fn markdown_code(value: &str) -> String {
+    markdown_table_cell(&value.replace('`', "'"))
 }
 
 fn project_risk_summary(report: &InsightReport) -> ProjectRiskSummary {
@@ -10798,6 +11257,69 @@ mod tests {
                 .iter()
                 .any(|risk| risk.kind == "parse_error" && risk.severity == "error")
         );
+    }
+
+    #[test]
+    fn project_report_markdown_includes_evidence_and_suggested_questions() {
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node(NodeKind::File, "src/main.rs");
+        let main = graph.add_node_with_span(
+            NodeKind::Function,
+            "main",
+            SourceSpan {
+                path: "src/main.rs".to_string(),
+                start_line: 3,
+                start_column: 1,
+                end_line: 5,
+                end_column: 2,
+            },
+        );
+        let config = graph.add_node(NodeKind::Config, "DATABASE_URL");
+        let unresolved = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "missing_call",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "call".to_string()),
+                ("resolution".to_string(), "unresolved".to_string()),
+            ]),
+        );
+        graph.add_edge(file, main, EdgeKind::Defines, Confidence::Exact);
+        graph.add_edge(file, main, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(main, unresolved, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(main, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
+
+        let report = project_report(
+            &graph,
+            ProjectReportLimits {
+                architecture_group_limit: 5,
+                architecture_edge_limit: 5,
+                language_link_limit: 5,
+                hotspot_limit: 5,
+                community_limit: 5,
+                insight_limit: 5,
+                fail_on: InsightSeverity::Warning,
+            },
+        );
+        let markdown = project_report_markdown(
+            &report,
+            &ProjectReportMarkdownOptions {
+                title: "CodeGraph Project Report".to_string(),
+                root: Some("repo".to_string()),
+                generated_at_unix: Some(1_234),
+            },
+        );
+
+        assert!(markdown.contains("# CodeGraph Project Report"));
+        assert!(markdown.contains("- Root: `repo`"));
+        assert!(markdown.contains("## Key Concepts"));
+        assert!(markdown.contains("## Communities"));
+        assert!(markdown.contains("## Risks And Insights"));
+        assert!(markdown.contains("### Insight Evidence"));
+        assert!(markdown.contains("## Suggested Questions"));
+        assert!(markdown.contains("missing_call"));
+        assert!(markdown.contains("#2"));
+        assert!(markdown.contains("What startup flow is reachable from main?"));
     }
 
     #[test]
