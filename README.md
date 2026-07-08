@@ -823,6 +823,7 @@ Planned Dart/Flutter depth:
 Planned repository-knowledge features inspired by Graphify-style workflows:
 
 - Community detection, god-node reports, repository knowledge reports, Markdown/ADR/RFC/rationale extraction, deterministic SQL schema extraction, optional non-code document ingestion, assistant install/hooks, MCP server mode, global multi-repository graphs, saved investigation memory, PR impact dashboards, and exports for GraphML, SVG, Mermaid/callflow HTML, Obsidian/Markdown wiki, Neo4j, and FalkorDB.
+- The detailed Graphify parity map is tracked in [`docs/GRAPHIFY_PARITY.md`](docs/GRAPHIFY_PARITY.md), including already covered capabilities, gaps, priorities, and compatibility principles.
 
 Supported package manifests:
 

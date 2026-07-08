@@ -451,6 +451,8 @@ Exit criteria:
 
 Goal: cover the main Graphify-style ideas while keeping CodeGraph Rust-first, local-first, provenance-aware, and useful for both humans and agents.
 
+Feature parity analysis is tracked in `docs/GRAPHIFY_PARITY.md`.
+
 Already aligned:
 
 - [x] Build local code graphs from deterministic Tree-sitter parser facts.
@@ -459,11 +461,21 @@ Already aligned:
 - [x] Provide interactive graph exploration with search, filters, focused views, exports, and graph cards.
 - [x] Maintain persistent caches and incremental scan/update paths.
 - [x] Support local desktop launch through `codegraph-ui`.
+- [x] Provide first community and hotspot analysis foundations.
 
 Graphify-inspired gaps to close:
 
+Artifact and report parity:
+
 - [x] Add first deterministic graph community reports for subsystems with stable ids, local-first labels, sample nodes, and internal/external edge counts.
 - [ ] Add god-node and hotspot reports that separate real architectural hubs from noisy utility hubs.
+- [ ] Add project knowledge reports similar to `GRAPH_REPORT.md`: key concepts, communities, surprising links, risks, suggested questions, and exact graph evidence.
+- [ ] Add graph compaction and compact node/file summaries for agent navigation without reading raw files.
+- [ ] Add agent-facing natural-language query mode that maps a question to a bounded graph slice without vector storage.
+- [ ] Add confidence wording in reports that maps CodeGraph confidence to extracted, inferred, and ambiguous human labels.
+
+Repository knowledge ingestion:
+
 - [ ] Add Markdown/ADR/RFC extraction so design docs, decisions, and citations become first-class graph nodes.
 - [x] Promote source comments such as `NOTE`, `WHY`, `TODO`, `FIXME`, and security/risk markers into linked rationale nodes.
 - [ ] Add deterministic SQL schema extraction for tables, views, columns, foreign keys, indexes, queries, and JOIN relationships.
@@ -471,19 +483,25 @@ Graphify-inspired gaps to close:
 - [ ] Add document ingestion for Markdown, plain text, PDFs, Office files, and generated Markdown sidecars, with size limits and provenance.
 - [ ] Add optional local or configured-model semantic extraction for non-code documents while keeping code-only scans fully offline.
 - [ ] Add media ingestion hooks for transcripts from audio/video sidecars, with explicit opt-in for transcription backends.
-- [ ] Add graph compaction and compact node/file summaries for agent navigation without reading raw files.
-- [ ] Add project knowledge reports similar to `GRAPH_REPORT.md`: key concepts, communities, surprising links, risks, and suggested questions.
-- [ ] Add agent-facing natural-language query mode that maps a question to a bounded graph slice without vector storage.
+
+Agent memory and automation:
+
 - [ ] Add saved query/result memory with outcomes such as useful, dead-end, and corrected, linked back to graph nodes and invalidated by source changes.
 - [ ] Add reflection reports that aggregate saved investigation outcomes into repository lessons with provenance and stale-source warnings.
 - [ ] Add assistant installation commands for Codex and generic agent-skill instructions, generating project-scoped guidance to query CodeGraph before broad file reads.
 - [ ] Add optional local hooks that nudge agents toward CodeGraph query/path/explain before grep-heavy or raw-file-heavy workflows.
+- [ ] Add MCP stdio server mode for graph query/path/explain/report/card access from external assistants.
+
+Update and team workflows:
+
 - [ ] Add git hooks for post-commit/post-checkout incremental refresh, cache invalidation, and optional graph export regeneration.
 - [ ] Add watch mode for automatic local graph refresh while editing.
 - [ ] Add global graph registry for multiple local repositories with cross-project path/query support.
 - [ ] Add graph merge commands for combining project, docs, incident, and external-system graphs.
+
+Exports and dashboards:
+
 - [ ] Add GraphML, SVG, Mermaid/callflow HTML, Obsidian vault, Markdown wiki, Neo4j Cypher, and FalkorDB export targets.
-- [ ] Add MCP stdio server mode for graph query/path/explain/report/card access from external assistants.
 - [ ] Add PR impact dashboard using graph communities, changed files, CI/review state, conflicts, and risky shared subsystems.
 - [ ] Add query logging with privacy controls, response logging opt-in, and local JSONL audit output.
 - [ ] Add explicit security model for external ingestion: URL validation, redirect blocking, size/time limits, label sanitization, and graph path constraints.
