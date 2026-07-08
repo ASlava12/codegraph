@@ -778,6 +778,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "syntax_error",
     "undeclared_external_import",
     "unreachable_config_read",
+    "unreachable_error_flow",
     "unreachable_source_file",
     "unresolved_call",
     "unresolved_entrypoint_target",
@@ -1331,6 +1332,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unresolved_entrypoint_insights(graph, &mut insights);
     add_entrypoint_dead_end_insights(graph, &mut insights);
     add_unreachable_config_read_insights(graph, &mut insights);
+    add_unreachable_error_flow_insights(graph, &mut insights);
     add_unreachable_source_file_insights(graph, &mut insights);
     add_conflicting_config_default_insights(graph, &mut insights);
     add_mixed_config_requirement_insights(graph, &mut insights);
@@ -6301,6 +6303,31 @@ fn add_unreachable_config_read_insights(graph: &CodeGraph, insights: &mut Vec<In
     }
 }
 
+fn add_unreachable_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let reachable = entrypoint_reachable_nodes(graph);
+    if reachable.is_empty() {
+        return;
+    }
+
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind != EdgeKind::MayError || reachable.contains(&edge.source) {
+            continue;
+        }
+
+        let source = node_label(graph, edge.source).unwrap_or("unknown");
+        let target = node_label(graph, edge.target).unwrap_or("unknown");
+        insights.push(Insight {
+            kind: "unreachable_error_flow".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "`{source}` may error via `{target}` but is not reachable from any entrypoint"
+            ),
+            nodes: vec![edge.source, edge.target],
+            edges: vec![index],
+        });
+    }
+}
+
 fn add_unreachable_source_file_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let reachable = entrypoint_reachable_nodes(graph);
     if reachable.is_empty() {
@@ -10589,6 +10616,54 @@ mod tests {
         assert!(insight.message.contains("unused_loader"));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unreachable_config_read" && insight.nodes.contains(&main)
+        }));
+    }
+
+    #[test]
+    fn insights_report_unreachable_error_flows() {
+        let mut graph = CodeGraph::new("repo");
+        let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let live_error = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "panic",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "error".to_string())]),
+        );
+        let legacy_worker = graph.add_node(NodeKind::Function, "legacy_worker");
+        let legacy_error = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "LegacyError",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "error".to_string())]),
+        );
+        graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(entry, main, EdgeKind::References, Confidence::Exact);
+        graph.add_edge(main, live_error, EdgeKind::MayError, Confidence::Heuristic);
+        graph.add_edge(
+            legacy_worker,
+            legacy_error,
+            EdgeKind::MayError,
+            Confidence::Heuristic,
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unreachable_error_flow")
+            .expect("expected unreachable error flow insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert_eq!(insight.nodes, vec![legacy_worker, legacy_error]);
+        assert!(insight.message.contains("legacy_worker"));
+        assert!(insight.message.contains("LegacyError"));
+        assert_eq!(report.by_kind.get("unreachable_error_flow"), Some(&1));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unreachable_error_flow" && insight.nodes.contains(&main)
+        }));
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "potential_error_flow" && insight.nodes.contains(&main)
         }));
     }
 

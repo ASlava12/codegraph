@@ -420,6 +420,7 @@ const I18N = {
     "kind.graph_surface_added": "graph surface added",
     "kind.graph_surface_removed": "graph surface removed",
     "kind.semantic_diagnostic": "semantic diagnostic",
+    "kind.unreachable_error_flow": "unreachable error flow",
     "kind.unreachable_source_file": "unreachable source file",
   },
   ru: {
@@ -857,6 +858,7 @@ const I18N = {
     "kind.orphan_function": "изолированная функция",
     "kind.potential_error_flow": "потенциальный поток ошибки",
     "kind.undeclared_external_import": "импорт без зависимости",
+    "kind.unreachable_error_flow": "недостижимый поток ошибки",
     "kind.unreachable_source_file": "недостижимый файл с кодом",
   },
 };
