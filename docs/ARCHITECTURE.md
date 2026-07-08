@@ -62,7 +62,7 @@ The first implementation stores whole-graph JSON cache records keyed by root pat
 - entrypoint reachability checks for config and environment reads
 - entrypoint reachability checks for non-test source files with code symbols
 - dependency cycle checks
-- graph query results, unreachable-code slices, and directed path searches for agent and API clients
+- graph query results, unreachable-code/config/error slices, and directed path searches for agent and API clients
 - insight focus subgraphs for findings with multiple nodes or edges
 - project overview data for language mix, edge confidence/source/relation mix, annotations, and entrypoints
 - graph slices for paged UI, search/item/language/confidence/relation/source-filtered exploration, and agent loading

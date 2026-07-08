@@ -431,6 +431,8 @@ cargo run -p codegraph-cli -- query 'hotspots language:rust min_score:5 edge_lim
 cargo run -p codegraph-cli -- query 'path from:main to:load_config depth:6' .
 cargo run -p codegraph-cli -- query 'unreachable language:rust' .
 cargo run -p codegraph-cli -- query 'unreachable kind:function label:legacy_worker' .
+cargo run -p codegraph-cli -- query 'unreachable scope:config search:LEGACY_TOKEN' .
+cargo run -p codegraph-cli -- query 'unreachable scope:errors search:LegacyError' .
 cargo run -p codegraph-cli -- query 'diagnostics severity:error language:rust' .
 cargo run -p codegraph-cli -- query 'insights severity:error kind:dependency' .
 cargo run -p codegraph-cli -- query 'insights kind:sensitive_config_default' .
@@ -681,6 +683,9 @@ curl --get 'http://127.0.0.1:3765/api/query' \
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=unreachable language:rust'
+curl --get 'http://127.0.0.1:3765/api/query' \
+  --data-urlencode 'path=.' \
+  --data-urlencode 'q=unreachable scope:errors search:LegacyError'
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=diagnostics severity:error language:rust'

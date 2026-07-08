@@ -3638,12 +3638,24 @@ fn query_unreachable(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, 
 
     let path_index = node_path_index(graph);
     let node_terms = unreachable_node_terms(&spec);
-    let source_scope = unreachable_uses_source_file_scope(&spec)?;
+    let scope = unreachable_scope(&spec)?;
+    if matches!(
+        scope,
+        UnreachableScope::ConfigReads | UnreachableScope::ErrorFlows
+    ) {
+        return Ok(query_unreachable_flow_scope(
+            graph,
+            spec,
+            &reachable,
+            &path_index,
+            scope,
+        ));
+    }
     let matched: Vec<_> = graph
         .nodes
         .iter()
         .filter(|node| {
-            if source_scope {
+            if scope == UnreachableScope::SourceFiles {
                 is_source_file_candidate(graph, node)
                     && !reachable.contains(&node.id)
                     && !file_has_reachable_code(graph, node.id, &reachable)
@@ -3698,6 +3710,83 @@ fn query_unreachable(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, 
         total_edges,
         truncated,
     ))
+}
+
+fn query_unreachable_flow_scope(
+    graph: &CodeGraph,
+    spec: QuerySpec,
+    reachable: &BTreeSet<NodeId>,
+    path_index: &BTreeMap<NodeId, String>,
+    scope: UnreachableScope,
+) -> QueryResult {
+    let node_terms = unreachable_node_terms(&spec);
+    let edge_kinds = match scope {
+        UnreachableScope::ConfigReads => &[EdgeKind::ReadsConfig, EdgeKind::ReadsEnvironment][..],
+        UnreachableScope::ErrorFlows => &[EdgeKind::MayError][..],
+        UnreachableScope::SourceFiles | UnreachableScope::AnyNode => &[][..],
+    };
+    let node_by_id: BTreeMap<_, _> = graph.nodes.iter().map(|node| (node.id, node)).collect();
+
+    let matched: Vec<_> = graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| edge_kinds.contains(&edge.kind) && !reachable.contains(&edge.source))
+        .filter(|(_, edge)| {
+            unreachable_flow_matches(edge, &node_by_id, &node_terms, &spec, path_index)
+        })
+        .collect();
+    let total_matches = matched.len();
+    let edge_limit = spec.limit.clamp(1, 1000);
+    let mut result_node_ids = BTreeSet::new();
+    let mut edges = Vec::new();
+
+    for (_, edge) in matched.iter().take(edge_limit) {
+        result_node_ids.insert(edge.source);
+        result_node_ids.insert(edge.target);
+        edges.push((*edge).clone());
+    }
+
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| result_node_ids.contains(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let truncated = total_matches > edge_limit;
+    let total_nodes = nodes.len();
+    let total_edges = total_matches;
+    QueryResult::new(
+        graph,
+        spec.original,
+        nodes,
+        edges,
+        total_nodes,
+        total_edges,
+        truncated,
+    )
+}
+
+fn unreachable_flow_matches(
+    edge: &Edge,
+    node_by_id: &BTreeMap<NodeId, &Node>,
+    node_terms: &BTreeMap<String, String>,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
+    let Some(source) = node_by_id.get(&edge.source) else {
+        return false;
+    };
+    let Some(target) = node_by_id.get(&edge.target) else {
+        return false;
+    };
+
+    let node_match = node_matches(source, node_terms) || node_matches(target, node_terms);
+    let path_match = spec.terms.get("path_prefix").is_none_or(|expected| {
+        node_path_matches(source, path_index, expected)
+            || node_path_matches(target, path_index, expected)
+    });
+    node_match && path_match
 }
 
 fn query_diagnostics(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -4319,7 +4408,7 @@ fn validate_hotspot_terms(spec: &QuerySpec) -> Result<(), QueryError> {
 
 fn validate_unreachable_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     for key in spec.terms.keys() {
-        if is_node_term(key) || matches!(key.as_str(), "path_prefix" | "scope") {
+        if is_node_term(key) || matches!(key.as_str(), "path_prefix" | "scope" | "search") {
             continue;
         }
         return Err(QueryError::new(format!(
@@ -4419,7 +4508,7 @@ fn validate_insight_terms(spec: &QuerySpec) -> Result<(), QueryError> {
 fn is_node_term(key: &str) -> bool {
     matches!(
         key,
-        "id" | "kind" | "label" | "language" | "item_kind" | "package_id"
+        "id" | "kind" | "label" | "search" | "language" | "item_kind" | "package_id"
     ) || key.starts_with("metadata.")
 }
 
@@ -5066,21 +5155,40 @@ fn unreachable_node_terms(spec: &QuerySpec) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn unreachable_uses_source_file_scope(spec: &QuerySpec) -> Result<bool, QueryError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnreachableScope {
+    SourceFiles,
+    ConfigReads,
+    ErrorFlows,
+    AnyNode,
+}
+
+fn unreachable_scope(spec: &QuerySpec) -> Result<UnreachableScope, QueryError> {
     if let Some(scope) = spec.terms.get("scope") {
         return match scope.trim().to_ascii_lowercase().as_str() {
-            "source" | "sources" | "source_file" | "source_files" | "file" | "files" => Ok(true),
-            "any" | "all" | "node" | "nodes" => Ok(false),
+            "source" | "sources" | "source_file" | "source_files" | "file" | "files" => {
+                Ok(UnreachableScope::SourceFiles)
+            }
+            "config" | "configs" | "config_read" | "config_reads" | "environment"
+            | "environment_reads" | "env" | "env_reads" => Ok(UnreachableScope::ConfigReads),
+            "error" | "errors" | "error_flow" | "error_flows" | "exception" | "exceptions" => {
+                Ok(UnreachableScope::ErrorFlows)
+            }
+            "any" | "all" | "node" | "nodes" => Ok(UnreachableScope::AnyNode),
             other => Err(QueryError::new(format!(
-                "invalid unreachable scope `{other}`; expected source_files or any"
+                "invalid unreachable scope `{other}`; expected source_files, config, errors, or any"
             ))),
         };
     }
 
-    Ok(!spec.terms.keys().any(|key| {
+    if spec.terms.keys().any(|key| {
         matches!(key.as_str(), "id" | "kind" | "item_kind" | "package_id")
             || key.starts_with("metadata.")
-    }))
+    }) {
+        Ok(UnreachableScope::AnyNode)
+    } else {
+        Ok(UnreachableScope::SourceFiles)
+    }
 }
 
 fn node_matches(node: &Node, terms: &BTreeMap<String, String>) -> bool {
@@ -5088,6 +5196,7 @@ fn node_matches(node: &Node, terms: &BTreeMap<String, String>) -> bool {
         "id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
         "kind" => text_matches(&kind_name(&node.kind), expected),
         "label" => text_matches(&node.label, expected),
+        "search" => node_search_matches(node, expected),
         "language" | "item_kind" | "package_id" => node
             .metadata
             .get(key)
@@ -9292,6 +9401,82 @@ mod tests {
         let error =
             query_graph(&graph, "unreachable scope:maybe").expect_err("invalid scope should fail");
         assert!(error.to_string().contains("invalid unreachable scope"));
+    }
+
+    #[test]
+    fn query_unreachable_returns_config_and_error_flow_scopes() {
+        let mut graph = CodeGraph::new("repo");
+        let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let live_env = graph.add_node(NodeKind::Environment, "DATABASE_URL");
+        let live_error = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "panic",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "error".to_string())]),
+        );
+        let legacy_loader = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "legacy_loader",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let legacy_env = graph.add_node(NodeKind::Environment, "LEGACY_TOKEN");
+        let legacy_worker = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "legacy_worker",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let legacy_error = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "LegacyError",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "error".to_string())]),
+        );
+        graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(entry, main, EdgeKind::References, Confidence::Exact);
+        graph.add_edge(
+            main,
+            live_env,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(main, live_error, EdgeKind::MayError, Confidence::Heuristic);
+        graph.add_edge(
+            legacy_loader,
+            legacy_env,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            legacy_worker,
+            legacy_error,
+            EdgeKind::MayError,
+            Confidence::Heuristic,
+        );
+
+        let configs = query_graph(&graph, "unreachable scope:config search:LEGACY_TOKEN").unwrap();
+        assert!(configs.nodes.iter().any(|node| node.id == legacy_loader));
+        assert!(configs.nodes.iter().any(|node| node.id == legacy_env));
+        assert!(configs.edges.iter().any(|edge| {
+            edge.source == legacy_loader
+                && edge.target == legacy_env
+                && edge.kind == EdgeKind::ReadsEnvironment
+        }));
+        assert!(!configs.nodes.iter().any(|node| node.id == main));
+        assert!(!configs.nodes.iter().any(|node| node.id == live_env));
+
+        let errors = query_graph(&graph, "unreachable scope:errors search:LegacyError").unwrap();
+        assert!(errors.nodes.iter().any(|node| node.id == legacy_worker));
+        assert!(errors.nodes.iter().any(|node| node.id == legacy_error));
+        assert!(errors.edges.iter().any(|edge| {
+            edge.source == legacy_worker
+                && edge.target == legacy_error
+                && edge.kind == EdgeKind::MayError
+        }));
+        assert!(!errors.nodes.iter().any(|node| node.id == main));
+        assert!(!errors.nodes.iter().any(|node| node.id == live_error));
     }
 
     #[test]

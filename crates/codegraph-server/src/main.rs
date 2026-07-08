@@ -3494,6 +3494,7 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "id",
                     "kind",
                     "label",
+                    "search",
                     "language",
                     "item_kind",
                     "package_id",
@@ -3568,6 +3569,25 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "edge_limit",
                     "metadata.*",
                 ],
+            ),
+            (
+                "graph_query_unreachable_term",
+                vec![
+                    "id",
+                    "label",
+                    "search",
+                    "language",
+                    "kind",
+                    "item_kind",
+                    "package_id",
+                    "path_prefix",
+                    "scope",
+                    "metadata.*",
+                ],
+            ),
+            (
+                "graph_query_unreachable_scope",
+                vec!["source_files", "config", "errors", "any"],
             ),
             (
                 "graph_query_symbol_term",
@@ -4360,7 +4380,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Graph query expression, for example `symbols label:load_config direction:out`, `files path:src/main.rs direction:out`, `entrypoints language:rust`, `routes method:GET path:/users`, `packages package:serde ecosystem:cargo`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable language:rust`, `diagnostics severity:error language:rust`, `annotations key:domain value:payments`, or `insights severity:error`.",
+                            "Graph query expression, for example `symbols label:load_config direction:out`, `files path:src/main.rs direction:out`, `entrypoints language:rust`, `routes method:GET path:/users`, `packages package:serde ecosystem:cargo`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable scope:errors search:LegacyError`, `diagnostics severity:error language:rust`, `annotations key:domain value:payments`, or `insights severity:error`.",
                         )
                         .with_max_length(MAX_GRAPH_QUERY_LENGTH)
                         .with_capability_limit("max_graph_query_length"),
@@ -7004,6 +7024,7 @@ mod tests {
                         && commands.contains(&"errors")
                         && commands.contains(&"cycles")
                         && commands.contains(&"hotspots")
+                        && commands.contains(&"unreachable")
                         && commands.contains(&"diagnostics")
                         && commands.contains(&"annotations")
                         && commands.contains(&"insights")
@@ -7019,7 +7040,7 @@ mod tests {
             schema
                 .enum_values
                 .get("graph_query_node_term")
-                .is_some_and(|terms| terms.contains(&"metadata.*") && terms.contains(&"label"))
+                .is_some_and(|terms| terms.contains(&"metadata.*") && terms.contains(&"search"))
         );
         assert!(
             schema
@@ -7074,6 +7095,21 @@ mod tests {
                 .enum_values
                 .get("graph_query_hotspot_term")
                 .is_some_and(|terms| terms.contains(&"min_score") && terms.contains(&"edge_limit"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_unreachable_term")
+                .is_some_and(|terms| terms.contains(&"scope") && terms.contains(&"search"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_unreachable_scope")
+                .is_some_and(|scopes| scopes.contains(&"source_files")
+                    && scopes.contains(&"config")
+                    && scopes.contains(&"errors")
+                    && scopes.contains(&"any"))
         );
         assert!(
             schema
