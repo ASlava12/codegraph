@@ -6780,6 +6780,10 @@ mod tests {
         assert!(app.contains("\"button.downloadErrorTrace\""));
         assert!(app.contains("clientEntrypointReachableIds"));
         assert!(app.contains("unreachable_error_flow"));
+        assert!(index.contains("unreachable scope:config"));
+        assert!(index.contains("unreachable scope:errors"));
+        assert!(app.contains("\"queryPreset.unreachableConfig\""));
+        assert!(app.contains("\"queryPreset.unreachableErrors\""));
         assert!(index.contains("annotations key:domain edge_limit:300"));
         assert!(app.contains("\"queryPreset.annotations\""));
         assert!(app.contains("limits.max_api_body_bytes"));
