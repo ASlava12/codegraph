@@ -10,16 +10,17 @@ use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
     CheckReport, ConfigTraceRequest, ConfigTraceResult, DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
-    DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_HOTSPOT_LIMIT,
-    DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, EntrypointTraceReport,
-    EntrypointTraceRequest, ErrorTraceRequest, ErrorTraceResult, ExplainEdgeRequest, FocusRequest,
-    GraphSlice, GraphSliceRequest, GraphSummary, InsightFilter, InsightReport, InsightSeverity,
-    KNOWN_INSIGHT_KINDS, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
-    MAX_REPORT_HOTSPOT_LIMIT, MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, NodeCard,
-    NodeContext, ProjectReport, ProjectReportLimits, SourcePreview, SourceSearchRequest,
-    SourceSearchResult, TraceRequest, TraceStart, architecture_map, check_insights, entrypoints,
-    explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots,
-    insights, language_dependencies, node_card, node_context, project_report, query_graph,
+    DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_COMMUNITY_LIMIT,
+    DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
+    EntrypointTraceReport, EntrypointTraceRequest, ErrorTraceRequest, ErrorTraceResult,
+    ExplainEdgeRequest, FocusRequest, GraphSlice, GraphSliceRequest, GraphSummary, InsightFilter,
+    InsightReport, InsightSeverity, KNOWN_INSIGHT_KINDS, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT,
+    MAX_REPORT_ARCHITECTURE_GROUP_LIMIT, MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
+    MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, NodeCard, NodeContext, ProjectReport,
+    ProjectReportLimits, SourcePreview, SourceSearchRequest, SourceSearchResult, TraceRequest,
+    TraceStart, architecture_map, check_insights, communities, entrypoints, explain_edge,
+    export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots, insights,
+    language_dependencies, node_card, node_context, project_report, query_graph,
     read_source_preview, search_source, slice_graph, summarize, trace, trace_config,
     trace_dependents, trace_entrypoints, trace_errors,
 };
@@ -322,6 +323,12 @@ struct HotspotQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct CommunityQuery {
+    path: Option<PathBuf>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct CacheDiffQuery {
     path: Option<PathBuf>,
     limit: Option<usize>,
@@ -418,6 +425,7 @@ struct ProjectReportQuery {
     architecture_edge_limit: Option<usize>,
     language_link_limit: Option<usize>,
     hotspot_limit: Option<usize>,
+    community_limit: Option<usize>,
     insight_limit: Option<usize>,
     fail_on: Option<String>,
 }
@@ -779,6 +787,8 @@ struct RuntimeLimitsResponse {
     max_report_language_link_limit: usize,
     default_report_hotspot_limit: usize,
     max_report_hotspot_limit: usize,
+    default_report_community_limit: usize,
+    max_report_community_limit: usize,
     default_report_insight_limit: usize,
     max_report_insight_limit: usize,
     default_source_context: u32,
@@ -963,6 +973,7 @@ async fn main() -> Result<()> {
         .route("/api/architecture", get(architecture_api))
         .route("/api/language-dependencies", get(language_dependencies_api))
         .route("/api/hotspots", get(hotspots_api))
+        .route("/api/communities", get(communities_api))
         .route("/api/entrypoints", get(entrypoints_api))
         .route("/api/entrypoint-traces", get(entrypoint_traces_api))
         .route("/api/insights", get(insights_api))
@@ -1768,6 +1779,8 @@ async fn capabilities_api(
             max_report_language_link_limit: MAX_REPORT_LANGUAGE_LINK_LIMIT,
             default_report_hotspot_limit: DEFAULT_REPORT_HOTSPOT_LIMIT,
             max_report_hotspot_limit: MAX_REPORT_HOTSPOT_LIMIT,
+            default_report_community_limit: DEFAULT_REPORT_COMMUNITY_LIMIT,
+            max_report_community_limit: MAX_REPORT_COMMUNITY_LIMIT,
             default_report_insight_limit: DEFAULT_REPORT_INSIGHT_LIMIT,
             max_report_insight_limit: MAX_REPORT_INSIGHT_LIMIT,
             default_source_context: DEFAULT_SOURCE_CONTEXT,
@@ -2550,6 +2563,17 @@ async fn hotspots_api(
     Ok(Json(hotspots(&graph, query.limit.unwrap_or(25))))
 }
 
+async fn communities_api(
+    State(state): State<AppState>,
+    Query(query): Query<CommunityQuery>,
+) -> Result<Json<codegraph_analysis::CommunityReport>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    Ok(Json(communities(
+        &graph,
+        query.limit.unwrap_or(DEFAULT_REPORT_COMMUNITY_LIMIT),
+    )))
+}
+
 async fn entrypoints_api(
     State(state): State<AppState>,
     Query(query): Query<ScanQuery>,
@@ -2967,6 +2991,10 @@ fn project_report_limits_from_query(
             .hotspot_limit
             .unwrap_or(DEFAULT_REPORT_HOTSPOT_LIMIT)
             .clamp(1, MAX_REPORT_HOTSPOT_LIMIT),
+        community_limit: query
+            .community_limit
+            .unwrap_or(DEFAULT_REPORT_COMMUNITY_LIMIT)
+            .clamp(1, MAX_REPORT_COMMUNITY_LIMIT),
         insight_limit: query
             .insight_limit
             .unwrap_or(DEFAULT_REPORT_INSIGHT_LIMIT)
@@ -3443,6 +3471,7 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "architecture",
                     "language_dependencies",
                     "hotspots",
+                    "communities",
                     "cache",
                     "coverage",
                 ],
@@ -4479,6 +4508,18 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 )
                 .with_response_fields(hotspot_response_fields()),
                 api_get(
+                    "/api/communities",
+                    "List deterministic graph communities/subsystems with sample nodes and edge indexes.",
+                    vec![
+                        path_param(),
+                        query_param("limit", false, "usize", Some("25"), "Maximum communities.")
+                            .with_range(1, MAX_REPORT_COMMUNITY_LIMIT)
+                            .with_capability_limit("max_report_community_limit"),
+                    ],
+                    "CommunityReport",
+                )
+                .with_response_fields(community_response_fields()),
+                api_get(
                     "/api/entrypoints",
                     "List detected entrypoint candidate nodes.",
                     vec![path_param()],
@@ -4805,6 +4846,15 @@ fn report_params() -> Vec<ApiParameterSpec> {
         )
         .with_range(1, MAX_REPORT_HOTSPOT_LIMIT)
         .with_capability_limit("max_report_hotspot_limit"),
+        query_param(
+            "community_limit",
+            false,
+            "usize",
+            Some("25"),
+            "Maximum graph communities, capped by server capabilities.",
+        )
+        .with_range(1, MAX_REPORT_COMMUNITY_LIMIT)
+        .with_capability_limit("max_report_community_limit"),
         query_param(
             "insight_limit",
             false,
@@ -5631,6 +5681,47 @@ fn hotspot_response_fields() -> Vec<ApiParameterSpec> {
     ]
 }
 
+fn community_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "communities",
+            true,
+            "GraphCommunity[]",
+            "Deterministic graph communities/subsystems with sample nodes.",
+        ),
+        response_field(
+            "total_communities",
+            true,
+            "usize",
+            "Total communities before limiting.",
+        ),
+        response_field(
+            "total_nodes",
+            true,
+            "usize",
+            "Total nodes represented by communities.",
+        ),
+        response_field(
+            "total_internal_edges",
+            true,
+            "usize",
+            "Total internal community edges.",
+        ),
+        response_field(
+            "total_external_edges",
+            true,
+            "usize",
+            "Total incoming plus outgoing external community edges.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether more communities exist beyond the limit.",
+        ),
+    ]
+}
+
 fn entrypoint_trace_response_fields() -> Vec<ApiParameterSpec> {
     vec![
         response_field("max_depth", true, "usize", "Applied trace depth limit."),
@@ -6141,6 +6232,7 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
                 "GET /api/architecture",
                 "GET /api/language-dependencies",
                 "GET /api/hotspots",
+                "GET /api/communities",
                 "GET /api/entrypoints",
                 "GET /api/entrypoint-traces",
                 "GET /api/insights",
@@ -6603,6 +6695,8 @@ mod tests {
         assert_eq!(response.limits.max_report_language_link_limit, 500);
         assert_eq!(response.limits.default_report_hotspot_limit, 25);
         assert_eq!(response.limits.max_report_hotspot_limit, 500);
+        assert_eq!(response.limits.default_report_community_limit, 25);
+        assert_eq!(response.limits.max_report_community_limit, 500);
         assert_eq!(response.limits.default_report_insight_limit, 50);
         assert_eq!(response.limits.max_report_insight_limit, 500);
         assert_eq!(response.limits.max_source_search_query_length, 4096);
@@ -6643,6 +6737,7 @@ mod tests {
             architecture_edge_limit: Some(usize::MAX),
             language_link_limit: Some(usize::MAX),
             hotspot_limit: Some(usize::MAX),
+            community_limit: Some(usize::MAX),
             insight_limit: Some(usize::MAX),
             fail_on: None,
         })
@@ -6658,6 +6753,7 @@ mod tests {
         );
         assert_eq!(limits.language_link_limit, MAX_REPORT_LANGUAGE_LINK_LIMIT);
         assert_eq!(limits.hotspot_limit, MAX_REPORT_HOTSPOT_LIMIT);
+        assert_eq!(limits.community_limit, MAX_REPORT_COMMUNITY_LIMIT);
         assert_eq!(limits.insight_limit, MAX_REPORT_INSIGHT_LIMIT);
     }
 
@@ -7660,6 +7756,24 @@ mod tests {
                 .iter()
                 .any(|field| { field.name == "hotspots" && field.value_type == "Hotspot[]" })
         );
+        let communities_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/communities")
+            .expect("schema should list communities endpoint");
+        let community_limit = communities_endpoint
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "limit")
+            .expect("communities limit");
+        assert_eq!(
+            community_limit.capability_limit,
+            Some("max_report_community_limit")
+        );
+        assert!(communities_endpoint.response_fields.iter().any(|field| {
+            field.name == "communities" && field.value_type == "GraphCommunity[]"
+        }));
         let entrypoint_traces_endpoint = schema
             .groups
             .iter()

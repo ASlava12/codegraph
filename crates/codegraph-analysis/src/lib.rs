@@ -92,6 +92,32 @@ pub struct Hotspot {
     pub edge_kinds: BTreeMap<String, usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommunityReport {
+    pub communities: Vec<GraphCommunity>,
+    pub total_communities: usize,
+    pub total_nodes: usize,
+    pub total_internal_edges: usize,
+    pub total_external_edges: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphCommunity {
+    pub id: String,
+    pub label: String,
+    pub node_count: usize,
+    pub files: usize,
+    pub entrypoints: usize,
+    pub internal_edges: usize,
+    pub incoming_external_edges: usize,
+    pub outgoing_external_edges: usize,
+    pub languages: BTreeMap<String, usize>,
+    pub node_kinds: BTreeMap<String, usize>,
+    pub sample_nodes: Vec<Node>,
+    pub edge_indexes: Vec<usize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceSearchRequest {
     pub query: String,
@@ -850,6 +876,8 @@ pub const DEFAULT_REPORT_LANGUAGE_LINK_LIMIT: usize = 50;
 pub const MAX_REPORT_LANGUAGE_LINK_LIMIT: usize = 500;
 pub const DEFAULT_REPORT_HOTSPOT_LIMIT: usize = 25;
 pub const MAX_REPORT_HOTSPOT_LIMIT: usize = 500;
+pub const DEFAULT_REPORT_COMMUNITY_LIMIT: usize = 25;
+pub const MAX_REPORT_COMMUNITY_LIMIT: usize = 500;
 pub const DEFAULT_REPORT_INSIGHT_LIMIT: usize = 50;
 pub const MAX_REPORT_INSIGHT_LIMIT: usize = 500;
 
@@ -859,6 +887,7 @@ pub struct ProjectReportLimits {
     pub architecture_edge_limit: usize,
     pub language_link_limit: usize,
     pub hotspot_limit: usize,
+    pub community_limit: usize,
     pub insight_limit: usize,
     pub fail_on: InsightSeverity,
 }
@@ -870,6 +899,7 @@ impl Default for ProjectReportLimits {
             architecture_edge_limit: DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
             language_link_limit: DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
             hotspot_limit: DEFAULT_REPORT_HOTSPOT_LIMIT,
+            community_limit: DEFAULT_REPORT_COMMUNITY_LIMIT,
             insight_limit: DEFAULT_REPORT_INSIGHT_LIMIT,
             fail_on: InsightSeverity::Error,
         }
@@ -887,6 +917,7 @@ pub struct ProjectReport {
     pub architecture: ArchitectureMap,
     pub language_dependencies: LanguageDependencyReport,
     pub hotspots: HotspotReport,
+    pub communities: CommunityReport,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1254,6 +1285,247 @@ pub fn hotspots(graph: &CodeGraph, limit: usize) -> HotspotReport {
     }
 }
 
+pub fn communities(graph: &CodeGraph, limit: usize) -> CommunityReport {
+    let limit = limit.clamp(1, MAX_REPORT_COMMUNITY_LIMIT);
+    let nodes_by_id: BTreeMap<NodeId, &Node> =
+        graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let mut node_community: BTreeMap<NodeId, String> = BTreeMap::new();
+    let mut components: BTreeMap<String, BTreeSet<NodeId>> = BTreeMap::new();
+
+    for node in graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::File)
+    {
+        let (group_id, _) = architecture_group_for_path(&node.label);
+        let community_id = format!("area:{group_id}");
+        node_community.insert(node.id, community_id.clone());
+        components.entry(community_id).or_default().insert(node.id);
+    }
+
+    for edge in graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Contains)
+    {
+        let Some(source_community) = node_community.get(&edge.source).cloned() else {
+            continue;
+        };
+        let Some(target) = nodes_by_id.get(&edge.target) else {
+            continue;
+        };
+        if is_architecture_symbol(&target.kind) {
+            node_community.insert(edge.target, source_community.clone());
+            components
+                .entry(source_community)
+                .or_default()
+                .insert(edge.target);
+        }
+    }
+
+    for node in graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::File || is_architecture_symbol(&node.kind))
+    {
+        if node_community.contains_key(&node.id) {
+            continue;
+        }
+        let community_id = format!("isolated:{}", node.id.0);
+        node_community.insert(node.id, community_id.clone());
+        components.entry(community_id).or_default().insert(node.id);
+    }
+
+    let mut communities: Vec<_> = components
+        .into_iter()
+        .map(|(community_id, component)| {
+            graph_community(
+                graph,
+                &nodes_by_id,
+                &node_community,
+                community_id,
+                component,
+            )
+        })
+        .collect();
+    let total_communities = communities.len();
+    let total_nodes = communities
+        .iter()
+        .map(|community| community.node_count)
+        .sum();
+    let total_internal_edges = communities
+        .iter()
+        .map(|community| community.internal_edges)
+        .sum();
+    let total_external_edges = graph
+        .edges
+        .iter()
+        .filter(|edge| is_community_report_edge(edge))
+        .filter_map(|edge| {
+            let source_community = node_community.get(&edge.source)?;
+            let target_community = node_community.get(&edge.target)?;
+            (source_community != target_community).then_some(())
+        })
+        .count();
+    communities.sort_by(|left, right| {
+        right
+            .node_count
+            .cmp(&left.node_count)
+            .then_with(|| right.internal_edges.cmp(&left.internal_edges))
+            .then_with(|| left.label.cmp(&right.label))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    communities.truncate(limit);
+
+    CommunityReport {
+        communities,
+        total_communities,
+        total_nodes,
+        total_internal_edges,
+        total_external_edges,
+        truncated: total_communities > limit,
+    }
+}
+
+fn graph_community(
+    graph: &CodeGraph,
+    nodes_by_id: &BTreeMap<NodeId, &Node>,
+    node_community: &BTreeMap<NodeId, String>,
+    community_id: String,
+    component: BTreeSet<NodeId>,
+) -> GraphCommunity {
+    let mut files = 0;
+    let mut entrypoints = 0;
+    let mut languages = BTreeMap::new();
+    let mut node_kinds = BTreeMap::new();
+    let mut area_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut nodes: Vec<Node> = component
+        .iter()
+        .filter_map(|id| nodes_by_id.get(id).map(|node| (*node).clone()))
+        .collect();
+    nodes.sort_by(|left, right| {
+        node_rank(&left.kind)
+            .cmp(&node_rank(&right.kind))
+            .then_with(|| left.label.cmp(&right.label))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    for node in &nodes {
+        if node.kind == NodeKind::File {
+            files += 1;
+            let (_, area) = architecture_group_for_path(&node.label);
+            *area_counts.entry(area).or_insert(0) += 1;
+        }
+        if node.kind == NodeKind::Entrypoint {
+            entrypoints += 1;
+        }
+        if let Some(language) = node
+            .metadata
+            .get("language")
+            .map(String::as_str)
+            .filter(|language| !language.trim().is_empty())
+        {
+            *languages.entry(language.to_string()).or_insert(0) += 1;
+        }
+        *node_kinds.entry(kind_name(&node.kind)).or_insert(0) += 1;
+    }
+
+    let mut internal_edges = 0;
+    let mut incoming_external_edges = 0;
+    let mut outgoing_external_edges = 0;
+    let mut edge_indexes = Vec::new();
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
+        if !is_community_report_edge(edge) {
+            continue;
+        }
+        let source_inside = component.contains(&edge.source);
+        let target_inside = component.contains(&edge.target);
+        match (source_inside, target_inside) {
+            (true, true) => {
+                internal_edges += 1;
+                if edge_indexes.len() < 100 {
+                    edge_indexes.push(edge_index);
+                }
+            }
+            (true, false) if node_community.contains_key(&edge.target) => {
+                outgoing_external_edges += 1;
+                if edge_indexes.len() < 100 {
+                    edge_indexes.push(edge_index);
+                }
+            }
+            (false, true) if node_community.contains_key(&edge.source) => {
+                incoming_external_edges += 1;
+                if edge_indexes.len() < 100 {
+                    edge_indexes.push(edge_index);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let label = community_label(&area_counts, &languages, nodes.first());
+    GraphCommunity {
+        id: community_id,
+        label: if label.is_empty() {
+            "Community".to_string()
+        } else {
+            label
+        },
+        node_count: nodes.len(),
+        files,
+        entrypoints,
+        internal_edges,
+        incoming_external_edges,
+        outgoing_external_edges,
+        languages,
+        node_kinds,
+        sample_nodes: nodes.into_iter().take(8).collect(),
+        edge_indexes,
+    }
+}
+
+fn is_community_report_edge(edge: &Edge) -> bool {
+    edge.kind == EdgeKind::Contains || is_architecture_dependency_edge(&edge.kind)
+}
+
+fn community_label(
+    area_counts: &BTreeMap<String, usize>,
+    languages: &BTreeMap<String, usize>,
+    first_node: Option<&Node>,
+) -> String {
+    if let Some((area, _)) = area_counts
+        .iter()
+        .max_by(|left, right| left.1.cmp(right.1).then_with(|| right.0.cmp(left.0)))
+    {
+        return area.clone();
+    }
+    if let Some((language, _)) = languages
+        .iter()
+        .max_by(|left, right| left.1.cmp(right.1).then_with(|| right.0.cmp(left.0)))
+    {
+        return format!("{language} symbols");
+    }
+    first_node
+        .map(|node| node.label.clone())
+        .unwrap_or_else(|| "Community".to_string())
+}
+
+fn node_rank(kind: &NodeKind) -> usize {
+    match kind {
+        NodeKind::Entrypoint => 0,
+        NodeKind::File => 1,
+        NodeKind::Module => 2,
+        NodeKind::Type => 3,
+        NodeKind::Function => 4,
+        NodeKind::Config => 5,
+        NodeKind::Environment => 6,
+        NodeKind::ExternalDependency => 7,
+        NodeKind::Directory => 8,
+        NodeKind::Repository => 9,
+        NodeKind::Unknown => 10,
+    }
+}
+
 fn hotspot_stats<F>(graph: &CodeGraph, edge_filter: F, direction: NeighborDirection) -> Vec<Hotspot>
 where
     F: Fn(&Edge) -> bool,
@@ -1481,6 +1753,7 @@ pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> Project
         ),
         language_dependencies: language_dependencies(graph, limits.language_link_limit),
         hotspots: hotspots(graph, limits.hotspot_limit),
+        communities: communities(graph, limits.community_limit),
     }
 }
 
@@ -1560,6 +1833,7 @@ fn normalize_project_report_limits(limits: ProjectReportLimits) -> ProjectReport
             .language_link_limit
             .clamp(1, MAX_REPORT_LANGUAGE_LINK_LIMIT),
         hotspot_limit: limits.hotspot_limit.clamp(1, MAX_REPORT_HOTSPOT_LIMIT),
+        community_limit: limits.community_limit.clamp(1, MAX_REPORT_COMMUNITY_LIMIT),
         insight_limit: limits.insight_limit.clamp(1, MAX_REPORT_INSIGHT_LIMIT),
         fail_on: limits.fail_on,
     }
@@ -9747,6 +10021,7 @@ mod tests {
                 architecture_edge_limit: 5,
                 language_link_limit: 5,
                 hotspot_limit: 1,
+                community_limit: 5,
                 insight_limit: 1,
                 fail_on: InsightSeverity::Warning,
             },
@@ -9756,6 +10031,7 @@ mod tests {
         assert_eq!(report.summary.nodes, graph.nodes.len());
         assert_eq!(report.entrypoints.len(), 1);
         assert_eq!(report.hotspots.hotspots.len(), 1);
+        assert!(!report.communities.communities.is_empty());
         assert_eq!(report.quality_gate.fail_on, "warning");
         assert_eq!(report.insights.insights.len(), 1);
         assert_eq!(report.insights.total, report.quality_gate.report.total);
@@ -9952,6 +10228,72 @@ mod tests {
         assert_eq!(report.hotspots[0].outgoing, 1);
         assert_eq!(report.hotspots[0].edge_kinds.get("calls"), Some(&2));
         assert_eq!(report.hotspots[0].edge_kinds.get("reads_config"), Some(&1));
+    }
+
+    #[test]
+    fn communities_group_related_files_symbols_and_external_edges() {
+        let mut graph = CodeGraph::new("repo");
+        let api_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "api/users.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let core_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "core/db.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let _docs_file = graph.add_node(NodeKind::File, "docs/adr.md");
+        let route = graph.add_node(NodeKind::Entrypoint, "route GET /users");
+        let handler = graph.add_node(NodeKind::Function, "list_users");
+        let db = graph.add_node(NodeKind::Function, "load_users");
+        graph.add_edge(api_file, route, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(api_file, handler, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(core_file, db, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(route, handler, EdgeKind::Calls, Confidence::Exact);
+        graph.add_edge(handler, db, EdgeKind::Calls, Confidence::Heuristic);
+
+        let report = communities(&graph, 1);
+
+        assert_eq!(report.total_communities, 3);
+        assert_eq!(report.total_nodes, 6);
+        assert_eq!(report.total_external_edges, 1);
+        assert!(report.truncated);
+        let community = &report.communities[0];
+        assert_eq!(community.label, "api");
+        assert_eq!(community.node_count, 3);
+        assert_eq!(community.files, 1);
+        assert_eq!(community.entrypoints, 1);
+        assert_eq!(community.internal_edges, 3);
+        assert_eq!(community.incoming_external_edges, 0);
+        assert_eq!(community.outgoing_external_edges, 1);
+        assert_eq!(community.languages.get("rust"), Some(&1));
+        assert_eq!(community.node_kinds.get("file"), Some(&1));
+        assert!(
+            community
+                .sample_nodes
+                .iter()
+                .any(|node| node.label == "route GET /users")
+        );
+        assert_eq!(community.edge_indexes, vec![0, 1, 3, 4]);
+
+        let full = communities(&graph, 10);
+        let core = full
+            .communities
+            .iter()
+            .find(|community| community.label == "core")
+            .expect("core community should be present");
+        assert_eq!(core.incoming_external_edges, 1);
+        assert_eq!(core.outgoing_external_edges, 0);
+        let docs = full
+            .communities
+            .iter()
+            .find(|community| community.label == "docs")
+            .expect("isolated docs file should remain visible as a community");
+        assert_eq!(docs.node_count, 1);
+        assert_eq!(docs.files, 1);
     }
 
     #[test]

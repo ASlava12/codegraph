@@ -334,6 +334,7 @@ const I18N = {
     "empty.noCapabilities": "No server capabilities.",
     "empty.noMetrics": "No runtime metrics.",
     "empty.noHotspots": "No hotspots.",
+    "empty.noCommunities": "No communities.",
     "empty.noAnnotations": "No annotations.",
     "empty.noEntrypoints": "No entrypoints.",
     "empty.noScanPolicy": "No scan policy.",
@@ -345,6 +346,7 @@ const I18N = {
     "empty.loadingSource": "Loading...",
     "focus.entrypoint": "Focus: entrypoint",
     "focus.hotspot": "Focus: hotspot",
+    "focus.community": "Focus: {label}",
     "focus.architectureEdge": "Focus: {source} -> {target}",
     "focus.languageDependency": "Focus: {source} -> {target}",
     "focus.semantic": "Semantic: {label}",
@@ -368,6 +370,7 @@ const I18N = {
     "overview.reset": "reset",
     "overview.areaEdges": "Area edges",
     "overview.crossLanguage": "Cross-language",
+    "overview.communities": "Communities",
     "cap.server": "Server",
     "cap.api": "API",
     "cap.graph": "Graph",
@@ -893,6 +896,7 @@ const I18N = {
     "empty.noCapabilities": "Нет данных о сервере.",
     "empty.noMetrics": "Нет runtime-метрик.",
     "empty.noHotspots": "Горячих узлов нет.",
+    "empty.noCommunities": "Подсистем нет.",
     "empty.noAnnotations": "Аннотаций нет.",
     "empty.noEntrypoints": "Точки входа не найдены.",
     "empty.noScanPolicy": "Политика скана не получена.",
@@ -904,6 +908,7 @@ const I18N = {
     "empty.loadingSource": "Загружаю...",
     "focus.entrypoint": "Фокус: точка входа",
     "focus.hotspot": "Фокус: горячий узел",
+    "focus.community": "Фокус: {label}",
     "focus.architectureEdge": "Фокус: {source} -> {target}",
     "focus.languageDependency": "Фокус: {source} -> {target}",
     "focus.semantic": "Семантика: {label}",
@@ -927,6 +932,7 @@ const I18N = {
     "overview.reset": "сброс",
     "overview.areaEdges": "Связи областей",
     "overview.crossLanguage": "Межъязыковые",
+    "overview.communities": "Подсистемы",
     "cap.server": "Сервер",
     "cap.api": "API",
     "cap.graph": "Граф",
@@ -1242,6 +1248,7 @@ const state = {
   report: null,
   architecture: null,
   languageDependencies: null,
+  communities: null,
   hotspots: null,
   architecturePathPrefix: "",
   entrypoints: [],
@@ -1349,6 +1356,7 @@ const semanticCancelButton = document.querySelector("#semanticCancelButton");
 const semanticWorkList = document.querySelector("#semanticWorkList");
 const architectureList = document.querySelector("#architectureList");
 const languageDependencyList = document.querySelector("#languageDependencyList");
+const communityList = document.querySelector("#communityList");
 const hotspotList = document.querySelector("#hotspotList");
 const annotationList = document.querySelector("#annotationList");
 const entrypointList = document.querySelector("#entrypointList");
@@ -2705,6 +2713,7 @@ async function loadProjectOverview() {
   reportParams.set("architecture_edge_limit", "40");
   reportParams.set("language_link_limit", "8");
   reportParams.set("hotspot_limit", "8");
+  reportParams.set("community_limit", "8");
   reportParams.set("insight_limit", "6");
   reportParams.set("fail_on", "warning");
 
@@ -2753,6 +2762,7 @@ async function loadProjectOverview() {
     state.report = report;
     state.architecture = report.architecture || null;
     state.languageDependencies = report.language_dependencies || null;
+    state.communities = report.communities || null;
     state.hotspots = report.hotspots || null;
     state.entrypoints = Array.isArray(report.entrypoints) ? report.entrypoints : [];
     renderOverview();
@@ -2772,6 +2782,7 @@ async function loadProjectOverview() {
     semanticWorkList.innerHTML = "";
     architectureList.innerHTML = "";
     languageDependencyList.innerHTML = "";
+    communityList.innerHTML = "";
     hotspotList.innerHTML = "";
     annotationList.innerHTML = "";
     entrypointList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
@@ -3096,6 +3107,7 @@ function renderOverview() {
   renderSemanticWork(state.semanticPlan);
   renderArchitecture(state.architecture);
   renderLanguageDependencies(state.languageDependencies);
+  renderCommunities(state.communities);
   renderHotspots(state.hotspots);
 
   const annotations = annotationFacets(summary, state.graph.nodes);
@@ -3245,6 +3257,7 @@ function renderCapabilities(capabilities) {
         limits.max_report_architecture_edge_limit,
         limits.max_report_language_link_limit,
         limits.max_report_hotspot_limit,
+        limits.max_report_community_limit,
         limits.max_report_insight_limit,
       ]
         .map((value) => String(Number(value || 0)))
@@ -3774,6 +3787,68 @@ async function focusLanguageDependency(link) {
       t("focus.languageDependency", {
         source: link.source_language || formatKind("unknown"),
         target: link.target_language || formatKind("unknown"),
+      }),
+    );
+  } catch (error) {
+    if (requestId !== state.insightFocusRequest) return;
+    queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderCommunities(report) {
+  if (!report) {
+    communityList.innerHTML = `<p class="empty">${escapeHtml(t("empty.noCommunities"))}</p>`;
+    return;
+  }
+
+  const communities = Array.isArray(report.communities) ? report.communities.slice(0, 8) : [];
+  const chips = communities.map(
+    (community, index) => `
+      <button class="community-chip" type="button" data-community-index="${index}">
+        <span>${escapeHtml(community.label || community.id || "community")}</span>
+        <strong>${Number(community.node_count || 0)}n/${Number(community.outgoing_external_edges || 0) + Number(community.incoming_external_edges || 0)}x</strong>
+      </button>
+    `,
+  );
+  chips.unshift(`
+    <div class="community-chip">
+      <span>${escapeHtml(t("overview.communities"))}</span>
+      <strong>${Number(report.total_communities || 0)}</strong>
+    </div>
+  `);
+  communityList.innerHTML =
+    chips.length > 1 ? chips.join("") : `<p class="empty">${escapeHtml(t("empty.noCommunities"))}</p>`;
+  communityList.querySelectorAll("[data-community-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const community = communities[Number(button.dataset.communityIndex)];
+      if (!community) return;
+      focusCommunity(community);
+    });
+  });
+}
+
+async function focusCommunity(community) {
+  const edgeIndexes = Array.isArray(community.edge_indexes) ? community.edge_indexes : [];
+  if (edgeIndexes.length === 0) return;
+  state.insightFocusRequest += 1;
+  const requestId = state.insightFocusRequest;
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    edge_indexes: edgeIndexes.join(","),
+    edge_limit: "300",
+  });
+
+  try {
+    const response = await apiFetch(`/api/focus?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.insightFocusRequest) return;
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(body, response, "focus failed"));
+    }
+    showFocusedGraph(
+      body,
+      t("focus.community", {
+        label: community.label || community.id || "community",
       }),
     );
   } catch (error) {

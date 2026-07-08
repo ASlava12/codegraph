@@ -480,6 +480,7 @@ button.cancel-action:hover:not(:disabled) {
 .lsp-list,
 .architecture-list,
 .language-dependency-list,
+.community-list,
 .hotspot-list,
 .annotation-list {
   display: flex;
@@ -499,6 +500,7 @@ button.cancel-action:hover:not(:disabled) {
 .architecture-chip,
 .architecture-edge-chip,
 .language-dependency-chip,
+.community-chip,
 .hotspot-chip,
 .annotation-chip {
   display: inline-grid;
@@ -526,6 +528,7 @@ button.cancel-action:hover:not(:disabled) {
 .architecture-chip span,
 .architecture-edge-chip span,
 .language-dependency-chip span,
+.community-chip span,
 .hotspot-chip span,
 .annotation-chip span {
   min-width: 0;
@@ -546,6 +549,7 @@ button.cancel-action:hover:not(:disabled) {
 .architecture-chip strong,
 .architecture-edge-chip strong,
 .language-dependency-chip strong,
+.community-chip strong,
 .hotspot-chip strong,
 .annotation-chip strong {
   color: var(--muted);
@@ -743,6 +747,11 @@ button.cancel-action:hover:not(:disabled) {
   background: rgba(103, 183, 220, 0.1);
 }
 
+.community-chip {
+  max-width: 100%;
+  background: rgba(92, 200, 167, 0.1);
+}
+
 .hotspot-chip {
   max-width: 100%;
   background: rgba(242, 193, 78, 0.1);
@@ -784,6 +793,7 @@ button.cancel-action:hover:not(:disabled) {
 .architecture-chip:hover,
 .architecture-edge-chip:hover,
 .language-dependency-chip:hover,
+.community-chip:hover,
 .hotspot-chip:hover,
 .entrypoint-item:hover {
   border-color: rgba(92, 200, 167, 0.55);

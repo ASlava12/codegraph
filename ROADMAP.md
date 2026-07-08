@@ -447,7 +447,7 @@ Already aligned:
 
 Graphify-inspired gaps to close:
 
-- [ ] Add community detection for subsystems using graph structure, with stable community ids and local-first labels.
+- [x] Add first deterministic graph community reports for subsystems with stable ids, local-first labels, sample nodes, and internal/external edge counts.
 - [ ] Add god-node and hotspot reports that separate real architectural hubs from noisy utility hubs.
 - [ ] Add Markdown/ADR/RFC extraction so rationale comments, design docs, decisions, and citations become first-class graph nodes.
 - [ ] Promote source comments such as `NOTE`, `WHY`, `TODO`, `FIXME`, and security/risk markers into linked rationale nodes.

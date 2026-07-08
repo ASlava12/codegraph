@@ -45,7 +45,7 @@ Implemented now:
 - API capabilities limits include graph page, node-card, focus, query, report, source preview, and source-search ceilings for production clients.
 - API capabilities publish the effective maximum JSON API request body size for POST clients.
 - API capabilities publish insight/check result limits and API schema parameters link overview/report limits to matching capability keys.
-- API capabilities publish bounded project report snapshot limits for architecture groups, architecture edges, language links, hotspots, and returned insights.
+- API capabilities publish bounded project report snapshot limits for architecture groups, architecture edges, language links, hotspots, graph communities, and returned insights.
 - API and web UI enforce the published maximum graph query expression length before running repository scans.
 - API and web UI enforce the published maximum source-search text length before scanning source files.
 - Machine-readable API schema endpoint for agents and integrations.
@@ -83,6 +83,7 @@ Implemented now:
 - Web overview hotspot, annotation, and entrypoint empty/focus states are localized for English and Russian UI sessions.
 - Web overview scan policy, coverage, LSP, semantic work, architecture, and language-dependency diagnostics use localized status and focus text.
 - Web overview reuses the project report snapshot for summary, coverage, topology, hotspots, and risks to avoid duplicate heavy scans.
+- Deterministic graph community reports group files and contained symbols into top-level subsystems with internal/external edge counts, sample nodes, languages, and provenance edge indexes.
 - Web runtime panel for uptime, cache state, scan/semantic slots, and retained job-store totals.
 - Web runtime panel surfaces the last API response latency from `x-response-time-ms` for quick slow-endpoint diagnosis.
 - Async scan job API for long-running repository scans.
@@ -317,6 +318,12 @@ Find high-degree graph hotspots:
 
 ```bash
 cargo run -p codegraph-cli -- hotspots .
+```
+
+Find graph communities/subsystems:
+
+```bash
+cargo run -p codegraph-cli -- communities .
 ```
 
 Create a production-oriented project report snapshot:
@@ -711,6 +718,7 @@ curl 'http://127.0.0.1:3765/api/summary?path=.'
 curl 'http://127.0.0.1:3765/api/architecture?path=.&group_limit=50&edge_limit=200'
 curl 'http://127.0.0.1:3765/api/language-dependencies?path=.&limit=50'
 curl 'http://127.0.0.1:3765/api/hotspots?path=.&limit=25'
+curl 'http://127.0.0.1:3765/api/communities?path=.&limit=25'
 curl 'http://127.0.0.1:3765/api/entrypoints?path=.'
 curl 'http://127.0.0.1:3765/api/entrypoint-traces?path=.&search=server&depth=4'
 curl 'http://127.0.0.1:3765/api/check?path=.&fail_on=warning&kind=dependency'

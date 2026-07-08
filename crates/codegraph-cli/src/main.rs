@@ -2,13 +2,14 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
     ConfigTraceRequest, DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
-    DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_HOTSPOT_LIMIT,
-    DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, EntrypointTraceRequest,
-    ErrorTraceRequest, ExplainEdgeRequest, InsightFilter, InsightSeverity, ProjectReport,
-    ProjectReportLimits, SourceSearchRequest, TraceRequest, TraceStart, architecture_map,
-    check_insights, entrypoints, explain_edge, filter_insight_report, hotspots, insights,
-    language_dependencies, project_report, query_graph, search_source, summarize, trace,
-    trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_COMMUNITY_LIMIT,
+    DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
+    EntrypointTraceRequest, ErrorTraceRequest, ExplainEdgeRequest, InsightFilter, InsightSeverity,
+    ProjectReport, ProjectReportLimits, SourceSearchRequest, TraceRequest, TraceStart,
+    architecture_map, check_insights, communities, entrypoints, explain_edge,
+    filter_insight_report, hotspots, insights, language_dependencies, project_report, query_graph,
+    search_source, summarize, trace, trace_config, trace_dependents, trace_entrypoints,
+    trace_errors,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -103,6 +104,9 @@ enum Command {
 
     /// Emit high-degree graph hotspots as JSON.
     Hotspots(HotspotArgs),
+
+    /// Emit graph communities/subsystems as JSON.
+    Communities(CommunityArgs),
 
     /// Explain scan coverage, ignored paths, and file-size skips as JSON.
     Coverage(CoverageArgs),
@@ -377,6 +381,10 @@ struct ReportArgs {
     #[arg(long, default_value_t = DEFAULT_REPORT_HOTSPOT_LIMIT)]
     hotspot_limit: usize,
 
+    /// Maximum graph communities to include.
+    #[arg(long, default_value_t = DEFAULT_REPORT_COMMUNITY_LIMIT)]
+    community_limit: usize,
+
     /// Maximum insights to include while keeping full insight counts.
     #[arg(long, default_value_t = DEFAULT_REPORT_INSIGHT_LIMIT)]
     insight_limit: usize,
@@ -474,6 +482,16 @@ struct HotspotArgs {
 
     /// Maximum hotspots to include.
     #[arg(long, default_value_t = 25)]
+    limit: usize,
+}
+
+#[derive(Debug, Args)]
+struct CommunityArgs {
+    #[command(flatten)]
+    scan: ScanArgs,
+
+    /// Maximum graph communities to include.
+    #[arg(long, default_value_t = DEFAULT_REPORT_COMMUNITY_LIMIT)]
     limit: usize,
 }
 
@@ -919,6 +937,19 @@ fn main() -> Result<()> {
                 serde_json::to_string_pretty(&hotspots(&graph, args.limit))?
             );
         }
+        Command::Communities(args) => {
+            let graph = scan_with_options(
+                args.scan.path,
+                args.scan.include_hidden,
+                args.scan.include_ignored,
+                max_file_size,
+                &args.scan.cache,
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&communities(&graph, args.limit))?
+            );
+        }
         Command::Benchmark(args) => {
             let report = benchmark_scans(args, max_file_size)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
@@ -1339,6 +1370,7 @@ fn report_limits_from_args(args: &ReportArgs) -> ProjectReportLimits {
         architecture_edge_limit: args.architecture_edge_limit,
         language_link_limit: args.language_link_limit,
         hotspot_limit: args.hotspot_limit,
+        community_limit: args.community_limit,
         insight_limit: args.insight_limit,
         fail_on: InsightSeverity::from(args.fail_on),
     }
