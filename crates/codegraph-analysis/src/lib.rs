@@ -780,6 +780,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "sensitive_config_default",
     "skipped_large_file",
     "syntax_error",
+    "test_only_runtime_dependency",
     "undeclared_external_import",
     "unreachable_config_read",
     "unreachable_error_flow",
@@ -1348,6 +1349,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_conflicting_dependency_insights(graph, &mut insights);
     add_mixed_dependency_scope_insights(graph, &mut insights);
     add_non_runtime_dependency_import_insights(graph, &mut insights);
+    add_test_only_runtime_dependency_insights(graph, &mut insights);
     add_unresolved_framework_route_handler_insights(graph, &mut insights);
     add_duplicate_framework_route_insights(graph, &mut insights);
     add_custom_rule_violation_insights(graph, &mut insights);
@@ -7199,6 +7201,60 @@ fn add_non_runtime_dependency_import_insights(graph: &CodeGraph, insights: &mut 
     }
 }
 
+fn add_test_only_runtime_dependency_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let declarations = dependency_declarations_by_package(graph);
+    if declarations.is_empty() {
+        return;
+    }
+    let usages = dependency_import_usages_by_package(graph);
+    if usages.is_empty() {
+        return;
+    }
+
+    for (package_id, package_declarations) in declarations {
+        let runtime_declarations = package_declarations
+            .iter()
+            .filter(|declaration| declaration.kind == "runtime")
+            .collect::<Vec<_>>();
+        if runtime_declarations.is_empty() {
+            continue;
+        }
+        let Some(package_usages) = usages.get(&package_id).filter(|usages| !usages.is_empty())
+        else {
+            continue;
+        };
+        if package_usages.iter().any(|usage| !usage.test_like) {
+            continue;
+        }
+
+        let mut nodes = BTreeSet::new();
+        let mut edges = Vec::new();
+        for declaration in runtime_declarations {
+            nodes.insert(declaration.source);
+            nodes.insert(declaration.target);
+            edges.push(declaration.edge_index);
+        }
+        for usage in package_usages {
+            nodes.insert(usage.source);
+            nodes.insert(usage.target);
+            edges.push(usage.edge_index);
+        }
+        let package = package_declarations
+            .first()
+            .and_then(|declaration| node_label(graph, declaration.target))
+            .unwrap_or(package_id.as_str());
+        insights.push(Insight {
+            kind: "test_only_runtime_dependency".to_string(),
+            severity: InsightSeverity::Info,
+            message: format!(
+                "Dependency `{package}` is declared as runtime but is only imported from test-like sources"
+            ),
+            nodes: nodes.into_iter().collect(),
+            edges,
+        });
+    }
+}
+
 #[derive(Debug)]
 struct DependencyDeclaration {
     edge_index: usize,
@@ -7240,6 +7296,67 @@ fn dependency_declarations_by_package(
             });
     }
     declarations
+}
+
+#[derive(Debug)]
+struct DependencyImportUsage {
+    edge_index: usize,
+    source: NodeId,
+    target: NodeId,
+    test_like: bool,
+}
+
+fn dependency_import_usages_by_package(
+    graph: &CodeGraph,
+) -> BTreeMap<String, Vec<DependencyImportUsage>> {
+    let path_index = node_path_index(graph);
+    let declared = declared_package_ids(graph);
+    let mut usages: BTreeMap<String, Vec<DependencyImportUsage>> = BTreeMap::new();
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind != EdgeKind::Imports {
+            continue;
+        }
+        let Some(source) = graph.nodes.iter().find(|node| node.id == edge.source) else {
+            continue;
+        };
+        let Some(import_node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+            continue;
+        };
+        if import_node
+            .metadata
+            .get("import_scope")
+            .is_some_and(|scope| scope == "local")
+        {
+            continue;
+        }
+        let Some(language) = import_node.metadata.get("language").map(String::as_str) else {
+            continue;
+        };
+        let Some(import) = import_package_candidate(language, &import_node.label) else {
+            continue;
+        };
+        let Some(package_id) = declared
+            .iter()
+            .find(|package_id| import_matches_package_id(package_id, &import))
+            .cloned()
+        else {
+            continue;
+        };
+        let test_like = path_index
+            .get(&source.id)
+            .is_some_and(|path| is_test_like_source_path(path))
+            || is_test_like_source_path(&source.label);
+        usages
+            .entry(package_id)
+            .or_default()
+            .push(DependencyImportUsage {
+                edge_index,
+                source: edge.source,
+                target: edge.target,
+                test_like,
+            });
+    }
+    usages
 }
 
 fn add_duplicate_framework_route_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
@@ -12094,6 +12211,77 @@ mod tests {
             report.by_kind.get("non_runtime_dependency_import"),
             Some(&1)
         );
+    }
+
+    #[test]
+    fn insights_report_runtime_dependencies_used_only_by_tests() {
+        let mut graph = CodeGraph::new("repo");
+        let manifest = graph.add_node(NodeKind::File, "package.json");
+        let test = graph.add_node_with_metadata(
+            NodeKind::File,
+            "tests/app.test.ts",
+            None,
+            BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+        );
+        let app = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/app.ts",
+            None,
+            BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+        );
+        let jest = dependency_node(&mut graph, "jest", "npm:jest");
+        let react = dependency_node(&mut graph, "react", "npm:react");
+        let vite = dependency_node(&mut graph, "vite", "npm:vite");
+        graph.add_edge_with_metadata(
+            manifest,
+            jest,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            manifest,
+            react,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            manifest,
+            vite,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "dev".to_string())]),
+        );
+
+        let jest_import = import_node(
+            &mut graph,
+            "import { describe } from \"jest\";",
+            "typescript",
+        );
+        let react_import = import_node(&mut graph, "import React from \"react\";", "typescript");
+        let vite_import = import_node(&mut graph, "import { test } from \"vite\";", "typescript");
+        graph.add_edge(test, jest_import, EdgeKind::Imports, Confidence::Syntactic);
+        graph.add_edge(app, react_import, EdgeKind::Imports, Confidence::Syntactic);
+        graph.add_edge(test, vite_import, EdgeKind::Imports, Confidence::Syntactic);
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "test_only_runtime_dependency")
+            .expect("expected test-only runtime dependency insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Info);
+        assert!(insight.message.contains("jest"));
+        assert!(insight.nodes.contains(&manifest));
+        assert!(insight.nodes.contains(&jest));
+        assert!(insight.nodes.contains(&test));
+        assert!(insight.nodes.contains(&jest_import));
+        assert!(!insight.nodes.contains(&app));
+        assert!(!insight.nodes.contains(&react));
+        assert!(!insight.nodes.contains(&vite));
+        assert_eq!(report.by_kind.get("test_only_runtime_dependency"), Some(&1));
     }
 
     #[test]

@@ -6797,15 +6797,18 @@ mod tests {
         assert!(index.contains("insights kind:mixed_dependency_scope"));
         assert!(index.contains("insights kind:conflicting_dependency_declaration"));
         assert!(index.contains("insights kind:non_runtime_dependency_import"));
+        assert!(index.contains("insights kind:test_only_runtime_dependency"));
         assert!(index.contains("insights kind:sensitive_config_default"));
         assert!(app.contains("\"queryPreset.ambiguousCalls\""));
         assert!(app.contains("\"queryPreset.ambiguousEntrypoints\""));
         assert!(app.contains("\"queryPreset.dependencyScopes\""));
         assert!(app.contains("\"queryPreset.dependencyVersions\""));
         assert!(app.contains("\"queryPreset.runtimeImports\""));
+        assert!(app.contains("\"queryPreset.testOnlyRuntime\""));
         assert!(app.contains("\"queryPreset.sensitiveDefaults\""));
         assert!(app.contains("\"kind.mixed_dependency_scope\""));
         assert!(app.contains("\"kind.non_runtime_dependency_import\""));
+        assert!(app.contains("\"kind.test_only_runtime_dependency\""));
         assert!(app.contains("\"kind.conflicting_dependency_declaration\""));
         assert!(app.contains("\"mixed dependency scope\""));
         assert!(app.contains("\"смешанный scope зависимости\""));
@@ -7091,6 +7094,7 @@ mod tests {
                 && kinds.contains(&"dependency_cycle")
                 && kinds.contains(&"mixed_dependency_scope")
                 && kinds.contains(&"non_runtime_dependency_import")
+                && kinds.contains(&"test_only_runtime_dependency")
                 && kinds.contains(&"custom_rule_*")
         }));
         assert!(
