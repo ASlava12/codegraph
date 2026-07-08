@@ -2212,25 +2212,35 @@ pub fn project_report_markdown(
     writeln!(output, "\n## Confidence Guide").unwrap();
     writeln!(
         output,
-        "- `exact`: extracted from exact project metadata or compiler-like facts."
+        "| CodeGraph confidence | Report wording | How to read it |"
+    )
+    .unwrap();
+    writeln!(output, "| --- | --- | --- |").unwrap();
+    writeln!(
+        output,
+        "| `exact` | extracted | Exact project metadata, deterministic manifests, or compiler-like facts. |"
     )
     .unwrap();
     writeln!(
         output,
-        "- `semantic`: resolved through a semantic analyzer or language server."
+        "| `semantic` | resolved | Resolved through a semantic analyzer or language server. |"
     )
     .unwrap();
     writeln!(
         output,
-        "- `syntactic`: extracted directly from source syntax."
+        "| `syntactic` | extracted from syntax | Extracted directly from source syntax. |"
     )
     .unwrap();
     writeln!(
         output,
-        "- `heuristic`: inferred by a named rule and should be reviewed at boundaries."
+        "| `heuristic` | inferred | Inferred by a named rule and worth reviewing at architectural or runtime boundaries. |"
     )
     .unwrap();
-    writeln!(output, "- `unknown`: legacy or ambiguous evidence.").unwrap();
+    writeln!(
+        output,
+        "| `unknown` | ambiguous | Legacy, imported, or ambiguous evidence. |"
+    )
+    .unwrap();
 
     writeln!(output, "\n## Key Concepts").unwrap();
     let key_hotspots = if report.hotspots.architectural_hubs.is_empty() {
@@ -12355,6 +12365,10 @@ mod tests {
 
         assert!(markdown.contains("# CodeGraph Project Report"));
         assert!(markdown.contains("- Root: `repo`"));
+        assert!(markdown.contains("## Confidence Guide"));
+        assert!(markdown.contains("| `exact` | extracted |"));
+        assert!(markdown.contains("| `heuristic` | inferred |"));
+        assert!(markdown.contains("| `unknown` | ambiguous |"));
         assert!(markdown.contains("## Key Concepts"));
         assert!(markdown.contains("## Communities"));
         assert!(markdown.contains("## Surprising Links"));

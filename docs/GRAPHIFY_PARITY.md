@@ -27,11 +27,11 @@ CodeGraph already has the right foundation: Rust workspace, typed graph schema, 
 | Graphify idea | Current CodeGraph state | Target state |
 | --- | --- | --- |
 | Local AST code graph | Implemented for the current supported language set | Continue expanding language adapters while preserving typed facts and provenance |
-| Confidence tags | Implemented as `exact`, `semantic`, `syntactic`, `heuristic`, `unknown` | Add report wording that maps these to extracted/inferred/ambiguous for agent readability |
+| Confidence tags | Implemented as `exact`, `semantic`, `syntactic`, `heuristic`, `unknown`, with Markdown report wording for extracted/resolved/inferred/ambiguous evidence | Keep wording aligned as new confidence sources are added |
 | Interactive graph | Implemented in web UI with graph cards, filters, focused slices, source preview, workflows | Add community and hotspot overlays directly into the UI graph/card flows |
 | Query/path/explain | Implemented across CLI/API/web | Add natural-language-to-bounded-subgraph mode without vector storage as the default dependency |
 | God nodes and communities | First community reports exist; hotspot reports exist | Separate architectural hubs from noisy utility hubs and expose both in reports/UI |
-| GRAPH_REPORT-style summary | Not yet implemented as a first-class artifact | Generate `CODEGRAPH_REPORT.md` with key concepts, communities, risks, surprising links, suggested questions, and provenance |
+| GRAPH_REPORT-style summary | Implemented through `codegraph report --format markdown --output CODEGRAPH_REPORT.md` with key concepts, communities, risks, surprising links, suggested questions, and provenance | Add saved investigation memory and reflection reports next |
 | Rationale and doc refs | Source rationale comments plus first Markdown/ADR/RFC section, local path, and symbol references are indexed | Add richer document citations, backlinks, and UI overlays that connect docs, decisions, and code cards |
 | Beyond code | First-class manifests/config, deterministic Markdown docs, first SQL schema facts, source SQL query-string links, SQL graph slices, and missing SQL table insights are indexed | Add deeper SQL semantics, ORM links, and migration insights next, then optional model-backed PDFs/images/media sidecars |
 | Wiki/agent-readable docs | Not yet implemented | Export a Markdown wiki with one index plus pages for communities, hotspots, entrypoints, and important nodes |
@@ -47,7 +47,7 @@ CodeGraph already has the right foundation: Rust workspace, typed graph schema, 
 
 ### P0: Repository Knowledge Artifact
 
-Deliver a durable report and query artifact for code-only repositories:
+Implemented first durable report and query artifact for code-only repositories:
 
 - `codegraph report . --format markdown --output CODEGRAPH_REPORT.md`
 - key concepts, top communities, hotspots, risky insights, surprising cross-area links, and suggested questions

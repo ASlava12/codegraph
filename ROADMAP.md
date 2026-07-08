@@ -470,10 +470,10 @@ Artifact and report parity:
 
 - [x] Add first deterministic graph community reports for subsystems with stable ids, local-first labels, sample nodes, and internal/external edge counts.
 - [x] Add god-node and hotspot reports that separate real architectural hubs from noisy utility hubs.
-- [ ] Add project knowledge reports similar to `GRAPH_REPORT.md`: key concepts, communities, surprising links, risks, suggested questions, and exact graph evidence.
+- [x] Add project knowledge reports similar to `GRAPH_REPORT.md`: key concepts, communities, surprising links, risks, suggested questions, and exact graph evidence.
 - [ ] Add graph compaction and compact node/file summaries for agent navigation without reading raw files.
 - [ ] Add agent-facing natural-language query mode that maps a question to a bounded graph slice without vector storage.
-- [ ] Add confidence wording in reports that maps CodeGraph confidence to extracted, inferred, and ambiguous human labels.
+- [x] Add confidence wording in reports that maps CodeGraph confidence to extracted, inferred, and ambiguous human labels.
 
 Repository knowledge ingestion:
 
