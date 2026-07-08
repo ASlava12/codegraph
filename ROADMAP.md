@@ -50,6 +50,7 @@ Goal: extract language-independent structure from source files.
 - [x] Detect Docker Compose published ports as runtime surface facts.
 - [x] Detect Docker Compose bind/local volumes as runtime dependency facts.
 - [x] Detect Kubernetes workloads, services, and ConfigMap/Secret runtime config references from YAML manifests.
+- [x] Link Kubernetes Services to workloads through selector and pod-template label matching.
 - Add graph export formats:
   - [x] JSON
   - [x] DOT/Graphviz

@@ -31,7 +31,7 @@ Implemented now:
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
 - Manifest-defined entrypoints from Cargo, npm, Go, Python, setup.py/setup.cfg, Composer, and CMake project metadata.
 - Shebang-defined script entrypoints for Bash, Python, Node.js, and PHP scripts, including extensionless CLI files.
-- Dockerfile, Docker Compose, and Kubernetes runtime entrypoints, including Compose service dependencies, runtime config inputs, published ports, local bind volumes, Kubernetes workloads, services, and ConfigMap/Secret references.
+- Dockerfile, Docker Compose, and Kubernetes runtime entrypoints, including Compose service dependencies, runtime config inputs, published ports, local bind volumes, Kubernetes workloads, services, Service selector links, and ConfigMap/Secret references.
 - Framework route entrypoints for common Python, JavaScript/TypeScript, Rust, Go, and PHP web route declarations.
 - Rust/Axum route entrypoints handle multiline `.route(...)` calls and ignore string literal route markers.
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
@@ -798,6 +798,9 @@ Compose services also emit `depends_on`, `reads_environment`, `reads_config`,
 and `references` edges for service dependencies, `environment`, `env_file`,
 published `ports`, and local bind `volumes` entries without storing literal
 environment values in graph metadata.
+Kubernetes Services emit `references` edges to matching workloads when their
+selectors match workload pod-template labels, keeping runtime traffic surfaces
+connected to the entrypoint graph.
 Entrypoint trace reports run this traversal for all matching entrypoints so a
 project's startup flows can be compared without manually copying labels.
 Config traces specialize that graph traversal by matching `config` and

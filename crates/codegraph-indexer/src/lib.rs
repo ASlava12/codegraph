@@ -224,6 +224,9 @@ struct KubernetesDocument {
     name: String,
     namespace: String,
     line: u32,
+    labels: BTreeMap<String, String>,
+    pod_labels: BTreeMap<String, String>,
+    selector_labels: BTreeMap<String, String>,
     config_refs: Vec<KubernetesConfigRef>,
     service_ports: Vec<KubernetesServicePort>,
     container_count: usize,
@@ -244,6 +247,13 @@ struct KubernetesServicePort {
     target_port: Option<String>,
     protocol: String,
     line: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KubernetesLabelTarget {
+    Metadata,
+    PodTemplate,
+    Selector,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2770,6 +2780,8 @@ fn index_kubernetes_manifest_facts(
         return;
     }
 
+    let mut service_nodes = Vec::new();
+    let mut workload_nodes = Vec::new();
     for document in &documents {
         if let Some(config_kind) = kubernetes_config_kind(&document.kind) {
             let key = KubernetesConfigKey {
@@ -2804,14 +2816,18 @@ fn index_kubernetes_manifest_facts(
         }
 
         if document.kind == "Service" {
-            index_kubernetes_service(context, file_id, label, source, document);
+            let service_id = index_kubernetes_service(context, file_id, label, source, document);
+            service_nodes.push((service_id, document));
             continue;
         }
 
         if kubernetes_workload_kind(&document.kind) {
-            index_kubernetes_workload(context, file_id, label, source, document);
+            let workload_id = index_kubernetes_workload(context, file_id, label, source, document);
+            workload_nodes.push((workload_id, document));
         }
     }
+
+    link_kubernetes_services_to_workloads(&mut context.graph, &service_nodes, &workload_nodes);
 }
 
 fn index_kubernetes_service(
@@ -2820,7 +2836,7 @@ fn index_kubernetes_service(
     label: &str,
     source: &str,
     document: &KubernetesDocument,
-) {
+) -> NodeId {
     let mut metadata = BTreeMap::new();
     metadata.insert("item_kind".to_string(), "kubernetes_service".to_string());
     metadata.insert("source".to_string(), "kubernetes".to_string());
@@ -2833,6 +2849,12 @@ fn index_kubernetes_service(
         "port_count".to_string(),
         document.service_ports.len().to_string(),
     );
+    if !document.selector_labels.is_empty() {
+        metadata.insert(
+            "selector".to_string(),
+            kubernetes_label_selector_string(&document.selector_labels),
+        );
+    }
     let service_id = context.graph.add_node_with_metadata(
         NodeKind::Config,
         kubernetes_resource_label("service", &document.namespace, &document.name),
@@ -2889,6 +2911,7 @@ fn index_kubernetes_service(
             edge_metadata,
         );
     }
+    service_id
 }
 
 fn index_kubernetes_workload(
@@ -2897,7 +2920,7 @@ fn index_kubernetes_workload(
     label: &str,
     source: &str,
     document: &KubernetesDocument,
-) {
+) -> NodeId {
     let kind_slug = document.kind.to_ascii_lowercase();
     let mut metadata = BTreeMap::new();
     metadata.insert("item_kind".to_string(), "kubernetes_workload".to_string());
@@ -2916,6 +2939,18 @@ fn index_kubernetes_workload(
         "container_count".to_string(),
         document.container_count.to_string(),
     );
+    if !document.labels.is_empty() {
+        metadata.insert(
+            "labels".to_string(),
+            kubernetes_label_selector_string(&document.labels),
+        );
+    }
+    if !document.pod_labels.is_empty() {
+        metadata.insert(
+            "pod_labels".to_string(),
+            kubernetes_label_selector_string(&document.pod_labels),
+        );
+    }
     let workload_id = context.graph.add_node_with_metadata(
         NodeKind::Entrypoint,
         kubernetes_resource_label(&kind_slug, &document.namespace, &document.name),
@@ -2992,6 +3027,49 @@ fn index_kubernetes_workload(
                 config_kind: config_ref.config_kind.clone(),
                 name: config_ref.name.clone(),
             });
+    }
+    workload_id
+}
+
+fn link_kubernetes_services_to_workloads(
+    graph: &mut CodeGraph,
+    service_nodes: &[(NodeId, &KubernetesDocument)],
+    workload_nodes: &[(NodeId, &KubernetesDocument)],
+) {
+    for (service_id, service) in service_nodes {
+        if service.selector_labels.is_empty() {
+            continue;
+        }
+        for (workload_id, workload) in workload_nodes {
+            if service.namespace != workload.namespace {
+                continue;
+            }
+            let workload_labels = kubernetes_workload_match_labels(workload);
+            if !kubernetes_selector_matches(&service.selector_labels, workload_labels) {
+                continue;
+            }
+            let mut metadata = BTreeMap::new();
+            metadata.insert("source".to_string(), "kubernetes".to_string());
+            metadata.insert(
+                "relation".to_string(),
+                "kubernetes_service_selector".to_string(),
+            );
+            metadata.insert(
+                "selector".to_string(),
+                kubernetes_label_selector_string(&service.selector_labels),
+            );
+            metadata.insert("service".to_string(), service.name.clone());
+            metadata.insert("workload".to_string(), workload.name.clone());
+            metadata.insert("namespace".to_string(), service.namespace.clone());
+            add_edge_once_with_metadata(
+                graph,
+                *service_id,
+                *workload_id,
+                EdgeKind::References,
+                Confidence::Exact,
+                metadata,
+            );
+        }
     }
 }
 
@@ -3101,12 +3179,19 @@ fn kubernetes_document_from_lines(lines: &[String], start_line: u32) -> Option<K
     let mut metadata_indent = None;
     let mut name = None;
     let mut namespace = None;
+    let mut labels = BTreeMap::new();
+    let mut pod_labels = BTreeMap::new();
+    let mut selector_labels = BTreeMap::new();
     let mut config_refs = Vec::new();
     let mut service_ports = Vec::new();
     let mut active_ref: Option<(String, String, usize, u32)> = None;
     let mut active_ports_indent = None;
     let mut active_service_port: Option<(KubernetesServicePort, usize)> = None;
     let mut active_containers_indent = None;
+    let mut active_template_indent = None;
+    let mut active_template_metadata_indent = None;
+    let mut active_selector_indent = None;
+    let mut active_label_map: Option<(KubernetesLabelTarget, usize)> = None;
     let mut container_count = 0usize;
 
     for (index, raw_line) in lines.iter().enumerate() {
@@ -3117,6 +3202,27 @@ fn kubernetes_document_from_lines(lines: &[String], start_line: u32) -> Option<K
         }
         let item_trimmed = trimmed.strip_prefix("- ").unwrap_or(trimmed);
         let indent = yaml_indent(raw_line);
+
+        if let Some((_target, label_indent)) = active_label_map
+            && indent <= label_indent
+        {
+            active_label_map = None;
+        } else if let Some((target, _)) = active_label_map
+            && let Some((key, value)) = yaml_key_pair(trimmed)
+        {
+            match target {
+                KubernetesLabelTarget::Metadata => {
+                    labels.insert(key, value);
+                }
+                KubernetesLabelTarget::PodTemplate => {
+                    pod_labels.insert(key, value);
+                }
+                KubernetesLabelTarget::Selector => {
+                    selector_labels.insert(key, value);
+                }
+            }
+            continue;
+        }
 
         if let Some((_, _, ref_indent, _)) = active_ref.as_ref()
             && indent <= *ref_indent
@@ -3158,6 +3264,22 @@ fn kubernetes_document_from_lines(lines: &[String], start_line: u32) -> Option<K
             }
         }
 
+        if let Some(template_indent) = active_template_indent
+            && indent <= template_indent
+        {
+            active_template_indent = None;
+            active_template_metadata_indent = None;
+        }
+        if let Some(template_metadata_indent) = active_template_metadata_indent
+            && indent <= template_metadata_indent
+        {
+            active_template_metadata_indent = None;
+        }
+        if let Some(selector_indent) = active_selector_indent
+            && indent <= selector_indent
+        {
+            active_selector_indent = None;
+        }
         if let Some((_, port_indent)) = active_service_port.as_ref()
             && indent <= *port_indent
         {
@@ -3181,6 +3303,41 @@ fn kubernetes_document_from_lines(lines: &[String], start_line: u32) -> Option<K
         }
         if yaml_key(trimmed).is_some_and(|key| key == "containers") {
             active_containers_indent = Some(indent);
+            continue;
+        }
+        if yaml_key(trimmed).is_some_and(|key| key == "template") {
+            active_template_indent = Some(indent);
+            continue;
+        }
+        if active_template_indent.is_some()
+            && yaml_key(trimmed).is_some_and(|key| key == "metadata")
+        {
+            active_template_metadata_indent = Some(indent);
+            continue;
+        }
+        if yaml_key(trimmed).is_some_and(|key| key == "selector") {
+            active_selector_indent = Some(indent);
+            continue;
+        }
+        if yaml_key(trimmed).is_some_and(|key| key == "labels") {
+            if active_template_metadata_indent.is_some() {
+                active_label_map = Some((KubernetesLabelTarget::PodTemplate, indent));
+            } else if metadata_indent.is_some_and(|metadata_indent| indent > metadata_indent) {
+                active_label_map = Some((KubernetesLabelTarget::Metadata, indent));
+            }
+            continue;
+        }
+        if active_selector_indent.is_some()
+            && yaml_key(trimmed).is_some_and(|key| key == "matchLabels")
+        {
+            active_label_map = Some((KubernetesLabelTarget::Selector, indent));
+            continue;
+        }
+        if active_selector_indent.is_some()
+            && let Some((key, value)) = yaml_key_pair(trimmed)
+            && key != "matchLabels"
+        {
+            selector_labels.insert(key, value);
             continue;
         }
 
@@ -3245,6 +3402,9 @@ fn kubernetes_document_from_lines(lines: &[String], start_line: u32) -> Option<K
         name,
         namespace: namespace.unwrap_or_else(|| "default".to_string()),
         line: start_line,
+        labels,
+        pod_labels,
+        selector_labels,
         config_refs,
         service_ports,
         container_count,
@@ -3343,6 +3503,32 @@ fn kubernetes_service_port_label(
             document.namespace, document.name, port_value, port.protocol
         ),
     }
+}
+
+fn kubernetes_workload_match_labels(document: &KubernetesDocument) -> &BTreeMap<String, String> {
+    if !document.pod_labels.is_empty() {
+        &document.pod_labels
+    } else {
+        &document.labels
+    }
+}
+
+fn kubernetes_selector_matches(
+    selector: &BTreeMap<String, String>,
+    labels: &BTreeMap<String, String>,
+) -> bool {
+    !selector.is_empty()
+        && selector
+            .iter()
+            .all(|(key, value)| labels.get(key).is_some_and(|label| label == value))
+}
+
+fn kubernetes_label_selector_string(labels: &BTreeMap<String, String>) -> String {
+    labels
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn compose_services(source: &str) -> Vec<ComposeService> {
@@ -10951,6 +11137,9 @@ metadata:
   name: web
   namespace: prod
 spec:
+  selector:
+    app: web
+    tier: frontend
   ports:
     - name: http
       port: 80
@@ -10962,8 +11151,18 @@ kind: Deployment
 metadata:
   name: web
   namespace: prod
+  labels:
+    app.kubernetes.io/name: web
 spec:
+  selector:
+    matchLabels:
+      app: web
+      tier: frontend
   template:
+    metadata:
+      labels:
+        app: web
+        tier: frontend
     spec:
       containers:
         - name: web
@@ -11077,6 +11276,20 @@ spec:
                     .get("relation")
                     .is_some_and(|value| value == "kubernetes_service_port")
         }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == service
+                && edge.target == deployment
+                && edge.kind == EdgeKind::References
+                && edge.confidence == Confidence::Exact
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "kubernetes_service_selector")
+                && edge
+                    .metadata
+                    .get("selector")
+                    .is_some_and(|value| value == "app=web,tier=frontend")
+        }));
         let deployment_node = graph
             .nodes
             .iter()
@@ -11095,6 +11308,22 @@ spec:
                 .get("container_count")
                 .map(String::as_str),
             Some("1")
+        );
+        assert_eq!(
+            deployment_node
+                .metadata
+                .get("pod_labels")
+                .map(String::as_str),
+            Some("app=web,tier=frontend")
+        );
+        let service_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == service)
+            .expect("missing Kubernetes service");
+        assert_eq!(
+            service_node.metadata.get("selector").map(String::as_str),
+            Some("app=web,tier=frontend")
         );
 
         fs::remove_dir_all(root).unwrap();
