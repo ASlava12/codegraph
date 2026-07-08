@@ -43,18 +43,18 @@
 
     if (selected) return false;
     if (labelMode === "minimal") return false;
-    if (labelMode === "hover") return hovered && zoom >= 2.4 && visibleCount <= 80;
-    if (labelMode === "focus") return focused && zoom >= 4.8 && visibleCount <= 3;
-    if (hovered) return zoom >= 5.2 && visibleCount <= 3 && priority <= 1;
-    if (focused) return zoom >= 4.8 && visibleCount <= 3;
+    if (labelMode === "hover") return hovered && zoom >= 2.8 && visibleCount <= 24;
+    if (labelMode === "focus") return focused && zoom >= 3.2 && visibleCount <= 2;
+    if (hovered) return zoom >= 3.3 && visibleCount <= 2 && priority <= 1;
+    if (focused) return zoom >= 3.2 && visibleCount <= 2;
 
     if (hasSearch) {
-      if (visibleCount <= 4) return zoom >= 5 && priority <= 1;
-      if (visibleCount <= 8) return zoom >= 5.6 && priority <= 1;
+      if (visibleCount <= 2) return zoom >= 3.2 && priority <= 1;
+      if (visibleCount <= 4) return zoom >= 3.4 && priority <= 1;
       return false;
     }
-    if (zoom < 5.6) return false;
-    if (visibleCount > 4) return false;
+    if (zoom < 3.4) return false;
+    if (visibleCount > 2) return false;
     return priority <= 1;
   }
 
@@ -69,15 +69,15 @@
     if (labelMode === "minimal") return 0;
     if (labelMode === "hover") return 0;
     if (labelMode === "focus") {
-      if (zoom < 4.8) return 0;
-      return visibleCount <= 3 ? 1 : 0;
+      if (zoom < 3.2) return 0;
+      return visibleCount <= 2 ? 1 : 0;
     }
     if (hasSearch) {
-      if (zoom < 5) return 0;
-      return visibleCount <= 4 ? 1 : visibleCount <= 8 && zoom >= 5.6 ? 1 : 0;
+      if (zoom < 3.2) return 0;
+      return visibleCount <= 2 ? 1 : visibleCount <= 4 && zoom >= 3.4 ? 1 : 0;
     }
-    if (zoom < 5.6) return 0;
-    if (visibleCount > 4) return 0;
+    if (zoom < 3.4) return 0;
+    if (visibleCount > 2) return 0;
     return 1;
   }
 
