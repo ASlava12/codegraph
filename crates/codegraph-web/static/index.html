@@ -151,6 +151,28 @@
               <input id="entryFlowDepthInput" type="number" min="1" max="32" value="3" />
             </label>
           </div>
+          <div class="workflow-filter-fields">
+            <label class="field compact">
+              <span data-i18n="label.edge">Edge</span>
+              <input id="entryWorkflowEdgeKindInput" type="text" list="edgeKindOptions" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="label.confidence">Confidence</span>
+              <input id="entryWorkflowConfidenceInput" type="text" list="confidenceOptions" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="label.language">Language</span>
+              <input id="entryWorkflowLanguageInput" type="text" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="label.riskSeverity">Risk</span>
+              <input id="entryWorkflowRiskSeverityInput" type="text" list="severityOptions" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="label.block">Block</span>
+              <input id="entryWorkflowBlockKindInput" type="text" list="workflowBlockKindOptions" autocomplete="off" />
+            </label>
+          </div>
           <div class="entrypoint-flow-actions">
             <button id="entryFlowButton" type="button" data-i18n="button.traceEntrypoints">Trace Entrypoints</button>
             <button id="entryFlowWorkflowButton" type="button" data-i18n="button.buildEntryWorkflows">
@@ -549,6 +571,7 @@
     <datalist id="edgeKindOptions"></datalist>
     <datalist id="confidenceOptions"></datalist>
     <datalist id="severityOptions"></datalist>
+    <datalist id="workflowBlockKindOptions"></datalist>
     <datalist id="insightKindOptions"></datalist>
 
     <script src="/label-policy.js"></script>

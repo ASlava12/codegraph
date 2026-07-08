@@ -136,6 +136,8 @@ const I18N = {
     "label.language": "Language",
     "label.edge": "Edge",
     "label.confidence": "Confidence",
+    "label.riskSeverity": "Risk",
+    "label.block": "Block",
     "label.relation": "Relation",
     "label.source": "Source",
     "label.query": "Query",
@@ -729,6 +731,8 @@ const I18N = {
     "label.language": "Язык",
     "label.edge": "Связь",
     "label.confidence": "Уверенность",
+    "label.riskSeverity": "Риск",
+    "label.block": "Блок",
     "label.relation": "Отношение",
     "label.source": "Источник",
     "label.query": "Запрос",
@@ -1427,6 +1431,11 @@ const annotationList = document.querySelector("#annotationList");
 const entrypointList = document.querySelector("#entrypointList");
 const entryFlowSearchInput = document.querySelector("#entryFlowSearchInput");
 const entryFlowDepthInput = document.querySelector("#entryFlowDepthInput");
+const entryWorkflowEdgeKindInput = document.querySelector("#entryWorkflowEdgeKindInput");
+const entryWorkflowConfidenceInput = document.querySelector("#entryWorkflowConfidenceInput");
+const entryWorkflowLanguageInput = document.querySelector("#entryWorkflowLanguageInput");
+const entryWorkflowRiskSeverityInput = document.querySelector("#entryWorkflowRiskSeverityInput");
+const entryWorkflowBlockKindInput = document.querySelector("#entryWorkflowBlockKindInput");
 const entryFlowButton = document.querySelector("#entryFlowButton");
 const entryFlowWorkflowButton = document.querySelector("#entryFlowWorkflowButton");
 const entryFlowExportButton = document.querySelector("#entryFlowExportButton");
@@ -1524,6 +1533,7 @@ const nodeKindOptions = document.querySelector("#nodeKindOptions");
 const edgeKindOptions = document.querySelector("#edgeKindOptions");
 const confidenceOptions = document.querySelector("#confidenceOptions");
 const severityOptions = document.querySelector("#severityOptions");
+const workflowBlockKindOptions = document.querySelector("#workflowBlockKindOptions");
 const insightKindOptions = document.querySelector("#insightKindOptions");
 
 localeSelect.value = state.locale;
@@ -1588,6 +1598,17 @@ entryFlowWorkflowMermaidExportButton.addEventListener("click", () => exportLastE
 for (const input of [entryFlowSearchInput, entryFlowDepthInput]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") runEntryFlowTrace();
+  });
+}
+for (const input of [
+  entryWorkflowEdgeKindInput,
+  entryWorkflowConfidenceInput,
+  entryWorkflowLanguageInput,
+  entryWorkflowRiskSeverityInput,
+  entryWorkflowBlockKindInput,
+]) {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") runEntryFlowWorkflows();
   });
 }
 pathButton.addEventListener("click", () => runPathQuery());
@@ -2173,6 +2194,7 @@ function renderApiSchemaOptions() {
   renderDatalist(edgeKindOptions, enums.graph_edge_kind || []);
   renderDatalist(confidenceOptions, enums.graph_confidence || []);
   renderDatalist(severityOptions, enums.insight_severity || []);
+  renderDatalist(workflowBlockKindOptions, enums.workflow_block_kind || []);
   renderDatalist(insightKindOptions, enums.insight_kind || []);
 }
 
@@ -4099,6 +4121,41 @@ function renderGraphPageScope(options = {}) {
   `;
 }
 
+const WORKFLOW_FILTER_FIELDS = [
+  ["edge_kind", "EdgeKind"],
+  ["confidence", "Confidence"],
+  ["language", "Language"],
+  ["risk_severity", "RiskSeverity"],
+  ["block_kind", "BlockKind"],
+];
+
+function workflowFilterInputs(prefix) {
+  return WORKFLOW_FILTER_FIELDS.map(([, suffix]) => document.querySelector(`#${prefix}${suffix}Input`)).filter(Boolean);
+}
+
+function readWorkflowFilters(prefix) {
+  return Object.fromEntries(
+    WORKFLOW_FILTER_FIELDS.map(([key, suffix]) => [
+      key,
+      document.querySelector(`#${prefix}${suffix}Input`)?.value.trim() || "",
+    ]).filter(([, value]) => value),
+  );
+}
+
+function appendWorkflowFilterParams(params, filters) {
+  Object.entries(filters || {}).forEach(([key, value]) => {
+    if (value) params.set(key, value);
+  });
+}
+
+function renderWorkflowFilterSummary(filters) {
+  const entries = Object.entries(filters || {}).filter(([, value]) => value);
+  if (!entries.length) return "";
+  return entries
+    .map(([key, value]) => `<span>${escapeHtml(`${formatKind(key)}: ${value}`)}</span>`)
+    .join("");
+}
+
 async function runEntryFlowTrace() {
   const depth = clampNumber(Number(entryFlowDepthInput.value || 3), 1, 32);
   entryFlowDepthInput.value = String(depth);
@@ -4166,6 +4223,8 @@ async function runEntryFlowWorkflows() {
   });
   const search = entryFlowSearchInput.value.trim();
   if (search) params.set("search", search);
+  const workflowFilters = readWorkflowFilters("entryWorkflow");
+  appendWorkflowFilterParams(params, workflowFilters);
 
   try {
     const response = await apiFetch(`/api/entrypoint-workflows?${params.toString()}`);
@@ -4182,6 +4241,7 @@ async function runEntryFlowWorkflows() {
         depth,
         block_limit: 120,
         limit: 15,
+        ...workflowFilters,
       },
       report: body,
     };
@@ -4352,6 +4412,7 @@ function renderEntryWorkflowReport(report) {
       <span>${escapeHtml(t("entryFlows.entrypointCount", { count: formatNumber(report.total_entrypoints || 0) }))}</span>
       <span>${escapeHtml(t("entryFlows.workflowCount", { count: formatNumber(workflows.length) }))}</span>
       <span>${escapeHtml(t("trace.depth", { depth: formatNumber(report.max_depth || 0) }))}</span>
+      ${renderWorkflowFilterSummary(report.filters)}
     </div>
   `;
   if (!workflows.length) {
@@ -8574,6 +8635,28 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
           <button id="workflowButton" type="button">${escapeHtml(t("selection.flow"))}</button>
           <button id="dependentsButton" type="button">${escapeHtml(t("selection.dependents"))}</button>
         </div>
+        <div class="workflow-filter-fields">
+          <label class="field compact">
+            <span>${escapeHtml(t("label.edge"))}</span>
+            <input id="workflowEdgeKindInput" type="text" list="edgeKindOptions" autocomplete="off" />
+          </label>
+          <label class="field compact">
+            <span>${escapeHtml(t("label.confidence"))}</span>
+            <input id="workflowConfidenceInput" type="text" list="confidenceOptions" autocomplete="off" />
+          </label>
+          <label class="field compact">
+            <span>${escapeHtml(t("label.language"))}</span>
+            <input id="workflowLanguageInput" type="text" autocomplete="off" />
+          </label>
+          <label class="field compact">
+            <span>${escapeHtml(t("label.riskSeverity"))}</span>
+            <input id="workflowRiskSeverityInput" type="text" list="severityOptions" autocomplete="off" />
+          </label>
+          <label class="field compact">
+            <span>${escapeHtml(t("label.block"))}</span>
+            <input id="workflowBlockKindInput" type="text" list="workflowBlockKindOptions" autocomplete="off" />
+          </label>
+        </div>
         <div class="workflow-export-actions">
           <button id="workflowJsonExportButton" type="button" disabled>${escapeHtml(t("button.downloadWorkflow"))}</button>
           <button id="workflowMermaidExportButton" type="button" disabled>${escapeHtml(t("button.downloadWorkflowMermaid"))}</button>
@@ -8646,6 +8729,11 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
   const workflowButton = document.querySelector("#workflowButton");
   if (workflowButton) {
     workflowButton.addEventListener("click", () => loadWorkflow(node));
+  }
+  for (const input of workflowFilterInputs("workflow")) {
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") loadWorkflow(node);
+    });
   }
   renderWorkflowExportState();
   const workflowJsonExportButton = document.querySelector("#workflowJsonExportButton");
@@ -8985,6 +9073,8 @@ async function loadWorkflow(node) {
     depth: String(depth),
     block_limit: "120",
   });
+  const workflowFilters = readWorkflowFilters("workflow");
+  appendWorkflowFilterParams(params, workflowFilters);
 
   try {
     const response = await apiFetch(`/api/workflow?${params.toString()}`);
@@ -9001,6 +9091,7 @@ async function loadWorkflow(node) {
         label: node.label,
         depth,
         block_limit: 120,
+        ...workflowFilters,
       },
       report: body,
     };
@@ -9185,6 +9276,7 @@ function renderWorkflow(report) {
       <span>${escapeHtml(t("workflow.blockCount", { count: formatNumber(blocks.length) }))}</span>
       <span>${escapeHtml(t("workflow.transitionCount", { count: formatNumber(transitions.length) }))}</span>
       <span>${escapeHtml(t("trace.depth", { depth: formatNumber(report.max_depth || 0) }))}</span>
+      ${renderWorkflowFilterSummary(report.filters)}
     </div>
     <div class="workflow-diagram" aria-label="${escapeHtml(t("selection.flow"))}">
       <ol class="workflow-blocks">${blockRows}</ol>

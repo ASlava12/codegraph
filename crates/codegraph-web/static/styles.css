@@ -841,6 +841,16 @@ button.cancel-action:hover:not(:disabled) {
   height: 34px;
 }
 
+.workflow-filter-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.workflow-filter-fields input {
+  height: 32px;
+}
+
 .entrypoint-flow-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2070,6 +2080,10 @@ button.cancel-action:hover:not(:disabled) {
   min-height: 34px;
   padding: 5px 8px;
   line-height: 1.2;
+}
+
+.trace-panel .workflow-filter-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .workflow-export-actions {

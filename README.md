@@ -136,6 +136,7 @@ Implemented now:
 - Block-style workflow reports from a selected entrypoint, matched entrypoint set, or node label in CLI and API, with stable block ids, source node ids, edge indexes, confidence metadata, risk references, Mermaid flowchart output from CLI/web, and a selected-node web Flow panel with JSON/Mermaid downloads.
 - Workflow reports support edge kind, confidence, language, risk severity, and block kind filters across CLI and API for smaller human diagrams and agent handoffs.
 - Web Entry Flows can build block-style workflow reports for matched entrypoints, focus a workflow slice on the graph, and download JSON or Mermaid for agent handoff.
+- Web workflow filters are available for selected-node Flow panels and Entry Flows using edge kind, confidence, language, risk severity, and block kind controls.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Web config trace reports can be downloaded as JSON with target, depth, matched readers, and dependency paths.
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
