@@ -106,6 +106,7 @@ Implemented now:
 - Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
 - Initial English/Russian web UI localization with a persistent language selector.
 - Web quality-check and source-search workflows use localized status, result, empty-state, and export summary text.
+- Web entrypoint trace workflow uses localized status, counters, empty states, truncation notes, export summary text, and focused graph titles.
 - Web config/error trace workflows use localized status, counters, empty states, truncation notes, and focused graph titles.
 - Off-by-default graph labels with collision-aware, sparse Auto/Focus modes so node cards stay readable without captions covering the graph.
 - Hover labels render only for the node under the pointer, selected-node cards are zoom/density gated, and saved label modes reset when label-density rules change.

@@ -376,6 +376,17 @@ const I18N = {
     "trace.traceTruncated": "Trace truncated.",
     "trace.resultTruncated": "Result truncated by limit.",
     "trace.entrypointPath": "entrypoint path",
+    "trace.noStart": "No matching start node.",
+    "trace.noOutgoing": "No outgoing dependency edges.",
+    "entryFlows.tracing": "Tracing entrypoints...",
+    "entryFlows.failedFallback": "entrypoint trace failed",
+    "entryFlows.entrypointCount": "{count} entrypoints",
+    "entryFlows.traceCount": "{count} traces",
+    "entryFlows.noMatches": "No matching entrypoint flows.",
+    "entryFlows.traceTruncated": "Trace truncated by depth.",
+    "entryFlows.reportTruncated": "Report truncated by limit or depth.",
+    "entryFlows.focusFlow": "Focus flow",
+    "entryFlows.focusTitle": "Entry: {label}",
     "configTrace.enterTarget": "Enter a config file or environment variable.",
     "configTrace.tracing": "Tracing config...",
     "configTrace.failedFallback": "config trace failed",
@@ -836,6 +847,17 @@ const I18N = {
     "trace.traceTruncated": "Трасса усечена.",
     "trace.resultTruncated": "Результат усечён лимитом.",
     "trace.entrypointPath": "путь от точки входа",
+    "trace.noStart": "Начальный узел не найден.",
+    "trace.noOutgoing": "Исходящих связей зависимостей нет.",
+    "entryFlows.tracing": "Трассирую точки входа...",
+    "entryFlows.failedFallback": "трасса точек входа не удалась",
+    "entryFlows.entrypointCount": "точек входа: {count}",
+    "entryFlows.traceCount": "трасс: {count}",
+    "entryFlows.noMatches": "Подходящих потоков входа нет.",
+    "entryFlows.traceTruncated": "Трасса усечена глубиной.",
+    "entryFlows.reportTruncated": "Отчёт усечён лимитом или глубиной.",
+    "entryFlows.focusFlow": "Фокус потока",
+    "entryFlows.focusTitle": "Вход: {label}",
     "configTrace.enterTarget": "Введите конфиг-файл или переменную окружения.",
     "configTrace.tracing": "Трассирую конфиг...",
     "configTrace.failedFallback": "трасса конфига не удалась",
@@ -3741,7 +3763,7 @@ async function runEntryFlowTrace() {
   state.entryFlowRequest += 1;
   const requestId = state.entryFlowRequest;
   entryFlowButton.disabled = true;
-  entryFlowResult.innerHTML = '<p class="empty">Tracing entrypoints...</p>';
+  entryFlowResult.innerHTML = `<p class="empty">${escapeHtml(t("entryFlows.tracing"))}</p>`;
 
   const params = new URLSearchParams({
     path: pathInput.value.trim() || ".",
@@ -3756,7 +3778,7 @@ async function runEntryFlowTrace() {
     const body = await response.json();
     if (requestId !== state.entryFlowRequest) return;
     if (!response.ok) {
-      throw new Error(apiErrorMessage(body, response, "entrypoint trace failed"));
+      throw new Error(apiErrorMessage(body, response, t("entryFlows.failedFallback")));
     }
     state.lastEntryFlowReport = {
       generated_at: new Date().toISOString(),
@@ -3811,8 +3833,8 @@ function exportLastEntryFlowReport() {
       <div class="query-summary">
         <span>${escapeHtml(t("export.entryFlows"))}</span>
         <span>${escapeHtml(formatBytes(blob.size))}</span>
-        <span>${escapeHtml(formatNumber(payload.report?.traces?.length ?? 0))} traces</span>
-        <span>${escapeHtml(formatNumber(payload.report?.total_entrypoints ?? 0))} entrypoints</span>
+        <span>${escapeHtml(t("entryFlows.traceCount", { count: formatNumber(payload.report?.traces?.length ?? 0) }))}</span>
+        <span>${escapeHtml(t("entryFlows.entrypointCount", { count: formatNumber(payload.report?.total_entrypoints ?? 0) }))}</span>
         <span class="query-expression">${escapeHtml(fileName)}</span>
       </div>
     `,
@@ -3822,13 +3844,13 @@ function exportLastEntryFlowReport() {
 function renderEntryFlowReport(report) {
   const summary = `
     <div class="query-summary">
-      <span>${report.total_entrypoints} entrypoints</span>
-      <span>${report.traces.length} traces</span>
-      <span>depth ${report.max_depth}</span>
+      <span>${escapeHtml(t("entryFlows.entrypointCount", { count: formatNumber(report.total_entrypoints || 0) }))}</span>
+      <span>${escapeHtml(t("entryFlows.traceCount", { count: formatNumber(report.traces.length) }))}</span>
+      <span>${escapeHtml(t("trace.depth", { depth: formatNumber(report.max_depth || 0) }))}</span>
     </div>
   `;
   if (!report.traces.length) {
-    return `${summary}<p class="empty">No matching entrypoint flows.</p>`;
+    return `${summary}<p class="empty">${escapeHtml(t("entryFlows.noMatches"))}</p>`;
   }
 
   const rows = report.traces
@@ -3848,25 +3870,29 @@ function renderEntryFlowReport(report) {
           `,
         )
         .join("");
-      const truncated = trace.truncated ? '<p class="empty">Trace truncated by depth.</p>' : "";
+      const truncated = trace.truncated
+        ? `<p class="empty">${escapeHtml(t("entryFlows.traceTruncated"))}</p>`
+        : "";
       return `
         <section class="trace-columns">
           <h3>${escapeHtml(trace.start.label)}</h3>
           <div class="trace-summary">
-            <span>${trace.nodes.length} nodes</span>
-            <span>${trace.edges.length} edges</span>
+            <span>${escapeHtml(t("stat.nodes"))}: ${escapeHtml(formatNumber(trace.nodes.length))}</span>
+            <span>${escapeHtml(t("stat.edges"))}: ${escapeHtml(formatNumber(trace.edges.length))}</span>
             <span>${escapeHtml(formatKind(trace.start.metadata?.entrypoint_kind || trace.start.kind))}</span>
           </div>
           <div class="query-actions">
-            <button type="button" data-entry-flow="${index}">Focus flow</button>
+            <button type="button" data-entry-flow="${index}">${escapeHtml(t("entryFlows.focusFlow"))}</button>
           </div>
-          ${nodes ? `<ul class="trace-list">${nodes}</ul>` : '<p class="empty">No outgoing dependency edges.</p>'}
+          ${nodes ? `<ul class="trace-list">${nodes}</ul>` : `<p class="empty">${escapeHtml(t("trace.noOutgoing"))}</p>`}
           ${truncated}
         </section>
       `;
     })
     .join("");
-  const truncated = report.truncated ? '<p class="empty">Report truncated by limit or depth.</p>' : "";
+  const truncated = report.truncated
+    ? `<p class="empty">${escapeHtml(t("entryFlows.reportTruncated"))}</p>`
+    : "";
   return `${summary}${rows}${truncated}`;
 }
 
@@ -3884,7 +3910,7 @@ function attachEntryFlowActions(container, report) {
         total_edges: trace.edges.length,
         truncated: trace.truncated,
       };
-      showFocusedGraph(focused, `Entry: ${trace.start.label}`, trace.start.id);
+      showFocusedGraph(focused, t("entryFlows.focusTitle", { label: trace.start.label }), trace.start.id);
     });
   });
 }
@@ -8243,10 +8269,10 @@ async function loadDependents(node) {
 
 function renderTrace(trace, options = {}) {
   if (!trace) {
-    return '<p class="empty">No matching start node.</p>';
+    return `<p class="empty">${escapeHtml(t("trace.noStart"))}</p>`;
   }
   if (trace.nodes.length <= 1 && trace.edges.length === 0) {
-    return `<p class="empty">${escapeHtml(options.empty || "No outgoing dependency edges.")}</p>`;
+    return `<p class="empty">${escapeHtml(options.empty || t("trace.noOutgoing"))}</p>`;
   }
 
   const nodes = [...trace.nodes]
@@ -8259,7 +8285,7 @@ function renderTrace(trace, options = {}) {
     .map((edge) => renderTraceEdge(edge, nodeMap))
     .join("");
 
-  const suffix = trace.truncated ? '<p class="empty">Trace truncated by depth.</p>' : "";
+  const suffix = trace.truncated ? `<p class="empty">${escapeHtml(t("trace.traceTruncated"))}</p>` : "";
   return `
     <div class="trace-summary">
       ${options.label ? `<span>${escapeHtml(options.label)}</span>` : ""}

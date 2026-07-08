@@ -6795,6 +6795,10 @@ mod tests {
         assert!(app.contains("\"check.running\""));
         assert!(app.contains("\"sourceSearch.enterText\""));
         assert!(app.contains("\"sourceSearch.noMatches\""));
+        assert!(app.contains("\"entryFlows.tracing\""));
+        assert!(app.contains("\"entryFlows.noMatches\""));
+        assert!(app.contains("\"entryFlows.reportTruncated\""));
+        assert!(app.contains("\"trace.noOutgoing\""));
         assert!(app.contains("\"configTrace.tracing\""));
         assert!(app.contains("\"configTrace.noReaders\""));
         assert!(app.contains("\"errorTrace.tracing\""));
