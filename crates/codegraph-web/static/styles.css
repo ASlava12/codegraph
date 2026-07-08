@@ -2061,6 +2061,17 @@ button.cancel-action:hover:not(:disabled) {
   line-height: 1.2;
 }
 
+.workflow-export-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workflow-export-actions button {
+  min-height: 32px;
+  padding: 5px 8px;
+}
+
 .trace-result {
   min-height: 0;
 }

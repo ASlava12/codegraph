@@ -191,6 +191,8 @@ const I18N = {
     "button.downloadConfigTrace": "Download Config Trace",
     "button.downloadErrorTrace": "Download Error Trace",
     "button.downloadCard": "Download Card",
+    "button.downloadWorkflow": "Download Flow",
+    "button.downloadWorkflowMermaid": "Download Mermaid",
     "button.graphFile": "Graph File",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
@@ -420,11 +422,14 @@ const I18N = {
     "export.configTrace": "Config Trace JSON",
     "export.errorTrace": "Error Trace JSON",
     "export.selectionCard": "Selection Card JSON",
+    "export.workflow": "Workflow JSON",
+    "export.workflowMermaid": "Workflow Mermaid",
     "export.noEntryFlows": "Trace entrypoints before exporting flows.",
     "export.noPathResult": "Find a path before exporting its result.",
     "export.noConfigTrace": "Trace config before exporting results.",
     "export.noErrorTrace": "Trace errors before exporting results.",
     "export.noSelectionCard": "Select a node or edge card before exporting.",
+    "export.noWorkflow": "Load Flow before exporting.",
     "export.noSourceSearch": "Run source search before exporting results.",
     "export.noCheck": "Run a quality check before exporting its result.",
     "export.noQueryResult": "Run a graph query before exporting its result.",
@@ -768,6 +773,8 @@ const I18N = {
     "button.downloadConfigTrace": "Скачать трассу конфига",
     "button.downloadErrorTrace": "Скачать трассу ошибок",
     "button.downloadCard": "Скачать карточку",
+    "button.downloadWorkflow": "Скачать Flow",
+    "button.downloadWorkflowMermaid": "Скачать Mermaid",
     "button.graphFile": "Граф файла",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
@@ -997,11 +1004,14 @@ const I18N = {
     "export.configTrace": "JSON трассы конфига",
     "export.errorTrace": "JSON трассы ошибок",
     "export.selectionCard": "JSON карточки выбора",
+    "export.workflow": "JSON блок-схемы",
+    "export.workflowMermaid": "Mermaid блок-схемы",
     "export.noEntryFlows": "Сначала трассируйте точки входа.",
     "export.noPathResult": "Сначала найдите путь.",
     "export.noConfigTrace": "Сначала трассируйте конфиг.",
     "export.noErrorTrace": "Сначала трассируйте ошибки.",
     "export.noSelectionCard": "Сначала выберите карточку узла или связи.",
+    "export.noWorkflow": "Сначала загрузите блок-схему.",
     "export.noSourceSearch": "Сначала выполните поиск в коде.",
     "export.noCheck": "Сначала запустите проверку качества.",
     "export.noQueryResult": "Сначала выполните запрос к графу.",
@@ -1321,6 +1331,7 @@ const state = {
   lastPathResult: null,
   lastConfigTraceReport: null,
   lastErrorTraceReport: null,
+  lastWorkflowReport: null,
   lastSelectionCard: null,
   pendingSelectionLink: null,
   pendingQueryLink: null,
@@ -8254,6 +8265,7 @@ async function loadNodeContext(nodeId, requestId) {
 }
 
 function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, context = null, card = null) {
+  state.lastWorkflowReport = null;
   if (loading) {
     clearLastSelectionCard();
   } else {
@@ -8368,6 +8380,10 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
           <button id="workflowButton" type="button">${escapeHtml(t("selection.flow"))}</button>
           <button id="dependentsButton" type="button">${escapeHtml(t("selection.dependents"))}</button>
         </div>
+        <div class="workflow-export-actions">
+          <button id="workflowJsonExportButton" type="button" disabled>${escapeHtml(t("button.downloadWorkflow"))}</button>
+          <button id="workflowMermaidExportButton" type="button" disabled>${escapeHtml(t("button.downloadWorkflowMermaid"))}</button>
+        </div>
         <div id="traceResult" class="trace-result"></div>
       </section>
       ${
@@ -8436,6 +8452,15 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
   const workflowButton = document.querySelector("#workflowButton");
   if (workflowButton) {
     workflowButton.addEventListener("click", () => loadWorkflow(node));
+  }
+  renderWorkflowExportState();
+  const workflowJsonExportButton = document.querySelector("#workflowJsonExportButton");
+  if (workflowJsonExportButton) {
+    workflowJsonExportButton.addEventListener("click", () => exportLastWorkflowReport("json"));
+  }
+  const workflowMermaidExportButton = document.querySelector("#workflowMermaidExportButton");
+  if (workflowMermaidExportButton) {
+    workflowMermaidExportButton.addEventListener("click", () => exportLastWorkflowReport("mermaid"));
   }
   const dependentsButton = document.querySelector("#dependentsButton");
   if (dependentsButton) {
@@ -8716,6 +8741,7 @@ async function loadTrace(node) {
   state.traceRequest += 1;
   state.workflowRequest += 1;
   state.dependentsRequest += 1;
+  clearLastWorkflowReport();
   const requestId = state.traceRequest;
   const target = document.querySelector("#traceResult");
   if (!target) return;
@@ -8750,6 +8776,7 @@ async function loadWorkflow(node) {
   state.traceRequest += 1;
   state.workflowRequest += 1;
   state.dependentsRequest += 1;
+  clearLastWorkflowReport();
   const requestId = state.workflowRequest;
   const target = document.querySelector("#traceResult");
   if (!target) return;
@@ -8772,6 +8799,18 @@ async function loadWorkflow(node) {
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "workflow failed"));
     }
+    state.lastWorkflowReport = {
+      generated_at: new Date().toISOString(),
+      root: pathInput.value.trim() || ".",
+      request: {
+        node_id: node.id,
+        label: node.label,
+        depth,
+        block_limit: 120,
+      },
+      report: body,
+    };
+    renderWorkflowExportState();
     target.innerHTML = renderWorkflow(body);
     attachWorkflowNavigation(target);
     attachEdgeExplainActions(target);
@@ -8785,6 +8824,7 @@ async function loadDependents(node) {
   state.traceRequest += 1;
   state.workflowRequest += 1;
   state.dependentsRequest += 1;
+  clearLastWorkflowReport();
   const requestId = state.dependentsRequest;
   const target = document.querySelector("#traceResult");
   if (!target) return;
@@ -8816,6 +8856,103 @@ async function loadDependents(node) {
     if (requestId !== state.dependentsRequest) return;
     target.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   }
+}
+
+function renderWorkflowExportState() {
+  const jsonButton = document.querySelector("#workflowJsonExportButton");
+  const mermaidButton = document.querySelector("#workflowMermaidExportButton");
+  if (jsonButton) jsonButton.disabled = !state.lastWorkflowReport;
+  if (mermaidButton) mermaidButton.disabled = !state.lastWorkflowReport;
+}
+
+function clearLastWorkflowReport() {
+  state.lastWorkflowReport = null;
+  renderWorkflowExportState();
+}
+
+function exportLastWorkflowReport(format) {
+  if (!state.lastWorkflowReport) {
+    const target = document.querySelector("#traceResult");
+    if (target) {
+      target.insertAdjacentHTML(
+        "afterbegin",
+        `<p class="empty" data-workflow-export-note>${escapeHtml(t("export.noWorkflow"))}</p>`,
+      );
+    }
+    renderWorkflowExportState();
+    return;
+  }
+
+  const payload = {
+    schema: "codegraph.workflow.v1",
+    ...state.lastWorkflowReport,
+  };
+  const root = safeFilePart(payload.root);
+  const label = safeFilePart(payload.request?.label || payload.report?.start?.label || "workflow");
+  if (format === "mermaid") {
+    const mermaid = workflowReportToMermaid(payload.report);
+    const blob = new Blob([mermaid], { type: "text/vnd.mermaid;charset=utf-8" });
+    const fileName = `codegraph-${root}-${label}-workflow.mmd`;
+    downloadBlob(blob, fileName);
+    renderWorkflowExportNote(fileName, blob.size, t("export.workflowMermaid"));
+    return;
+  }
+
+  const serialized = JSON.stringify(payload, null, 2);
+  const blob = new Blob([serialized], { type: "application/json" });
+  const fileName = `codegraph-${root}-${label}-workflow.json`;
+  downloadBlob(blob, fileName);
+  renderWorkflowExportNote(fileName, blob.size, t("export.workflow"));
+}
+
+function renderWorkflowExportNote(fileName, size, label) {
+  const target = document.querySelector("#traceResult");
+  if (!target) return;
+  target.querySelector("[data-workflow-export-note]")?.remove();
+  target.insertAdjacentHTML(
+    "afterbegin",
+    `
+      <div class="query-summary" data-workflow-export-note>
+        <span>${escapeHtml(label)}</span>
+        <span>${escapeHtml(formatBytes(size))}</span>
+        <span class="query-expression">${escapeHtml(fileName)}</span>
+      </div>
+    `,
+  );
+}
+
+function workflowReportToMermaid(report) {
+  const blocks = Array.isArray(report?.blocks) ? report.blocks : [];
+  const transitions = Array.isArray(report?.transitions) ? report.transitions : [];
+  const lines = ["flowchart TD"];
+  blocks.forEach((block) => {
+    const node = block.node || {};
+    lines.push(
+      `  ${workflowMermaidNodeId(node.id)}["${mermaidEscape(`${formatKind(block.kind || "unknown")}: ${node.label || node.id || ""}`)}"]`,
+    );
+  });
+  transitions.forEach((transition) => {
+    const edge = transition.edge || {};
+    const source = transition.source_node_id || edge.source;
+    const target = transition.target_node_id || edge.target;
+    const label = `${formatKind(edge.kind || "unknown")}/${formatKind(edge.confidence || "unknown")}`;
+    lines.push(
+      `  ${workflowMermaidNodeId(source)} -->|${mermaidEscape(label)}| ${workflowMermaidNodeId(target)}`,
+    );
+  });
+  return `${lines.join("\n")}\n`;
+}
+
+function workflowMermaidNodeId(id) {
+  return `B${String(id || "unknown").replace(/[^A-Za-z0-9_]/g, "_")}`;
+}
+
+function mermaidEscape(value) {
+  return String(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\|/g, " ")
+    .replace(/\r?\n/g, " ");
 }
 
 function renderWorkflow(report) {

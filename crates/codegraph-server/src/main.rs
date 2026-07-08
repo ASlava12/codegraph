@@ -7219,12 +7219,19 @@ fn helper() {
         let styles = include_str!("../../codegraph-web/static/styles.css");
 
         assert!(app.contains("workflowButton"));
+        assert!(app.contains("workflowJsonExportButton"));
+        assert!(app.contains("workflowMermaidExportButton"));
         assert!(app.contains("/api/workflow?"));
         assert!(app.contains("renderWorkflow"));
+        assert!(app.contains("exportLastWorkflowReport"));
+        assert!(app.contains("workflowReportToMermaid"));
         assert!(app.contains("workflow.blockCount"));
         assert!(app.contains("workflow.transitionCount"));
+        assert!(app.contains("\"button.downloadWorkflow\""));
+        assert!(app.contains("\"button.downloadWorkflowMermaid\""));
         assert!(app.contains("\"selection.flow\""));
         assert!(styles.contains(".workflow-diagram"));
+        assert!(styles.contains(".workflow-export-actions"));
         assert!(styles.contains(".workflow-block"));
         assert!(styles.contains(".workflow-transitions"));
     }

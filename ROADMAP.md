@@ -218,6 +218,7 @@ Goal: answer practical code investigation questions.
 - [x] Add first CLI workflow command for selected entrypoint/function/node labels.
 - [x] Add first workflow API endpoint with depth and block-limit controls.
 - [x] Add first web selected-node Flow panel with workflow blocks, transitions, risk badges, and node navigation.
+- [x] Add first web workflow export downloads in JSON and Mermaid.
 - [ ] Extend workflow generation from selected labels to entrypoints, routes, CI jobs, Makefile targets, Docker commands, and selected query slices.
 - [ ] Classify workflow blocks as start, call, config/env read, dependency, branch, error, return, and external boundary.
 - [ ] Add workflow graph compaction so repeated helper calls, import-only hops, and low-signal nodes collapse into readable blocks.
@@ -229,7 +230,7 @@ Goal: answer practical code investigation questions.
 - [ ] Add branch extraction for common if/match/try/catch constructs where parser or LSP facts support it.
 - [ ] Add loop and async/concurrency markers for common constructs where confidence is high.
 - [ ] Add workflow regression fixtures for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, Dart/Flutter, CI, Docker, and Kubernetes runtime paths.
-- [ ] Add workflow export downloads in JSON, Mermaid, DOT, and visible-slice JSON.
+- [ ] Add remaining workflow export downloads for DOT and visible-slice JSON.
 - [ ] Localize workflow UI, commands, schema descriptions, and block labels in English and Russian.
 
 Example commands:

@@ -133,7 +133,7 @@ Implemented now:
 - Reverse dependency/dependent traces for impact analysis from CLI, API, query language, and web detail panels.
 - Entrypoint trace API, CLI command, and web panel for comparing startup flows from manifest/code entrypoints.
 - Web entrypoint trace reports can be downloaded as JSON with search, depth, and returned startup flows.
-- Block-style workflow reports from a selected entrypoint or node label in CLI and API, with stable block ids, source node ids, edge indexes, confidence metadata, risk references, Mermaid flowchart output from the CLI, and a selected-node web Flow panel.
+- Block-style workflow reports from a selected entrypoint or node label in CLI and API, with stable block ids, source node ids, edge indexes, confidence metadata, risk references, Mermaid flowchart output from CLI/web, and a selected-node web Flow panel with JSON/Mermaid downloads.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Web config trace reports can be downloaded as JSON with target, depth, matched readers, and dependency paths.
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
