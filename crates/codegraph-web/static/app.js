@@ -146,6 +146,7 @@ const I18N = {
     "button.copyLink": "Copy Link",
     "button.copyQueryLink": "Copy Query Link",
     "button.copyPageLink": "Copy Page Link",
+    "button.clearFilters": "Clear Filters",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
     "button.queryEdge": "Query",
@@ -526,6 +527,7 @@ const I18N = {
     "button.copyLink": "Скопировать ссылку",
     "button.copyQueryLink": "Ссылка на запрос",
     "button.copyPageLink": "Ссылка на страницу",
+    "button.clearFilters": "Сбросить фильтры",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
     "button.queryEdge": "Запрос",
@@ -990,6 +992,7 @@ const pageNextButton = document.querySelector("#pageNextButton");
 const edgePrevButton = document.querySelector("#edgePrevButton");
 const edgeNextButton = document.querySelector("#edgeNextButton");
 const pageCopyButton = document.querySelector("#pageCopyButton");
+const pageClearButton = document.querySelector("#pageClearButton");
 const queryInput = document.querySelector("#queryInput");
 const queryButton = document.querySelector("#queryButton");
 const queryCopyButton = document.querySelector("#queryCopyButton");
@@ -1146,6 +1149,7 @@ pageReloadButton.addEventListener("click", () => loadGraphPage({ resetPage: true
 edgePrevButton.addEventListener("click", () => shiftEdgePage(-1));
 edgeNextButton.addEventListener("click", () => shiftEdgePage(1));
 pageCopyButton.addEventListener("click", () => copyGraphPageLink(pageCopyButton));
+pageClearButton.addEventListener("click", () => clearGraphPageFilters());
 zoomOutButton.addEventListener("click", () => zoomAtCanvasCenter(0.82));
 zoomInButton.addEventListener("click", () => zoomAtCanvasCenter(1.18));
 fitGraphButton.addEventListener("click", () => fitVisibleGraph());
@@ -2161,6 +2165,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
   edgePrevButton.disabled = true;
   edgeNextButton.disabled = true;
   pageCopyButton.disabled = true;
+  pageClearButton.disabled = true;
 
   const preserveGraphPageLink = resetPage && state.pendingGraphPageLink;
   const preserveInvestigationLink = Boolean(state.pendingSelectionLink || state.pendingQueryLink);
@@ -3419,6 +3424,21 @@ function shiftEdgePage(direction) {
   loadGraphPage({ resetLayout: true });
 }
 
+function clearGraphPageFilters() {
+  state.architecturePathPrefix = "";
+  state.graphPage.nodeOffset = 0;
+  state.graphPage.edgeOffset = 0;
+  serverKindInput.value = "";
+  serverItemKindInput.value = "";
+  serverLanguageInput.value = "";
+  serverSearchInput.value = "";
+  serverEdgeKindInput.value = "";
+  serverConfidenceInput.value = "";
+  serverEdgeRelationInput.value = "";
+  serverEdgeSourceInput.value = "";
+  loadGraphPage({ resetLayout: true });
+}
+
 function updateGraphPageControls() {
   const start = state.graphPage.totalNodes === 0 ? 0 : state.graphPage.nodeOffset + 1;
   const end = Math.min(
@@ -3438,7 +3458,24 @@ function updateGraphPageControls() {
   edgeNextButton.disabled = !state.graphPage.truncatedEdges;
   pageReloadButton.disabled = false;
   pageCopyButton.disabled = state.graph.nodes.length === 0 && state.graph.edges.length === 0;
+  pageClearButton.disabled = !graphPageHasFilters();
   renderGraphPageScope();
+}
+
+function graphPageHasFilters() {
+  return Boolean(
+    state.architecturePathPrefix ||
+      serverKindInput.value.trim() ||
+      serverItemKindInput.value.trim() ||
+      serverLanguageInput.value.trim() ||
+      serverSearchInput.value.trim() ||
+      serverEdgeKindInput.value.trim() ||
+      serverConfidenceInput.value.trim() ||
+      serverEdgeRelationInput.value.trim() ||
+      serverEdgeSourceInput.value.trim() ||
+      state.graphPage.nodeOffset > 0 ||
+      state.graphPage.edgeOffset > 0,
+  );
 }
 
 function renderGraphPageScope(options = {}) {
@@ -4395,6 +4432,7 @@ function showIncrementalScanGraph(scan) {
   edgeNextButton.disabled = true;
   renderStaticEdgePageInfo();
   pageCopyButton.disabled = false;
+  pageClearButton.disabled = false;
   pageReloadButton.disabled = false;
 }
 
@@ -4425,6 +4463,7 @@ function showIncrementalMergePreviewGraph(preview) {
   edgeNextButton.disabled = true;
   renderStaticEdgePageInfo();
   pageCopyButton.disabled = false;
+  pageClearButton.disabled = false;
   pageReloadButton.disabled = false;
 }
 
@@ -5454,6 +5493,7 @@ function showFocusedGraph(result, label, selectedId = null, options = {}) {
   edgeNextButton.disabled = true;
   renderStaticEdgePageInfo();
   pageCopyButton.disabled = false;
+  pageClearButton.disabled = false;
   pageReloadButton.disabled = false;
   if (selectedId != null) {
     selectNodeById(selectedId, { syncUrl: options.syncUrl !== false });

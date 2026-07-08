@@ -6755,7 +6755,9 @@ mod tests {
         assert!(index.contains("queryCopyButton"));
         assert!(index.contains("button.copyQueryLink"));
         assert!(index.contains("pageCopyButton"));
+        assert!(index.contains("pageClearButton"));
         assert!(index.contains("button.copyPageLink"));
+        assert!(index.contains("button.clearFilters"));
         assert!(app.contains("buildSelectionUrl"));
         assert!(app.contains("buildQueryUrl"));
         assert!(app.contains("buildGraphPageUrl"));
@@ -6767,6 +6769,7 @@ mod tests {
         assert!(app.contains("edge_offset"));
         assert!(app.contains("copyCurrentQueryLink"));
         assert!(app.contains("copyGraphPageLink"));
+        assert!(app.contains("clearGraphPageFilters"));
         assert!(app.contains("data-copy-selection-link=\"node\""));
         assert!(app.contains("data-copy-selection-link=\"edge\""));
         assert!(app.contains("url.searchParams.delete(\"query\")"));
