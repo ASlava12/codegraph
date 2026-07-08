@@ -770,6 +770,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "duplicate_framework_route",
     "duplicate_function_label",
     "entrypoint_dead_end",
+    "mixed_dependency_scope",
     "mixed_config_requirement",
     "orphan_function",
     "parse_error",
@@ -1344,6 +1345,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_undeclared_import_insights(graph, &mut insights);
     add_unused_dependency_insights(graph, &mut insights);
     add_conflicting_dependency_insights(graph, &mut insights);
+    add_mixed_dependency_scope_insights(graph, &mut insights);
     add_unresolved_framework_route_handler_insights(graph, &mut insights);
     add_duplicate_framework_route_insights(graph, &mut insights);
     add_custom_rule_violation_insights(graph, &mut insights);
@@ -7053,6 +7055,69 @@ fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &mut Vec<Ins
     }
 }
 
+fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let mut groups: BTreeMap<String, Vec<(usize, NodeId, NodeId, String)>> = BTreeMap::new();
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind != EdgeKind::DependsOn {
+            continue;
+        }
+        let Some(scope) = edge
+            .metadata
+            .get("dependency_kind")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let Some(target) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+            continue;
+        };
+        let key = target
+            .metadata
+            .get("package_id")
+            .cloned()
+            .unwrap_or_else(|| format!("node:{}", target.id.0));
+        groups
+            .entry(key)
+            .or_default()
+            .push((index, edge.source, edge.target, scope.to_string()));
+    }
+
+    for declarations in groups.into_values() {
+        let scopes: BTreeSet<_> = declarations
+            .iter()
+            .map(|(_, _, _, scope)| scope.as_str())
+            .collect();
+        if scopes.len() < 2 {
+            continue;
+        }
+
+        let mut nodes = BTreeSet::new();
+        let mut edges = Vec::new();
+        for (index, source, target, _) in &declarations {
+            nodes.insert(*source);
+            nodes.insert(*target);
+            edges.push(*index);
+        }
+        let Some(package) = declarations
+            .first()
+            .and_then(|(_, _, target, _)| node_label(graph, *target))
+        else {
+            continue;
+        };
+        let scope_list = format_backtick_list(scopes.iter().copied(), 6);
+        insights.push(Insight {
+            kind: "mixed_dependency_scope".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Dependency `{package}` is declared in multiple dependency scopes: {scope_list}"
+            ),
+            nodes: nodes.into_iter().collect(),
+            edges,
+        });
+    }
+}
+
 fn add_duplicate_framework_route_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let mut groups: BTreeMap<(String, String), Vec<NodeId>> = BTreeMap::new();
     for node in &graph.nodes {
@@ -11747,6 +11812,79 @@ mod tests {
         assert!(conflict.nodes.contains(&serde));
         assert!(!conflict.nodes.contains(&anyhow));
         assert_eq!(conflict.edges.len(), 2);
+    }
+
+    #[test]
+    fn insights_report_mixed_dependency_scopes() {
+        let mut graph = CodeGraph::new("repo");
+        let manifest = graph.add_node(NodeKind::File, "package.json");
+        let workspace_manifest = graph.add_node(NodeKind::File, "packages/app/package.json");
+        let react = dependency_node(&mut graph, "react", "npm:react");
+        let lodash = dependency_node(&mut graph, "lodash", "npm:lodash");
+        graph.add_edge_with_metadata(
+            manifest,
+            react,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "runtime".to_string()),
+                ("dependency_version".to_string(), "^18".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            workspace_manifest,
+            react,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "dev".to_string()),
+                ("dependency_version".to_string(), "^18".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            workspace_manifest,
+            lodash,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "runtime".to_string()),
+                ("dependency_version".to_string(), "^4".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            manifest,
+            lodash,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "runtime".to_string()),
+                ("dependency_version".to_string(), "^4".to_string()),
+            ]),
+        );
+
+        let report = insights(&graph);
+        let mixed = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "mixed_dependency_scope")
+            .expect("expected mixed dependency scope insight");
+
+        assert_eq!(mixed.severity, InsightSeverity::Warning);
+        assert!(mixed.message.contains("react"));
+        assert!(mixed.message.contains("`runtime`"));
+        assert!(mixed.message.contains("`dev`"));
+        assert!(mixed.nodes.contains(&manifest));
+        assert!(mixed.nodes.contains(&workspace_manifest));
+        assert!(mixed.nodes.contains(&react));
+        assert!(!mixed.nodes.contains(&lodash));
+        assert_eq!(mixed.edges.len(), 2);
+        assert_eq!(report.by_kind.get("mixed_dependency_scope"), Some(&1));
+        assert!(
+            !report
+                .insights
+                .iter()
+                .any(|insight| insight.kind == "conflicting_dependency_declaration")
+        );
     }
 
     #[test]

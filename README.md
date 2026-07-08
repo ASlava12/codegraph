@@ -227,6 +227,7 @@ Implemented now:
 - Dependency consistency insights for external imports/CommonJS requires that are not backed by declared manifest dependencies.
 - Dependency consistency insights for runtime manifest dependencies with no matching import.
 - Dependency consistency insights for package declarations with conflicting manifest constraints.
+- Dependency consistency insights for packages declared across multiple dependency scopes such as runtime and dev/build.
 - Focused package graph queries that connect manifest declarations, import sites, and source files for mixed-language dependency investigation.
 - Focused file graph queries that connect source files to contained symbols, imports, config/environment reads, potential errors, and nearby dependency edges.
 - Framework route insights for duplicate HTTP method/path declarations.

@@ -111,6 +111,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect external imports that are missing declared manifest dependencies.
 - [x] Detect runtime manifest dependencies with no matching import.
 - [x] Detect conflicting manifest dependency constraints for the same package.
+- [x] Detect packages declared across multiple dependency scopes such as runtime and dev/build.
 - [x] Detect duplicate framework route method/path declarations.
 - [x] Detect framework routes whose named handler cannot be resolved.
 - [x] Improve Rust/Axum route entrypoint labels for multiline routes and string literal false positives.

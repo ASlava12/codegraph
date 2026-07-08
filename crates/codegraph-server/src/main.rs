@@ -7076,6 +7076,7 @@ mod tests {
                 && kinds.contains(&"ambiguous_call_resolution")
                 && kinds.contains(&"ambiguous_entrypoint_target")
                 && kinds.contains(&"dependency_cycle")
+                && kinds.contains(&"mixed_dependency_scope")
                 && kinds.contains(&"custom_rule_*")
         }));
         assert!(

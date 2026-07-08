@@ -2079,15 +2079,37 @@ fn index_manifest_dependencies(
         if let Some(version) = dependency.version {
             edge_metadata.insert("dependency_version".to_string(), version);
         }
-        add_edge_once_with_metadata(
+        add_manifest_dependency_edge_once(
             &mut context.graph,
             file_id,
             dependency_id,
-            EdgeKind::DependsOn,
-            Confidence::Exact,
             edge_metadata,
         );
     }
+}
+
+fn add_manifest_dependency_edge_once(
+    graph: &mut CodeGraph,
+    file_id: NodeId,
+    dependency_id: NodeId,
+    metadata: BTreeMap<String, String>,
+) {
+    if graph.edges.iter().any(|edge| {
+        edge.source == file_id
+            && edge.target == dependency_id
+            && edge.kind == EdgeKind::DependsOn
+            && edge.metadata.get("dependency_kind") == metadata.get("dependency_kind")
+            && edge.metadata.get("dependency_version") == metadata.get("dependency_version")
+    }) {
+        return;
+    }
+    graph.add_edge_with_metadata(
+        file_id,
+        dependency_id,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        metadata,
+    );
 }
 
 fn index_manifest_entrypoints(
@@ -6045,7 +6067,7 @@ local-util = { workspace = true }
             root.join("package.json"),
             r#"{
   "dependencies": { "react": "^19.0.0" },
-  "devDependencies": { "vite": "^7.0.0" }
+  "devDependencies": { "react": "^19.0.0", "vite": "^7.0.0" }
 }"#,
         )
         .unwrap();
@@ -6150,6 +6172,22 @@ dependencies = ["pydantic>=2"]
                     .get("dependency_version")
                     .is_some_and(|value| value == "^19.0.0")
         }));
+        let react = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "npm:react")
+            })
+            .expect("missing react dependency");
+        let react_kinds: BTreeSet<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == EdgeKind::DependsOn && edge.target == react.id)
+            .filter_map(|edge| edge.metadata.get("dependency_kind").map(String::as_str))
+            .collect();
+        assert_eq!(react_kinds, BTreeSet::from(["dev", "runtime"]));
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == EdgeKind::DependsOn
                 && edge
