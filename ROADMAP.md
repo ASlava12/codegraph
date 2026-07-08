@@ -51,8 +51,10 @@ Goal: extract language-independent structure from source files.
 - [x] Detect Docker Compose bind/local volumes as runtime dependency facts.
 - [x] Detect GitHub Actions workflow jobs as CI/CD entrypoints.
 - [x] Link GitHub Actions workflow job `needs`, `uses`, local actions, and local run-script paths.
+- [x] Detect GitHub Actions workflow and job `env` variables as environment inputs.
 - [x] Detect GitLab CI pipeline jobs as CI/CD entrypoints.
 - [x] Link GitLab CI job `needs`, `dependencies`, and local script command paths.
+- [x] Detect GitLab CI pipeline and job `variables` as environment inputs.
 - [x] Detect Kubernetes workloads, services, and ConfigMap/Secret runtime config references from YAML manifests.
 - [x] Detect Kubernetes Ingress entrypoints and backend Service references.
 - [x] Link Kubernetes Services to workloads through selector and pod-template label matching.

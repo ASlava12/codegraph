@@ -241,6 +241,7 @@ struct ComposeVolume {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GithubActionsWorkflow {
     name: String,
+    environment: Vec<CiEnvironment>,
     jobs: Vec<GithubActionsJob>,
 }
 
@@ -250,6 +251,7 @@ struct GithubActionsJob {
     display_name: Option<String>,
     runs_on: Option<String>,
     needs: Vec<String>,
+    environment: Vec<CiEnvironment>,
     steps: Vec<GithubActionsStep>,
     line: u32,
 }
@@ -270,6 +272,7 @@ struct GitlabCiJob {
     extends: Vec<String>,
     needs: Vec<String>,
     dependencies: Vec<String>,
+    variables: Vec<CiEnvironment>,
     scripts: Vec<GitlabCiScript>,
     line: u32,
 }
@@ -279,6 +282,14 @@ struct GitlabCiScript {
     command: String,
     script_kind: String,
     ordinal: usize,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CiEnvironment {
+    name: String,
+    value_present: bool,
+    scope: String,
     line: u32,
 }
 
@@ -2878,6 +2889,11 @@ fn index_github_actions_workflow_entrypoints(
         metadata.insert("uses_count".to_string(), uses_count.to_string());
         metadata.insert("run_count".to_string(), run_count.to_string());
         metadata.insert("needs_count".to_string(), job.needs.len().to_string());
+        let environment_count = workflow.environment.len() + job.environment.len();
+        metadata.insert(
+            "environment_count".to_string(),
+            environment_count.to_string(),
+        );
         if !job.needs.is_empty() {
             metadata.insert("needs".to_string(), job.needs.join(","));
         }
@@ -2922,6 +2938,17 @@ fn index_github_actions_workflow_entrypoints(
 
         for step in &job.steps {
             index_github_actions_step(context, job_id, label, source, &workflow, job, step);
+        }
+        for environment in workflow.environment.iter().chain(job.environment.iter()) {
+            index_ci_environment(
+                context,
+                job_id,
+                label,
+                source,
+                "github-actions",
+                &job.id,
+                environment,
+            );
         }
     }
 
@@ -3158,6 +3185,10 @@ fn index_gitlab_ci_entrypoints(
             "dependencies_count".to_string(),
             job.dependencies.len().to_string(),
         );
+        metadata.insert(
+            "environment_count".to_string(),
+            job.variables.len().to_string(),
+        );
         if !job.needs.is_empty() {
             metadata.insert("needs".to_string(), job.needs.join(","));
         }
@@ -3208,6 +3239,17 @@ fn index_gitlab_ci_entrypoints(
 
         for script in &job.scripts {
             index_gitlab_ci_script(context, job_id, label, source, job, script);
+        }
+        for variable in &job.variables {
+            index_ci_environment(
+                context,
+                job_id,
+                label,
+                source,
+                "gitlab-ci",
+                &job.name,
+                variable,
+            );
         }
     }
 
@@ -3292,6 +3334,50 @@ fn index_gitlab_ci_script(
             ecosystem: "gitlab-ci".to_string(),
             entrypoint_kind: "pipeline_job".to_string(),
         });
+}
+
+fn index_ci_environment(
+    context: &mut IndexContext,
+    job_id: NodeId,
+    label: &str,
+    source: &str,
+    ci_source: &str,
+    job_name: &str,
+    environment: &CiEnvironment,
+) {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("item_kind".to_string(), "ci_environment".to_string());
+    metadata.insert("source".to_string(), ci_source.to_string());
+    metadata.insert("ecosystem".to_string(), ci_source.to_string());
+    metadata.insert("job".to_string(), job_name.to_string());
+    metadata.insert("scope".to_string(), environment.scope.clone());
+    metadata.insert("line".to_string(), environment.line.to_string());
+    metadata.insert(
+        "value_present".to_string(),
+        environment.value_present.to_string(),
+    );
+    if !environment.value_present {
+        metadata.insert("value_source".to_string(), "runner".to_string());
+    }
+    let environment_id = context.graph.add_node_with_metadata(
+        NodeKind::Environment,
+        environment.name.clone(),
+        Some(line_span(label, source, environment.line)),
+        metadata,
+    );
+    let mut edge_metadata = BTreeMap::new();
+    edge_metadata.insert("source".to_string(), ci_source.to_string());
+    edge_metadata.insert("relation".to_string(), "ci_environment".to_string());
+    edge_metadata.insert("job".to_string(), job_name.to_string());
+    edge_metadata.insert("scope".to_string(), environment.scope.clone());
+    add_edge_once_with_metadata(
+        &mut context.graph,
+        job_id,
+        environment_id,
+        EdgeKind::ReadsEnvironment,
+        Confidence::Exact,
+        edge_metadata,
+    );
 }
 
 fn add_gitlab_ci_job_dependency_edge(
@@ -4258,9 +4344,11 @@ fn github_actions_workflow(label: &str, source: &str) -> GithubActionsWorkflow {
         .unwrap_or("workflow")
         .to_string();
     let mut workflow_name = None;
+    let mut workflow_environment = Vec::new();
     let mut jobs = Vec::new();
     let mut in_jobs = false;
     let mut jobs_indent = 0usize;
+    let mut active_workflow_section: Option<(String, usize)> = None;
     let mut active_job: Option<GithubActionsJob> = None;
     let mut active_step: Option<(GithubActionsStep, usize)> = None;
     let mut active_section: Option<(String, usize)> = None;
@@ -4273,15 +4361,32 @@ fn github_actions_workflow(label: &str, source: &str) -> GithubActionsWorkflow {
         let indent = yaml_indent(raw_line);
 
         if !in_jobs {
+            if let Some((section, section_indent)) = active_workflow_section.as_ref() {
+                if indent <= *section_indent {
+                    active_workflow_section = None;
+                } else if section == "env" {
+                    if let Some(environment) =
+                        ci_environment_assignment(trimmed, "workflow", index as u32 + 1)
+                    {
+                        workflow_environment.push(environment);
+                    }
+                    continue;
+                }
+            }
             if indent == 0
                 && workflow_name.is_none()
                 && let Some(value) = yaml_key_value(trimmed, "name")
             {
                 workflow_name = Some(value);
             }
+            if indent == 0 && yaml_key(trimmed).is_some_and(|key| key == "env") {
+                active_workflow_section = Some(("env".to_string(), indent));
+                continue;
+            }
             if yaml_key(trimmed).is_some_and(|key| key == "jobs") {
                 in_jobs = true;
                 jobs_indent = indent;
+                active_workflow_section = None;
             }
             continue;
         }
@@ -4304,6 +4409,7 @@ fn github_actions_workflow(label: &str, source: &str) -> GithubActionsWorkflow {
                 display_name: None,
                 runs_on: None,
                 needs: Vec::new(),
+                environment: Vec::new(),
                 steps: Vec::new(),
                 line: index as u32 + 1,
             });
@@ -4324,6 +4430,8 @@ fn github_actions_workflow(label: &str, source: &str) -> GithubActionsWorkflow {
                 job.needs.extend(github_actions_needs_values(&value));
             } else if yaml_key(trimmed).is_some_and(|key| key == "needs") {
                 active_section = Some(("needs".to_string(), indent));
+            } else if yaml_key(trimmed).is_some_and(|key| key == "env") {
+                active_section = Some(("env".to_string(), indent));
             } else if yaml_key(trimmed).is_some_and(|key| key == "steps") {
                 active_section = Some(("steps".to_string(), indent));
             }
@@ -4348,6 +4456,14 @@ fn github_actions_workflow(label: &str, source: &str) -> GithubActionsWorkflow {
                             job.needs.push(dependency);
                         }
                     }
+                }
+            }
+            "env" => {
+                if let Some(environment) =
+                    ci_environment_assignment(trimmed, "job", index as u32 + 1)
+                    && let Some(job) = active_job.as_mut()
+                {
+                    job.environment.push(environment);
                 }
             }
             "steps" => {
@@ -4375,6 +4491,7 @@ fn github_actions_workflow(label: &str, source: &str) -> GithubActionsWorkflow {
     flush_github_actions_job(&mut active_job, &mut jobs);
     GithubActionsWorkflow {
         name: workflow_name.unwrap_or(fallback_name),
+        environment: workflow_environment,
         jobs,
     }
 }
@@ -4451,7 +4568,9 @@ fn is_github_actions_workflow_path(label: &str, path: &Path) -> bool {
 
 fn gitlab_ci_jobs(source: &str) -> Vec<GitlabCiJob> {
     let mut jobs = Vec::new();
+    let mut global_variables = Vec::new();
     let mut active_job: Option<GitlabCiJob> = None;
+    let mut active_global_section: Option<(String, usize)> = None;
     let mut active_section: Option<(String, usize)> = None;
 
     for (index, raw_line) in source.lines().enumerate() {
@@ -4460,12 +4579,28 @@ fn gitlab_ci_jobs(source: &str) -> Vec<GitlabCiJob> {
             continue;
         }
         let indent = yaml_indent(raw_line);
+        if let Some((section, section_indent)) = active_global_section.as_ref() {
+            if indent <= *section_indent {
+                active_global_section = None;
+            } else if section == "variables" {
+                if let Some(variable) =
+                    ci_environment_assignment(trimmed, "pipeline", index as u32 + 1)
+                {
+                    global_variables.push(variable);
+                }
+                continue;
+            }
+        }
         if indent == 0 {
             flush_gitlab_ci_job(&mut active_job, &mut jobs);
             active_section = None;
             let Some(name) = yaml_key(trimmed) else {
                 continue;
             };
+            if name == "variables" {
+                active_global_section = Some(("variables".to_string(), indent));
+                continue;
+            }
             if gitlab_ci_reserved_key(&name) || name.starts_with('.') {
                 continue;
             }
@@ -4476,6 +4611,7 @@ fn gitlab_ci_jobs(source: &str) -> Vec<GitlabCiJob> {
                 extends: Vec::new(),
                 needs: Vec::new(),
                 dependencies: Vec::new(),
+                variables: global_variables.clone(),
                 scripts: Vec::new(),
                 line: index as u32 + 1,
             });
@@ -4504,6 +4640,8 @@ fn gitlab_ci_jobs(source: &str) -> Vec<GitlabCiJob> {
                 job.dependencies.extend(gitlab_ci_name_values(&value));
             } else if yaml_key(trimmed).is_some_and(|key| key == "dependencies") {
                 active_section = Some(("dependencies".to_string(), indent));
+            } else if yaml_key(trimmed).is_some_and(|key| key == "variables") {
+                active_section = Some(("variables".to_string(), indent));
             } else if let Some(value) = yaml_key_value(trimmed, "script") {
                 push_gitlab_ci_script(job, "script", value, index as u32 + 1);
             } else if yaml_key(trimmed).is_some_and(|key| key == "script") {
@@ -4544,6 +4682,12 @@ fn gitlab_ci_jobs(source: &str) -> Vec<GitlabCiJob> {
             "dependencies" => {
                 if let Some(value) = trimmed.strip_prefix("- ") {
                     job.dependencies.extend(gitlab_ci_name_values(value));
+                }
+            }
+            "variables" => {
+                if let Some(variable) = ci_environment_assignment(trimmed, "job", index as u32 + 1)
+                {
+                    job.variables.push(variable);
                 }
             }
             "script" | "before_script" | "after_script" => {
@@ -4615,6 +4759,17 @@ fn gitlab_ci_need_values(value: &str) -> Vec<String> {
         return vec![job];
     }
     gitlab_ci_name_values(value)
+}
+
+fn ci_environment_assignment(trimmed: &str, scope: &str, line: u32) -> Option<CiEnvironment> {
+    let name = yaml_key(trimmed)?;
+    let value_present = yaml_key_value(trimmed, &name).is_some();
+    Some(CiEnvironment {
+        name,
+        value_present,
+        scope: scope.to_string(),
+        line,
+    })
 }
 
 fn gitlab_ci_reserved_key(key: &str) -> bool {
@@ -12436,11 +12591,17 @@ generated/output.txt:
             root.join(".github").join("workflows").join("ci.yml"),
             r#"name: CI
 on: [push]
+env:
+  GLOBAL_TOKEN: ${{ secrets.GLOBAL_TOKEN }}
+  RUNNER_FLAG:
 
 jobs:
   build:
     name: Build and test
     runs-on: ubuntu-latest
+    env:
+      BUILD_MODE: ci
+      OPTIONAL_FLAG:
     steps:
       - uses: actions/checkout@v4
       - name: Setup
@@ -12488,7 +12649,9 @@ jobs:
             NodeKind::Config,
             "github action:.github/actions/missing",
         );
-        let run_step = node_id(&graph, NodeKind::Config, "github run:CI/build/12");
+        let run_step = node_id(&graph, NodeKind::Config, "github run:CI/build/18");
+        let global_token = node_id(&graph, NodeKind::Environment, "GLOBAL_TOKEN");
+        let build_mode = node_id(&graph, NodeKind::Environment, "BUILD_MODE");
 
         for job in [build, deploy] {
             assert!(has_entrypoint_reference(
@@ -12573,6 +12736,24 @@ jobs:
             Some("build")
         );
         assert_eq!(
+            build_node
+                .metadata
+                .get("environment_count")
+                .map(String::as_str),
+            Some("4")
+        );
+        for environment in [global_token, build_mode] {
+            assert!(graph.edges.iter().any(|edge| {
+                edge.source == build
+                    && edge.target == environment
+                    && edge.kind == EdgeKind::ReadsEnvironment
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|value| value == "ci_environment")
+            }));
+        }
+        assert_eq!(
             graph
                 .nodes
                 .iter()
@@ -12596,6 +12777,10 @@ jobs:
   - test
   - deploy
 
+variables:
+  GLOBAL_URL: https://example.test
+  EMPTY_VAR:
+
 .base:
   script:
     - echo template
@@ -12612,6 +12797,9 @@ test:
   needs: [build]
   dependencies:
     - build
+  variables:
+    TEST_MODE: ci
+    SECRET_TOKEN:
   script: ["./scripts/test.sh", "cargo clippy"]
 
 deploy:
@@ -12641,9 +12829,9 @@ deploy:
         let build = node_id(&graph, NodeKind::Entrypoint, "gitlab job:build");
         let test = node_id(&graph, NodeKind::Entrypoint, "gitlab job:test");
         let deploy = node_id(&graph, NodeKind::Entrypoint, "gitlab job:deploy");
-        let build_script_fact = node_id(&graph, NodeKind::Config, "gitlab script:build/14#1");
-        let test_script_fact = node_id(&graph, NodeKind::Config, "gitlab script:test/22#1");
-        let deploy_script_fact = node_id(&graph, NodeKind::Config, "gitlab script:deploy/29#1");
+        let build_script_fact = node_id(&graph, NodeKind::Config, "gitlab script:build/18#1");
+        let test_script_fact = node_id(&graph, NodeKind::Config, "gitlab script:test/29#1");
+        let deploy_script_fact = node_id(&graph, NodeKind::Config, "gitlab script:deploy/36#1");
 
         for job in [build, test, deploy] {
             assert!(has_entrypoint_reference(
@@ -12709,6 +12897,30 @@ deploy:
                 .map(String::as_str),
             Some("build")
         );
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == test)
+                .and_then(|node| node.metadata.get("environment_count"))
+                .map(String::as_str),
+            Some("4")
+        );
+        for environment_label in ["GLOBAL_URL", "TEST_MODE"] {
+            assert!(graph.edges.iter().any(|edge| {
+                edge.source == test
+                    && graph.nodes.iter().any(|node| {
+                        node.id == edge.target
+                            && node.kind == NodeKind::Environment
+                            && node.label == environment_label
+                    })
+                    && edge.kind == EdgeKind::ReadsEnvironment
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|value| value == "ci_environment")
+            }));
+        }
         assert_eq!(
             graph
                 .nodes
