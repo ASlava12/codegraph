@@ -50,6 +50,7 @@ Goal: extract language-independent structure from source files.
 - [x] Detect Docker Compose published ports as runtime surface facts.
 - [x] Detect Docker Compose bind/local volumes as runtime dependency facts.
 - [x] Detect Kubernetes workloads, services, and ConfigMap/Secret runtime config references from YAML manifests.
+- [x] Detect Kubernetes Ingress entrypoints and backend Service references.
 - [x] Link Kubernetes Services to workloads through selector and pod-template label matching.
 - Add graph export formats:
   - [x] JSON
@@ -147,6 +148,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect Docker Compose services that publish conflicting host ports.
 - [x] Detect Docker Compose services that mount missing local bind volume paths.
 - [x] Detect Kubernetes workloads that reference missing local ConfigMap or Secret manifests.
+- [x] Detect Kubernetes Ingresses that reference missing local Service manifests.
 - [x] Detect Kubernetes Services whose selectors do not match any scanned workload.
 - [x] Detect custom architectural boundary violations on graph edges.
 - [x] Detect config and environment reads that are not reachable from entrypoints.

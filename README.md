@@ -31,7 +31,7 @@ Implemented now:
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
 - Manifest-defined entrypoints from Cargo, npm, Go, Python, setup.py/setup.cfg, Composer, and CMake project metadata.
 - Shebang-defined script entrypoints for Bash, Python, Node.js, and PHP scripts, including extensionless CLI files.
-- Dockerfile, Docker Compose, and Kubernetes runtime entrypoints, including Compose service dependencies, runtime config inputs, published ports, local bind volumes, Kubernetes workloads, services, Service selector links, and ConfigMap/Secret references.
+- Dockerfile, Docker Compose, and Kubernetes runtime entrypoints, including Compose service dependencies, runtime config inputs, published ports, local bind volumes, Kubernetes workloads, Ingresses, services, Service selector links, and ConfigMap/Secret references.
 - Framework route entrypoints for common Python, JavaScript/TypeScript, Rust, Go, and PHP web route declarations.
 - Rust/Axum route entrypoints handle multiline `.route(...)` calls and ignore string literal route markers.
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
@@ -217,7 +217,7 @@ Implemented now:
 - Investigation insights for ambiguous call resolutions where one call label from the same caller points to multiple possible targets.
 - Investigation insights for manifest entrypoints whose declared target cannot be resolved to a file or function.
 - Investigation insights for entrypoints that have no outgoing code/config/dependency/error flow.
-- Investigation insights for Dockerfile, Makefile, Docker Compose, and Kubernetes runtime paths/config refs that reference missing local files, missing local bind volumes, missing ConfigMap/Secret manifests, unmatched Service selectors, plus duplicate Compose published ports.
+- Investigation insights for Dockerfile, Makefile, Docker Compose, and Kubernetes runtime paths/config refs that reference missing local files, missing local bind volumes, missing ConfigMap/Secret manifests, missing Ingress backend Services, unmatched Service selectors, plus duplicate Compose published ports.
 - Investigation insights for framework routes whose named handler cannot be linked to a scanned function.
 - Investigation insights for heuristic cross-language dependency edges that deserve semantic review.
 - Investigation insights for local imports/includes whose target file cannot be found.
@@ -788,8 +788,8 @@ one exists; path-only workspace dependencies omit `dependency_version`.
 Manifest and runtime entrypoints are represented as `entrypoint` nodes linked from the
 repository root with exact `entrypoint` edges. Examples include Cargo binaries,
 npm scripts, Python project and setup.py/setup.cfg console scripts, Composer
-scripts, Composer binaries, Dockerfile instructions, and Docker Compose
-services.
+scripts, Composer binaries, Dockerfile instructions, Docker Compose services,
+and Kubernetes workloads or Ingresses.
 When a manifest target can be mapped back to code, the entrypoint node also
 emits `references` edges with metadata such as `relation=entrypoint_file` or
 `relation=entrypoint_function`; traces follow these edges before continuing into
@@ -801,6 +801,9 @@ environment values in graph metadata.
 Kubernetes Services emit `references` edges to matching workloads when their
 selectors match workload pod-template labels, keeping runtime traffic surfaces
 connected to the entrypoint graph.
+Kubernetes Ingresses emit backend `references` edges to Service refs and then
+to matching Service manifests, preserving host/path route context for traffic
+entrypoint investigation.
 Entrypoint trace reports run this traversal for all matching entrypoints so a
 project's startup flows can be compared without manually copying labels.
 Config traces specialize that graph traversal by matching `config` and

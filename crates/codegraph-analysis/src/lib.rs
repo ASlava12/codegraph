@@ -794,6 +794,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unresolved_entrypoint_target",
     "unresolved_framework_route_handler",
     "unresolved_kubernetes_config_ref",
+    "unresolved_kubernetes_ingress_backend",
     "unresolved_kubernetes_service_selector",
     "unresolved_local_import",
     "unresolved_makefile_command_path",
@@ -1350,6 +1351,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unresolved_compose_env_file_path_insights(graph, &mut insights);
     add_unresolved_compose_volume_source_path_insights(graph, &mut insights);
     add_unresolved_kubernetes_config_ref_insights(graph, &mut insights);
+    add_unresolved_kubernetes_ingress_backend_insights(graph, &mut insights);
     add_unresolved_kubernetes_service_selector_insights(graph, &mut insights);
     add_unresolved_dockerfile_command_path_insights(graph, &mut insights);
     add_unresolved_makefile_command_path_insights(graph, &mut insights);
@@ -6755,6 +6757,85 @@ fn kubernetes_config_ref_reader_ids(graph: &CodeGraph, config_ref: NodeId) -> Ve
         })
         .map(|edge| edge.source)
         .collect()
+}
+
+fn add_unresolved_kubernetes_ingress_backend_insights(
+    graph: &CodeGraph,
+    insights: &mut Vec<Insight>,
+) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Config
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "kubernetes_service_ref")
+        {
+            continue;
+        }
+        let resolved = graph.edges.iter().any(|edge| {
+            edge.source == node.id
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|value| value == "kubernetes_service_ref")
+        });
+        if resolved {
+            continue;
+        }
+
+        let name = node
+            .metadata
+            .get("name")
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        let namespace = node
+            .metadata
+            .get("namespace")
+            .map(String::as_str)
+            .unwrap_or("default");
+        let ingress = node
+            .metadata
+            .get("ingress")
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        let route = kubernetes_ingress_route_label(node);
+        let mut nodes = vec![node.id];
+        nodes.extend(kubernetes_service_ref_reader_ids(graph, node.id));
+        nodes.sort();
+        nodes.dedup();
+        insights.push(Insight {
+            kind: "unresolved_kubernetes_ingress_backend".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Kubernetes Ingress `{ingress}` routes {route} to Service `{namespace}/{name}` but no matching Service manifest was found"
+            ),
+            nodes,
+            edges: incoming_edge_indexes(graph, node.id, EdgeKind::References),
+        });
+    }
+}
+
+fn kubernetes_service_ref_reader_ids(graph: &CodeGraph, service_ref: NodeId) -> Vec<NodeId> {
+    graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.target == service_ref
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "kubernetes_ingress_backend")
+        })
+        .map(|edge| edge.source)
+        .collect()
+}
+
+fn kubernetes_ingress_route_label(node: &Node) -> String {
+    let host = node.metadata.get("host").map(String::as_str).unwrap_or("*");
+    let path = node.metadata.get("path").map(String::as_str).unwrap_or("/");
+    format!("`{host}{path}`")
 }
 
 fn add_unresolved_kubernetes_service_selector_insights(
@@ -12615,6 +12696,102 @@ mod tests {
         assert!(insight.message.contains("prod/missing-config"));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unresolved_kubernetes_config_ref" && insight.nodes.contains(&resolved)
+        }));
+    }
+
+    #[test]
+    fn insights_report_unresolved_kubernetes_ingress_backends() {
+        let mut graph = CodeGraph::new("repo");
+        let ingress = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "k8s ingress:prod/web",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "kubernetes_ingress".to_string()),
+                ("name".to_string(), "web".to_string()),
+                ("namespace".to_string(), "prod".to_string()),
+            ]),
+        );
+        let missing = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "k8s service ref:prod/missing",
+            None,
+            BTreeMap::from([
+                (
+                    "item_kind".to_string(),
+                    "kubernetes_service_ref".to_string(),
+                ),
+                ("name".to_string(), "missing".to_string()),
+                ("namespace".to_string(), "prod".to_string()),
+                ("ingress".to_string(), "web".to_string()),
+                ("host".to_string(), "example.test".to_string()),
+                ("path".to_string(), "/missing".to_string()),
+            ]),
+        );
+        let resolved = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "k8s service ref:prod/api",
+            None,
+            BTreeMap::from([
+                (
+                    "item_kind".to_string(),
+                    "kubernetes_service_ref".to_string(),
+                ),
+                ("name".to_string(), "api".to_string()),
+                ("namespace".to_string(), "prod".to_string()),
+                ("ingress".to_string(), "web".to_string()),
+                ("host".to_string(), "example.test".to_string()),
+                ("path".to_string(), "/api".to_string()),
+            ]),
+        );
+        let service = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "k8s service:prod/api",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "kubernetes_service".to_string()),
+                ("name".to_string(), "api".to_string()),
+                ("namespace".to_string(), "prod".to_string()),
+            ]),
+        );
+        for service_ref in [missing, resolved] {
+            graph.add_edge_with_metadata(
+                ingress,
+                service_ref,
+                EdgeKind::References,
+                Confidence::Exact,
+                BTreeMap::from([(
+                    "relation".to_string(),
+                    "kubernetes_ingress_backend".to_string(),
+                )]),
+            );
+        }
+        graph.add_edge_with_metadata(
+            resolved,
+            service,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([(
+                "resolution".to_string(),
+                "kubernetes_service_ref".to_string(),
+            )]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_kubernetes_ingress_backend")
+            .expect("expected unresolved Kubernetes ingress backend insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.nodes.contains(&missing));
+        assert!(insight.nodes.contains(&ingress));
+        assert!(insight.message.contains("example.test/missing"));
+        assert!(insight.message.contains("prod/missing"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_kubernetes_ingress_backend"
+                && insight.nodes.contains(&resolved)
         }));
     }
 

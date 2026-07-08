@@ -105,7 +105,9 @@ struct IndexContext {
     pending_compose_config_targets: Vec<PendingComposeConfigTarget>,
     pending_compose_volume_targets: Vec<PendingComposeVolumeTarget>,
     kubernetes_configs: BTreeMap<KubernetesConfigKey, NodeId>,
+    kubernetes_services: BTreeMap<KubernetesServiceKey, NodeId>,
     pending_kubernetes_config_refs: Vec<PendingKubernetesConfigRef>,
+    pending_kubernetes_service_refs: Vec<PendingKubernetesServiceRef>,
 }
 
 struct PendingCall {
@@ -153,6 +155,18 @@ struct PendingKubernetesConfigRef {
     config_ref: NodeId,
     namespace: String,
     config_kind: String,
+    name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct KubernetesServiceKey {
+    namespace: String,
+    name: String,
+}
+
+struct PendingKubernetesServiceRef {
+    service_ref: NodeId,
+    namespace: String,
     name: String,
 }
 
@@ -229,6 +243,7 @@ struct KubernetesDocument {
     selector_labels: BTreeMap<String, String>,
     config_refs: Vec<KubernetesConfigRef>,
     service_ports: Vec<KubernetesServicePort>,
+    ingress_backends: Vec<KubernetesIngressBackend>,
     container_count: usize,
 }
 
@@ -246,6 +261,16 @@ struct KubernetesServicePort {
     port: Option<String>,
     target_port: Option<String>,
     protocol: String,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KubernetesIngressBackend {
+    service_name: String,
+    service_port: Option<String>,
+    host: Option<String>,
+    path: Option<String>,
+    path_type: Option<String>,
     line: u32,
 }
 
@@ -669,7 +694,9 @@ fn scan_project_with_scope(
         pending_compose_config_targets: Vec::new(),
         pending_compose_volume_targets: Vec::new(),
         kubernetes_configs: BTreeMap::new(),
+        kubernetes_services: BTreeMap::new(),
         pending_kubernetes_config_refs: Vec::new(),
+        pending_kubernetes_service_refs: Vec::new(),
     };
 
     for entry in WalkDir::new(root)
@@ -727,6 +754,7 @@ fn scan_project_with_scope(
     resolve_pending_compose_config_targets(&mut context);
     resolve_pending_compose_volume_targets(&mut context);
     resolve_pending_kubernetes_config_refs(&mut context);
+    resolve_pending_kubernetes_service_refs(&mut context);
     apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
 
@@ -2817,7 +2845,19 @@ fn index_kubernetes_manifest_facts(
 
         if document.kind == "Service" {
             let service_id = index_kubernetes_service(context, file_id, label, source, document);
+            context.kubernetes_services.insert(
+                KubernetesServiceKey {
+                    namespace: document.namespace.clone(),
+                    name: document.name.clone(),
+                },
+                service_id,
+            );
             service_nodes.push((service_id, document));
+            continue;
+        }
+
+        if document.kind == "Ingress" {
+            index_kubernetes_ingress(context, file_id, label, source, document);
             continue;
         }
 
@@ -2912,6 +2952,123 @@ fn index_kubernetes_service(
         );
     }
     service_id
+}
+
+fn index_kubernetes_ingress(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+    document: &KubernetesDocument,
+) -> NodeId {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("item_kind".to_string(), "kubernetes_ingress".to_string());
+    metadata.insert("entrypoint_kind".to_string(), "ingress".to_string());
+    metadata.insert("source".to_string(), "kubernetes".to_string());
+    metadata.insert("ecosystem".to_string(), "kubernetes".to_string());
+    metadata.insert("kubernetes_kind".to_string(), document.kind.clone());
+    metadata.insert("name".to_string(), document.name.clone());
+    metadata.insert("namespace".to_string(), document.namespace.clone());
+    metadata.insert("line".to_string(), document.line.to_string());
+    metadata.insert(
+        "backend_count".to_string(),
+        document.ingress_backends.len().to_string(),
+    );
+    let ingress_id = context.graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        kubernetes_resource_label("ingress", &document.namespace, &document.name),
+        Some(line_span(label, source, document.line)),
+        metadata,
+    );
+    add_edge_once(
+        &mut context.graph,
+        file_id,
+        ingress_id,
+        EdgeKind::Contains,
+        Confidence::Exact,
+    );
+    let root_id = context.graph.root;
+    add_edge_once(
+        &mut context.graph,
+        root_id,
+        ingress_id,
+        EdgeKind::Entrypoint,
+        Confidence::Exact,
+    );
+    let mut edge_metadata = BTreeMap::new();
+    edge_metadata.insert("relation".to_string(), "entrypoint_file".to_string());
+    edge_metadata.insert("resolution".to_string(), "kubernetes_manifest".to_string());
+    edge_metadata.insert("source".to_string(), "kubernetes".to_string());
+    add_edge_once_with_metadata(
+        &mut context.graph,
+        ingress_id,
+        file_id,
+        EdgeKind::References,
+        Confidence::Exact,
+        edge_metadata,
+    );
+
+    for backend in &document.ingress_backends {
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "item_kind".to_string(),
+            "kubernetes_service_ref".to_string(),
+        );
+        metadata.insert("source".to_string(), "kubernetes".to_string());
+        metadata.insert("ecosystem".to_string(), "kubernetes".to_string());
+        metadata.insert("ref_kind".to_string(), "ingress_backend".to_string());
+        metadata.insert("name".to_string(), backend.service_name.clone());
+        metadata.insert("namespace".to_string(), document.namespace.clone());
+        metadata.insert("ingress".to_string(), document.name.clone());
+        metadata.insert("line".to_string(), backend.line.to_string());
+        if let Some(port) = backend.service_port.as_deref() {
+            metadata.insert("service_port".to_string(), port.to_string());
+        }
+        if let Some(host) = backend.host.as_deref() {
+            metadata.insert("host".to_string(), host.to_string());
+        }
+        if let Some(path) = backend.path.as_deref() {
+            metadata.insert("path".to_string(), path.to_string());
+        }
+        if let Some(path_type) = backend.path_type.as_deref() {
+            metadata.insert("path_type".to_string(), path_type.to_string());
+        }
+        let service_ref_id = context.graph.add_node_with_metadata(
+            NodeKind::Config,
+            kubernetes_service_ref_label(&document.namespace, &backend.service_name),
+            Some(line_span(label, source, backend.line)),
+            metadata,
+        );
+        let mut edge_metadata = BTreeMap::new();
+        edge_metadata.insert("source".to_string(), "kubernetes".to_string());
+        edge_metadata.insert(
+            "relation".to_string(),
+            "kubernetes_ingress_backend".to_string(),
+        );
+        if let Some(path) = backend.path.as_deref() {
+            edge_metadata.insert("path".to_string(), path.to_string());
+        }
+        if let Some(host) = backend.host.as_deref() {
+            edge_metadata.insert("host".to_string(), host.to_string());
+        }
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            ingress_id,
+            service_ref_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            edge_metadata,
+        );
+        context
+            .pending_kubernetes_service_refs
+            .push(PendingKubernetesServiceRef {
+                service_ref: service_ref_id,
+                namespace: document.namespace.clone(),
+                name: backend.service_name.clone(),
+            });
+    }
+
+    ingress_id
 }
 
 fn index_kubernetes_workload(
@@ -3184,9 +3341,15 @@ fn kubernetes_document_from_lines(lines: &[String], start_line: u32) -> Option<K
     let mut selector_labels = BTreeMap::new();
     let mut config_refs = Vec::new();
     let mut service_ports = Vec::new();
+    let mut ingress_backends = Vec::new();
     let mut active_ref: Option<(String, String, usize, u32)> = None;
     let mut active_ports_indent = None;
     let mut active_service_port: Option<(KubernetesServicePort, usize)> = None;
+    let mut active_ingress_host: Option<String> = None;
+    let mut active_ingress_path: Option<String> = None;
+    let mut active_ingress_path_type: Option<String> = None;
+    let mut active_ingress_backend: Option<(KubernetesIngressBackend, usize)> = None;
+    let mut active_ingress_service_indent = None;
     let mut active_containers_indent = None;
     let mut active_template_indent = None;
     let mut active_template_metadata_indent = None;
@@ -3228,6 +3391,17 @@ fn kubernetes_document_from_lines(lines: &[String], start_line: u32) -> Option<K
             && indent <= *ref_indent
         {
             active_ref = None;
+        }
+        if let Some((_, backend_indent)) = active_ingress_backend.as_ref()
+            && indent <= *backend_indent
+        {
+            flush_kubernetes_ingress_backend(&mut ingress_backends, &mut active_ingress_backend);
+            active_ingress_service_indent = None;
+        }
+        if let Some(service_indent) = active_ingress_service_indent
+            && indent <= service_indent
+        {
+            active_ingress_service_indent = None;
         }
         if let Some((config_kind, ref_kind, _, ref_line)) = active_ref.as_ref()
             && let Some(value) = yaml_key_value(trimmed, "name")
@@ -3304,6 +3478,56 @@ fn kubernetes_document_from_lines(lines: &[String], start_line: u32) -> Option<K
         if yaml_key(trimmed).is_some_and(|key| key == "containers") {
             active_containers_indent = Some(indent);
             continue;
+        }
+        if let Some(value) = yaml_key_value(item_trimmed, "host") {
+            active_ingress_host = Some(value);
+            continue;
+        }
+        if let Some(value) = yaml_key_value(item_trimmed, "path") {
+            active_ingress_path = Some(value);
+            continue;
+        }
+        if let Some(value) = yaml_key_value(item_trimmed, "pathType") {
+            active_ingress_path_type = Some(value);
+            continue;
+        }
+        if yaml_key(trimmed).is_some_and(|key| key == "backend") {
+            flush_kubernetes_ingress_backend(&mut ingress_backends, &mut active_ingress_backend);
+            active_ingress_backend = Some((
+                KubernetesIngressBackend {
+                    service_name: String::new(),
+                    service_port: None,
+                    host: active_ingress_host.clone(),
+                    path: active_ingress_path.clone(),
+                    path_type: active_ingress_path_type.clone(),
+                    line,
+                },
+                indent,
+            ));
+            active_ingress_service_indent = None;
+            continue;
+        }
+        if active_ingress_backend.is_some() && yaml_key(trimmed).is_some_and(|key| key == "service")
+        {
+            active_ingress_service_indent = Some(indent);
+            continue;
+        }
+        if active_ingress_service_indent.is_some()
+            && let Some((backend, _)) = active_ingress_backend.as_mut()
+        {
+            if let Some(value) = yaml_key_value(trimmed, "name") {
+                if backend.service_name.is_empty() {
+                    backend.service_name = value;
+                    backend.line = line;
+                } else if backend.service_port.is_none() {
+                    backend.service_port = Some(value);
+                }
+                continue;
+            }
+            if let Some(value) = yaml_key_value(trimmed, "number") {
+                backend.service_port = Some(value);
+                continue;
+            }
         }
         if yaml_key(trimmed).is_some_and(|key| key == "template") {
             active_template_indent = Some(indent);
@@ -3390,6 +3614,7 @@ fn kubernetes_document_from_lines(lines: &[String], start_line: u32) -> Option<K
     }
 
     flush_kubernetes_service_port(&mut service_ports, &mut active_service_port);
+    flush_kubernetes_ingress_backend(&mut ingress_backends, &mut active_ingress_backend);
 
     let kind = kind?;
     let name = name?;
@@ -3407,6 +3632,7 @@ fn kubernetes_document_from_lines(lines: &[String], start_line: u32) -> Option<K
         selector_labels,
         config_refs,
         service_ports,
+        ingress_backends,
         container_count,
     })
 }
@@ -3461,8 +3687,22 @@ fn flush_kubernetes_service_port(
     }
 }
 
+fn flush_kubernetes_ingress_backend(
+    backends: &mut Vec<KubernetesIngressBackend>,
+    active_backend: &mut Option<(KubernetesIngressBackend, usize)>,
+) {
+    let Some((backend, _)) = active_backend.take() else {
+        return;
+    };
+    if !backend.service_name.is_empty() {
+        backends.push(backend);
+    }
+}
+
 fn kubernetes_known_kind(kind: &str) -> bool {
-    kubernetes_config_kind(kind).is_some() || kind == "Service" || kubernetes_workload_kind(kind)
+    kubernetes_config_kind(kind).is_some()
+        || matches!(kind, "Ingress" | "Service")
+        || kubernetes_workload_kind(kind)
 }
 
 fn kubernetes_config_kind(kind: &str) -> Option<&'static str> {
@@ -3486,6 +3726,10 @@ fn kubernetes_resource_label(kind: &str, namespace: &str, name: &str) -> String 
 
 fn kubernetes_config_ref_label(config_kind: &str, namespace: &str, name: &str) -> String {
     format!("k8s config ref:{config_kind} {namespace}/{name}")
+}
+
+fn kubernetes_service_ref_label(namespace: &str, name: &str) -> String {
+    format!("k8s service ref:{namespace}/{name}")
 }
 
 fn kubernetes_service_port_label(
@@ -7749,6 +7993,35 @@ fn resolve_pending_kubernetes_config_refs(context: &mut IndexContext) {
     }
 }
 
+fn resolve_pending_kubernetes_service_refs(context: &mut IndexContext) {
+    let pending_refs = std::mem::take(&mut context.pending_kubernetes_service_refs);
+
+    for pending in pending_refs {
+        let key = KubernetesServiceKey {
+            namespace: pending.namespace,
+            name: pending.name,
+        };
+        let Some(service_id) = context.kubernetes_services.get(&key).copied() else {
+            continue;
+        };
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), "service_definition".to_string());
+        metadata.insert(
+            "resolution".to_string(),
+            "kubernetes_service_ref".to_string(),
+        );
+        metadata.insert("source".to_string(), "kubernetes".to_string());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.service_ref,
+            service_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
 fn entrypoint_target_candidates(
     pending: &PendingEntrypointTarget,
 ) -> Vec<EntrypointTargetCandidate> {
@@ -11146,6 +11419,24 @@ spec:
       targetPort: 8080
       protocol: TCP
 ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  namespace: prod
+spec:
+  rules:
+    - host: example.test
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -11192,6 +11483,8 @@ spec:
         let configmap = node_id(&graph, NodeKind::Config, "k8s configmap:prod/app-config");
         let secret = node_id(&graph, NodeKind::Config, "k8s secret:prod/app-secret");
         let service = node_id(&graph, NodeKind::Config, "k8s service:prod/web");
+        let ingress = node_id(&graph, NodeKind::Entrypoint, "k8s ingress:prod/web");
+        let service_ref = node_id(&graph, NodeKind::Config, "k8s service ref:prod/web");
         let service_port = node_id(
             &graph,
             NodeKind::Config,
@@ -11219,7 +11512,7 @@ spec:
                 && edge.kind == EdgeKind::Entrypoint
                 && edge.confidence == Confidence::Exact
         }));
-        for node in [deployment, configmap, secret, service] {
+        for node in [deployment, configmap, secret, service, ingress] {
             assert!(graph.edges.iter().any(|edge| {
                 edge.source == manifest
                     && edge.target == node
@@ -11235,6 +11528,40 @@ spec:
                     .metadata
                     .get("resolution")
                     .is_some_and(|value| value == "kubernetes_manifest")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == graph.root
+                && edge.target == ingress
+                && edge.kind == EdgeKind::Entrypoint
+                && edge.confidence == Confidence::Exact
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == ingress
+                && edge.target == service_ref
+                && edge.kind == EdgeKind::References
+                && edge.confidence == Confidence::Exact
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "kubernetes_ingress_backend")
+                && edge
+                    .metadata
+                    .get("path")
+                    .is_some_and(|value| value == "/api")
+                && edge
+                    .metadata
+                    .get("host")
+                    .is_some_and(|value| value == "example.test")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == service_ref
+                && edge.target == service
+                && edge.kind == EdgeKind::References
+                && edge.confidence == Confidence::Exact
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|value| value == "kubernetes_service_ref")
         }));
         for config_ref in [app_config_ref, app_secret_ref, missing_config_ref] {
             assert!(graph.edges.iter().any(|edge| {
@@ -11324,6 +11651,30 @@ spec:
         assert_eq!(
             service_node.metadata.get("selector").map(String::as_str),
             Some("app=web,tier=frontend")
+        );
+        let ingress_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == ingress)
+            .expect("missing Kubernetes ingress");
+        assert_eq!(
+            ingress_node
+                .metadata
+                .get("backend_count")
+                .map(String::as_str),
+            Some("1")
+        );
+        let service_ref_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == service_ref)
+            .expect("missing Kubernetes service ref");
+        assert_eq!(
+            service_ref_node
+                .metadata
+                .get("service_port")
+                .map(String::as_str),
+            Some("80")
         );
 
         fs::remove_dir_all(root).unwrap();
