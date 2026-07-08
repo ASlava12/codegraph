@@ -304,9 +304,38 @@ const I18N = {
     "empty.noHotspots": "No hotspots.",
     "empty.noAnnotations": "No annotations.",
     "empty.noEntrypoints": "No entrypoints.",
+    "empty.noScanPolicy": "No scan policy.",
+    "empty.noCoverage": "No coverage.",
+    "empty.noLspStatus": "No LSP status.",
+    "empty.noSemanticWork": "No semantic work items.",
+    "empty.noArchitecture": "No architecture map.",
+    "empty.noLanguageDependencies": "No language dependencies.",
     "empty.loadingSource": "Loading...",
     "focus.entrypoint": "Focus: entrypoint",
     "focus.hotspot": "Focus: hotspot",
+    "focus.architectureEdge": "Focus: {source} -> {target}",
+    "focus.languageDependency": "Focus: {source} -> {target}",
+    "focus.semantic": "Semantic: {label}",
+    "overview.maxFile": "Max file",
+    "overview.policy": "Policy",
+    "overview.defaults": "defaults",
+    "overview.ignoreNames": "Ignore names",
+    "overview.ignoreGlobs": "Ignore globs",
+    "overview.hidden": "Hidden",
+    "overview.gitIgnored": "Git ignored",
+    "overview.indexed": "Indexed",
+    "overview.large": "Large",
+    "overview.policySkipped": "Policy skipped",
+    "overview.otherFiles": "Other files",
+    "overview.indexedBytes": "Indexed bytes",
+    "overview.yes": "yes",
+    "overview.no": "no",
+    "overview.shown": "shown",
+    "overview.queued": "queued",
+    "overview.allAreas": "All areas",
+    "overview.reset": "reset",
+    "overview.areaEdges": "Area edges",
+    "overview.crossLanguage": "Cross-language",
     "cap.server": "Server",
     "cap.api": "API",
     "cap.graph": "Graph",
@@ -781,9 +810,38 @@ const I18N = {
     "empty.noHotspots": "Горячих узлов нет.",
     "empty.noAnnotations": "Аннотаций нет.",
     "empty.noEntrypoints": "Точки входа не найдены.",
+    "empty.noScanPolicy": "Политика скана не получена.",
+    "empty.noCoverage": "Покрытие скана не получено.",
+    "empty.noLspStatus": "Статус LSP не получен.",
+    "empty.noSemanticWork": "Семантических задач нет.",
+    "empty.noArchitecture": "Карта архитектуры не получена.",
+    "empty.noLanguageDependencies": "Межъязыковых зависимостей нет.",
     "empty.loadingSource": "Загружаю...",
     "focus.entrypoint": "Фокус: точка входа",
     "focus.hotspot": "Фокус: горячий узел",
+    "focus.architectureEdge": "Фокус: {source} -> {target}",
+    "focus.languageDependency": "Фокус: {source} -> {target}",
+    "focus.semantic": "Семантика: {label}",
+    "overview.maxFile": "Макс. файл",
+    "overview.policy": "Политика",
+    "overview.defaults": "по умолчанию",
+    "overview.ignoreNames": "Имена ignore",
+    "overview.ignoreGlobs": "Glob ignore",
+    "overview.hidden": "Скрытые",
+    "overview.gitIgnored": "Git ignored",
+    "overview.indexed": "Индексировано",
+    "overview.large": "Большие",
+    "overview.policySkipped": "Пропущено политикой",
+    "overview.otherFiles": "Прочие файлы",
+    "overview.indexedBytes": "Индексировано байт",
+    "overview.yes": "да",
+    "overview.no": "нет",
+    "overview.shown": "показано",
+    "overview.queued": "в очереди",
+    "overview.allAreas": "Все области",
+    "overview.reset": "сброс",
+    "overview.areaEdges": "Связи областей",
+    "overview.crossLanguage": "Межъязыковые",
     "cap.server": "Сервер",
     "cap.api": "API",
     "cap.graph": "Граф",
@@ -3100,19 +3158,19 @@ function renderCapabilities(capabilities) {
 
 function renderScanPolicy(options) {
   if (!options) {
-    scanPolicyList.innerHTML = '<p class="empty">No scan policy.</p>';
+    scanPolicyList.innerHTML = `<p class="empty">${escapeHtml(t("empty.noScanPolicy"))}</p>`;
     return;
   }
 
   const ignoredNames = Array.isArray(options.ignored_names) ? options.ignored_names : [];
   const ignoredGlobs = Array.isArray(options.ignored_globs) ? options.ignored_globs : [];
   const chips = [
-    ["Max file", formatBytes(Number(options.max_file_size || 0))],
-    ["Policy", options.config_path ? ".codegraph" : "defaults"],
-    ["Ignore names", String(ignoredNames.length)],
-    ["Ignore globs", String(ignoredGlobs.length)],
-    ["Hidden", options.include_hidden ? "yes" : "no"],
-    ["Git ignored", options.include_ignored ? "yes" : "no"],
+    [t("overview.maxFile"), formatBytes(Number(options.max_file_size || 0))],
+    [t("overview.policy"), options.config_path ? ".codegraph" : t("overview.defaults")],
+    [t("overview.ignoreNames"), String(ignoredNames.length)],
+    [t("overview.ignoreGlobs"), String(ignoredGlobs.length)],
+    [t("overview.hidden"), options.include_hidden ? t("overview.yes") : t("overview.no")],
+    [t("overview.gitIgnored"), options.include_ignored ? t("overview.yes") : t("overview.no")],
   ];
 
   scanPolicyList.innerHTML = chips
@@ -3129,16 +3187,16 @@ function renderScanPolicy(options) {
 
 function renderCoverage(coverage) {
   if (!coverage) {
-    coverageList.innerHTML = '<p class="empty">No coverage.</p>';
+    coverageList.innerHTML = `<p class="empty">${escapeHtml(t("empty.noCoverage"))}</p>`;
     return;
   }
 
   const chips = [
-    ["Indexed", String(coverage.indexed_files || 0)],
-    ["Large", String(coverage.skipped_large_files || 0)],
-    ["Policy skipped", String(coverage.skipped_policy_entries || 0)],
-    ["Other files", String(coverage.non_index_files || 0)],
-    ["Indexed bytes", formatBytes(Number(coverage.indexed_bytes || 0))],
+    [t("overview.indexed"), String(coverage.indexed_files || 0)],
+    [t("overview.large"), String(coverage.skipped_large_files || 0)],
+    [t("overview.policySkipped"), String(coverage.skipped_policy_entries || 0)],
+    [t("overview.otherFiles"), String(coverage.non_index_files || 0)],
+    [t("overview.indexedBytes"), formatBytes(Number(coverage.indexed_bytes || 0))],
   ];
 
   coverageList.innerHTML = chips
@@ -3241,7 +3299,7 @@ function riskKindChip(item) {
 
 function renderLspStatus(report, readiness, plan) {
   if (!report && !readiness && !plan) {
-    lspList.innerHTML = '<p class="empty">No LSP status.</p>';
+    lspList.innerHTML = `<p class="empty">${escapeHtml(t("empty.noLspStatus"))}</p>`;
     return;
   }
 
@@ -3250,7 +3308,7 @@ function renderLspStatus(report, readiness, plan) {
     (server) => `
       <div class="lsp-chip ${server.installed ? "available" : "missing"}">
         <span>${escapeHtml(server.id || "lsp")}</span>
-        <strong>${server.installed ? "ready" : "missing"}</strong>
+        <strong>${escapeHtml(server.installed ? t("option.ready") : t("option.missing"))}</strong>
       </div>
     `,
   );
@@ -3357,17 +3415,17 @@ function renderLspStatus(report, readiness, plan) {
 function renderSemanticWork(plan) {
   const items = Array.isArray(plan?.work_items) ? plan.work_items.slice(0, 8) : [];
   if (items.length === 0) {
-    semanticWorkList.innerHTML = '<p class="empty">No semantic work items.</p>';
+    semanticWorkList.innerHTML = `<p class="empty">${escapeHtml(t("empty.noSemanticWork"))}</p>`;
     return;
   }
 
   const filter = renderSemanticWorkFilterLabel(plan.work_item_filter);
   const truncated = plan.truncated_work_items
-    ? `<span>${items.length}/${Number(plan.total_work_items || items.length)} shown</span>`
-    : `<span>${items.length} queued</span>`;
+    ? `<span>${items.length}/${Number(plan.total_work_items || items.length)} ${escapeHtml(t("overview.shown"))}</span>`
+    : `<span>${items.length} ${escapeHtml(t("overview.queued"))}</span>`;
   semanticWorkList.innerHTML = `
     <div class="semantic-work-summary">
-      <strong>Semantic work</strong>
+      <strong>${escapeHtml(t("semantic.workQueue"))}</strong>
       <span>${filter}${truncated}</span>
     </div>
     <ul class="semantic-work-items">
@@ -3451,7 +3509,11 @@ async function focusSemanticWorkItem(item) {
       throw new Error(apiErrorMessage(body, response, "focus failed"));
     }
     const selectedId = item.node?.id ?? item.target?.id ?? null;
-    showFocusedGraph(body, `Semantic: ${formatKind(item.capability || item.kind)}`, selectedId);
+    showFocusedGraph(
+      body,
+      t("focus.semantic", { label: formatKind(item.capability || item.kind) }),
+      selectedId,
+    );
   } catch (error) {
     if (requestId !== state.insightFocusRequest) return;
     queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
@@ -3460,7 +3522,7 @@ async function focusSemanticWorkItem(item) {
 
 function renderArchitecture(architecture) {
   if (!architecture) {
-    architectureList.innerHTML = '<p class="empty">No architecture map.</p>';
+    architectureList.innerHTML = `<p class="empty">${escapeHtml(t("empty.noArchitecture"))}</p>`;
     return;
   }
 
@@ -3476,14 +3538,14 @@ function renderArchitecture(architecture) {
   if (state.architecturePathPrefix) {
     groupChips.unshift(`
       <button class="architecture-chip" type="button" data-architecture-prefix="">
-        <span>All areas</span>
-        <strong>reset</strong>
+        <span>${escapeHtml(t("overview.allAreas"))}</span>
+        <strong>${escapeHtml(t("overview.reset"))}</strong>
       </button>
     `);
   }
   groupChips.push(`
     <div class="architecture-chip">
-      <span>Area edges</span>
+      <span>${escapeHtml(t("overview.areaEdges"))}</span>
       <strong>${Number(architecture.total_edges || 0)}</strong>
     </div>
   `);
@@ -3535,7 +3597,13 @@ async function focusArchitectureEdge(edge) {
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "focus failed"));
     }
-    showFocusedGraph(body, `Focus: ${edge.source || "area"} -> ${edge.target || "area"}`);
+    showFocusedGraph(
+      body,
+      t("focus.architectureEdge", {
+        source: edge.source || "area",
+        target: edge.target || "area",
+      }),
+    );
   } catch (error) {
     if (requestId !== state.insightFocusRequest) return;
     queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
@@ -3544,7 +3612,7 @@ async function focusArchitectureEdge(edge) {
 
 function renderLanguageDependencies(report) {
   if (!report) {
-    languageDependencyList.innerHTML = '<p class="empty">No language dependencies.</p>';
+    languageDependencyList.innerHTML = `<p class="empty">${escapeHtml(t("empty.noLanguageDependencies"))}</p>`;
     return;
   }
 
@@ -3552,14 +3620,14 @@ function renderLanguageDependencies(report) {
   const chips = links.map(
     (link, index) => `
       <button class="language-dependency-chip" type="button" data-language-dependency-index="${index}">
-        <span>${escapeHtml(link.source_language || "unknown")} -> ${escapeHtml(link.target_language || "unknown")}</span>
+        <span>${escapeHtml(link.source_language || formatKind("unknown"))} -> ${escapeHtml(link.target_language || formatKind("unknown"))}</span>
         <strong>${Number(link.count || 0)}</strong>
       </button>
     `,
   );
   chips.unshift(`
     <div class="language-dependency-chip">
-      <span>Cross-language</span>
+      <span>${escapeHtml(t("overview.crossLanguage"))}</span>
       <strong>${Number(report.cross_language_edges || 0)}</strong>
     </div>
   `);
@@ -3593,7 +3661,10 @@ async function focusLanguageDependency(link) {
     }
     showFocusedGraph(
       body,
-      `Focus: ${link.source_language || "unknown"} -> ${link.target_language || "unknown"}`,
+      t("focus.languageDependency", {
+        source: link.source_language || formatKind("unknown"),
+        target: link.target_language || formatKind("unknown"),
+      }),
     );
   } catch (error) {
     if (requestId !== state.insightFocusRequest) return;

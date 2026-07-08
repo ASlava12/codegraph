@@ -79,6 +79,7 @@ Implemented now:
 - Web overview surfaces the API schema common response-header contract for agent/client diagnostics.
 - Web overview risk summary chips for report quality gate, grade, weighted score, severity counts, and top finding kinds with quick insight filtering plus one-click quality checks.
 - Web overview hotspot, annotation, and entrypoint empty/focus states are localized for English and Russian UI sessions.
+- Web overview scan policy, coverage, LSP, semantic work, architecture, and language-dependency diagnostics use localized status and focus text.
 - Web overview reuses the project report snapshot for summary, coverage, topology, hotspots, and risks to avoid duplicate heavy scans.
 - Web runtime panel for uptime, cache state, scan/semantic slots, and retained job-store totals.
 - Web runtime panel surfaces the last API response latency from `x-response-time-ms` for quick slow-endpoint diagnosis.
