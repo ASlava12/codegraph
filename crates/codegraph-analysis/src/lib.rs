@@ -4290,6 +4290,8 @@ fn validate_package_terms(spec: &QuerySpec) -> Result<(), QueryError> {
                 | "dependency_kind"
                 | "version"
                 | "dependency_version"
+                | "version_kind"
+                | "dependency_version_kind"
                 | "path"
                 | "source_path"
                 | "file"
@@ -4902,6 +4904,9 @@ fn package_query_matches(
         "version" | "dependency_version" => package_incoming_edges(graph, node.id)
             .iter()
             .any(|edge| edge_metadata_matches(edge, "dependency_version", expected)),
+        "version_kind" | "dependency_version_kind" => package_incoming_edges(graph, node.id)
+            .iter()
+            .any(|edge| edge_metadata_matches(edge, "dependency_version_kind", expected)),
         "path" | "source_path" | "file" | "file_path" | "path_prefix" => {
             node_path_matches(node, path_index, expected)
                 || package_source_nodes(graph, node.id)
@@ -4930,6 +4935,9 @@ fn package_edge_query_matches(
         "dependency_kind" => edge_metadata_matches(edge, "dependency_kind", expected),
         "version" | "dependency_version" => {
             edge_metadata_matches(edge, "dependency_version", expected)
+        }
+        "version_kind" | "dependency_version_kind" => {
+            edge_metadata_matches(edge, "dependency_version_kind", expected)
         }
         "path" | "source_path" | "file" | "file_path" | "path_prefix" => graph
             .nodes
@@ -7020,6 +7028,13 @@ fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &mut Vec<Ins
     let mut groups: BTreeMap<NodeId, Vec<(usize, String)>> = BTreeMap::new();
     for (index, edge) in graph.edges.iter().enumerate() {
         if edge.kind != EdgeKind::DependsOn {
+            continue;
+        }
+        if edge
+            .metadata
+            .get("dependency_version_kind")
+            .is_some_and(|kind| kind == "locked")
+        {
             continue;
         }
         let Some(version) = edge
@@ -12515,6 +12530,7 @@ mod tests {
         let mut graph = CodeGraph::new("repo");
         let root_manifest = graph.add_node(NodeKind::File, "Cargo.toml");
         let app_manifest = graph.add_node(NodeKind::File, "crates/app/Cargo.toml");
+        let lockfile = graph.add_node(NodeKind::File, "Cargo.lock");
         let serde = dependency_node(&mut graph, "serde", "cargo:serde");
         let anyhow = dependency_node(&mut graph, "anyhow", "cargo:anyhow");
         graph.add_edge_with_metadata(
@@ -12535,6 +12551,17 @@ mod tests {
             BTreeMap::from([
                 ("dependency_kind".to_string(), "runtime".to_string()),
                 ("dependency_version".to_string(), "2".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            lockfile,
+            serde,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "runtime".to_string()),
+                ("dependency_version".to_string(), "1.2.3".to_string()),
+                ("dependency_version_kind".to_string(), "locked".to_string()),
             ]),
         );
         graph.add_edge_with_metadata(
@@ -12564,6 +12591,47 @@ mod tests {
         assert!(conflict.nodes.contains(&serde));
         assert!(!conflict.nodes.contains(&anyhow));
         assert_eq!(conflict.edges.len(), 2);
+    }
+
+    #[test]
+    fn insights_ignore_locked_versions_as_conflicting_constraints() {
+        let mut graph = CodeGraph::new("repo");
+        let manifest = graph.add_node(NodeKind::File, "package.json");
+        let lockfile = graph.add_node(NodeKind::File, "package-lock.json");
+        let react = dependency_node(&mut graph, "react", "npm:react");
+        graph.add_edge_with_metadata(
+            manifest,
+            react,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "runtime".to_string()),
+                ("dependency_version".to_string(), "^19.0.0".to_string()),
+                (
+                    "dependency_version_kind".to_string(),
+                    "constraint".to_string(),
+                ),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            lockfile,
+            react,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "runtime".to_string()),
+                ("dependency_version".to_string(), "19.0.0".to_string()),
+                ("dependency_version_kind".to_string(), "locked".to_string()),
+            ]),
+        );
+
+        let report = insights(&graph);
+        assert!(
+            !report
+                .insights
+                .iter()
+                .any(|insight| insight.kind == "conflicting_dependency_declaration")
+        );
     }
 
     #[test]

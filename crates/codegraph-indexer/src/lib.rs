@@ -153,6 +153,7 @@ struct ManifestDependency {
     kind: String,
     ecosystem: String,
     version: Option<String>,
+    version_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2078,6 +2079,9 @@ fn index_manifest_dependencies(
         edge_metadata.insert("source".to_string(), "manifest".to_string());
         if let Some(version) = dependency.version {
             edge_metadata.insert("dependency_version".to_string(), version);
+            if let Some(version_kind) = dependency.version_kind {
+                edge_metadata.insert("dependency_version_kind".to_string(), version_kind);
+            }
         }
         add_manifest_dependency_edge_once(
             &mut context.graph,
@@ -2814,18 +2818,23 @@ fn collect_package_lock_root_dependencies(
         return;
     };
     for (name, declared) in object {
-        let version = package_lock_package_version(value, name).or_else(|| {
-            declared
-                .as_str()
-                .map(str::trim)
-                .filter(|version| !version.is_empty())
-                .map(str::to_string)
-        });
-        dependencies.push(manifest_dependency(
+        let locked_version = package_lock_package_version(value, name);
+        let declared_version = declared
+            .as_str()
+            .map(str::trim)
+            .filter(|version| !version.is_empty())
+            .map(str::to_string);
+        let (version, version_kind) = if let Some(version) = locked_version {
+            (Some(version), Some("locked"))
+        } else {
+            (declared_version, Some("constraint"))
+        };
+        dependencies.push(manifest_dependency_with_version_kind(
             name.clone(),
             dependency_kind,
             "npm",
             version,
+            version_kind,
         ));
     }
 }
@@ -2941,15 +2950,20 @@ fn flush_pnpm_dependency(
     let Some(dependency) = pending.take() else {
         return;
     };
-    let version = dependency
-        .version
-        .or(dependency.specifier)
-        .filter(|value| !value.is_empty());
-    dependencies.push(manifest_dependency(
+    let (version, version_kind) = if let Some(version) = dependency.version {
+        (Some(version), Some("locked"))
+    } else {
+        (
+            dependency.specifier.filter(|value| !value.is_empty()),
+            Some("constraint"),
+        )
+    };
+    dependencies.push(manifest_dependency_with_version_kind(
         dependency.name,
         dependency.kind,
         "npm",
         version,
+        version_kind,
     ));
 }
 
@@ -3046,11 +3060,12 @@ fn collect_composer_lock_packages(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
-        dependencies.push(manifest_dependency(
+        dependencies.push(manifest_dependency_with_version_kind(
             name.to_string(),
             dependency_kind,
             "composer",
             version,
+            Some("locked"),
         ));
     }
 }
@@ -5314,11 +5329,33 @@ fn manifest_dependency(
     ecosystem: impl Into<String>,
     version: Option<String>,
 ) -> ManifestDependency {
+    manifest_dependency_with_version_kind(
+        name,
+        dependency_kind,
+        ecosystem,
+        version,
+        Some("constraint"),
+    )
+}
+
+fn manifest_dependency_with_version_kind(
+    name: impl Into<String>,
+    dependency_kind: impl Into<String>,
+    ecosystem: impl Into<String>,
+    version: Option<String>,
+    version_kind: Option<&str>,
+) -> ManifestDependency {
+    let version_kind = if version.is_some() {
+        version_kind.map(str::to_string)
+    } else {
+        None
+    };
     ManifestDependency {
         name: name.into(),
         kind: dependency_kind.into(),
         ecosystem: ecosystem.into(),
         version,
+        version_kind,
     }
 }
 
@@ -7405,6 +7442,10 @@ find_package(Boost 1.83 REQUIRED COMPONENTS filesystem)
                     .metadata
                     .get("dependency_version")
                     .is_some_and(|value| value == "^19.0.0")
+                && edge
+                    .metadata
+                    .get("dependency_version_kind")
+                    .is_some_and(|value| value == "constraint")
         }));
         let react = graph
             .nodes
@@ -7429,6 +7470,10 @@ find_package(Boost 1.83 REQUIRED COMPONENTS filesystem)
                     .metadata
                     .get("dependency_version")
                     .is_some_and(|value| value == "19.0.0")
+                && edge
+                    .metadata
+                    .get("dependency_version_kind")
+                    .is_some_and(|value| value == "locked")
         }));
         let lodash_dep = graph
             .nodes
@@ -7851,6 +7896,10 @@ find_package(Boost 1.83 REQUIRED COMPONENTS filesystem)
                     .metadata
                     .get("dependency_version")
                     .is_some_and(|value| value == "3.8.1")
+                && edge
+                    .metadata
+                    .get("dependency_version_kind")
+                    .is_some_and(|value| value == "locked")
         }));
         let symfony_console_dep = graph
             .nodes
@@ -7872,6 +7921,10 @@ find_package(Boost 1.83 REQUIRED COMPONENTS filesystem)
                     .metadata
                     .get("dependency_version")
                     .is_some_and(|value| value == "v7.2.1")
+                && edge
+                    .metadata
+                    .get("dependency_version_kind")
+                    .is_some_and(|value| value == "locked")
         }));
         let phpunit_dep = graph
             .nodes

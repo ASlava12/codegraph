@@ -776,7 +776,9 @@ manifest files connect to those package nodes with `depends_on` edges; the edge
 metadata records whether the declaration is runtime, dev, optional, peer,
 build, or test dependency data when the manifest format exposes that
 distinction, plus the raw `dependency_version` constraint or locked package
-version when the manifest declares one. Cargo
+version when the manifest declares one. Version-bearing dependency edges also
+set `dependency_version_kind` to `constraint` or `locked` so lockfile versions
+do not masquerade as conflicting manifest constraints. Cargo
 `workspace = true` dependencies resolve to the root workspace constraint when
 one exists; path-only workspace dependencies omit `dependency_version`.
 

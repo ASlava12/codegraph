@@ -107,6 +107,7 @@ Goal: answer practical code investigation questions.
 - [x] Warn when production Go code directly imports a dependency declared only as `// indirect`.
 - [x] Detect direct npm `package-lock.json` dependencies with locked versions.
 - [x] Detect direct pnpm `pnpm-lock.yaml` importer dependencies with locked versions.
+- [x] Distinguish locked dependency versions from manifest constraints in dependency conflict insights.
 - [x] Detect legacy Python `setup.py`/`setup.cfg` dependencies and console script entrypoints.
 - [x] Detect Python `Pipfile` runtime and dev package dependencies.
 - [x] Detect modern Poetry dependency groups from `pyproject.toml`.

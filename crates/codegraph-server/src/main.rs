@@ -3712,6 +3712,8 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "dependency_kind",
                     "version",
                     "dependency_version",
+                    "version_kind",
+                    "dependency_version_kind",
                     "path",
                     "source_path",
                     "file",
