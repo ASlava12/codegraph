@@ -8,11 +8,11 @@ use codegraph_analysis::{
     EntrypointWorkflowRequest, ErrorTraceRequest, ExplainEdgeRequest, InsightFilter,
     InsightSeverity, ProjectReport, ProjectReportLimits, ProjectReportMarkdownOptions,
     SourceSearchRequest, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryRequest,
-    WorkflowRequest, architecture_map, check_insights, communities, entrypoints, explain_edge,
-    filter_insight_report, hotspots, insights, language_dependencies, project_report,
-    project_report_markdown, query_graph, search_source, summarize, surprising_links, trace,
-    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
-    workflow_entrypoints, workflow_mermaid, workflow_query,
+    WorkflowRequest, architecture_map, check_insights, communities, compact_query_result,
+    entrypoints, explain_edge, filter_insight_report, hotspots, insights, language_dependencies,
+    project_report, project_report_markdown, query_graph, search_source, summarize,
+    surprising_links, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    workflow, workflow_entrypoints, workflow_mermaid, workflow_query,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -165,6 +165,10 @@ enum Command {
         /// Include default ignored directories such as target and node_modules.
         #[arg(long)]
         include_ignored: bool,
+
+        /// Collapse repeated low-signal nodes in the query result.
+        #[arg(long)]
+        compact: bool,
 
         #[command(flatten)]
         cache: CacheArgs,
@@ -1321,14 +1325,18 @@ fn main() -> Result<()> {
             path,
             include_hidden,
             include_ignored,
+            compact,
             cache,
         } => {
             let graph =
                 scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&query_graph(&graph, &expression)?)?
-            );
+            let result = query_graph(&graph, &expression)?;
+            let result = if compact {
+                compact_query_result(result)
+            } else {
+                result
+            };
+            println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Command::NodeCard(args) => {
             let graph = scan_with_options(

@@ -22,8 +22,8 @@ use codegraph_analysis::{
     NodeCard, NodeContext, ProjectReport, ProjectReportLimits, ProjectReportMarkdownOptions,
     SourcePreview, SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart,
     WorkflowFilters, WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport, WorkflowRequest,
-    architecture_map, check_insights, communities, entrypoints, explain_edge, export_dot,
-    export_ndjson, filter_insight_report, focus_subgraph, hotspots, insights,
+    architecture_map, check_insights, communities, compact_query_result, entrypoints, explain_edge,
+    export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots, insights,
     language_dependencies, node_card, node_context, project_report, project_report_markdown,
     query_graph, read_source_preview, search_source, slice_graph, summarize, surprising_links,
     trace, trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
@@ -445,6 +445,7 @@ struct ErrorTraceQuery {
 struct GraphQuery {
     path: Option<PathBuf>,
     q: String,
+    compact: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -536,6 +537,7 @@ struct FocusQuery {
     node_ids: Option<String>,
     edge_indexes: Option<String>,
     edge_limit: Option<usize>,
+    compact: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2549,14 +2551,19 @@ async fn focus_api(
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let node_ids = parse_node_ids(query.node_ids.as_deref())?;
     let edge_indexes = parse_edge_indexes(query.edge_indexes.as_deref())?;
-    Ok(Json(focus_subgraph(
+    let result = focus_subgraph(
         &graph,
         FocusRequest {
             node_ids,
             edge_indexes,
             edge_limit: query.edge_limit.unwrap_or(DEFAULT_FOCUS_EDGE_LIMIT),
         },
-    )))
+    );
+    Ok(Json(if query.compact.unwrap_or(false) {
+        compact_query_result(result)
+    } else {
+        result
+    }))
 }
 
 async fn report_api(
@@ -2775,6 +2782,11 @@ async fn query_api(
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let result =
         query_graph(&graph, &query.q).map_err(|error| ApiError::bad_request(error.to_string()))?;
+    let result = if query.compact.unwrap_or(false) {
+        compact_query_result(result)
+    } else {
+        result
+    };
     Ok(Json(result))
 }
 
@@ -4701,6 +4713,13 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         )
                         .with_range(1, MAX_FOCUS_EDGE_LIMIT)
                         .with_capability_limit("max_focus_edge_limit"),
+                        query_param(
+                            "compact",
+                            false,
+                            "bool",
+                            Some("false"),
+                            "Collapse repeated low-signal nodes in the focused graph.",
+                        ),
                     ],
                     "QueryResult",
                 )
@@ -4725,6 +4744,13 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         )
                         .with_max_length(MAX_GRAPH_QUERY_LENGTH)
                         .with_capability_limit("max_graph_query_length"),
+                        query_param(
+                            "compact",
+                            false,
+                            "bool",
+                            Some("false"),
+                            "Collapse repeated low-signal nodes in the query result.",
+                        ),
                     ],
                     "QueryResult",
                 )
@@ -6073,6 +6099,36 @@ fn query_result_response_fields() -> Vec<ApiParameterSpec> {
         ),
         response_field("returned_nodes", true, "usize", "Returned node count."),
         response_field("returned_edges", true, "usize", "Returned edge count."),
+        response_field(
+            "compact",
+            true,
+            "bool",
+            "Whether repeated low-signal nodes were compacted.",
+        ),
+        response_field(
+            "raw_total_nodes",
+            true,
+            "usize",
+            "Node count before optional result compaction.",
+        ),
+        response_field(
+            "raw_total_edges",
+            true,
+            "usize",
+            "Edge count before optional result compaction.",
+        ),
+        response_field(
+            "compacted_nodes",
+            true,
+            "usize",
+            "Number of source nodes collapsed into compact aggregate nodes.",
+        ),
+        response_field(
+            "compacted_edges",
+            true,
+            "usize",
+            "Number of source edges collapsed or deduplicated during compaction.",
+        ),
         response_field(
             "truncated",
             true,
@@ -7589,6 +7645,7 @@ mod tests {
         let query = GraphQuery {
             path: None,
             q: "x".repeat(MAX_GRAPH_QUERY_LENGTH + 1),
+            compact: None,
         };
 
         let error = query_api(State(state), Query(query))
@@ -8670,6 +8727,11 @@ fn helper() {}
                 .iter()
                 .any(|field| { field.name == "facets" && field.value_type == "QueryFacets" })
         );
+        assert!(focus_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "compact"
+                && parameter.value_type == "bool"
+                && parameter.default.as_deref() == Some("false")
+        }));
         let semantic_plan_endpoint = schema
             .groups
             .iter()
@@ -8751,6 +8813,23 @@ fn helper() {}
                     && parameter.required
                     && parameter.max_length == Some(MAX_GRAPH_QUERY_LENGTH)
                     && parameter.capability_limit == Some("max_graph_query_length"))
+        );
+        assert!(query_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "compact"
+                && parameter.value_type == "bool"
+                && parameter.default.as_deref() == Some("false")
+        }));
+        assert!(
+            query_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "compact" && field.value_type == "bool" })
+        );
+        assert!(
+            query_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "raw_total_nodes" && field.value_type == "usize" })
         );
         assert!(query_endpoint.response_fields.iter().any(|field| {
             field.name == "returned_nodes" && field.value_type == "usize" && field.required

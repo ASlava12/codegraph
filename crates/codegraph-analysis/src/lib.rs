@@ -457,6 +457,16 @@ pub struct QueryResult {
     pub total_nodes: usize,
     pub total_edges: usize,
     #[serde(default)]
+    pub compact: bool,
+    #[serde(default)]
+    pub raw_total_nodes: usize,
+    #[serde(default)]
+    pub raw_total_edges: usize,
+    #[serde(default)]
+    pub compacted_nodes: usize,
+    #[serde(default)]
+    pub compacted_edges: usize,
+    #[serde(default)]
     pub returned_nodes: usize,
     #[serde(default)]
     pub returned_edges: usize,
@@ -494,6 +504,11 @@ impl QueryResult {
             edges,
             total_nodes,
             total_edges,
+            compact: false,
+            raw_total_nodes: total_nodes,
+            raw_total_edges: total_edges,
+            compacted_nodes: 0,
+            compacted_edges: 0,
             returned_nodes,
             returned_edges,
             truncated,
@@ -3970,6 +3985,213 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         other => Err(QueryError::new(format!(
             "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, symbols, files, docs, sql, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, annotations, insights, or path"
         ))),
+    }
+}
+
+pub fn compact_query_result(result: QueryResult) -> QueryResult {
+    let mut group_members: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (index, node) in result.nodes.iter().enumerate() {
+        if let Some(group_key) = query_compaction_group_key(node, &result.edges) {
+            group_members.entry(group_key).or_default().push(index);
+        }
+    }
+    group_members.retain(|_, members| members.len() > 1);
+    if group_members.is_empty() {
+        return QueryResult {
+            compact: true,
+            raw_total_nodes: result.total_nodes,
+            raw_total_edges: result.total_edges,
+            ..result
+        };
+    }
+
+    let raw_total_nodes = result.total_nodes;
+    let raw_total_edges = result.total_edges;
+    let mut original_to_compact = BTreeMap::new();
+    let mut compact_nodes = Vec::new();
+    let mut compacted_nodes = 0;
+    for (group_index, (group_key, members)) in group_members.iter().enumerate() {
+        let compact_id = NodeId(8_000_000_000 + group_index as u64 + 1);
+        compacted_nodes += members.len();
+        for member in members {
+            original_to_compact.insert(result.nodes[*member].id, compact_id);
+        }
+        compact_nodes.push(query_compacted_node(
+            compact_id,
+            group_key,
+            members.iter().map(|index| &result.nodes[*index]).collect(),
+        ));
+    }
+
+    let mut nodes = result
+        .nodes
+        .iter()
+        .filter(|node| !original_to_compact.contains_key(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    nodes.extend(compact_nodes);
+    nodes.sort_by(|left, right| {
+        node_rank(&left.kind)
+            .cmp(&node_rank(&right.kind))
+            .then_with(|| left.label.cmp(&right.label))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    let mut compacted_edges = 0;
+    let mut edge_by_key: BTreeMap<(NodeId, NodeId, String, String), Edge> = BTreeMap::new();
+    for edge in result.edges {
+        let source = original_to_compact
+            .get(&edge.source)
+            .copied()
+            .unwrap_or(edge.source);
+        let target = original_to_compact
+            .get(&edge.target)
+            .copied()
+            .unwrap_or(edge.target);
+        if source == target {
+            compacted_edges += 1;
+            continue;
+        }
+        let key = (
+            source,
+            target,
+            edge_kind_name(&edge.kind),
+            confidence_name(edge.confidence),
+        );
+        if let Some(existing) = edge_by_key.get_mut(&key) {
+            compacted_edges += 1;
+            let count = existing
+                .metadata
+                .get("compacted_count")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(1)
+                + 1;
+            existing
+                .metadata
+                .insert("compacted".to_string(), "true".to_string());
+            existing
+                .metadata
+                .insert("compacted_count".to_string(), count.to_string());
+            continue;
+        }
+        let mut edge = edge;
+        if source != edge.source || target != edge.target {
+            edge.metadata
+                .insert("original_source".to_string(), edge.source.to_string());
+            edge.metadata
+                .insert("original_target".to_string(), edge.target.to_string());
+            edge.metadata
+                .insert("compacted".to_string(), "true".to_string());
+            edge.metadata
+                .insert("compacted_count".to_string(), "1".to_string());
+            edge.source = source;
+            edge.target = target;
+        }
+        edge_by_key.insert(key, edge);
+    }
+
+    let edges = edge_by_key.into_values().collect::<Vec<_>>();
+    let returned_nodes = nodes.len();
+    let returned_edges = edges.len();
+    let facets = QueryFacets::from_graph_parts(&nodes, &edges);
+    QueryResult {
+        query: result.query,
+        total_nodes: nodes.len(),
+        total_edges: edges.len(),
+        compact: true,
+        raw_total_nodes,
+        raw_total_edges,
+        compacted_nodes,
+        compacted_edges,
+        returned_nodes,
+        returned_edges,
+        truncated: result.truncated,
+        facets,
+        nodes,
+        edges,
+    }
+}
+
+fn query_compaction_group_key(node: &Node, edges: &[Edge]) -> Option<String> {
+    if !query_compaction_low_signal_node(node) {
+        return None;
+    }
+    let degree = edges
+        .iter()
+        .filter(|edge| edge.source == node.id || edge.target == node.id)
+        .count();
+    if degree > 2 {
+        return None;
+    }
+    let language = node
+        .metadata
+        .get("language")
+        .map(String::as_str)
+        .unwrap_or("unknown");
+    let item_kind = node
+        .metadata
+        .get("item_kind")
+        .map(String::as_str)
+        .unwrap_or("unknown");
+    Some(format!(
+        "{}:{}:{}",
+        kind_name(&node.kind),
+        language,
+        item_kind
+    ))
+}
+
+fn query_compaction_low_signal_node(node: &Node) -> bool {
+    if node
+        .metadata
+        .get("compacted")
+        .is_some_and(|value| value == "true")
+    {
+        return false;
+    }
+    if node
+        .metadata
+        .get("item_kind")
+        .is_some_and(|value| matches!(value.as_str(), "entrypoint" | "route" | "config"))
+    {
+        return false;
+    }
+    matches!(
+        node.kind,
+        NodeKind::Function | NodeKind::Module | NodeKind::Unknown | NodeKind::ExternalDependency
+    )
+}
+
+fn query_compacted_node(id: NodeId, group_key: &str, members: Vec<&Node>) -> Node {
+    let count = members.len();
+    let mut source_node_ids = members
+        .iter()
+        .map(|node| node.id.to_string())
+        .collect::<Vec<_>>();
+    source_node_ids.sort();
+    let mut parts = group_key.split(':');
+    let kind = parts.next().unwrap_or("node");
+    let language = parts.next().unwrap_or("unknown");
+    let item_kind = parts.next().unwrap_or("unknown");
+    let label = if language == "unknown" && item_kind == "unknown" {
+        format!("{count} compacted {kind} nodes")
+    } else {
+        format!("{count} compacted {language} {kind} nodes")
+    };
+
+    Node {
+        id,
+        kind: NodeKind::Unknown,
+        label,
+        span: None,
+        metadata: BTreeMap::from([
+            ("compacted".to_string(), "true".to_string()),
+            ("compacted_count".to_string(), count.to_string()),
+            ("compacted_kind".to_string(), kind.to_string()),
+            ("compacted_language".to_string(), language.to_string()),
+            ("compacted_item_kind".to_string(), item_kind.to_string()),
+            ("source_node_ids".to_string(), source_node_ids.join(",")),
+        ]),
     }
 }
 
@@ -16004,6 +16226,64 @@ mod tests {
                 .to_string()
                 .contains("unsupported hotspots query term")
         );
+    }
+
+    #[test]
+    fn compact_query_result_collapses_low_signal_nodes() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "main",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let helper_a = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "helper_a",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let helper_b = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "helper_b",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let config = graph.add_node(NodeKind::Config, "DATABASE_URL");
+        graph.add_edge(main, helper_a, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(main, helper_b, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(main, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
+
+        let result = query_graph(&graph, "neighbors main direction:out").unwrap();
+        let compacted = compact_query_result(result);
+
+        assert!(compacted.compact);
+        assert_eq!(compacted.raw_total_nodes, 4);
+        assert_eq!(compacted.raw_total_edges, 3);
+        assert_eq!(compacted.total_nodes, 3);
+        assert_eq!(compacted.total_edges, 2);
+        assert_eq!(compacted.compacted_nodes, 2);
+        assert_eq!(compacted.compacted_edges, 1);
+        assert!(compacted.nodes.iter().any(|node| node.id == config));
+        let aggregate = compacted
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("compacted")
+                    .is_some_and(|value| value == "true")
+            })
+            .expect("compacted aggregate");
+        assert_eq!(
+            aggregate.metadata.get("compacted_count"),
+            Some(&"2".to_string())
+        );
+        assert!(aggregate.label.contains("2 compacted rust function nodes"));
+        assert!(compacted.edges.iter().any(|edge| {
+            edge.metadata
+                .get("compacted")
+                .is_some_and(|value| value == "true")
+        }));
     }
 
     #[test]

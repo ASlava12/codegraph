@@ -197,6 +197,7 @@ Implemented now:
 - Web query panel supports shareable `query` deep-links and copy-link actions for reusable investigations.
 - Web query panel keeps a local recent-query history so repeated investigations can be rerun quickly.
 - Web query results can be downloaded as JSON with query, root, facets, nodes, and edges for agent handoff.
+- CLI/API graph query and focus results support optional compact mode for collapsing repeated low-signal nodes while preserving raw counts and compacted metadata.
 - Web graph page filters, node/edge offsets, and page limits can be copied as shareable deep-links for reproducible large-repository slices.
 - Web graph page filters and offsets can be cleared in one action after opening focused or shared large-repository slices.
 - Web canvas search, kind, risk, and query-focus filters show active-filter status in the HUD and can be cleared in one action.
@@ -763,7 +764,8 @@ curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'q=nodes kind:function label:main'
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
-  --data-urlencode 'q=neighbors label:main direction:out depth:2 edge_kind:calls'
+  --data-urlencode 'q=neighbors label:main direction:out depth:2 edge_kind:calls' \
+  --data-urlencode 'compact=true'
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=dependents label:load_config depth:3'
