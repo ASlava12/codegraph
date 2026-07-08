@@ -2173,6 +2173,7 @@ fn manifest_dependencies(
         Some("Cargo.toml") => cargo_dependencies(source, cargo_workspace_dependencies),
         Some("package.json") => package_json_dependencies(source),
         Some("package-lock.json") => package_lock_dependencies(source),
+        Some("pnpm-lock.yaml") => pnpm_lock_dependencies(source),
         Some("go.mod") => go_mod_dependencies(source),
         Some("requirements.txt") => requirements_dependencies(source),
         Some("pyproject.toml") => pyproject_dependencies(source),
@@ -2807,6 +2808,166 @@ fn package_lock_package_version(value: &serde_json::Value, name: &str) -> Option
         .map(str::trim)
         .filter(|version| !version.is_empty())
         .map(str::to_string)
+}
+
+#[derive(Debug)]
+struct PendingPnpmDependency {
+    name: String,
+    kind: String,
+    indent: usize,
+    specifier: Option<String>,
+    version: Option<String>,
+}
+
+fn pnpm_lock_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut in_importers = false;
+    let mut in_importer = false;
+    let mut active_section: Option<(&str, usize)> = None;
+    let mut pending: Option<PendingPnpmDependency> = None;
+
+    for raw_line in source.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = yaml_indent(raw_line);
+
+        if indent == 0 {
+            flush_pnpm_dependency(&mut pending, &mut dependencies);
+            in_importers = trimmed == "importers:";
+            in_importer = false;
+            active_section = None;
+            continue;
+        }
+
+        if !in_importers {
+            continue;
+        }
+
+        if indent == 2 {
+            flush_pnpm_dependency(&mut pending, &mut dependencies);
+            in_importer = yaml_key(trimmed).is_some();
+            active_section = None;
+            continue;
+        }
+
+        if !in_importer {
+            continue;
+        }
+
+        if indent == 4 {
+            flush_pnpm_dependency(&mut pending, &mut dependencies);
+            active_section = pnpm_dependency_section(trimmed).map(|kind| (kind, indent));
+            continue;
+        }
+
+        let Some((dependency_kind, section_indent)) = active_section else {
+            continue;
+        };
+        if indent <= section_indent {
+            flush_pnpm_dependency(&mut pending, &mut dependencies);
+            active_section = None;
+            continue;
+        }
+
+        if indent == section_indent + 2 {
+            flush_pnpm_dependency(&mut pending, &mut dependencies);
+            if let Some(name) = yaml_key(trimmed) {
+                pending = Some(PendingPnpmDependency {
+                    name,
+                    kind: dependency_kind.to_string(),
+                    indent,
+                    specifier: None,
+                    version: None,
+                });
+            }
+            continue;
+        }
+
+        let Some(dependency) = pending.as_mut() else {
+            continue;
+        };
+        if indent <= dependency.indent {
+            flush_pnpm_dependency(&mut pending, &mut dependencies);
+            continue;
+        }
+        if let Some(value) = yaml_key_value(trimmed, "specifier") {
+            dependency.specifier = Some(value);
+        } else if let Some(value) = yaml_key_value(trimmed, "version") {
+            dependency.version = Some(pnpm_clean_version(&value));
+        }
+    }
+
+    flush_pnpm_dependency(&mut pending, &mut dependencies);
+    dependencies
+}
+
+fn flush_pnpm_dependency(
+    pending: &mut Option<PendingPnpmDependency>,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(dependency) = pending.take() else {
+        return;
+    };
+    let version = dependency
+        .version
+        .or(dependency.specifier)
+        .filter(|value| !value.is_empty());
+    dependencies.push(manifest_dependency(
+        dependency.name,
+        dependency.kind,
+        "npm",
+        version,
+    ));
+}
+
+fn pnpm_dependency_section(trimmed: &str) -> Option<&'static str> {
+    match yaml_key(trimmed)?.as_str() {
+        "dependencies" => Some("runtime"),
+        "devDependencies" => Some("dev"),
+        "peerDependencies" => Some("peer"),
+        "optionalDependencies" => Some("optional"),
+        _ => None,
+    }
+}
+
+fn yaml_indent(raw_line: &str) -> usize {
+    raw_line
+        .chars()
+        .take_while(|character| *character == ' ')
+        .count()
+}
+
+fn yaml_key(trimmed: &str) -> Option<String> {
+    let (key, _) = trimmed.split_once(':')?;
+    let key = yaml_clean_scalar(key);
+    (!key.is_empty()).then_some(key)
+}
+
+fn yaml_key_value(trimmed: &str, expected_key: &str) -> Option<String> {
+    let (key, value) = trimmed.split_once(':')?;
+    if yaml_clean_scalar(key) != expected_key {
+        return None;
+    }
+    let value = yaml_clean_scalar(value);
+    (!value.is_empty()).then_some(value)
+}
+
+fn yaml_clean_scalar(value: &str) -> String {
+    value
+        .split(" #")
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string()
+}
+
+fn pnpm_clean_version(value: &str) -> String {
+    value.split('(').next().unwrap_or(value).trim().to_string()
 }
 
 fn composer_dependencies(source: &str) -> Vec<ManifestDependency> {
@@ -5874,6 +6035,7 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
             "Cargo.toml"
                 | "package.json"
                 | "package-lock.json"
+                | "pnpm-lock.yaml"
                 | "go.mod"
                 | "pyproject.toml"
                 | "setup.py"
@@ -6845,6 +7007,28 @@ local-util = { workspace = true }
         )
         .unwrap();
         fs::write(
+            root.join("pnpm-lock.yaml"),
+            r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      solid-js:
+        specifier: ^1.8.0
+        version: 1.8.19
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.13.1
+  packages/app:
+    peerDependencies:
+      magic-string:
+        specifier: ^0.30.0
+        version: 0.30.17(supports-color@9.4.0)
+"#,
+        )
+        .unwrap();
+        fs::write(
             root.join("go.mod"),
             "module example.com/demo\n\nrequire github.com/gin-gonic/gin v1.10.0\n",
         )
@@ -6969,6 +7153,9 @@ gtest/1.14.0
             "lodash",
             "vitest",
             "fsevents",
+            "solid-js",
+            "@types/node",
+            "magic-string",
             "github.com/gin-gonic/gin",
             "fastapi",
             "pydantic",
@@ -7133,6 +7320,69 @@ gtest/1.14.0
                     .metadata
                     .get("dependency_version")
                     .is_some_and(|value| value == "2.3.3")
+        }));
+        let solid_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "npm:solid-js")
+            })
+            .expect("missing pnpm solid-js dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == solid_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "runtime")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "1.8.19")
+        }));
+        let types_node_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "npm:@types/node")
+            })
+            .expect("missing pnpm @types/node dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == types_node_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "dev")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "22.13.1")
+        }));
+        let magic_string_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "npm:magic-string")
+            })
+            .expect("missing pnpm magic-string dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == magic_string_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "peer")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "0.30.17")
         }));
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == EdgeKind::DependsOn
