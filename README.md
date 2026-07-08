@@ -240,6 +240,7 @@ Implemented now:
 - Investigation insights for config/environment keys that are read both as required and with fallback defaults.
 - Investigation insights for sensitive config/environment keys, credential-like defaults, placeholder secret fallbacks, and literal sensitive CI environment assignments, without echoing fallback values in reports.
 - Investigation insights for risky source rationale markers such as `SECURITY`, `FIXME`, `HACK`, `BUG`, and `XXX`, while lower-noise `WHY`, `NOTE`, and `TODO` comments remain graph facts for context.
+- Investigation insights for application SQL query strings that reference tables without matching indexed schema tables.
 - Dependency consistency insights for external imports/CommonJS requires that are not backed by declared manifest dependencies.
 - Dependency consistency insights for runtime manifest dependencies with no matching import.
 - Dependency consistency insights for package declarations with conflicting manifest constraints.

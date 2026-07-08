@@ -11353,10 +11353,15 @@ fn resolve_pending_sql_foreign_keys(context: &mut IndexContext) {
 
 fn resolve_pending_sql_query_table_refs(context: &mut IndexContext) {
     let pending_refs = std::mem::take(&mut context.pending_sql_query_table_refs);
+    let mut unresolved_tables: BTreeMap<NodeId, BTreeSet<String>> = BTreeMap::new();
 
     for pending in pending_refs {
         let table_key = sql_identifier_key(&pending.table);
         let Some(table_id) = context.sql_tables.get(&table_key).copied() else {
+            unresolved_tables
+                .entry(pending.query)
+                .or_default()
+                .insert(pending.table);
             continue;
         };
 
@@ -11377,6 +11382,33 @@ fn resolve_pending_sql_query_table_refs(context: &mut IndexContext) {
                 ("table".to_string(), pending.table),
                 ("line".to_string(), pending.line.to_string()),
             ]),
+        );
+    }
+
+    for (query_id, tables) in unresolved_tables {
+        let has_resolved_table_ref = context.graph.edges.iter().any(|edge| {
+            edge.source == query_id
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "app_sql_table_reference")
+        });
+        add_node_metadata(
+            &mut context.graph,
+            query_id,
+            "resolution",
+            if has_resolved_table_ref {
+                "partial"
+            } else {
+                "unresolved"
+            },
+        );
+        add_node_metadata(
+            &mut context.graph,
+            query_id,
+            "unresolved_tables",
+            tables.into_iter().collect::<Vec<_>>().join(","),
         );
     }
 }
@@ -12686,6 +12718,7 @@ CREATE TABLE users (
         WHERE users.email = ?
     """)
     db.execute("INSERT INTO users (email, org_id) VALUES (?, ?)")
+    db.execute("SELECT * FROM audit_log")
     return rows
 "#,
         )
@@ -12695,6 +12728,7 @@ CREATE TABLE users (
         let load_users = function_id_in_file(&graph, "load_users", "src/repo.py");
         let select_query = node_id(&graph, NodeKind::Config, "sql query:src/repo.py:2");
         let insert_query = node_id(&graph, NodeKind::Config, "sql query:src/repo.py:8");
+        let missing_query = node_id(&graph, NodeKind::Config, "sql query:src/repo.py:9");
         let users = node_id(&graph, NodeKind::Type, "sql table:users");
         let organizations = node_id(&graph, NodeKind::Type, "sql table:organizations");
 
@@ -12718,7 +12752,7 @@ CREATE TABLE users (
                 .is_some_and(|value| value.contains("users") && value.contains("organizations"))
         );
 
-        for query in [select_query, insert_query] {
+        for query in [select_query, insert_query, missing_query] {
             assert!(graph.edges.iter().any(|edge| {
                 edge.source == load_users
                     && edge.target == query
@@ -12773,6 +12807,22 @@ CREATE TABLE users (
                     .get("operation")
                     .is_some_and(|value| value == "insert")
         }));
+        let missing_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == missing_query)
+            .expect("missing unresolved query");
+        assert_eq!(
+            missing_node.metadata.get("resolution").map(String::as_str),
+            Some("unresolved")
+        );
+        assert_eq!(
+            missing_node
+                .metadata
+                .get("unresolved_tables")
+                .map(String::as_str),
+            Some("audit_log")
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

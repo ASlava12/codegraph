@@ -977,6 +977,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unresolved_kubernetes_service_selector",
     "unresolved_local_import",
     "unresolved_makefile_command_path",
+    "unresolved_sql_table_reference",
     "unused_declared_dependency",
 ];
 
@@ -1986,6 +1987,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unresolved_call_insights(graph, &mut insights);
     add_ambiguous_call_resolution_insights(graph, &mut insights);
     add_unresolved_local_import_insights(graph, &mut insights);
+    add_unresolved_sql_table_reference_insights(graph, &mut insights);
     add_cross_language_heuristic_edge_insights(graph, &mut insights);
     add_duplicate_function_insights(graph, &mut insights);
     add_duplicate_compose_published_port_insights(graph, &mut insights);
@@ -7879,6 +7881,69 @@ fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: &mut Vec<In
                         .filter_map(|index| graph.edges.get(*index).map(|edge| edge.source)),
                 )
                 .collect(),
+            edges,
+        });
+    }
+}
+
+fn add_unresolved_sql_table_reference_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node
+            .metadata
+            .get("item_kind")
+            .is_none_or(|kind| kind != "app_sql_query")
+        {
+            continue;
+        }
+        let Some(tables) = node
+            .metadata
+            .get("unresolved_tables")
+            .map(|tables| tables.trim())
+            .filter(|tables| !tables.is_empty())
+        else {
+            continue;
+        };
+
+        let incoming = incoming_edge_indexes(graph, node.id, EdgeKind::References);
+        let outgoing = outgoing_edge_indexes(graph, node.id, EdgeKind::References);
+        let mut edges = incoming
+            .iter()
+            .chain(outgoing.iter())
+            .copied()
+            .collect::<Vec<_>>();
+        edges.sort_unstable();
+        edges.dedup();
+
+        let mut nodes = std::iter::once(node.id)
+            .chain(
+                edges
+                    .iter()
+                    .filter_map(|index| graph.edges.get(*index))
+                    .flat_map(|edge| [edge.source, edge.target]),
+            )
+            .collect::<Vec<_>>();
+        nodes.sort_unstable();
+        nodes.dedup();
+
+        let operation = node
+            .metadata
+            .get("operation")
+            .map(String::as_str)
+            .unwrap_or("sql");
+        let source = incoming
+            .first()
+            .and_then(|index| graph.edges.get(*index))
+            .and_then(|edge| node_label(graph, edge.source))
+            .unwrap_or("unknown source");
+
+        insights.push(Insight {
+            kind: "unresolved_sql_table_reference".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "`{source}` has {operation} SQL query `{}` referencing table(s) `{tables}` without a matching indexed schema table",
+                node.label
+            ),
+            nodes,
             edges,
         });
     }
@@ -15274,6 +15339,68 @@ mod tests {
         assert!(insight.nodes.contains(&import));
         assert!(!insight.nodes.contains(&external));
         assert_eq!(insight.edges.len(), 1);
+    }
+
+    #[test]
+    fn insights_report_unresolved_sql_table_references() {
+        let mut graph = CodeGraph::new("repo");
+        let load_users = graph.add_node(NodeKind::Function, "load_users");
+        let users = graph.add_node_with_metadata(
+            NodeKind::Type,
+            "sql table:users",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "sql_table".to_string()),
+                ("table_name".to_string(), "users".to_string()),
+            ]),
+        );
+        let query = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "sql query:src/repo.py:2",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "app_sql_query".to_string()),
+                ("operation".to_string(), "select".to_string()),
+                ("tables".to_string(), "audit_log,users".to_string()),
+                ("unresolved_tables".to_string(), "audit_log".to_string()),
+                ("resolution".to_string(), "partial".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            load_users,
+            query,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([("relation".to_string(), "app_sql_query".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            query,
+            users,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([(
+                "relation".to_string(),
+                "app_sql_table_reference".to_string(),
+            )]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_sql_table_reference")
+            .expect("expected unresolved SQL table insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.message.contains("audit_log"));
+        assert!(insight.message.contains("load_users"));
+        assert!(insight.nodes.contains(&load_users));
+        assert!(insight.nodes.contains(&query));
+        assert!(insight.nodes.contains(&users));
+        assert_eq!(
+            report.by_kind.get("unresolved_sql_table_reference"),
+            Some(&1)
+        );
     }
 
     #[test]

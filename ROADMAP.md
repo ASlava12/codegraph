@@ -481,7 +481,8 @@ Repository knowledge ingestion:
 - [ ] Add richer Markdown citations, backlinks, front matter, ownership metadata, and dedicated UI overlays for docs-to-code exploration.
 - [x] Promote source comments such as `NOTE`, `WHY`, `TODO`, `FIXME`, and security/risk markers into linked rationale nodes.
 - [x] Add first deterministic SQL schema extraction for tables, views, columns, foreign keys, and indexes.
-- [ ] Add deeper SQL query extraction, JOIN relationships, migration ordering, and schema consistency insights.
+- [x] Add first SQL schema consistency insight for query strings that reference missing indexed tables.
+- [ ] Add deeper SQL query extraction, JOIN relationship semantics, migration ordering, and broader schema consistency insights.
 - [x] Link application code to SQL/schema nodes through common SQL query strings.
 - [ ] Link application code to SQL/schema nodes through migrations, ORM metadata, database config, and deeper query semantics.
 - [ ] Add document ingestion for Markdown, plain text, PDFs, Office files, and generated Markdown sidecars, with size limits and provenance.
