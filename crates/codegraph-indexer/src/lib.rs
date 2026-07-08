@@ -112,6 +112,9 @@ struct IndexContext {
     pending_github_actions_local_actions: Vec<PendingGithubActionsLocalAction>,
     pending_document_path_refs: Vec<PendingDocumentPathRef>,
     pending_document_symbol_refs: Vec<PendingDocumentSymbolRef>,
+    sql_tables: BTreeMap<String, NodeId>,
+    sql_columns: BTreeMap<String, NodeId>,
+    pending_sql_foreign_keys: Vec<PendingSqlForeignKey>,
 }
 
 struct PendingCall {
@@ -192,6 +195,15 @@ struct PendingDocumentSymbolRef {
     source: NodeId,
     symbol: String,
     relation: &'static str,
+    line: u32,
+}
+
+struct PendingSqlForeignKey {
+    source: NodeId,
+    source_table: String,
+    source_column: Option<String>,
+    target_table: String,
+    target_column: Option<String>,
     line: u32,
 }
 
@@ -802,6 +814,9 @@ fn scan_project_with_scope(
         pending_github_actions_local_actions: Vec::new(),
         pending_document_path_refs: Vec::new(),
         pending_document_symbol_refs: Vec::new(),
+        sql_tables: BTreeMap::new(),
+        sql_columns: BTreeMap::new(),
+        pending_sql_foreign_keys: Vec::new(),
     };
 
     for entry in WalkDir::new(root)
@@ -863,6 +878,7 @@ fn scan_project_with_scope(
     resolve_pending_github_actions_local_actions(&mut context);
     resolve_pending_document_path_refs(&mut context);
     resolve_pending_document_symbol_refs(&mut context);
+    resolve_pending_sql_foreign_keys(&mut context);
     apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
 
@@ -1001,6 +1017,8 @@ pub fn scan_coverage(
                 .or_default() += 1;
         } else if is_markdown_document(path) {
             *report.languages.entry("markdown".to_string()).or_default() += 1;
+        } else if is_sql_file(path) {
+            *report.languages.entry("sql".to_string()).or_default() += 1;
         }
     }
 
@@ -1028,6 +1046,9 @@ fn index_skipped_file(
         metadata.insert("language".to_string(), "markdown".to_string());
         metadata.insert("item_kind".to_string(), "document".to_string());
         metadata.insert("document_kind".to_string(), document_kind(path, label));
+    } else if is_sql_file(path) {
+        metadata.insert("language".to_string(), "sql".to_string());
+        metadata.insert("item_kind".to_string(), "sql_schema".to_string());
     }
 
     let file_id = context
@@ -1063,6 +1084,9 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
         metadata.insert("language".to_string(), "markdown".to_string());
         metadata.insert("item_kind".to_string(), "document".to_string());
         metadata.insert("document_kind".to_string(), document_kind(path, label));
+    } else if is_sql_file(path) {
+        metadata.insert("language".to_string(), "sql".to_string());
+        metadata.insert("item_kind".to_string(), "sql_schema".to_string());
     }
 
     let parse_result = source_bytes.as_ref().and_then(|source| {
@@ -1091,6 +1115,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
         script_entrypoint = index_script_entrypoint(context, file_id, label, source);
         index_manifest_facts(context, file_id, path, label, source);
         index_markdown_document(context, file_id, path, label, source);
+        index_sql_schema(context, file_id, path, label, source);
         index_framework_configs(context, file_id, label, language, source);
         if language == Some(Language::Dart) {
             index_dart_platform_channels(context, file_id, label, source);
@@ -1676,6 +1701,629 @@ fn document_kind(path: &Path, label: &str) -> String {
     } else {
         "markdown".to_string()
     }
+}
+
+fn index_sql_schema(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if !is_sql_file(path) {
+        return;
+    }
+
+    add_file_metadata(&mut context.graph, file_id, "language", "sql");
+    add_file_metadata(&mut context.graph, file_id, "item_kind", "sql_schema");
+    add_file_metadata(&mut context.graph, file_id, "source", "sql");
+
+    for statement in sql_statements(source) {
+        let normalized = statement.sql.trim_start().to_ascii_lowercase();
+        if normalized.starts_with("create table")
+            || normalized.starts_with("create temporary table")
+            || normalized.starts_with("create temp table")
+        {
+            index_sql_create_table(context, file_id, label, source, &statement);
+        } else if normalized.starts_with("create view")
+            || normalized.starts_with("create or replace view")
+            || normalized.starts_with("create materialized view")
+        {
+            index_sql_create_view(context, file_id, label, source, &statement);
+        } else if normalized.starts_with("create index")
+            || normalized.starts_with("create unique index")
+            || normalized.starts_with("create index if not exists")
+            || normalized.starts_with("create unique index if not exists")
+        {
+            index_sql_create_index(context, file_id, label, source, &statement);
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SqlStatement {
+    sql: String,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SqlCreateTable {
+    name: String,
+    body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SqlColumn {
+    name: String,
+    data_type: Option<String>,
+    nullable: Option<bool>,
+    primary_key: bool,
+    line: u32,
+    references: Option<SqlReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SqlReference {
+    target_table: String,
+    target_column: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SqlTableConstraint {
+    columns: Vec<String>,
+    reference: SqlReference,
+    line: u32,
+}
+
+fn index_sql_create_table(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+    statement: &SqlStatement,
+) {
+    let Some(table) = parse_sql_create_table(&statement.sql) else {
+        return;
+    };
+    let table_key = sql_identifier_key(&table.name);
+    if table_key.is_empty() {
+        return;
+    }
+
+    let mut metadata = BTreeMap::new();
+    metadata.insert("language".to_string(), "sql".to_string());
+    metadata.insert("item_kind".to_string(), "sql_table".to_string());
+    metadata.insert("source".to_string(), "sql".to_string());
+    metadata.insert("table_name".to_string(), table.name.clone());
+    metadata.insert("table_key".to_string(), table_key.clone());
+    metadata.insert("line".to_string(), statement.line.to_string());
+    let table_id = context.graph.add_node_with_metadata(
+        NodeKind::Type,
+        format!("sql table:{}", table.name),
+        Some(line_span(label, source, statement.line)),
+        metadata,
+    );
+    context.sql_tables.insert(table_key.clone(), table_id);
+    add_edge_once_with_metadata(
+        &mut context.graph,
+        file_id,
+        table_id,
+        EdgeKind::Contains,
+        Confidence::Exact,
+        BTreeMap::from([("relation".to_string(), "sql_table".to_string())]),
+    );
+
+    for part in split_sql_comma_items(&table.body) {
+        let line = statement.line + sql_line_offset(&statement.sql, &part);
+        if let Some(column) = parse_sql_column(&part, line) {
+            let column_key = sql_column_key(&table_key, &column.name);
+            let mut metadata = BTreeMap::new();
+            metadata.insert("language".to_string(), "sql".to_string());
+            metadata.insert("item_kind".to_string(), "sql_column".to_string());
+            metadata.insert("source".to_string(), "sql".to_string());
+            metadata.insert("table_name".to_string(), table.name.clone());
+            metadata.insert("table_key".to_string(), table_key.clone());
+            metadata.insert("column_name".to_string(), column.name.clone());
+            metadata.insert("column_key".to_string(), column_key.clone());
+            metadata.insert("line".to_string(), column.line.to_string());
+            metadata.insert("primary_key".to_string(), column.primary_key.to_string());
+            if let Some(data_type) = column.data_type.as_deref() {
+                metadata.insert("data_type".to_string(), data_type.to_string());
+            }
+            if let Some(nullable) = column.nullable {
+                metadata.insert("nullable".to_string(), nullable.to_string());
+            }
+            let column_id = context.graph.add_node_with_metadata(
+                NodeKind::Config,
+                format!("sql column:{}.{}", table.name, column.name),
+                Some(line_span(label, source, column.line)),
+                metadata,
+            );
+            context.sql_columns.insert(column_key, column_id);
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                table_id,
+                column_id,
+                EdgeKind::Contains,
+                Confidence::Exact,
+                BTreeMap::from([("relation".to_string(), "sql_column".to_string())]),
+            );
+            if let Some(reference) = column.references {
+                context.pending_sql_foreign_keys.push(PendingSqlForeignKey {
+                    source: column_id,
+                    source_table: table.name.clone(),
+                    source_column: Some(column.name),
+                    target_table: reference.target_table,
+                    target_column: reference.target_column,
+                    line: column.line,
+                });
+            }
+        } else if let Some(constraint) = parse_sql_table_constraint(&part, line) {
+            for column in constraint.columns {
+                let source = context
+                    .sql_columns
+                    .get(&sql_column_key(&table_key, &column))
+                    .copied()
+                    .unwrap_or(table_id);
+                context.pending_sql_foreign_keys.push(PendingSqlForeignKey {
+                    source,
+                    source_table: table.name.clone(),
+                    source_column: Some(column),
+                    target_table: constraint.reference.target_table.clone(),
+                    target_column: constraint.reference.target_column.clone(),
+                    line: constraint.line,
+                });
+            }
+        }
+    }
+}
+
+fn index_sql_create_view(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+    statement: &SqlStatement,
+) {
+    let Some(name) = parse_sql_create_named_object(&statement.sql, "view") else {
+        return;
+    };
+    let mut metadata = BTreeMap::new();
+    metadata.insert("language".to_string(), "sql".to_string());
+    metadata.insert("item_kind".to_string(), "sql_view".to_string());
+    metadata.insert("source".to_string(), "sql".to_string());
+    metadata.insert("view_name".to_string(), name.clone());
+    metadata.insert("view_key".to_string(), sql_identifier_key(&name));
+    metadata.insert("line".to_string(), statement.line.to_string());
+    let view_id = context.graph.add_node_with_metadata(
+        NodeKind::Type,
+        format!("sql view:{name}"),
+        Some(line_span(label, source, statement.line)),
+        metadata,
+    );
+    add_edge_once_with_metadata(
+        &mut context.graph,
+        file_id,
+        view_id,
+        EdgeKind::Contains,
+        Confidence::Exact,
+        BTreeMap::from([("relation".to_string(), "sql_view".to_string())]),
+    );
+}
+
+fn index_sql_create_index(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+    statement: &SqlStatement,
+) {
+    let Some((index_name, table_name, columns, unique)) = parse_sql_create_index(&statement.sql)
+    else {
+        return;
+    };
+    let table_key = sql_identifier_key(&table_name);
+    let mut metadata = BTreeMap::new();
+    metadata.insert("language".to_string(), "sql".to_string());
+    metadata.insert("item_kind".to_string(), "sql_index".to_string());
+    metadata.insert("source".to_string(), "sql".to_string());
+    metadata.insert("index_name".to_string(), index_name.clone());
+    metadata.insert("table_name".to_string(), table_name.clone());
+    metadata.insert("table_key".to_string(), table_key.clone());
+    metadata.insert("columns".to_string(), columns.join(","));
+    metadata.insert("unique".to_string(), unique.to_string());
+    metadata.insert("line".to_string(), statement.line.to_string());
+    let index_id = context.graph.add_node_with_metadata(
+        NodeKind::Config,
+        format!("sql index:{index_name}"),
+        Some(line_span(label, source, statement.line)),
+        metadata,
+    );
+    add_edge_once_with_metadata(
+        &mut context.graph,
+        file_id,
+        index_id,
+        EdgeKind::Contains,
+        Confidence::Exact,
+        BTreeMap::from([("relation".to_string(), "sql_index".to_string())]),
+    );
+    if let Some(table_id) = context.sql_tables.get(&table_key).copied() {
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            index_id,
+            table_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("relation".to_string(), "sql_index_table".to_string()),
+                ("source".to_string(), "sql".to_string()),
+            ]),
+        );
+    }
+}
+
+fn sql_statements(source: &str) -> Vec<SqlStatement> {
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    let mut line = 1u32;
+    let mut statement_line = 1u32;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut chars = source.chars().peekable();
+
+    while let Some(character) = chars.next() {
+        if current.trim().is_empty() {
+            statement_line = line;
+        }
+
+        if in_line_comment {
+            if character == '\n' {
+                in_line_comment = false;
+                line += 1;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if character == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                in_block_comment = false;
+            } else if character == '\n' {
+                line += 1;
+            }
+            continue;
+        }
+        if !in_single_quote && !in_double_quote && character == '-' && chars.peek() == Some(&'-') {
+            chars.next();
+            in_line_comment = true;
+            continue;
+        }
+        if !in_single_quote && !in_double_quote && character == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            in_block_comment = true;
+            continue;
+        }
+
+        match character {
+            '\'' if !in_double_quote => {
+                in_single_quote = !in_single_quote;
+                current.push(character);
+            }
+            '"' if !in_single_quote => {
+                in_double_quote = !in_double_quote;
+                current.push(character);
+            }
+            ';' if !in_single_quote && !in_double_quote => {
+                let sql = current.trim().to_string();
+                if !sql.is_empty() {
+                    statements.push(SqlStatement {
+                        sql,
+                        line: statement_line,
+                    });
+                }
+                current.clear();
+            }
+            '\n' => {
+                current.push(character);
+                line += 1;
+            }
+            _ => current.push(character),
+        }
+    }
+
+    let sql = current.trim().to_string();
+    if !sql.is_empty() {
+        statements.push(SqlStatement {
+            sql,
+            line: statement_line,
+        });
+    }
+
+    statements
+}
+
+fn parse_sql_create_table(sql: &str) -> Option<SqlCreateTable> {
+    let normalized = sql.to_ascii_lowercase();
+    let table_index = normalized.find("table")?;
+    let after_table = sql[table_index + "table".len()..].trim_start();
+    let after_table = after_table
+        .strip_prefix("if not exists")
+        .map(str::trim_start)
+        .unwrap_or(after_table);
+    let (name, rest) = read_sql_identifier(after_table)?;
+    let open = rest.find('(')?;
+    let close = matching_closing_paren(rest, open)?;
+    Some(SqlCreateTable {
+        name,
+        body: rest[open + 1..close].to_string(),
+    })
+}
+
+fn parse_sql_create_named_object(sql: &str, keyword: &str) -> Option<String> {
+    let normalized = sql.to_ascii_lowercase();
+    let keyword_index = normalized.find(keyword)?;
+    let mut rest = sql[keyword_index + keyword.len()..].trim_start();
+    rest = rest
+        .strip_prefix("if not exists")
+        .map(str::trim_start)
+        .unwrap_or(rest);
+    read_sql_identifier(rest).map(|(name, _)| name)
+}
+
+fn parse_sql_create_index(sql: &str) -> Option<(String, String, Vec<String>, bool)> {
+    let tokens = sql_first_words(sql, 8);
+    let unique = tokens.iter().any(|token| token == "unique");
+    let normalized = sql.to_ascii_lowercase();
+    let index_pos = normalized.find(" index ")?;
+    let mut rest = sql[index_pos + " index ".len()..].trim_start();
+    rest = rest
+        .strip_prefix("if not exists")
+        .map(str::trim_start)
+        .unwrap_or(rest);
+    let (index_name, after_name) = read_sql_identifier(rest)?;
+    let after_name_lower = after_name.trim_start().to_ascii_lowercase();
+    if !after_name_lower.starts_with("on ") {
+        return None;
+    }
+    let after_on = after_name.trim_start()[2..].trim_start();
+    let (table_name, after_table) = read_sql_identifier(after_on)?;
+    let open = after_table.find('(')?;
+    let close = matching_closing_paren(after_table, open)?;
+    let columns = split_sql_comma_items(&after_table[open + 1..close])
+        .into_iter()
+        .filter_map(|item| read_sql_identifier(item.trim()).map(|(name, _)| name))
+        .collect();
+    Some((index_name, table_name, columns, unique))
+}
+
+fn parse_sql_column(part: &str, line: u32) -> Option<SqlColumn> {
+    let trimmed = part.trim();
+    let first = trimmed
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(
+        first.as_str(),
+        "constraint" | "primary" | "foreign" | "unique" | "check" | "exclude"
+    ) {
+        return None;
+    }
+    let (name, rest) = read_sql_identifier(trimmed)?;
+    let rest = rest.trim();
+    let rest_lower = rest.to_ascii_lowercase();
+    let data_type = sql_column_data_type(rest);
+    let nullable = if rest_lower.contains("not null") {
+        Some(false)
+    } else if rest_lower.contains(" null") || rest_lower.ends_with(" null") {
+        Some(true)
+    } else {
+        None
+    };
+    let primary_key = rest_lower.contains("primary key");
+    let references = parse_sql_references(rest);
+    Some(SqlColumn {
+        name,
+        data_type,
+        nullable,
+        primary_key,
+        line,
+        references,
+    })
+}
+
+fn parse_sql_table_constraint(part: &str, line: u32) -> Option<SqlTableConstraint> {
+    let mut text = part.trim();
+    let lower = text.to_ascii_lowercase();
+    if lower.starts_with("constraint ") {
+        let rest = text
+            .split_once(char::is_whitespace)
+            .map(|(_, rest)| rest.trim_start())?;
+        let (_, rest) = read_sql_identifier(rest)?;
+        text = rest.trim_start();
+    }
+    let lower = text.to_ascii_lowercase();
+    if !lower.starts_with("foreign key") {
+        return None;
+    }
+    let open = text.find('(')?;
+    let close = matching_closing_paren(text, open)?;
+    let columns = split_sql_comma_items(&text[open + 1..close])
+        .into_iter()
+        .filter_map(|item| read_sql_identifier(item.trim()).map(|(name, _)| name))
+        .collect::<Vec<_>>();
+    let reference = parse_sql_references(&text[close + 1..])?;
+    Some(SqlTableConstraint {
+        columns,
+        reference,
+        line,
+    })
+}
+
+fn parse_sql_references(text: &str) -> Option<SqlReference> {
+    let lower = text.to_ascii_lowercase();
+    let index = lower.find("references")?;
+    let rest = text[index + "references".len()..].trim_start();
+    let (target_table, after_table) = read_sql_identifier(rest)?;
+    let target_column = after_table
+        .find('(')
+        .and_then(|open| matching_closing_paren(after_table, open).map(|close| (open, close)))
+        .and_then(|(open, close)| {
+            split_sql_comma_items(&after_table[open + 1..close])
+                .into_iter()
+                .next()
+        })
+        .and_then(|value| read_sql_identifier(value.trim()).map(|(name, _)| name));
+    Some(SqlReference {
+        target_table,
+        target_column,
+    })
+}
+
+fn sql_column_data_type(rest: &str) -> Option<String> {
+    let stop_words = [
+        "not",
+        "null",
+        "primary",
+        "unique",
+        "references",
+        "default",
+        "check",
+        "constraint",
+        "generated",
+        "collate",
+    ];
+    let mut parts = Vec::new();
+    for token in rest.split_whitespace() {
+        let normalized = token
+            .trim_matches(',')
+            .trim_matches('(')
+            .trim_matches(')')
+            .to_ascii_lowercase();
+        if stop_words.contains(&normalized.as_str()) {
+            break;
+        }
+        parts.push(token.trim_matches(','));
+    }
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
+fn split_sql_comma_items(text: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    for character in text.chars() {
+        match character {
+            '\'' if !in_double_quote => {
+                in_single_quote = !in_single_quote;
+                current.push(character);
+            }
+            '"' if !in_single_quote => {
+                in_double_quote = !in_double_quote;
+                current.push(character);
+            }
+            '(' if !in_single_quote && !in_double_quote => {
+                depth += 1;
+                current.push(character);
+            }
+            ')' if !in_single_quote && !in_double_quote => {
+                depth = depth.saturating_sub(1);
+                current.push(character);
+            }
+            ',' if depth == 0 && !in_single_quote && !in_double_quote => {
+                let item = current.trim();
+                if !item.is_empty() {
+                    items.push(item.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(character),
+        }
+    }
+    let item = current.trim();
+    if !item.is_empty() {
+        items.push(item.to_string());
+    }
+    items
+}
+
+fn read_sql_identifier(text: &str) -> Option<(String, &str)> {
+    let text = text.trim_start();
+    let mut chars = text.char_indices();
+    let (_, first) = chars.next()?;
+    if matches!(first, '"' | '`' | '[') {
+        let close = if first == '[' { ']' } else { first };
+        let end = text[1..].find(close)? + 1;
+        let name = text[1..end].to_string();
+        return Some((name, &text[end + close.len_utf8()..]));
+    }
+
+    let end = text
+        .char_indices()
+        .take_while(|(_, character)| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '$')
+        })
+        .map(|(index, character)| index + character.len_utf8())
+        .last()?;
+    Some((text[..end].to_string(), &text[end..]))
+}
+
+fn matching_closing_paren(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    for (index, character) in text.char_indices().skip_while(|(index, _)| *index < open) {
+        match character {
+            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+            '"' if !in_single_quote => in_double_quote = !in_double_quote,
+            '(' if !in_single_quote && !in_double_quote => depth += 1,
+            ')' if !in_single_quote && !in_double_quote => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn sql_first_words(sql: &str, limit: usize) -> Vec<String> {
+    sql.split_whitespace()
+        .take(limit)
+        .map(|token| token.trim_matches(',').to_ascii_lowercase())
+        .collect()
+}
+
+fn sql_identifier_key(identifier: &str) -> String {
+    identifier
+        .trim()
+        .trim_matches('"')
+        .trim_matches('`')
+        .trim_matches('[')
+        .trim_matches(']')
+        .to_ascii_lowercase()
+}
+
+fn sql_column_key(table_key: &str, column: &str) -> String {
+    format!("{}.{}", table_key, sql_identifier_key(column))
+}
+
+fn sql_line_offset(statement: &str, part: &str) -> u32 {
+    statement
+        .find(part.trim())
+        .map(|index| statement[..index].lines().count().saturating_sub(1) as u32)
+        .unwrap_or(0)
+}
+
+fn is_sql_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("sql"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10209,6 +10857,48 @@ fn resolve_pending_document_symbol_refs(context: &mut IndexContext) {
     }
 }
 
+fn resolve_pending_sql_foreign_keys(context: &mut IndexContext) {
+    let pending_refs = std::mem::take(&mut context.pending_sql_foreign_keys);
+
+    for pending in pending_refs {
+        let target_table_key = sql_identifier_key(&pending.target_table);
+        let target_id = pending
+            .target_column
+            .as_deref()
+            .and_then(|column| {
+                context
+                    .sql_columns
+                    .get(&sql_column_key(&target_table_key, column))
+                    .copied()
+            })
+            .or_else(|| context.sql_tables.get(&target_table_key).copied());
+        let Some(target_id) = target_id else {
+            continue;
+        };
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), "sql_foreign_key".to_string());
+        metadata.insert("source".to_string(), "sql".to_string());
+        metadata.insert("source_table".to_string(), pending.source_table);
+        metadata.insert("target_table".to_string(), pending.target_table);
+        metadata.insert("line".to_string(), pending.line.to_string());
+        if let Some(source_column) = pending.source_column {
+            metadata.insert("source_column".to_string(), source_column);
+        }
+        if let Some(target_column) = pending.target_column {
+            metadata.insert("target_column".to_string(), target_column);
+        }
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.source,
+            target_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
 fn github_actions_local_action_target(context: &IndexContext, target: &str) -> Option<NodeId> {
     let candidates = [
         target.to_string(),
@@ -10998,6 +11688,9 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
     if is_markdown_document(path) {
         return true;
     }
+    if is_sql_file(path) {
+        return true;
+    }
 
     matches!(
         path.file_name().and_then(|name| name.to_str()),
@@ -11360,6 +12053,122 @@ mod tests {
 
         let coverage = scan_coverage(&root, &IndexOptions::default()).unwrap();
         assert_eq!(coverage.languages.get("markdown"), Some(&1));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_indexes_sql_schema_facts() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("db").join("migrations")).unwrap();
+        fs::write(
+            root.join("db").join("migrations").join("001_schema.sql"),
+            r#"
+CREATE TABLE organizations (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    org_id INTEGER NOT NULL REFERENCES organizations(id),
+    email TEXT NOT NULL,
+    CONSTRAINT users_org_fk FOREIGN KEY (org_id) REFERENCES organizations(id)
+);
+
+CREATE UNIQUE INDEX idx_users_email ON users (email);
+CREATE VIEW active_users AS SELECT id, email FROM users;
+"#,
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let sql_file = node_id(&graph, NodeKind::File, "db/migrations/001_schema.sql");
+        let organizations = node_id(&graph, NodeKind::Type, "sql table:organizations");
+        let users = node_id(&graph, NodeKind::Type, "sql table:users");
+        let org_id = node_id(&graph, NodeKind::Config, "sql column:users.org_id");
+        let email = node_id(&graph, NodeKind::Config, "sql column:users.email");
+        let org_pk = node_id(&graph, NodeKind::Config, "sql column:organizations.id");
+        let index = node_id(&graph, NodeKind::Config, "sql index:idx_users_email");
+        let view = node_id(&graph, NodeKind::Type, "sql view:active_users");
+
+        let sql_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == sql_file)
+            .expect("missing SQL file");
+        assert_eq!(
+            sql_node.metadata.get("language").map(String::as_str),
+            Some("sql")
+        );
+        assert_eq!(
+            sql_node.metadata.get("item_kind").map(String::as_str),
+            Some("sql_schema")
+        );
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == sql_file
+                && edge.target == users
+                && edge.kind == EdgeKind::Contains
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "sql_table")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == users
+                && edge.target == email
+                && edge.kind == EdgeKind::Contains
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "sql_column")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == org_id
+                && edge.target == org_pk
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "sql_foreign_key")
+                && edge
+                    .metadata
+                    .get("target_table")
+                    .is_some_and(|value| value == "organizations")
+                && edge
+                    .metadata
+                    .get("target_column")
+                    .is_some_and(|value| value == "id")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == index
+                && edge.target == users
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "sql_index_table")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == sql_file
+                && edge.target == view
+                && edge.kind == EdgeKind::Contains
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "sql_view")
+        }));
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == organizations)
+                .and_then(|node| node.metadata.get("table_key"))
+                .is_some_and(|value| value == "organizations")
+        );
+
+        let coverage = scan_coverage(&root, &IndexOptions::default()).unwrap();
+        assert_eq!(coverage.languages.get("sql"), Some(&1));
 
         fs::remove_dir_all(root).unwrap();
     }

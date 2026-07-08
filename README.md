@@ -38,6 +38,7 @@ Implemented now:
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
 - Source rationale comments such as `WHY`, `NOTE`, `TODO`, `FIXME`, `HACK`, `BUG`, `XXX`, and `SECURITY` are indexed as linked graph facts with source spans for human and agent review.
 - Markdown, ADR, and RFC documents are indexed as repository knowledge facts with section nodes plus local file/directory and symbol references from Markdown links and inline code.
+- SQL schema files are indexed as repository knowledge facts for tables, views, columns, indexes, and foreign-key references with exact source spans.
 - Local import/include resolution for relative JavaScript/TypeScript imports and CommonJS requires, Python relative/absolute project imports, Go module-local imports, quoted C/C++ includes with CMake and compile database include directories, PHP include/require paths and namespace imports, Bash source paths, and common Rust module paths.
 - Manifest dependency extraction from Cargo, npm/package-lock/pnpm-lock, Go including indirect requirements, Python/Poetry, setup.py/setup.cfg/Pipfile, Composer/composer.lock, vcpkg, Conan, and CMake `find_package` projects.
 - Heuristic config reads, environment reads, and potential error/exception constructs.
@@ -828,6 +829,7 @@ At the current stage, supported source languages are detected by extension:
 - PHP: `php`, `phtml`
 - Bash/shell: `sh`, `bash`, `zsh`, `ksh`, `Makefile`
 - Markdown/ADR/RFC repository docs: `md`, `markdown`, `mdown`, `mkdn`
+- SQL schema/migration files: `sql`
 
 Planned Dart/Flutter depth:
 
@@ -835,7 +837,7 @@ Planned Dart/Flutter depth:
 
 Planned repository-knowledge features inspired by Graphify-style workflows:
 
-- Repository knowledge reports, deeper document ingestion beyond Markdown, deterministic SQL schema extraction, optional non-code document ingestion, assistant install/hooks, MCP server mode, global multi-repository graphs, saved investigation memory, PR impact dashboards, and exports for GraphML, SVG, Mermaid/callflow HTML, Obsidian/Markdown wiki, Neo4j, and FalkorDB.
+- Repository knowledge reports, deeper document ingestion beyond Markdown, deeper SQL/query/ORM linking, optional non-code document ingestion, assistant install/hooks, MCP server mode, global multi-repository graphs, saved investigation memory, PR impact dashboards, and exports for GraphML, SVG, Mermaid/callflow HTML, Obsidian/Markdown wiki, Neo4j, and FalkorDB.
 - The detailed Graphify parity map is tracked in [`docs/GRAPHIFY_PARITY.md`](docs/GRAPHIFY_PARITY.md), including already covered capabilities, gaps, priorities, and compatibility principles.
 
 Supported package manifests:
