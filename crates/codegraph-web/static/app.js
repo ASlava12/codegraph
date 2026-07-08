@@ -64,6 +64,7 @@ const I18N = {
     "selection.errorTrace": "Error Trace",
     "selection.packageGraph": "Packages",
     "selection.fileGraph": "File Graph",
+    "selection.documentGraph": "Document Graph",
     "selection.symbolGraph": "Symbol Graph",
     "selection.configGraph": "Config Graph",
     "selection.errorGraph": "Error Graph",
@@ -229,6 +230,7 @@ const I18N = {
     "queryPreset.risks": "Risks",
     "queryPreset.symbols": "Symbols",
     "queryPreset.files": "Files",
+    "queryPreset.docs": "Docs",
     "queryPreset.entrypoints": "Entrypoints",
     "queryPreset.routes": "Routes",
     "queryPreset.configs": "Configs",
@@ -664,6 +666,7 @@ const I18N = {
     "selection.errorTrace": "Трасса ошибок",
     "selection.packageGraph": "Пакеты",
     "selection.fileGraph": "Граф файла",
+    "selection.documentGraph": "Граф документа",
     "selection.symbolGraph": "Граф символа",
     "selection.configGraph": "Граф конфига",
     "selection.errorGraph": "Граф ошибок",
@@ -829,6 +832,7 @@ const I18N = {
     "queryPreset.risks": "Риски",
     "queryPreset.symbols": "Символы",
     "queryPreset.files": "Файлы",
+    "queryPreset.docs": "Документы",
     "queryPreset.entrypoints": "Точки входа",
     "queryPreset.routes": "Маршруты",
     "queryPreset.configs": "Конфиги",
@@ -9113,6 +9117,11 @@ function localNodeCardActions(node) {
       label: "File graph",
       query: fileGraphQueryForNode(node),
     },
+    documentGraphQueryForNode(node) && {
+      kind: "document_graph",
+      label: "Document graph",
+      query: documentGraphQueryForNode(node),
+    },
     symbolGraphQueryForNode(node) && {
       kind: "symbol_graph",
       label: "Symbol graph",
@@ -9139,6 +9148,7 @@ function localNodeCardActions(node) {
 function nodeCardActionLabel(action) {
   const labels = {
     file_graph: "selection.fileGraph",
+    document_graph: "selection.documentGraph",
     symbol_graph: "selection.symbolGraph",
     package_graph: "selection.packageGraph",
     config_graph: "selection.configGraph",
@@ -9167,6 +9177,13 @@ function packageGraphQueryForNode(node) {
 function fileGraphQueryForNode(node) {
   if (node.kind !== "file") return null;
   return `files path:${quoteQueryValue(node.label)} direction:out edge_limit:300`;
+}
+
+function documentGraphQueryForNode(node) {
+  const itemKind = node.metadata?.item_kind || "";
+  const language = node.metadata?.language || "";
+  if (!["document", "document_section"].includes(itemKind) && language !== "markdown") return null;
+  return `docs node_id:${node.id} edge_limit:300`;
 }
 
 function symbolGraphQueryForNode(node) {

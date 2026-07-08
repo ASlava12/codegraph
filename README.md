@@ -95,7 +95,7 @@ Implemented now:
 - Web job monitor for retained scan and semantic jobs with refresh, status summaries, and cancellation actions.
 - Source preview API and UI panel for parsed symbols plus framework route/config facts with source spans.
 - File node cards include source previews and can jump into focused file graph slices.
-- Node cards return suggested focused graph actions for files, symbols, packages, configs, and error facts.
+- Node cards return suggested focused graph actions for files, documents, symbols, packages, configs, and error facts.
 - Node cards include dependency summaries with incoming/outgoing counts, edge kinds, confidence, and neighbor facets.
 - File node cards include contained-symbol and in-file trace fact summaries for quick file-level triage.
 - File node cards surface risks from contained symbols and facts, not only risks attached directly to the file node.
@@ -474,6 +474,7 @@ cargo run -p codegraph-cli -- query 'dependents label:load_config depth:3' .
 cargo run -p codegraph-cli -- query 'neighbors label:main direction:out depth:2 edge_kind:calls' .
 cargo run -p codegraph-cli -- query 'symbols label:load_config direction:out edge_limit:300' .
 cargo run -p codegraph-cli -- query 'files path:src/main.rs direction:out edge_limit:300' .
+cargo run -p codegraph-cli -- query 'docs target:src/main.rs relation:markdown_link edge_limit:300' .
 cargo run -p codegraph-cli -- query 'entrypoints language:rust' .
 cargo run -p codegraph-cli -- query 'routes method:GET path:/health depth:3 edge_limit:300' .
 cargo run -p codegraph-cli -- query 'packages package:serde ecosystem:cargo edge_limit:300' .

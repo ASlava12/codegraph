@@ -3714,6 +3714,7 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "neighbors",
                     "symbols",
                     "files",
+                    "docs",
                     "entrypoints",
                     "routes",
                     "packages",
@@ -3872,6 +3873,38 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "dir",
                     "edge_kind",
                     "confidence",
+                    "edge_limit",
+                    "metadata.*",
+                ],
+            ),
+            (
+                "graph_query_document_term",
+                vec![
+                    "id",
+                    "node",
+                    "node_id",
+                    "label",
+                    "search",
+                    "language",
+                    "kind",
+                    "node_kind",
+                    "item_kind",
+                    "document_kind",
+                    "doc_kind",
+                    "type",
+                    "heading",
+                    "anchor",
+                    "path",
+                    "source_path",
+                    "file",
+                    "file_path",
+                    "path_prefix",
+                    "target",
+                    "relation",
+                    "edge_kind",
+                    "confidence",
+                    "direction",
+                    "dir",
                     "edge_limit",
                     "metadata.*",
                 ],
@@ -4614,7 +4647,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/query",
-                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, symbols, files, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, annotations, or insights. QueryResult includes returned counts, edge metadata.edge_index values, and facets for node kinds, edge kinds, languages, item kinds, and confidence.",
+                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, symbols, files, docs, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, annotations, or insights. QueryResult includes returned counts, edge metadata.edge_index values, and facets for node kinds, edge kinds, languages, item kinds, and confidence.",
                     vec![
                         path_param(),
                         query_param(
@@ -4622,7 +4655,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Graph query expression, for example `symbols label:load_config direction:out`, `files path:src/main.rs direction:out`, `entrypoints language:rust`, `routes method:GET path:/users`, `packages package:serde ecosystem:cargo`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable scope:errors search:LegacyError`, `diagnostics severity:error language:rust`, `annotations key:domain value:payments`, or `insights severity:error`.",
+                            "Graph query expression, for example `symbols label:load_config direction:out`, `files path:src/main.rs direction:out`, `docs target:src/main.rs relation:markdown_link`, `entrypoints language:rust`, `routes method:GET path:/users`, `packages package:serde ecosystem:cargo`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable scope:errors search:LegacyError`, `diagnostics severity:error language:rust`, `annotations key:domain value:payments`, or `insights severity:error`.",
                         )
                         .with_max_length(MAX_GRAPH_QUERY_LENGTH)
                         .with_capability_limit("max_graph_query_length"),
@@ -7749,6 +7782,7 @@ fn helper() {}
         assert!(app.contains("ambiguous_entrypoint_target"));
         assert!(index.contains("insights kind:ambiguous_call_resolution"));
         assert!(index.contains("insights kind:ambiguous_entrypoint_target"));
+        assert!(index.contains("docs edge_limit:300"));
         assert!(index.contains("insights kind:mixed_dependency_scope"));
         assert!(index.contains("insights kind:conflicting_dependency_declaration"));
         assert!(index.contains("insights kind:non_runtime_dependency_import"));
@@ -7761,6 +7795,9 @@ fn helper() {}
         assert!(app.contains("\"queryPreset.runtimeImports\""));
         assert!(app.contains("\"queryPreset.testOnlyRuntime\""));
         assert!(app.contains("\"queryPreset.sensitiveDefaults\""));
+        assert!(app.contains("\"queryPreset.docs\""));
+        assert!(app.contains("\"selection.documentGraph\""));
+        assert!(app.contains("documentGraphQueryForNode"));
         assert!(app.contains("\"kind.mixed_dependency_scope\""));
         assert!(app.contains("\"kind.non_runtime_dependency_import\""));
         assert!(app.contains("\"kind.test_only_runtime_dependency\""));
@@ -8185,6 +8222,7 @@ fn helper() {}
                     commands.contains(&"entrypoints")
                         && commands.contains(&"symbols")
                         && commands.contains(&"files")
+                        && commands.contains(&"docs")
                         && commands.contains(&"routes")
                         && commands.contains(&"packages")
                         && commands.contains(&"configs")
@@ -8232,6 +8270,17 @@ fn helper() {}
                 .enum_values
                 .get("graph_query_file_term")
                 .is_some_and(|terms| terms.contains(&"path") && terms.contains(&"edge_limit"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_document_term")
+                .is_some_and(|terms| {
+                    terms.contains(&"document_kind")
+                        && terms.contains(&"heading")
+                        && terms.contains(&"target")
+                        && terms.contains(&"relation")
+                })
         );
         assert!(
             schema
