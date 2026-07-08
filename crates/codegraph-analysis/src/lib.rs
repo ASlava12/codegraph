@@ -793,6 +793,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unresolved_dockerfile_command_path",
     "unresolved_entrypoint_target",
     "unresolved_framework_route_handler",
+    "unresolved_github_actions_local_action",
     "unresolved_kubernetes_config_ref",
     "unresolved_kubernetes_ingress_backend",
     "unresolved_kubernetes_service_selector",
@@ -1350,6 +1351,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unresolved_compose_command_path_insights(graph, &mut insights);
     add_unresolved_compose_env_file_path_insights(graph, &mut insights);
     add_unresolved_compose_volume_source_path_insights(graph, &mut insights);
+    add_unresolved_github_actions_local_action_insights(graph, &mut insights);
     add_unresolved_kubernetes_config_ref_insights(graph, &mut insights);
     add_unresolved_kubernetes_ingress_backend_insights(graph, &mut insights);
     add_unresolved_kubernetes_service_selector_insights(graph, &mut insights);
@@ -6675,6 +6677,81 @@ fn compose_volume_reader_ids(graph: &CodeGraph, volume: NodeId) -> Vec<NodeId> {
                     .metadata
                     .get("relation")
                     .is_some_and(|relation| relation == "compose_volume")
+        })
+        .map(|edge| edge.source)
+        .collect()
+}
+
+fn add_unresolved_github_actions_local_action_insights(
+    graph: &CodeGraph,
+    insights: &mut Vec<Insight>,
+) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Config
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "github_actions_local_action")
+        {
+            continue;
+        }
+        let Some(local_action_path) = node
+            .metadata
+            .get("local_action_path")
+            .map(|path| path.trim())
+            .filter(|path| !path.is_empty())
+        else {
+            continue;
+        };
+        let resolved = graph.edges.iter().any(|edge| {
+            edge.source == node.id
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|value| value == "github_actions_local_action_path")
+        });
+        if resolved {
+            continue;
+        }
+
+        let workflow = node
+            .metadata
+            .get("workflow")
+            .map(String::as_str)
+            .unwrap_or("workflow");
+        let job = node
+            .metadata
+            .get("job")
+            .map(String::as_str)
+            .unwrap_or("job");
+        let mut nodes = vec![node.id];
+        nodes.extend(github_actions_local_action_reader_ids(graph, node.id));
+        nodes.sort();
+        nodes.dedup();
+        insights.push(Insight {
+            kind: "unresolved_github_actions_local_action".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "GitHub Actions job `{workflow}/{job}` uses local action `{local_action_path}` but no matching action directory, action.yml, action.yaml, or Dockerfile was found"
+            ),
+            nodes,
+            edges: incoming_edge_indexes(graph, node.id, EdgeKind::DependsOn),
+        });
+    }
+}
+
+fn github_actions_local_action_reader_ids(graph: &CodeGraph, action: NodeId) -> Vec<NodeId> {
+    graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.target == action
+                && edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "github_actions_uses")
         })
         .map(|edge| edge.source)
         .collect()
@@ -12603,6 +12680,98 @@ mod tests {
         assert!(insight.message.contains("config/missing"));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unresolved_compose_volume_source_path"
+                && insight.nodes.contains(&resolved)
+        }));
+    }
+
+    #[test]
+    fn insights_report_unresolved_github_actions_local_actions() {
+        let mut graph = CodeGraph::new("repo");
+        let build = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "github workflow:CI/build",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "github_actions_job".to_string())]),
+        );
+        let deploy = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "github workflow:CI/deploy",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "github_actions_job".to_string())]),
+        );
+        let missing = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "github action:.github/actions/missing",
+            None,
+            BTreeMap::from([
+                (
+                    "item_kind".to_string(),
+                    "github_actions_local_action".to_string(),
+                ),
+                ("workflow".to_string(), "CI".to_string()),
+                ("job".to_string(), "build".to_string()),
+                (
+                    "local_action_path".to_string(),
+                    ".github/actions/missing".to_string(),
+                ),
+            ]),
+        );
+        let resolved = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "github action:.github/actions/setup",
+            None,
+            BTreeMap::from([
+                (
+                    "item_kind".to_string(),
+                    "github_actions_local_action".to_string(),
+                ),
+                ("workflow".to_string(), "CI".to_string()),
+                ("job".to_string(), "deploy".to_string()),
+                (
+                    "local_action_path".to_string(),
+                    ".github/actions/setup".to_string(),
+                ),
+            ]),
+        );
+        let setup_dir = graph.add_node(NodeKind::Directory, ".github/actions/setup");
+        graph.add_edge_with_metadata(
+            build,
+            missing,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "github_actions_uses".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            deploy,
+            resolved,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "github_actions_uses".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            resolved,
+            setup_dir,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([(
+                "resolution".to_string(),
+                "github_actions_local_action_path".to_string(),
+            )]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_github_actions_local_action")
+            .expect("expected unresolved GitHub Actions local action insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.nodes.contains(&missing));
+        assert!(insight.nodes.contains(&build));
+        assert!(insight.message.contains(".github/actions/missing"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_github_actions_local_action"
                 && insight.nodes.contains(&resolved)
         }));
     }

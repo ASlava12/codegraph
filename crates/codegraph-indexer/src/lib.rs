@@ -108,6 +108,7 @@ struct IndexContext {
     kubernetes_services: BTreeMap<KubernetesServiceKey, NodeId>,
     pending_kubernetes_config_refs: Vec<PendingKubernetesConfigRef>,
     pending_kubernetes_service_refs: Vec<PendingKubernetesServiceRef>,
+    pending_github_actions_local_actions: Vec<PendingGithubActionsLocalAction>,
 }
 
 struct PendingCall {
@@ -170,6 +171,11 @@ struct PendingKubernetesServiceRef {
     name: String,
 }
 
+struct PendingGithubActionsLocalAction {
+    action: NodeId,
+    target: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MakefileTarget {
     name: String,
@@ -229,6 +235,30 @@ struct ComposeVolume {
     kind: String,
     read_only: bool,
     raw: Option<String>,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GithubActionsWorkflow {
+    name: String,
+    jobs: Vec<GithubActionsJob>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GithubActionsJob {
+    id: String,
+    display_name: Option<String>,
+    runs_on: Option<String>,
+    needs: Vec<String>,
+    steps: Vec<GithubActionsStep>,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GithubActionsStep {
+    name: Option<String>,
+    uses: Option<String>,
+    run: Option<String>,
     line: u32,
 }
 
@@ -697,6 +727,7 @@ fn scan_project_with_scope(
         kubernetes_services: BTreeMap::new(),
         pending_kubernetes_config_refs: Vec::new(),
         pending_kubernetes_service_refs: Vec::new(),
+        pending_github_actions_local_actions: Vec::new(),
     };
 
     for entry in WalkDir::new(root)
@@ -755,6 +786,7 @@ fn scan_project_with_scope(
     resolve_pending_compose_volume_targets(&mut context);
     resolve_pending_kubernetes_config_refs(&mut context);
     resolve_pending_kubernetes_service_refs(&mut context);
+    resolve_pending_github_actions_local_actions(&mut context);
     apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
 
@@ -1275,6 +1307,7 @@ fn index_manifest_facts(
     index_makefile_entrypoints(context, file_id, path, label, source);
     index_dockerfile_entrypoints(context, file_id, path, label, source);
     index_compose_entrypoints(context, file_id, path, label, source);
+    index_github_actions_workflow_entrypoints(context, file_id, path, label, source);
     index_kubernetes_manifest_facts(context, file_id, path, label, source);
 }
 
@@ -2793,6 +2826,284 @@ fn index_compose_entrypoints(
     }
 }
 
+fn index_github_actions_workflow_entrypoints(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if !is_github_actions_workflow_path(label, path) {
+        return;
+    }
+    let workflow = github_actions_workflow(label, source);
+    if workflow.jobs.is_empty() {
+        return;
+    }
+
+    let mut job_nodes = BTreeMap::new();
+    for job in &workflow.jobs {
+        let uses_count = job.steps.iter().filter(|step| step.uses.is_some()).count();
+        let run_count = job.steps.iter().filter(|step| step.run.is_some()).count();
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "github_actions_job".to_string());
+        metadata.insert("entrypoint_kind".to_string(), "workflow_job".to_string());
+        metadata.insert("ecosystem".to_string(), "github-actions".to_string());
+        metadata.insert("source".to_string(), "github-actions".to_string());
+        metadata.insert("workflow".to_string(), workflow.name.clone());
+        metadata.insert("job".to_string(), job.id.clone());
+        metadata.insert("line".to_string(), job.line.to_string());
+        metadata.insert("step_count".to_string(), job.steps.len().to_string());
+        metadata.insert("uses_count".to_string(), uses_count.to_string());
+        metadata.insert("run_count".to_string(), run_count.to_string());
+        metadata.insert("needs_count".to_string(), job.needs.len().to_string());
+        if let Some(display_name) = job.display_name.as_deref() {
+            metadata.insert("name".to_string(), display_name.to_string());
+        }
+        if let Some(runs_on) = job.runs_on.as_deref() {
+            metadata.insert("runs_on".to_string(), runs_on.to_string());
+        }
+
+        let job_id = context.graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            format!("github workflow:{}/{}", workflow.name, job.id),
+            Some(line_span(label, source, job.line)),
+            metadata,
+        );
+        job_nodes.insert(job.id.clone(), job_id);
+        add_edge_once(
+            &mut context.graph,
+            file_id,
+            job_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+        );
+        let root_id = context.graph.root;
+        add_edge_once(
+            &mut context.graph,
+            root_id,
+            job_id,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        add_entrypoint_reference(
+            &mut context.graph,
+            job_id,
+            file_id,
+            "entrypoint_file",
+            "github_actions_workflow",
+            Confidence::Exact,
+            None,
+        );
+
+        for step in &job.steps {
+            index_github_actions_step(context, job_id, label, source, &workflow, job, step);
+        }
+    }
+
+    for job in &workflow.jobs {
+        let Some(source_id) = job_nodes.get(&job.id).copied() else {
+            continue;
+        };
+        for dependency in &job.needs {
+            let Some(target_id) = job_nodes.get(dependency).copied() else {
+                continue;
+            };
+            let mut metadata = BTreeMap::new();
+            metadata.insert("relation".to_string(), "github_actions_needs".to_string());
+            metadata.insert("source".to_string(), "github-actions".to_string());
+            metadata.insert("workflow".to_string(), workflow.name.clone());
+            metadata.insert("job".to_string(), job.id.clone());
+            metadata.insert("dependency".to_string(), dependency.clone());
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                source_id,
+                target_id,
+                EdgeKind::DependsOn,
+                Confidence::Exact,
+                metadata,
+            );
+        }
+    }
+}
+
+fn index_github_actions_step(
+    context: &mut IndexContext,
+    job_id: NodeId,
+    label: &str,
+    source: &str,
+    workflow: &GithubActionsWorkflow,
+    job: &GithubActionsJob,
+    step: &GithubActionsStep,
+) {
+    if let Some(action) = step.uses.as_deref() {
+        index_github_actions_uses_step(context, job_id, label, source, workflow, job, step, action);
+    }
+    if let Some(command) = step.run.as_deref() {
+        index_github_actions_run_step(context, job_id, label, source, workflow, job, step, command);
+    }
+}
+
+fn index_github_actions_uses_step(
+    context: &mut IndexContext,
+    job_id: NodeId,
+    label: &str,
+    source: &str,
+    workflow: &GithubActionsWorkflow,
+    job: &GithubActionsJob,
+    step: &GithubActionsStep,
+    action: &str,
+) {
+    if let Some(local_path) = github_actions_local_action_path(action) {
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "item_kind".to_string(),
+            "github_actions_local_action".to_string(),
+        );
+        metadata.insert("source".to_string(), "github-actions".to_string());
+        metadata.insert("ecosystem".to_string(), "github-actions".to_string());
+        metadata.insert("workflow".to_string(), workflow.name.clone());
+        metadata.insert("job".to_string(), job.id.clone());
+        metadata.insert("line".to_string(), step.line.to_string());
+        metadata.insert("uses".to_string(), action.to_string());
+        metadata.insert("local_action_path".to_string(), local_path.clone());
+        if let Some(name) = step.name.as_deref() {
+            metadata.insert("name".to_string(), name.to_string());
+        }
+        let action_id = context.graph.add_node_with_metadata(
+            NodeKind::Config,
+            format!("github action:{local_path}"),
+            Some(line_span(label, source, step.line)),
+            metadata,
+        );
+        add_github_actions_uses_edge(&mut context.graph, job_id, action_id, workflow, job, action);
+        context
+            .pending_github_actions_local_actions
+            .push(PendingGithubActionsLocalAction {
+                action: action_id,
+                target: local_path,
+            });
+        return;
+    }
+
+    let (name, version) = github_actions_remote_action(action);
+    let action_id = github_actions_external_action_node(context, &name, version.as_deref());
+    add_github_actions_uses_edge(&mut context.graph, job_id, action_id, workflow, job, action);
+}
+
+fn index_github_actions_run_step(
+    context: &mut IndexContext,
+    job_id: NodeId,
+    label: &str,
+    source: &str,
+    workflow: &GithubActionsWorkflow,
+    job: &GithubActionsJob,
+    step: &GithubActionsStep,
+    command: &str,
+) {
+    let mut metadata = BTreeMap::new();
+    metadata.insert(
+        "item_kind".to_string(),
+        "github_actions_run_step".to_string(),
+    );
+    metadata.insert("source".to_string(), "github-actions".to_string());
+    metadata.insert("ecosystem".to_string(), "github-actions".to_string());
+    metadata.insert("workflow".to_string(), workflow.name.clone());
+    metadata.insert("job".to_string(), job.id.clone());
+    metadata.insert("line".to_string(), step.line.to_string());
+    metadata.insert("command".to_string(), command.to_string());
+    if let Some(command_path) = github_actions_run_command_path_candidate(command) {
+        metadata.insert("command_path".to_string(), command_path);
+    }
+    if let Some(name) = step.name.as_deref() {
+        metadata.insert("name".to_string(), name.to_string());
+    }
+    let step_id = context.graph.add_node_with_metadata(
+        NodeKind::Config,
+        format!("github run:{}/{}/{}", workflow.name, job.id, step.line),
+        Some(line_span(label, source, step.line)),
+        metadata,
+    );
+    let mut edge_metadata = BTreeMap::new();
+    edge_metadata.insert("source".to_string(), "github-actions".to_string());
+    edge_metadata.insert("relation".to_string(), "github_actions_run".to_string());
+    edge_metadata.insert("workflow".to_string(), workflow.name.clone());
+    edge_metadata.insert("job".to_string(), job.id.clone());
+    add_edge_once_with_metadata(
+        &mut context.graph,
+        job_id,
+        step_id,
+        EdgeKind::References,
+        Confidence::Exact,
+        edge_metadata,
+    );
+    context
+        .pending_entrypoint_targets
+        .push(PendingEntrypointTarget {
+            entrypoint: job_id,
+            manifest_label: label.to_string(),
+            target: command.to_string(),
+            ecosystem: "github-actions".to_string(),
+            entrypoint_kind: "workflow_job".to_string(),
+        });
+}
+
+fn add_github_actions_uses_edge(
+    graph: &mut CodeGraph,
+    job_id: NodeId,
+    action_id: NodeId,
+    workflow: &GithubActionsWorkflow,
+    job: &GithubActionsJob,
+    action: &str,
+) {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("source".to_string(), "github-actions".to_string());
+    metadata.insert("relation".to_string(), "github_actions_uses".to_string());
+    metadata.insert("workflow".to_string(), workflow.name.clone());
+    metadata.insert("job".to_string(), job.id.clone());
+    metadata.insert("uses".to_string(), action.to_string());
+    if let Some((_, version)) = action.rsplit_once('@')
+        && !version.trim().is_empty()
+    {
+        metadata.insert("version".to_string(), version.trim().to_string());
+    }
+    add_edge_once_with_metadata(
+        graph,
+        job_id,
+        action_id,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        metadata,
+    );
+}
+
+fn github_actions_external_action_node(
+    context: &mut IndexContext,
+    action: &str,
+    version: Option<&str>,
+) -> NodeId {
+    let package_id = format!("github-actions:{action}");
+    if let Some(id) = context.external_dependencies.get(&package_id).copied() {
+        return id;
+    }
+    let mut metadata = BTreeMap::new();
+    metadata.insert("item_kind".to_string(), "dependency".to_string());
+    metadata.insert("ecosystem".to_string(), "github-actions".to_string());
+    metadata.insert("package_id".to_string(), package_id.clone());
+    metadata.insert("source".to_string(), "github-actions".to_string());
+    if let Some(version) = version {
+        metadata.insert("version".to_string(), version.to_string());
+    }
+    let id = context.graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        format!("github action:{action}"),
+        None,
+        metadata,
+    );
+    context.external_dependencies.insert(package_id, id);
+    id
+}
+
 fn index_kubernetes_manifest_facts(
     context: &mut IndexContext,
     file_id: NodeId,
@@ -3722,6 +4033,204 @@ fn kubernetes_workload_kind(kind: &str) -> bool {
 
 fn kubernetes_resource_label(kind: &str, namespace: &str, name: &str) -> String {
     format!("k8s {kind}:{namespace}/{name}")
+}
+
+fn github_actions_workflow(label: &str, source: &str) -> GithubActionsWorkflow {
+    let fallback_name = Path::new(label)
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("workflow")
+        .to_string();
+    let mut workflow_name = None;
+    let mut jobs = Vec::new();
+    let mut in_jobs = false;
+    let mut jobs_indent = 0usize;
+    let mut active_job: Option<GithubActionsJob> = None;
+    let mut active_step: Option<(GithubActionsStep, usize)> = None;
+    let mut active_section: Option<(String, usize)> = None;
+
+    for (index, raw_line) in source.lines().enumerate() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = yaml_indent(raw_line);
+
+        if !in_jobs {
+            if indent == 0
+                && workflow_name.is_none()
+                && let Some(value) = yaml_key_value(trimmed, "name")
+            {
+                workflow_name = Some(value);
+            }
+            if yaml_key(trimmed).is_some_and(|key| key == "jobs") {
+                in_jobs = true;
+                jobs_indent = indent;
+            }
+            continue;
+        }
+
+        if indent <= jobs_indent && yaml_key(trimmed).is_some() {
+            flush_github_actions_step(&mut active_job, &mut active_step);
+            flush_github_actions_job(&mut active_job, &mut jobs);
+            break;
+        }
+
+        if indent == jobs_indent + 2 {
+            flush_github_actions_step(&mut active_job, &mut active_step);
+            flush_github_actions_job(&mut active_job, &mut jobs);
+            active_section = None;
+            let Some(id) = yaml_key(trimmed) else {
+                continue;
+            };
+            active_job = Some(GithubActionsJob {
+                id,
+                display_name: None,
+                runs_on: None,
+                needs: Vec::new(),
+                steps: Vec::new(),
+                line: index as u32 + 1,
+            });
+            continue;
+        }
+
+        if indent == jobs_indent + 4 {
+            flush_github_actions_step(&mut active_job, &mut active_step);
+            let Some(job) = active_job.as_mut() else {
+                continue;
+            };
+            active_section = None;
+            if let Some(value) = yaml_key_value(trimmed, "name") {
+                job.display_name = Some(value);
+            } else if let Some(value) = yaml_key_value(trimmed, "runs-on") {
+                job.runs_on = Some(value);
+            } else if let Some(value) = yaml_key_value(trimmed, "needs") {
+                job.needs.extend(github_actions_needs_values(&value));
+            } else if yaml_key(trimmed).is_some_and(|key| key == "needs") {
+                active_section = Some(("needs".to_string(), indent));
+            } else if yaml_key(trimmed).is_some_and(|key| key == "steps") {
+                active_section = Some(("steps".to_string(), indent));
+            }
+            continue;
+        }
+
+        let Some((section, section_indent)) = active_section.as_ref() else {
+            continue;
+        };
+        if indent <= *section_indent {
+            flush_github_actions_step(&mut active_job, &mut active_step);
+            active_section = None;
+            continue;
+        }
+
+        match section.as_str() {
+            "needs" => {
+                if let Some(value) = trimmed.strip_prefix("- ") {
+                    let dependency = yaml_clean_scalar(value);
+                    if !dependency.is_empty() {
+                        if let Some(job) = active_job.as_mut() {
+                            job.needs.push(dependency);
+                        }
+                    }
+                }
+            }
+            "steps" => {
+                if let Some(value) = trimmed.strip_prefix("- ") {
+                    flush_github_actions_step(&mut active_job, &mut active_step);
+                    let mut step = GithubActionsStep {
+                        name: None,
+                        uses: None,
+                        run: None,
+                        line: index as u32 + 1,
+                    };
+                    apply_github_actions_step_field(&mut step, value);
+                    active_step = Some((step, indent));
+                } else if let Some((step, step_indent)) = active_step.as_mut()
+                    && indent > *step_indent
+                {
+                    apply_github_actions_step_field(step, trimmed);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    flush_github_actions_step(&mut active_job, &mut active_step);
+    flush_github_actions_job(&mut active_job, &mut jobs);
+    GithubActionsWorkflow {
+        name: workflow_name.unwrap_or(fallback_name),
+        jobs,
+    }
+}
+
+fn flush_github_actions_job(
+    active_job: &mut Option<GithubActionsJob>,
+    jobs: &mut Vec<GithubActionsJob>,
+) {
+    let Some(mut job) = active_job.take() else {
+        return;
+    };
+    job.needs.sort();
+    job.needs.dedup();
+    jobs.push(job);
+}
+
+fn flush_github_actions_step(
+    active_job: &mut Option<GithubActionsJob>,
+    active_step: &mut Option<(GithubActionsStep, usize)>,
+) {
+    let Some((step, _)) = active_step.take() else {
+        return;
+    };
+    if step.uses.is_some() || step.run.is_some() {
+        if let Some(job) = active_job.as_mut() {
+            job.steps.push(step);
+        }
+    }
+}
+
+fn apply_github_actions_step_field(step: &mut GithubActionsStep, field: &str) {
+    if let Some(value) = yaml_key_value(field, "name") {
+        step.name = Some(value);
+    } else if let Some(value) = yaml_key_value(field, "uses") {
+        step.uses = Some(value);
+    } else if let Some(value) = yaml_key_value(field, "run") {
+        step.run = Some(value);
+    }
+}
+
+fn github_actions_needs_values(value: &str) -> Vec<String> {
+    let inline = yaml_inline_list_values(value);
+    if !inline.is_empty() {
+        return inline;
+    }
+    let value = yaml_clean_scalar(value);
+    (!value.is_empty()).then_some(value).into_iter().collect()
+}
+
+fn github_actions_local_action_path(action: &str) -> Option<String> {
+    let action = action.trim().trim_matches('"').trim_matches('\'');
+    if !action.starts_with("./") {
+        return None;
+    }
+    normalize_relative_path(Path::new(action))
+}
+
+fn github_actions_remote_action(action: &str) -> (String, Option<String>) {
+    let action = action.trim();
+    let (name, version) = action
+        .rsplit_once('@')
+        .map(|(name, version)| (name.trim(), Some(version.trim().to_string())))
+        .unwrap_or((action, None));
+    let name = name.trim_matches('"').trim_matches('\'').to_string();
+    let version = version.filter(|value| !value.is_empty());
+    (name, version)
+}
+
+fn is_github_actions_workflow_path(label: &str, path: &Path) -> bool {
+    let name = path.file_name().and_then(|name| name.to_str());
+    matches!(name, Some(name) if name.ends_with(".yml") || name.ends_with(".yaml"))
+        && label.starts_with(".github/workflows/")
 }
 
 fn kubernetes_config_ref_label(config_kind: &str, namespace: &str, name: &str) -> String {
@@ -8022,6 +8531,52 @@ fn resolve_pending_kubernetes_service_refs(context: &mut IndexContext) {
     }
 }
 
+fn resolve_pending_github_actions_local_actions(context: &mut IndexContext) {
+    let pending_actions = std::mem::take(&mut context.pending_github_actions_local_actions);
+
+    for pending in pending_actions {
+        let Some(target_id) = github_actions_local_action_target(context, &pending.target) else {
+            continue;
+        };
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "relation".to_string(),
+            "github_actions_local_action".to_string(),
+        );
+        metadata.insert(
+            "resolution".to_string(),
+            "github_actions_local_action_path".to_string(),
+        );
+        metadata.insert("source".to_string(), "github-actions".to_string());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.action,
+            target_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
+fn github_actions_local_action_target(context: &IndexContext, target: &str) -> Option<NodeId> {
+    let candidates = [
+        target.to_string(),
+        format!("{target}/action.yml"),
+        format!("{target}/action.yaml"),
+        format!("{target}/Dockerfile"),
+    ];
+    for candidate in candidates {
+        if let Some(id) = context.directory_nodes.get(&candidate).copied() {
+            return Some(id);
+        }
+        if let Some(id) = context.file_nodes.get(&candidate).copied() {
+            return Some(id);
+        }
+    }
+    None
+}
+
 fn entrypoint_target_candidates(
     pending: &PendingEntrypointTarget,
 ) -> Vec<EntrypointTargetCandidate> {
@@ -8127,6 +8682,16 @@ fn entrypoint_target_candidates(
         )
         .into_iter()
         .collect(),
+        "github-actions" => github_actions_run_command_path_candidate(&pending.target)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "github_actions_run_command_path",
+            })
+            .into_iter()
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -8190,6 +8755,13 @@ fn normalized_command_path_candidate(manifest_label: &str, command: &str) -> Opt
         .into_iter()
         .filter(|token| is_command_path_candidate(token))
         .find_map(|path| normalize_manifest_relative_path(manifest_label, &path))
+}
+
+fn github_actions_run_command_path_candidate(command: &str) -> Option<String> {
+    split_command_tokens(command)
+        .into_iter()
+        .filter(|token| is_command_path_candidate(token))
+        .find_map(|path| normalize_relative_path(Path::new(&path)))
 }
 
 fn cmake_command_bodies(source: &str, command_name: &str) -> Vec<String> {
@@ -8467,6 +9039,8 @@ fn add_entrypoint_reference(
         "dockerfile"
     } else if resolution.starts_with("compose") {
         "compose"
+    } else if resolution.starts_with("github_actions") {
+        "github-actions"
     } else {
         "manifest"
     };
@@ -8628,6 +9202,9 @@ fn should_enter(
     if entry.path() == root {
         return true;
     }
+    if !options.include_hidden && is_github_actions_infrastructure_path(entry.path(), root) {
+        return entry_exclusion_without_hidden(entry, root, options, ignored_globs).is_none();
+    }
 
     entry_exclusion(entry, root, options, ignored_globs).is_none()
 }
@@ -8653,11 +9230,45 @@ fn entry_exclusion(
     None
 }
 
+fn entry_exclusion_without_hidden(
+    entry: &DirEntry,
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Option<EntryExclusion> {
+    if !options.include_ignored && is_ignored_name(entry, &options.ignored_names) {
+        return Some(EntryExclusion::IgnoredName);
+    }
+
+    if !options.include_ignored && is_ignored_glob(entry.path(), root, ignored_globs) {
+        return Some(EntryExclusion::IgnoredGlob);
+    }
+
+    None
+}
+
 fn is_hidden(entry: &DirEntry) -> bool {
     entry
         .file_name()
         .to_str()
         .is_some_and(|name| name.starts_with('.') && name != ".")
+}
+
+fn is_github_actions_infrastructure_path(path: &Path, root: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let parts: Vec<_> = relative
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => part.to_str(),
+            _ => None,
+        })
+        .collect();
+    matches!(
+        parts.as_slice(),
+        [".github"] | [".github", "workflows", ..] | [".github", "actions", ..]
+    )
 }
 
 fn is_ignored_name(entry: &DirEntry, ignored_names: &BTreeSet<String>) -> bool {
@@ -11378,6 +11989,156 @@ generated/output.txt:
             "entrypoint_file",
             Confidence::Exact,
         ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_adds_github_actions_workflow_entrypoints() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join(".github").join("workflows")).unwrap();
+        fs::create_dir_all(root.join(".github").join("actions").join("setup")).unwrap();
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join(".github").join("workflows").join("ci.yml"),
+            r#"name: CI
+on: [push]
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup
+        uses: ./.github/actions/setup
+      - run: ./scripts/test.sh --ci
+  deploy:
+    needs: [build]
+    steps:
+      - uses: ./.github/actions/missing
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join(".github")
+                .join("actions")
+                .join("setup")
+                .join("action.yml"),
+            "name: setup\nruns:\n  using: composite\n  steps: []\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("scripts").join("test.sh"),
+            "#!/usr/bin/env bash\necho test\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let workflow_file = node_id(&graph, NodeKind::File, ".github/workflows/ci.yml");
+        let setup_action_dir = node_id(&graph, NodeKind::Directory, ".github/actions/setup");
+        let test_script = node_id(&graph, NodeKind::File, "scripts/test.sh");
+        let build = node_id(&graph, NodeKind::Entrypoint, "github workflow:CI/build");
+        let deploy = node_id(&graph, NodeKind::Entrypoint, "github workflow:CI/deploy");
+        let checkout = node_id(
+            &graph,
+            NodeKind::ExternalDependency,
+            "github action:actions/checkout",
+        );
+        let setup_action = node_id(
+            &graph,
+            NodeKind::Config,
+            "github action:.github/actions/setup",
+        );
+        let missing_action = node_id(
+            &graph,
+            NodeKind::Config,
+            "github action:.github/actions/missing",
+        );
+        let run_step = node_id(&graph, NodeKind::Config, "github run:CI/build/12");
+
+        for job in [build, deploy] {
+            assert!(has_entrypoint_reference(
+                &graph,
+                job,
+                workflow_file,
+                "entrypoint_file",
+                Confidence::Exact,
+            ));
+        }
+        assert!(has_entrypoint_reference(
+            &graph,
+            build,
+            test_script,
+            "entrypoint_file",
+            Confidence::Heuristic,
+        ));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == deploy
+                && edge.target == build
+                && edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "github_actions_needs")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == build
+                && edge.target == checkout
+                && edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "github_actions_uses")
+                && edge
+                    .metadata
+                    .get("version")
+                    .is_some_and(|value| value == "v4")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == setup_action
+                && edge.target == setup_action_dir
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|value| value == "github_actions_local_action_path")
+        }));
+        assert!(!graph.edges.iter().any(|edge| {
+            edge.source == missing_action
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|value| value == "github_actions_local_action_path")
+        }));
+
+        let build_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == build)
+            .expect("missing build workflow job");
+        assert_eq!(
+            build_node.metadata.get("item_kind").map(String::as_str),
+            Some("github_actions_job")
+        );
+        assert_eq!(
+            build_node.metadata.get("step_count").map(String::as_str),
+            Some("3")
+        );
+        assert_eq!(
+            build_node.metadata.get("uses_count").map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == run_step)
+                .and_then(|node| node.metadata.get("command_path"))
+                .map(String::as_str),
+            Some("scripts/test.sh")
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
