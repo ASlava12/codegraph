@@ -2177,6 +2177,7 @@ fn manifest_dependencies(
         Some("pyproject.toml") => pyproject_dependencies(source),
         Some("setup.py") => setup_py_dependencies(source),
         Some("setup.cfg") => setup_cfg_dependencies(source),
+        Some("Pipfile") => pipfile_dependencies(source),
         Some("composer.json") => composer_dependencies(source),
         Some("vcpkg.json") => vcpkg_dependencies(source),
         Some("conanfile.txt") => conanfile_txt_dependencies(source),
@@ -2654,6 +2655,35 @@ fn setup_cfg_dependencies(source: &str) -> Vec<ManifestDependency> {
     }
 
     dependencies
+}
+
+fn pipfile_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = toml::from_str::<toml::Value>(source) else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+    collect_pipfile_table(&value, "packages", "runtime", &mut dependencies);
+    collect_pipfile_table(&value, "dev-packages", "dev", &mut dependencies);
+    dependencies
+}
+
+fn collect_pipfile_table(
+    value: &toml::Value,
+    table_name: &str,
+    dependency_kind: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(table) = value.get(table_name).and_then(|value| value.as_table()) else {
+        return;
+    };
+    for (name, value) in table {
+        dependencies.push(manifest_dependency(
+            name.clone(),
+            dependency_kind,
+            "python",
+            pipfile_dependency_version(value),
+        ));
+    }
 }
 
 fn collect_setup_cfg_requirement_key(
@@ -4487,6 +4517,16 @@ fn direct_toml_dependency_version(value: &toml::Value) -> Option<String> {
         .map(str::to_string)
 }
 
+fn pipfile_dependency_version(value: &toml::Value) -> Option<String> {
+    let version = direct_toml_dependency_version(value)?;
+    let version = version.trim();
+    if version.is_empty() || version == "*" {
+        None
+    } else {
+        Some(version.to_string())
+    }
+}
+
 fn package_name_and_version_from_requirement(
     requirement: &str,
 ) -> Option<(String, Option<String>)> {
@@ -5751,6 +5791,7 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
                 | "pyproject.toml"
                 | "setup.py"
                 | "setup.cfg"
+                | "Pipfile"
                 | "requirements.txt"
                 | "composer.json"
                 | "vcpkg.json"
@@ -6704,6 +6745,17 @@ dependencies = ["pydantic>=2"]
         )
         .unwrap();
         fs::write(
+            root.join("Pipfile"),
+            r#"[packages]
+Flask = ">=3"
+python-dotenv = "*"
+
+[dev-packages]
+pytest-cov = { version = ">=5" }
+"#,
+        )
+        .unwrap();
+        fs::write(
             root.join("setup.py"),
             r#"from setuptools import setup
 
@@ -6804,6 +6856,9 @@ gtest/1.14.0
             "github.com/gin-gonic/gin",
             "fastapi",
             "pydantic",
+            "flask",
+            "python-dotenv",
+            "pytest-cov",
             "requests",
             "uvicorn",
             "wheel",
@@ -6905,6 +6960,67 @@ gtest/1.14.0
                     .metadata
                     .get("dependency_version")
                     .is_some_and(|value| value == ">=2")
+        }));
+        let flask_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "python:flask")
+            })
+            .expect("missing Pipfile flask dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == flask_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "runtime")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == ">=3")
+        }));
+        let python_dotenv_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "python:python-dotenv")
+            })
+            .expect("missing Pipfile python-dotenv dependency");
+        let python_dotenv_edge = graph
+            .edges
+            .iter()
+            .find(|edge| edge.kind == EdgeKind::DependsOn && edge.target == python_dotenv_dep.id)
+            .expect("missing Pipfile python-dotenv dependency edge");
+        assert!(
+            !python_dotenv_edge
+                .metadata
+                .contains_key("dependency_version")
+        );
+        let pytest_cov_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "python:pytest-cov")
+            })
+            .expect("missing Pipfile pytest-cov dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == pytest_cov_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "dev")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == ">=5")
         }));
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == EdgeKind::DependsOn
