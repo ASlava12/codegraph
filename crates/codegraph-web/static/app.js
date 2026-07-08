@@ -3,7 +3,7 @@ const DEFAULT_LABEL_MODE = "minimal";
 const LABEL_MODES = new Set(["minimal", "hover", "focus", "auto"]);
 const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
-const LABEL_MODE_STORAGE_VERSION = "14";
+const LABEL_MODE_STORAGE_VERSION = "15";
 const API_TOKEN_STORAGE_KEY = "codegraph.apiToken";
 const QUERY_HISTORY_STORAGE_KEY = "codegraph.queryHistory";
 const QUERY_HISTORY_LIMIT = 8;
@@ -7667,20 +7667,21 @@ function drawNodeLabels(candidates) {
 }
 
 function labelGeometry(candidate, occupied, nodeBoxes, edgeBoxes) {
-  const { node, position, radius, forced } = candidate;
+  const { node, position, radius, forced, hovered, focused } = candidate;
   const zoom = Math.max(0.18, state.zoom);
+  const textLength = hovered ? 16 : focused ? 14 : 10;
   const lines = forced
     ? compactGraphLabelLines(node.label, 14, 1)
-    : [truncateGraphLabel(node.label, state.zoom >= 3.2 ? 12 : 8)];
-  const padX = (forced ? 6 : 4) / zoom;
-  const padY = (forced ? 4 : 0) / zoom;
-  const fontSize = (forced ? 11 : 10) / zoom;
-  const lineHeight = (forced ? 12 : 11) / zoom;
+    : [truncateGraphLabel(node.label, textLength)];
+  const padX = (forced ? 6 : 5) / zoom;
+  const padY = (forced ? 4 : 3) / zoom;
+  const fontSize = (forced ? 11 : 9) / zoom;
+  const lineHeight = (forced ? 12 : 10) / zoom;
   ctx.font = `${fontSize}px Inter, sans-serif`;
   const width = Math.max(...lines.map((line) => ctx.measureText(line).width)) + padX * 2;
-  const height = forced ? lines.length * lineHeight + padY * 2 : 16 / zoom;
-  const gap = (forced ? 11 : 13) / zoom;
-  const placements = forced ? ["right", "left", "top"] : ["right", "left", "top"];
+  const height = lines.length * lineHeight + padY * 2;
+  const gap = (forced ? 11 : 17) / zoom;
+  const placements = forced ? ["right", "left", "top"] : ["right", "left"];
   const geometries = placements.map((placement) =>
     clampLabelGeometryToViewport(labelGeometryForPlacement({
       node,
@@ -7753,10 +7754,13 @@ function drawLabelGeometry(geometry) {
   ctx.font = geometry.font;
   ctx.textBaseline = "middle";
   if (!geometry.forced) {
-    ctx.lineWidth = 2 / Math.max(0.18, state.zoom);
-    ctx.strokeStyle = "rgba(13, 15, 16, 0.64)";
-    drawLabelText(geometry, (line, x, y) => ctx.strokeText(line, x, y));
-    ctx.fillStyle = "rgba(237, 241, 242, 0.84)";
+    ctx.fillStyle = "rgba(13, 15, 16, 0.78)";
+    roundRect(ctx, geometry.x, geometry.y, geometry.width, geometry.height, geometry.radius);
+    ctx.fill();
+    ctx.lineWidth = 1 / Math.max(0.18, state.zoom);
+    ctx.strokeStyle = "rgba(237, 241, 242, 0.16)";
+    ctx.stroke();
+    ctx.fillStyle = "rgba(237, 241, 242, 0.9)";
     drawLabelText(geometry, (line, x, y) => ctx.fillText(line, x, y));
     return;
   }
