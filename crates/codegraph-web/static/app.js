@@ -154,6 +154,7 @@ const I18N = {
     "button.copyPageLink": "Copy Page Link",
     "button.clearFilters": "Clear Filters",
     "button.clearCanvasFilters": "Clear Canvas Filters",
+    "button.downloadSlice": "Download Slice",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
     "button.queryEdge": "Query",
@@ -326,6 +327,8 @@ const I18N = {
     "risk.gate": "Gate",
     "risk.clean": "Clean",
     "export.report": "Report JSON",
+    "export.slice": "Visible Slice JSON",
+    "export.noSlice": "No visible graph slice to export.",
     "trace.tracing": "Tracing...",
     "trace.tracingDependents": "Tracing dependents...",
     "trace.noDependents": "No incoming dependents.",
@@ -543,6 +546,7 @@ const I18N = {
     "button.copyPageLink": "Ссылка на страницу",
     "button.clearFilters": "Сбросить фильтры",
     "button.clearCanvasFilters": "Сбросить фильтры графа",
+    "button.downloadSlice": "Скачать срез",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
     "button.queryEdge": "Запрос",
@@ -715,6 +719,8 @@ const I18N = {
     "risk.gate": "Гейт",
     "risk.clean": "Чисто",
     "export.report": "JSON-отчёт",
+    "export.slice": "JSON видимого среза",
+    "export.noSlice": "Нет видимого среза графа для экспорта.",
     "trace.tracing": "Трассирую...",
     "trace.tracingDependents": "Трассирую зависимые узлы...",
     "trace.noDependents": "Входящих зависимых нет.",
@@ -1051,6 +1057,7 @@ const incrementalUpdateButton = document.querySelector("#incrementalUpdateButton
 const cacheDiffResult = document.querySelector("#cacheDiffResult");
 const exportFormatInput = document.querySelector("#exportFormatInput");
 const exportButton = document.querySelector("#exportButton");
+const exportSliceButton = document.querySelector("#exportSliceButton");
 const exportResult = document.querySelector("#exportResult");
 const pathFromInput = document.querySelector("#pathFromInput");
 const pathToInput = document.querySelector("#pathToInput");
@@ -1145,6 +1152,7 @@ cacheDiffLimitInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") loadCacheDiff();
 });
 exportButton.addEventListener("click", () => runGraphExport());
+exportSliceButton.addEventListener("click", () => exportVisibleGraphSlice());
 entryFlowButton.addEventListener("click", () => runEntryFlowTrace());
 for (const input of [entryFlowSearchInput, entryFlowDepthInput]) {
   input.addEventListener("keydown", (event) => {
@@ -4137,6 +4145,84 @@ async function runGraphExport() {
   }
 }
 
+function exportVisibleGraphSlice() {
+  if (state.visibleNodes.length === 0 && state.visibleEdges.length === 0) {
+    exportResult.innerHTML = `<p class="empty">${escapeHtml(t("export.noSlice"))}</p>`;
+    return;
+  }
+
+  const visibleNodeIds = new Set(state.visibleNodes.map((node) => node.id));
+  const edges = state.visibleEdges.filter(
+    (edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target),
+  );
+  const slice = {
+    schema: "codegraph.visible_slice.v1",
+    generated_at: new Date().toISOString(),
+    root: state.graphPage.root || pathInput.value.trim() || ".",
+    nodes: state.visibleNodes,
+    edges,
+    counts: {
+      nodes: state.visibleNodes.length,
+      edges: edges.length,
+      loaded_nodes: state.graph.nodes.length,
+      loaded_edges: state.graph.edges.length,
+      total_nodes: state.graphPage.totalNodes,
+      total_edges: state.graphPage.totalEdges,
+      truncated_nodes: Boolean(state.graphPage.truncatedNodes),
+      truncated_edges: Boolean(state.graphPage.truncatedEdges),
+    },
+    graph_page: {
+      node_offset: state.graphPage.nodeOffset,
+      node_limit: state.graphPage.nodeLimit,
+      edge_offset: state.graphPage.edgeOffset,
+      edge_limit: state.graphPage.edgeLimit,
+      path_prefix: state.graphPage.pathPrefix,
+    },
+    server_filters: {
+      kind: serverKindInput.value.trim(),
+      item_kind: serverItemKindInput.value.trim(),
+      language: serverLanguageInput.value.trim(),
+      search: serverSearchInput.value.trim(),
+      edge_kind: serverEdgeKindInput.value.trim(),
+      confidence: serverConfidenceInput.value.trim(),
+      relation: serverEdgeRelationInput.value.trim(),
+      source: serverEdgeSourceInput.value.trim(),
+    },
+    canvas_filters: {
+      search: state.search,
+      enabled_kinds: [...state.enabledKinds].sort(),
+      active_risk_severity: state.activeRiskSeverity,
+      query_focus: Boolean(state.queryFocus),
+    },
+    viewport: {
+      zoom: state.zoom,
+      pan: state.pan,
+      label_mode: state.labelMode,
+      layout_paused: state.layoutPaused,
+    },
+    layout: {
+      positions: Object.fromEntries(
+        state.visibleNodes
+          .map((node) => [node.id, state.positions.get(node.id)])
+          .filter(([, position]) => Boolean(position)),
+      ),
+    },
+  };
+  const serialized = JSON.stringify(slice, null, 2);
+  const blob = new Blob([serialized], { type: "application/json" });
+  const fileName = `codegraph-${safeFilePart(slice.root)}-visible-slice.json`;
+  downloadBlob(blob, fileName);
+  exportResult.innerHTML = `
+    <div class="query-summary">
+      <span>${escapeHtml(t("export.slice"))}</span>
+      <span>${escapeHtml(formatBytes(blob.size))}</span>
+      <span>${escapeHtml(formatNumber(slice.counts.nodes))} nodes</span>
+      <span>${escapeHtml(formatNumber(slice.counts.edges))} edges</span>
+      <span class="query-expression">${escapeHtml(fileName)}</span>
+    </div>
+  `;
+}
+
 async function responseErrorMessage(response, fallback) {
   const contentType = response.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
@@ -6054,6 +6140,7 @@ function renderViewportControls() {
   zoomOutButton.disabled = state.graph.nodes.length === 0;
   toggleLayoutButton.disabled = state.graph.nodes.length === 0;
   clearCanvasFiltersButton.disabled = canvasFilterCount() === 0;
+  exportSliceButton.disabled = state.visibleNodes.length === 0 && state.visibleEdges.length === 0;
   labelModeButtons.forEach((button) => {
     const active = button.dataset.labelMode === state.labelMode;
     button.setAttribute("aria-pressed", active ? "true" : "false");

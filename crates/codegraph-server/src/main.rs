@@ -6727,6 +6727,10 @@ mod tests {
         assert!(app.contains("x-codegraph-export-nodes"));
         assert!(app.contains("x-codegraph-export-edges"));
         assert!(app.contains("x-codegraph-export-bytes"));
+        assert!(index.contains("exportSliceButton"));
+        assert!(app.contains("exportVisibleGraphSlice"));
+        assert!(app.contains("codegraph.visible_slice.v1"));
+        assert!(app.contains("\"button.downloadSlice\""));
         assert!(index.contains("annotations key:domain edge_limit:300"));
         assert!(app.contains("\"queryPreset.annotations\""));
         assert!(app.contains("limits.max_api_body_bytes"));

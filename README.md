@@ -161,6 +161,7 @@ Implemented now:
 - Web graph page filters and offsets can be cleared in one action after opening focused or shared large-repository slices.
 - Web canvas search, kind, risk, and query-focus filters show active-filter status in the HUD and can be cleared in one action.
 - Web export panel for downloading full graph snapshots as JSON, DOT, or NDJSON.
+- Web export panel can download the currently visible canvas slice with graph-page, filter, viewport, and layout metadata for compact handoff.
 - Full graph exports publish response headers for node count, edge count, and serialized byte size.
 - Web project selector backed by an explicit server-side allowlist for opening local repositories.
 - DOT/Graphviz and NDJSON export formats for visualization and streaming agent use.
