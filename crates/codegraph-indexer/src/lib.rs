@@ -3160,6 +3160,11 @@ fn go_mod_dependencies(source: &str) -> Vec<ManifestDependency> {
     let mut dependencies = Vec::new();
     let mut in_require_block = false;
     for raw_line in source.lines() {
+        let dependency_kind = if raw_line.contains("// indirect") {
+            "indirect"
+        } else {
+            "runtime"
+        };
         let line = raw_line.split("//").next().unwrap_or("").trim();
         if line.is_empty() {
             continue;
@@ -3184,7 +3189,7 @@ fn go_mod_dependencies(source: &str) -> Vec<ManifestDependency> {
             let version = parts.next().map(str::to_string);
             dependencies.push(manifest_dependency(
                 name.to_string(),
-                "runtime",
+                dependency_kind,
                 "go",
                 version,
             ));
@@ -7059,7 +7064,7 @@ importers:
         .unwrap();
         fs::write(
             root.join("go.mod"),
-            "module example.com/demo\n\nrequire github.com/gin-gonic/gin v1.10.0\n",
+            "module example.com/demo\n\nrequire github.com/gin-gonic/gin v1.10.0\nrequire golang.org/x/sys v0.30.0 // indirect\n",
         )
         .unwrap();
         fs::write(root.join("requirements.txt"), "fastapi==0.115.0\n").unwrap();
@@ -7195,6 +7200,7 @@ gtest/1.14.0
             "@types/node",
             "magic-string",
             "github.com/gin-gonic/gin",
+            "golang.org/x/sys",
             "fastapi",
             "pydantic",
             "black",
@@ -7431,6 +7437,27 @@ gtest/1.14.0
                     .metadata
                     .get("dependency_version")
                     .is_some_and(|value| value == "v1.10.0")
+        }));
+        let go_indirect_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "go:golang.org/x/sys")
+            })
+            .expect("missing go indirect dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == go_indirect_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "indirect")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "v0.30.0")
         }));
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == EdgeKind::DependsOn

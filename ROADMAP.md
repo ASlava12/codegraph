@@ -103,6 +103,7 @@ Goal: answer practical code investigation questions.
 - [x] Add investigation insights for semantic LSP diagnostics.
 - [x] Detect directed dependency cycles across calls, imports, references, and dependency edges.
 - [x] Detect package manifest dependency boundaries.
+- [x] Preserve Go `// indirect` dependency scope from `go.mod`.
 - [x] Detect direct npm `package-lock.json` dependencies with locked versions.
 - [x] Detect direct pnpm `pnpm-lock.yaml` importer dependencies with locked versions.
 - [x] Detect legacy Python `setup.py`/`setup.cfg` dependencies and console script entrypoints.
