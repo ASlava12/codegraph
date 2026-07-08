@@ -143,6 +143,7 @@ const I18N = {
     "label.relation": "Relation",
     "label.source": "Source",
     "label.query": "Query",
+    "label.question": "Question",
     "label.text": "Text",
     "label.limit": "Limit",
     "label.from": "From",
@@ -158,6 +159,7 @@ const I18N = {
     "button.semanticEnrich": "Enrich",
     "button.traceEntrypoints": "Trace Entrypoints",
     "button.run": "Run",
+    "button.ask": "Ask",
     "button.searchSource": "Search Source",
     "button.explainCache": "Explain Cache",
     "button.cacheChunks": "Cache Chunks",
@@ -470,6 +472,15 @@ const I18N = {
     "query.enterExpression": "Enter a query expression.",
     "query.running": "Running query...",
     "query.tooLong": "Graph query is too long: {count} characters, maximum {limit}.",
+    "ask.enterQuestion": "Enter a question.",
+    "ask.running": "Mapping question...",
+    "ask.failedFallback": "question query failed",
+    "ask.resultLabel": "Ask",
+    "ask.question": "Question",
+    "ask.generatedQuery": "Generated query",
+    "ask.rule": "Rule: {rule}",
+    "ask.confidence": "Confidence: {confidence}",
+    "ask.alternatives": "Alternatives",
     "path.enterEndpoints": "Enter both path endpoints.",
     "path.finding": "Finding path...",
     "path.failedFallback": "path query failed",
@@ -750,6 +761,7 @@ const I18N = {
     "label.relation": "Отношение",
     "label.source": "Источник",
     "label.query": "Запрос",
+    "label.question": "Вопрос",
     "label.text": "Текст",
     "label.limit": "Лимит",
     "label.from": "Откуда",
@@ -765,6 +777,7 @@ const I18N = {
     "button.semanticEnrich": "Обогатить",
     "button.traceEntrypoints": "Трассировать входы",
     "button.run": "Запустить",
+    "button.ask": "Спросить",
     "button.searchSource": "Искать в коде",
     "button.explainCache": "Объяснить кеш",
     "button.cacheChunks": "Фрагменты кеша",
@@ -1077,6 +1090,15 @@ const I18N = {
     "query.enterExpression": "Введите выражение запроса.",
     "query.running": "Выполняю запрос...",
     "query.tooLong": "Запрос к графу слишком длинный: {count} символов, максимум {limit}.",
+    "ask.enterQuestion": "Введите вопрос.",
+    "ask.running": "Преобразую вопрос...",
+    "ask.failedFallback": "запрос по вопросу не удался",
+    "ask.resultLabel": "Вопрос",
+    "ask.question": "Вопрос",
+    "ask.generatedQuery": "Сгенерированный запрос",
+    "ask.rule": "Правило: {rule}",
+    "ask.confidence": "Уверенность: {confidence}",
+    "ask.alternatives": "Альтернативы",
     "path.enterEndpoints": "Введите обе конечные точки пути.",
     "path.finding": "Ищу путь...",
     "path.failedFallback": "запрос пути не удался",
@@ -1492,6 +1514,8 @@ const queryInput = document.querySelector("#queryInput");
 const queryButton = document.querySelector("#queryButton");
 const queryCopyButton = document.querySelector("#queryCopyButton");
 const queryExportButton = document.querySelector("#queryExportButton");
+const askInput = document.querySelector("#askInput");
+const askButton = document.querySelector("#askButton");
 const queryHistory = document.querySelector("#queryHistory");
 const queryHistoryList = document.querySelector("#queryHistoryList");
 const clearQueryHistoryButton = document.querySelector("#clearQueryHistoryButton");
@@ -1588,9 +1612,13 @@ clearCanvasFiltersButton.addEventListener("click", () => clearCanvasFilters());
 queryButton.addEventListener("click", () => runGraphQuery());
 queryCopyButton.addEventListener("click", () => copyCurrentQueryLink(queryCopyButton));
 queryExportButton.addEventListener("click", () => exportLastQueryResult());
+askButton.addEventListener("click", () => runNaturalQuery());
 clearQueryHistoryButton.addEventListener("click", () => clearQueryHistory());
 queryInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runGraphQuery();
+});
+askInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") runNaturalQuery();
 });
 document.querySelectorAll("[data-query-preset]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -3349,6 +3377,7 @@ function renderCapabilities(capabilities) {
     : [];
   if (Number(limits.max_graph_query_length || 0) > 0) {
     queryInput.maxLength = String(Number(limits.max_graph_query_length));
+    askInput.maxLength = String(Number(limits.max_graph_query_length));
   }
   if (Number(limits.max_source_search_query_length || 0) > 0) {
     sourceSearchInput.maxLength = String(Number(limits.max_source_search_query_length));
@@ -4837,6 +4866,77 @@ async function runGraphQuery(options = {}) {
     return null;
   } finally {
     if (requestId === state.queryRequest) {
+      queryButton.disabled = false;
+    }
+  }
+}
+
+async function runNaturalQuery(options = {}) {
+  const question = askInput.value.trim();
+  if (!question) {
+    queryResult.innerHTML = `<p class="empty">${escapeHtml(t("ask.enterQuestion"))}</p>`;
+    return null;
+  }
+  if (!graphQueryWithinClientLimit(question, queryResult)) {
+    clearLastQueryResult();
+    return null;
+  }
+
+  state.queryRequest += 1;
+  const requestId = state.queryRequest;
+  askButton.disabled = true;
+  queryButton.disabled = true;
+  queryResult.innerHTML = `<p class="empty">${escapeHtml(t("ask.running"))}</p>`;
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    q: question,
+  });
+
+  try {
+    const response = await apiFetch(`/api/ask?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.queryRequest) return null;
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(body, response, t("ask.failedFallback")));
+    }
+    const result = body.result || { query: body.generated_query || "", nodes: [], edges: [] };
+    queryInput.value = body.generated_query || result.query || "";
+    queryResult.innerHTML = renderNaturalQueryReport(body);
+    attachQueryNavigation(queryResult);
+    attachEdgeExplainActions(queryResult);
+    attachQueryFocusActions(queryResult, result);
+    attachNaturalQueryActions(queryResult);
+    state.lastQueryResult = {
+      generated_at: new Date().toISOString(),
+      root: pathInput.value.trim() || ".",
+      mode: "ask",
+      question,
+      query: body.generated_query || result.query || "",
+      natural_query: {
+        question: body.question || question,
+        generated_query: body.generated_query || result.query || "",
+        rule: body.rule || "",
+        confidence: body.confidence || "",
+        alternatives: body.alternatives || [],
+      },
+      result,
+    };
+    renderQueryExportState();
+    rememberQuery(body.generated_query || result.query || "");
+    if (options.focus !== false) {
+      focusQueryResult(result, queryResult, { title: t("ask.resultLabel") });
+      fitVisibleGraph();
+      if (result.query) syncQueryUrl(result.query, { focus: true });
+    }
+    return body;
+  } catch (error) {
+    if (requestId !== state.queryRequest) return null;
+    queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+    return null;
+  } finally {
+    if (requestId === state.queryRequest) {
+      askButton.disabled = false;
       queryButton.disabled = false;
     }
   }
@@ -6506,6 +6606,51 @@ function renderQueryHistory() {
     button.addEventListener("click", () => {
       queryInput.value = button.dataset.queryHistory || "";
       runGraphQuery();
+    });
+  });
+}
+
+function renderNaturalQueryReport(report) {
+  const result = report.result || { query: report.generated_query || "", nodes: [], edges: [] };
+  const alternatives = Array.isArray(report.alternatives) ? report.alternatives : [];
+  const alternativeButtons = alternatives
+    .slice(0, 5)
+    .map(
+      (query) => `
+        <button type="button" data-ask-alternative="${escapeHtml(query)}">
+          ${escapeHtml(query)}
+        </button>
+      `,
+    )
+    .join("");
+  const alternativesMarkup = alternativeButtons
+    ? `
+      <div class="query-presets ask-alternatives" aria-label="${escapeHtml(t("ask.alternatives"))}">
+        ${alternativeButtons}
+      </div>
+    `
+    : "";
+
+  return `
+    <div class="query-summary">
+      <span>${escapeHtml(t("ask.resultLabel"))}</span>
+      <span>${escapeHtml(t("ask.question"))}</span>
+      <span class="query-expression">${escapeHtml(report.question || "")}</span>
+      <span>${escapeHtml(t("ask.rule", { rule: report.rule || "unknown" }))}</span>
+      <span>${escapeHtml(t("ask.confidence", { confidence: report.confidence || "unknown" }))}</span>
+      <span>${escapeHtml(t("ask.generatedQuery"))}</span>
+      <span class="query-expression">${escapeHtml(report.generated_query || result.query || "")}</span>
+    </div>
+    ${alternativesMarkup}
+    ${renderQueryResult(result, { label: t("ask.generatedQuery") })}
+  `;
+}
+
+function attachNaturalQueryActions(container) {
+  container.querySelectorAll("[data-ask-alternative]").forEach((button) => {
+    button.addEventListener("click", () => {
+      queryInput.value = button.dataset.askAlternative || "";
+      runGraphQuery({ focus: true });
     });
   });
 }

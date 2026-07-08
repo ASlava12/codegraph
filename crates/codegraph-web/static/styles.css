@@ -980,6 +980,20 @@ button.cancel-action:hover:not(:disabled) {
   align-items: end;
 }
 
+.ask-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.ask-row button {
+  min-width: 72px;
+  height: 34px;
+  padding: 0 10px;
+}
+
 .query-presets {
   grid-column: 1 / -1;
   display: flex;

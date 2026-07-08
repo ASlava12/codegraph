@@ -195,6 +195,7 @@ Implemented now:
 - Web quality-gate check results can be downloaded as JSON for CI handoff and review records.
 - Insight focus API and web interaction for turning findings into focused graph views.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
+- Web Ask field maps English/Russian investigation questions to generated graph queries, focuses the canvas on the result, and keeps the generated query/export payload for agent handoff.
 - Web query panel supports shareable `query` deep-links and copy-link actions for reusable investigations.
 - Web query panel keeps a local recent-query history so repeated investigations can be rerun quickly.
 - Web query results can be downloaded as JSON with query, root, facets, nodes, and edges for agent handoff.

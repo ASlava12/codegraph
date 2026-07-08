@@ -8114,7 +8114,19 @@ fn helper() {}
         assert!(app.contains("\"query.enterExpression\""));
         assert!(app.contains("\"query.running\""));
         assert!(app.contains("\"query.tooLong\""));
+        assert!(index.contains("askInput"));
+        assert!(index.contains("askButton"));
+        assert!(index.contains("button.ask"));
+        assert!(index.contains("label.question"));
+        assert!(app.contains("\"ask.enterQuestion\""));
+        assert!(app.contains("\"ask.running\""));
+        assert!(app.contains("\"ask.generatedQuery\""));
+        assert!(app.contains("runNaturalQuery"));
+        assert!(app.contains("/api/ask?"));
+        assert!(app.contains("renderNaturalQueryReport"));
+        assert!(app.contains("data-ask-alternative"));
         assert!(app.contains("graphQueryWithinClientLimit(expression, queryResult)"));
+        assert!(app.contains("graphQueryWithinClientLimit(question, queryResult)"));
         assert!(app.contains("clearLastQueryResult();"));
         assert!(app.contains("graphQueryWithinClientLimit(expression, pathResult)"));
         assert!(app.contains("max_graph_query_length"));
@@ -8212,6 +8224,8 @@ fn helper() {}
         assert!(app.contains("rememberQuery"));
         assert!(app.contains("renderQueryHistory"));
         assert!(app.contains("\"queryHistory.recent\""));
+        assert!(app.contains("mode: \"ask\""));
+        assert!(app.contains("natural_query:"));
         assert!(app.contains("buildGraphPageUrl"));
         assert!(app.contains("pendingQueryLink"));
         assert!(app.contains("restorePendingQueryLink"));

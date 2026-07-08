@@ -278,6 +278,18 @@
           <button id="queryButton" type="button" data-i18n="button.run">Run</button>
           <button id="queryCopyButton" type="button" data-i18n="button.copyQueryLink">Copy Query Link</button>
           <button id="queryExportButton" type="button" data-i18n="button.downloadQueryResult" disabled>Download Result</button>
+          <div class="ask-row">
+            <label class="field">
+              <span data-i18n="label.question">Question</span>
+              <input
+                id="askInput"
+                type="text"
+                value="Where is DATABASE_URL read from the environment?"
+                autocomplete="off"
+              />
+            </label>
+            <button id="askButton" type="button" data-i18n="button.ask">Ask</button>
+          </div>
           <div class="query-presets" aria-label="Query presets" data-i18n-aria-label="aria.queryPresets">
             <button type="button" data-query-preset="unreachable" data-i18n="queryPreset.unreachable">
               Unreachable

@@ -307,6 +307,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add shareable query deep-links and copy-link actions for reusable web investigations.
 - [x] Add local recent-query history in the web query panel.
 - [x] Add query-result JSON downloads for portable investigation handoff.
+- [x] Add web Ask flow for natural-language question mapping, generated query display, focused canvas slices, and exportable agent handoff.
 - [x] Add web query presets for SQL query cards and missing SQL table references.
 - [x] Add shareable graph-page deep-links for paged/filterable large-repository slices.
 - [x] Add a one-click web reset for graph-page filters and offsets.
