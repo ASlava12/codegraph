@@ -3,7 +3,7 @@ const DEFAULT_LABEL_MODE = "minimal";
 const LABEL_MODES = new Set(["minimal", "hover", "focus", "auto"]);
 const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
-const LABEL_MODE_STORAGE_VERSION = "15";
+const LABEL_MODE_STORAGE_VERSION = "16";
 const API_TOKEN_STORAGE_KEY = "codegraph.apiToken";
 const QUERY_HISTORY_STORAGE_KEY = "codegraph.queryHistory";
 const QUERY_HISTORY_LIMIT = 8;
@@ -7762,18 +7762,18 @@ function drawNodeLabels(candidates) {
 function labelGeometry(candidate, occupied, nodeBoxes, edgeBoxes) {
   const { node, position, radius, forced, hovered, focused } = candidate;
   const zoom = Math.max(0.18, state.zoom);
-  const textLength = hovered ? 16 : focused ? 14 : 10;
+  const textLength = hovered ? 12 : focused ? 11 : 8;
   const lines = forced
     ? compactGraphLabelLines(node.label, 14, 1)
     : [truncateGraphLabel(node.label, textLength)];
-  const padX = (forced ? 6 : 5) / zoom;
-  const padY = (forced ? 4 : 3) / zoom;
-  const fontSize = (forced ? 11 : 9) / zoom;
-  const lineHeight = (forced ? 12 : 10) / zoom;
+  const padX = (forced ? 6 : 4) / zoom;
+  const padY = (forced ? 4 : 2.5) / zoom;
+  const fontSize = (forced ? 11 : 8) / zoom;
+  const lineHeight = (forced ? 12 : 9) / zoom;
   ctx.font = `${fontSize}px Inter, sans-serif`;
   const width = Math.max(...lines.map((line) => ctx.measureText(line).width)) + padX * 2;
   const height = lines.length * lineHeight + padY * 2;
-  const gap = (forced ? 11 : 17) / zoom;
+  const gap = (forced ? 11 : 21) / zoom;
   const placements = forced ? ["right", "left", "top"] : ["right", "left"];
   const geometries = placements.map((placement) =>
     clampLabelGeometryToViewport(labelGeometryForPlacement({
@@ -7905,7 +7905,7 @@ function nodeLabelBudget() {
 }
 
 function nodeOcclusionBoxes() {
-  const pad = 24 / Math.max(0.18, state.zoom);
+  const pad = 32 / Math.max(0.18, state.zoom);
   return state.visibleNodes
     .map((node) => {
       const position = state.positions.get(node.id);
@@ -7923,7 +7923,7 @@ function nodeOcclusionBoxes() {
 }
 
 function edgeOcclusionBoxes() {
-  const pad = 5 / Math.max(0.18, state.zoom);
+  const pad = 8 / Math.max(0.18, state.zoom);
   return state.visibleEdges
     .map((edge) => {
       const source = state.positions.get(edge.source);
@@ -7974,7 +7974,7 @@ function labelIntersectsScene(label, occupied, nodeBoxes, edgeBoxes) {
 }
 
 function boxesIntersect(left, right) {
-  const pad = 8 / Math.max(0.18, state.zoom);
+  const pad = 12 / Math.max(0.18, state.zoom);
   return !(
     left.x + left.width + pad < right.x ||
     right.x + right.width + pad < left.x ||

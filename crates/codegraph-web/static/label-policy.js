@@ -43,9 +43,9 @@
 
     if (selected) return false;
     if (labelMode === "minimal") return false;
-    if (labelMode === "hover") return hovered;
+    if (labelMode === "hover") return hovered && zoom >= 2.4 && visibleCount <= 80;
     if (labelMode === "focus") return focused && zoom >= 4.8 && visibleCount <= 3;
-    if (hovered) return zoom >= 4.2 && visibleCount <= 4;
+    if (hovered) return zoom >= 5.2 && visibleCount <= 3 && priority <= 1;
     if (focused) return zoom >= 4.8 && visibleCount <= 3;
 
     if (hasSearch) {

@@ -250,6 +250,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Make minimal node labels the default and keep dense captions behind explicit Focus/Auto modes.
 - [x] Reset saved web label mode and make Auto labels sparse enough for dense graph exploration.
 - [x] Keep hover/focus labels as compact side badges and leave selected-node details in the side card.
+- [x] Suppress node captions in dense graph views and reset stale saved label modes.
 - [x] Add a graph viewport HUD for visible size, zoom, and layout state.
 - [x] Surface loaded-vs-total graph slice status for paged large-repository views.
 - [x] Add visible canvas-filter status and one-click reset for local graph filters.

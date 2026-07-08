@@ -6790,7 +6790,7 @@ mod tests {
         assert!(app.contains("\"button.downloadCard\""));
         assert!(app.contains("\"export.selectionCard\""));
         assert!(app.contains("const DEFAULT_LABEL_MODE = \"minimal\""));
-        assert!(app.contains("const LABEL_MODE_STORAGE_VERSION = \"15\""));
+        assert!(app.contains("const LABEL_MODE_STORAGE_VERSION = \"16\""));
         assert!(index.contains("data-label-mode=\"minimal\" aria-pressed=\"true\""));
         assert!(app.contains("ambiguous_call_resolution"));
         assert!(app.contains("ambiguous_entrypoint_target"));

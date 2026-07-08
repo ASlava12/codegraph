@@ -44,7 +44,7 @@ test("auto mode only allows labels in very sparse, highly zoomed graphs", () => 
   assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 3.2, visibleCount: 15 }), 0);
 });
 
-test("hover mode only labels the current hovered target", () => {
+test("hover mode only labels the current hovered target in readable views", () => {
   assert.equal(policy.nodeLabelBudget({ labelMode: "hover", zoom: 6, visibleCount: 2 }), 0);
   assert.equal(
     policy.shouldShowNodeLabel({
@@ -65,7 +65,27 @@ test("hover mode only labels the current hovered target", () => {
       visibleCount: 200,
       priority: 9,
     }),
+    false,
+  );
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "hover",
+      hovered: true,
+      zoom: 2.4,
+      visibleCount: 80,
+      priority: 9,
+    }),
     true,
+  );
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "hover",
+      hovered: true,
+      zoom: 2.4,
+      visibleCount: 81,
+      priority: 1,
+    }),
+    false,
   );
   assert.equal(
     policy.shouldShowNodeLabel({
@@ -103,7 +123,7 @@ test("auto mode prioritizes entrypoints and risks over low-signal nodes", () => 
   );
 });
 
-test("auto mode keeps hover labels out of very dense views", () => {
+test("auto mode keeps hover labels out of dense or low-signal views", () => {
   assert.equal(
     policy.shouldShowNodeLabel({
       labelMode: "auto",
@@ -130,6 +150,16 @@ test("auto mode keeps hover labels out of very dense views", () => {
       hovered: true,
       zoom: 4.2,
       visibleCount: 4,
+      priority: 1,
+    }),
+    false,
+  );
+  assert.equal(
+    policy.shouldShowNodeLabel({
+      labelMode: "auto",
+      hovered: true,
+      zoom: 5.2,
+      visibleCount: 3,
       priority: 1,
     }),
     true,
