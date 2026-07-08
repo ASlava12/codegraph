@@ -917,6 +917,12 @@ button.cancel-action:hover:not(:disabled) {
   text-align: center;
 }
 
+.page-copy-button {
+  height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
 .query,
 .source-search,
 .cache-diff,

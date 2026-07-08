@@ -3768,7 +3768,26 @@ fn api_schema_response() -> ApiSchemaResponse {
             ),
             (
                 "web_deep_link_param",
-                vec!["path", "node", "edge", "query", "query_focus"],
+                vec![
+                    "path",
+                    "node",
+                    "edge",
+                    "query",
+                    "query_focus",
+                    "node_offset",
+                    "node_limit",
+                    "edge_offset",
+                    "edge_limit",
+                    "path_prefix",
+                    "kind",
+                    "item_kind",
+                    "language",
+                    "search",
+                    "edge_kind",
+                    "confidence",
+                    "edge_relation",
+                    "edge_source",
+                ],
             ),
         ]),
     }
@@ -6735,12 +6754,19 @@ mod tests {
 
         assert!(index.contains("queryCopyButton"));
         assert!(index.contains("button.copyQueryLink"));
+        assert!(index.contains("pageCopyButton"));
+        assert!(index.contains("button.copyPageLink"));
         assert!(app.contains("buildSelectionUrl"));
         assert!(app.contains("buildQueryUrl"));
+        assert!(app.contains("buildGraphPageUrl"));
         assert!(app.contains("pendingQueryLink"));
         assert!(app.contains("restorePendingQueryLink"));
         assert!(app.contains("query_focus"));
+        assert!(app.contains("pendingGraphPageLink"));
+        assert!(app.contains("node_offset"));
+        assert!(app.contains("edge_offset"));
         assert!(app.contains("copyCurrentQueryLink"));
+        assert!(app.contains("copyGraphPageLink"));
         assert!(app.contains("data-copy-selection-link=\"node\""));
         assert!(app.contains("data-copy-selection-link=\"edge\""));
         assert!(app.contains("url.searchParams.delete(\"query\")"));
@@ -7016,7 +7042,11 @@ mod tests {
                 .is_some_and(|params| params.contains(&"node")
                     && params.contains(&"edge")
                     && params.contains(&"query")
-                    && params.contains(&"query_focus"))
+                    && params.contains(&"query_focus")
+                    && params.contains(&"node_offset")
+                    && params.contains(&"edge_offset")
+                    && params.contains(&"edge_kind")
+                    && params.contains(&"edge_source"))
         );
         assert!(schema.common_response_headers.iter().any(|header| {
             header.name == "x-request-id" && header.value_type == "string" && header.required

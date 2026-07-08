@@ -145,6 +145,7 @@ const I18N = {
     "button.card": "Card",
     "button.copyLink": "Copy Link",
     "button.copyQueryLink": "Copy Query Link",
+    "button.copyPageLink": "Copy Page Link",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
     "button.queryEdge": "Query",
@@ -524,6 +525,7 @@ const I18N = {
     "button.card": "Карточка",
     "button.copyLink": "Скопировать ссылку",
     "button.copyQueryLink": "Ссылка на запрос",
+    "button.copyPageLink": "Ссылка на страницу",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
     "button.queryEdge": "Запрос",
@@ -901,6 +903,7 @@ const state = {
   labelMode: getInitialLabelMode(),
   pendingSelectionLink: null,
   pendingQueryLink: null,
+  pendingGraphPageLink: false,
 };
 
 const colors = {
@@ -986,6 +989,7 @@ const pageReloadButton = document.querySelector("#pageReloadButton");
 const pageNextButton = document.querySelector("#pageNextButton");
 const edgePrevButton = document.querySelector("#edgePrevButton");
 const edgeNextButton = document.querySelector("#edgeNextButton");
+const pageCopyButton = document.querySelector("#pageCopyButton");
 const queryInput = document.querySelector("#queryInput");
 const queryButton = document.querySelector("#queryButton");
 const queryCopyButton = document.querySelector("#queryCopyButton");
@@ -1141,6 +1145,7 @@ pageNextButton.addEventListener("click", () => shiftGraphPage(1));
 pageReloadButton.addEventListener("click", () => loadGraphPage({ resetPage: true }));
 edgePrevButton.addEventListener("click", () => shiftEdgePage(-1));
 edgeNextButton.addEventListener("click", () => shiftEdgePage(1));
+pageCopyButton.addEventListener("click", () => copyGraphPageLink(pageCopyButton));
 zoomOutButton.addEventListener("click", () => zoomAtCanvasCenter(0.82));
 zoomInButton.addEventListener("click", () => zoomAtCanvasCenter(1.18));
 fitGraphButton.addEventListener("click", () => fitVisibleGraph());
@@ -1264,6 +1269,7 @@ function applyUrlState() {
       projectSelect.value = link.path;
     }
   }
+  applyGraphPageLink(link.graphPage);
   if (link.nodeId != null || link.edgeIndex != null) {
     state.pendingSelectionLink = link;
   }
@@ -1285,10 +1291,49 @@ function readSelectionLinkFromUrl() {
       edgeIndex: parseUrlInteger(params.get("edge")),
       query: params.get("query") || "",
       queryFocus: params.get("query_focus") === "1",
+      graphPage: readGraphPageLink(params),
     };
   } catch (error) {
-    return { path: "", nodeId: null, edgeIndex: null, query: "", queryFocus: false };
+    return { path: "", nodeId: null, edgeIndex: null, query: "", queryFocus: false, graphPage: null };
   }
+}
+
+function readGraphPageLink(params) {
+  const values = {
+    nodeOffset: parseUrlInteger(params.get("node_offset")),
+    nodeLimit: parseUrlInteger(params.get("node_limit")),
+    edgeOffset: parseUrlInteger(params.get("edge_offset")),
+    edgeLimit: parseUrlInteger(params.get("edge_limit")),
+    pathPrefix: params.get("path_prefix") || "",
+    kind: params.get("kind") || "",
+    itemKind: params.get("item_kind") || "",
+    language: params.get("language") || "",
+    search: params.get("search") || "",
+    edgeKind: params.get("edge_kind") || "",
+    confidence: params.get("confidence") || "",
+    edgeRelation: params.get("edge_relation") || "",
+    edgeSource: params.get("edge_source") || "",
+  };
+  const hasValue = Object.values(values).some((value) => value != null && value !== "");
+  return hasValue ? values : null;
+}
+
+function applyGraphPageLink(link) {
+  if (!link) return;
+  state.pendingGraphPageLink = true;
+  if (link.nodeOffset != null) state.graphPage.nodeOffset = link.nodeOffset;
+  if (link.edgeOffset != null) state.graphPage.edgeOffset = link.edgeOffset;
+  if (link.nodeLimit != null) nodeLimitInput.value = String(link.nodeLimit);
+  if (link.edgeLimit != null) edgeLimitInput.value = String(link.edgeLimit);
+  if (link.pathPrefix) state.architecturePathPrefix = link.pathPrefix;
+  serverKindInput.value = link.kind || "";
+  serverItemKindInput.value = link.itemKind || "";
+  serverLanguageInput.value = link.language || "";
+  serverSearchInput.value = link.search || "";
+  serverEdgeKindInput.value = link.edgeKind || "";
+  serverConfidenceInput.value = link.confidence || "";
+  serverEdgeRelationInput.value = link.edgeRelation || "";
+  serverEdgeSourceInput.value = link.edgeSource || "";
 }
 
 function parseUrlInteger(value) {
@@ -1313,12 +1358,7 @@ function syncSelectionUrl() {
 
 function buildSelectionUrl({ nodeId = null, edgeIndex = null, absolute = true } = {}) {
   const url = new URL(window.location.href);
-  const root = pathInput.value.trim();
-  if (root && root !== ".") {
-    url.searchParams.set("path", root);
-  } else {
-    url.searchParams.delete("path");
-  }
+  writePathUrlParam(url);
 
   if (nodeId != null) {
     url.searchParams.set("node", String(nodeId));
@@ -1340,12 +1380,7 @@ function buildSelectionUrl({ nodeId = null, edgeIndex = null, absolute = true } 
 
 function buildQueryUrl(expression, { focus = false, absolute = true } = {}) {
   const url = new URL(window.location.href);
-  const root = pathInput.value.trim();
-  if (root && root !== ".") {
-    url.searchParams.set("path", root);
-  } else {
-    url.searchParams.delete("path");
-  }
+  writePathUrlParam(url);
   url.searchParams.set("query", expression);
   if (focus) {
     url.searchParams.set("query_focus", "1");
@@ -1355,6 +1390,64 @@ function buildQueryUrl(expression, { focus = false, absolute = true } = {}) {
   url.searchParams.delete("node");
   url.searchParams.delete("edge");
   return absolute ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
+}
+
+function buildGraphPageUrl({ absolute = true } = {}) {
+  const url = new URL(window.location.href);
+  writePathUrlParam(url);
+  writeOptionalIntegerUrlParam(url, "node_offset", state.graphPage.nodeOffset, 0);
+  writeOptionalIntegerUrlParam(url, "node_limit", Number(nodeLimitInput.value || 250), 250);
+  writeOptionalIntegerUrlParam(url, "edge_offset", state.graphPage.edgeOffset, 0);
+  writeOptionalIntegerUrlParam(url, "edge_limit", Number(edgeLimitInput.value || 500), 500);
+  writeOptionalStringUrlParam(url, "path_prefix", state.architecturePathPrefix);
+  writeOptionalStringUrlParam(url, "kind", serverKindInput.value.trim());
+  writeOptionalStringUrlParam(url, "item_kind", serverItemKindInput.value.trim());
+  writeOptionalStringUrlParam(url, "language", serverLanguageInput.value.trim());
+  writeOptionalStringUrlParam(url, "search", serverSearchInput.value.trim());
+  writeOptionalStringUrlParam(url, "edge_kind", serverEdgeKindInput.value.trim());
+  writeOptionalStringUrlParam(url, "confidence", serverConfidenceInput.value.trim());
+  writeOptionalStringUrlParam(url, "edge_relation", serverEdgeRelationInput.value.trim());
+  writeOptionalStringUrlParam(url, "edge_source", serverEdgeSourceInput.value.trim());
+  url.searchParams.delete("node");
+  url.searchParams.delete("edge");
+  url.searchParams.delete("query");
+  url.searchParams.delete("query_focus");
+  return absolute ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
+}
+
+function syncGraphPageUrl() {
+  try {
+    window.history.replaceState(null, "", buildGraphPageUrl({ absolute: false }));
+  } catch (error) {
+    // Graph page URLs are best-effort; the graph page itself works without History API.
+  }
+}
+
+function writePathUrlParam(url) {
+  const root = pathInput.value.trim();
+  if (root && root !== ".") {
+    url.searchParams.set("path", root);
+  } else {
+    url.searchParams.delete("path");
+  }
+}
+
+function writeOptionalIntegerUrlParam(url, name, value, defaultValue) {
+  const number = Number(value);
+  if (Number.isInteger(number) && number >= 0 && number !== defaultValue) {
+    url.searchParams.set(name, String(number));
+  } else {
+    url.searchParams.delete(name);
+  }
+}
+
+function writeOptionalStringUrlParam(url, name, value) {
+  const text = String(value || "").trim();
+  if (text) {
+    url.searchParams.set(name, text);
+  } else {
+    url.searchParams.delete(name);
+  }
 }
 
 function syncQueryUrl(expression, options = {}) {
@@ -1446,6 +1539,27 @@ async function copyCurrentQueryLink(button) {
     button.textContent = error.message;
     window.setTimeout(() => {
       button.textContent = t("button.copyQueryLink");
+    }, 1600);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function copyGraphPageLink(button) {
+  button.disabled = true;
+  try {
+    const href = buildGraphPageUrl();
+    await writeClipboardText(href);
+    syncGraphPageUrl();
+    const previous = button.textContent;
+    button.textContent = t("button.copied");
+    window.setTimeout(() => {
+      button.textContent = previous || t("button.copyPageLink");
+    }, 1200);
+  } catch (error) {
+    button.textContent = error.message;
+    window.setTimeout(() => {
+      button.textContent = t("button.copyPageLink");
     }, 1600);
   } finally {
     button.disabled = false;
@@ -1854,7 +1968,7 @@ async function scan() {
   state.architecture = null;
   state.languageDependencies = null;
   state.hotspots = null;
-  state.architecturePathPrefix = "";
+  if (!state.pendingGraphPageLink) state.architecturePathPrefix = "";
   state.entrypoints = [];
   renderOverview();
   state.insightReport = null;
@@ -2046,11 +2160,15 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
   pageNextButton.disabled = true;
   edgePrevButton.disabled = true;
   edgeNextButton.disabled = true;
+  pageCopyButton.disabled = true;
 
-  if (resetPage) {
+  const preserveGraphPageLink = resetPage && state.pendingGraphPageLink;
+  const preserveInvestigationLink = Boolean(state.pendingSelectionLink || state.pendingQueryLink);
+  if (resetPage && !preserveGraphPageLink) {
     state.graphPage.nodeOffset = 0;
     state.graphPage.edgeOffset = 0;
   }
+  if (preserveGraphPageLink) state.pendingGraphPageLink = false;
 
   const nodeLimit = clampNumber(Number(nodeLimitInput.value || 250), 20, 1000);
   const edgeLimit = clampNumber(Number(edgeLimitInput.value || 500), 1, 2000);
@@ -2118,6 +2236,9 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     initializeGraph({ preserveView: !resetLayout });
     await restorePendingQueryLink();
     await restorePendingSelectionLink();
+    if (!preserveInvestigationLink && state.selectedId == null && !state.selectedEdgeKey && !state.queryFocus) {
+      syncGraphPageUrl();
+    }
     loadProjectOverview();
     loadInsights();
     setStatus("ready");
@@ -3316,6 +3437,7 @@ function updateGraphPageControls() {
   edgePrevButton.disabled = state.graphPage.edgeOffset === 0;
   edgeNextButton.disabled = !state.graphPage.truncatedEdges;
   pageReloadButton.disabled = false;
+  pageCopyButton.disabled = state.graph.nodes.length === 0 && state.graph.edges.length === 0;
   renderGraphPageScope();
 }
 
@@ -4272,6 +4394,7 @@ function showIncrementalScanGraph(scan) {
   edgePrevButton.disabled = true;
   edgeNextButton.disabled = true;
   renderStaticEdgePageInfo();
+  pageCopyButton.disabled = false;
   pageReloadButton.disabled = false;
 }
 
@@ -4301,6 +4424,7 @@ function showIncrementalMergePreviewGraph(preview) {
   edgePrevButton.disabled = true;
   edgeNextButton.disabled = true;
   renderStaticEdgePageInfo();
+  pageCopyButton.disabled = false;
   pageReloadButton.disabled = false;
 }
 
@@ -5329,6 +5453,7 @@ function showFocusedGraph(result, label, selectedId = null, options = {}) {
   edgePrevButton.disabled = true;
   edgeNextButton.disabled = true;
   renderStaticEdgePageInfo();
+  pageCopyButton.disabled = false;
   pageReloadButton.disabled = false;
   if (selectedId != null) {
     selectNodeById(selectedId, { syncUrl: options.syncUrl !== false });

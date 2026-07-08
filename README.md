@@ -155,6 +155,7 @@ Implemented now:
 - Insight focus API and web interaction for turning findings into focused graph views.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - Web query panel supports shareable `query` deep-links and copy-link actions for reusable investigations.
+- Web graph page filters, node/edge offsets, and page limits can be copied as shareable deep-links for reproducible large-repository slices.
 - Web export panel for downloading full graph snapshots as JSON, DOT, or NDJSON.
 - Full graph exports publish response headers for node count, edge count, and serialized byte size.
 - Web project selector backed by an explicit server-side allowlist for opening local repositories.

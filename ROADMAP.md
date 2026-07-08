@@ -205,6 +205,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add insight focus API and web interaction for opening findings as focused graph views.
 - [x] Add enriched node cards with summary, code preview, dependencies, and related risks.
 - [x] Add shareable query deep-links and copy-link actions for reusable web investigations.
+- [x] Add shareable graph-page deep-links for paged/filterable large-repository slices.
 - [x] Add package graph actions from external dependency/import node cards.
 - [x] Add selectable graph edges with dependency cards and exact edge explanation actions.
 - [x] Highlight graph edges on hover before opening dependency cards.
