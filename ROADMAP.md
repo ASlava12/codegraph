@@ -204,6 +204,21 @@ Goal: answer practical code investigation questions.
 - [x] Add web source-search actions for opening matching files as focused graph slices.
 - [x] Add web source-search result JSON downloads for agent handoff.
 - [x] Add edge explanation for confidence and provenance evidence across CLI, API, and web.
+- [ ] Add a derived workflow model that converts entrypoint traces into block-style execution steps.
+- [ ] Classify workflow blocks as start, call, config/env read, dependency, branch, error, return, and external boundary.
+- [ ] Add workflow graph compaction so repeated helper calls, import-only hops, and low-signal nodes collapse into readable blocks.
+- [ ] Add workflow JSON output for agents with stable block ids, source node ids, edge provenance, confidence, and risk references.
+- [ ] Add Mermaid flowchart export for human-readable workflow diagrams.
+- [ ] Add CLI workflow commands for entrypoints, routes, CI jobs, Makefile targets, Docker commands, and selected nodes.
+- [ ] Add workflow API endpoints with depth, edge-kind, confidence, language, and risk filters.
+- [ ] Add workflow query slices so existing graph query results can open as block diagrams.
+- [ ] Add web Flow view next to Graph/Cards/Risks with pan, zoom, minimap, and selectable workflow blocks.
+- [ ] Reuse node and dependency cards from workflow blocks, including source preview, related dependencies, risks, and edge explanations.
+- [ ] Add branch extraction for common if/match/try/catch constructs where parser or LSP facts support it.
+- [ ] Add loop and async/concurrency markers for common constructs where confidence is high.
+- [ ] Add workflow regression fixtures for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, CI, Docker, and Kubernetes runtime paths.
+- [ ] Add workflow export downloads in JSON, Mermaid, DOT, and visible-slice JSON.
+- [ ] Localize workflow UI, commands, schema descriptions, and block labels in English and Russian.
 
 Example commands:
 
@@ -213,6 +228,9 @@ codegraph trace main
 codegraph trace-entrypoints --search server
 codegraph trace-config DATABASE_URL
 codegraph trace-errors "failed to load data"
+codegraph workflow --entrypoint main --format json
+codegraph workflow --entrypoint "POST /users" --format mermaid
+codegraph workflow --entrypoint "github workflow:CI/deploy" --depth 4
 codegraph query 'neighbors label:main direction:out depth:2 edge_kind:calls'
 codegraph query 'calls(function:main)'
 ```
@@ -221,6 +239,8 @@ Exit criteria:
 
 - A human can start from an entrypoint and follow meaningful execution paths.
 - An agent can request focused subgraphs instead of reading a whole repository.
+- A human can switch from a dense graph to a readable block workflow for a selected entrypoint.
+- An agent can request machine-readable workflow blocks with source, confidence, provenance, and risk context.
 
 ## Phase 4: API And UI
 
