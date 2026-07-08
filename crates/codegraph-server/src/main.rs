@@ -6800,6 +6800,12 @@ mod tests {
         assert!(app.contains("\"path.failedFallback\""));
         assert!(app.contains("\"path.resultLabel\""));
         assert!(app.contains("t(\"path.resultLabel\")"));
+        assert!(index.contains("pathExportButton"));
+        assert!(app.contains("exportLastPathResult"));
+        assert!(app.contains("codegraph.path_result.v1"));
+        assert!(app.contains("\"button.downloadPathResult\""));
+        assert!(app.contains("\"export.pathResult\""));
+        assert!(app.contains("\"export.noPathResult\""));
         assert!(app.contains("\"entryFlows.tracing\""));
         assert!(app.contains("\"entryFlows.noMatches\""));
         assert!(app.contains("\"entryFlows.reportTruncated\""));

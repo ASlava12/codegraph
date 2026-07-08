@@ -186,6 +186,7 @@ const I18N = {
     "button.downloadCheck": "Download Check",
     "button.downloadSourceResults": "Download Results",
     "button.downloadEntryFlows": "Download Flows",
+    "button.downloadPathResult": "Download Path",
     "button.downloadConfigTrace": "Download Config Trace",
     "button.downloadErrorTrace": "Download Error Trace",
     "button.downloadCard": "Download Card",
@@ -406,10 +407,12 @@ const I18N = {
     "export.check": "Check Result JSON",
     "export.sourceSearch": "Source Search JSON",
     "export.entryFlows": "Entrypoint Traces JSON",
+    "export.pathResult": "Path Result JSON",
     "export.configTrace": "Config Trace JSON",
     "export.errorTrace": "Error Trace JSON",
     "export.selectionCard": "Selection Card JSON",
     "export.noEntryFlows": "Trace entrypoints before exporting flows.",
+    "export.noPathResult": "Find a path before exporting its result.",
     "export.noConfigTrace": "Trace config before exporting results.",
     "export.noErrorTrace": "Trace errors before exporting results.",
     "export.noSelectionCard": "Select a node or edge card before exporting.",
@@ -722,6 +725,7 @@ const I18N = {
     "button.downloadCheck": "Скачать проверку",
     "button.downloadSourceResults": "Скачать результаты",
     "button.downloadEntryFlows": "Скачать потоки",
+    "button.downloadPathResult": "Скачать путь",
     "button.downloadConfigTrace": "Скачать трассу конфига",
     "button.downloadErrorTrace": "Скачать трассу ошибок",
     "button.downloadCard": "Скачать карточку",
@@ -942,10 +946,12 @@ const I18N = {
     "export.check": "JSON проверки",
     "export.sourceSearch": "JSON поиска в коде",
     "export.entryFlows": "JSON потоков входа",
+    "export.pathResult": "JSON результата пути",
     "export.configTrace": "JSON трассы конфига",
     "export.errorTrace": "JSON трассы ошибок",
     "export.selectionCard": "JSON карточки выбора",
     "export.noEntryFlows": "Сначала трассируйте точки входа.",
+    "export.noPathResult": "Сначала найдите путь.",
     "export.noConfigTrace": "Сначала трассируйте конфиг.",
     "export.noErrorTrace": "Сначала трассируйте ошибки.",
     "export.noSelectionCard": "Сначала выберите карточку узла или связи.",
@@ -1235,6 +1241,7 @@ const state = {
   lastCheckResult: null,
   lastSourceSearchResult: null,
   lastEntryFlowReport: null,
+  lastPathResult: null,
   lastConfigTraceReport: null,
   lastErrorTraceReport: null,
   lastSelectionCard: null,
@@ -1362,6 +1369,7 @@ const pathToInput = document.querySelector("#pathToInput");
 const pathDepthInput = document.querySelector("#pathDepthInput");
 const pathEdgeKindInput = document.querySelector("#pathEdgeKindInput");
 const pathButton = document.querySelector("#pathButton");
+const pathExportButton = document.querySelector("#pathExportButton");
 const pathResult = document.querySelector("#pathResult");
 const configTraceTargetInput = document.querySelector("#configTraceTargetInput");
 const configTraceDepthInput = document.querySelector("#configTraceDepthInput");
@@ -1465,6 +1473,7 @@ for (const input of [entryFlowSearchInput, entryFlowDepthInput]) {
   });
 }
 pathButton.addEventListener("click", () => runPathQuery());
+pathExportButton.addEventListener("click", () => exportLastPathResult());
 for (const input of [pathFromInput, pathToInput, pathDepthInput, pathEdgeKindInput]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") runPathQuery();
@@ -1624,6 +1633,7 @@ function applyLocale() {
   renderCheckExportState();
   renderSourceSearchExportState();
   renderEntryFlowExportState();
+  renderPathExportState();
   renderConfigTraceExportState();
   renderErrorTraceExportState();
   renderSelection();
@@ -2356,6 +2366,7 @@ async function scan() {
   checkResult.innerHTML = "";
   clearLastQueryResult();
   clearLastSourceSearchResult();
+  clearLastPathResult();
   exportResult.innerHTML = "";
   if (state.scanEvents) {
     state.scanEvents.close();
@@ -5365,6 +5376,17 @@ async function runPathQuery() {
       throw new Error(apiErrorMessage(body, response, t("path.failedFallback")));
     }
     pathResult.innerHTML = renderQueryResult(body, { label: t("path.resultLabel") });
+    state.lastPathResult = {
+      generated_at: new Date().toISOString(),
+      root: pathInput.value.trim() || ".",
+      from,
+      to,
+      depth,
+      edge_kind: edgeKind || null,
+      query: expression,
+      result: body,
+    };
+    renderPathExportState();
     attachQueryNavigation(pathResult);
     attachEdgeExplainActions(pathResult);
     attachQueryFocusActions(pathResult, body);
@@ -5379,6 +5401,44 @@ async function runPathQuery() {
       pathButton.disabled = false;
     }
   }
+}
+
+function renderPathExportState() {
+  pathExportButton.disabled = !state.lastPathResult;
+}
+
+function clearLastPathResult() {
+  state.lastPathResult = null;
+  renderPathExportState();
+}
+
+function exportLastPathResult() {
+  if (!state.lastPathResult) {
+    pathResult.innerHTML = `<p class="empty">${escapeHtml(t("export.noPathResult"))}</p>`;
+    renderPathExportState();
+    return;
+  }
+
+  const payload = {
+    schema: "codegraph.path_result.v1",
+    ...state.lastPathResult,
+  };
+  const serialized = JSON.stringify(payload, null, 2);
+  const blob = new Blob([serialized], { type: "application/json" });
+  const fileName = `codegraph-${safeFilePart(payload.root)}-path-result.json`;
+  downloadBlob(blob, fileName);
+  pathResult.insertAdjacentHTML(
+    "afterbegin",
+    `
+      <div class="query-summary">
+        <span>${escapeHtml(t("export.pathResult"))}</span>
+        <span>${escapeHtml(formatBytes(blob.size))}</span>
+        <span>${escapeHtml(formatNumber(payload.result?.returned_nodes ?? payload.result?.nodes?.length ?? 0))} nodes</span>
+        <span>${escapeHtml(formatNumber(payload.result?.returned_edges ?? payload.result?.edges?.length ?? 0))} edges</span>
+        <span class="query-expression">${escapeHtml(fileName)}</span>
+      </div>
+    `,
+  );
 }
 
 async function runConfigTrace() {
