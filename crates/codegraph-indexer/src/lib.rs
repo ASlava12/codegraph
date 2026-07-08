@@ -110,6 +110,8 @@ struct IndexContext {
     pending_kubernetes_config_refs: Vec<PendingKubernetesConfigRef>,
     pending_kubernetes_service_refs: Vec<PendingKubernetesServiceRef>,
     pending_github_actions_local_actions: Vec<PendingGithubActionsLocalAction>,
+    pending_document_path_refs: Vec<PendingDocumentPathRef>,
+    pending_document_symbol_refs: Vec<PendingDocumentSymbolRef>,
 }
 
 struct PendingCall {
@@ -175,6 +177,22 @@ struct PendingKubernetesServiceRef {
 struct PendingGithubActionsLocalAction {
     action: NodeId,
     target: String,
+}
+
+struct PendingDocumentPathRef {
+    source: NodeId,
+    target: String,
+    candidates: Vec<String>,
+    relation: &'static str,
+    line: u32,
+    text: Option<String>,
+}
+
+struct PendingDocumentSymbolRef {
+    source: NodeId,
+    symbol: String,
+    relation: &'static str,
+    line: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -782,6 +800,8 @@ fn scan_project_with_scope(
         pending_kubernetes_config_refs: Vec::new(),
         pending_kubernetes_service_refs: Vec::new(),
         pending_github_actions_local_actions: Vec::new(),
+        pending_document_path_refs: Vec::new(),
+        pending_document_symbol_refs: Vec::new(),
     };
 
     for entry in WalkDir::new(root)
@@ -841,6 +861,8 @@ fn scan_project_with_scope(
     resolve_pending_kubernetes_config_refs(&mut context);
     resolve_pending_kubernetes_service_refs(&mut context);
     resolve_pending_github_actions_local_actions(&mut context);
+    resolve_pending_document_path_refs(&mut context);
+    resolve_pending_document_symbol_refs(&mut context);
     apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
 
@@ -977,6 +999,8 @@ pub fn scan_coverage(
                 .languages
                 .entry(adapter.language().to_string())
                 .or_default() += 1;
+        } else if is_markdown_document(path) {
+            *report.languages.entry("markdown".to_string()).or_default() += 1;
         }
     }
 
@@ -1000,6 +1024,10 @@ fn index_skipped_file(
     );
     if let Some(adapter) = adapter_for_path(path) {
         metadata.insert("language".to_string(), adapter.language().to_string());
+    } else if is_markdown_document(path) {
+        metadata.insert("language".to_string(), "markdown".to_string());
+        metadata.insert("item_kind".to_string(), "document".to_string());
+        metadata.insert("document_kind".to_string(), document_kind(path, label));
     }
 
     let file_id = context
@@ -1031,6 +1059,10 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
 
     if let Some(language) = language {
         metadata.insert("language".to_string(), language.to_string());
+    } else if is_markdown_document(path) {
+        metadata.insert("language".to_string(), "markdown".to_string());
+        metadata.insert("item_kind".to_string(), "document".to_string());
+        metadata.insert("document_kind".to_string(), document_kind(path, label));
     }
 
     let parse_result = source_bytes.as_ref().and_then(|source| {
@@ -1058,6 +1090,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
         index_rationale_comments(context, file_id, label, language, source);
         script_entrypoint = index_script_entrypoint(context, file_id, label, source);
         index_manifest_facts(context, file_id, path, label, source);
+        index_markdown_document(context, file_id, path, label, source);
         index_framework_configs(context, file_id, label, language, source);
         if language == Some(Language::Dart) {
             index_dart_platform_channels(context, file_id, label, source);
@@ -1306,6 +1339,342 @@ fn index_rationale_comments(
             Confidence::Exact,
             BTreeMap::from([("relation".to_string(), "rationale_comment".to_string())]),
         );
+    }
+}
+
+fn index_markdown_document(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if !is_markdown_document(path) {
+        return;
+    }
+
+    let doc_kind = document_kind(path, label);
+    add_file_metadata(&mut context.graph, file_id, "item_kind", "document");
+    add_file_metadata(&mut context.graph, file_id, "source", "markdown");
+    add_file_metadata(
+        &mut context.graph,
+        file_id,
+        "document_kind",
+        doc_kind.clone(),
+    );
+
+    let mut current_section = None;
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        if let Some((level, heading)) = markdown_heading(line) {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("item_kind".to_string(), "document_section".to_string());
+            metadata.insert("source".to_string(), "markdown".to_string());
+            metadata.insert("language".to_string(), "markdown".to_string());
+            metadata.insert("document_kind".to_string(), doc_kind.clone());
+            metadata.insert("heading".to_string(), heading.clone());
+            metadata.insert("level".to_string(), level.to_string());
+            metadata.insert("anchor".to_string(), markdown_anchor(&heading));
+            metadata.insert("line".to_string(), line_number.to_string());
+            let section_id = context.graph.add_node_with_metadata(
+                NodeKind::Module,
+                format!("{label}#{heading}"),
+                Some(line_span(label, source, line_number)),
+                metadata,
+            );
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                file_id,
+                section_id,
+                EdgeKind::Contains,
+                Confidence::Exact,
+                BTreeMap::from([("relation".to_string(), "document_section".to_string())]),
+            );
+            current_section = Some(section_id);
+        }
+
+        let source_id = current_section.unwrap_or(file_id);
+        for link in markdown_links(line) {
+            if let Some(candidates) = markdown_path_candidates(label, &link.target) {
+                context
+                    .pending_document_path_refs
+                    .push(PendingDocumentPathRef {
+                        source: source_id,
+                        target: link.target,
+                        candidates,
+                        relation: "markdown_link",
+                        line: line_number,
+                        text: Some(link.text),
+                    });
+            }
+        }
+
+        for code in inline_code_spans(line) {
+            if let Some(candidates) = markdown_path_candidates(label, &code) {
+                context
+                    .pending_document_path_refs
+                    .push(PendingDocumentPathRef {
+                        source: source_id,
+                        target: code,
+                        candidates,
+                        relation: "markdown_code_path",
+                        line: line_number,
+                        text: None,
+                    });
+            } else if is_document_symbol_reference(&code) {
+                context
+                    .pending_document_symbol_refs
+                    .push(PendingDocumentSymbolRef {
+                        source: source_id,
+                        symbol: code,
+                        relation: "markdown_symbol_reference",
+                        line: line_number,
+                    });
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MarkdownLink {
+    text: String,
+    target: String,
+}
+
+fn markdown_heading(line: &str) -> Option<(u8, String)> {
+    let trimmed = line.trim_start();
+    let level = trimmed
+        .chars()
+        .take_while(|character| *character == '#')
+        .count();
+    if !(1..=6).contains(&level) {
+        return None;
+    }
+    let rest = trimmed[level..].trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+    let heading = rest.trim_end_matches('#').trim();
+    (!heading.is_empty()).then(|| (level as u8, heading.to_string()))
+}
+
+fn markdown_anchor(heading: &str) -> String {
+    let mut anchor = String::new();
+    let mut previous_dash = false;
+    for character in heading.chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_alphanumeric() {
+            anchor.push(character);
+            previous_dash = false;
+        } else if !previous_dash && !anchor.is_empty() {
+            anchor.push('-');
+            previous_dash = true;
+        }
+    }
+    anchor.trim_matches('-').to_string()
+}
+
+fn markdown_links(line: &str) -> Vec<MarkdownLink> {
+    let bytes = line.as_bytes();
+    let mut links = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let Some(open_offset) = line[index..].find('[') else {
+            break;
+        };
+        let open = index + open_offset;
+        if open > 0 && bytes[open - 1] == b'!' {
+            index = open + 1;
+            continue;
+        }
+        let Some(close_offset) = line[open + 1..].find(']') else {
+            break;
+        };
+        let close = open + 1 + close_offset;
+        if line[close + 1..].starts_with('(') {
+            let target_start = close + 2;
+            if let Some(target_offset) = line[target_start..].find(')') {
+                let target_end = target_start + target_offset;
+                let target = markdown_link_target(&line[target_start..target_end]);
+                if !target.is_empty() {
+                    links.push(MarkdownLink {
+                        text: line[open + 1..close].trim().to_string(),
+                        target,
+                    });
+                }
+                index = target_end + 1;
+                continue;
+            }
+        }
+        index = close + 1;
+    }
+    links
+}
+
+fn markdown_link_target(raw: &str) -> String {
+    raw.trim()
+        .trim_matches('<')
+        .trim_matches('>')
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+fn inline_code_spans(line: &str) -> Vec<String> {
+    if line.contains("```") {
+        return Vec::new();
+    }
+
+    let mut spans = Vec::new();
+    let mut rest = line;
+    while let Some(start) = rest.find('`') {
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find('`') else {
+            break;
+        };
+        let value = after_start[..end].trim();
+        if !value.is_empty() {
+            spans.push(value.to_string());
+        }
+        rest = &after_start[end + 1..];
+    }
+    spans
+}
+
+fn markdown_path_candidates(document_label: &str, raw_target: &str) -> Option<Vec<String>> {
+    let target = clean_markdown_path_target(raw_target)?;
+    if !is_document_path_reference(&target) {
+        return None;
+    }
+
+    let mut candidates = Vec::new();
+    let relative = join_path(path_dir(document_label).as_deref(), &target);
+    if !relative.is_empty() {
+        candidates.push(relative);
+    }
+    let root_relative = normalize_path(&target);
+    if !root_relative.is_empty() && !candidates.contains(&root_relative) {
+        candidates.push(root_relative);
+    }
+    (!candidates.is_empty()).then_some(candidates)
+}
+
+fn clean_markdown_path_target(raw_target: &str) -> Option<String> {
+    let trimmed = raw_target.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("mailto:")
+        || trimmed.starts_with("git@")
+    {
+        return None;
+    }
+    let without_fragment = trimmed
+        .split_once('#')
+        .map(|(path, _)| path)
+        .unwrap_or(trimmed);
+    let without_query = without_fragment
+        .split_once('?')
+        .map(|(path, _)| path)
+        .unwrap_or(without_fragment)
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'');
+    (!without_query.is_empty()).then(|| without_query.to_string())
+}
+
+fn is_document_path_reference(target: &str) -> bool {
+    target.contains('/')
+        || target.starts_with("./")
+        || target.starts_with("../")
+        || target.rsplit('/').next().is_some_and(|name| {
+            name.rsplit_once('.').is_some_and(|(_, extension)| {
+                matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "rs" | "py"
+                        | "js"
+                        | "jsx"
+                        | "ts"
+                        | "tsx"
+                        | "go"
+                        | "c"
+                        | "h"
+                        | "cc"
+                        | "cpp"
+                        | "hpp"
+                        | "dart"
+                        | "php"
+                        | "sh"
+                        | "bash"
+                        | "md"
+                        | "markdown"
+                        | "toml"
+                        | "json"
+                        | "yaml"
+                        | "yml"
+                        | "lock"
+                        | "txt"
+                        | "cfg"
+                        | "ini"
+                        | "env"
+                        | "sql"
+                )
+            })
+        })
+}
+
+fn is_document_symbol_reference(value: &str) -> bool {
+    let value = value.trim().trim_end_matches("()").trim_end_matches('!');
+    (3..=96).contains(&value.len())
+        && !value.contains(char::is_whitespace)
+        && !value.contains('/')
+        && !value.starts_with('-')
+        && !value.starts_with('$')
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "_:.#<>".contains(character))
+        && value.chars().any(|character| {
+            character == '_'
+                || character == ':'
+                || character == '.'
+                || character.is_ascii_lowercase()
+        })
+}
+
+fn is_markdown_document(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "md" | "markdown" | "mdown" | "mkdn"
+            )
+        })
+}
+
+fn document_kind(path: &Path, label: &str) -> String {
+    let normalized = label.to_ascii_lowercase();
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(label)
+        .to_ascii_lowercase();
+    if normalized.contains("/adr/")
+        || normalized.contains("/adrs/")
+        || file_name.starts_with("adr-")
+        || file_name.starts_with("adr_")
+    {
+        "adr".to_string()
+    } else if normalized.contains("/rfc/")
+        || normalized.contains("/rfcs/")
+        || file_name.starts_with("rfc-")
+        || file_name.starts_with("rfc_")
+    {
+        "rfc".to_string()
+    } else {
+        "markdown".to_string()
     }
 }
 
@@ -9774,6 +10143,72 @@ fn resolve_pending_github_actions_local_actions(context: &mut IndexContext) {
     }
 }
 
+fn resolve_pending_document_path_refs(context: &mut IndexContext) {
+    let pending_refs = std::mem::take(&mut context.pending_document_path_refs);
+
+    for pending in pending_refs {
+        let target = pending.candidates.iter().find_map(|candidate| {
+            context
+                .file_nodes
+                .get(candidate)
+                .copied()
+                .or_else(|| context.directory_nodes.get(candidate).copied())
+                .map(|id| (candidate.clone(), id))
+        });
+        let Some((resolved_path, target_id)) = target else {
+            continue;
+        };
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), pending.relation.to_string());
+        metadata.insert("resolution".to_string(), "document_path".to_string());
+        metadata.insert("source".to_string(), "markdown".to_string());
+        metadata.insert("target".to_string(), pending.target);
+        metadata.insert("resolved_path".to_string(), resolved_path);
+        metadata.insert("line".to_string(), pending.line.to_string());
+        if let Some(text) = pending.text {
+            metadata.insert("text".to_string(), text);
+        }
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.source,
+            target_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
+fn resolve_pending_document_symbol_refs(context: &mut IndexContext) {
+    let pending_refs = std::mem::take(&mut context.pending_document_symbol_refs);
+
+    for pending in pending_refs {
+        let targets = resolve_function_targets(&context.function_symbols, &pending.symbol);
+        if targets.is_empty() {
+            continue;
+        }
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), pending.relation.to_string());
+        metadata.insert("resolution".to_string(), "document_symbol".to_string());
+        metadata.insert("source".to_string(), "markdown".to_string());
+        metadata.insert("symbol".to_string(), pending.symbol);
+        metadata.insert("line".to_string(), pending.line.to_string());
+
+        for target in targets {
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                pending.source,
+                target,
+                EdgeKind::References,
+                Confidence::Heuristic,
+                metadata.clone(),
+            );
+        }
+    }
+}
+
 fn github_actions_local_action_target(context: &IndexContext, target: &str) -> Option<NodeId> {
     let candidates = [
         target.to_string(),
@@ -10560,6 +10995,9 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
     if Language::detect(path).is_some() {
         return true;
     }
+    if is_markdown_document(path) {
+        return true;
+    }
 
     matches!(
         path.file_name().and_then(|name| name.to_str()),
@@ -10830,6 +11268,98 @@ mod tests {
                 .iter()
                 .any(|edge| edge.kind == EdgeKind::Entrypoint)
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_links_markdown_docs_to_code_nodes() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("docs").join("adr")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            "mod config;\nfn main() { load_config(); }\nfn load_config() {}\n",
+        )
+        .unwrap();
+        fs::write(root.join("src").join("config.rs"), "pub fn read() {}\n").unwrap();
+        fs::write(
+            root.join("docs").join("adr").join("0001-runtime.md"),
+            "# ADR 0001: Runtime Flow\n\nThe startup path begins in [main](../../src/main.rs).\nIt keeps configuration work in `src/config.rs` and calls `load_config`.\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let doc = node_id(&graph, NodeKind::File, "docs/adr/0001-runtime.md");
+        let section = node_id(
+            &graph,
+            NodeKind::Module,
+            "docs/adr/0001-runtime.md#ADR 0001: Runtime Flow",
+        );
+        let main_file = node_id(&graph, NodeKind::File, "src/main.rs");
+        let config_file = node_id(&graph, NodeKind::File, "src/config.rs");
+        let load_config = function_id_in_file(&graph, "load_config", "src/main.rs");
+
+        let doc_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == doc)
+            .expect("missing doc node");
+        assert_eq!(
+            doc_node.metadata.get("language").map(String::as_str),
+            Some("markdown")
+        );
+        assert_eq!(
+            doc_node.metadata.get("document_kind").map(String::as_str),
+            Some("adr")
+        );
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == doc
+                && edge.target == section
+                && edge.kind == EdgeKind::Contains
+                && edge.confidence == Confidence::Exact
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "document_section")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == section
+                && edge.target == main_file
+                && edge.kind == EdgeKind::References
+                && edge.confidence == Confidence::Exact
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "markdown_link")
+                && edge
+                    .metadata
+                    .get("resolved_path")
+                    .is_some_and(|value| value == "src/main.rs")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == section
+                && edge.target == config_file
+                && edge.kind == EdgeKind::References
+                && edge.confidence == Confidence::Exact
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "markdown_code_path")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == section
+                && edge.target == load_config
+                && edge.kind == EdgeKind::References
+                && edge.confidence == Confidence::Heuristic
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "markdown_symbol_reference")
+        }));
+
+        let coverage = scan_coverage(&root, &IndexOptions::default()).unwrap();
+        assert_eq!(coverage.languages.get("markdown"), Some(&1));
 
         fs::remove_dir_all(root).unwrap();
     }

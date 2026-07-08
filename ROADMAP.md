@@ -476,7 +476,8 @@ Artifact and report parity:
 
 Repository knowledge ingestion:
 
-- [ ] Add Markdown/ADR/RFC extraction so design docs, decisions, and citations become first-class graph nodes.
+- [x] Add first Markdown/ADR/RFC extraction so design docs and decisions become graph nodes with section, local path, and symbol references.
+- [ ] Add richer Markdown citations, backlinks, front matter, ownership metadata, and UI overlays for docs-to-code exploration.
 - [x] Promote source comments such as `NOTE`, `WHY`, `TODO`, `FIXME`, and security/risk markers into linked rationale nodes.
 - [ ] Add deterministic SQL schema extraction for tables, views, columns, foreign keys, indexes, queries, and JOIN relationships.
 - [ ] Link application code to SQL/schema nodes through query strings, migrations, ORM metadata, and database config.

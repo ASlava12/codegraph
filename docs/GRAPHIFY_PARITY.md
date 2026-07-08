@@ -32,8 +32,8 @@ CodeGraph already has the right foundation: Rust workspace, typed graph schema, 
 | Query/path/explain | Implemented across CLI/API/web | Add natural-language-to-bounded-subgraph mode without vector storage as the default dependency |
 | God nodes and communities | First community reports exist; hotspot reports exist | Separate architectural hubs from noisy utility hubs and expose both in reports/UI |
 | GRAPH_REPORT-style summary | Not yet implemented as a first-class artifact | Generate `CODEGRAPH_REPORT.md` with key concepts, communities, risks, surprising links, suggested questions, and provenance |
-| Rationale and doc refs | Source rationale comments are indexed | Add Markdown/ADR/RFC/doc link extraction and link docs to code nodes |
-| Beyond code | Not yet first-class beyond manifests/config | Add deterministic docs and SQL first, then optional model-backed PDFs/images/media sidecars |
+| Rationale and doc refs | Source rationale comments plus first Markdown/ADR/RFC section, local path, and symbol references are indexed | Add richer document citations, backlinks, and UI overlays that connect docs, decisions, and code cards |
+| Beyond code | First-class manifests/config plus deterministic Markdown docs are indexed | Add SQL next, then optional model-backed PDFs/images/media sidecars |
 | Wiki/agent-readable docs | Not yet implemented | Export a Markdown wiki with one index plus pages for communities, hotspots, entrypoints, and important nodes |
 | Assistant install/hooks | Not yet implemented | Generate project-scoped Codex/generic agent instructions that prefer CodeGraph query/path/explain before broad raw-file reads |
 | MCP server | Planned | Expose query, path, explain, node card, report, and insight tools over stdio first |
