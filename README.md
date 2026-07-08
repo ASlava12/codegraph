@@ -116,6 +116,7 @@ Implemented now:
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, trace, diagnostic, insight/risk, and unreachable-code slices.
+- Agent-friendly annotation graph queries for focused user-owned metadata slices from `.codegraph/annotations.toml`.
 - Focused query responses include returned counts and facets for node kinds, edge kinds, languages, item kinds, and confidence.
 - Agent-friendly symbol graph queries for focused function/type/module context with containing files and nearby dependency edges.
 - Agent-friendly file graph queries for focused source-file structure, imports, and contained-symbol dependency context.
@@ -415,6 +416,7 @@ cargo run -p codegraph-cli -- query 'unreachable kind:function label:legacy_work
 cargo run -p codegraph-cli -- query 'diagnostics severity:error language:rust' .
 cargo run -p codegraph-cli -- query 'insights severity:error kind:dependency' .
 cargo run -p codegraph-cli -- query 'insights kind:sensitive_config_default' .
+cargo run -p codegraph-cli -- query 'annotations key:domain value:payments direction:out edge_limit:300' .
 cargo run -p codegraph-cli -- query 'nodes metadata.annotation.domain:payments' .
 ```
 
@@ -664,6 +666,9 @@ curl --get 'http://127.0.0.1:3765/api/query' \
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=diagnostics severity:error language:rust'
+curl --get 'http://127.0.0.1:3765/api/query' \
+  --data-urlencode 'path=.' \
+  --data-urlencode 'q=annotations key:domain value:payments direction:out edge_limit:300'
 curl --get 'http://127.0.0.1:3765/api/query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=insights severity:error'

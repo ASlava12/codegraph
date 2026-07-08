@@ -1887,12 +1887,13 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "hotspots" | "hotspot" | "central" | "hubs" => query_hotspots(graph, spec),
         "unreachable" | "dead" => query_unreachable(graph, spec),
         "diagnostics" | "diagnostic" => query_diagnostics(graph, spec),
+        "annotations" | "annotation" | "tags" | "tag" => query_annotations(graph, spec),
         "insights" | "insight" | "risks" | "risk" | "findings" | "finding" => {
             query_insights(graph, spec)
         }
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, symbols, files, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, insights, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, symbols, files, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, annotations, insights, or path"
         ))),
     }
 }
@@ -3749,6 +3750,96 @@ fn query_diagnostics(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, 
     ))
 }
 
+fn query_annotations(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    if let Some(first) = spec.positional.first() {
+        spec.terms
+            .entry("search".to_string())
+            .or_insert(first.clone());
+    }
+    validate_annotation_terms(&spec)?;
+    let path_index = node_path_index(graph);
+    let edge_kind = spec.terms.get("edge_kind");
+    let confidence = spec.terms.get("confidence");
+    let direction = spec
+        .terms
+        .get("direction")
+        .or_else(|| spec.terms.get("dir"))
+        .map(|value| parse_neighbor_direction(value, "annotations"))
+        .transpose()?
+        .unwrap_or(NeighborDirection::Both);
+    let edge_limit = spec
+        .terms
+        .get("edge_limit")
+        .map(|value| parse_limit(value).map(|value| value.clamp(1, 2_000)))
+        .transpose()?
+        .unwrap_or(300);
+
+    let matched: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node_has_annotation(node) && annotation_query_matches(node, &spec, &path_index)
+        })
+        .cloned()
+        .collect();
+    let selected_ids: BTreeSet<_> = matched
+        .iter()
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let mut node_ids = selected_ids.clone();
+    let mut edge_indexes = BTreeSet::new();
+
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if !hotspot_edge_touches_selected(edge, &selected_ids, direction) {
+            continue;
+        }
+        if edge_kind.is_some_and(|expected| !text_matches(&edge_kind_name(&edge.kind), expected)) {
+            continue;
+        }
+        if confidence
+            .is_some_and(|expected| !text_matches(&confidence_name(edge.confidence), expected))
+        {
+            continue;
+        }
+        edge_indexes.insert(index);
+        node_ids.insert(edge.source);
+        node_ids.insert(edge.target);
+    }
+
+    let total_edges = edge_indexes.len();
+    let total_nodes = node_ids.len();
+    let edges = graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| edge_indexes.contains(index))
+        .take(edge_limit)
+        .map(|(_, edge)| edge.clone())
+        .collect::<Vec<_>>();
+    let mut returned_node_ids = selected_ids.clone();
+    for edge in &edges {
+        returned_node_ids.insert(edge.source);
+        returned_node_ids.insert(edge.target);
+    }
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| returned_node_ids.contains(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    Ok(QueryResult::new(
+        graph,
+        spec.original,
+        nodes,
+        edges,
+        total_nodes,
+        total_edges,
+        matched.len() > spec.limit || total_edges > edge_limit,
+    ))
+}
+
 fn query_insights(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
     validate_insight_terms(&spec)?;
     let path_index = node_path_index(graph);
@@ -4261,6 +4352,42 @@ fn validate_diagnostic_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     Ok(())
 }
 
+fn validate_annotation_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if matches!(
+            key.as_str(),
+            "id" | "node"
+                | "node_id"
+                | "label"
+                | "search"
+                | "key"
+                | "annotation"
+                | "annotation_key"
+                | "value"
+                | "annotation_value"
+                | "language"
+                | "kind"
+                | "node_kind"
+                | "item_kind"
+                | "path"
+                | "path_prefix"
+                | "direction"
+                | "dir"
+                | "edge_kind"
+                | "confidence"
+                | "edge_limit"
+        ) || key.starts_with("metadata.")
+            || key.starts_with("annotation.")
+        {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported annotations query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_insight_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     for key in spec.terms.keys() {
         if matches!(
@@ -4370,6 +4497,92 @@ fn diagnostic_source_nodes(graph: &CodeGraph, diagnostic_id: NodeId) -> Vec<Node
         })
         .map(|edge| edge.source)
         .collect()
+}
+
+fn annotation_query_matches(
+    node: &Node,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
+    if let (Some(key), Some(value)) = (annotation_key_filter(spec), annotation_value_filter(spec))
+        && !annotation_pair_matches(node, key, value)
+    {
+        return false;
+    }
+
+    spec.terms.iter().all(|(key, expected)| match key.as_str() {
+        "id" | "node" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        "label" => text_matches(&node.label, expected),
+        "search" => node_search_matches(node, expected) || annotation_matches(node, expected),
+        "key" | "annotation" | "annotation_key" => annotation_key_matches(node, expected),
+        "value" | "annotation_value" => annotation_value_matches(node, expected),
+        "language" | "item_kind" => metadata_matches(node, key, expected),
+        "kind" | "node_kind" => text_matches(&kind_name(&node.kind), expected),
+        "path" | "path_prefix" => node_path_matches(node, path_index, expected),
+        "direction" | "dir" | "edge_kind" | "confidence" | "edge_limit" => true,
+        key if key.starts_with("metadata.") => node
+            .metadata
+            .get(key.trim_start_matches("metadata."))
+            .is_some_and(|value| text_matches(value, expected)),
+        key if key.starts_with("annotation.") => node
+            .metadata
+            .get(key)
+            .is_some_and(|value| text_matches(value, expected)),
+        _ => false,
+    })
+}
+
+fn annotation_key_filter(spec: &QuerySpec) -> Option<&str> {
+    spec.terms
+        .get("key")
+        .or_else(|| spec.terms.get("annotation"))
+        .or_else(|| spec.terms.get("annotation_key"))
+        .map(String::as_str)
+}
+
+fn annotation_value_filter(spec: &QuerySpec) -> Option<&str> {
+    spec.terms
+        .get("value")
+        .or_else(|| spec.terms.get("annotation_value"))
+        .map(String::as_str)
+}
+
+fn node_has_annotation(node: &Node) -> bool {
+    node.metadata
+        .keys()
+        .any(|key| key.starts_with("annotation."))
+}
+
+fn annotation_matches(node: &Node, expected: &str) -> bool {
+    node.metadata.iter().any(|(key, value)| {
+        key.starts_with("annotation.")
+            && (text_matches(key.trim_start_matches("annotation."), expected)
+                || text_matches(key, expected)
+                || text_matches(value, expected))
+    })
+}
+
+fn annotation_key_matches(node: &Node, expected: &str) -> bool {
+    node.metadata.keys().any(|key| {
+        key.starts_with("annotation.")
+            && (text_matches(key.trim_start_matches("annotation."), expected)
+                || text_matches(key, expected))
+    })
+}
+
+fn annotation_value_matches(node: &Node, expected: &str) -> bool {
+    node.metadata
+        .iter()
+        .any(|(key, value)| key.starts_with("annotation.") && text_matches(value, expected))
+}
+
+fn annotation_pair_matches(node: &Node, key_expected: &str, value_expected: &str) -> bool {
+    node.metadata.iter().any(|(key, value)| {
+        key.starts_with("annotation.")
+            && (text_matches(key.trim_start_matches("annotation."), key_expected)
+                || text_matches(key, key_expected))
+            && text_matches(value, value_expected)
+    })
 }
 
 fn is_framework_route_node(node: &Node) -> bool {
@@ -8306,6 +8519,52 @@ mod tests {
         assert_eq!(result.total_nodes, 1);
         assert_eq!(result.nodes[0].label, "load_config");
         assert!(result.edges.is_empty());
+    }
+
+    #[test]
+    fn query_annotations_returns_annotated_node_context() {
+        let mut graph = CodeGraph::new("repo");
+        let mut payment_metadata = BTreeMap::new();
+        payment_metadata.insert("language".to_string(), "rust".to_string());
+        payment_metadata.insert("annotation.domain".to_string(), "payments".to_string());
+        payment_metadata.insert("annotation.layer".to_string(), "service".to_string());
+        let payment =
+            graph.add_node_with_metadata(NodeKind::Function, "charge_card", None, payment_metadata);
+        let database = graph.add_node(NodeKind::Function, "write_payment");
+        let mut billing_metadata = BTreeMap::new();
+        billing_metadata.insert("annotation.domain".to_string(), "billing".to_string());
+        billing_metadata.insert("annotation.team".to_string(), "payments".to_string());
+        graph.add_node_with_metadata(NodeKind::Function, "invoice", None, billing_metadata);
+        graph.add_edge(payment, database, EdgeKind::Calls, Confidence::Heuristic);
+
+        let result = query_graph(
+            &graph,
+            "annotations key:domain value:payments direction:out edge_limit:10",
+        )
+        .unwrap();
+
+        assert_eq!(result.total_edges, 1);
+        assert!(result.nodes.iter().any(|node| node.id == payment));
+        assert!(result.nodes.iter().any(|node| node.id == database));
+        assert!(
+            result
+                .edges
+                .iter()
+                .any(|edge| edge.source == payment && edge.target == database)
+        );
+        assert!(!result.nodes.iter().any(|node| node.label == "invoice"));
+
+        let exact = query_graph(&graph, "annotations annotation.domain:payments").unwrap();
+        assert_eq!(exact.total_nodes, 2);
+        assert!(exact.nodes.iter().any(|node| node.id == payment));
+
+        let error = query_graph(&graph, "annotations nope:value")
+            .expect_err("invalid annotations term should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported annotations query term")
+        );
     }
 
     #[test]

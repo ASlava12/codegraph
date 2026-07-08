@@ -135,6 +135,7 @@ Goal: answer practical code investigation questions.
 - [x] Add reachability-aware query slices for unreachable source files and nodes.
 - [x] Add semantic diagnostic query slices for focused LSP issue context.
 - [x] Add insight/risk query slices for focused investigation findings.
+- [x] Add annotation query slices for focused user-owned metadata context.
 - [x] Add entrypoint query slices for focused startup graph context.
 - [x] Add route query slices for focused HTTP/framework handler context.
 - [x] Add package query slices for focused external dependency declaration/import context.
