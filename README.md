@@ -112,6 +112,7 @@ Implemented now:
 - Interactive UI trace panel for following outgoing dependency subgraphs from a selected node.
 - Reverse dependency/dependent traces for impact analysis from CLI, API, query language, and web detail panels.
 - Entrypoint trace API, CLI command, and web panel for comparing startup flows from manifest/code entrypoints.
+- Web entrypoint trace reports can be downloaded as JSON with search, depth, and returned startup flows.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.

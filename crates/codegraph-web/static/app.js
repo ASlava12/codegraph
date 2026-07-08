@@ -159,6 +159,7 @@ const I18N = {
     "button.downloadInsights": "Download Insights",
     "button.downloadCheck": "Download Check",
     "button.downloadSourceResults": "Download Results",
+    "button.downloadEntryFlows": "Download Flows",
     "button.graphFile": "Graph File",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
@@ -337,6 +338,8 @@ const I18N = {
     "export.insights": "Insights JSON",
     "export.check": "Check Result JSON",
     "export.sourceSearch": "Source Search JSON",
+    "export.entryFlows": "Entrypoint Traces JSON",
+    "export.noEntryFlows": "Trace entrypoints before exporting flows.",
     "export.noSourceSearch": "Run source search before exporting results.",
     "export.noCheck": "Run a quality check before exporting its result.",
     "export.noQueryResult": "Run a graph query before exporting its result.",
@@ -563,6 +566,7 @@ const I18N = {
     "button.downloadInsights": "Скачать insights",
     "button.downloadCheck": "Скачать проверку",
     "button.downloadSourceResults": "Скачать результаты",
+    "button.downloadEntryFlows": "Скачать потоки",
     "button.graphFile": "Граф файла",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
@@ -741,6 +745,8 @@ const I18N = {
     "export.insights": "JSON insights",
     "export.check": "JSON проверки",
     "export.sourceSearch": "JSON поиска в коде",
+    "export.entryFlows": "JSON потоков входа",
+    "export.noEntryFlows": "Сначала трассируйте точки входа.",
     "export.noSourceSearch": "Сначала выполните поиск в коде.",
     "export.noCheck": "Сначала запустите проверку качества.",
     "export.noQueryResult": "Сначала выполните запрос к графу.",
@@ -970,6 +976,7 @@ const state = {
   lastQueryResult: null,
   lastCheckResult: null,
   lastSourceSearchResult: null,
+  lastEntryFlowReport: null,
   pendingSelectionLink: null,
   pendingQueryLink: null,
   pendingGraphPageLink: false,
@@ -1041,6 +1048,7 @@ const entrypointList = document.querySelector("#entrypointList");
 const entryFlowSearchInput = document.querySelector("#entryFlowSearchInput");
 const entryFlowDepthInput = document.querySelector("#entryFlowDepthInput");
 const entryFlowButton = document.querySelector("#entryFlowButton");
+const entryFlowExportButton = document.querySelector("#entryFlowExportButton");
 const entryFlowResult = document.querySelector("#entryFlowResult");
 const pageInfo = document.querySelector("#pageInfo");
 const pageScope = document.querySelector("#pageScope");
@@ -1187,6 +1195,7 @@ cacheDiffLimitInput.addEventListener("keydown", (event) => {
 exportButton.addEventListener("click", () => runGraphExport());
 exportSliceButton.addEventListener("click", () => exportVisibleGraphSlice());
 entryFlowButton.addEventListener("click", () => runEntryFlowTrace());
+entryFlowExportButton.addEventListener("click", () => exportLastEntryFlowReport());
 for (const input of [entryFlowSearchInput, entryFlowDepthInput]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") runEntryFlowTrace();
@@ -1348,6 +1357,7 @@ function applyLocale() {
   renderQueryExportState();
   renderCheckExportState();
   renderSourceSearchExportState();
+  renderEntryFlowExportState();
   renderSelection();
   draw();
 }
@@ -2071,6 +2081,7 @@ async function scan() {
   renderOverview();
   state.insightReport = null;
   renderInsights();
+  clearLastEntryFlowReport();
   clearLastCheckResult();
   checkResult.innerHTML = "";
   clearLastQueryResult();
@@ -3628,6 +3639,17 @@ async function runEntryFlowTrace() {
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "entrypoint trace failed"));
     }
+    state.lastEntryFlowReport = {
+      generated_at: new Date().toISOString(),
+      root: pathInput.value.trim() || ".",
+      filters: {
+        search,
+        depth,
+        limit: 25,
+      },
+      report: body,
+    };
+    renderEntryFlowExportState();
     entryFlowResult.innerHTML = renderEntryFlowReport(body);
     attachEntryFlowActions(entryFlowResult, body);
   } catch (error) {
@@ -3638,6 +3660,44 @@ async function runEntryFlowTrace() {
       entryFlowButton.disabled = false;
     }
   }
+}
+
+function renderEntryFlowExportState() {
+  entryFlowExportButton.disabled = !state.lastEntryFlowReport;
+}
+
+function clearLastEntryFlowReport() {
+  state.lastEntryFlowReport = null;
+  renderEntryFlowExportState();
+}
+
+function exportLastEntryFlowReport() {
+  if (!state.lastEntryFlowReport) {
+    entryFlowResult.innerHTML = `<p class="empty">${escapeHtml(t("export.noEntryFlows"))}</p>`;
+    renderEntryFlowExportState();
+    return;
+  }
+
+  const payload = {
+    schema: "codegraph.entrypoint_traces.v1",
+    ...state.lastEntryFlowReport,
+  };
+  const serialized = JSON.stringify(payload, null, 2);
+  const blob = new Blob([serialized], { type: "application/json" });
+  const fileName = `codegraph-${safeFilePart(payload.root)}-entrypoint-traces.json`;
+  downloadBlob(blob, fileName);
+  entryFlowResult.insertAdjacentHTML(
+    "afterbegin",
+    `
+      <div class="query-summary">
+        <span>${escapeHtml(t("export.entryFlows"))}</span>
+        <span>${escapeHtml(formatBytes(blob.size))}</span>
+        <span>${escapeHtml(formatNumber(payload.report?.traces?.length ?? 0))} traces</span>
+        <span>${escapeHtml(formatNumber(payload.report?.total_entrypoints ?? 0))} entrypoints</span>
+        <span class="query-expression">${escapeHtml(fileName)}</span>
+      </div>
+    `,
+  );
 }
 
 function renderEntryFlowReport(report) {
