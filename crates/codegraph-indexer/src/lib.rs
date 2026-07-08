@@ -2175,6 +2175,7 @@ fn manifest_dependencies(
         Some("go.mod") => go_mod_dependencies(source),
         Some("requirements.txt") => requirements_dependencies(source),
         Some("pyproject.toml") => pyproject_dependencies(source),
+        Some("setup.py") => setup_py_dependencies(source),
         Some("composer.json") => composer_dependencies(source),
         Some("vcpkg.json") => vcpkg_dependencies(source),
         Some("conanfile.txt") => conanfile_txt_dependencies(source),
@@ -2188,6 +2189,7 @@ fn manifest_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
         Some("package.json") => package_json_entrypoints(source),
         Some("go.mod") => go_mod_entrypoints(path, source),
         Some("pyproject.toml") => pyproject_entrypoints(source),
+        Some("setup.py") => setup_py_entrypoints(source),
         Some("composer.json") => composer_entrypoints(source),
         Some("CMakeLists.txt") => cmake_entrypoints(source),
         _ => Vec::new(),
@@ -2347,6 +2349,21 @@ fn pyproject_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
     }
 
     entrypoints
+}
+
+fn setup_py_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    setup_py_console_scripts(source)
+        .into_iter()
+        .filter_map(|entrypoint| {
+            let (name, target) = python_console_script_name_and_target(&entrypoint)?;
+            Some(manifest_entrypoint(
+                format!("python console_script:{name}"),
+                "console_script",
+                "python",
+                Some(target),
+            ))
+        })
+        .collect()
 }
 
 fn composer_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
@@ -2546,6 +2563,39 @@ fn pyproject_dependencies(source: &str) -> Vec<ManifestDependency> {
     }
 
     dependencies
+}
+
+fn setup_py_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    collect_setup_py_requirement_key(source, "install_requires", "runtime", &mut dependencies);
+    collect_setup_py_requirement_key(source, "setup_requires", "build", &mut dependencies);
+    collect_setup_py_requirement_key(source, "tests_require", "test", &mut dependencies);
+
+    for requirement in setup_py_dict_list_string_values(source, "extras_require") {
+        if let Some((name, version)) = package_name_and_version_from_requirement(&requirement) {
+            dependencies.push(manifest_dependency(name, "optional", "python", version));
+        }
+    }
+
+    dependencies
+}
+
+fn collect_setup_py_requirement_key(
+    source: &str,
+    key: &str,
+    dependency_kind: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    for requirement in setup_py_sequence_string_values(source, key) {
+        if let Some((name, version)) = package_name_and_version_from_requirement(&requirement) {
+            dependencies.push(manifest_dependency(
+                name,
+                dependency_kind,
+                "python",
+                version,
+            ));
+        }
+    }
 }
 
 fn package_json_dependencies(source: &str) -> Vec<ManifestDependency> {
@@ -3559,6 +3609,250 @@ fn requirements_dependencies(source: &str) -> Vec<ManifestDependency> {
                 .map(|(name, version)| manifest_dependency(name, "runtime", "python", version))
         })
         .collect()
+}
+
+fn setup_py_sequence_string_values(source: &str, key: &str) -> Vec<String> {
+    let Some(value) = setup_py_keyword_value(source, key) else {
+        return Vec::new();
+    };
+    extract_python_quoted_strings(&value)
+}
+
+fn setup_py_dict_list_string_values(source: &str, key: &str) -> Vec<String> {
+    let Some(value) = setup_py_keyword_value(source, key) else {
+        return Vec::new();
+    };
+    python_dict_list_values(&value)
+        .into_iter()
+        .flat_map(|value| extract_python_quoted_strings(&value))
+        .collect()
+}
+
+fn setup_py_console_scripts(source: &str) -> Vec<String> {
+    let Some(value) = setup_py_keyword_value(source, "entry_points") else {
+        return Vec::new();
+    };
+    python_dict_list_values_for_key(&value, "console_scripts")
+        .into_iter()
+        .flat_map(|value| extract_python_quoted_strings(&value))
+        .collect()
+}
+
+fn setup_py_keyword_value(source: &str, key: &str) -> Option<String> {
+    let lower = source.to_ascii_lowercase();
+    let key_lower = key.to_ascii_lowercase();
+    let mut search_start = 0;
+    while let Some(offset) = lower[search_start..].find(&key_lower) {
+        let key_start = search_start + offset;
+        let key_end = key_start + key.len();
+        if !is_python_identifier_boundary(source, key_start, key_end) {
+            search_start = key_end;
+            continue;
+        }
+        let mut cursor = skip_ascii_whitespace(source, key_end);
+        if source[cursor..].chars().next() != Some('=') {
+            search_start = key_end;
+            continue;
+        }
+        cursor = skip_ascii_whitespace(source, cursor + 1);
+        return python_value_literal_at(source, cursor);
+    }
+    None
+}
+
+fn is_python_identifier_boundary(source: &str, start: usize, end: usize) -> bool {
+    let before = source[..start].chars().next_back();
+    let after = source[end..].chars().next();
+    before.is_none_or(|character| !is_python_identifier_character(character))
+        && after.is_none_or(|character| !is_python_identifier_character(character))
+}
+
+fn is_python_identifier_character(character: char) -> bool {
+    character == '_' || character.is_ascii_alphanumeric()
+}
+
+fn python_value_literal_at(source: &str, start: usize) -> Option<String> {
+    let first = source[start..].chars().next()?;
+    if matches!(first, '[' | '(' | '{') {
+        return balanced_python_delimited_value(source, start);
+    }
+    if matches!(first, '"' | '\'') {
+        let quoted = extract_python_quoted_string_at(source, start)?;
+        return Some(quoted.raw);
+    }
+    let end = source[start..]
+        .find([',', '\n'])
+        .map(|offset| start + offset)
+        .unwrap_or(source.len());
+    Some(source[start..end].trim().to_string()).filter(|value| !value.is_empty())
+}
+
+fn balanced_python_delimited_value(source: &str, start: usize) -> Option<String> {
+    let open = source[start..].chars().next()?;
+    let close = match open {
+        '[' => ']',
+        '(' => ')',
+        '{' => '}',
+        _ => return None,
+    };
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (relative, character) in source[start..].char_indices() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if character == '\\' {
+                escaped = true;
+                continue;
+            }
+            if character == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        if matches!(character, '"' | '\'') {
+            quote = Some(character);
+            continue;
+        }
+        if character == open {
+            depth += 1;
+        } else if character == close {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                let end = start + relative + character.len_utf8();
+                return Some(source[start..end].to_string());
+            }
+        }
+    }
+    None
+}
+
+#[derive(Debug)]
+struct PythonQuotedString {
+    raw: String,
+    value: String,
+    end: usize,
+}
+
+fn extract_python_quoted_strings(source: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut cursor = 0;
+    while cursor < source.len() {
+        if let Some(relative) = source[cursor..].find(['"', '\'']) {
+            let start = cursor + relative;
+            if let Some(quoted) = extract_python_quoted_string_at(source, start) {
+                values.push(quoted.value);
+                cursor = quoted.end;
+                continue;
+            }
+            cursor = start + 1;
+        } else {
+            break;
+        }
+    }
+    values
+}
+
+fn extract_python_quoted_string_at(source: &str, start: usize) -> Option<PythonQuotedString> {
+    let quote = source[start..].chars().next()?;
+    if !matches!(quote, '"' | '\'') {
+        return None;
+    }
+    let mut escaped = false;
+    let mut value = String::new();
+    for (relative, character) in source[start + quote.len_utf8()..].char_indices() {
+        if escaped {
+            value.push(character);
+            escaped = false;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+        if character == quote {
+            let end = start + quote.len_utf8() + relative + character.len_utf8();
+            return Some(PythonQuotedString {
+                raw: source[start..end].to_string(),
+                value,
+                end,
+            });
+        }
+        value.push(character);
+    }
+    None
+}
+
+fn python_dict_list_values(source: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut cursor = 0;
+    while cursor < source.len() {
+        let Some(relative) = source[cursor..].find(['[', '(']) else {
+            break;
+        };
+        let start = cursor + relative;
+        if let Some(value) = balanced_python_delimited_value(source, start) {
+            cursor = start + value.len();
+            values.push(value);
+        } else {
+            cursor = start + 1;
+        }
+    }
+    values
+}
+
+fn python_dict_list_values_for_key(source: &str, wanted_key: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut cursor = 0;
+    while cursor < source.len() {
+        let Some(relative) = source[cursor..].find(['"', '\'']) else {
+            break;
+        };
+        let key_start = cursor + relative;
+        let Some(key) = extract_python_quoted_string_at(source, key_start) else {
+            cursor = key_start + 1;
+            continue;
+        };
+        let mut after_key = skip_ascii_whitespace(source, key.end);
+        if source[after_key..].chars().next() != Some(':') {
+            cursor = key.end;
+            continue;
+        }
+        after_key = skip_ascii_whitespace(source, after_key + 1);
+        if key.value == wanted_key
+            && let Some(value) = python_value_literal_at(source, after_key)
+        {
+            values.push(value);
+        }
+        cursor = after_key.saturating_add(1);
+    }
+    values
+}
+
+fn python_console_script_name_and_target(value: &str) -> Option<(String, String)> {
+    let (name, target) = value.split_once('=')?;
+    let name = name.trim();
+    let target = target.trim();
+    if name.is_empty() || target.is_empty() {
+        None
+    } else {
+        Some((name.to_string(), target.to_string()))
+    }
+}
+
+fn skip_ascii_whitespace(value: &str, mut cursor: usize) -> usize {
+    while cursor < value.len()
+        && value[cursor..]
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_whitespace())
+    {
+        cursor += value[cursor..].chars().next().unwrap().len_utf8();
+    }
+    cursor
 }
 
 fn collect_toml_table_keys(
@@ -6235,6 +6529,26 @@ dependencies = ["pydantic>=2"]
         )
         .unwrap();
         fs::write(
+            root.join("setup.py"),
+            r#"from setuptools import setup
+
+setup(
+    name="legacy-demo",
+    install_requires=[
+        "requests>=2.31",
+        "uvicorn[standard]>=0.24",
+    ],
+    setup_requires=["wheel>=0.42"],
+    tests_require=["pytest>=8"],
+    extras_require={
+        "dev": ["ruff==0.6.0"],
+        "docs": ["mkdocs>=1.6"],
+    },
+)
+"#,
+        )
+        .unwrap();
+        fs::write(
             root.join("composer.json"),
             r#"{
   "require": {
@@ -6296,6 +6610,12 @@ gtest/1.14.0
             "github.com/gin-gonic/gin",
             "fastapi",
             "pydantic",
+            "requests",
+            "uvicorn",
+            "wheel",
+            "pytest",
+            "ruff",
+            "mkdocs",
             "monolog/monolog",
             "fmt",
             "zlib",
@@ -6387,6 +6707,71 @@ gtest/1.14.0
                     .metadata
                     .get("dependency_version")
                     .is_some_and(|value| value == ">=2")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == ">=2.31")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "[standard]>=0.24")
+        }));
+        let wheel_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "python:wheel")
+            })
+            .expect("missing setup.py wheel dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == wheel_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "build")
+        }));
+        let pytest_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "python:pytest")
+            })
+            .expect("missing setup.py pytest dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == pytest_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "test")
+        }));
+        let ruff_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "python:ruff")
+            })
+            .expect("missing setup.py ruff dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == ruff_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "optional")
         }));
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == EdgeKind::DependsOn
@@ -6544,6 +6929,21 @@ cg = "codegraph.cli:main"
         )
         .unwrap();
         fs::write(
+            root.join("setup.py"),
+            r#"from setuptools import setup
+
+setup(
+    name="legacy-demo",
+    entry_points={
+        "console_scripts": [
+            "legacy = codegraph.cli:main",
+        ],
+    },
+)
+"#,
+        )
+        .unwrap();
+        fs::write(
             root.join("composer.json"),
             r#"{
   "bin": ["bin/codegraph"],
@@ -6583,6 +6983,7 @@ add_executable(imported_tool IMPORTED)
             "npm script:start",
             "npm script:test",
             "python console_script:cg",
+            "python console_script:legacy",
             "composer bin:bin/codegraph",
             "composer script:analyse",
             "cmake executable:demo_c",
@@ -6611,6 +7012,8 @@ add_executable(imported_tool IMPORTED)
         let npm_entrypoint = node_id(&graph, NodeKind::Entrypoint, "npm script:start");
         let npm_file = node_id(&graph, NodeKind::File, "src/index.js");
         let python_entrypoint = node_id(&graph, NodeKind::Entrypoint, "python console_script:cg");
+        let setup_py_entrypoint =
+            node_id(&graph, NodeKind::Entrypoint, "python console_script:legacy");
         let python_main = function_id_in_file(&graph, "main", "codegraph/cli.py");
         let composer_entrypoint =
             node_id(&graph, NodeKind::Entrypoint, "composer bin:bin/codegraph");
@@ -6650,6 +7053,13 @@ add_executable(imported_tool IMPORTED)
         assert!(has_entrypoint_reference(
             &graph,
             python_entrypoint,
+            python_main,
+            "entrypoint_function",
+            Confidence::Heuristic,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            setup_py_entrypoint,
             python_main,
             "entrypoint_function",
             Confidence::Heuristic,

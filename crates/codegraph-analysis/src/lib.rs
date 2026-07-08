@@ -6901,6 +6901,12 @@ fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>
             continue;
         }
 
+        let Some(source_node) = graph.nodes.iter().find(|node| node.id == edge.source) else {
+            continue;
+        };
+        if is_dependency_manifest_source_path(&source_node.label) {
+            continue;
+        }
         let Some(import_node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
             continue;
         };
@@ -6927,12 +6933,7 @@ fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>
             continue;
         }
 
-        let source = graph
-            .nodes
-            .iter()
-            .find(|node| node.id == edge.source)
-            .map(|node| node.label.as_str())
-            .unwrap_or("unknown");
+        let source = source_node.label.as_str();
         insights.push(Insight {
             kind: "undeclared_external_import".to_string(),
             severity: InsightSeverity::Warning,
@@ -7141,6 +7142,9 @@ fn add_non_runtime_dependency_import_insights(graph: &CodeGraph, insights: &mut 
         let Some(source) = graph.nodes.iter().find(|node| node.id == edge.source) else {
             continue;
         };
+        if is_dependency_manifest_source_path(&source.label) {
+            continue;
+        }
         if node_path_matches(source, &path_index, "test")
             || path_index
                 .get(&source.id)
@@ -7326,6 +7330,9 @@ fn dependency_import_usages_by_package(
         let Some(source) = graph.nodes.iter().find(|node| node.id == edge.source) else {
             continue;
         };
+        if is_dependency_manifest_source_path(&source.label) {
+            continue;
+        }
         let Some(import_node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
             continue;
         };
@@ -7721,6 +7728,14 @@ fn import_packages(graph: &CodeGraph) -> Vec<(usize, ImportPackage)> {
         .enumerate()
         .flat_map(|(index, edge)| {
             if edge.kind != EdgeKind::Imports {
+                return Vec::new();
+            }
+            if graph
+                .nodes
+                .iter()
+                .find(|node| node.id == edge.source)
+                .is_some_and(|node| is_dependency_manifest_source_path(&node.label))
+            {
                 return Vec::new();
             }
             let Some(import_node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
@@ -8364,6 +8379,14 @@ fn is_test_like_source_path(path: &str) -> bool {
         || file_name.ends_with(".test.ts")
         || file_name.ends_with(".spec.js")
         || file_name.ends_with(".spec.ts")
+}
+
+fn is_dependency_manifest_source_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    matches!(
+        normalized.rsplit('/').next().unwrap_or(normalized.as_str()),
+        "setup.py"
+    )
 }
 
 fn node_label(graph: &CodeGraph, id: NodeId) -> Option<&str> {
@@ -12152,6 +12175,72 @@ mod tests {
         }));
         assert!(report.insights.iter().any(|insight| {
             insight.kind == "unused_declared_dependency" && insight.nodes.contains(&serde)
+        }));
+    }
+
+    #[test]
+    fn dependency_insights_ignore_setup_py_manifest_imports() {
+        let mut graph = CodeGraph::new("repo");
+        let setup_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "setup.py",
+            None,
+            BTreeMap::from([("language".to_string(), "python".to_string())]),
+        );
+        let app_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/app.py",
+            None,
+            BTreeMap::from([("language".to_string(), "python".to_string())]),
+        );
+        let requests = dependency_node(&mut graph, "requests", "python:requests");
+        let fastapi = dependency_node(&mut graph, "fastapi", "python:fastapi");
+        graph.add_edge_with_metadata(
+            setup_file,
+            requests,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            setup_file,
+            fastapi,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+
+        let setup_import = import_node(&mut graph, "from setuptools import setup", "python");
+        let setup_requests = import_node(&mut graph, "import requests", "python");
+        let fastapi_import = import_node(&mut graph, "from fastapi import FastAPI", "python");
+        graph.add_edge(
+            setup_file,
+            setup_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            setup_file,
+            setup_requests,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            app_file,
+            fastapi_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+
+        let report = insights(&graph);
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "undeclared_external_import" && insight.message.contains("setuptools")
+        }));
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&requests)
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&fastapi)
         }));
     }
 
