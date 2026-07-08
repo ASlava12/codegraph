@@ -156,6 +156,7 @@ struct ComposeService {
     depends_on: Vec<String>,
     environment: Vec<ComposeEnvironment>,
     env_files: Vec<ComposeEnvFile>,
+    ports: Vec<ComposePort>,
     line: u32,
 }
 
@@ -169,6 +170,16 @@ struct ComposeEnvironment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ComposeEnvFile {
     path: String,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ComposePort {
+    published: Option<String>,
+    target: Option<String>,
+    protocol: String,
+    host_ip: Option<String>,
+    raw: Option<String>,
     line: u32,
 }
 
@@ -2409,6 +2420,9 @@ fn index_compose_entrypoints(
                 service.env_files.len().to_string(),
             );
         }
+        if !service.ports.is_empty() {
+            metadata.insert("port_count".to_string(), service.ports.len().to_string());
+        }
 
         let entrypoint_id = context.graph.add_node_with_metadata(
             NodeKind::Entrypoint,
@@ -2542,6 +2556,46 @@ fn index_compose_entrypoints(
                     target: env_file.path.clone(),
                 });
         }
+
+        for port in &service.ports {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("item_kind".to_string(), "compose_port".to_string());
+            metadata.insert("source".to_string(), "compose".to_string());
+            metadata.insert("ecosystem".to_string(), "docker-compose".to_string());
+            metadata.insert("service".to_string(), service.name.clone());
+            metadata.insert("line".to_string(), port.line.to_string());
+            metadata.insert("protocol".to_string(), port.protocol.clone());
+            if let Some(raw) = port.raw.as_deref() {
+                metadata.insert("raw".to_string(), raw.to_string());
+            }
+            if let Some(published) = port.published.as_deref() {
+                metadata.insert("published_port".to_string(), published.to_string());
+            }
+            if let Some(target) = port.target.as_deref() {
+                metadata.insert("target_port".to_string(), target.to_string());
+            }
+            if let Some(host_ip) = port.host_ip.as_deref() {
+                metadata.insert("host_ip".to_string(), host_ip.to_string());
+            }
+            let port_id = context.graph.add_node_with_metadata(
+                NodeKind::Config,
+                compose_port_label(port),
+                Some(line_span(label, source, port.line)),
+                metadata,
+            );
+            let mut edge_metadata = BTreeMap::new();
+            edge_metadata.insert("source".to_string(), "compose".to_string());
+            edge_metadata.insert("relation".to_string(), "compose_port".to_string());
+            edge_metadata.insert("service".to_string(), service.name.clone());
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                service_id,
+                port_id,
+                EdgeKind::References,
+                Confidence::Exact,
+                edge_metadata,
+            );
+        }
     }
 
     for service in &services {
@@ -2647,6 +2701,7 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
     let mut services_indent = 0usize;
     let mut active_service: Option<ComposeService> = None;
     let mut active_section: Option<(String, usize)> = None;
+    let mut active_port: Option<ComposePort> = None;
 
     for (index, raw_line) in source.lines().enumerate() {
         let trimmed = raw_line.trim();
@@ -2668,7 +2723,8 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
         }
 
         if indent == services_indent + 2 {
-            if let Some(service) = active_service.take() {
+            if let Some(mut service) = active_service.take() {
+                flush_compose_service_port(&mut service, &mut active_port);
                 services.push(service);
             }
             active_section = None;
@@ -2685,6 +2741,7 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
                 depends_on: Vec::new(),
                 environment: Vec::new(),
                 env_files: Vec::new(),
+                ports: Vec::new(),
                 line: index as u32 + 1,
             });
             continue;
@@ -2695,6 +2752,12 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
         };
 
         if indent == services_indent + 4 {
+            if active_section
+                .as_ref()
+                .is_some_and(|(section, _)| section == "ports")
+            {
+                flush_compose_service_port(service, &mut active_port);
+            }
             active_section = None;
             if let Some(value) = yaml_key_value(trimmed, "command") {
                 service.command = compose_command_string(&value);
@@ -2722,6 +2785,12 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
                     .extend(compose_env_file_values(&value, index as u32 + 1));
             } else if yaml_key(trimmed).is_some_and(|key| key == "env_file") {
                 active_section = Some(("env_file".to_string(), indent));
+            } else if let Some(value) = yaml_key_value(trimmed, "ports") {
+                service
+                    .ports
+                    .extend(compose_inline_ports(&value, index as u32 + 1));
+            } else if yaml_key(trimmed).is_some_and(|key| key == "ports") {
+                active_section = Some(("ports".to_string(), indent));
             }
             continue;
         }
@@ -2781,11 +2850,26 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
                     }
                 }
             }
+            "ports" => {
+                if let Some(value) = trimmed.strip_prefix("- ") {
+                    flush_compose_service_port(service, &mut active_port);
+                    if let Some(port) = compose_short_port(value, index as u32 + 1) {
+                        service.ports.push(port);
+                    } else if let Some((key, value)) = yaml_key_pair(value) {
+                        active_port = Some(compose_long_port(key, value, index as u32 + 1));
+                    }
+                } else if let Some((key, value)) = yaml_key_pair(trimmed) {
+                    if let Some(port) = active_port.as_mut() {
+                        apply_compose_port_field(port, key, value);
+                    }
+                }
+            }
             _ => {}
         }
     }
 
-    if let Some(service) = active_service {
+    if let Some(mut service) = active_service {
+        flush_compose_service_port(&mut service, &mut active_port);
         services.push(service);
     }
     dedupe_compose_service_dependencies(&mut services);
@@ -2804,6 +2888,7 @@ fn compose_service_reserved_key(name: &str) -> bool {
             | "volumes"
             | "environment"
             | "env_file"
+            | "ports"
     )
 }
 
@@ -2868,6 +2953,112 @@ fn compose_env_file_values(value: &str, line: u32) -> Vec<ComposeEnvFile> {
         .filter(|path| !path.is_empty())
         .map(|path| ComposeEnvFile { path, line })
         .collect()
+}
+
+fn compose_inline_ports(value: &str, line: u32) -> Vec<ComposePort> {
+    yaml_inline_list_values(value)
+        .into_iter()
+        .filter_map(|value| compose_short_port(&value, line))
+        .collect()
+}
+
+fn compose_short_port(value: &str, line: u32) -> Option<ComposePort> {
+    let raw = yaml_clean_scalar(value);
+    if raw.is_empty() || yaml_key_pair(&raw).is_some() {
+        return None;
+    }
+    let (port_spec, protocol) = compose_port_protocol(&raw);
+    let parts: Vec<_> = port_spec.split(':').map(str::trim).collect();
+    let (host_ip, published, target) = match parts.as_slice() {
+        [target] if !target.is_empty() => (None, None, Some((*target).to_string())),
+        [published, target] if !published.is_empty() && !target.is_empty() => (
+            None,
+            Some((*published).to_string()),
+            Some((*target).to_string()),
+        ),
+        [host_ip, published, target]
+            if !host_ip.is_empty() && !published.is_empty() && !target.is_empty() =>
+        {
+            (
+                Some((*host_ip).to_string()),
+                Some((*published).to_string()),
+                Some((*target).to_string()),
+            )
+        }
+        _ => return None,
+    };
+    Some(ComposePort {
+        published,
+        target,
+        protocol,
+        host_ip,
+        raw: Some(raw),
+        line,
+    })
+}
+
+fn compose_long_port(key: String, value: String, line: u32) -> ComposePort {
+    let mut port = ComposePort {
+        published: None,
+        target: None,
+        protocol: "tcp".to_string(),
+        host_ip: None,
+        raw: None,
+        line,
+    };
+    apply_compose_port_field(&mut port, key, value);
+    port
+}
+
+fn apply_compose_port_field(port: &mut ComposePort, key: String, value: String) {
+    match key.as_str() {
+        "published" => port.published = Some(value),
+        "target" => port.target = Some(value),
+        "protocol" if !value.is_empty() => port.protocol = value,
+        "host_ip" if !value.is_empty() => port.host_ip = Some(value),
+        _ => {}
+    }
+}
+
+fn flush_compose_service_port(service: &mut ComposeService, active_port: &mut Option<ComposePort>) {
+    let Some(port) = active_port.take() else {
+        return;
+    };
+    if port.published.is_some() || port.target.is_some() {
+        service.ports.push(port);
+    }
+}
+
+fn compose_port_protocol(raw: &str) -> (String, String) {
+    if let Some((port, protocol)) = raw.rsplit_once('/')
+        && !port.is_empty()
+        && !protocol.is_empty()
+        && protocol
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+    {
+        return (port.to_string(), protocol.to_ascii_lowercase());
+    }
+    (raw.to_string(), "tcp".to_string())
+}
+
+fn compose_port_label(port: &ComposePort) -> String {
+    let protocol = port.protocol.as_str();
+    match (
+        port.host_ip.as_deref(),
+        port.published.as_deref(),
+        port.target.as_deref(),
+    ) {
+        (Some(host_ip), Some(published), Some(target)) => {
+            format!("compose port:{host_ip}:{published}->{target}/{protocol}")
+        }
+        (_, Some(published), Some(target)) => {
+            format!("compose port:{published}->{target}/{protocol}")
+        }
+        (_, Some(published), None) => format!("compose port:{published}/{protocol}"),
+        (_, None, Some(target)) => format!("compose port:{target}/{protocol}"),
+        _ => "compose port:unknown".to_string(),
+    }
 }
 
 fn yaml_inline_list_values(value: &str) -> Vec<String> {
@@ -3904,6 +4095,20 @@ fn yaml_key_value(trimmed: &str, expected_key: &str) -> Option<String> {
     }
     let value = yaml_clean_scalar(value);
     (!value.is_empty()).then_some(value)
+}
+
+fn yaml_key_pair(trimmed: &str) -> Option<(String, String)> {
+    let (key, value) = trimmed.split_once(':')?;
+    if value
+        .chars()
+        .next()
+        .is_none_or(|character| !character.is_whitespace())
+    {
+        return None;
+    }
+    let key = yaml_clean_scalar(key);
+    let value = yaml_clean_scalar(value);
+    (!key.is_empty() && !value.is_empty()).then_some((key, value))
 }
 
 fn yaml_clean_scalar(value: &str) -> String {
@@ -9513,6 +9718,8 @@ generated/output.txt:
     environment:
       APP_ENV: production
       DATABASE_URL:
+    ports:
+      - "8080:80"
     depends_on:
       - db
   worker:
@@ -9520,6 +9727,10 @@ generated/output.txt:
     entrypoint: ./scripts/worker.sh
     env_file: [worker.env]
     environment: [WORKER_TOKEN, QUEUE=critical]
+    ports:
+      - target: 9000
+        published: "19000"
+        protocol: udp
     depends_on:
       db:
         condition: service_healthy
@@ -9562,6 +9773,8 @@ generated/output.txt:
         let queue = node_id(&graph, NodeKind::Environment, "QUEUE");
         let web_env_config = node_id(&graph, NodeKind::Config, "compose env file:config/web.env");
         let worker_env_config = node_id(&graph, NodeKind::Config, "compose env file:worker.env");
+        let web_port = node_id(&graph, NodeKind::Config, "compose port:8080->80/tcp");
+        let worker_port = node_id(&graph, NodeKind::Config, "compose port:19000->9000/udp");
 
         for service in [web, worker, db] {
             assert!(has_entrypoint_reference(
@@ -9634,6 +9847,18 @@ generated/output.txt:
                     .get("relation")
                     .is_some_and(|value| value == "compose_env_file")
         }));
+        for (service, port) in [(web, web_port), (worker, worker_port)] {
+            assert!(graph.edges.iter().any(|edge| {
+                edge.source == service
+                    && edge.target == port
+                    && edge.kind == EdgeKind::References
+                    && edge.confidence == Confidence::Exact
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|value| value == "compose_port")
+            }));
+        }
         assert!(graph.edges.iter().any(|edge| {
             edge.source == web
                 && edge.target == db
@@ -9680,6 +9905,33 @@ generated/output.txt:
         assert_eq!(
             web_node.metadata.get("env_file_count").map(String::as_str),
             Some("1")
+        );
+        assert_eq!(
+            web_node.metadata.get("port_count").map(String::as_str),
+            Some("1")
+        );
+        let web_port_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == web_port)
+            .expect("missing web compose port");
+        assert_eq!(
+            web_port_node
+                .metadata
+                .get("published_port")
+                .map(String::as_str),
+            Some("8080")
+        );
+        assert_eq!(
+            web_port_node
+                .metadata
+                .get("target_port")
+                .map(String::as_str),
+            Some("80")
+        );
+        assert_eq!(
+            web_port_node.metadata.get("protocol").map(String::as_str),
+            Some("tcp")
         );
         assert_eq!(
             graph

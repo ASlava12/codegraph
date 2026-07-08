@@ -766,6 +766,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "cross_language_heuristic_edge",
     "custom_rule_*",
     "dependency_cycle",
+    "duplicate_compose_published_port",
     "duplicate_entrypoint_label",
     "duplicate_framework_route",
     "duplicate_function_label",
@@ -1336,6 +1337,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unresolved_local_import_insights(graph, &mut insights);
     add_cross_language_heuristic_edge_insights(graph, &mut insights);
     add_duplicate_function_insights(graph, &mut insights);
+    add_duplicate_compose_published_port_insights(graph, &mut insights);
     add_duplicate_entrypoint_insights(graph, &mut insights);
     add_ambiguous_entrypoint_target_insights(graph, &mut insights);
     add_orphan_function_insights(graph, &mut insights);
@@ -6243,6 +6245,65 @@ fn add_duplicate_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight
                 edges: Vec::new(),
             });
         }
+    }
+}
+
+fn add_duplicate_compose_published_port_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let mut groups: BTreeMap<(String, String), Vec<NodeId>> = BTreeMap::new();
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Config
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "compose_port")
+        {
+            continue;
+        }
+        let Some(published) = node
+            .metadata
+            .get("published_port")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let protocol = node
+            .metadata
+            .get("protocol")
+            .map(String::as_str)
+            .unwrap_or("tcp")
+            .to_ascii_lowercase();
+        groups
+            .entry((published.to_string(), protocol))
+            .or_default()
+            .push(node.id);
+    }
+
+    for ((published, protocol), nodes) in groups {
+        if nodes.len() <= 1 {
+            continue;
+        }
+        let services = nodes
+            .iter()
+            .filter_map(|node_id| graph.nodes.iter().find(|node| node.id == *node_id))
+            .filter_map(|node| node.metadata.get("service").cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut edges = Vec::new();
+        for node_id in &nodes {
+            edges.extend(incoming_edge_indexes(graph, *node_id, EdgeKind::References));
+        }
+        insights.push(Insight {
+            kind: "duplicate_compose_published_port".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Docker Compose published port `{published}/{protocol}` is declared by multiple services: {services}"
+            ),
+            nodes,
+            edges,
+        });
     }
 }
 
@@ -12162,6 +12223,86 @@ mod tests {
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unresolved_compose_env_file_path" && insight.nodes.contains(&resolved)
         }));
+    }
+
+    #[test]
+    fn insights_report_duplicate_compose_published_ports() {
+        let mut graph = CodeGraph::new("repo");
+        let web = graph.add_node(NodeKind::Entrypoint, "compose service:web");
+        let admin = graph.add_node(NodeKind::Entrypoint, "compose service:admin");
+        let worker = graph.add_node(NodeKind::Entrypoint, "compose service:worker");
+        let web_port = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "compose port:8080->80/tcp",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "compose_port".to_string()),
+                ("service".to_string(), "web".to_string()),
+                ("published_port".to_string(), "8080".to_string()),
+                ("target_port".to_string(), "80".to_string()),
+                ("protocol".to_string(), "tcp".to_string()),
+            ]),
+        );
+        let admin_port = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "compose port:8080->8080/tcp",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "compose_port".to_string()),
+                ("service".to_string(), "admin".to_string()),
+                ("published_port".to_string(), "8080".to_string()),
+                ("target_port".to_string(), "8080".to_string()),
+                ("protocol".to_string(), "tcp".to_string()),
+            ]),
+        );
+        let worker_port = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "compose port:8080->9000/udp",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "compose_port".to_string()),
+                ("service".to_string(), "worker".to_string()),
+                ("published_port".to_string(), "8080".to_string()),
+                ("target_port".to_string(), "9000".to_string()),
+                ("protocol".to_string(), "udp".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            web,
+            web_port,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "compose_port".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            admin,
+            admin_port,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "compose_port".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            worker,
+            worker_port,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "compose_port".to_string())]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "duplicate_compose_published_port")
+            .expect("expected duplicate Compose published port insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.message.contains("8080/tcp"));
+        assert!(insight.message.contains("web"));
+        assert!(insight.message.contains("admin"));
+        assert!(insight.nodes.contains(&web_port));
+        assert!(insight.nodes.contains(&admin_port));
+        assert!(!insight.nodes.contains(&worker_port));
     }
 
     #[test]
