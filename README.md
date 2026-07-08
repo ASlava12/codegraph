@@ -217,7 +217,7 @@ Implemented now:
 - Investigation insights for ambiguous call resolutions where one call label from the same caller points to multiple possible targets.
 - Investigation insights for manifest entrypoints whose declared target cannot be resolved to a file or function.
 - Investigation insights for entrypoints that have no outgoing code/config/dependency/error flow.
-- Investigation insights for Dockerfile, Makefile, Docker Compose, and Kubernetes runtime paths/config refs that reference missing local files, missing local bind volumes, missing ConfigMap/Secret manifests, plus duplicate Compose published ports.
+- Investigation insights for Dockerfile, Makefile, Docker Compose, and Kubernetes runtime paths/config refs that reference missing local files, missing local bind volumes, missing ConfigMap/Secret manifests, unmatched Service selectors, plus duplicate Compose published ports.
 - Investigation insights for framework routes whose named handler cannot be linked to a scanned function.
 - Investigation insights for heuristic cross-language dependency edges that deserve semantic review.
 - Investigation insights for local imports/includes whose target file cannot be found.

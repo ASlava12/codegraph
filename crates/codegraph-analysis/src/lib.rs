@@ -794,6 +794,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unresolved_entrypoint_target",
     "unresolved_framework_route_handler",
     "unresolved_kubernetes_config_ref",
+    "unresolved_kubernetes_service_selector",
     "unresolved_local_import",
     "unresolved_makefile_command_path",
     "unused_declared_dependency",
@@ -1349,6 +1350,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unresolved_compose_env_file_path_insights(graph, &mut insights);
     add_unresolved_compose_volume_source_path_insights(graph, &mut insights);
     add_unresolved_kubernetes_config_ref_insights(graph, &mut insights);
+    add_unresolved_kubernetes_service_selector_insights(graph, &mut insights);
     add_unresolved_dockerfile_command_path_insights(graph, &mut insights);
     add_unresolved_makefile_command_path_insights(graph, &mut insights);
     add_entrypoint_dead_end_insights(graph, &mut insights);
@@ -6753,6 +6755,64 @@ fn kubernetes_config_ref_reader_ids(graph: &CodeGraph, config_ref: NodeId) -> Ve
         })
         .map(|edge| edge.source)
         .collect()
+}
+
+fn add_unresolved_kubernetes_service_selector_insights(
+    graph: &CodeGraph,
+    insights: &mut Vec<Insight>,
+) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Config
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "kubernetes_service")
+        {
+            continue;
+        }
+        let Some(selector) = node
+            .metadata
+            .get("selector")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        if kubernetes_service_selector_is_resolved(graph, node.id) {
+            continue;
+        }
+
+        let name = node
+            .metadata
+            .get("name")
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        let namespace = node
+            .metadata
+            .get("namespace")
+            .map(String::as_str)
+            .unwrap_or("default");
+        insights.push(Insight {
+            kind: "unresolved_kubernetes_service_selector".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Kubernetes Service `{namespace}/{name}` selector `{selector}` does not match any scanned workload"
+            ),
+            nodes: vec![node.id],
+            edges: Vec::new(),
+        });
+    }
+}
+
+fn kubernetes_service_selector_is_resolved(graph: &CodeGraph, service: NodeId) -> bool {
+    graph.edges.iter().any(|edge| {
+        edge.source == service
+            && edge.kind == EdgeKind::References
+            && edge
+                .metadata
+                .get("relation")
+                .is_some_and(|relation| relation == "kubernetes_service_selector")
+    })
 }
 
 fn add_unresolved_makefile_command_path_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
@@ -12555,6 +12615,70 @@ mod tests {
         assert!(insight.message.contains("prod/missing-config"));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unresolved_kubernetes_config_ref" && insight.nodes.contains(&resolved)
+        }));
+    }
+
+    #[test]
+    fn insights_report_unresolved_kubernetes_service_selectors() {
+        let mut graph = CodeGraph::new("repo");
+        let missing = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "k8s service:prod/orphan",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "kubernetes_service".to_string()),
+                ("name".to_string(), "orphan".to_string()),
+                ("namespace".to_string(), "prod".to_string()),
+                ("selector".to_string(), "app=missing".to_string()),
+            ]),
+        );
+        let resolved = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "k8s service:prod/web",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "kubernetes_service".to_string()),
+                ("name".to_string(), "web".to_string()),
+                ("namespace".to_string(), "prod".to_string()),
+                ("selector".to_string(), "app=web".to_string()),
+            ]),
+        );
+        let web = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "k8s deployment:prod/web",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "kubernetes_workload".to_string()),
+                ("name".to_string(), "web".to_string()),
+                ("namespace".to_string(), "prod".to_string()),
+                ("pod_labels".to_string(), "app=web".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            resolved,
+            web,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([(
+                "relation".to_string(),
+                "kubernetes_service_selector".to_string(),
+            )]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_kubernetes_service_selector")
+            .expect("expected unresolved Kubernetes service selector insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert_eq!(insight.nodes, vec![missing]);
+        assert!(insight.message.contains("prod/orphan"));
+        assert!(insight.message.contains("app=missing"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_kubernetes_service_selector"
+                && insight.nodes.contains(&resolved)
         }));
     }
 

@@ -147,6 +147,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect Docker Compose services that publish conflicting host ports.
 - [x] Detect Docker Compose services that mount missing local bind volume paths.
 - [x] Detect Kubernetes workloads that reference missing local ConfigMap or Secret manifests.
+- [x] Detect Kubernetes Services whose selectors do not match any scanned workload.
 - [x] Detect custom architectural boundary violations on graph edges.
 - [x] Detect config and environment reads that are not reachable from entrypoints.
 - [x] Detect potential error/exception flows whose source is not reachable from entrypoints.
