@@ -101,6 +101,7 @@ struct IndexContext {
     pending_calls: Vec<PendingCall>,
     pending_local_imports: Vec<PendingLocalImport>,
     pending_entrypoint_targets: Vec<PendingEntrypointTarget>,
+    pending_compose_config_targets: Vec<PendingComposeConfigTarget>,
 }
 
 struct PendingCall {
@@ -125,6 +126,12 @@ struct PendingEntrypointTarget {
     entrypoint_kind: String,
 }
 
+struct PendingComposeConfigTarget {
+    config: NodeId,
+    manifest_label: String,
+    target: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MakefileTarget {
     name: String,
@@ -147,6 +154,21 @@ struct ComposeService {
     build_context: Option<String>,
     dockerfile: Option<String>,
     depends_on: Vec<String>,
+    environment: Vec<ComposeEnvironment>,
+    env_files: Vec<ComposeEnvFile>,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ComposeEnvironment {
+    name: String,
+    value_present: bool,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ComposeEnvFile {
+    path: String,
     line: u32,
 }
 
@@ -559,6 +581,7 @@ fn scan_project_with_scope(
         pending_calls: Vec::new(),
         pending_local_imports: Vec::new(),
         pending_entrypoint_targets: Vec::new(),
+        pending_compose_config_targets: Vec::new(),
     };
 
     for entry in WalkDir::new(root)
@@ -612,6 +635,7 @@ fn scan_project_with_scope(
     resolve_pending_calls(&mut context);
     resolve_pending_local_imports(&mut context);
     resolve_pending_entrypoint_targets(&mut context);
+    resolve_pending_compose_config_targets(&mut context);
     apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
 
@@ -2373,6 +2397,18 @@ fn index_compose_entrypoints(
         if let Some(dockerfile) = compose_service_dockerfile_path(label, service) {
             metadata.insert("dockerfile".to_string(), dockerfile);
         }
+        if !service.environment.is_empty() {
+            metadata.insert(
+                "environment_count".to_string(),
+                service.environment.len().to_string(),
+            );
+        }
+        if !service.env_files.is_empty() {
+            metadata.insert(
+                "env_file_count".to_string(),
+                service.env_files.len().to_string(),
+            );
+        }
 
         let entrypoint_id = context.graph.add_node_with_metadata(
             NodeKind::Entrypoint,
@@ -2425,6 +2461,85 @@ fn index_compose_entrypoints(
                     target: dockerfile,
                     ecosystem: "compose-dockerfile".to_string(),
                     entrypoint_kind: "service".to_string(),
+                });
+        }
+    }
+
+    for service in &services {
+        let Some(service_id) = service_nodes.get(&service.name).copied() else {
+            continue;
+        };
+        for environment in &service.environment {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("item_kind".to_string(), "compose_environment".to_string());
+            metadata.insert("source".to_string(), "compose".to_string());
+            metadata.insert("ecosystem".to_string(), "docker-compose".to_string());
+            metadata.insert("service".to_string(), service.name.clone());
+            metadata.insert("line".to_string(), environment.line.to_string());
+            metadata.insert(
+                "value_present".to_string(),
+                environment.value_present.to_string(),
+            );
+            if !environment.value_present {
+                metadata.insert("value_source".to_string(), "host".to_string());
+            }
+            let environment_id = context.graph.add_node_with_metadata(
+                NodeKind::Environment,
+                environment.name.clone(),
+                Some(line_span(label, source, environment.line)),
+                metadata,
+            );
+            let mut edge_metadata = BTreeMap::new();
+            edge_metadata.insert("source".to_string(), "compose".to_string());
+            edge_metadata.insert("relation".to_string(), "compose_environment".to_string());
+            edge_metadata.insert("service".to_string(), service.name.clone());
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                service_id,
+                environment_id,
+                EdgeKind::ReadsEnvironment,
+                Confidence::Exact,
+                edge_metadata,
+            );
+        }
+
+        for env_file in &service.env_files {
+            let Some(normalized_env_file) = normalize_manifest_relative_path(label, &env_file.path)
+            else {
+                continue;
+            };
+            let mut metadata = BTreeMap::new();
+            metadata.insert("item_kind".to_string(), "compose_env_file".to_string());
+            metadata.insert("source".to_string(), "compose".to_string());
+            metadata.insert("ecosystem".to_string(), "docker-compose".to_string());
+            metadata.insert("service".to_string(), service.name.clone());
+            metadata.insert("line".to_string(), env_file.line.to_string());
+            metadata.insert("env_file".to_string(), env_file.path.clone());
+            metadata.insert("env_file_path".to_string(), normalized_env_file.clone());
+            let config_id = context.graph.add_node_with_metadata(
+                NodeKind::Config,
+                format!("compose env file:{normalized_env_file}"),
+                Some(line_span(label, source, env_file.line)),
+                metadata,
+            );
+            let mut edge_metadata = BTreeMap::new();
+            edge_metadata.insert("source".to_string(), "compose".to_string());
+            edge_metadata.insert("relation".to_string(), "compose_env_file".to_string());
+            edge_metadata.insert("service".to_string(), service.name.clone());
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                service_id,
+                config_id,
+                EdgeKind::ReadsConfig,
+                Confidence::Exact,
+                edge_metadata,
+            );
+            context
+                .pending_compose_config_targets
+                .push(PendingComposeConfigTarget {
+                    config: config_id,
+                    manifest_label: label.to_string(),
+                    target: env_file.path.clone(),
                 });
         }
     }
@@ -2568,6 +2683,8 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
                 build_context: None,
                 dockerfile: None,
                 depends_on: Vec::new(),
+                environment: Vec::new(),
+                env_files: Vec::new(),
                 line: index as u32 + 1,
             });
             continue;
@@ -2593,6 +2710,18 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
                 service.depends_on.extend(compose_inline_depends_on(&value));
             } else if yaml_key(trimmed).is_some_and(|key| key == "depends_on") {
                 active_section = Some(("depends_on".to_string(), indent));
+            } else if let Some(value) = yaml_key_value(trimmed, "environment") {
+                service
+                    .environment
+                    .extend(compose_inline_environment(&value, index as u32 + 1).into_iter());
+            } else if yaml_key(trimmed).is_some_and(|key| key == "environment") {
+                active_section = Some(("environment".to_string(), indent));
+            } else if let Some(value) = yaml_key_value(trimmed, "env_file") {
+                service
+                    .env_files
+                    .extend(compose_env_file_values(&value, index as u32 + 1));
+            } else if yaml_key(trimmed).is_some_and(|key| key == "env_file") {
+                active_section = Some(("env_file".to_string(), indent));
             }
             continue;
         }
@@ -2625,6 +2754,33 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
                     service.depends_on.push(name);
                 }
             }
+            "environment" => {
+                if let Some(value) = trimmed.strip_prefix("- ") {
+                    if let Some(environment) =
+                        compose_environment_assignment(value, index as u32 + 1)
+                    {
+                        service.environment.push(environment);
+                    }
+                } else if let Some(name) = yaml_key(trimmed) {
+                    let value_present = yaml_key_value(trimmed, &name).is_some();
+                    service.environment.push(ComposeEnvironment {
+                        name,
+                        value_present,
+                        line: index as u32 + 1,
+                    });
+                }
+            }
+            "env_file" => {
+                if let Some(value) = trimmed.strip_prefix("- ") {
+                    let path = yaml_clean_scalar(value);
+                    if !path.is_empty() {
+                        service.env_files.push(ComposeEnvFile {
+                            path,
+                            line: index as u32 + 1,
+                        });
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -2639,7 +2795,15 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
 fn compose_service_reserved_key(name: &str) -> bool {
     matches!(
         name,
-        "build" | "command" | "depends_on" | "entrypoint" | "image" | "networks" | "volumes"
+        "build"
+            | "command"
+            | "depends_on"
+            | "entrypoint"
+            | "image"
+            | "networks"
+            | "volumes"
+            | "environment"
+            | "env_file"
     )
 }
 
@@ -2665,12 +2829,65 @@ fn compose_command_string(value: &str) -> Option<String> {
 fn compose_inline_depends_on(value: &str) -> Vec<String> {
     let value = value.trim();
     if value.starts_with('[') {
-        quoted_strings(value)
+        yaml_inline_list_values(value)
     } else if value.is_empty() {
         Vec::new()
     } else {
         vec![value.to_string()]
     }
+}
+
+fn compose_inline_environment(value: &str, line: u32) -> Vec<ComposeEnvironment> {
+    yaml_inline_list_values(value)
+        .into_iter()
+        .filter_map(|value| compose_environment_assignment(&value, line))
+        .collect()
+}
+
+fn compose_environment_assignment(value: &str, line: u32) -> Option<ComposeEnvironment> {
+    let value = yaml_clean_scalar(value);
+    let (name, value_present) = value
+        .split_once('=')
+        .map(|(name, _)| (name.trim(), true))
+        .unwrap_or((value.trim(), false));
+    (!name.is_empty()).then(|| ComposeEnvironment {
+        name: name.to_string(),
+        value_present,
+        line,
+    })
+}
+
+fn compose_env_file_values(value: &str, line: u32) -> Vec<ComposeEnvFile> {
+    let values = if value.trim().starts_with('[') {
+        yaml_inline_list_values(value)
+    } else {
+        vec![yaml_clean_scalar(value)]
+    };
+    values
+        .into_iter()
+        .filter(|path| !path.is_empty())
+        .map(|path| ComposeEnvFile { path, line })
+        .collect()
+}
+
+fn yaml_inline_list_values(value: &str) -> Vec<String> {
+    let value = value.trim();
+    if !value.starts_with('[') || !value.ends_with(']') {
+        return Vec::new();
+    }
+    let body = value.trim_start_matches('[').trim_end_matches(']');
+    let quoted = quoted_strings(body);
+    if !quoted.is_empty() {
+        return quoted
+            .into_iter()
+            .map(|value| yaml_clean_scalar(&value))
+            .filter(|value| !value.is_empty())
+            .collect();
+    }
+    body.split(',')
+        .map(yaml_clean_scalar)
+        .filter(|value| !value.is_empty())
+        .collect()
 }
 
 fn compose_service_dockerfile_path(
@@ -6254,6 +6471,35 @@ fn resolve_pending_entrypoint_targets(context: &mut IndexContext) {
     }
 }
 
+fn resolve_pending_compose_config_targets(context: &mut IndexContext) {
+    let pending_targets = std::mem::take(&mut context.pending_compose_config_targets);
+
+    for pending in pending_targets {
+        let Some(path) = normalize_manifest_relative_path(&pending.manifest_label, &pending.target)
+        else {
+            continue;
+        };
+        let Some(file_id) = context.file_nodes.get(&path).copied() else {
+            continue;
+        };
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), "config_file".to_string());
+        metadata.insert(
+            "resolution".to_string(),
+            "compose_env_file_path".to_string(),
+        );
+        metadata.insert("source".to_string(), "compose".to_string());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.config,
+            file_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
 fn entrypoint_target_candidates(
     pending: &PendingEntrypointTarget,
 ) -> Vec<EntrypointTargetCandidate> {
@@ -9253,6 +9499,7 @@ generated/output.txt:
     fn scan_project_adds_compose_service_entrypoints() {
         let root = temp_project_root();
         fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
         fs::write(
             root.join("docker-compose.yml"),
             r#"services:
@@ -9261,11 +9508,18 @@ generated/output.txt:
       context: .
       dockerfile: Dockerfile
     command: ["./scripts/start.sh", "--serve"]
+    env_file:
+      - config/web.env
+    environment:
+      APP_ENV: production
+      DATABASE_URL:
     depends_on:
       - db
   worker:
     image: demo/worker
     entrypoint: ./scripts/worker.sh
+    env_file: [worker.env]
+    environment: [WORKER_TOKEN, QUEUE=critical]
     depends_on:
       db:
         condition: service_healthy
@@ -9275,6 +9529,12 @@ generated/output.txt:
         )
         .unwrap();
         fs::write(root.join("Dockerfile"), "FROM debian:stable-slim\n").unwrap();
+        fs::write(
+            root.join("config").join("web.env"),
+            "DATABASE_URL=postgres\n",
+        )
+        .unwrap();
+        fs::write(root.join("worker.env"), "QUEUE=critical\n").unwrap();
         fs::write(
             root.join("scripts").join("start.sh"),
             "#!/usr/bin/env bash\necho start\n",
@@ -9289,11 +9549,19 @@ generated/output.txt:
         let graph = scan_project(&root, &IndexOptions::default()).unwrap();
         let compose = node_id(&graph, NodeKind::File, "docker-compose.yml");
         let dockerfile = node_id(&graph, NodeKind::File, "Dockerfile");
+        let web_env_file = node_id(&graph, NodeKind::File, "config/web.env");
+        let worker_env_file = node_id(&graph, NodeKind::File, "worker.env");
         let start_script = node_id(&graph, NodeKind::File, "scripts/start.sh");
         let worker_script = node_id(&graph, NodeKind::File, "scripts/worker.sh");
         let web = node_id(&graph, NodeKind::Entrypoint, "compose service:web");
         let worker = node_id(&graph, NodeKind::Entrypoint, "compose service:worker");
         let db = node_id(&graph, NodeKind::Entrypoint, "compose service:db");
+        let app_env = node_id(&graph, NodeKind::Environment, "APP_ENV");
+        let database_url = node_id(&graph, NodeKind::Environment, "DATABASE_URL");
+        let worker_token = node_id(&graph, NodeKind::Environment, "WORKER_TOKEN");
+        let queue = node_id(&graph, NodeKind::Environment, "QUEUE");
+        let web_env_config = node_id(&graph, NodeKind::Config, "compose env file:config/web.env");
+        let worker_env_config = node_id(&graph, NodeKind::Config, "compose env file:worker.env");
 
         for service in [web, worker, db] {
             assert!(has_entrypoint_reference(
@@ -9325,6 +9593,47 @@ generated/output.txt:
             "entrypoint_file",
             Confidence::Exact,
         ));
+        for (service, environment) in [
+            (web, app_env),
+            (web, database_url),
+            (worker, worker_token),
+            (worker, queue),
+        ] {
+            assert!(graph.edges.iter().any(|edge| {
+                edge.source == service
+                    && edge.target == environment
+                    && edge.kind == EdgeKind::ReadsEnvironment
+                    && edge.confidence == Confidence::Exact
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|value| value == "compose_environment")
+            }));
+        }
+        for (config, file) in [
+            (web_env_config, web_env_file),
+            (worker_env_config, worker_env_file),
+        ] {
+            assert!(graph.edges.iter().any(|edge| {
+                edge.source == config
+                    && edge.target == file
+                    && edge.kind == EdgeKind::References
+                    && edge.confidence == Confidence::Exact
+                    && edge
+                        .metadata
+                        .get("resolution")
+                        .is_some_and(|value| value == "compose_env_file_path")
+            }));
+        }
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == web
+                && edge.target == web_env_config
+                && edge.kind == EdgeKind::ReadsConfig
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "compose_env_file")
+        }));
         assert!(graph.edges.iter().any(|edge| {
             edge.source == web
                 && edge.target == db
@@ -9360,6 +9669,35 @@ generated/output.txt:
         assert_eq!(
             web_node.metadata.get("dockerfile").map(String::as_str),
             Some("Dockerfile")
+        );
+        assert_eq!(
+            web_node
+                .metadata
+                .get("environment_count")
+                .map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(
+            web_node.metadata.get("env_file_count").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == app_env)
+                .and_then(|node| node.metadata.get("value_present"))
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == worker_token)
+                .and_then(|node| node.metadata.get("value_source"))
+                .map(String::as_str),
+            Some("host")
         );
         let db_node = graph
             .nodes

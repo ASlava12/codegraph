@@ -31,6 +31,7 @@ Implemented now:
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
 - Manifest-defined entrypoints from Cargo, npm, Go, Python, setup.py/setup.cfg, Composer, and CMake project metadata.
 - Shebang-defined script entrypoints for Bash, Python, Node.js, and PHP scripts, including extensionless CLI files.
+- Dockerfile and Docker Compose runtime entrypoints, including Compose service dependencies and runtime config inputs.
 - Framework route entrypoints for common Python, JavaScript/TypeScript, Rust, Go, and PHP web route declarations.
 - Rust/Axum route entrypoints handle multiline `.route(...)` calls and ignore string literal route markers.
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
@@ -216,6 +217,7 @@ Implemented now:
 - Investigation insights for ambiguous call resolutions where one call label from the same caller points to multiple possible targets.
 - Investigation insights for manifest entrypoints whose declared target cannot be resolved to a file or function.
 - Investigation insights for entrypoints that have no outgoing code/config/dependency/error flow.
+- Investigation insights for Dockerfile, Makefile, and Docker Compose runtime paths that reference missing local files.
 - Investigation insights for framework routes whose named handler cannot be linked to a scanned function.
 - Investigation insights for heuristic cross-language dependency edges that deserve semantic review.
 - Investigation insights for local imports/includes whose target file cannot be found.
@@ -783,14 +785,18 @@ do not masquerade as conflicting manifest constraints. Cargo
 `workspace = true` dependencies resolve to the root workspace constraint when
 one exists; path-only workspace dependencies omit `dependency_version`.
 
-Manifest entrypoints are represented as `entrypoint` nodes linked from the
+Manifest and runtime entrypoints are represented as `entrypoint` nodes linked from the
 repository root with exact `entrypoint` edges. Examples include Cargo binaries,
 npm scripts, Python project and setup.py/setup.cfg console scripts, Composer
-scripts, and Composer binaries.
+scripts, Composer binaries, Dockerfile instructions, and Docker Compose
+services.
 When a manifest target can be mapped back to code, the entrypoint node also
 emits `references` edges with metadata such as `relation=entrypoint_file` or
 `relation=entrypoint_function`; traces follow these edges before continuing into
 regular call, import, config, environment, dependency, and error-flow edges.
+Compose services also emit `depends_on`, `reads_environment`, and
+`reads_config` edges for service dependencies, `environment`, and `env_file`
+entries without storing literal environment values in graph metadata.
 Entrypoint trace reports run this traversal for all matching entrypoints so a
 project's startup flows can be compared without manually copying labels.
 Config traces specialize that graph traversal by matching `config` and

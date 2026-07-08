@@ -787,6 +787,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unreachable_source_file",
     "unresolved_call",
     "unresolved_compose_command_path",
+    "unresolved_compose_env_file_path",
     "unresolved_dockerfile_command_path",
     "unresolved_entrypoint_target",
     "unresolved_framework_route_handler",
@@ -1341,6 +1342,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_error_flow_insights(graph, &mut insights);
     add_unresolved_entrypoint_insights(graph, &mut insights);
     add_unresolved_compose_command_path_insights(graph, &mut insights);
+    add_unresolved_compose_env_file_path_insights(graph, &mut insights);
     add_unresolved_dockerfile_command_path_insights(graph, &mut insights);
     add_unresolved_makefile_command_path_insights(graph, &mut insights);
     add_entrypoint_dead_end_insights(graph, &mut insights);
@@ -6465,6 +6467,73 @@ fn add_unresolved_compose_command_path_insights(graph: &CodeGraph, insights: &mu
         "unresolved_compose_command_path",
         "Compose service",
     );
+}
+
+fn add_unresolved_compose_env_file_path_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Config
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "compose_env_file")
+        {
+            continue;
+        }
+        let Some(env_file_path) = node
+            .metadata
+            .get("env_file_path")
+            .map(|path| path.trim())
+            .filter(|path| !path.is_empty())
+        else {
+            continue;
+        };
+        let resolved = graph.edges.iter().any(|edge| {
+            edge.source == node.id
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|value| value == "compose_env_file_path")
+        });
+        if resolved {
+            continue;
+        }
+
+        let service = node
+            .metadata
+            .get("service")
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        let mut nodes = vec![node.id];
+        nodes.extend(compose_env_file_reader_ids(graph, node.id));
+        nodes.sort();
+        nodes.dedup();
+        insights.push(Insight {
+            kind: "unresolved_compose_env_file_path".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Compose service `{service}` references env_file `{env_file_path}` but the file was not found"
+            ),
+            nodes,
+            edges: incoming_edge_indexes(graph, node.id, EdgeKind::ReadsConfig),
+        });
+    }
+}
+
+fn compose_env_file_reader_ids(graph: &CodeGraph, config: NodeId) -> Vec<NodeId> {
+    graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.target == config
+                && edge.kind == EdgeKind::ReadsConfig
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "compose_env_file")
+        })
+        .map(|edge| edge.source)
+        .collect()
 }
 
 fn add_unresolved_makefile_command_path_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
@@ -12010,6 +12079,88 @@ mod tests {
         assert!(insight.message.contains("scripts/start.sh"));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unresolved_compose_command_path" && insight.nodes.contains(&resolved)
+        }));
+    }
+
+    #[test]
+    fn insights_report_unresolved_compose_env_file_paths() {
+        let mut graph = CodeGraph::new("repo");
+        let web = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "compose service:web",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "compose_service".to_string())]),
+        );
+        let worker = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "compose service:worker",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "compose_service".to_string())]),
+        );
+        let missing = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "compose env file:config/missing.env",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "compose_env_file".to_string()),
+                ("service".to_string(), "web".to_string()),
+                (
+                    "env_file_path".to_string(),
+                    "config/missing.env".to_string(),
+                ),
+            ]),
+        );
+        let resolved = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "compose env file:worker.env",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "compose_env_file".to_string()),
+                ("service".to_string(), "worker".to_string()),
+                ("env_file_path".to_string(), "worker.env".to_string()),
+            ]),
+        );
+        let worker_env = graph.add_node(NodeKind::File, "worker.env");
+        graph.add_edge(graph.root, web, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(graph.root, worker, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge_with_metadata(
+            web,
+            missing,
+            EdgeKind::ReadsConfig,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "compose_env_file".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            worker,
+            resolved,
+            EdgeKind::ReadsConfig,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "compose_env_file".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            resolved,
+            worker_env,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([(
+                "resolution".to_string(),
+                "compose_env_file_path".to_string(),
+            )]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_compose_env_file_path")
+            .expect("expected unresolved Compose env_file path insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.nodes.contains(&missing));
+        assert!(insight.nodes.contains(&web));
+        assert!(insight.message.contains("config/missing.env"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_compose_env_file_path" && insight.nodes.contains(&resolved)
         }));
     }
 
