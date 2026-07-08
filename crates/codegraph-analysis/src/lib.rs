@@ -794,6 +794,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unresolved_entrypoint_target",
     "unresolved_framework_route_handler",
     "unresolved_github_actions_local_action",
+    "unresolved_github_actions_run_path",
     "unresolved_gitlab_ci_script_path",
     "unresolved_kubernetes_config_ref",
     "unresolved_kubernetes_ingress_backend",
@@ -1353,6 +1354,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unresolved_compose_env_file_path_insights(graph, &mut insights);
     add_unresolved_compose_volume_source_path_insights(graph, &mut insights);
     add_unresolved_github_actions_local_action_insights(graph, &mut insights);
+    add_unresolved_github_actions_run_path_insights(graph, &mut insights);
     add_unresolved_gitlab_ci_script_path_insights(graph, &mut insights);
     add_unresolved_kubernetes_config_ref_insights(graph, &mut insights);
     add_unresolved_kubernetes_ingress_backend_insights(graph, &mut insights);
@@ -6757,6 +6759,97 @@ fn github_actions_local_action_reader_ids(graph: &CodeGraph, action: NodeId) -> 
         })
         .map(|edge| edge.source)
         .collect()
+}
+
+fn add_unresolved_github_actions_run_path_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Config
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "github_actions_run_step")
+        {
+            continue;
+        }
+        let Some(command_path) = node
+            .metadata
+            .get("command_path")
+            .map(|path| path.trim())
+            .filter(|path| !path.is_empty())
+        else {
+            continue;
+        };
+        let reader_ids = github_actions_run_step_reader_ids(graph, node.id);
+        let resolved = github_actions_run_path_is_resolved(graph, &reader_ids, command_path);
+        if resolved {
+            continue;
+        }
+
+        let workflow = node
+            .metadata
+            .get("workflow")
+            .map(String::as_str)
+            .unwrap_or("workflow");
+        let job = node
+            .metadata
+            .get("job")
+            .map(String::as_str)
+            .unwrap_or("job");
+        let command = node
+            .metadata
+            .get("command")
+            .map(String::as_str)
+            .unwrap_or(command_path);
+        let mut nodes = vec![node.id];
+        nodes.extend(reader_ids);
+        nodes.sort();
+        nodes.dedup();
+        insights.push(Insight {
+            kind: "unresolved_github_actions_run_path".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "GitHub Actions job `{workflow}/{job}` runs `{command}` but command path `{command_path}` was not found"
+            ),
+            nodes,
+            edges: incoming_edge_indexes(graph, node.id, EdgeKind::References),
+        });
+    }
+}
+
+fn github_actions_run_step_reader_ids(graph: &CodeGraph, step: NodeId) -> Vec<NodeId> {
+    graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.target == step
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "github_actions_run")
+        })
+        .map(|edge| edge.source)
+        .collect()
+}
+
+fn github_actions_run_path_is_resolved(
+    graph: &CodeGraph,
+    reader_ids: &[NodeId],
+    command_path: &str,
+) -> bool {
+    graph.edges.iter().any(|edge| {
+        reader_ids.contains(&edge.source)
+            && edge.kind == EdgeKind::References
+            && graph
+                .nodes
+                .iter()
+                .find(|node| node.id == edge.target)
+                .is_some_and(|node| node.label == command_path)
+            && edge
+                .metadata
+                .get("resolution")
+                .is_some_and(|value| value == "github_actions_run_command_path")
+    })
 }
 
 fn add_unresolved_gitlab_ci_script_path_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
@@ -12860,6 +12953,83 @@ mod tests {
         assert!(insight.message.contains(".github/actions/missing"));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unresolved_github_actions_local_action"
+                && insight.nodes.contains(&resolved)
+        }));
+    }
+
+    #[test]
+    fn insights_report_unresolved_github_actions_run_paths() {
+        let mut graph = CodeGraph::new("repo");
+        let build = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "github workflow:CI/build",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "github_actions_job".to_string())]),
+        );
+        let missing = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "github run:CI/build/10",
+            None,
+            BTreeMap::from([
+                (
+                    "item_kind".to_string(),
+                    "github_actions_run_step".to_string(),
+                ),
+                ("workflow".to_string(), "CI".to_string()),
+                ("job".to_string(), "build".to_string()),
+                ("command".to_string(), "./scripts/missing.sh".to_string()),
+                ("command_path".to_string(), "scripts/missing.sh".to_string()),
+            ]),
+        );
+        let resolved = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "github run:CI/build/11",
+            None,
+            BTreeMap::from([
+                (
+                    "item_kind".to_string(),
+                    "github_actions_run_step".to_string(),
+                ),
+                ("workflow".to_string(), "CI".to_string()),
+                ("job".to_string(), "build".to_string()),
+                ("command".to_string(), "./scripts/test.sh".to_string()),
+                ("command_path".to_string(), "scripts/test.sh".to_string()),
+            ]),
+        );
+        let test_script = graph.add_node(NodeKind::File, "scripts/test.sh");
+        for step in [missing, resolved] {
+            graph.add_edge_with_metadata(
+                build,
+                step,
+                EdgeKind::References,
+                Confidence::Exact,
+                BTreeMap::from([("relation".to_string(), "github_actions_run".to_string())]),
+            );
+        }
+        graph.add_edge_with_metadata(
+            build,
+            test_script,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([(
+                "resolution".to_string(),
+                "github_actions_run_command_path".to_string(),
+            )]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_github_actions_run_path")
+            .expect("expected unresolved GitHub Actions run path insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.nodes.contains(&missing));
+        assert!(insight.nodes.contains(&build));
+        assert!(insight.message.contains("scripts/missing.sh"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_github_actions_run_path"
                 && insight.nodes.contains(&resolved)
         }));
     }

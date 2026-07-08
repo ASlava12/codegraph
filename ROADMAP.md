@@ -152,6 +152,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect Docker Compose services that publish conflicting host ports.
 - [x] Detect Docker Compose services that mount missing local bind volume paths.
 - [x] Detect GitHub Actions workflow jobs that reference missing local actions.
+- [x] Detect GitHub Actions workflow jobs that reference missing local run-script paths.
 - [x] Detect GitLab CI jobs that reference missing local script paths.
 - [x] Detect Kubernetes workloads that reference missing local ConfigMap or Secret manifests.
 - [x] Detect Kubernetes Ingresses that reference missing local Service manifests.
