@@ -152,6 +152,7 @@ Implemented now:
 - Insight reports include severity and kind breakdowns for triage.
 - Web insight severity breakdown chips can apply and clear triage filters directly.
 - Server-side insight filters for severity, kind, search, and capped agent/UI reads.
+- Web insight findings can be exported as JSON with active filters and severity/kind counts for review or agent handoff.
 - CI/agent check command, API, and web quality gate for failing on insight severity thresholds.
 - Insight focus API and web interaction for turning findings into focused graph views.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.

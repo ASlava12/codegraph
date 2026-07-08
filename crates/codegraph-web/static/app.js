@@ -156,6 +156,7 @@ const I18N = {
     "button.clearCanvasFilters": "Clear Canvas Filters",
     "button.downloadSlice": "Download Slice",
     "button.downloadQueryResult": "Download Result",
+    "button.downloadInsights": "Download Insights",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
     "button.queryEdge": "Query",
@@ -330,6 +331,7 @@ const I18N = {
     "export.report": "Report JSON",
     "export.slice": "Visible Slice JSON",
     "export.queryResult": "Query Result JSON",
+    "export.insights": "Insights JSON",
     "export.noQueryResult": "Run a graph query before exporting its result.",
     "export.noSlice": "No visible graph slice to export.",
     "trace.tracing": "Tracing...",
@@ -551,6 +553,7 @@ const I18N = {
     "button.clearCanvasFilters": "Сбросить фильтры графа",
     "button.downloadSlice": "Скачать срез",
     "button.downloadQueryResult": "Скачать результат",
+    "button.downloadInsights": "Скачать insights",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
     "button.queryEdge": "Запрос",
@@ -725,6 +728,7 @@ const I18N = {
     "export.report": "JSON-отчёт",
     "export.slice": "JSON видимого среза",
     "export.queryResult": "JSON результата запроса",
+    "export.insights": "JSON insights",
     "export.noQueryResult": "Сначала выполните запрос к графу.",
     "export.noSlice": "Нет видимого среза графа для экспорта.",
     "trace.tracing": "Трассирую...",
@@ -1088,6 +1092,7 @@ const checkFailOnInput = document.querySelector("#checkFailOnInput");
 const insightKindInput = document.querySelector("#insightKindInput");
 const insightSearchInput = document.querySelector("#insightSearchInput");
 const insightFilterButton = document.querySelector("#insightFilterButton");
+const insightExportButton = document.querySelector("#insightExportButton");
 const checkButton = document.querySelector("#checkButton");
 const checkResult = document.querySelector("#checkResult");
 const kindFilters = document.querySelector("#kindFilters");
@@ -1187,6 +1192,7 @@ for (const input of [errorTraceTargetInput, errorTraceDepthInput]) {
   });
 }
 insightFilterButton.addEventListener("click", () => loadInsights());
+insightExportButton.addEventListener("click", () => exportCurrentInsights());
 for (const input of [insightSeverityInput, insightKindInput, insightSearchInput]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") loadInsights();
@@ -3750,6 +3756,49 @@ async function runCheck() {
       checkButton.disabled = false;
     }
   }
+}
+
+function exportCurrentInsights() {
+  const clientInsights = state.insightReport ? [] : buildClientInsights(state.graph);
+  const report = state.insightReport || {
+    total: clientInsights.length,
+    insights: clientInsights,
+    severity_counts: countInsightField(clientInsights, "severity"),
+    kind_counts: countInsightField(clientInsights, "kind"),
+  };
+  const payload = {
+    schema: "codegraph.insights_export.v1",
+    generated_at: new Date().toISOString(),
+    root: state.graphPage.root || pathInput.value.trim() || ".",
+    source: state.insightReport ? "server" : "client",
+    filters: {
+      severity: insightSeverityInput.value.trim(),
+      kind: insightKindInput.value.trim(),
+      search: insightSearchInput.value.trim(),
+      fail_on: checkFailOnInput.value.trim() || "error",
+    },
+    report,
+  };
+  const serialized = JSON.stringify(payload, null, 2);
+  const blob = new Blob([serialized], { type: "application/json" });
+  const fileName = `codegraph-${safeFilePart(payload.root)}-insights.json`;
+  downloadBlob(blob, fileName);
+  checkResult.innerHTML = `
+    <div class="query-summary">
+      <span>${escapeHtml(t("export.insights"))}</span>
+      <span>${escapeHtml(formatBytes(blob.size))}</span>
+      <span>${escapeHtml(formatNumber(report.total ?? report.insights?.length ?? 0))} insights</span>
+      <span class="query-expression">${escapeHtml(fileName)}</span>
+    </div>
+  `;
+}
+
+function countInsightField(insights, field) {
+  return insights.reduce((counts, insight) => {
+    const key = insight?.[field] || "unknown";
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
 }
 
 function renderCheckReport(check) {

@@ -6716,6 +6716,10 @@ mod tests {
         assert!(app.contains("apiFetch(`/api/report?${reportParams.toString()}`)"));
         assert!(app.contains("state.report?.quality_gate"));
         assert!(app.contains("\"risk.gate\""));
+        assert!(index.contains("insightExportButton"));
+        assert!(app.contains("exportCurrentInsights"));
+        assert!(app.contains("codegraph.insights_export.v1"));
+        assert!(app.contains("\"button.downloadInsights\""));
         assert!(app.contains("capabilities.server_version"));
         assert!(app.contains("\"cap.server\""));
         assert!(app.contains("\"cap.apiBody\""));
