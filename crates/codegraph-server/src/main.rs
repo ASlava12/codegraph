@@ -6799,6 +6799,13 @@ mod tests {
         assert!(app.contains("\"entryFlows.noMatches\""));
         assert!(app.contains("\"entryFlows.reportTruncated\""));
         assert!(app.contains("\"trace.noOutgoing\""));
+        assert!(app.contains("\"empty.noHotspots\""));
+        assert!(app.contains("\"empty.noAnnotations\""));
+        assert!(app.contains("\"empty.noEntrypoints\""));
+        assert!(app.contains("\"focus.hotspot\""));
+        assert!(app.contains("\"focus.entrypoint\""));
+        assert!(app.contains("t(\"focus.hotspot\")"));
+        assert!(app.contains("t(\"focus.entrypoint\")"));
         assert!(app.contains("\"configTrace.tracing\""));
         assert!(app.contains("\"configTrace.noReaders\""));
         assert!(app.contains("\"errorTrace.tracing\""));

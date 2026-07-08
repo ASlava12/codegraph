@@ -301,7 +301,12 @@ const I18N = {
     "empty.noVisibleIssues": "No obvious issues in the visible graph.",
     "empty.noCapabilities": "No server capabilities.",
     "empty.noMetrics": "No runtime metrics.",
+    "empty.noHotspots": "No hotspots.",
+    "empty.noAnnotations": "No annotations.",
+    "empty.noEntrypoints": "No entrypoints.",
     "empty.loadingSource": "Loading...",
+    "focus.entrypoint": "Focus: entrypoint",
+    "focus.hotspot": "Focus: hotspot",
     "cap.server": "Server",
     "cap.api": "API",
     "cap.graph": "Graph",
@@ -773,7 +778,12 @@ const I18N = {
     "empty.noVisibleIssues": "В видимом графе явных проблем нет.",
     "empty.noCapabilities": "Нет данных о сервере.",
     "empty.noMetrics": "Нет runtime-метрик.",
+    "empty.noHotspots": "Горячих узлов нет.",
+    "empty.noAnnotations": "Аннотаций нет.",
+    "empty.noEntrypoints": "Точки входа не найдены.",
     "empty.loadingSource": "Загружаю...",
+    "focus.entrypoint": "Фокус: точка входа",
+    "focus.hotspot": "Фокус: горячий узел",
     "cap.server": "Сервер",
     "cap.api": "API",
     "cap.graph": "Граф",
@@ -2933,7 +2943,7 @@ function renderOverview() {
             `,
           )
           .join("")
-      : '<p class="empty">No annotations.</p>';
+      : `<p class="empty">${escapeHtml(t("empty.noAnnotations"))}</p>`;
 
   entrypointList.innerHTML =
     entrypoints.length > 0
@@ -2948,7 +2958,7 @@ function renderOverview() {
             `,
           )
           .join("")
-      : '<p class="empty">No entrypoints.</p>';
+      : `<p class="empty">${escapeHtml(t("empty.noEntrypoints"))}</p>`;
 
   languageList.querySelectorAll("[data-language]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -3005,7 +3015,7 @@ function renderOverview() {
 
   entrypointList.querySelectorAll("[data-node-id]").forEach((button) => {
     button.addEventListener("click", () => {
-      focusNodeId(Number(button.dataset.nodeId), "Focus: entrypoint");
+      focusNodeId(Number(button.dataset.nodeId), t("focus.entrypoint"));
     });
   });
 }
@@ -3593,7 +3603,7 @@ async function focusLanguageDependency(link) {
 
 function renderHotspots(report) {
   if (!report) {
-    hotspotList.innerHTML = '<p class="empty">No hotspots.</p>';
+    hotspotList.innerHTML = `<p class="empty">${escapeHtml(t("empty.noHotspots"))}</p>`;
     return;
   }
 
@@ -3610,10 +3620,10 @@ function renderHotspots(report) {
             `,
           )
           .join("")
-      : '<p class="empty">No hotspots.</p>';
+      : `<p class="empty">${escapeHtml(t("empty.noHotspots"))}</p>`;
   hotspotList.querySelectorAll("[data-hotspot-node-id]").forEach((button) => {
     button.addEventListener("click", () => {
-      focusNodeId(Number(button.dataset.hotspotNodeId), "Focus: hotspot");
+      focusNodeId(Number(button.dataset.hotspotNodeId), t("focus.hotspot"));
     });
   });
 }
