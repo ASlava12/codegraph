@@ -324,6 +324,12 @@ Show language-to-language dependency links:
 cargo run -p codegraph-cli -- language-dependencies .
 ```
 
+Rank surprising cross-area, cross-language, and low-confidence dependency links:
+
+```bash
+cargo run -p codegraph-cli -- surprising-links .
+```
+
 Find high-degree graph hotspots, including separated architectural and utility hub buckets:
 
 ```bash
@@ -735,6 +741,7 @@ curl 'http://127.0.0.1:3765/api/focus?path=.&node_ids=1,2&edge_indexes=0&edge_li
 curl 'http://127.0.0.1:3765/api/summary?path=.'
 curl 'http://127.0.0.1:3765/api/architecture?path=.&group_limit=50&edge_limit=200'
 curl 'http://127.0.0.1:3765/api/language-dependencies?path=.&limit=50'
+curl 'http://127.0.0.1:3765/api/surprising-links?path=.&limit=50'
 curl 'http://127.0.0.1:3765/api/hotspots?path=.&limit=25'
 curl 'http://127.0.0.1:3765/api/communities?path=.&limit=25'
 curl 'http://127.0.0.1:3765/api/entrypoints?path=.'

@@ -24,8 +24,8 @@ use codegraph_analysis::{
     communities, entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report,
     focus_subgraph, hotspots, insights, language_dependencies, node_card, node_context,
     project_report, project_report_markdown, query_graph, read_source_preview, search_source,
-    slice_graph, summarize, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
-    workflow, workflow_entrypoints, workflow_query,
+    slice_graph, summarize, surprising_links, trace, trace_config, trace_dependents,
+    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_query,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -315,6 +315,12 @@ struct ArchitectureQuery {
 
 #[derive(Debug, Deserialize)]
 struct LanguageDependencyQuery {
+    path: Option<PathBuf>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SurprisingLinkQuery {
     path: Option<PathBuf>,
     limit: Option<usize>,
 }
@@ -1025,6 +1031,7 @@ async fn main() -> Result<()> {
         .route("/api/summary", get(summary))
         .route("/api/architecture", get(architecture_api))
         .route("/api/language-dependencies", get(language_dependencies_api))
+        .route("/api/surprising-links", get(surprising_links_api))
         .route("/api/hotspots", get(hotspots_api))
         .route("/api/communities", get(communities_api))
         .route("/api/entrypoints", get(entrypoints_api))
@@ -2632,6 +2639,14 @@ async fn language_dependencies_api(
         &graph,
         query.limit.unwrap_or(50),
     )))
+}
+
+async fn surprising_links_api(
+    State(state): State<AppState>,
+    Query(query): Query<SurprisingLinkQuery>,
+) -> Result<Json<codegraph_analysis::SurprisingLinkReport>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    Ok(Json(surprising_links(&graph, query.limit.unwrap_or(50))))
 }
 
 async fn hotspots_api(
@@ -4692,6 +4707,24 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 )
                 .with_response_fields(language_dependency_response_fields()),
                 api_get(
+                    "/api/surprising-links",
+                    "Rank cross-area, cross-language, low-confidence, and boundary dependency links with exact edge evidence.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            Some("50"),
+                            "Maximum surprising links.",
+                        )
+                        .with_range(1, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT)
+                        .with_capability_limit("max_report_architecture_edge_limit"),
+                    ],
+                    "SurprisingLinkReport",
+                )
+                .with_response_fields(surprising_link_response_fields()),
+                api_get(
                     "/api/hotspots",
                     "List high-degree files, functions, entrypoints, and config nodes.",
                     vec![
@@ -6080,6 +6113,29 @@ fn language_dependency_response_fields() -> Vec<ApiParameterSpec> {
     ]
 }
 
+fn surprising_link_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "links",
+            true,
+            "SurprisingLink[]",
+            "Ranked dependency links with source/target nodes, reasons, score, and edge_index evidence.",
+        ),
+        response_field(
+            "total_candidates",
+            true,
+            "usize",
+            "Total surprising link candidates before limiting.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether more surprising links exist beyond the limit.",
+        ),
+    ]
+}
+
 fn hotspot_response_fields() -> Vec<ApiParameterSpec> {
     vec![
         response_field(
@@ -6831,6 +6887,7 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
                 "GET /api/report",
                 "GET /api/architecture",
                 "GET /api/language-dependencies",
+                "GET /api/surprising-links",
                 "GET /api/hotspots",
                 "GET /api/communities",
                 "GET /api/entrypoints",
@@ -7592,6 +7649,7 @@ fn helper() {}
         assert!(endpoints.contains(&"GET /api/query"));
         assert!(endpoints.contains(&"GET /api/node-context"));
         assert!(endpoints.contains(&"GET /api/node-card"));
+        assert!(endpoints.contains(&"GET /api/surprising-links"));
         assert!(endpoints.contains(&"GET /api/workflow"));
         assert!(endpoints.contains(&"GET /api/workflow-query"));
         assert!(endpoints.contains(&"GET /api/entrypoint-workflows"));
@@ -8587,6 +8645,27 @@ fn helper() {}
                 .response_fields
                 .iter()
                 .any(|field| field.name == "cross_language_edges" && field.value_type == "usize")
+        );
+        let surprising_links_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/surprising-links")
+            .expect("schema should list surprising-links endpoint");
+        let surprising_limit = surprising_links_endpoint
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "limit")
+            .expect("surprising links limit");
+        assert_eq!(
+            surprising_limit.capability_limit,
+            Some("max_report_architecture_edge_limit")
+        );
+        assert!(
+            surprising_links_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "links" && field.value_type == "SurprisingLink[]" })
         );
         let hotspots_endpoint = schema
             .groups

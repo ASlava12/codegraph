@@ -9,9 +9,9 @@ use codegraph_analysis::{
     ProjectReportMarkdownOptions, SourceSearchRequest, TraceRequest, TraceStart, WorkflowFilters,
     WorkflowQueryRequest, WorkflowRequest, architecture_map, check_insights, communities,
     entrypoints, explain_edge, filter_insight_report, hotspots, insights, language_dependencies,
-    project_report, project_report_markdown, query_graph, search_source, summarize, trace,
-    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
-    workflow_entrypoints, workflow_mermaid, workflow_query,
+    project_report, project_report_markdown, query_graph, search_source, summarize,
+    surprising_links, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    workflow, workflow_entrypoints, workflow_mermaid, workflow_query,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -104,6 +104,9 @@ enum Command {
 
     /// Emit language-to-language dependency links as JSON.
     LanguageDependencies(LanguageDependencyArgs),
+
+    /// Emit ranked surprising dependency links as JSON.
+    SurprisingLinks(SurprisingLinkArgs),
 
     /// Emit high-degree graph hotspots as JSON.
     Hotspots(HotspotArgs),
@@ -655,6 +658,16 @@ struct LanguageDependencyArgs {
 }
 
 #[derive(Debug, Args)]
+struct SurprisingLinkArgs {
+    #[command(flatten)]
+    scan: ScanArgs,
+
+    /// Maximum surprising links to include.
+    #[arg(long, default_value_t = 50)]
+    limit: usize,
+}
+
+#[derive(Debug, Args)]
 struct HotspotArgs {
     #[command(flatten)]
     scan: ScanArgs,
@@ -1130,6 +1143,19 @@ fn main() -> Result<()> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&language_dependencies(&graph, args.limit))?
+            );
+        }
+        Command::SurprisingLinks(args) => {
+            let graph = scan_with_options(
+                args.scan.path,
+                args.scan.include_hidden,
+                args.scan.include_ignored,
+                max_file_size,
+                &args.scan.cache,
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&surprising_links(&graph, args.limit))?
             );
         }
         Command::Hotspots(args) => {
