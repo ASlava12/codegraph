@@ -370,6 +370,29 @@ const I18N = {
     "sourceSearch.matchCount": "{count} matches",
     "sourceSearch.truncated": "truncated",
     "sourceSearch.noMatches": "No source matches.",
+    "trace.depth": "depth {depth}",
+    "trace.pathCount": "{count} paths",
+    "trace.traceTruncated": "Trace truncated.",
+    "trace.resultTruncated": "Result truncated by limit.",
+    "trace.entrypointPath": "entrypoint path",
+    "configTrace.enterTarget": "Enter a config file or environment variable.",
+    "configTrace.tracing": "Tracing config...",
+    "configTrace.failedFallback": "config trace failed",
+    "configTrace.targetCount": "{count} targets",
+    "configTrace.readerCount": "{count} readers",
+    "configTrace.noMatches": "No matching config or environment nodes.",
+    "configTrace.noReaders": "No direct readers.",
+    "configTrace.readerPath": "reader path",
+    "configTrace.focusTitle": "Config: {label}",
+    "errorTrace.enterTarget": "Enter an error or exception label.",
+    "errorTrace.tracing": "Tracing errors...",
+    "errorTrace.failedFallback": "error trace failed",
+    "errorTrace.errorCount": "{count} errors",
+    "errorTrace.sourceCount": "{count} sources",
+    "errorTrace.noMatches": "No matching error nodes.",
+    "errorTrace.noSources": "No direct sources.",
+    "errorTrace.sourcePath": "source path",
+    "errorTrace.focusTitle": "Error: {label}",
     "trace.tracing": "Tracing...",
     "trace.tracingDependents": "Tracing dependents...",
     "trace.noDependents": "No incoming dependents.",
@@ -805,6 +828,29 @@ const I18N = {
     "sourceSearch.matchCount": "совпадений: {count}",
     "sourceSearch.truncated": "результат усечён",
     "sourceSearch.noMatches": "Совпадений в коде нет.",
+    "trace.depth": "глубина {depth}",
+    "trace.pathCount": "путей: {count}",
+    "trace.traceTruncated": "Трасса усечена.",
+    "trace.resultTruncated": "Результат усечён лимитом.",
+    "trace.entrypointPath": "путь от точки входа",
+    "configTrace.enterTarget": "Введите конфиг-файл или переменную окружения.",
+    "configTrace.tracing": "Трассирую конфиг...",
+    "configTrace.failedFallback": "трасса конфига не удалась",
+    "configTrace.targetCount": "целей: {count}",
+    "configTrace.readerCount": "читателей: {count}",
+    "configTrace.noMatches": "Подходящих конфигов или переменных окружения нет.",
+    "configTrace.noReaders": "Прямых читателей нет.",
+    "configTrace.readerPath": "путь читателя",
+    "configTrace.focusTitle": "Конфиг: {label}",
+    "errorTrace.enterTarget": "Введите метку ошибки или исключения.",
+    "errorTrace.tracing": "Трассирую ошибки...",
+    "errorTrace.failedFallback": "трасса ошибок не удалась",
+    "errorTrace.errorCount": "ошибок: {count}",
+    "errorTrace.sourceCount": "источников: {count}",
+    "errorTrace.noMatches": "Подходящих узлов ошибок нет.",
+    "errorTrace.noSources": "Прямых источников нет.",
+    "errorTrace.sourcePath": "путь источника",
+    "errorTrace.focusTitle": "Ошибка: {label}",
     "trace.tracing": "Трассирую...",
     "trace.tracingDependents": "Трассирую зависимые узлы...",
     "trace.noDependents": "Входящих зависимых нет.",
@@ -5164,7 +5210,7 @@ async function runPathQuery() {
 async function runConfigTrace() {
   const target = configTraceTargetInput.value.trim();
   if (!target) {
-    configTraceResult.innerHTML = '<p class="empty">Enter a config file or environment variable.</p>';
+    configTraceResult.innerHTML = `<p class="empty">${escapeHtml(t("configTrace.enterTarget"))}</p>`;
     return;
   }
 
@@ -5174,7 +5220,7 @@ async function runConfigTrace() {
   const requestId = state.configTraceRequest;
   configTraceButton.disabled = true;
   clearLastConfigTraceReport();
-  configTraceResult.innerHTML = '<p class="empty">Tracing config...</p>';
+  configTraceResult.innerHTML = `<p class="empty">${escapeHtml(t("configTrace.tracing"))}</p>`;
 
   const params = new URLSearchParams({
     path: pathInput.value.trim() || ".",
@@ -5188,7 +5234,7 @@ async function runConfigTrace() {
     const body = await response.json();
     if (requestId !== state.configTraceRequest) return;
     if (!response.ok) {
-      throw new Error(apiErrorMessage(body, response, "config trace failed"));
+      throw new Error(apiErrorMessage(body, response, t("configTrace.failedFallback")));
     }
     state.lastConfigTraceReport = {
       generated_at: new Date().toISOString(),
@@ -5243,8 +5289,8 @@ function exportLastConfigTraceReport() {
       <div class="query-summary">
         <span>${escapeHtml(t("export.configTrace"))}</span>
         <span>${escapeHtml(formatBytes(blob.size))}</span>
-        <span>${escapeHtml(formatNumber(payload.report?.total_matches ?? payload.report?.matches?.length ?? 0))} targets</span>
-        <span>${escapeHtml(formatNumber(payload.report?.total_paths ?? 0))} paths</span>
+        <span>${escapeHtml(t("configTrace.targetCount", { count: formatNumber(payload.report?.total_matches ?? payload.report?.matches?.length ?? 0) }))}</span>
+        <span>${escapeHtml(t("trace.pathCount", { count: formatNumber(payload.report?.total_paths ?? 0) }))}</span>
         <span class="query-expression">${escapeHtml(fileName)}</span>
       </div>
     `,
@@ -5254,16 +5300,16 @@ function exportLastConfigTraceReport() {
 function renderConfigTrace(result) {
   const summary = `
     <div class="query-summary">
-      <span>${result.total_matches} targets</span>
-      <span>${result.total_readers} readers</span>
-      <span>${result.total_paths} paths</span>
-      <span>depth ${result.max_depth}</span>
+      <span>${escapeHtml(t("configTrace.targetCount", { count: formatNumber(result.total_matches || 0) }))}</span>
+      <span>${escapeHtml(t("configTrace.readerCount", { count: formatNumber(result.total_readers || 0) }))}</span>
+      <span>${escapeHtml(t("trace.pathCount", { count: formatNumber(result.total_paths || 0) }))}</span>
+      <span>${escapeHtml(t("trace.depth", { depth: result.max_depth }))}</span>
       <span class="query-expression">${escapeHtml(result.target)}</span>
     </div>
   `;
 
   if (!result.matches.length) {
-    return `${summary}<p class="empty">No matching config or environment nodes.</p>`;
+    return `${summary}<p class="empty">${escapeHtml(t("configTrace.noMatches"))}</p>`;
   }
 
   const rows = result.matches
@@ -5285,29 +5331,33 @@ function renderConfigTrace(result) {
         .slice(0, 8)
         .map((path, pathIndex) => renderConfigTracePath(path, matchIndex, pathIndex))
         .join("");
-      const truncated = match.truncated ? '<p class="empty">Trace truncated.</p>' : "";
+      const truncated = match.truncated
+        ? `<p class="empty">${escapeHtml(t("trace.traceTruncated"))}</p>`
+        : "";
       return `
         <section class="trace-columns">
           <h3>${escapeHtml(match.target.label)}</h3>
           <div class="trace-summary">
-            <span>${match.total_readers} readers</span>
-            <span>${match.total_paths} paths</span>
+            <span>${escapeHtml(t("configTrace.readerCount", { count: formatNumber(match.total_readers || 0) }))}</span>
+            <span>${escapeHtml(t("trace.pathCount", { count: formatNumber(match.total_paths || 0) }))}</span>
             <span>${escapeHtml(formatKind(match.target.kind))}</span>
           </div>
-          ${readers ? `<ul class="trace-list">${readers}</ul>` : '<p class="empty">No direct readers.</p>'}
+          ${readers ? `<ul class="trace-list">${readers}</ul>` : `<p class="empty">${escapeHtml(t("configTrace.noReaders"))}</p>`}
           ${paths ? `<ul class="trace-list">${paths}</ul>` : ""}
           ${truncated}
         </section>
       `;
     })
     .join("");
-  const truncated = result.truncated ? '<p class="empty">Result truncated by limit.</p>' : "";
+  const truncated = result.truncated
+    ? `<p class="empty">${escapeHtml(t("trace.resultTruncated"))}</p>`
+    : "";
   return `${summary}${rows}${truncated}`;
 }
 
 function renderConfigTracePath(path, matchIndex, pathIndex) {
   const labels = path.nodes.map((node) => node.label).join(" -> ");
-  const kind = path.reached_entrypoint ? "entrypoint path" : "reader path";
+  const kind = path.reached_entrypoint ? t("trace.entrypointPath") : t("configTrace.readerPath");
   return `
     <li>
       <button class="trace-edge" type="button" data-config-match="${matchIndex}" data-config-path="${pathIndex}">
@@ -5334,7 +5384,11 @@ function attachConfigTraceActions(container, result) {
         truncated: false,
       };
       const selectedId = path.nodes[path.nodes.length - 1]?.id ?? null;
-      showFocusedGraph(focused, `Config: ${match.target.label}`, selectedId);
+      showFocusedGraph(
+        focused,
+        t("configTrace.focusTitle", { label: match.target.label }),
+        selectedId,
+      );
     });
   });
 }
@@ -5342,7 +5396,7 @@ function attachConfigTraceActions(container, result) {
 async function runErrorTrace() {
   const target = errorTraceTargetInput.value.trim();
   if (!target) {
-    errorTraceResult.innerHTML = '<p class="empty">Enter an error or exception label.</p>';
+    errorTraceResult.innerHTML = `<p class="empty">${escapeHtml(t("errorTrace.enterTarget"))}</p>`;
     return;
   }
 
@@ -5352,7 +5406,7 @@ async function runErrorTrace() {
   const requestId = state.errorTraceRequest;
   errorTraceButton.disabled = true;
   clearLastErrorTraceReport();
-  errorTraceResult.innerHTML = '<p class="empty">Tracing errors...</p>';
+  errorTraceResult.innerHTML = `<p class="empty">${escapeHtml(t("errorTrace.tracing"))}</p>`;
 
   const params = new URLSearchParams({
     path: pathInput.value.trim() || ".",
@@ -5366,7 +5420,7 @@ async function runErrorTrace() {
     const body = await response.json();
     if (requestId !== state.errorTraceRequest) return;
     if (!response.ok) {
-      throw new Error(apiErrorMessage(body, response, "error trace failed"));
+      throw new Error(apiErrorMessage(body, response, t("errorTrace.failedFallback")));
     }
     state.lastErrorTraceReport = {
       generated_at: new Date().toISOString(),
@@ -5421,8 +5475,8 @@ function exportLastErrorTraceReport() {
       <div class="query-summary">
         <span>${escapeHtml(t("export.errorTrace"))}</span>
         <span>${escapeHtml(formatBytes(blob.size))}</span>
-        <span>${escapeHtml(formatNumber(payload.report?.total_matches ?? payload.report?.matches?.length ?? 0))} errors</span>
-        <span>${escapeHtml(formatNumber(payload.report?.total_paths ?? 0))} paths</span>
+        <span>${escapeHtml(t("errorTrace.errorCount", { count: formatNumber(payload.report?.total_matches ?? payload.report?.matches?.length ?? 0) }))}</span>
+        <span>${escapeHtml(t("trace.pathCount", { count: formatNumber(payload.report?.total_paths ?? 0) }))}</span>
         <span class="query-expression">${escapeHtml(fileName)}</span>
       </div>
     `,
@@ -5432,16 +5486,16 @@ function exportLastErrorTraceReport() {
 function renderErrorTrace(result) {
   const summary = `
     <div class="query-summary">
-      <span>${result.total_matches} errors</span>
-      <span>${result.total_sources} sources</span>
-      <span>${result.total_paths} paths</span>
-      <span>depth ${result.max_depth}</span>
+      <span>${escapeHtml(t("errorTrace.errorCount", { count: formatNumber(result.total_matches || 0) }))}</span>
+      <span>${escapeHtml(t("errorTrace.sourceCount", { count: formatNumber(result.total_sources || 0) }))}</span>
+      <span>${escapeHtml(t("trace.pathCount", { count: formatNumber(result.total_paths || 0) }))}</span>
+      <span>${escapeHtml(t("trace.depth", { depth: result.max_depth }))}</span>
       <span class="query-expression">${escapeHtml(result.target)}</span>
     </div>
   `;
 
   if (!result.matches.length) {
-    return `${summary}<p class="empty">No matching error nodes.</p>`;
+    return `${summary}<p class="empty">${escapeHtml(t("errorTrace.noMatches"))}</p>`;
   }
 
   const rows = result.matches
@@ -5463,29 +5517,33 @@ function renderErrorTrace(result) {
         .slice(0, 8)
         .map((path, pathIndex) => renderErrorTracePath(path, matchIndex, pathIndex))
         .join("");
-      const truncated = match.truncated ? '<p class="empty">Trace truncated.</p>' : "";
+      const truncated = match.truncated
+        ? `<p class="empty">${escapeHtml(t("trace.traceTruncated"))}</p>`
+        : "";
       return `
         <section class="trace-columns">
           <h3>${escapeHtml(match.error.label)}</h3>
           <div class="trace-summary">
-            <span>${match.total_sources} sources</span>
-            <span>${match.total_paths} paths</span>
+            <span>${escapeHtml(t("errorTrace.sourceCount", { count: formatNumber(match.total_sources || 0) }))}</span>
+            <span>${escapeHtml(t("trace.pathCount", { count: formatNumber(match.total_paths || 0) }))}</span>
             <span>${escapeHtml(formatKind(match.error.metadata?.language || match.error.kind))}</span>
           </div>
-          ${sources ? `<ul class="trace-list">${sources}</ul>` : '<p class="empty">No direct sources.</p>'}
+          ${sources ? `<ul class="trace-list">${sources}</ul>` : `<p class="empty">${escapeHtml(t("errorTrace.noSources"))}</p>`}
           ${paths ? `<ul class="trace-list">${paths}</ul>` : ""}
           ${truncated}
         </section>
       `;
     })
     .join("");
-  const truncated = result.truncated ? '<p class="empty">Result truncated by limit.</p>' : "";
+  const truncated = result.truncated
+    ? `<p class="empty">${escapeHtml(t("trace.resultTruncated"))}</p>`
+    : "";
   return `${summary}${rows}${truncated}`;
 }
 
 function renderErrorTracePath(path, matchIndex, pathIndex) {
   const labels = path.nodes.map((node) => node.label).join(" -> ");
-  const kind = path.reached_entrypoint ? "entrypoint path" : "source path";
+  const kind = path.reached_entrypoint ? t("trace.entrypointPath") : t("errorTrace.sourcePath");
   return `
     <li>
       <button class="trace-edge" type="button" data-error-match="${matchIndex}" data-error-path="${pathIndex}">
@@ -5512,7 +5570,11 @@ function attachErrorTraceActions(container, result) {
         truncated: false,
       };
       const selectedId = path.nodes[path.nodes.length - 1]?.id ?? null;
-      showFocusedGraph(focused, `Error: ${match.error.label}`, selectedId);
+      showFocusedGraph(
+        focused,
+        t("errorTrace.focusTitle", { label: match.error.label }),
+        selectedId,
+      );
     });
   });
 }

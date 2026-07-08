@@ -6789,6 +6789,10 @@ mod tests {
         assert!(app.contains("\"check.running\""));
         assert!(app.contains("\"sourceSearch.enterText\""));
         assert!(app.contains("\"sourceSearch.noMatches\""));
+        assert!(app.contains("\"configTrace.tracing\""));
+        assert!(app.contains("\"configTrace.noReaders\""));
+        assert!(app.contains("\"errorTrace.tracing\""));
+        assert!(app.contains("\"errorTrace.noSources\""));
         assert!(app.contains("clientEntrypointReachableIds"));
         assert!(app.contains("unreachable_error_flow"));
         assert!(index.contains("unreachable scope:config"));
