@@ -1,9 +1,9 @@
 const DEFAULT_LOCALE = "en";
-const DEFAULT_LABEL_MODE = "hover";
+const DEFAULT_LABEL_MODE = "minimal";
 const LABEL_MODES = new Set(["minimal", "hover", "focus", "auto"]);
 const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
-const LABEL_MODE_STORAGE_VERSION = "12";
+const LABEL_MODE_STORAGE_VERSION = "13";
 const API_TOKEN_STORAGE_KEY = "codegraph.apiToken";
 const QUERY_HISTORY_STORAGE_KEY = "codegraph.queryHistory";
 const QUERY_HISTORY_LIMIT = 8;
@@ -7094,6 +7094,7 @@ function draw() {
         focused,
         forced: selected,
         priority: nodeLabelPriority(node),
+        bypassBudget: selected || hovered,
       });
     }
   });
@@ -7324,13 +7325,12 @@ function drawNodeLabels(candidates) {
   });
 
   ordered.forEach((candidate) => {
-    const forced = candidate.forced;
-    if (!forced && drawnAutoLabels >= budget) return;
+    if (!candidate.bypassBudget && drawnAutoLabels >= budget) return;
     const geometry = labelGeometry(candidate, occupied, nodeBoxes, edgeBoxes);
     if (!geometry) return;
     drawLabelGeometry(geometry);
     occupied.push(geometry);
-    if (!forced) drawnAutoLabels += 1;
+    if (!candidate.bypassBudget) drawnAutoLabels += 1;
   });
 }
 

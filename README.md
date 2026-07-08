@@ -107,8 +107,8 @@ Implemented now:
 - Initial English/Russian web UI localization with a persistent language selector.
 - Web quality-check and source-search workflows use localized status, result, empty-state, and export summary text.
 - Web config/error trace workflows use localized status, counters, empty states, truncation notes, and focused graph titles.
-- Minimal-by-default graph labels with collision-aware, sparse Auto/Focus modes so node cards stay readable without captions covering the graph.
-- Hover labels render as lightweight text, selected-node cards are zoom/density gated, and saved label modes reset when label-density rules change.
+- Off-by-default graph labels with collision-aware, sparse Auto/Focus modes so node cards stay readable without captions covering the graph.
+- Hover labels render only for the node under the pointer, selected-node cards are zoom/density gated, and saved label modes reset when label-density rules change.
 - Web graph viewport HUD for visible node/edge counts, zoom, and layout state during canvas exploration.
 - Keyboard-accessible graph canvas navigation for panning, zooming, fitting, resetting, and pausing layout.
 - Dependency-free web label policy tests guard caption density, saved-mode resets, and interaction label behavior.

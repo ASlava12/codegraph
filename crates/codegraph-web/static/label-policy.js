@@ -42,7 +42,7 @@
     } = options || {};
 
     if (labelMode === "minimal") return false;
-    if (labelMode === "hover") return selected || hovered;
+    if (labelMode === "hover") return hovered;
     if (selected) return zoom >= 2.6 && visibleCount <= 12;
     if (hovered) return zoom >= 3.6 && visibleCount <= 8;
     if (labelMode === "focus") return focused && zoom >= 3.8 && visibleCount <= 6;

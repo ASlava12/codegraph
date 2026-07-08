@@ -44,7 +44,7 @@ test("auto mode only allows labels in very sparse, highly zoomed graphs", () => 
   assert.equal(policy.nodeLabelBudget({ labelMode: "auto", zoom: 3.2, visibleCount: 15 }), 0);
 });
 
-test("hover mode only labels the current interaction target", () => {
+test("hover mode only labels the current hovered target", () => {
   assert.equal(policy.nodeLabelBudget({ labelMode: "hover", zoom: 6, visibleCount: 2 }), 0);
   assert.equal(
     policy.shouldShowNodeLabel({
@@ -54,7 +54,7 @@ test("hover mode only labels the current interaction target", () => {
       visibleCount: 200,
       priority: 9,
     }),
-    true,
+    false,
   );
   assert.equal(
     policy.shouldShowNodeLabel({
