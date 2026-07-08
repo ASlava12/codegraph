@@ -873,6 +873,24 @@ button.cancel-action:hover:not(:disabled) {
   height: 34px;
 }
 
+.page-scope {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.page-scope:empty {
+  display: none;
+}
+
+.page-scope strong {
+  color: #f2c14e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .page-actions {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) 44px;

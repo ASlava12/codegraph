@@ -6756,10 +6756,15 @@ mod tests {
 
         assert!(index.contains("graphHud"));
         assert!(index.contains("graph-hud"));
+        assert!(index.contains("pageScope"));
         assert!(app.contains("renderGraphHud"));
+        assert!(app.contains("renderGraphPageScope"));
         assert!(app.contains("\"graph.zoom\""));
         assert!(app.contains("\"graph.layout\""));
+        assert!(app.contains("\"graph.slice\""));
+        assert!(app.contains("truncated_edges"));
         assert!(styles.contains(".graph-hud"));
+        assert!(styles.contains(".page-scope"));
     }
 
     #[test]

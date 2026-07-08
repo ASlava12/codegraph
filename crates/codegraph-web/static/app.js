@@ -80,8 +80,14 @@ const I18N = {
     "label.edges": "Edges",
     "graph.zoom": "Zoom",
     "graph.layout": "Layout",
+    "graph.slice": "Slice",
     "graph.running": "Running",
     "graph.paused": "Paused",
+    "graph.scopeLoaded": "Loaded {nodes} of {totalNodes} nodes and {edges} of {totalEdges} edges.",
+    "graph.scopeComplete": "Loaded complete visible graph: {nodes} nodes and {edges} edges.",
+    "graph.scopeNodesTruncated": "More nodes are available; use next page, filters, or a higher node limit.",
+    "graph.scopeEdgesTruncated": "More edges are available; raise the edge limit or narrow the filters.",
+    "graph.scopeFocused": "Focused slice: {nodes} nodes and {edges} edges.",
     "aria.graphStage": "Code graph",
     "aria.graphControls": "Graph viewport controls",
     "aria.graphCanvas": "Interactive code graph. Use arrow keys to pan, plus and minus to zoom, Home to fit, 0 to reset, and Space to pause or resume layout.",
@@ -453,8 +459,14 @@ const I18N = {
     "label.edges": "Связи",
     "graph.zoom": "Масштаб",
     "graph.layout": "Раскладка",
+    "graph.slice": "Срез",
     "graph.running": "Идет",
     "graph.paused": "Пауза",
+    "graph.scopeLoaded": "Загружено {nodes} из {totalNodes} узлов и {edges} из {totalEdges} связей.",
+    "graph.scopeComplete": "Загружен полный видимый граф: {nodes} узлов и {edges} связей.",
+    "graph.scopeNodesTruncated": "Доступны ещё узлы; используйте следующую страницу, фильтры или больший лимит узлов.",
+    "graph.scopeEdgesTruncated": "Доступны ещё связи; увеличьте лимит связей или сузьте фильтры.",
+    "graph.scopeFocused": "Фокусный срез: {nodes} узлов и {edges} связей.",
     "aria.graphStage": "Граф кода",
     "aria.graphControls": "Управление областью графа",
     "aria.graphCanvas": "Интерактивный граф кода. Используйте стрелки для сдвига, плюс и минус для масштаба, Home чтобы вписать граф, 0 для сброса и пробел для паузы или продолжения раскладки.",
@@ -881,6 +893,7 @@ const state = {
     totalNodes: 0,
     totalEdges: 0,
     truncatedNodes: false,
+    truncatedEdges: false,
     root: "",
   },
   locale: getInitialLocale(),
@@ -955,6 +968,7 @@ const entryFlowDepthInput = document.querySelector("#entryFlowDepthInput");
 const entryFlowButton = document.querySelector("#entryFlowButton");
 const entryFlowResult = document.querySelector("#entryFlowResult");
 const pageInfo = document.querySelector("#pageInfo");
+const pageScope = document.querySelector("#pageScope");
 const nodeLimitInput = document.querySelector("#nodeLimitInput");
 const edgeLimitInput = document.querySelector("#edgeLimitInput");
 const serverKindInput = document.querySelector("#serverKindInput");
@@ -1219,6 +1233,7 @@ function applyLocale() {
     selectionTitle.textContent = t(selectionTitle.dataset.i18nFallback);
   }
   renderViewportControls();
+  renderGraphPageScope({ focused: Boolean(state.queryFocus) });
   renderOverview();
   renderRuntimeMetrics();
   renderJobQueue();
@@ -2074,6 +2089,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     state.graphPage.nodeLimit = body.node_limit;
     state.graphPage.edgeLimit = body.edge_limit;
     state.graphPage.truncatedNodes = body.truncated_nodes;
+    state.graphPage.truncatedEdges = body.truncated_edges;
     state.graphPage.root = root || state.graphPage.root || pathInput.value.trim() || ".";
     clearSelection({ syncUrl: false, render: false });
     state.hoveredId = null;
@@ -2403,6 +2419,7 @@ function applySemanticEnrichResult(result, root) {
   state.graphPage.totalNodes = state.graph.nodes.length;
   state.graphPage.totalEdges = state.graph.edges.length;
   state.graphPage.truncatedNodes = false;
+  state.graphPage.truncatedEdges = false;
   clearSelection({ render: false });
   state.edgeSelectionCache.clear();
   state.edgeSelectionNodeCache.clear();
@@ -2414,6 +2431,7 @@ function applySemanticEnrichResult(result, root) {
   checkResult.innerHTML = "";
   rootLabel.textContent = state.graphPage.root;
   initializeGraph({ preserveView: false });
+  updateGraphPageControls();
   renderOverview();
   renderSemanticEnrichReport(result);
   setStatus("ready");
@@ -3271,6 +3289,37 @@ function updateGraphPageControls() {
   pagePrevButton.disabled = state.graphPage.nodeOffset === 0;
   pageNextButton.disabled = !state.graphPage.truncatedNodes;
   pageReloadButton.disabled = false;
+  renderGraphPageScope();
+}
+
+function renderGraphPageScope(options = {}) {
+  if (!state.graphPage.root && state.graph.nodes.length === 0 && state.graph.edges.length === 0) {
+    pageScope.innerHTML = "";
+    return;
+  }
+  const focused = options.focused || Boolean(state.queryFocus);
+  const nodes = formatNumber(state.graph.nodes.length);
+  const edges = formatNumber(state.graph.edges.length);
+  const totalNodes = formatNumber(state.graphPage.totalNodes);
+  const totalEdges = formatNumber(state.graphPage.totalEdges);
+  const warnings = [];
+
+  if (focused) {
+    pageScope.innerHTML = `<span>${escapeHtml(t("graph.scopeFocused", { nodes, edges }))}</span>`;
+    return;
+  }
+
+  const message =
+    state.graphPage.truncatedNodes || state.graphPage.truncatedEdges
+      ? t("graph.scopeLoaded", { nodes, totalNodes, edges, totalEdges })
+      : t("graph.scopeComplete", { nodes, edges });
+  if (state.graphPage.truncatedNodes) warnings.push(t("graph.scopeNodesTruncated"));
+  if (state.graphPage.truncatedEdges) warnings.push(t("graph.scopeEdgesTruncated"));
+
+  pageScope.innerHTML = `
+    <span>${escapeHtml(message)}</span>
+    ${warnings.map((warning) => `<strong>${escapeHtml(warning)}</strong>`).join("")}
+  `;
 }
 
 async function runEntryFlowTrace() {
@@ -4178,6 +4227,7 @@ function showIncrementalScanGraph(scan) {
   state.graphPage.totalNodes = state.graph.nodes.length;
   state.graphPage.totalEdges = state.graph.edges.length;
   state.graphPage.truncatedNodes = false;
+  state.graphPage.truncatedEdges = false;
   clearSelection({ render: false });
   state.hoveredId = null;
   state.hoveredEdgeKey = null;
@@ -4188,6 +4238,7 @@ function showIncrementalScanGraph(scan) {
     nodes: state.graph.nodes.length,
     files: Number(plan.rescan_files || 0),
   });
+  renderGraphPageScope({ focused: true });
   pagePrevButton.disabled = true;
   pageNextButton.disabled = true;
   pageReloadButton.disabled = false;
@@ -4201,6 +4252,7 @@ function showIncrementalMergePreviewGraph(preview) {
   state.graphPage.totalNodes = state.graph.nodes.length;
   state.graphPage.totalEdges = state.graph.edges.length;
   state.graphPage.truncatedNodes = false;
+  state.graphPage.truncatedEdges = false;
   clearSelection({ render: false });
   state.hoveredId = null;
   state.hoveredEdgeKey = null;
@@ -4211,6 +4263,7 @@ function showIncrementalMergePreviewGraph(preview) {
     nodes: state.graph.nodes.length,
     reused: Number(merge.reused_nodes || 0),
   });
+  renderGraphPageScope({ focused: true });
   pagePrevButton.disabled = true;
   pageNextButton.disabled = true;
   pageReloadButton.disabled = false;
@@ -5224,6 +5277,7 @@ function showFocusedGraph(result, label, selectedId = null, options = {}) {
   state.graphPage.totalNodes = result.total_nodes;
   state.graphPage.totalEdges = result.total_edges;
   state.graphPage.truncatedNodes = false;
+  state.graphPage.truncatedEdges = Boolean(result.truncated_edges);
   state.selectedEdgeKey = null;
   state.queryFocus = null;
   queryResult.innerHTML = renderQueryResult(result);
@@ -5233,6 +5287,7 @@ function showFocusedGraph(result, label, selectedId = null, options = {}) {
   rootLabel.textContent = label;
   initializeGraph({ preserveView: false });
   pageInfo.textContent = `focus ${result.nodes.length} / ${result.total_nodes}`;
+  renderGraphPageScope({ focused: true });
   pagePrevButton.disabled = true;
   pageNextButton.disabled = true;
   pageReloadButton.disabled = false;
@@ -5675,9 +5730,11 @@ function renderViewportControls() {
 function renderGraphHud() {
   const zoom = `${Math.round(state.zoom * 100)}%`;
   const layout = state.layoutPaused ? t("graph.paused") : t("graph.running");
+  const slice = graphSliceLabel();
   const items = [
     [t("label.nodes"), formatNumber(state.visibleNodes.length)],
     [t("label.edges"), formatNumber(state.visibleEdges.length)],
+    [t("graph.slice"), slice],
     [t("graph.zoom"), zoom],
     [t("graph.layout"), layout],
   ];
@@ -5691,6 +5748,13 @@ function renderGraphHud() {
       `,
     )
     .join("");
+}
+
+function graphSliceLabel() {
+  if (state.queryFocus) {
+    return `${formatNumber(state.visibleNodes.length)} · ${formatNumber(state.visibleEdges.length)}`;
+  }
+  return `${formatNumber(state.graph.nodes.length)}/${formatNumber(state.graphPage.totalNodes)} · ${formatNumber(state.graph.edges.length)}/${formatNumber(state.graphPage.totalEdges)}`;
 }
 
 function zoomAtCanvasCenter(scale) {
