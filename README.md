@@ -29,14 +29,14 @@ Implemented now:
 - Filesystem scanner with default build/vendor ignore rules.
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, PHP, and Bash.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
-- Manifest-defined entrypoints from Cargo, npm, Go, Python, setup.py, Composer, and CMake project metadata.
+- Manifest-defined entrypoints from Cargo, npm, Go, Python, setup.py/setup.cfg, Composer, and CMake project metadata.
 - Shebang-defined script entrypoints for Bash, Python, Node.js, and PHP scripts, including extensionless CLI files.
 - Framework route entrypoints for common Python, JavaScript/TypeScript, Rust, Go, and PHP web route declarations.
 - Rust/Axum route entrypoints handle multiline `.route(...)` calls and ignore string literal route markers.
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
 - Local import/include resolution for relative JavaScript/TypeScript imports and CommonJS requires, Python relative/absolute project imports, Go module-local imports, quoted C/C++ includes with CMake and compile database include directories, PHP include/require paths, Bash source paths, and common Rust module paths.
-- Manifest dependency extraction from Cargo, npm, Go, Python, setup.py, Composer, vcpkg, and Conan projects.
+- Manifest dependency extraction from Cargo, npm, Go, Python, setup.py/setup.cfg, Composer, vcpkg, and Conan projects.
 - Heuristic config reads, environment reads, and potential error/exception constructs.
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
@@ -764,7 +764,7 @@ Supported package manifests:
 - Rust/Cargo: `Cargo.toml`
 - JavaScript/TypeScript/npm-compatible: `package.json`
 - Go modules: `go.mod`
-- Python: `requirements.txt`, `pyproject.toml`, `setup.py`
+- Python: `requirements.txt`, `pyproject.toml`, `setup.py`, `setup.cfg`
 - PHP/Composer: `composer.json`
 - C/C++ package managers: `vcpkg.json`, `conanfile.txt`
 
@@ -779,8 +779,8 @@ one exists; path-only workspace dependencies omit `dependency_version`.
 
 Manifest entrypoints are represented as `entrypoint` nodes linked from the
 repository root with exact `entrypoint` edges. Examples include Cargo binaries,
-npm scripts, Python project and setup.py console scripts, Composer scripts, and
-Composer binaries.
+npm scripts, Python project and setup.py/setup.cfg console scripts, Composer
+scripts, and Composer binaries.
 When a manifest target can be mapped back to code, the entrypoint node also
 emits `references` edges with metadata such as `relation=entrypoint_file` or
 `relation=entrypoint_function`; traces follow these edges before continuing into

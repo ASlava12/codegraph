@@ -2176,6 +2176,7 @@ fn manifest_dependencies(
         Some("requirements.txt") => requirements_dependencies(source),
         Some("pyproject.toml") => pyproject_dependencies(source),
         Some("setup.py") => setup_py_dependencies(source),
+        Some("setup.cfg") => setup_cfg_dependencies(source),
         Some("composer.json") => composer_dependencies(source),
         Some("vcpkg.json") => vcpkg_dependencies(source),
         Some("conanfile.txt") => conanfile_txt_dependencies(source),
@@ -2190,6 +2191,7 @@ fn manifest_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
         Some("go.mod") => go_mod_entrypoints(path, source),
         Some("pyproject.toml") => pyproject_entrypoints(source),
         Some("setup.py") => setup_py_entrypoints(source),
+        Some("setup.cfg") => setup_cfg_entrypoints(source),
         Some("composer.json") => composer_entrypoints(source),
         Some("CMakeLists.txt") => cmake_entrypoints(source),
         _ => Vec::new(),
@@ -2353,6 +2355,22 @@ fn pyproject_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
 
 fn setup_py_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
     setup_py_console_scripts(source)
+        .into_iter()
+        .filter_map(|entrypoint| {
+            let (name, target) = python_console_script_name_and_target(&entrypoint)?;
+            Some(manifest_entrypoint(
+                format!("python console_script:{name}"),
+                "console_script",
+                "python",
+                Some(target),
+            ))
+        })
+        .collect()
+}
+
+fn setup_cfg_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    let sections = setup_cfg_sections(source);
+    setup_cfg_values(&sections, "options.entry_points", "console_scripts")
         .into_iter()
         .filter_map(|entrypoint| {
             let (name, target) = python_console_script_name_and_target(&entrypoint)?;
@@ -2587,6 +2605,65 @@ fn collect_setup_py_requirement_key(
     dependencies: &mut Vec<ManifestDependency>,
 ) {
     for requirement in setup_py_sequence_string_values(source, key) {
+        if let Some((name, version)) = package_name_and_version_from_requirement(&requirement) {
+            dependencies.push(manifest_dependency(
+                name,
+                dependency_kind,
+                "python",
+                version,
+            ));
+        }
+    }
+}
+
+fn setup_cfg_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let sections = setup_cfg_sections(source);
+    let mut dependencies = Vec::new();
+    collect_setup_cfg_requirement_key(
+        &sections,
+        "options",
+        "install_requires",
+        "runtime",
+        &mut dependencies,
+    );
+    collect_setup_cfg_requirement_key(
+        &sections,
+        "options",
+        "setup_requires",
+        "build",
+        &mut dependencies,
+    );
+    collect_setup_cfg_requirement_key(
+        &sections,
+        "options",
+        "tests_require",
+        "test",
+        &mut dependencies,
+    );
+
+    if let Some(extras) = sections.get("options.extras_require") {
+        for requirements in extras.values() {
+            for requirement in requirements {
+                if let Some((name, version)) =
+                    package_name_and_version_from_requirement(requirement)
+                {
+                    dependencies.push(manifest_dependency(name, "optional", "python", version));
+                }
+            }
+        }
+    }
+
+    dependencies
+}
+
+fn collect_setup_cfg_requirement_key(
+    sections: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    section: &str,
+    key: &str,
+    dependency_kind: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    for requirement in setup_cfg_values(sections, section, key) {
         if let Some((name, version)) = package_name_and_version_from_requirement(&requirement) {
             dependencies.push(manifest_dependency(
                 name,
@@ -3636,6 +3713,103 @@ fn setup_py_console_scripts(source: &str) -> Vec<String> {
         .into_iter()
         .flat_map(|value| extract_python_quoted_strings(&value))
         .collect()
+}
+
+fn setup_cfg_sections(source: &str) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
+    let mut sections: BTreeMap<String, BTreeMap<String, Vec<String>>> = BTreeMap::new();
+    let mut current_section: Option<String> = None;
+    let mut current_key: Option<String> = None;
+
+    for raw_line in source.lines() {
+        let is_continuation = raw_line.starts_with([' ', '\t']);
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+
+        if let Some(section) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
+            let section = section.trim().to_ascii_lowercase();
+            if section.is_empty() {
+                current_section = None;
+            } else {
+                sections.entry(section.clone()).or_default();
+                current_section = Some(section);
+            }
+            current_key = None;
+            continue;
+        }
+
+        let Some(section) = current_section.as_deref() else {
+            continue;
+        };
+
+        if is_continuation {
+            let Some(key) = current_key.as_deref() else {
+                continue;
+            };
+            let value = setup_cfg_clean_value(line);
+            if !value.is_empty() {
+                sections
+                    .entry(section.to_string())
+                    .or_default()
+                    .entry(key.to_string())
+                    .or_default()
+                    .push(value);
+            }
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=').or_else(|| line.split_once(':')) else {
+            current_key = None;
+            continue;
+        };
+        let key = key.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            current_key = None;
+            continue;
+        }
+        sections
+            .entry(section.to_string())
+            .or_default()
+            .entry(key.clone())
+            .or_default();
+        current_key = Some(key.clone());
+        let value = setup_cfg_clean_value(value);
+        if !value.is_empty() {
+            sections
+                .entry(section.to_string())
+                .or_default()
+                .entry(key)
+                .or_default()
+                .push(value);
+        }
+    }
+
+    sections
+}
+
+fn setup_cfg_values(
+    sections: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    section: &str,
+    key: &str,
+) -> Vec<String> {
+    sections
+        .get(&section.to_ascii_lowercase())
+        .and_then(|values| values.get(&key.to_ascii_lowercase()))
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn setup_cfg_clean_value(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string()
 }
 
 fn setup_py_keyword_value(source: &str, key: &str) -> Option<String> {
@@ -5576,6 +5750,7 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
                 | "go.mod"
                 | "pyproject.toml"
                 | "setup.py"
+                | "setup.cfg"
                 | "requirements.txt"
                 | "composer.json"
                 | "vcpkg.json"
@@ -6549,6 +6724,25 @@ setup(
         )
         .unwrap();
         fs::write(
+            root.join("setup.cfg"),
+            r#"[metadata]
+name = legacy-cfg-demo
+
+[options]
+install_requires =
+    httpx>=0.27
+setup_requires =
+    cython>=3
+tests_require =
+    hypothesis>=6
+
+[options.extras_require]
+cli =
+    rich>=13
+"#,
+        )
+        .unwrap();
+        fs::write(
             root.join("composer.json"),
             r#"{
   "require": {
@@ -6616,6 +6810,10 @@ gtest/1.14.0
             "pytest",
             "ruff",
             "mkdocs",
+            "httpx",
+            "cython",
+            "hypothesis",
+            "rich",
             "monolog/monolog",
             "fmt",
             "zlib",
@@ -6720,6 +6918,13 @@ gtest/1.14.0
                 && edge
                     .metadata
                     .get("dependency_version")
+                    .is_some_and(|value| value == ">=0.27")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("dependency_version")
                     .is_some_and(|value| value == "[standard]>=0.24")
         }));
         let wheel_dep = graph
@@ -6734,6 +6939,23 @@ gtest/1.14.0
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == EdgeKind::DependsOn
                 && edge.target == wheel_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "build")
+        }));
+        let cython_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "python:cython")
+            })
+            .expect("missing setup.cfg cython dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == cython_dep.id
                 && edge
                     .metadata
                     .get("dependency_kind")
@@ -6756,6 +6978,23 @@ gtest/1.14.0
                     .get("dependency_kind")
                     .is_some_and(|value| value == "test")
         }));
+        let hypothesis_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "python:hypothesis")
+            })
+            .expect("missing setup.cfg hypothesis dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == hypothesis_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "test")
+        }));
         let ruff_dep = graph
             .nodes
             .iter()
@@ -6768,6 +7007,23 @@ gtest/1.14.0
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == EdgeKind::DependsOn
                 && edge.target == ruff_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "optional")
+        }));
+        let rich_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "python:rich")
+            })
+            .expect("missing setup.cfg rich dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == rich_dep.id
                 && edge
                     .metadata
                     .get("dependency_kind")
@@ -6944,6 +7200,17 @@ setup(
         )
         .unwrap();
         fs::write(
+            root.join("setup.cfg"),
+            r#"[metadata]
+name = legacy-cfg-demo
+
+[options.entry_points]
+console_scripts =
+    cfglegacy = codegraph.cli:main
+"#,
+        )
+        .unwrap();
+        fs::write(
             root.join("composer.json"),
             r#"{
   "bin": ["bin/codegraph"],
@@ -6984,6 +7251,7 @@ add_executable(imported_tool IMPORTED)
             "npm script:test",
             "python console_script:cg",
             "python console_script:legacy",
+            "python console_script:cfglegacy",
             "composer bin:bin/codegraph",
             "composer script:analyse",
             "cmake executable:demo_c",
@@ -7014,6 +7282,11 @@ add_executable(imported_tool IMPORTED)
         let python_entrypoint = node_id(&graph, NodeKind::Entrypoint, "python console_script:cg");
         let setup_py_entrypoint =
             node_id(&graph, NodeKind::Entrypoint, "python console_script:legacy");
+        let setup_cfg_entrypoint = node_id(
+            &graph,
+            NodeKind::Entrypoint,
+            "python console_script:cfglegacy",
+        );
         let python_main = function_id_in_file(&graph, "main", "codegraph/cli.py");
         let composer_entrypoint =
             node_id(&graph, NodeKind::Entrypoint, "composer bin:bin/codegraph");
@@ -7060,6 +7333,13 @@ add_executable(imported_tool IMPORTED)
         assert!(has_entrypoint_reference(
             &graph,
             setup_py_entrypoint,
+            python_main,
+            "entrypoint_function",
+            Confidence::Heuristic,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            setup_cfg_entrypoint,
             python_main,
             "entrypoint_function",
             Confidence::Heuristic,
