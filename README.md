@@ -109,6 +109,7 @@ Implemented now:
 - Initial English/Russian web UI localization with a persistent language selector.
 - Static web landmarks and pagination controls expose localized ARIA labels for English/Russian accessibility.
 - Web quality-check and source-search workflows use localized status, result, empty-state, and export summary text.
+- Web path-query workflow uses localized validation, loading, error fallback, and result labels in English/Russian UI sessions.
 - Web source-search match cards use localized titles and loading states for English/Russian UI sessions.
 - Web entrypoint trace workflow uses localized status, counters, empty states, truncation notes, export summary text, and focused graph titles.
 - Web config/error trace workflows use localized status, counters, empty states, truncation notes, and focused graph titles.

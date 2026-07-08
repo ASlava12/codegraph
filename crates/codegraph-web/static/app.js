@@ -431,6 +431,10 @@ const I18N = {
     "sourceSearch.matchCount": "{count} matches",
     "sourceSearch.truncated": "truncated",
     "sourceSearch.noMatches": "No source matches.",
+    "path.enterEndpoints": "Enter both path endpoints.",
+    "path.finding": "Finding path...",
+    "path.failedFallback": "path query failed",
+    "path.resultLabel": "Path",
     "trace.depth": "depth {depth}",
     "trace.pathCount": "{count} paths",
     "trace.traceTruncated": "Trace truncated.",
@@ -963,6 +967,10 @@ const I18N = {
     "sourceSearch.matchCount": "совпадений: {count}",
     "sourceSearch.truncated": "результат усечён",
     "sourceSearch.noMatches": "Совпадений в коде нет.",
+    "path.enterEndpoints": "Введите обе конечные точки пути.",
+    "path.finding": "Ищу путь...",
+    "path.failedFallback": "запрос пути не удался",
+    "path.resultLabel": "Путь",
     "trace.depth": "глубина {depth}",
     "trace.pathCount": "путей: {count}",
     "trace.traceTruncated": "Трасса усечена.",
@@ -5322,7 +5330,7 @@ async function runPathQuery() {
   const from = pathFromInput.value.trim();
   const to = pathToInput.value.trim();
   if (!from || !to) {
-    pathResult.innerHTML = '<p class="empty">Enter both path endpoints.</p>';
+    pathResult.innerHTML = `<p class="empty">${escapeHtml(t("path.enterEndpoints"))}</p>`;
     return;
   }
 
@@ -5342,7 +5350,7 @@ async function runPathQuery() {
   state.pathRequest += 1;
   const requestId = state.pathRequest;
   pathButton.disabled = true;
-  pathResult.innerHTML = '<p class="empty">Finding path...</p>';
+  pathResult.innerHTML = `<p class="empty">${escapeHtml(t("path.finding"))}</p>`;
 
   const params = new URLSearchParams({
     path: pathInput.value.trim() || ".",
@@ -5354,9 +5362,9 @@ async function runPathQuery() {
     const body = await response.json();
     if (requestId !== state.pathRequest) return;
     if (!response.ok) {
-      throw new Error(apiErrorMessage(body, response, "path query failed"));
+      throw new Error(apiErrorMessage(body, response, t("path.failedFallback")));
     }
-    pathResult.innerHTML = renderQueryResult(body, { label: "Path" });
+    pathResult.innerHTML = renderQueryResult(body, { label: t("path.resultLabel") });
     attachQueryNavigation(pathResult);
     attachEdgeExplainActions(pathResult);
     attachQueryFocusActions(pathResult, body);
