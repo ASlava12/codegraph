@@ -6786,7 +6786,9 @@ mod tests {
         assert!(app.contains("ambiguous_call_resolution"));
         assert!(app.contains("ambiguous_entrypoint_target"));
         assert!(index.contains("insights kind:ambiguous_call_resolution"));
+        assert!(index.contains("insights kind:ambiguous_entrypoint_target"));
         assert!(app.contains("\"queryPreset.ambiguousCalls\""));
+        assert!(app.contains("\"queryPreset.ambiguousEntrypoints\""));
         assert!(app.contains("\"check.running\""));
         assert!(app.contains("\"sourceSearch.enterText\""));
         assert!(app.contains("\"sourceSearch.noMatches\""));
