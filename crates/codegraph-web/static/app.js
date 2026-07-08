@@ -434,6 +434,9 @@ const I18N = {
     "sourceSearch.matchCount": "{count} matches",
     "sourceSearch.truncated": "truncated",
     "sourceSearch.noMatches": "No source matches.",
+    "query.enterExpression": "Enter a query expression.",
+    "query.running": "Running query...",
+    "query.tooLong": "Graph query is too long: {count} characters, maximum {limit}.",
     "path.enterEndpoints": "Enter both path endpoints.",
     "path.finding": "Finding path...",
     "path.failedFallback": "path query failed",
@@ -973,6 +976,9 @@ const I18N = {
     "sourceSearch.matchCount": "совпадений: {count}",
     "sourceSearch.truncated": "результат усечён",
     "sourceSearch.noMatches": "Совпадений в коде нет.",
+    "query.enterExpression": "Введите выражение запроса.",
+    "query.running": "Выполняю запрос...",
+    "query.tooLong": "Запрос к графу слишком длинный: {count} символов, максимум {limit}.",
     "path.enterEndpoints": "Введите обе конечные точки пути.",
     "path.finding": "Ищу путь...",
     "path.failedFallback": "запрос пути не удался",
@@ -4290,14 +4296,18 @@ function seedGraphLayout() {
 async function runGraphQuery(options = {}) {
   const expression = queryInput.value.trim();
   if (!expression) {
-    queryResult.innerHTML = '<p class="empty">Enter a query expression.</p>';
+    queryResult.innerHTML = `<p class="empty">${escapeHtml(t("query.enterExpression"))}</p>`;
+    return null;
+  }
+  if (!graphQueryWithinClientLimit(expression, queryResult)) {
+    clearLastQueryResult();
     return null;
   }
 
   state.queryRequest += 1;
   const requestId = state.queryRequest;
   queryButton.disabled = true;
-  queryResult.innerHTML = '<p class="empty">Running query...</p>';
+  queryResult.innerHTML = `<p class="empty">${escapeHtml(t("query.running"))}</p>`;
 
   const params = new URLSearchParams({
     path: pathInput.value.trim() || ".",
@@ -5319,6 +5329,16 @@ function renderCacheDiffGroup(label, items, renderItem) {
   `;
 }
 
+function graphQueryWithinClientLimit(expression, target) {
+  const limit = Number(state.capabilities?.limits?.max_graph_query_length || 0);
+  if (limit <= 0 || expression.length <= limit) return true;
+  target.innerHTML = `<p class="error-text">${escapeHtml(t("query.tooLong", {
+    count: formatNumber(expression.length),
+    limit: formatNumber(limit),
+  }))}</p>`;
+  return false;
+}
+
 function renderCacheDiffEntry(entry) {
   return `
     <div class="query-item cache-diff-item">
@@ -5357,6 +5377,10 @@ async function runPathQuery() {
   ]
     .filter(Boolean)
     .join(" ");
+  if (!graphQueryWithinClientLimit(expression, pathResult)) {
+    clearLastPathResult();
+    return;
+  }
 
   state.pathRequest += 1;
   const requestId = state.pathRequest;

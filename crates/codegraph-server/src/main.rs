@@ -6795,6 +6795,13 @@ mod tests {
         assert!(app.contains("\"check.running\""));
         assert!(app.contains("\"sourceSearch.enterText\""));
         assert!(app.contains("\"sourceSearch.noMatches\""));
+        assert!(app.contains("\"query.enterExpression\""));
+        assert!(app.contains("\"query.running\""));
+        assert!(app.contains("\"query.tooLong\""));
+        assert!(app.contains("graphQueryWithinClientLimit(expression, queryResult)"));
+        assert!(app.contains("clearLastQueryResult();"));
+        assert!(app.contains("graphQueryWithinClientLimit(expression, pathResult)"));
+        assert!(app.contains("max_graph_query_length"));
         assert!(app.contains("\"path.enterEndpoints\""));
         assert!(app.contains("\"path.finding\""));
         assert!(app.contains("\"path.failedFallback\""));
