@@ -6814,6 +6814,11 @@ mod tests {
         assert!(app.contains("\"kind.conflicting_dependency_declaration\""));
         assert!(app.contains("\"mixed dependency scope\""));
         assert!(app.contains("\"смешанный scope зависимости\""));
+        assert!(app.contains("phpImportPackage"));
+        assert!(app.contains("phpNonComposerNamespaceRoots"));
+        assert!(app.contains("target?.metadata?.import_scope === \"local\""));
+        assert!(app.contains("Symfony"));
+        assert!(app.contains("composer"));
         assert!(app.contains("\"check.running\""));
         assert!(app.contains("\"sourceSearch.enterText\""));
         assert!(app.contains("\"sourceSearch.noMatches\""));
@@ -7228,7 +7233,12 @@ mod tests {
             schema
                 .enum_values
                 .get("graph_query_package_term")
-                .is_some_and(|terms| terms.contains(&"package") && terms.contains(&"ecosystem"))
+                .is_some_and(|terms| {
+                    terms.contains(&"package")
+                        && terms.contains(&"ecosystem")
+                        && terms.contains(&"version_kind")
+                        && terms.contains(&"dependency_version_kind")
+                })
         );
         assert!(
             schema

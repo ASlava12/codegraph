@@ -155,6 +155,7 @@ Implemented now:
 - Web graph page controls backed by server-side paging, search, kind, item, language, edge, confidence, relation, and source filters.
 - Web graph page controls can page dense edge slices independently with the `/api/graph` `edge_offset` contract.
 - Web graph and insight filter inputs use API schema enum suggestions for node kinds, edge kinds, confidence levels, insight severities, and insight kinds.
+- Web fallback dependency insights recognize local import scopes and common PHP/Composer namespace imports while server reports are loading or unavailable.
 - Web graph viewport controls for zooming, fitting visible nodes, restarting layout, and pausing layout simulation.
 - Web graph page and viewport HUD show loaded-vs-total slice status so large-repository canvases are clearly marked as partial views.
 - Web graph minimap shows graph position and supports click/drag recentering during large-canvas exploration.

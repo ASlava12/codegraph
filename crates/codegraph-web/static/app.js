@@ -6830,6 +6830,7 @@ function addUndeclaredImportInsights(graph, insights) {
     .forEach((edge) => {
       const source = nodeById.get(edge.source);
       const target = nodeById.get(edge.target);
+      if (target?.metadata?.import_scope === "local") return;
       const candidate = importPackageCandidate(target?.metadata?.language, target?.label || "");
       if (!candidate) return;
       if (!declaredEcosystems.has(candidate.ecosystem)) return;
@@ -6856,6 +6857,8 @@ function importPackageCandidate(language, label) {
       return jsImportPackage(label);
     case "go":
       return goImportPackage(label);
+    case "php":
+      return phpImportPackage(label);
     default:
       return null;
   }
@@ -6908,6 +6911,71 @@ function goImportPackage(label) {
     }
   }
   return null;
+}
+
+function phpImportPackage(label) {
+  const namespaces = phpImportNamespaces(label);
+  for (const namespace of namespaces) {
+    const candidate = phpNamespacePackage(namespace);
+    if (candidate) return { ecosystem: "composer", package: candidate };
+  }
+  return null;
+}
+
+function phpImportNamespaces(label) {
+  let value = String(label || "").trim().replace(/;$/, "").trim();
+  if (value.startsWith("use ")) value = value.slice(4).trim();
+  if (value.startsWith("function ")) value = value.slice(9).trim();
+  if (value.startsWith("const ")) value = value.slice(6).trim();
+
+  const groupStart = value.indexOf("{");
+  const groupEnd = value.indexOf("}");
+  if (groupStart >= 0 && groupEnd > groupStart) {
+    const prefix = value.slice(0, groupStart).trim().replace(/\\+$/, "");
+    return value
+      .slice(groupStart + 1, groupEnd)
+      .split(",")
+      .map((part) => phpNamespaceWithoutAlias(part))
+      .filter(Boolean)
+      .map((part) => (prefix ? `${prefix}\\${part}` : part));
+  }
+
+  const namespace = phpNamespaceWithoutAlias(value);
+  return namespace ? [namespace] : [];
+}
+
+function phpNamespaceWithoutAlias(value) {
+  return String(value || "")
+    .split(/\s+as\s+/i)[0]
+    .trim()
+    .replace(/^\\+/, "");
+}
+
+function phpNamespacePackage(namespace) {
+  const parts = String(namespace || "")
+    .split("\\")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length < 2 || phpNonComposerNamespaceRoots.has(parts[0])) return null;
+
+  if (parts[0] === "Monolog") return "monolog/monolog";
+  if (parts[0] === "PHPUnit") return "phpunit/phpunit";
+  if (parts[0] === "GuzzleHttp") return "guzzlehttp/guzzle";
+  if (parts[0] === "Symfony" && parts[1] === "Component" && parts[2]) {
+    return `symfony/${composerPackagePart(parts[2])}`;
+  }
+  if (parts[0] === "Psr" && parts[1]) return `psr/${composerPackagePart(parts[1])}`;
+
+  return `${composerPackagePart(parts[0])}/${composerPackagePart(parts[1])}`;
+}
+
+function composerPackagePart(value) {
+  return String(value || "")
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/[_.-]+/g, "-")
+    .toLowerCase()
+    .replace(/^-+|-+$/g, "");
 }
 
 function isDeclaredPackage(declared, ecosystem, packageName) {
@@ -6979,6 +7047,31 @@ const nodeBuiltinModules = new Set([
   "util",
   "vm",
   "zlib",
+]);
+
+const phpNonComposerNamespaceRoots = new Set([
+  "App",
+  "Tests",
+  "Test",
+  "Database",
+  "Config",
+  "DateTime",
+  "DateTimeImmutable",
+  "DateTimeInterface",
+  "DateInterval",
+  "DateTimeZone",
+  "Exception",
+  "RuntimeException",
+  "InvalidArgumentException",
+  "Throwable",
+  "Closure",
+  "ArrayObject",
+  "Iterator",
+  "IteratorAggregate",
+  "Traversable",
+  "Countable",
+  "JsonSerializable",
+  "PDO",
 ]);
 
 const pythonStdlibPackages = new Set([

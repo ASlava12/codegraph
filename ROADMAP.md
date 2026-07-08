@@ -113,6 +113,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect modern Poetry dependency groups from `pyproject.toml`.
 - [x] Detect Composer `composer.lock` runtime and dev locked dependencies.
 - [x] Match PHP namespace imports to Composer dependencies for dependency consistency insights.
+- [x] Keep web fallback dependency insights aligned with PHP/Composer namespace imports and local import scopes.
 - [x] Detect C/C++ package manifest dependencies from `vcpkg.json` and `conanfile.txt`.
 - [x] Detect CMake `find_package(...)` dependencies and match them to C/C++ include usage.
 - [x] Detect duplicate entrypoint labels that make startup traces ambiguous.
