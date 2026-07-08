@@ -128,6 +128,7 @@ Implemented now:
 - Agent-friendly hotspot graph queries for focused high-degree dependency slices.
 - Agent-friendly source search command, API, and web panel for compact matching snippets.
 - Web source-search matches can open the matching file's graph slice directly for dependency exploration.
+- Web source-search results can be downloaded as JSON with query, path filter, matches, and context snippets.
 - Edge explanation command, API, and web controls for confidence/provenance evidence.
 - Path queries for finding directed dependency paths between labels or node ids.
 - Confidence-aware edge queries and UI edge labels for fact provenance.

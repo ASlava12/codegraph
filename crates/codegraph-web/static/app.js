@@ -158,6 +158,7 @@ const I18N = {
     "button.downloadQueryResult": "Download Result",
     "button.downloadInsights": "Download Insights",
     "button.downloadCheck": "Download Check",
+    "button.downloadSourceResults": "Download Results",
     "button.graphFile": "Graph File",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
@@ -335,6 +336,8 @@ const I18N = {
     "export.queryResult": "Query Result JSON",
     "export.insights": "Insights JSON",
     "export.check": "Check Result JSON",
+    "export.sourceSearch": "Source Search JSON",
+    "export.noSourceSearch": "Run source search before exporting results.",
     "export.noCheck": "Run a quality check before exporting its result.",
     "export.noQueryResult": "Run a graph query before exporting its result.",
     "export.noSlice": "No visible graph slice to export.",
@@ -559,6 +562,7 @@ const I18N = {
     "button.downloadQueryResult": "Скачать результат",
     "button.downloadInsights": "Скачать insights",
     "button.downloadCheck": "Скачать проверку",
+    "button.downloadSourceResults": "Скачать результаты",
     "button.graphFile": "Граф файла",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
@@ -736,6 +740,8 @@ const I18N = {
     "export.queryResult": "JSON результата запроса",
     "export.insights": "JSON insights",
     "export.check": "JSON проверки",
+    "export.sourceSearch": "JSON поиска в коде",
+    "export.noSourceSearch": "Сначала выполните поиск в коде.",
     "export.noCheck": "Сначала запустите проверку качества.",
     "export.noQueryResult": "Сначала выполните запрос к графу.",
     "export.noSlice": "Нет видимого среза графа для экспорта.",
@@ -963,6 +969,7 @@ const state = {
   queryHistory: getInitialQueryHistory(),
   lastQueryResult: null,
   lastCheckResult: null,
+  lastSourceSearchResult: null,
   pendingSelectionLink: null,
   pendingQueryLink: null,
   pendingGraphPageLink: false,
@@ -1066,6 +1073,7 @@ const queryResult = document.querySelector("#queryResult");
 const sourceSearchInput = document.querySelector("#sourceSearchInput");
 const sourcePathFilterInput = document.querySelector("#sourcePathFilterInput");
 const sourceSearchButton = document.querySelector("#sourceSearchButton");
+const sourceSearchExportButton = document.querySelector("#sourceSearchExportButton");
 const sourceSearchResult = document.querySelector("#sourceSearchResult");
 const cacheDiffStatus = document.querySelector("#cacheDiffStatus");
 const cacheDiffLimitInput = document.querySelector("#cacheDiffLimitInput");
@@ -1161,6 +1169,7 @@ document.querySelectorAll("[data-query-preset]").forEach((button) => {
   });
 });
 sourceSearchButton.addEventListener("click", () => runSourceSearch());
+sourceSearchExportButton.addEventListener("click", () => exportLastSourceSearchResult());
 for (const input of [sourceSearchInput, sourcePathFilterInput]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") runSourceSearch();
@@ -1338,6 +1347,7 @@ function applyLocale() {
   renderQueryHistory();
   renderQueryExportState();
   renderCheckExportState();
+  renderSourceSearchExportState();
   renderSelection();
   draw();
 }
@@ -2064,6 +2074,7 @@ async function scan() {
   clearLastCheckResult();
   checkResult.innerHTML = "";
   clearLastQueryResult();
+  clearLastSourceSearchResult();
   exportResult.innerHTML = "";
   if (state.scanEvents) {
     state.scanEvents.close();
@@ -3999,6 +4010,14 @@ async function runSourceSearch() {
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "source search failed"));
     }
+    state.lastSourceSearchResult = {
+      generated_at: new Date().toISOString(),
+      root: pathInput.value.trim() || ".",
+      query,
+      path_filter: pathFilter,
+      result: body,
+    };
+    renderSourceSearchExportState();
     sourceSearchResult.innerHTML = renderSourceSearchResult(body);
     attachSourceSearchActions(sourceSearchResult, body);
   } catch (error) {
@@ -4009,6 +4028,43 @@ async function runSourceSearch() {
       sourceSearchButton.disabled = false;
     }
   }
+}
+
+function renderSourceSearchExportState() {
+  sourceSearchExportButton.disabled = !state.lastSourceSearchResult;
+}
+
+function clearLastSourceSearchResult() {
+  state.lastSourceSearchResult = null;
+  renderSourceSearchExportState();
+}
+
+function exportLastSourceSearchResult() {
+  if (!state.lastSourceSearchResult) {
+    sourceSearchResult.innerHTML = `<p class="empty">${escapeHtml(t("export.noSourceSearch"))}</p>`;
+    renderSourceSearchExportState();
+    return;
+  }
+
+  const payload = {
+    schema: "codegraph.source_search_result.v1",
+    ...state.lastSourceSearchResult,
+  };
+  const serialized = JSON.stringify(payload, null, 2);
+  const blob = new Blob([serialized], { type: "application/json" });
+  const fileName = `codegraph-${safeFilePart(payload.root)}-source-search.json`;
+  downloadBlob(blob, fileName);
+  sourceSearchResult.insertAdjacentHTML(
+    "afterbegin",
+    `
+      <div class="query-summary">
+        <span>${escapeHtml(t("export.sourceSearch"))}</span>
+        <span>${escapeHtml(formatBytes(blob.size))}</span>
+        <span>${escapeHtml(formatNumber(payload.result?.total_matches ?? payload.result?.matches?.length ?? 0))} matches</span>
+        <span class="query-expression">${escapeHtml(fileName)}</span>
+      </div>
+    `,
+  );
 }
 
 async function loadCacheDiff() {

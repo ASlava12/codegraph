@@ -149,6 +149,7 @@ Goal: answer practical code investigation questions.
 - [x] Add reverse dependent traces for impact analysis.
 - [x] Add source text search across CLI, API, and web for focused code snippets.
 - [x] Add web source-search actions for opening matching files as focused graph slices.
+- [x] Add web source-search result JSON downloads for agent handoff.
 - [x] Add edge explanation for confidence and provenance evidence across CLI, API, and web.
 
 Example commands:

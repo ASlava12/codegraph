@@ -6742,6 +6742,10 @@ mod tests {
         assert!(app.contains("openSourceFileGraph"));
         assert!(app.contains("data-source-file-graph"));
         assert!(app.contains("\"button.graphFile\""));
+        assert!(index.contains("sourceSearchExportButton"));
+        assert!(app.contains("exportLastSourceSearchResult"));
+        assert!(app.contains("codegraph.source_search_result.v1"));
+        assert!(app.contains("\"button.downloadSourceResults\""));
         assert!(index.contains("annotations key:domain edge_limit:300"));
         assert!(app.contains("\"queryPreset.annotations\""));
         assert!(app.contains("limits.max_api_body_bytes"));
