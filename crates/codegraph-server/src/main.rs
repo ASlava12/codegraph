@@ -6918,6 +6918,7 @@ mod tests {
             "go",
             "c",
             "cpp",
+            "dart",
             "php",
             "bash",
         ] {

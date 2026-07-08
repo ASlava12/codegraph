@@ -28,21 +28,23 @@ Goal: extract language-independent structure from source files.
 - [x] Integrate Tree-sitter.
 - [x] Detect languages by extension and file name.
 - [x] Extract files, modules, imports, top-level declarations, functions, and classes/types.
-- [x] Support Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash at syntax level.
-- [ ] Add Dart syntax support for `.dart` files with files, libraries, imports/exports/parts, classes, mixins, extensions, functions, methods, constructors, and approximate call sites.
+- [x] Support Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, Dart, PHP, and Bash at syntax level.
+- [x] Add Dart syntax support for `.dart` files with files, libraries, imports/exports/parts, classes, mixins, extensions, functions, methods, constructors, and approximate call sites.
 - [x] Extract approximate call sites.
 - [x] Resolve local import/include file dependencies where syntax-level paths are explicit.
-- [ ] Resolve Dart relative imports, package imports from `pubspec.yaml`, `part`/`part of` relationships, and generated-file conventions.
+- [x] Resolve Dart relative imports, package imports from `pubspec.yaml`, and `part`/`part of` relationships.
+- [ ] Resolve Dart generated-file conventions and `.dart_tool/package_config.json` package maps.
 - [x] Resolve Python project-local absolute imports when they match scanned files.
 - [x] Resolve Go module-local imports from `go.mod` module paths when package files are scanned.
 - [x] Resolve quoted C/C++ includes through CMake include directories when header files are scanned.
 - [x] Resolve quoted C/C++ includes through `compile_commands.json` include directories.
 - [x] Detect CommonJS `require(...)` imports for dependency and local-file analysis.
 - [x] Detect config and environment reads.
-- [ ] Detect Dart/Flutter config reads, environment reads, asset references, platform-channel boundaries, and common exception/error constructs.
+- [x] Detect Dart/Flutter config reads, environment reads, asset string reads, and common throw/rethrow error constructs.
+- [ ] Detect Dart/Flutter platform-channel boundaries and Flutter-specific asset metadata from `pubspec.yaml`.
 - [x] Detect basic error/exception constructs.
 - [x] Detect manifest-defined entrypoints from project metadata.
-- [ ] Detect Dart and Flutter entrypoints from `main()`, Flutter `runApp(...)`, `bin/*.dart`, `test/*_test.dart`, and `pubspec.yaml` package metadata.
+- [x] Detect Dart and Flutter entrypoints from `main()`, Flutter `runApp(...)`, `bin/*.dart`, `test/*_test.dart`, and `pubspec.yaml` package metadata.
 - [x] Resolve manifest entrypoints to target files and functions where possible.
 - [x] Detect shebang script entrypoints for Bash, Python, Node.js, and PHP CLI files.
 - [x] Detect Go module and `cmd/*` entrypoints from `go.mod`.
@@ -96,7 +98,8 @@ Goal: improve precision where language tooling exists.
 - [x] Add Rust enrichment through `rust-analyzer`.
 - [x] Add TypeScript/JavaScript enrichment through tsserver-compatible tooling.
 - [x] Add Go enrichment through `gopls`.
-- [ ] Add Dart semantic enrichment through the Dart analysis server or an LSP-compatible Dart language server.
+- [x] Discover Dart analysis server LSP support for semantic readiness and execution batch planning.
+- [ ] Validate Dart semantic enrichment patches from the Dart analysis server or an LSP-compatible Dart language server.
 - [x] Mark facts by confidence:
   - [x] `exact`
   - [x] `semantic`

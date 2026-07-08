@@ -96,6 +96,7 @@ struct IndexContext {
     external_dependencies: BTreeMap<String, NodeId>,
     cargo_workspace_dependencies: BTreeMap<String, Option<String>>,
     go_modules: Vec<GoModuleRoot>,
+    dart_packages: Vec<DartPackageRoot>,
     c_include_dirs: Vec<String>,
     custom_rules: CustomRules,
     annotations: GraphAnnotations,
@@ -403,6 +404,12 @@ struct FrameworkConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GoModuleRoot {
     module: String,
+    dir: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DartPackageRoot {
+    name: String,
     dir: Option<String>,
 }
 
@@ -736,6 +743,7 @@ fn scan_project_with_scope(
         .unwrap_or(".");
     let cargo_workspace_dependencies = cargo_workspace_dependencies(root);
     let go_modules = go_module_roots(root, options, &ignored_globs);
+    let dart_packages = dart_package_roots(root, options, &ignored_globs);
     let c_include_dirs = c_include_dirs(root, options, &ignored_globs);
     let custom_rules = custom_rules(root);
     let annotations = graph_annotations(root);
@@ -747,6 +755,7 @@ fn scan_project_with_scope(
         external_dependencies: BTreeMap::new(),
         cargo_workspace_dependencies,
         go_modules,
+        dart_packages,
         c_include_dirs,
         custom_rules,
         annotations,
@@ -1072,7 +1081,13 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
                         parsed_item_kind_name(item.kind).to_string(),
                     );
                     let local_import = if item.kind == ParsedItemKind::Import {
-                        local_import_target(language, label, &item.label, &context.c_include_dirs)
+                        local_import_target(
+                            language,
+                            label,
+                            &item.label,
+                            &context.c_include_dirs,
+                            &context.dart_packages,
+                        )
                     } else {
                         None
                     };
@@ -1083,6 +1098,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
                                 label,
                                 &item.label,
                                 &context.go_modules,
+                                &context.dart_packages,
                             )
                         } else {
                             None
@@ -1321,7 +1337,8 @@ fn rationale_comment_text(language: Option<Language>, line: &str) -> Option<&str
             | Language::Tsx
             | Language::Go
             | Language::C
-            | Language::Cpp,
+            | Language::Cpp
+            | Language::Dart,
         ) => trimmed.strip_prefix("//").or_else(|| {
             trimmed
                 .strip_prefix("/*")
@@ -1618,7 +1635,7 @@ fn framework_routes(language: Language, source: &str) -> Vec<FrameworkRoute> {
         Language::Rust => rust_framework_routes(source),
         Language::Go => go_framework_routes(source),
         Language::Php => php_framework_routes(source),
-        Language::C | Language::Cpp | Language::Bash => Vec::new(),
+        Language::C | Language::Cpp | Language::Dart | Language::Bash => Vec::new(),
     }
 }
 
@@ -1647,7 +1664,7 @@ fn index_commonjs_require_imports(
         metadata.insert("item_kind".to_string(), "import".to_string());
         metadata.insert("import_style".to_string(), "commonjs".to_string());
 
-        let local_import = local_import_target(language, label, &require_call, &[]);
+        let local_import = local_import_target(language, label, &require_call, &[], &[]);
         if let Some(local_import) = local_import.as_ref() {
             metadata.insert("import_scope".to_string(), "local".to_string());
             metadata.insert("import_target".to_string(), local_import.target.clone());
@@ -1757,7 +1774,7 @@ fn framework_configs(
         Some(Language::Go) => configs.extend(go_framework_configs(source)),
         Some(Language::Php) => configs.extend(php_framework_configs(source)),
         Some(Language::Bash) => configs.extend(bash_framework_configs(source)),
-        Some(Language::C | Language::Cpp) | None => {}
+        Some(Language::C | Language::Cpp | Language::Dart) | None => {}
     }
 
     configs.into_iter().collect()
@@ -4014,6 +4031,7 @@ fn manifest_dependencies(
         Some("vcpkg.json") => vcpkg_dependencies(source),
         Some("conanfile.txt") => conanfile_txt_dependencies(source),
         Some("CMakeLists.txt") => cmake_dependencies(source),
+        Some("pubspec.yaml") => pubspec_dependencies(source),
         _ => Vec::new(),
     }
 }
@@ -4028,6 +4046,7 @@ fn manifest_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
         Some("setup.cfg") => setup_cfg_entrypoints(source),
         Some("composer.json") => composer_entrypoints(source),
         Some("CMakeLists.txt") => cmake_entrypoints(source),
+        Some("pubspec.yaml") => pubspec_entrypoints(path, source),
         _ => Vec::new(),
     }
 }
@@ -5893,6 +5912,79 @@ fn go_mod_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
     entrypoints
 }
 
+fn pubspec_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
+    let Some(package_name) = pubspec_package_name(source) else {
+        return Vec::new();
+    };
+    let Some(root) = path.parent() else {
+        return Vec::new();
+    };
+
+    let mut entrypoints = Vec::new();
+    if root.join("lib").join("main.dart").is_file() {
+        let ecosystem = if pubspec_uses_flutter(source) {
+            "flutter"
+        } else {
+            "dart"
+        };
+        let prefix = if ecosystem == "flutter" {
+            "flutter app"
+        } else {
+            "dart package"
+        };
+        entrypoints.push(manifest_entrypoint(
+            format!("{prefix}:{package_name}"),
+            "app",
+            ecosystem,
+            Some("lib/main.dart".to_string()),
+        ));
+    }
+
+    let bin_dir = root.join("bin");
+    if let Ok(commands) = fs::read_dir(&bin_dir) {
+        for command in commands.flatten() {
+            let command_path = command.path();
+            if command_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                != Some("dart")
+            {
+                continue;
+            }
+            let Some(name) = command_path.file_stem().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            entrypoints.push(manifest_entrypoint(
+                format!("dart bin:{name}"),
+                "binary",
+                "dart",
+                Some(format!("bin/{name}.dart")),
+            ));
+        }
+    }
+
+    let test_dir = root.join("test");
+    if let Ok(tests) = fs::read_dir(&test_dir) {
+        for test in tests.flatten() {
+            let test_path = test.path();
+            let Some(name) = test_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !name.ends_with("_test.dart") {
+                continue;
+            }
+            entrypoints.push(manifest_entrypoint(
+                format!("dart test:{name}"),
+                "test",
+                "dart",
+                Some(format!("test/{name}")),
+            ));
+        }
+    }
+
+    entrypoints
+}
+
 fn pyproject_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
     let Ok(value) = toml::from_str::<toml::Value>(source) else {
         return Vec::new();
@@ -6893,6 +6985,64 @@ fn go_mod_dependencies(source: &str) -> Vec<ManifestDependency> {
     dependencies
 }
 
+fn pubspec_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut active_section: Option<(String, usize)> = None;
+
+    for raw_line in source.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = yaml_indent(raw_line);
+
+        if indent == 0 {
+            active_section = None;
+            if let Some(section) = yaml_key(trimmed).filter(|section| {
+                matches!(
+                    section.as_str(),
+                    "dependencies" | "dev_dependencies" | "dependency_overrides"
+                )
+            }) {
+                active_section = Some((section, indent));
+            }
+            continue;
+        }
+
+        let Some((section, section_indent)) = active_section.as_ref() else {
+            continue;
+        };
+        if indent <= *section_indent {
+            active_section = None;
+            continue;
+        }
+        if indent != section_indent + 2 {
+            continue;
+        }
+        let Some((name, value)) = yaml_key_pair(trimmed) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let kind = match section.as_str() {
+            "dependencies" => "runtime",
+            "dev_dependencies" => "dev",
+            "dependency_overrides" => "override",
+            _ => "runtime",
+        };
+        let version = (!value.is_empty()
+            && !matches!(
+                value.as_str(),
+                "{}" | "[]" | "null" | "~" | "sdk" | "path" | "git"
+            ))
+        .then_some(value);
+        dependencies.push(manifest_dependency(name, kind, "dart", version));
+    }
+
+    dependencies
+}
+
 fn go_module_name(source: &str) -> Option<String> {
     source.lines().find_map(|line| {
         let line = line.split("//").next().unwrap_or("").trim();
@@ -6900,6 +7050,30 @@ fn go_module_name(source: &str) -> Option<String> {
             .map(str::trim)
             .filter(|module| !module.is_empty())
             .map(str::to_string)
+    })
+}
+
+fn pubspec_package_name(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            return None;
+        }
+        yaml_key_value(trimmed, "name").filter(|name| pubspec_package_name_valid(name))
+    })
+}
+
+fn pubspec_package_name_valid(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+fn pubspec_uses_flutter(source: &str) -> bool {
+    source.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed == "flutter:" || trimmed.starts_with("sdk: flutter")
     })
 }
 
@@ -8175,6 +8349,45 @@ fn go_module_roots(
     modules
 }
 
+fn dart_package_roots(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Vec<DartPackageRoot> {
+    let mut packages = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path == root || !entry.file_type().is_file() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) != Some("pubspec.yaml")
+            || !is_probably_source_file(path, options.max_file_size)
+        {
+            continue;
+        }
+
+        let Ok(source) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Some(name) = pubspec_package_name(&source) else {
+            continue;
+        };
+        let dir = path
+            .parent()
+            .and_then(|parent| parent.strip_prefix(root).ok())
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map(|relative| normalize_path(&relative))
+            .filter(|relative| !relative.is_empty());
+        packages.push(DartPackageRoot { name, dir });
+    }
+    packages.sort_by(|left, right| right.name.len().cmp(&left.name.len()));
+    packages
+}
+
 fn c_include_dirs(
     root: &Path,
     options: &IndexOptions,
@@ -8561,6 +8774,7 @@ fn local_import_target(
     source_label: &str,
     import_label: &str,
     cmake_include_dirs: &[String],
+    dart_packages: &[DartPackageRoot],
 ) -> Option<LocalImportTarget> {
     match language {
         Language::JavaScript | Language::TypeScript | Language::Tsx => {
@@ -8574,6 +8788,7 @@ fn local_import_target(
         Language::Bash => bash_local_import_target(source_label, import_label),
         Language::Rust => rust_local_import_target(source_label, import_label),
         Language::Go => go_local_import_target(source_label, import_label),
+        Language::Dart => dart_local_import_target(source_label, import_label, dart_packages),
     }
 }
 
@@ -8582,10 +8797,12 @@ fn possible_local_import_target(
     source_label: &str,
     import_label: &str,
     go_modules: &[GoModuleRoot],
+    dart_packages: &[DartPackageRoot],
 ) -> Option<LocalImportTarget> {
     match language {
         Language::Python => python_absolute_local_import_target(source_label, import_label),
         Language::Go => go_module_import_target(import_label, go_modules),
+        Language::Dart => dart_package_import_target(import_label, dart_packages),
         _ => None,
     }
 }
@@ -8828,6 +9045,56 @@ fn go_module_import_target(
         target: path,
         candidates: vec![directory_candidate(&package_dir)],
     })
+}
+
+fn dart_local_import_target(
+    source_label: &str,
+    import_label: &str,
+    dart_packages: &[DartPackageRoot],
+) -> Option<LocalImportTarget> {
+    let uri = dart_import_uri(import_label)?;
+    if uri.starts_with("./") || uri.starts_with("../") {
+        return Some(LocalImportTarget {
+            target: uri.clone(),
+            candidates: vec![join_path(path_dir(source_label).as_deref(), &uri)],
+        });
+    }
+    if uri.ends_with(".dart") && !uri.starts_with("package:") && !uri.contains("://") {
+        return Some(LocalImportTarget {
+            target: uri.clone(),
+            candidates: vec![join_path(path_dir(source_label).as_deref(), &uri)],
+        });
+    }
+    dart_package_uri_target(&uri, dart_packages)
+}
+
+fn dart_package_import_target(
+    import_label: &str,
+    dart_packages: &[DartPackageRoot],
+) -> Option<LocalImportTarget> {
+    let uri = dart_import_uri(import_label)?;
+    dart_package_uri_target(&uri, dart_packages)
+}
+
+fn dart_package_uri_target(
+    uri: &str,
+    dart_packages: &[DartPackageRoot],
+) -> Option<LocalImportTarget> {
+    let rest = uri.strip_prefix("package:")?;
+    let (package, path) = rest.split_once('/')?;
+    if package.is_empty() || path.is_empty() {
+        return None;
+    }
+    let package_root = dart_packages.iter().find(|root| root.name == package)?;
+    let target = join_path(package_root.dir.as_deref(), &format!("lib/{path}"));
+    Some(LocalImportTarget {
+        target: uri.to_string(),
+        candidates: vec![target],
+    })
+}
+
+fn dart_import_uri(import_label: &str) -> Option<String> {
+    first_quoted_value(import_label)
 }
 
 fn directory_candidate(path: &str) -> String {
@@ -9329,6 +9596,16 @@ fn entrypoint_target_candidates(
         .collect(),
         "python" => python_entrypoint_candidates(pending),
         "go" => manifest_path_candidate(
+            pending,
+            &pending.target,
+            Some("main".to_string()),
+            Confidence::Exact,
+            Confidence::Syntactic,
+            "manifest_path",
+        )
+        .into_iter()
+        .collect(),
+        "dart" | "flutter" => manifest_path_candidate(
             pending,
             &pending.target,
             Some("main".to_string()),
@@ -10080,6 +10357,7 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
                 | "package-lock.json"
                 | "pnpm-lock.yaml"
                 | "go.mod"
+                | "pubspec.yaml"
                 | "pyproject.toml"
                 | "setup.py"
                 | "setup.cfg"
@@ -10480,6 +10758,191 @@ mod tests {
                 .get("candidate_paths")
                 .is_some_and(|value| value.contains("src/missing.js"))
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_indexes_dart_flutter_pubspec_and_imports() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("lib").join("src")).unwrap();
+        fs::create_dir_all(root.join("bin")).unwrap();
+        fs::create_dir_all(root.join("test")).unwrap();
+        fs::write(
+            root.join("pubspec.yaml"),
+            "name: demo_app\nversion: 0.1.0\ndependencies:\n  flutter:\n    sdk: flutter\n  http: ^1.2.0\ndev_dependencies:\n  test: any\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("lib").join("main.dart"),
+            "import 'package:flutter/material.dart';\nimport 'package:demo_app/src/app.dart';\nimport 'src/local.dart';\npart 'src/main_part.dart';\n\nclass Shell {}\nvoid main() {\n  const port = String.fromEnvironment('PORT', defaultValue: '8080');\n  final api = Platform.environment['API_URL'] ?? 'http://localhost';\n  final config = rootBundle.loadString('assets/config/app.json');\n  runApp(App());\n  throw StateError('broken');\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("lib").join("src").join("app.dart"),
+            "class App {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("lib").join("src").join("local.dart"),
+            "void localHelper() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("lib").join("src").join("main_part.dart"),
+            "part of '../main.dart';\nvoid partHelper() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("bin").join("tool.dart"),
+            "void main() { print('tool'); }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("test").join("widget_test.dart"),
+            "void main() { print('test'); }\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+
+        let main_file = node_id(&graph, NodeKind::File, "lib/main.dart");
+        let app_file = node_id(&graph, NodeKind::File, "lib/src/app.dart");
+        let local_file = node_id(&graph, NodeKind::File, "lib/src/local.dart");
+        let part_file = node_id(&graph, NodeKind::File, "lib/src/main_part.dart");
+        let main_fn = function_id_in_file(&graph, "main", "lib/main.dart");
+        let tool_main = function_id_in_file(&graph, "main", "bin/tool.dart");
+        let test_main = function_id_in_file(&graph, "main", "test/widget_test.dart");
+
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == main_file && edge.target == main_fn && edge.kind == EdgeKind::Contains
+        }));
+
+        for (label, target) in [
+            ("import 'package:demo_app/src/app.dart';", app_file),
+            ("import 'src/local.dart';", local_file),
+            ("part 'src/main_part.dart';", part_file),
+        ] {
+            let import = graph
+                .nodes
+                .iter()
+                .find(|node| node.label == label)
+                .unwrap_or_else(|| panic!("missing Dart import node `{label}`"));
+            assert_eq!(
+                import.metadata.get("import_scope").map(String::as_str),
+                Some("local")
+            );
+            assert_eq!(
+                import.metadata.get("resolution").map(String::as_str),
+                Some("resolved")
+            );
+            assert!(graph.edges.iter().any(|edge| {
+                edge.source == import.id
+                    && edge.target == target
+                    && edge.kind == EdgeKind::References
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|value| value == "local_import_file")
+            }));
+        }
+
+        assert!(graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::Environment
+                && node.label == "PORT"
+                && node
+                    .metadata
+                    .get("default_value")
+                    .is_some_and(|value| value == "8080")
+        }));
+        assert!(graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::Environment
+                && node.label == "API_URL"
+                && node
+                    .metadata
+                    .get("default_value")
+                    .is_some_and(|value| value == "http://localhost")
+        }));
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| node.kind == NodeKind::Config && node.label == "assets/config/app.json")
+        );
+        assert!(
+            graph
+                .edges
+                .iter()
+                .any(|edge| edge.source == main_fn && edge.kind == EdgeKind::MayError)
+        );
+
+        let flutter_entry = node_id(&graph, NodeKind::Entrypoint, "flutter app:demo_app");
+        let tool_entry = node_id(&graph, NodeKind::Entrypoint, "dart bin:tool");
+        let test_entry = node_id(&graph, NodeKind::Entrypoint, "dart test:widget_test.dart");
+        assert!(has_entrypoint_reference(
+            &graph,
+            flutter_entry,
+            main_fn,
+            "entrypoint_function",
+            Confidence::Syntactic
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            tool_entry,
+            tool_main,
+            "entrypoint_function",
+            Confidence::Syntactic
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            test_entry,
+            test_main,
+            "entrypoint_function",
+            Confidence::Syntactic
+        ));
+
+        let http_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "dart:http")
+            })
+            .expect("missing pubspec http dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == http_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "runtime")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "^1.2.0")
+        }));
+        let test_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "dart:test")
+            })
+            .expect("missing pubspec test dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == test_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "dev")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "any")
+        }));
 
         fs::remove_dir_all(root).unwrap();
     }

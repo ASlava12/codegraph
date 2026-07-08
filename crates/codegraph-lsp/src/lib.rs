@@ -507,6 +507,19 @@ const LSP_SERVER_SPECS: &[LspServerSpec] = &[
         ],
     },
     LspServerSpec {
+        id: "dart-analysis-server",
+        languages: &["dart"],
+        command: "dart",
+        args: &["language-server", "--protocol=lsp"],
+        capabilities: &[
+            "definitions",
+            "references",
+            "document_symbols",
+            "workspace_symbols",
+            "diagnostics",
+        ],
+    },
+    LspServerSpec {
         id: "bash-language-server",
         languages: &["bash"],
         command: "bash-language-server",
@@ -2763,13 +2776,14 @@ mod tests {
         let report = discover_lsp_servers();
         let ids: Vec<_> = report.servers.iter().map(|server| server.id).collect();
 
-        assert_eq!(report.total_servers, 7);
+        assert_eq!(report.total_servers, 8);
         assert!(ids.contains(&"rust-analyzer"));
         assert!(ids.contains(&"gopls"));
         assert!(ids.contains(&"typescript-language-server"));
         assert!(ids.contains(&"pyright-langserver"));
         assert!(ids.contains(&"clangd"));
         assert!(ids.contains(&"intelephense"));
+        assert!(ids.contains(&"dart-analysis-server"));
         assert!(ids.contains(&"bash-language-server"));
         assert!(report.available_servers <= report.total_servers);
     }
@@ -2807,6 +2821,14 @@ mod tests {
             &["javascript", "typescript", "tsx"],
             "typescript-language-server",
             &["--stdio"],
+            &required_capabilities,
+        );
+        assert_lsp_server_contract(
+            &report,
+            "dart-analysis-server",
+            &["dart"],
+            "dart",
+            &["language-server", "--protocol=lsp"],
             &required_capabilities,
         );
     }

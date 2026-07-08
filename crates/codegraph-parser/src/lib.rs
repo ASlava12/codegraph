@@ -27,6 +27,7 @@ pub enum Language {
     Go,
     C,
     Cpp,
+    Dart,
     Php,
     Bash,
 }
@@ -141,6 +142,11 @@ static CPP_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     extensions: &["cc", "cpp", "cxx", "hpp", "hh", "hxx"],
     file_names: &[],
 };
+static DART_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Dart,
+    extensions: &["dart"],
+    file_names: &[],
+};
 static PHP_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     language: Language::Php,
     extensions: &["php", "phtml"],
@@ -152,7 +158,7 @@ static BASH_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     file_names: &["Makefile"],
 };
 
-static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 10] = [
+static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 11] = [
     &RUST_ADAPTER,
     &PYTHON_ADAPTER,
     &JAVASCRIPT_ADAPTER,
@@ -161,6 +167,7 @@ static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 10] = [
     &GO_ADAPTER,
     &C_ADAPTER,
     &CPP_ADAPTER,
+    &DART_ADAPTER,
     &PHP_ADAPTER,
     &BASH_ADAPTER,
 ];
@@ -198,6 +205,7 @@ impl Language {
             Self::Go => "go",
             Self::C => "c",
             Self::Cpp => "cpp",
+            Self::Dart => "dart",
             Self::Php => "php",
             Self::Bash => "bash",
         }
@@ -213,6 +221,7 @@ impl Language {
             Self::Go => tree_sitter_go::LANGUAGE.into(),
             Self::C => tree_sitter_c::LANGUAGE.into(),
             Self::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+            Self::Dart => tree_sitter_dart::LANGUAGE.into(),
             Self::Php => tree_sitter_php::LANGUAGE_PHP.into(),
             Self::Bash => tree_sitter_bash::LANGUAGE.into(),
         }
@@ -391,6 +400,21 @@ fn classify_node(
             | "namespace_use_declaration" => ParsedItemKind::Import,
             _ => return None,
         },
+        Language::Dart => match kind {
+            "function_declaration"
+            | "method_declaration"
+            | "constructor_signature"
+            | "factory_constructor_signature" => ParsedItemKind::Function,
+            "class_declaration"
+            | "mixin_declaration"
+            | "extension_declaration"
+            | "extension_type_declaration"
+            | "enum_declaration"
+            | "type_alias" => ParsedItemKind::Type,
+            "library_name" => ParsedItemKind::Module,
+            "import_or_export" | "part_directive" | "part_of_directive" => ParsedItemKind::Import,
+            _ => return None,
+        },
         Language::Bash => match kind {
             "function_definition" => ParsedItemKind::Function,
             "command" if command_text_starts_with(source, node, &["source", "."]) => {
@@ -522,6 +546,22 @@ fn is_environment_read(language: Language, node: Node<'_>, source: &[u8]) -> boo
                     .as_deref()
                     .is_some_and(|value| matches!(simple_name(value), "getenv"))
         }
+        Language::Dart => {
+            matches!(
+                node.kind(),
+                "call_expression"
+                    | "member_expression"
+                    | "index_expression"
+                    | "null_aware_member_expression"
+                    | "null_aware_index_expression"
+            ) && text.as_deref().is_some_and(|value| {
+                value.contains("String.fromEnvironment")
+                    || value.contains("bool.fromEnvironment")
+                    || value.contains("int.fromEnvironment")
+                    || value.contains("double.fromEnvironment")
+                    || value.contains("Platform.environment")
+            })
+        }
         Language::Bash => node.kind() == "variable_name",
     }
 }
@@ -571,6 +611,12 @@ fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) -> bool {
                 "parse_ini_file" | "file_get_contents" | "include" | "require"
             )
         }),
+        Language::Dart => call.as_deref().is_some_and(|value| {
+            matches!(
+                simple_name(value),
+                "loadString" | "fromAsset" | "File" | "readAsString" | "readAsStringSync"
+            )
+        }),
         Language::Bash => {
             node.kind() == "command" && command_text_starts_with(source, node, &["source", "."])
         }
@@ -612,6 +658,13 @@ fn is_error_construct(language: Language, node: Node<'_>, source: &[u8]) -> bool
                         .is_some_and(|value| matches!(simple_name(value), "abort" | "exit")))
         }
         Language::Php => node.kind() == "throw_expression",
+        Language::Dart => {
+            matches!(node.kind(), "throw_expression" | "rethrow_statement")
+                || (is_call_node(language, node, source)
+                    && call_label(language, node, source)
+                        .as_deref()
+                        .is_some_and(|value| matches!(simple_name(value), "throw")))
+        }
         Language::Bash => {
             node.kind() == "command" && command_text_starts_with(source, node, &["exit"])
         }
@@ -630,6 +683,13 @@ fn effect_label(
             Language::JavaScript | Language::TypeScript | Language::Tsx
         )
         && let Some(key) = javascript_env_key(node, source)
+    {
+        return Some(truncate_label(key, 120));
+    }
+
+    if kind == ParsedItemKind::EnvironmentRead
+        && language == Language::Dart
+        && let Some(key) = dart_env_key(node, source)
     {
         return Some(truncate_label(key, 120));
     }
@@ -658,6 +718,7 @@ fn effect_metadata(
         }
         Language::Go => go_env_default_value(node, source),
         Language::C | Language::Cpp | Language::Php => getenv_default_value(node, source),
+        Language::Dart => dart_env_default_value(node, source),
         Language::Bash => bash_env_default_value(node, source),
     };
 
@@ -722,6 +783,38 @@ fn javascript_env_default_value(node: Node<'_>, source: &[u8]) -> Option<String>
     } else {
         literals.into_iter().next()
     }
+}
+
+fn dart_env_key(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let text = short_node_text(node, source)?;
+    if text.contains("Platform.environment") {
+        return first_string_literal(node, source);
+    }
+    if text.contains(".fromEnvironment") {
+        return all_string_literals(node, source).into_iter().next();
+    }
+    None
+}
+
+fn dart_env_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let text = short_node_text(node, source)?;
+    if text.contains(".fromEnvironment") {
+        let literals = all_string_literals(node, source);
+        if text.contains("defaultValue")
+            && let Some(value) = literals.get(1)
+        {
+            return Some(value.clone());
+        }
+        if literals.len() > 1 && text.contains(',') {
+            return literals.get(1).cloned();
+        }
+        return None;
+    }
+    let expression = short_ancestor_text(node, source, |candidate| {
+        candidate.contains("Platform.environment")
+            && (candidate.contains("??") || candidate.contains("?:"))
+    })?;
+    quoted_string_values(&expression).into_iter().nth(1)
 }
 
 fn getenv_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
@@ -790,6 +883,7 @@ fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) -> bool {
             node.kind(),
             "function_call_expression" | "scoped_call_expression" | "member_call_expression"
         ),
+        Language::Dart => matches!(node.kind(), "call_expression" | "constructor_invocation"),
         Language::Bash => {
             node.kind() == "command" && !command_text_starts_with(source, node, &["source", "."])
         }
@@ -857,6 +951,7 @@ fn first_identifier(node: Node<'_>, source: &[u8]) -> Option<String> {
             | "namespace_identifier"
             | "property_identifier"
             | "variable_name"
+            | "identifier_dollar_escaped"
             | "name"
     ) {
         return node_text(node, source);
@@ -1037,6 +1132,7 @@ fn is_entrypoint(language: Language, label: &str) -> bool {
         Language::JavaScript | Language::TypeScript | Language::Tsx | Language::Php => {
             label.eq_ignore_ascii_case("main")
         }
+        Language::Dart => label == "main",
         Language::Bash => label == "main",
     }
 }
@@ -1089,13 +1185,14 @@ mod tests {
             .map(|adapter| adapter.info().language)
             .collect::<BTreeSet<_>>();
 
-        assert_eq!(adapters.len(), 10);
+        assert_eq!(adapters.len(), 11);
         assert_eq!(
             languages,
             BTreeSet::from([
                 "bash",
                 "c",
                 "cpp",
+                "dart",
                 "go",
                 "javascript",
                 "php",
@@ -1122,6 +1219,7 @@ mod tests {
             ("main.go", Language::Go),
             ("lib.c", Language::C),
             ("lib.cpp", Language::Cpp),
+            ("main.dart", Language::Dart),
             ("index.php", Language::Php),
             ("deploy.sh", Language::Bash),
         ];
@@ -1501,6 +1599,96 @@ int main() {
     }
 
     #[test]
+    fn parses_dart_symbols_effects_and_calls() {
+        let parsed = parse_source(
+            "lib/main.dart",
+            br#"import 'package:flutter/material.dart';
+part 'src/app_part.dart';
+
+class App {}
+mixin Bootable {}
+extension AppExt on App {}
+
+void main() {
+  const port = String.fromEnvironment('PORT', defaultValue: '8080');
+  final api = Platform.environment['API_URL'] ?? 'http://localhost';
+  final config = rootBundle.loadString('assets/config/app.json');
+  runApp(App());
+  throw StateError('broken');
+}
+"#,
+            Language::Dart,
+        )
+        .unwrap();
+
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|item| { item.kind == ParsedItemKind::Entrypoint && item.label == "main" })
+        );
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|item| item.kind == ParsedItemKind::Type && item.label == "App")
+        );
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|item| item.kind == ParsedItemKind::Type && item.label == "Bootable")
+        );
+        assert!(
+            parsed
+                .items
+                .iter()
+                .filter(|item| item.kind == ParsedItemKind::Import)
+                .any(|item| item.label.contains("package:flutter/material.dart"))
+        );
+        assert!(
+            parsed
+                .items
+                .iter()
+                .filter(|item| item.kind == ParsedItemKind::Import)
+                .any(|item| item.label.contains("src/app_part.dart"))
+        );
+        assert!(parsed.items.iter().any(|item| {
+            item.kind == ParsedItemKind::Call
+                && item.label == "runApp"
+                && item.parent.as_deref() == Some("main")
+        }));
+
+        let port = parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "PORT")
+            .expect("missing PORT env read");
+        assert_eq!(
+            port.metadata.get("default_value").map(String::as_str),
+            Some("8080")
+        );
+        let api = parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "API_URL")
+            .expect("missing API_URL env read");
+        assert_eq!(
+            api.metadata.get("default_value").map(String::as_str),
+            Some("http://localhost")
+        );
+        assert!(parsed.items.iter().any(|item| {
+            item.kind == ParsedItemKind::ConfigRead && item.label == "assets/config/app.json"
+        }));
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|item| item.kind == ParsedItemKind::Error)
+        );
+    }
+
+    #[test]
     fn parses_mixed_language_smoke_samples() {
         let cases = [
             (
@@ -1531,6 +1719,12 @@ int main() {
                 "main.cpp",
                 Language::Cpp,
                 "#include <iostream>\nint main() { return 0; }\n",
+                "main",
+            ),
+            (
+                "main.dart",
+                Language::Dart,
+                "import 'package:flutter/widgets.dart';\nclass App {}\nvoid main() { runApp(App()); }\n",
                 "main",
             ),
             (

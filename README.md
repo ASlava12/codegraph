@@ -13,7 +13,7 @@ Implemented now:
 - Rust workspace layout.
 - Core graph model.
 - Stable graph confidence taxonomy for `exact`, `semantic`, `syntactic`, `heuristic`, and `unknown` facts with JSON round-trip coverage.
-- Built-in language adapter registry for Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash parser support.
+- Built-in language adapter registry for Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, Dart, PHP, and Bash parser support.
 - LSP server discovery for semantic enrichment readiness across Rust, Go, JavaScript/TypeScript, Python, C/C++, PHP, and Bash.
 - Semantic enrichment server contracts cover `rust-analyzer`, `gopls`, and `typescript-language-server --stdio` for primary Rust, Go, JavaScript, TypeScript, and TSX workflows.
 - Project semantic readiness reports showing which scanned languages are covered by installed LSP servers.
@@ -27,7 +27,7 @@ Implemented now:
 - Semantic LSP response patch reports that map definitions, references, and diagnostics back onto graph nodes.
 - Semantic graph patch application that emits enriched graphs with semantic edges and diagnostic nodes.
 - Filesystem scanner with default build/vendor ignore rules.
-- Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, PHP, and Bash.
+- Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, Dart, PHP, and Bash.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
 - Manifest-defined entrypoints from Cargo, npm, Go, Python, setup.py/setup.cfg, Composer, and CMake project metadata.
 - Shebang-defined script entrypoints for Bash, Python, Node.js, and PHP scripts, including extensionless CLI files.
@@ -232,7 +232,7 @@ Implemented now:
 - Investigation insights for config/environment reads that are not reachable from any detected entrypoint.
 - Investigation insights for potential error/exception flows whose source is not reachable from any detected entrypoint.
 - Investigation insights for non-test source files with code symbols that are not reachable from any detected entrypoint.
-- Investigation insights for config/environment keys that are read with conflicting fallback defaults, including common inline Rust, Python, JavaScript/TypeScript, Go, C, C++, PHP, and Bash environment-read patterns.
+- Investigation insights for config/environment keys that are read with conflicting fallback defaults, including common inline Rust, Python, JavaScript/TypeScript, Go, C, C++, Dart, PHP, and Bash environment-read patterns.
 - Investigation insights for config/environment keys that are read both as required and with fallback defaults.
 - Investigation insights for sensitive config/environment keys, credential-like defaults, placeholder secret fallbacks, and literal sensitive CI environment assignments, without echoing fallback values in reports.
 - Investigation insights for risky source rationale markers such as `SECURITY`, `FIXME`, `HACK`, `BUG`, and `XXX`, while lower-noise `WHY`, `NOTE`, and `TODO` comments remain graph facts for context.
@@ -810,12 +810,13 @@ At the current stage, supported source languages are detected by extension:
 - Go: `go`
 - C: `c`, `h`
 - C++: `cc`, `cpp`, `cxx`, `hpp`, `hh`, `hxx`
+- Dart/Flutter: `dart`, plus `pubspec.yaml` package metadata
 - PHP: `php`, `phtml`
 - Bash/shell: `sh`, `bash`, `zsh`, `ksh`, `Makefile`
 
-Planned language support:
+Planned Dart/Flutter depth:
 
-- Dart and Flutter: `.dart`, `pubspec.yaml`, `.dart_tool/package_config.json`, `main()`, `runApp(...)`, `bin/*.dart`, `test/*_test.dart`, package imports, relative imports, `part` files, assets, generated files, and Dart analysis server semantic enrichment.
+- `.dart_tool/package_config.json`, generated-file conventions, platform-channel boundaries, Flutter-specific asset metadata, and deeper Dart analysis server semantic validation.
 
 Planned repository-knowledge features inspired by Graphify-style workflows:
 
