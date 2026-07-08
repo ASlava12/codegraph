@@ -6759,6 +6759,7 @@ mod tests {
 
         assert!(index.contains("queryCopyButton"));
         assert!(index.contains("button.copyQueryLink"));
+        assert!(index.contains("queryExportButton"));
         assert!(index.contains("queryHistory"));
         assert!(index.contains("clearQueryHistoryButton"));
         assert!(index.contains("pageCopyButton"));
@@ -6767,6 +6768,9 @@ mod tests {
         assert!(index.contains("button.clearFilters"));
         assert!(app.contains("buildSelectionUrl"));
         assert!(app.contains("buildQueryUrl"));
+        assert!(app.contains("exportLastQueryResult"));
+        assert!(app.contains("codegraph.query_result.v1"));
+        assert!(app.contains("\"button.downloadQueryResult\""));
         assert!(app.contains("QUERY_HISTORY_STORAGE_KEY"));
         assert!(app.contains("rememberQuery"));
         assert!(app.contains("renderQueryHistory"));

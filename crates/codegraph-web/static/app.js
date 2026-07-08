@@ -155,6 +155,7 @@ const I18N = {
     "button.clearFilters": "Clear Filters",
     "button.clearCanvasFilters": "Clear Canvas Filters",
     "button.downloadSlice": "Download Slice",
+    "button.downloadQueryResult": "Download Result",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
     "button.queryEdge": "Query",
@@ -328,6 +329,8 @@ const I18N = {
     "risk.clean": "Clean",
     "export.report": "Report JSON",
     "export.slice": "Visible Slice JSON",
+    "export.queryResult": "Query Result JSON",
+    "export.noQueryResult": "Run a graph query before exporting its result.",
     "export.noSlice": "No visible graph slice to export.",
     "trace.tracing": "Tracing...",
     "trace.tracingDependents": "Tracing dependents...",
@@ -547,6 +550,7 @@ const I18N = {
     "button.clearFilters": "Сбросить фильтры",
     "button.clearCanvasFilters": "Сбросить фильтры графа",
     "button.downloadSlice": "Скачать срез",
+    "button.downloadQueryResult": "Скачать результат",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
     "button.queryEdge": "Запрос",
@@ -720,6 +724,8 @@ const I18N = {
     "risk.clean": "Чисто",
     "export.report": "JSON-отчёт",
     "export.slice": "JSON видимого среза",
+    "export.queryResult": "JSON результата запроса",
+    "export.noQueryResult": "Сначала выполните запрос к графу.",
     "export.noSlice": "Нет видимого среза графа для экспорта.",
     "trace.tracing": "Трассирую...",
     "trace.tracingDependents": "Трассирую зависимые узлы...",
@@ -943,6 +949,7 @@ const state = {
   locale: getInitialLocale(),
   labelMode: getInitialLabelMode(),
   queryHistory: getInitialQueryHistory(),
+  lastQueryResult: null,
   pendingSelectionLink: null,
   pendingQueryLink: null,
   pendingGraphPageLink: false,
@@ -1038,6 +1045,7 @@ const pageClearButton = document.querySelector("#pageClearButton");
 const queryInput = document.querySelector("#queryInput");
 const queryButton = document.querySelector("#queryButton");
 const queryCopyButton = document.querySelector("#queryCopyButton");
+const queryExportButton = document.querySelector("#queryExportButton");
 const queryHistory = document.querySelector("#queryHistory");
 const queryHistoryList = document.querySelector("#queryHistoryList");
 const clearQueryHistoryButton = document.querySelector("#clearQueryHistoryButton");
@@ -1126,6 +1134,7 @@ searchInput.addEventListener("input", () => {
 clearCanvasFiltersButton.addEventListener("click", () => clearCanvasFilters());
 queryButton.addEventListener("click", () => runGraphQuery());
 queryCopyButton.addEventListener("click", () => copyCurrentQueryLink(queryCopyButton));
+queryExportButton.addEventListener("click", () => exportLastQueryResult());
 clearQueryHistoryButton.addEventListener("click", () => clearQueryHistory());
 queryInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runGraphQuery();
@@ -1310,6 +1319,7 @@ function applyLocale() {
   renderInsights();
   renderLegend(state.enabledKinds);
   renderQueryHistory();
+  renderQueryExportState();
   renderSelection();
   draw();
 }
@@ -2034,6 +2044,7 @@ async function scan() {
   state.insightReport = null;
   renderInsights();
   checkResult.innerHTML = "";
+  clearLastQueryResult();
   exportResult.innerHTML = "";
   if (state.scanEvents) {
     state.scanEvents.close();
@@ -3825,6 +3836,13 @@ async function runGraphQuery(options = {}) {
     attachQueryNavigation(queryResult);
     attachEdgeExplainActions(queryResult);
     attachQueryFocusActions(queryResult, body);
+    state.lastQueryResult = {
+      generated_at: new Date().toISOString(),
+      root: pathInput.value.trim() || ".",
+      query: expression,
+      result: body,
+    };
+    renderQueryExportState();
     rememberQuery(expression);
     if (options.focus) {
       focusQueryResult(body, queryResult);
@@ -5104,6 +5122,44 @@ function rememberQuery(expression) {
   ].slice(0, QUERY_HISTORY_LIMIT);
   persistQueryHistory();
   renderQueryHistory();
+}
+
+function renderQueryExportState() {
+  queryExportButton.disabled = !state.lastQueryResult;
+}
+
+function clearLastQueryResult() {
+  state.lastQueryResult = null;
+  renderQueryExportState();
+}
+
+function exportLastQueryResult() {
+  if (!state.lastQueryResult) {
+    queryResult.innerHTML = `<p class="empty">${escapeHtml(t("export.noQueryResult"))}</p>`;
+    renderQueryExportState();
+    return;
+  }
+
+  const payload = {
+    schema: "codegraph.query_result.v1",
+    ...state.lastQueryResult,
+  };
+  const serialized = JSON.stringify(payload, null, 2);
+  const blob = new Blob([serialized], { type: "application/json" });
+  const fileName = `codegraph-${safeFilePart(payload.root)}-query-result.json`;
+  downloadBlob(blob, fileName);
+  queryResult.insertAdjacentHTML(
+    "afterbegin",
+    `
+      <div class="query-summary">
+        <span>${escapeHtml(t("export.queryResult"))}</span>
+        <span>${escapeHtml(formatBytes(blob.size))}</span>
+        <span>${escapeHtml(formatNumber(payload.result?.returned_nodes ?? payload.result?.nodes?.length ?? 0))} nodes</span>
+        <span>${escapeHtml(formatNumber(payload.result?.returned_edges ?? payload.result?.edges?.length ?? 0))} edges</span>
+        <span class="query-expression">${escapeHtml(fileName)}</span>
+      </div>
+    `,
+  );
 }
 
 function persistQueryHistory() {
