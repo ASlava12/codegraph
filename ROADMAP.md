@@ -431,3 +431,52 @@ Goal: make language and framework knowledge extensible.
 Exit criteria:
 
 - New language or framework support can be added without rewriting core graph logic.
+
+## Phase 7: Repository Knowledge Graph Parity
+
+Goal: cover the main Graphify-style ideas while keeping CodeGraph Rust-first, local-first, provenance-aware, and useful for both humans and agents.
+
+Already aligned:
+
+- [x] Build local code graphs from deterministic Tree-sitter parser facts.
+- [x] Preserve confidence and provenance on graph edges.
+- [x] Expose query, path, explain, trace, and node-card workflows across CLI, API, and web.
+- [x] Provide interactive graph exploration with search, filters, focused views, exports, and graph cards.
+- [x] Maintain persistent caches and incremental scan/update paths.
+- [x] Support local desktop launch through `codegraph-ui`.
+
+Graphify-inspired gaps to close:
+
+- [ ] Add community detection for subsystems using graph structure, with stable community ids and local-first labels.
+- [ ] Add god-node and hotspot reports that separate real architectural hubs from noisy utility hubs.
+- [ ] Add Markdown/ADR/RFC extraction so rationale comments, design docs, decisions, and citations become first-class graph nodes.
+- [ ] Promote source comments such as `NOTE`, `WHY`, `TODO`, `FIXME`, and security/risk markers into linked rationale nodes.
+- [ ] Add deterministic SQL schema extraction for tables, views, columns, foreign keys, indexes, queries, and JOIN relationships.
+- [ ] Link application code to SQL/schema nodes through query strings, migrations, ORM metadata, and database config.
+- [ ] Add document ingestion for Markdown, plain text, PDFs, Office files, and generated Markdown sidecars, with size limits and provenance.
+- [ ] Add optional local or configured-model semantic extraction for non-code documents while keeping code-only scans fully offline.
+- [ ] Add media ingestion hooks for transcripts from audio/video sidecars, with explicit opt-in for transcription backends.
+- [ ] Add graph compaction and compact node/file summaries for agent navigation without reading raw files.
+- [ ] Add project knowledge reports similar to `GRAPH_REPORT.md`: key concepts, communities, surprising links, risks, and suggested questions.
+- [ ] Add agent-facing natural-language query mode that maps a question to a bounded graph slice without vector storage.
+- [ ] Add saved query/result memory with outcomes such as useful, dead-end, and corrected, linked back to graph nodes and invalidated by source changes.
+- [ ] Add reflection reports that aggregate saved investigation outcomes into repository lessons with provenance and stale-source warnings.
+- [ ] Add assistant installation commands for Codex and generic agent-skill instructions, generating project-scoped guidance to query CodeGraph before broad file reads.
+- [ ] Add optional local hooks that nudge agents toward CodeGraph query/path/explain before grep-heavy or raw-file-heavy workflows.
+- [ ] Add git hooks for post-commit/post-checkout incremental refresh, cache invalidation, and optional graph export regeneration.
+- [ ] Add watch mode for automatic local graph refresh while editing.
+- [ ] Add global graph registry for multiple local repositories with cross-project path/query support.
+- [ ] Add graph merge commands for combining project, docs, incident, and external-system graphs.
+- [ ] Add GraphML, SVG, Mermaid/callflow HTML, Obsidian vault, Markdown wiki, Neo4j Cypher, and FalkorDB export targets.
+- [ ] Add MCP stdio server mode for graph query/path/explain/report/card access from external assistants.
+- [ ] Add PR impact dashboard using graph communities, changed files, CI/review state, conflicts, and risky shared subsystems.
+- [ ] Add query logging with privacy controls, response logging opt-in, and local JSONL audit output.
+- [ ] Add explicit security model for external ingestion: URL validation, redirect blocking, size/time limits, label sanitization, and graph path constraints.
+- [ ] Add benchmark harness for token/context savings and graph-query recall on real mixed corpora.
+
+Exit criteria:
+
+- Code-only repositories remain fully local and deterministic.
+- Mixed repositories can combine code, architecture docs, SQL schemas, and runtime metadata in one typed graph.
+- Agents can use CodeGraph as persistent repository memory through CLI/API/MCP without re-reading whole projects.
+- Humans can inspect communities, rationale, docs, schema links, and code flow from one UI.

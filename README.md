@@ -788,6 +788,10 @@ Planned language support:
 
 - Dart and Flutter: `.dart`, `pubspec.yaml`, `.dart_tool/package_config.json`, `main()`, `runApp(...)`, `bin/*.dart`, `test/*_test.dart`, package imports, relative imports, `part` files, assets, generated files, and Dart analysis server semantic enrichment.
 
+Planned repository-knowledge features inspired by Graphify-style workflows:
+
+- Community detection, god-node reports, repository knowledge reports, Markdown/ADR/RFC/rationale extraction, deterministic SQL schema extraction, optional non-code document ingestion, assistant install/hooks, MCP server mode, global multi-repository graphs, saved investigation memory, PR impact dashboards, and exports for GraphML, SVG, Mermaid/callflow HTML, Obsidian/Markdown wiki, Neo4j, and FalkorDB.
+
 Supported package manifests:
 
 - Rust/Cargo: `Cargo.toml`
