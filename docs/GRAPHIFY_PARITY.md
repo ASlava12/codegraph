@@ -28,7 +28,7 @@ CodeGraph already has the right foundation: Rust workspace, typed graph schema, 
 | --- | --- | --- |
 | Local AST code graph | Implemented for the current supported language set | Continue expanding language adapters while preserving typed facts and provenance |
 | Confidence tags | Implemented as `exact`, `semantic`, `syntactic`, `heuristic`, `unknown`, with Markdown report wording for extracted/resolved/inferred/ambiguous evidence | Keep wording aligned as new confidence sources are added |
-| Interactive graph | Implemented in web UI with graph cards, filters, focused slices, source preview, workflows | Add community and hotspot overlays directly into the UI graph/card flows |
+| Interactive graph | Implemented in web UI with graph cards, filters, focused slices, source preview, workflows, and compact workflow/callflow blocks | Add community and hotspot overlays directly into the UI graph/card flows |
 | Query/path/explain | Implemented across CLI/API/web | Add natural-language-to-bounded-subgraph mode without vector storage as the default dependency |
 | God nodes and communities | First community reports exist; hotspot reports exist | Separate architectural hubs from noisy utility hubs and expose both in reports/UI |
 | GRAPH_REPORT-style summary | Implemented through `codegraph report --format markdown --output CODEGRAPH_REPORT.md` with compact node/file summaries, key concepts, communities, risks, surprising links, suggested questions, and provenance | Add saved investigation memory and reflection reports next |

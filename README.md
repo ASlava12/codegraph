@@ -137,8 +137,8 @@ Implemented now:
 - Reverse dependency/dependent traces for impact analysis from CLI, API, query language, and web detail panels.
 - Entrypoint trace API, CLI command, and web panel for comparing startup flows from manifest/code entrypoints.
 - Web entrypoint trace reports can be downloaded as JSON with search, depth, and returned startup flows.
-- Block-style workflow reports from a selected entrypoint, matched entrypoint set, or node label in CLI and API, with stable block ids, source node ids, edge indexes, confidence metadata, risk references, Mermaid flowchart output from CLI/web, and a selected-node web Flow panel with JSON/Mermaid downloads.
-- Workflow reports support edge kind, confidence, language, risk severity, and block kind filters across CLI and API for smaller human diagrams and agent handoffs.
+- Block-style workflow reports from a selected entrypoint, matched entrypoint set, or node label in CLI and API, with stable block ids, source node ids, edge indexes, confidence metadata, risk references, optional low-signal block compaction, Mermaid flowchart output from CLI/web, and a selected-node web Flow panel with JSON/Mermaid downloads.
+- Workflow reports support edge kind, confidence, language, risk severity, block kind filters, and compact mode across CLI and API for smaller human diagrams and agent handoffs.
 - Web Entry Flows can build block-style workflow reports for matched entrypoints, focus a workflow slice on the graph, and download JSON or Mermaid for agent handoff.
 - Web workflow filters are available for selected-node Flow panels and Entry Flows using edge kind, confidence, language, risk severity, and block kind controls.
 - Graph query results can be converted into block-style workflow reports from CLI, API, and web query result actions.
@@ -795,7 +795,7 @@ curl --get 'http://127.0.0.1:3765/api/explain-edge' \
   --data-urlencode 'target=load_config' \
   --data-urlencode 'kind=calls'
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
-curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&depth=4&block_limit=200'
+curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&depth=4&block_limit=200&compact=true'
 curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&edge_kind=calls&confidence=heuristic&block_kind=call'
 curl --get 'http://127.0.0.1:3765/api/workflow-query' \
   --data-urlencode 'path=.' \

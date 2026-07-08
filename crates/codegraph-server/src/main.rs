@@ -384,6 +384,7 @@ struct WorkflowQuery {
     language: Option<String>,
     risk_severity: Option<String>,
     block_kind: Option<String>,
+    compact: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -406,6 +407,7 @@ struct EntrypointWorkflowQuery {
     language: Option<String>,
     risk_severity: Option<String>,
     block_kind: Option<String>,
+    compact: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -420,6 +422,7 @@ struct WorkflowQuerySliceQuery {
     language: Option<String>,
     risk_severity: Option<String>,
     block_kind: Option<String>,
+    compact: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2722,6 +2725,7 @@ async fn entrypoint_workflows_api(
                 query.risk_severity,
                 query.block_kind,
             ),
+            compact: query.compact.unwrap_or(false),
         },
     )))
 }
@@ -2842,6 +2846,7 @@ async fn workflow_api(
                 query.risk_severity,
                 query.block_kind,
             ),
+            compact: query.compact.unwrap_or(false),
         },
     )))
 }
@@ -2870,6 +2875,7 @@ async fn workflow_query_api(
                 query.risk_severity,
                 query.block_kind,
             ),
+            compact: query.compact.unwrap_or(false),
         },
     )
     .map_err(|error| ApiError::bad_request(error.to_string()))?;
@@ -4937,6 +4943,13 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "Restrict returned workflow blocks to matching workflow block kinds.",
                         ),
                         query_param(
+                            "compact",
+                            false,
+                            "bool",
+                            Some("false"),
+                            "Collapse repeated low-signal workflow blocks into aggregate blocks.",
+                        ),
+                        query_param(
                             "limit",
                             false,
                             "usize",
@@ -5045,6 +5058,13 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             None,
                             "Restrict returned workflow blocks to matching workflow block kinds.",
                         ),
+                        query_param(
+                            "compact",
+                            false,
+                            "bool",
+                            Some("false"),
+                            "Collapse repeated low-signal workflow blocks into aggregate blocks.",
+                        ),
                     ],
                     "WorkflowReport?",
                 )
@@ -5120,6 +5140,13 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "workflow_block_kind",
                             None,
                             "Restrict returned workflow blocks to matching workflow block kinds.",
+                        ),
+                        query_param(
+                            "compact",
+                            false,
+                            "bool",
+                            Some("false"),
+                            "Collapse repeated low-signal workflow blocks into aggregate blocks.",
                         ),
                     ],
                     "WorkflowQueryReport",
@@ -6447,6 +6474,12 @@ fn workflow_response_fields() -> Vec<ApiParameterSpec> {
             "Applied workflow block and traversal filters.",
         ),
         response_field(
+            "compact",
+            true,
+            "bool",
+            "Whether repeated low-signal workflow blocks were compacted.",
+        ),
+        response_field(
             "blocks",
             true,
             "WorkflowBlock[]",
@@ -6469,6 +6502,18 @@ fn workflow_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "usize",
             "Returned workflow transition count.",
+        ),
+        response_field(
+            "raw_total_blocks",
+            true,
+            "usize",
+            "Workflow block count before optional compaction.",
+        ),
+        response_field(
+            "raw_total_transitions",
+            true,
+            "usize",
+            "Workflow transition count before optional compaction.",
         ),
         response_field(
             "truncated",
@@ -7586,6 +7631,7 @@ fn helper() {
                 language: None,
                 risk_severity: None,
                 block_kind: None,
+                compact: None,
             }),
         )
         .await
@@ -7652,6 +7698,7 @@ fn helper() {}
                 language: None,
                 risk_severity: None,
                 block_kind: None,
+                compact: None,
             }),
         )
         .await
@@ -7700,6 +7747,7 @@ fn helper() {}
                 language: None,
                 risk_severity: None,
                 block_kind: Some("call".to_string()),
+                compact: None,
             }),
         )
         .await
@@ -8940,6 +8988,16 @@ fn helper() {}
         );
         assert!(
             entrypoint_workflows_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| {
+                    parameter.name == "compact"
+                        && parameter.value_type == "bool"
+                        && parameter.default.as_deref() == Some("false")
+                })
+        );
+        assert!(
+            entrypoint_workflows_endpoint
                 .response_fields
                 .iter()
                 .any(|field| field.name == "filters" && field.value_type == "WorkflowFilters")
@@ -8982,11 +9040,28 @@ fn helper() {}
         assert!(workflow_endpoint.parameters.iter().any(|parameter| {
             parameter.name == "risk_severity" && parameter.value_type == "insight_severity"
         }));
+        assert!(workflow_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "compact"
+                && parameter.value_type == "bool"
+                && parameter.default.as_deref() == Some("false")
+        }));
         assert!(
             workflow_endpoint
                 .response_fields
                 .iter()
                 .any(|field| { field.name == "filters" && field.value_type == "WorkflowFilters" })
+        );
+        assert!(
+            workflow_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "compact" && field.value_type == "bool" })
+        );
+        assert!(
+            workflow_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "raw_total_blocks" && field.value_type == "usize" })
         );
         assert!(workflow_endpoint.response_fields.iter().any(|field| {
             field.name == "transitions" && field.value_type == "WorkflowTransition[]"
@@ -9004,6 +9079,11 @@ fn helper() {}
         }));
         assert!(workflow_query_endpoint.parameters.iter().any(|parameter| {
             parameter.name == "block_kind" && parameter.value_type == "workflow_block_kind"
+        }));
+        assert!(workflow_query_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "compact"
+                && parameter.value_type == "bool"
+                && parameter.default.as_deref() == Some("false")
         }));
         assert!(
             workflow_query_endpoint.response_fields.iter().any(|field| {

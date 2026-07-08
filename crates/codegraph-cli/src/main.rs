@@ -327,6 +327,10 @@ enum Command {
         #[arg(long)]
         block_kind: Option<String>,
 
+        /// Collapse repeated low-signal workflow blocks into compact aggregate blocks.
+        #[arg(long)]
+        compact: bool,
+
         /// Output format.
         #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
         format: WorkflowFormat,
@@ -385,6 +389,10 @@ enum Command {
         #[arg(long)]
         block_kind: Option<String>,
 
+        /// Collapse repeated low-signal workflow blocks into compact aggregate blocks.
+        #[arg(long)]
+        compact: bool,
+
         /// Output format.
         #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
         format: WorkflowFormat,
@@ -441,6 +449,10 @@ enum Command {
         /// Restrict returned blocks to a workflow kind such as call, config_read, environment_read, or error.
         #[arg(long)]
         block_kind: Option<String>,
+
+        /// Collapse repeated low-signal workflow blocks into compact aggregate blocks.
+        #[arg(long)]
+        compact: bool,
 
         /// Output format.
         #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
@@ -1451,6 +1463,7 @@ fn main() -> Result<()> {
             language,
             risk_severity,
             block_kind,
+            compact,
             format,
             include_hidden,
             include_ignored,
@@ -1471,6 +1484,7 @@ fn main() -> Result<()> {
                         risk_severity,
                         block_kind,
                     },
+                    compact,
                 },
             );
             match (format, report) {
@@ -1496,6 +1510,7 @@ fn main() -> Result<()> {
             language,
             risk_severity,
             block_kind,
+            compact,
             format,
             include_hidden,
             include_ignored,
@@ -1517,6 +1532,7 @@ fn main() -> Result<()> {
                         risk_severity,
                         block_kind,
                     },
+                    compact,
                 },
             );
             match format {
@@ -1551,6 +1567,7 @@ fn main() -> Result<()> {
             language,
             risk_severity,
             block_kind,
+            compact,
             format,
             include_hidden,
             include_ignored,
@@ -1572,6 +1589,7 @@ fn main() -> Result<()> {
                         risk_severity,
                         block_kind,
                     },
+                    compact,
                 },
             )?;
             match format {

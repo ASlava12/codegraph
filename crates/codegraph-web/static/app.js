@@ -521,6 +521,7 @@ const I18N = {
     "workflow.transitionCount": "{count} transitions",
     "workflow.truncated": "Workflow truncated by depth or block limit.",
     "workflow.risks": "{count} risks",
+    "workflow.compacted": "{count} compacted",
     "trace.tracingDependents": "Tracing dependents...",
     "trace.noDependents": "No incoming dependents.",
     "trace.dependents": "Dependents",
@@ -1127,6 +1128,7 @@ const I18N = {
     "workflow.transitionCount": "переходов: {count}",
     "workflow.truncated": "Блок-схема усечена глубиной или лимитом блоков.",
     "workflow.risks": "рисков: {count}",
+    "workflow.compacted": "свернуто: {count}",
     "trace.tracingDependents": "Трассирую зависимые узлы...",
     "trace.noDependents": "Входящих зависимых нет.",
     "trace.dependents": "Зависимые",
@@ -4301,6 +4303,7 @@ async function runEntryFlowWorkflows() {
     depth: String(depth),
     block_limit: "120",
     limit: "15",
+    compact: "true",
   });
   const search = entryFlowSearchInput.value.trim();
   if (search) params.set("search", search);
@@ -4322,6 +4325,7 @@ async function runEntryFlowWorkflows() {
         depth,
         block_limit: 120,
         limit: 15,
+        compact: true,
         ...workflowFilters,
       },
       report: body,
@@ -6601,6 +6605,7 @@ async function runQueryWorkflow(expression) {
     depth: "4",
     block_limit: "120",
     limit: "15",
+    compact: "true",
   });
 
   try {
@@ -9288,6 +9293,7 @@ async function loadWorkflow(node) {
     node_id: String(node.id),
     depth: String(depth),
     block_limit: "120",
+    compact: "true",
   });
   const workflowFilters = readWorkflowFilters("workflow");
   appendWorkflowFilterParams(params, workflowFilters);
@@ -9307,6 +9313,7 @@ async function loadWorkflow(node) {
         label: node.label,
         depth,
         block_limit: 120,
+        compact: true,
         ...workflowFilters,
       },
       report: body,
@@ -9429,13 +9436,13 @@ function workflowReportToMermaid(report) {
   blocks.forEach((block) => {
     const node = block.node || {};
     lines.push(
-      `  ${workflowMermaidNodeId(node.id)}["${mermaidEscape(`${formatKind(block.kind || "unknown")}: ${node.label || node.id || ""}`)}"]`,
+      `  ${workflowMermaidNodeId(block.id || node.id)}["${mermaidEscape(`${formatKind(block.kind || "unknown")}: ${node.label || node.id || ""}`)}"]`,
     );
   });
   transitions.forEach((transition) => {
     const edge = transition.edge || {};
-    const source = transition.source_node_id || edge.source;
-    const target = transition.target_node_id || edge.target;
+    const source = transition.source || transition.source_node_id || edge.source;
+    const target = transition.target || transition.target_node_id || edge.target;
     const label = `${formatKind(edge.kind || "unknown")}/${formatKind(edge.confidence || "unknown")}`;
     lines.push(
       `  ${workflowMermaidNodeId(source)} -->|${mermaidEscape(label)}| ${workflowMermaidNodeId(target)}`,
@@ -9478,7 +9485,11 @@ function renderWorkflow(report) {
       Number(left.depth || 0) - Number(right.depth || 0) ||
       String(left.node?.label || "").localeCompare(String(right.node?.label || "")),
   );
-  const nodeMap = new Map(orderedBlocks.map((block) => [block.node?.id, block.node]).filter(([id]) => id != null));
+  const nodeMap = new Map();
+  orderedBlocks.forEach((block) => {
+    if (block.node?.id != null) nodeMap.set(block.node.id, block.node);
+    if (block.id) nodeMap.set(block.id, block.node);
+  });
   const blockRows = orderedBlocks.map((block) => renderWorkflowBlock(block)).join("");
   const transitionRows = transitions
     .map((transition) => renderWorkflowTransition(transition, nodeMap))
@@ -9512,6 +9523,9 @@ function renderWorkflow(report) {
 function renderWorkflowBlock(block) {
   const node = block.node || {};
   const risks = Array.isArray(block.risk_refs) ? block.risk_refs : [];
+  const compacted = block.compacted
+    ? `<span class="workflow-risk-count">${escapeHtml(t("workflow.compacted", { count: formatNumber(block.compacted_count || 0) }))}</span>`
+    : "";
   const riskSummary =
     risks.length > 0
       ? `<span class="workflow-risk-count">${escapeHtml(t("workflow.risks", { count: risks.length }))}</span>`
@@ -9529,6 +9543,7 @@ function renderWorkflowBlock(block) {
         <span>${escapeHtml(formatKind(block.kind || "unknown"))}</span>
         <strong>${escapeHtml(node.label || String(node.id || ""))}</strong>
         <em>#${escapeHtml(String(node.id || ""))}</em>
+        ${compacted}
         ${riskSummary}
       </button>
       ${riskRows ? `<div class="workflow-risk-list">${riskRows}</div>` : ""}
@@ -9538,8 +9553,8 @@ function renderWorkflowBlock(block) {
 
 function renderWorkflowTransition(transition, nodeMap) {
   const edge = transition.edge || {};
-  const source = nodeMap.get(transition.source_node_id) || nodeMap.get(edge.source);
-  const target = nodeMap.get(transition.target_node_id) || nodeMap.get(edge.target);
+  const source = nodeMap.get(transition.source) || nodeMap.get(transition.source_node_id) || nodeMap.get(edge.source);
+  const target = nodeMap.get(transition.target) || nodeMap.get(transition.target_node_id) || nodeMap.get(edge.target);
   const riskCount = Array.isArray(transition.risk_refs) ? transition.risk_refs.length : 0;
   const riskBadge =
     riskCount > 0

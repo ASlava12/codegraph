@@ -228,7 +228,7 @@ Goal: answer practical code investigation questions.
 - [x] Add web entrypoint workflow reports with focused graph slices and JSON/Mermaid exports.
 - [ ] Extend workflow generation from selected labels, entrypoints, and query result nodes to routes, CI jobs, Makefile targets, and Docker commands.
 - [ ] Classify workflow blocks as start, call, config/env read, dependency, branch, error, return, and external boundary.
-- [ ] Add workflow graph compaction so repeated helper calls, import-only hops, and low-signal nodes collapse into readable blocks.
+- [x] Add workflow graph compaction so repeated helper calls, import-only hops, and low-signal nodes collapse into readable blocks.
 - [ ] Add CLI workflow commands for routes, CI jobs, Makefile targets, Docker commands, and selected nodes.
 - [x] Add workflow CLI/API filters for edge-kind, confidence, language, risk severity, and block kinds.
 - [x] Add web workflow filter controls for selected-node flows and entrypoint workflow reports.
@@ -472,7 +472,7 @@ Artifact and report parity:
 - [x] Add god-node and hotspot reports that separate real architectural hubs from noisy utility hubs.
 - [x] Add project knowledge reports similar to `GRAPH_REPORT.md`: key concepts, communities, surprising links, risks, suggested questions, and exact graph evidence.
 - [x] Add compact node/file summaries for agent navigation without reading raw files.
-- [ ] Add graph compaction for agent navigation without reading raw files.
+- [ ] Add query/focus graph compaction for agent navigation without reading raw files.
 - [ ] Add agent-facing natural-language query mode that maps a question to a bounded graph slice without vector storage.
 - [x] Add confidence wording in reports that maps CodeGraph confidence to extracted, inferred, and ambiguous human labels.
 

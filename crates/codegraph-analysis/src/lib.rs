@@ -214,6 +214,8 @@ pub struct WorkflowRequest {
     pub max_depth: usize,
     pub block_limit: usize,
     pub filters: WorkflowFilters,
+    #[serde(default)]
+    pub compact: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -231,10 +233,13 @@ pub struct WorkflowReport {
     pub max_depth: usize,
     pub block_limit: usize,
     pub filters: WorkflowFilters,
+    pub compact: bool,
     pub blocks: Vec<WorkflowBlock>,
     pub transitions: Vec<WorkflowTransition>,
     pub total_blocks: usize,
     pub total_transitions: usize,
+    pub raw_total_blocks: usize,
+    pub raw_total_transitions: usize,
     pub truncated: bool,
 }
 
@@ -246,6 +251,10 @@ pub struct WorkflowBlock {
     pub depth: usize,
     pub source_node_ids: Vec<NodeId>,
     pub risk_refs: Vec<WorkflowRiskRef>,
+    #[serde(default)]
+    pub compacted: bool,
+    #[serde(default)]
+    pub compacted_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,6 +282,10 @@ pub struct WorkflowTransition {
     pub edge: Edge,
     pub edge_index: usize,
     pub risk_refs: Vec<WorkflowRiskRef>,
+    #[serde(default)]
+    pub compacted: bool,
+    #[serde(default)]
+    pub compacted_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -306,6 +319,8 @@ pub struct EntrypointWorkflowRequest {
     pub block_limit: usize,
     pub limit: usize,
     pub filters: WorkflowFilters,
+    #[serde(default)]
+    pub compact: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -325,6 +340,8 @@ pub struct WorkflowQueryRequest {
     pub block_limit: usize,
     pub limit: usize,
     pub filters: WorkflowFilters,
+    #[serde(default)]
+    pub compact: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -3325,6 +3342,7 @@ pub fn workflow_entrypoints(
                     max_depth,
                     block_limit,
                     filters: request.filters.clone(),
+                    compact: request.compact,
                 },
                 &insight_report,
             )
@@ -3365,6 +3383,7 @@ pub fn workflow_query(
                     max_depth,
                     block_limit,
                     filters: filters.clone(),
+                    compact: request.compact,
                 },
                 &insight_report,
             )
@@ -3461,6 +3480,8 @@ fn workflow_with_insight_report(
                 depth: depths.get(&node.id).copied().unwrap_or(0),
                 source_node_ids: vec![node.id],
                 risk_refs: workflow_risk_refs_for_node(insight_report, node.id),
+                compacted: false,
+                compacted_count: 1,
             }
         })
         .collect::<Vec<_>>();
@@ -3481,6 +3502,8 @@ fn workflow_with_insight_report(
                 edge: edge_with_index(*edge_index, edge),
                 edge_index: *edge_index,
                 risk_refs: workflow_risk_refs_for_edge(insight_report, *edge_index),
+                compacted: false,
+                compacted_count: 1,
             })
         })
         .collect::<Vec<_>>();
@@ -3498,18 +3521,205 @@ fn workflow_with_insight_report(
                 && workflow_transition_filter_matches(transition, &filters)
         })
         .collect::<Vec<_>>();
+    let raw_total_blocks = blocks.len();
+    let raw_total_transitions = transitions.len();
+    let (blocks, transitions) = if request.compact {
+        compact_workflow_blocks_and_transitions(&start, blocks, transitions)
+    } else {
+        (blocks, transitions)
+    };
 
     Some(WorkflowReport {
         start,
         max_depth,
         block_limit,
         filters,
+        compact: request.compact,
         total_blocks: blocks.len(),
         total_transitions: transitions.len(),
+        raw_total_blocks,
+        raw_total_transitions,
         blocks,
         transitions,
         truncated,
     })
+}
+
+fn compact_workflow_blocks_and_transitions(
+    _start: &Node,
+    blocks: Vec<WorkflowBlock>,
+    transitions: Vec<WorkflowTransition>,
+) -> (Vec<WorkflowBlock>, Vec<WorkflowTransition>) {
+    let mut group_members: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (index, block) in blocks.iter().enumerate() {
+        if let Some(group_key) = workflow_compaction_group_key(block) {
+            group_members.entry(group_key).or_default().push(index);
+        }
+    }
+    group_members.retain(|_, members| members.len() > 1);
+    if group_members.is_empty() {
+        return (blocks, transitions);
+    }
+
+    let mut original_to_compact_block = BTreeMap::new();
+    let mut compact_blocks = Vec::new();
+    for (group_index, (group_key, members)) in group_members.iter().enumerate() {
+        let compact_id = format!("wc-{}", group_index + 1);
+        for member in members {
+            original_to_compact_block.insert(blocks[*member].id.clone(), compact_id.clone());
+        }
+        compact_blocks.push(workflow_compacted_block(
+            group_index,
+            group_key,
+            members.iter().map(|index| &blocks[*index]).collect(),
+        ));
+    }
+
+    let mut visible_blocks = blocks
+        .iter()
+        .filter(|block| !original_to_compact_block.contains_key(&block.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    visible_blocks.extend(compact_blocks);
+    visible_blocks.sort_by(|left, right| {
+        left.depth
+            .cmp(&right.depth)
+            .then_with(|| {
+                workflow_block_kind_label(&left.kind).cmp(workflow_block_kind_label(&right.kind))
+            })
+            .then_with(|| left.node.label.cmp(&right.node.label))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    let compact_block_ids = visible_blocks
+        .iter()
+        .filter(|block| block.compacted)
+        .map(|block| block.id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut transition_by_key: BTreeMap<(String, String, String, String), WorkflowTransition> =
+        BTreeMap::new();
+    for transition in transitions {
+        let source = original_to_compact_block
+            .get(&transition.source)
+            .cloned()
+            .unwrap_or_else(|| transition.source.clone());
+        let target = original_to_compact_block
+            .get(&transition.target)
+            .cloned()
+            .unwrap_or_else(|| transition.target.clone());
+        if source == target {
+            continue;
+        }
+
+        let key = (
+            source.clone(),
+            target.clone(),
+            edge_kind_name(&transition.edge.kind),
+            confidence_name(transition.edge.confidence),
+        );
+        if let Some(existing) = transition_by_key.get_mut(&key) {
+            existing.compacted = true;
+            existing.compacted_count += transition.compacted_count.max(1);
+            existing.risk_refs.extend(transition.risk_refs);
+            continue;
+        }
+
+        let mut transition = transition;
+        transition.id = format!("wtc-{}", transition.edge_index);
+        transition.source = source.clone();
+        transition.target = target.clone();
+        transition.compacted = transition.compacted
+            || compact_block_ids.contains(&source)
+            || compact_block_ids.contains(&target);
+        transition.compacted_count = transition.compacted_count.max(1);
+        transition_by_key.insert(key, transition);
+    }
+
+    (visible_blocks, transition_by_key.into_values().collect())
+}
+
+fn workflow_compaction_group_key(block: &WorkflowBlock) -> Option<String> {
+    if block.compacted || !block.risk_refs.is_empty() || block.kind == WorkflowBlockKind::Start {
+        return None;
+    }
+    let low_signal_kind = matches!(
+        block.kind,
+        WorkflowBlockKind::Call
+            | WorkflowBlockKind::Import
+            | WorkflowBlockKind::Reference
+            | WorkflowBlockKind::Unknown
+    );
+    if !low_signal_kind {
+        return None;
+    }
+    let language = block
+        .node
+        .metadata
+        .get("language")
+        .map(String::as_str)
+        .unwrap_or("unknown");
+    Some(format!(
+        "{}:{}:{}",
+        block.depth,
+        workflow_block_kind_filter_name(&block.kind),
+        language
+    ))
+}
+
+fn workflow_compacted_block(
+    group_index: usize,
+    group_key: &str,
+    members: Vec<&WorkflowBlock>,
+) -> WorkflowBlock {
+    let representative = members
+        .first()
+        .expect("workflow compaction groups are non-empty");
+    let count = members.len();
+    let label = workflow_compacted_label(group_key, count, &representative.kind);
+    let mut source_node_ids = members
+        .iter()
+        .flat_map(|block| block.source_node_ids.iter().copied())
+        .collect::<Vec<_>>();
+    source_node_ids.sort();
+    source_node_ids.dedup();
+
+    WorkflowBlock {
+        id: format!("wc-{}", group_index + 1),
+        kind: representative.kind.clone(),
+        node: Node {
+            id: NodeId(9_000_000_000 + group_index as u64 + 1),
+            kind: NodeKind::Unknown,
+            label,
+            span: None,
+            metadata: BTreeMap::from([
+                ("compacted".to_string(), "true".to_string()),
+                ("compacted_count".to_string(), count.to_string()),
+                (
+                    "compacted_kind".to_string(),
+                    workflow_block_kind_filter_name(&representative.kind),
+                ),
+            ]),
+        },
+        depth: representative.depth,
+        source_node_ids,
+        risk_refs: Vec::new(),
+        compacted: true,
+        compacted_count: count,
+    }
+}
+
+fn workflow_compacted_label(group_key: &str, count: usize, kind: &WorkflowBlockKind) -> String {
+    let mut parts = group_key.split(':');
+    let _depth = parts.next();
+    let kind_name = parts
+        .next()
+        .unwrap_or_else(|| workflow_block_kind_label(kind));
+    let language = parts.next().unwrap_or("unknown");
+    if language == "unknown" {
+        format!("{count} compacted {kind_name} blocks")
+    } else {
+        format!("{count} compacted {language} {kind_name} blocks")
+    }
 }
 
 pub fn workflow_mermaid(report: &WorkflowReport) -> String {
@@ -3517,7 +3727,7 @@ pub fn workflow_mermaid(report: &WorkflowReport) -> String {
     for block in &report.blocks {
         lines.push(format!(
             "  {}[\"{}\"]",
-            mermaid_block_id(block.node.id),
+            mermaid_report_block_id(&block.id),
             mermaid_escape(&format!(
                 "{}: {}",
                 workflow_block_kind_label(&block.kind),
@@ -3533,9 +3743,9 @@ pub fn workflow_mermaid(report: &WorkflowReport) -> String {
         );
         lines.push(format!(
             "  {} -->|{}| {}",
-            mermaid_block_id(transition.source_node_id),
+            mermaid_report_block_id(&transition.source),
             mermaid_escape(&edge_label),
-            mermaid_block_id(transition.target_node_id)
+            mermaid_report_block_id(&transition.target)
         ));
     }
     lines.join("\n")
@@ -12272,8 +12482,16 @@ fn workflow_risk_ref(insight_index: usize, insight: &Insight) -> WorkflowRiskRef
     }
 }
 
-fn mermaid_block_id(id: NodeId) -> String {
-    format!("B{}", id.0)
+fn mermaid_report_block_id(id: &str) -> String {
+    let mut normalized = String::from("B");
+    for ch in id.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch);
+        } else {
+            normalized.push('_');
+        }
+    }
+    normalized
 }
 
 fn mermaid_escape(value: &str) -> String {
@@ -13744,6 +13962,7 @@ mod tests {
                 max_depth: 3,
                 block_limit: 20,
                 filters: WorkflowFilters::default(),
+                compact: false,
             },
         )
         .expect("workflow report");
@@ -13791,6 +14010,71 @@ mod tests {
         assert!(mermaid.starts_with("flowchart TD"));
         assert!(mermaid.contains("start: cargo bin:api"));
         assert!(mermaid.contains("reads_environment/heuristic"));
+    }
+
+    #[test]
+    fn workflow_compacts_repeated_low_signal_blocks() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "main",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let helper_a = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "helper_a",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let helper_b = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "helper_b",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        graph.add_edge(main, helper_a, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(main, helper_b, EdgeKind::Calls, Confidence::Heuristic);
+
+        let report = workflow(
+            &graph,
+            WorkflowRequest {
+                start: TraceStart::Label("main".to_string()),
+                max_depth: 1,
+                block_limit: 20,
+                filters: WorkflowFilters::default(),
+                compact: true,
+            },
+        )
+        .expect("workflow report");
+
+        assert!(report.compact);
+        assert_eq!(report.raw_total_blocks, 3);
+        assert_eq!(report.raw_total_transitions, 2);
+        assert_eq!(report.total_blocks, 2);
+        assert_eq!(report.total_transitions, 1);
+        let compacted = report
+            .blocks
+            .iter()
+            .find(|block| block.compacted)
+            .expect("compacted block");
+        assert_eq!(compacted.compacted_count, 2);
+        assert_eq!(compacted.source_node_ids, vec![helper_a, helper_b]);
+        assert!(
+            compacted
+                .node
+                .label
+                .contains("2 compacted rust call blocks")
+        );
+        let compacted_transition = report
+            .transitions
+            .iter()
+            .find(|transition| transition.compacted)
+            .expect("compacted transition");
+        assert_eq!(compacted_transition.compacted_count, 2);
+
+        let mermaid = workflow_mermaid(&report);
+        assert!(mermaid.contains("2 compacted rust call blocks"));
     }
 
     #[test]
@@ -13853,6 +14137,7 @@ mod tests {
                     block_kind: Some("environment_read".to_string()),
                     ..WorkflowFilters::default()
                 },
+                compact: false,
             },
         )
         .expect("environment workflow");
@@ -13883,6 +14168,7 @@ mod tests {
                     risk_severity: Some("warning".to_string()),
                     ..WorkflowFilters::default()
                 },
+                compact: false,
             },
         )
         .expect("risk workflow");
@@ -13956,6 +14242,7 @@ mod tests {
                 block_limit: 10,
                 limit: 10,
                 filters: WorkflowFilters::default(),
+                compact: false,
             },
         );
 
@@ -14014,6 +14301,7 @@ mod tests {
                     confidence: Some("heuristic".to_string()),
                     ..WorkflowFilters::default()
                 },
+                compact: false,
             },
         )
         .expect("workflow query report");
