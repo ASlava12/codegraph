@@ -6755,6 +6755,10 @@ mod tests {
         assert!(app.contains("x-codegraph-export-nodes"));
         assert!(app.contains("x-codegraph-export-edges"));
         assert!(app.contains("x-codegraph-export-bytes"));
+        assert!(app.contains("\"export.exporting\""));
+        assert!(app.contains("\"export.failedFallback\""));
+        assert!(app.contains("t(\"stat.nodes\").toLowerCase()"));
+        assert!(app.contains("t(\"stat.edges\").toLowerCase()"));
         assert!(index.contains("exportSliceButton"));
         assert!(app.contains("exportVisibleGraphSlice"));
         assert!(app.contains("codegraph.visible_slice.v1"));

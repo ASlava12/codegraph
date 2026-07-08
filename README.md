@@ -112,6 +112,7 @@ Implemented now:
 - Web path-query workflow uses localized validation, loading, error fallback, and result labels in English/Russian UI sessions.
 - Web graph-query and path-query workflows enforce the published query-length limit before issuing API requests.
 - Web path-query results can be downloaded as JSON with endpoints, query expression, counts, and returned graph slice for agent handoff.
+- Web graph export workflow uses localized progress, error fallback, and node/edge count labels in English/Russian sessions.
 - Web source-search match cards use localized titles and loading states for English/Russian UI sessions.
 - Web entrypoint trace workflow uses localized status, counters, empty states, truncation notes, export summary text, and focused graph titles.
 - Web config/error trace workflows use localized status, counters, empty states, truncation notes, and focused graph titles.

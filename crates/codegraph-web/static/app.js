@@ -420,6 +420,8 @@ const I18N = {
     "export.noCheck": "Run a quality check before exporting its result.",
     "export.noQueryResult": "Run a graph query before exporting its result.",
     "export.noSlice": "No visible graph slice to export.",
+    "export.exporting": "Exporting...",
+    "export.failedFallback": "export failed",
     "check.running": "Running check...",
     "check.failedFallback": "check failed",
     "check.passed": "Passed",
@@ -962,6 +964,8 @@ const I18N = {
     "export.noCheck": "Сначала запустите проверку качества.",
     "export.noQueryResult": "Сначала выполните запрос к графу.",
     "export.noSlice": "Нет видимого среза графа для экспорта.",
+    "export.exporting": "Экспортирую...",
+    "export.failedFallback": "экспорт не удался",
     "check.running": "Проверяю...",
     "check.failedFallback": "проверка не удалась",
     "check.passed": "Пройдено",
@@ -4659,7 +4663,7 @@ async function runGraphExport() {
   state.exportRequest += 1;
   const requestId = state.exportRequest;
   exportButton.disabled = true;
-  exportResult.innerHTML = '<p class="empty">Exporting...</p>';
+  exportResult.innerHTML = `<p class="empty">${escapeHtml(t("export.exporting"))}</p>`;
 
   const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
   if (metadata.endpoint === "/api/export") {
@@ -4670,7 +4674,7 @@ async function runGraphExport() {
     const response = await apiFetch(`${metadata.endpoint}?${params.toString()}`);
     if (requestId !== state.exportRequest) return;
     if (!response.ok) {
-      throw new Error(await responseErrorMessage(response, "export failed"));
+      throw new Error(await responseErrorMessage(response, t("export.failedFallback")));
     }
 
     const blob = await response.blob();
@@ -4684,8 +4688,8 @@ async function runGraphExport() {
       <div class="query-summary">
         <span>${escapeHtml(metadata.label)}</span>
         <span>${escapeHtml(formatBytes(blob.size))}</span>
-        ${exportNodes ? `<span>${escapeHtml(exportNodes)} nodes</span>` : ""}
-        ${exportEdges ? `<span>${escapeHtml(exportEdges)} edges</span>` : ""}
+        ${exportNodes ? `<span>${escapeHtml(exportNodes)} ${escapeHtml(t("stat.nodes").toLowerCase())}</span>` : ""}
+        ${exportEdges ? `<span>${escapeHtml(exportEdges)} ${escapeHtml(t("stat.edges").toLowerCase())}</span>` : ""}
         ${exportBytes && Number(exportBytes) !== blob.size ? `<span>${escapeHtml(formatBytes(Number(exportBytes)))}</span>` : ""}
         <span class="query-expression">${escapeHtml(fileName)}</span>
       </div>
