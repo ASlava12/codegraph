@@ -80,7 +80,11 @@ pub struct LanguageDependency {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HotspotReport {
     pub hotspots: Vec<Hotspot>,
+    pub architectural_hubs: Vec<Hotspot>,
+    pub utility_hubs: Vec<Hotspot>,
     pub total_candidates: usize,
+    pub total_architectural_hubs: usize,
+    pub total_utility_hubs: usize,
     pub truncated: bool,
 }
 
@@ -91,6 +95,7 @@ pub struct Hotspot {
     pub incoming: usize,
     pub outgoing: usize,
     pub edge_kinds: BTreeMap<String, usize>,
+    pub hub_kind: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1413,11 +1418,31 @@ pub fn hotspots(graph: &CodeGraph, limit: usize) -> HotspotReport {
     let limit = limit.clamp(1, 500);
     let mut hotspots = hotspot_stats(graph, |_| true, NeighborDirection::Both);
     let total_candidates = hotspots.len();
+    let architectural_candidates: Vec<_> = hotspots
+        .iter()
+        .filter(|hotspot| hotspot.hub_kind == "architectural")
+        .cloned()
+        .collect();
+    let utility_candidates: Vec<_> = hotspots
+        .iter()
+        .filter(|hotspot| hotspot.hub_kind == "utility")
+        .cloned()
+        .collect();
+    let total_architectural_hubs = architectural_candidates.len();
+    let total_utility_hubs = utility_candidates.len();
+    let mut architectural_hubs = architectural_candidates;
+    let mut utility_hubs = utility_candidates;
     hotspots.truncate(limit);
+    architectural_hubs.truncate(limit);
+    utility_hubs.truncate(limit);
 
     HotspotReport {
         hotspots,
+        architectural_hubs,
+        utility_hubs,
         total_candidates,
+        total_architectural_hubs,
+        total_utility_hubs,
         truncated: total_candidates > limit,
     }
 }
@@ -1691,6 +1716,7 @@ where
                 incoming: 0,
                 outgoing: 0,
                 edge_kinds: BTreeMap::new(),
+                hub_kind: String::new(),
             });
             hotspot.outgoing += 1;
             hotspot.score += 1;
@@ -1709,6 +1735,7 @@ where
                 incoming: 0,
                 outgoing: 0,
                 edge_kinds: BTreeMap::new(),
+                hub_kind: String::new(),
             });
             hotspot.incoming += 1;
             hotspot.score += 1;
@@ -1720,6 +1747,9 @@ where
     }
 
     let mut hotspots: Vec<_> = stats.into_values().collect();
+    for hotspot in &mut hotspots {
+        hotspot.hub_kind = hotspot_kind(hotspot).to_string();
+    }
     hotspots.sort_by(|left, right| {
         right
             .score
@@ -1729,6 +1759,82 @@ where
             .then_with(|| left.node.label.cmp(&right.node.label))
     });
     hotspots
+}
+
+fn hotspot_kind(hotspot: &Hotspot) -> &'static str {
+    if is_utility_hotspot(hotspot) {
+        "utility"
+    } else {
+        "architectural"
+    }
+}
+
+fn is_utility_hotspot(hotspot: &Hotspot) -> bool {
+    let label = hotspot.node.label.trim();
+    let normalized = label.trim_matches('_').to_ascii_lowercase();
+    if matches!(
+        hotspot.node.kind,
+        NodeKind::Config
+            | NodeKind::Environment
+            | NodeKind::File
+            | NodeKind::Entrypoint
+            | NodeKind::Type
+            | NodeKind::Module
+    ) {
+        return false;
+    }
+    if matches!(
+        normalized.as_str(),
+        "new"
+            | "default"
+            | "clone"
+            | "copy"
+            | "drop"
+            | "fmt"
+            | "debug"
+            | "to_string"
+            | "to_owned"
+            | "into"
+            | "from"
+            | "as_ref"
+            | "as_mut"
+            | "unwrap"
+            | "expect"
+            | "ok"
+            | "err"
+            | "some"
+            | "none"
+            | "get"
+            | "set"
+            | "len"
+            | "is_empty"
+            | "map"
+            | "and_then"
+            | "or_else"
+            | "parse"
+            | "open"
+            | "read"
+            | "write"
+    ) {
+        return true;
+    }
+    if normalized.len() <= 2 && hotspot.score >= 4 {
+        return true;
+    }
+    if normalized.starts_with("get_") || normalized.starts_with("set_") {
+        return true;
+    }
+    hotspot.node.kind == NodeKind::ExternalDependency
+        && hotspot
+            .node
+            .metadata
+            .get("item_kind")
+            .is_some_and(|kind| kind == "call")
+        && hotspot
+            .node
+            .metadata
+            .get("resolution")
+            .is_some_and(|resolution| resolution == "unresolved")
 }
 
 pub fn entrypoints(graph: &CodeGraph) -> Vec<Node> {
@@ -1998,18 +2104,28 @@ pub fn project_report_markdown(
     writeln!(output, "- `unknown`: legacy or ambiguous evidence.").unwrap();
 
     writeln!(output, "\n## Key Concepts").unwrap();
-    if report.hotspots.hotspots.is_empty() {
-        writeln!(output, "No hotspot candidates were found.").unwrap();
+    let key_hotspots = if report.hotspots.architectural_hubs.is_empty() {
+        &report.hotspots.hotspots
     } else {
-        writeln!(output, "| Score | Node | Kind | In | Out | Edge kinds |").unwrap();
-        writeln!(output, "| ---: | --- | --- | ---: | ---: | --- |").unwrap();
-        for hotspot in report.hotspots.hotspots.iter().take(15) {
+        &report.hotspots.architectural_hubs
+    };
+    if key_hotspots.is_empty() {
+        writeln!(output, "No architectural hub candidates were found.").unwrap();
+    } else {
+        writeln!(
+            output,
+            "| Score | Node | Kind | Hub kind | In | Out | Edge kinds |"
+        )
+        .unwrap();
+        writeln!(output, "| ---: | --- | --- | --- | ---: | ---: | --- |").unwrap();
+        for hotspot in key_hotspots.iter().take(15) {
             writeln!(
                 output,
-                "| {} | {} | `{}` | {} | {} | {} |",
+                "| {} | {} | `{}` | `{}` | {} | {} | {} |",
                 hotspot.score,
                 node_ref(&hotspot.node),
                 markdown_code(&kind_name(&hotspot.node.kind)),
+                markdown_code(&hotspot.hub_kind),
                 hotspot.incoming,
                 hotspot.outgoing,
                 count_map_inline(&hotspot.edge_kinds, 6)
@@ -2019,9 +2135,11 @@ pub fn project_report_markdown(
         if report.hotspots.truncated {
             writeln!(
                 output,
-                "\nHotspots are truncated: showing {} of {} candidates.",
-                report.hotspots.hotspots.len(),
-                report.hotspots.total_candidates
+                "\nHotspots are truncated: showing {} key hubs out of {} candidates ({} architectural, {} utility).",
+                key_hotspots.len(),
+                report.hotspots.total_candidates,
+                report.hotspots.total_architectural_hubs,
+                report.hotspots.total_utility_hubs
             )
             .unwrap();
         }
@@ -2284,7 +2402,12 @@ fn project_report_suggested_questions(report: &ProjectReport) -> Vec<String> {
             entrypoint.label
         ));
     }
-    if let Some(hotspot) = report.hotspots.hotspots.first() {
+    if let Some(hotspot) = report
+        .hotspots
+        .architectural_hubs
+        .first()
+        .or_else(|| report.hotspots.hotspots.first())
+    {
         questions.push(format!(
             "Why is {} a central graph hotspot?",
             hotspot.node.label
@@ -11235,6 +11358,10 @@ mod tests {
         assert_eq!(report.summary.nodes, graph.nodes.len());
         assert_eq!(report.entrypoints.len(), 1);
         assert_eq!(report.hotspots.hotspots.len(), 1);
+        assert_eq!(
+            report.hotspots.total_architectural_hubs + report.hotspots.total_utility_hubs,
+            report.hotspots.total_candidates
+        );
         assert!(!report.communities.communities.is_empty());
         assert_eq!(report.quality_gate.fail_on, "warning");
         assert_eq!(report.insights.insights.len(), 1);
@@ -11493,8 +11620,44 @@ mod tests {
         assert_eq!(report.hotspots[0].score, 3);
         assert_eq!(report.hotspots[0].incoming, 2);
         assert_eq!(report.hotspots[0].outgoing, 1);
+        assert_eq!(report.hotspots[0].hub_kind, "architectural");
+        assert_eq!(report.architectural_hubs[0].node.label, "load_config");
+        assert_eq!(report.total_architectural_hubs, 4);
+        assert_eq!(report.total_utility_hubs, 0);
         assert_eq!(report.hotspots[0].edge_kinds.get("calls"), Some(&2));
         assert_eq!(report.hotspots[0].edge_kinds.get("reads_config"), Some(&1));
+    }
+
+    #[test]
+    fn hotspots_separate_architectural_hubs_from_utility_hubs() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Entrypoint, "server main");
+        let load_config = graph.add_node(NodeKind::Function, "load_config");
+        let new_fn = graph.add_node(NodeKind::Function, "new");
+        let default_fn = graph.add_node(NodeKind::Function, "default");
+        graph.add_edge(main, load_config, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(main, new_fn, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(load_config, new_fn, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(default_fn, new_fn, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(main, default_fn, EdgeKind::Calls, Confidence::Heuristic);
+
+        let report = hotspots(&graph, 5);
+
+        assert!(
+            report
+                .utility_hubs
+                .iter()
+                .any(|hotspot| hotspot.node.label == "new" && hotspot.hub_kind == "utility")
+        );
+        assert!(
+            report
+                .architectural_hubs
+                .iter()
+                .any(|hotspot| hotspot.node.label == "server main"
+                    && hotspot.hub_kind == "architectural")
+        );
+        assert!(report.total_utility_hubs >= 2);
+        assert!(report.total_architectural_hubs >= 2);
     }
 
     #[test]

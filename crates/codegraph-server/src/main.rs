@@ -6088,10 +6088,34 @@ fn hotspot_response_fields() -> Vec<ApiParameterSpec> {
             "High-degree files, functions, entrypoints, and config nodes.",
         ),
         response_field(
+            "architectural_hubs",
+            true,
+            "Hotspot[]",
+            "High-degree hotspots after filtering out common utility-style hubs.",
+        ),
+        response_field(
+            "utility_hubs",
+            true,
+            "Hotspot[]",
+            "High-degree hotspots likely caused by generic helper names or unresolved utility calls.",
+        ),
+        response_field(
             "total_candidates",
             true,
             "usize",
             "Total hotspot candidates before limiting.",
+        ),
+        response_field(
+            "total_architectural_hubs",
+            true,
+            "usize",
+            "Total architectural hotspot candidates before limiting.",
+        ),
+        response_field(
+            "total_utility_hubs",
+            true,
+            "usize",
+            "Total utility hotspot candidates before limiting.",
         ),
         response_field(
             "truncated",
@@ -8579,6 +8603,15 @@ fn helper() {}
                 .response_fields
                 .iter()
                 .any(|field| { field.name == "hotspots" && field.value_type == "Hotspot[]" })
+        );
+        assert!(hotspots_endpoint.response_fields.iter().any(|field| {
+            field.name == "architectural_hubs" && field.value_type == "Hotspot[]"
+        }));
+        assert!(
+            hotspots_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "utility_hubs" && field.value_type == "Hotspot[]" })
         );
         let communities_endpoint = schema
             .groups

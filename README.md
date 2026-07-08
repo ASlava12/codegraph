@@ -176,7 +176,7 @@ Implemented now:
 - Web semantic overview counters for definitions, diagnostics, document symbols, references, workspace symbols, and queued work.
 - Architecture overview chips can focus the paged graph by project area path prefix.
 - Architecture dependency chips can focus the exact graph edges behind cross-area coupling.
-- Hotspot reports in CLI, API, and web overview for high-degree files, functions, entrypoints, and config nodes.
+- Hotspot reports in CLI, API, and web overview for high-degree files, functions, entrypoints, and config nodes, with architectural hubs separated from noisy utility hubs.
 - Web path navigation for finding, focusing, and visually highlighting dependency paths between graph nodes.
 - Node context API and detail-panel neighbor loading for paged graph exploration.
 - Server-backed web insights for project-wide findings while browsing paged graph slices.
@@ -323,7 +323,7 @@ Show language-to-language dependency links:
 cargo run -p codegraph-cli -- language-dependencies .
 ```
 
-Find high-degree graph hotspots:
+Find high-degree graph hotspots, including separated architectural and utility hub buckets:
 
 ```bash
 cargo run -p codegraph-cli -- hotspots .

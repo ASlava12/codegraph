@@ -3965,13 +3965,17 @@ function renderHotspots(report) {
     return;
   }
 
-  const hotspots = Array.isArray(report.hotspots) ? report.hotspots.slice(0, 8) : [];
+  const hotspots = Array.isArray(report.architectural_hubs) && report.architectural_hubs.length > 0
+    ? report.architectural_hubs.slice(0, 8)
+    : Array.isArray(report.hotspots)
+      ? report.hotspots.slice(0, 8)
+      : [];
   hotspotList.innerHTML =
     hotspots.length > 0
       ? hotspots
           .map(
             (hotspot) => `
-              <button class="hotspot-chip" type="button" data-hotspot-node-id="${hotspot.node?.id || ""}">
+              <button class="hotspot-chip" type="button" data-hotspot-node-id="${hotspot.node?.id || ""}" title="${escapeHtml(hotspot.hub_kind || "hotspot")}">
                 <span>${escapeHtml(hotspot.node?.label || "unknown")}</span>
                 <strong>${Number(hotspot.score || 0)}</strong>
               </button>
