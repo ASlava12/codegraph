@@ -125,6 +125,13 @@ struct PendingEntrypointTarget {
     entrypoint_kind: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MakefileTarget {
+    name: String,
+    command: Option<String>,
+    line: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct FileStamp {
     len: u64,
@@ -1104,6 +1111,7 @@ fn index_manifest_facts(
 ) {
     index_manifest_dependencies(context, file_id, path, source);
     index_manifest_entrypoints(context, file_id, path, label, source);
+    index_makefile_entrypoints(context, file_id, path, label, source);
 }
 
 fn index_script_entrypoint(
@@ -2168,6 +2176,74 @@ fn index_manifest_entrypoints(
     }
 }
 
+fn index_makefile_entrypoints(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if !is_makefile_path(path) {
+        return;
+    }
+
+    for target in makefile_targets(source) {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "makefile_target".to_string());
+        metadata.insert("entrypoint_kind".to_string(), "make_target".to_string());
+        metadata.insert("ecosystem".to_string(), "make".to_string());
+        metadata.insert("source".to_string(), "makefile".to_string());
+        metadata.insert("target".to_string(), target.name.clone());
+        metadata.insert("line".to_string(), target.line.to_string());
+        if let Some(command) = target.command.as_deref() {
+            metadata.insert("command".to_string(), command.to_string());
+        }
+
+        let entrypoint_id = context.graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            format!("make target:{}", target.name),
+            Some(line_span(label, source, target.line)),
+            metadata,
+        );
+        add_edge_once(
+            &mut context.graph,
+            file_id,
+            entrypoint_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+        );
+        let root_id = context.graph.root;
+        add_edge_once(
+            &mut context.graph,
+            root_id,
+            entrypoint_id,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        add_entrypoint_reference(
+            &mut context.graph,
+            entrypoint_id,
+            file_id,
+            "entrypoint_file",
+            "makefile_target",
+            Confidence::Exact,
+            None,
+        );
+
+        if let Some(command) = target.command {
+            context
+                .pending_entrypoint_targets
+                .push(PendingEntrypointTarget {
+                    entrypoint: entrypoint_id,
+                    manifest_label: label.to_string(),
+                    target: command,
+                    ecosystem: "make".to_string(),
+                    entrypoint_kind: "make_target".to_string(),
+                });
+        }
+    }
+}
+
 fn manifest_dependencies(
     path: &Path,
     source: &str,
@@ -2205,6 +2281,106 @@ fn manifest_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
         Some("CMakeLists.txt") => cmake_entrypoints(source),
         _ => Vec::new(),
     }
+}
+
+fn is_makefile_path(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("Makefile" | "makefile" | "GNUmakefile")
+    )
+}
+
+fn makefile_targets(source: &str) -> Vec<MakefileTarget> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut targets = Vec::new();
+    let mut index = 0;
+
+    while index < lines.len() {
+        let line = lines[index];
+        let line_number = index as u32 + 1;
+        let Some((target_names, inline_command)) = makefile_target_line(line) else {
+            index += 1;
+            continue;
+        };
+
+        let command = inline_command.or_else(|| {
+            lines[index + 1..]
+                .iter()
+                .take_while(|line| makefile_recipe_or_blank_line(line))
+                .find_map(|line| makefile_recipe_command(line))
+        });
+
+        for name in target_names {
+            targets.push(MakefileTarget {
+                name,
+                command: command.clone(),
+                line: line_number,
+            });
+        }
+        index += 1;
+    }
+
+    targets
+}
+
+fn makefile_target_line(line: &str) -> Option<(Vec<String>, Option<String>)> {
+    if line.chars().next().is_some_and(char::is_whitespace) {
+        return None;
+    }
+    let candidate = line.split('#').next().unwrap_or("").trim_end();
+    if candidate.is_empty() {
+        return None;
+    }
+    let colon = candidate.find(':')?;
+    if candidate[..colon].contains('=') {
+        return None;
+    }
+    let before = candidate[..colon].trim();
+    if before.is_empty() || before.starts_with('.') {
+        return None;
+    }
+
+    let names = before
+        .split_whitespace()
+        .filter(|name| is_makefile_task_target(name))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        return None;
+    }
+
+    let inline_command = candidate[colon + 1..]
+        .split_once(';')
+        .map(|(_, command)| command.trim().to_string())
+        .filter(|command| !command.is_empty());
+    Some((names, inline_command))
+}
+
+fn is_makefile_task_target(name: &str) -> bool {
+    let Some(first) = name.chars().next() else {
+        return false;
+    };
+    if !first.is_ascii_alphanumeric() || name.contains('/') || name.contains('%') {
+        return false;
+    }
+    name.chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.'))
+}
+
+fn makefile_recipe_or_blank_line(line: &&str) -> bool {
+    line.trim().is_empty() || line.starts_with('\t') || line.starts_with("        ")
+}
+
+fn makefile_recipe_command(line: &&str) -> Option<String> {
+    if !line.starts_with('\t') && !line.starts_with("        ") {
+        return None;
+    }
+    let command = line
+        .trim_start()
+        .trim_start_matches(['@', '-', '+'])
+        .trim()
+        .to_string();
+    (!command.is_empty()).then_some(command)
 }
 
 fn cargo_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
@@ -5629,6 +5805,16 @@ fn entrypoint_target_candidates(
             })
             .into_iter()
             .collect(),
+        "make" => command_path_candidate(pending)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "make_command_path",
+            })
+            .into_iter()
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -5963,6 +6149,8 @@ fn add_entrypoint_reference(
         "shebang"
     } else if resolution.starts_with("framework") {
         "framework"
+    } else if resolution.starts_with("make") {
+        "makefile"
     } else {
         "manifest"
     };
@@ -8347,6 +8535,88 @@ add_executable(imported_tool IMPORTED)
             "entrypoint_function",
             Confidence::Syntactic,
         ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_adds_makefile_target_entrypoints() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join("Makefile"),
+            r#".PHONY: build test deploy
+IMAGE := demo
+
+build test: ## grouped task targets
+	cargo test --workspace
+
+deploy:
+	@./scripts/deploy.sh --prod
+
+generated/output.txt:
+	echo generated > generated/output.txt
+
+%.o: %.c
+	$(CC) -c $<
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("scripts").join("deploy.sh"),
+            "#!/usr/bin/env bash\nmain() { echo deploy; }\nmain \"$@\"\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let makefile = node_id(&graph, NodeKind::File, "Makefile");
+        let deploy_script = node_id(&graph, NodeKind::File, "scripts/deploy.sh");
+        let build_entrypoint = node_id(&graph, NodeKind::Entrypoint, "make target:build");
+        let test_entrypoint = node_id(&graph, NodeKind::Entrypoint, "make target:test");
+        let deploy_entrypoint = node_id(&graph, NodeKind::Entrypoint, "make target:deploy");
+
+        for entrypoint in [build_entrypoint, test_entrypoint, deploy_entrypoint] {
+            assert!(has_entrypoint_reference(
+                &graph,
+                entrypoint,
+                makefile,
+                "entrypoint_file",
+                Confidence::Exact,
+            ));
+        }
+        assert!(has_entrypoint_reference(
+            &graph,
+            deploy_entrypoint,
+            deploy_script,
+            "entrypoint_file",
+            Confidence::Heuristic,
+        ));
+
+        let deploy = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == deploy_entrypoint)
+            .expect("missing deploy make target");
+        assert_eq!(
+            deploy.metadata.get("item_kind").map(String::as_str),
+            Some("makefile_target")
+        );
+        assert_eq!(
+            deploy.metadata.get("source").map(String::as_str),
+            Some("makefile")
+        );
+        assert_eq!(
+            deploy.metadata.get("command").map(String::as_str),
+            Some("./scripts/deploy.sh --prod")
+        );
+        assert!(!graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::Entrypoint && node.label == "make target:generated/output.txt"
+        }));
+        assert!(
+            !graph.nodes.iter().any(|node| {
+                node.kind == NodeKind::Entrypoint && node.label == "make target:%.o"
+            })
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

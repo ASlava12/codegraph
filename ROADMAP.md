@@ -43,6 +43,7 @@ Goal: extract language-independent structure from source files.
 - [x] Detect shebang script entrypoints for Bash, Python, Node.js, and PHP CLI files.
 - [x] Detect Go module and `cmd/*` entrypoints from `go.mod`.
 - [x] Detect CMake `add_executable` entrypoints for C and C++ projects.
+- [x] Detect Makefile task targets as build/test/run entrypoints.
 - Add graph export formats:
   - [x] JSON
   - [x] DOT/Graphviz
