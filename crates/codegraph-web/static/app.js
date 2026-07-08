@@ -160,6 +160,8 @@ const I18N = {
     "button.downloadCheck": "Download Check",
     "button.downloadSourceResults": "Download Results",
     "button.downloadEntryFlows": "Download Flows",
+    "button.downloadConfigTrace": "Download Config Trace",
+    "button.downloadErrorTrace": "Download Error Trace",
     "button.graphFile": "Graph File",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
@@ -339,7 +341,11 @@ const I18N = {
     "export.check": "Check Result JSON",
     "export.sourceSearch": "Source Search JSON",
     "export.entryFlows": "Entrypoint Traces JSON",
+    "export.configTrace": "Config Trace JSON",
+    "export.errorTrace": "Error Trace JSON",
     "export.noEntryFlows": "Trace entrypoints before exporting flows.",
+    "export.noConfigTrace": "Trace config before exporting results.",
+    "export.noErrorTrace": "Trace errors before exporting results.",
     "export.noSourceSearch": "Run source search before exporting results.",
     "export.noCheck": "Run a quality check before exporting its result.",
     "export.noQueryResult": "Run a graph query before exporting its result.",
@@ -567,6 +573,8 @@ const I18N = {
     "button.downloadCheck": "Скачать проверку",
     "button.downloadSourceResults": "Скачать результаты",
     "button.downloadEntryFlows": "Скачать потоки",
+    "button.downloadConfigTrace": "Скачать трассу конфига",
+    "button.downloadErrorTrace": "Скачать трассу ошибок",
     "button.graphFile": "Граф файла",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
@@ -746,7 +754,11 @@ const I18N = {
     "export.check": "JSON проверки",
     "export.sourceSearch": "JSON поиска в коде",
     "export.entryFlows": "JSON потоков входа",
+    "export.configTrace": "JSON трассы конфига",
+    "export.errorTrace": "JSON трассы ошибок",
     "export.noEntryFlows": "Сначала трассируйте точки входа.",
+    "export.noConfigTrace": "Сначала трассируйте конфиг.",
+    "export.noErrorTrace": "Сначала трассируйте ошибки.",
     "export.noSourceSearch": "Сначала выполните поиск в коде.",
     "export.noCheck": "Сначала запустите проверку качества.",
     "export.noQueryResult": "Сначала выполните запрос к графу.",
@@ -977,6 +989,8 @@ const state = {
   lastCheckResult: null,
   lastSourceSearchResult: null,
   lastEntryFlowReport: null,
+  lastConfigTraceReport: null,
+  lastErrorTraceReport: null,
   pendingSelectionLink: null,
   pendingQueryLink: null,
   pendingGraphPageLink: false,
@@ -1105,10 +1119,12 @@ const pathResult = document.querySelector("#pathResult");
 const configTraceTargetInput = document.querySelector("#configTraceTargetInput");
 const configTraceDepthInput = document.querySelector("#configTraceDepthInput");
 const configTraceButton = document.querySelector("#configTraceButton");
+const configTraceExportButton = document.querySelector("#configTraceExportButton");
 const configTraceResult = document.querySelector("#configTraceResult");
 const errorTraceTargetInput = document.querySelector("#errorTraceTargetInput");
 const errorTraceDepthInput = document.querySelector("#errorTraceDepthInput");
 const errorTraceButton = document.querySelector("#errorTraceButton");
+const errorTraceExportButton = document.querySelector("#errorTraceExportButton");
 const errorTraceResult = document.querySelector("#errorTraceResult");
 const insightCount = document.querySelector("#insightCount");
 const insightList = document.querySelector("#insightList");
@@ -1208,12 +1224,14 @@ for (const input of [pathFromInput, pathToInput, pathDepthInput, pathEdgeKindInp
   });
 }
 configTraceButton.addEventListener("click", () => runConfigTrace());
+configTraceExportButton.addEventListener("click", () => exportLastConfigTraceReport());
 for (const input of [configTraceTargetInput, configTraceDepthInput]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") runConfigTrace();
   });
 }
 errorTraceButton.addEventListener("click", () => runErrorTrace());
+errorTraceExportButton.addEventListener("click", () => exportLastErrorTraceReport());
 for (const input of [errorTraceTargetInput, errorTraceDepthInput]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") runErrorTrace();
@@ -1358,6 +1376,8 @@ function applyLocale() {
   renderCheckExportState();
   renderSourceSearchExportState();
   renderEntryFlowExportState();
+  renderConfigTraceExportState();
+  renderErrorTraceExportState();
   renderSelection();
   draw();
 }
@@ -2082,6 +2102,8 @@ async function scan() {
   state.insightReport = null;
   renderInsights();
   clearLastEntryFlowReport();
+  clearLastConfigTraceReport();
+  clearLastErrorTraceReport();
   clearLastCheckResult();
   checkResult.innerHTML = "";
   clearLastQueryResult();
@@ -2343,6 +2365,8 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     exportResult.innerHTML = "";
     entryFlowResult.innerHTML = "";
     pathResult.innerHTML = "";
+    clearLastConfigTraceReport();
+    clearLastErrorTraceReport();
     configTraceResult.innerHTML = "";
     errorTraceResult.innerHTML = "";
     rootLabel.textContent = state.graphPage.root;
@@ -5020,6 +5044,7 @@ async function runConfigTrace() {
   state.configTraceRequest += 1;
   const requestId = state.configTraceRequest;
   configTraceButton.disabled = true;
+  clearLastConfigTraceReport();
   configTraceResult.innerHTML = '<p class="empty">Tracing config...</p>';
 
   const params = new URLSearchParams({
@@ -5036,6 +5061,17 @@ async function runConfigTrace() {
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "config trace failed"));
     }
+    state.lastConfigTraceReport = {
+      generated_at: new Date().toISOString(),
+      root: pathInput.value.trim() || ".",
+      filters: {
+        target,
+        depth,
+        limit: 50,
+      },
+      report: body,
+    };
+    renderConfigTraceExportState();
     configTraceResult.innerHTML = renderConfigTrace(body);
     attachConfigTraceActions(configTraceResult, body);
   } catch (error) {
@@ -5046,6 +5082,44 @@ async function runConfigTrace() {
       configTraceButton.disabled = false;
     }
   }
+}
+
+function renderConfigTraceExportState() {
+  configTraceExportButton.disabled = !state.lastConfigTraceReport;
+}
+
+function clearLastConfigTraceReport() {
+  state.lastConfigTraceReport = null;
+  renderConfigTraceExportState();
+}
+
+function exportLastConfigTraceReport() {
+  if (!state.lastConfigTraceReport) {
+    configTraceResult.innerHTML = `<p class="empty">${escapeHtml(t("export.noConfigTrace"))}</p>`;
+    renderConfigTraceExportState();
+    return;
+  }
+
+  const payload = {
+    schema: "codegraph.config_trace.v1",
+    ...state.lastConfigTraceReport,
+  };
+  const serialized = JSON.stringify(payload, null, 2);
+  const blob = new Blob([serialized], { type: "application/json" });
+  const fileName = `codegraph-${safeFilePart(payload.root)}-config-trace.json`;
+  downloadBlob(blob, fileName);
+  configTraceResult.insertAdjacentHTML(
+    "afterbegin",
+    `
+      <div class="query-summary">
+        <span>${escapeHtml(t("export.configTrace"))}</span>
+        <span>${escapeHtml(formatBytes(blob.size))}</span>
+        <span>${escapeHtml(formatNumber(payload.report?.total_matches ?? payload.report?.matches?.length ?? 0))} targets</span>
+        <span>${escapeHtml(formatNumber(payload.report?.total_paths ?? 0))} paths</span>
+        <span class="query-expression">${escapeHtml(fileName)}</span>
+      </div>
+    `,
+  );
 }
 
 function renderConfigTrace(result) {
@@ -5148,6 +5222,7 @@ async function runErrorTrace() {
   state.errorTraceRequest += 1;
   const requestId = state.errorTraceRequest;
   errorTraceButton.disabled = true;
+  clearLastErrorTraceReport();
   errorTraceResult.innerHTML = '<p class="empty">Tracing errors...</p>';
 
   const params = new URLSearchParams({
@@ -5164,6 +5239,17 @@ async function runErrorTrace() {
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "error trace failed"));
     }
+    state.lastErrorTraceReport = {
+      generated_at: new Date().toISOString(),
+      root: pathInput.value.trim() || ".",
+      filters: {
+        target,
+        depth,
+        limit: 50,
+      },
+      report: body,
+    };
+    renderErrorTraceExportState();
     errorTraceResult.innerHTML = renderErrorTrace(body);
     attachErrorTraceActions(errorTraceResult, body);
   } catch (error) {
@@ -5174,6 +5260,44 @@ async function runErrorTrace() {
       errorTraceButton.disabled = false;
     }
   }
+}
+
+function renderErrorTraceExportState() {
+  errorTraceExportButton.disabled = !state.lastErrorTraceReport;
+}
+
+function clearLastErrorTraceReport() {
+  state.lastErrorTraceReport = null;
+  renderErrorTraceExportState();
+}
+
+function exportLastErrorTraceReport() {
+  if (!state.lastErrorTraceReport) {
+    errorTraceResult.innerHTML = `<p class="empty">${escapeHtml(t("export.noErrorTrace"))}</p>`;
+    renderErrorTraceExportState();
+    return;
+  }
+
+  const payload = {
+    schema: "codegraph.error_trace.v1",
+    ...state.lastErrorTraceReport,
+  };
+  const serialized = JSON.stringify(payload, null, 2);
+  const blob = new Blob([serialized], { type: "application/json" });
+  const fileName = `codegraph-${safeFilePart(payload.root)}-error-trace.json`;
+  downloadBlob(blob, fileName);
+  errorTraceResult.insertAdjacentHTML(
+    "afterbegin",
+    `
+      <div class="query-summary">
+        <span>${escapeHtml(t("export.errorTrace"))}</span>
+        <span>${escapeHtml(formatBytes(blob.size))}</span>
+        <span>${escapeHtml(formatNumber(payload.report?.total_matches ?? payload.report?.matches?.length ?? 0))} errors</span>
+        <span>${escapeHtml(formatNumber(payload.report?.total_paths ?? 0))} paths</span>
+        <span class="query-expression">${escapeHtml(fileName)}</span>
+      </div>
+    `,
+  );
 }
 
 function renderErrorTrace(result) {

@@ -114,7 +114,9 @@ Implemented now:
 - Entrypoint trace API, CLI command, and web panel for comparing startup flows from manifest/code entrypoints.
 - Web entrypoint trace reports can be downloaded as JSON with search, depth, and returned startup flows.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
+- Web config trace reports can be downloaded as JSON with target, depth, matched readers, and dependency paths.
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
+- Web error trace reports can be downloaded as JSON with target, depth, source nodes, and exception-flow paths.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, trace, diagnostic, insight/risk, and unreachable-code slices.
 - Agent-friendly annotation graph queries for focused user-owned metadata slices from `.codegraph/annotations.toml`.

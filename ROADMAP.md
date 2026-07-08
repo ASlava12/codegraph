@@ -148,6 +148,7 @@ Goal: answer practical code investigation questions.
 - [x] Add query result facets for agent and web triage summaries.
 - [x] Add reverse dependent traces for impact analysis.
 - [x] Add web entrypoint trace JSON downloads for startup-flow handoff.
+- [x] Add web config/error trace JSON downloads for configuration and exception-flow handoff.
 - [x] Add source text search across CLI, API, and web for focused code snippets.
 - [x] Add web source-search actions for opening matching files as focused graph slices.
 - [x] Add web source-search result JSON downloads for agent handoff.

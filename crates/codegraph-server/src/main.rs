@@ -6750,6 +6750,14 @@ mod tests {
         assert!(app.contains("exportLastEntryFlowReport"));
         assert!(app.contains("codegraph.entrypoint_traces.v1"));
         assert!(app.contains("\"button.downloadEntryFlows\""));
+        assert!(index.contains("configTraceExportButton"));
+        assert!(app.contains("exportLastConfigTraceReport"));
+        assert!(app.contains("codegraph.config_trace.v1"));
+        assert!(app.contains("\"button.downloadConfigTrace\""));
+        assert!(index.contains("errorTraceExportButton"));
+        assert!(app.contains("exportLastErrorTraceReport"));
+        assert!(app.contains("codegraph.error_trace.v1"));
+        assert!(app.contains("\"button.downloadErrorTrace\""));
         assert!(index.contains("annotations key:domain edge_limit:300"));
         assert!(app.contains("\"queryPreset.annotations\""));
         assert!(app.contains("limits.max_api_body_bytes"));
