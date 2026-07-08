@@ -127,6 +127,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect packages declared across multiple dependency scopes such as runtime and dev/build.
 - [x] Detect production-like source imports of packages declared only in non-runtime dependency scopes.
 - [x] Detect runtime dependencies that are imported only from test-like source files.
+- [x] Recognize common JS/TS, Go, Python, PHP, C/C++, and Bash test file conventions in dependency-scope insights.
 - [x] Detect duplicate framework route method/path declarations.
 - [x] Detect framework routes whose named handler cannot be resolved.
 - [x] Improve Rust/Axum route entrypoint labels for multiline routes and string literal false positives.

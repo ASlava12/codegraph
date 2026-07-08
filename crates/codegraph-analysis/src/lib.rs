@@ -8547,16 +8547,28 @@ fn is_code_symbol(kind: &NodeKind) -> bool {
 }
 
 fn is_test_like_source_path(path: &str) -> bool {
-    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    let normalized_original = path.replace('\\', "/");
+    let normalized = normalized_original.to_ascii_lowercase();
     let file_name = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
+    let original_file_name = normalized_original
+        .rsplit('/')
+        .next()
+        .unwrap_or(normalized_original.as_str());
+    let stem = file_name
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(file_name);
     normalized.split('/').any(|part| {
         matches!(
             part,
             "test"
                 | "tests"
+                | "__test__"
                 | "__tests__"
                 | "spec"
                 | "specs"
+                | "testdata"
+                | "testing"
                 | "fixture"
                 | "fixtures"
                 | "example"
@@ -8566,13 +8578,17 @@ fn is_test_like_source_path(path: &str) -> bool {
                 | "mock"
                 | "mocks"
         )
-    }) || file_name.ends_with("_test.go")
-        || file_name.ends_with("_test.rs")
-        || file_name.ends_with("_test.py")
-        || file_name.ends_with(".test.js")
-        || file_name.ends_with(".test.ts")
-        || file_name.ends_with(".spec.js")
-        || file_name.ends_with(".spec.ts")
+    }) || stem == "test"
+        || stem.starts_with("test_")
+        || stem.ends_with("_test")
+        || stem.ends_with("_tests")
+        || stem.ends_with("_spec")
+        || stem.ends_with("_specs")
+        || file_name.contains(".test.")
+        || file_name.contains(".spec.")
+        || file_name.ends_with(".bats")
+        || original_file_name.ends_with("Test.php")
+        || original_file_name.ends_with("Spec.php")
 }
 
 fn is_dependency_manifest_source_path(path: &str) -> bool {
@@ -12723,6 +12739,12 @@ mod tests {
             None,
             BTreeMap::from([("language".to_string(), "typescript".to_string())]),
         );
+        let spec = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/__tests__/setup.spec.tsx",
+            None,
+            BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+        );
         let react = dependency_node(&mut graph, "react", "npm:react");
         let vite = dependency_node(&mut graph, "vite", "npm:vite");
         graph.add_edge_with_metadata(
@@ -12749,6 +12771,11 @@ mod tests {
             import_node(&mut graph, "import React from \"react\";", "typescript");
         let test_vite_import =
             import_node(&mut graph, "import { test } from \"vite\";", "typescript");
+        let spec_vite_import = import_node(
+            &mut graph,
+            "import { defineConfig } from \"vite\";",
+            "typescript",
+        );
         graph.add_edge(
             app,
             app_vite_import,
@@ -12764,6 +12791,12 @@ mod tests {
         graph.add_edge(
             test,
             test_vite_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            spec,
+            spec_vite_import,
             EdgeKind::Imports,
             Confidence::Syntactic,
         );
@@ -12786,6 +12819,8 @@ mod tests {
         assert!(!insight.nodes.contains(&app_react_import));
         assert!(!insight.nodes.contains(&test));
         assert!(!insight.nodes.contains(&test_vite_import));
+        assert!(!insight.nodes.contains(&spec));
+        assert!(!insight.nodes.contains(&spec_vite_import));
         assert_eq!(
             report.by_kind.get("non_runtime_dependency_import"),
             Some(&1)
@@ -12904,6 +12939,43 @@ mod tests {
         assert!(!insight.nodes.contains(&react));
         assert!(!insight.nodes.contains(&vite));
         assert_eq!(report.by_kind.get("test_only_runtime_dependency"), Some(&1));
+    }
+
+    #[test]
+    fn test_like_source_paths_cover_common_language_conventions() {
+        for path in [
+            "src/__tests__/app.spec.tsx",
+            "web/components/Button.test.jsx",
+            "internal/server/server_test.go",
+            "tests/test_api.py",
+            "tests/api_test.py",
+            "src/FooTest.php",
+            "src/FooSpec.php",
+            "native/foo_test.cpp",
+            "native/test_parser.cc",
+            "scripts/deploy_test.sh",
+            "scripts/deploy.bats",
+            "pkg/testdata/input.go",
+        ] {
+            assert!(
+                is_test_like_source_path(path),
+                "expected test-like path: {path}"
+            );
+        }
+
+        for path in [
+            "src/app.ts",
+            "src/context.php",
+            "src/contest.php",
+            "cmd/server/main.go",
+            "native/parser.cpp",
+            "scripts/deploy.sh",
+        ] {
+            assert!(
+                !is_test_like_source_path(path),
+                "expected production-like path: {path}"
+            );
+        }
     }
 
     #[test]
