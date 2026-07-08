@@ -6789,22 +6789,28 @@ mod tests {
         assert!(index.contains("edgePrevButton"));
         assert!(index.contains("edgeNextButton"));
         assert!(index.contains("clearCanvasFiltersButton"));
+        assert!(index.contains("graphMinimap"));
+        assert!(index.contains("data-i18n-aria-label=\"aria.graphMinimap\""));
         assert!(app.contains("renderGraphHud"));
         assert!(app.contains("renderGraphPageScope"));
         assert!(app.contains("shiftEdgePage"));
         assert!(app.contains("clearCanvasFilters"));
         assert!(app.contains("canvasFilterCount"));
+        assert!(app.contains("drawGraphMinimap"));
+        assert!(app.contains("onMinimapPointerDown"));
         assert!(app.contains("edge_offset: String(state.graphPage.edgeOffset)"));
         assert!(app.contains("\"graph.zoom\""));
         assert!(app.contains("\"graph.layout\""));
         assert!(app.contains("\"graph.slice\""));
         assert!(app.contains("\"graph.filters\""));
+        assert!(app.contains("\"aria.graphMinimap\""));
         assert!(app.contains("\"button.clearCanvasFilters\""));
         assert!(app.contains("truncated_edges"));
         assert!(styles.contains(".graph-hud"));
         assert!(styles.contains(".page-scope"));
         assert!(styles.contains(".page-action-info"));
         assert!(styles.contains(".filters > button"));
+        assert!(styles.contains(".graph-minimap"));
     }
 
     #[test]

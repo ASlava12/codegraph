@@ -224,6 +224,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Surface loaded-vs-total graph slice status for paged large-repository views.
 - [x] Add visible canvas-filter status and one-click reset for local graph filters.
 - [x] Add web controls for paging dense edge slices through the existing `edge_offset` API contract.
+- [x] Add a graph minimap with click/drag viewport recentering.
 - [x] Add keyboard-accessible graph canvas navigation.
 - [x] Add web label policy regression tests for caption density and interaction labels.
 - [x] Add embedded web asset smoke checks for script order, content types, and static JS validity.

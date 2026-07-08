@@ -100,6 +100,7 @@ const I18N = {
     "aria.restartLayout": "Restart graph layout",
     "aria.pauseLayout": "Pause graph layout",
     "aria.resumeLayout": "Resume graph layout",
+    "aria.graphMinimap": "Graph minimap. Click or drag to recenter the viewport.",
     "aria.nodeLabels": "Node labels",
     "label.kind": "Kind",
     "label.item": "Item",
@@ -485,6 +486,7 @@ const I18N = {
     "aria.restartLayout": "Перезапустить раскладку графа",
     "aria.pauseLayout": "Поставить раскладку графа на паузу",
     "aria.resumeLayout": "Продолжить раскладку графа",
+    "aria.graphMinimap": "Мини-карта графа. Нажмите или перетащите, чтобы сместить область просмотра.",
     "aria.nodeLabels": "Подписи узлов",
     "label.kind": "Тип",
     "label.item": "Элемент",
@@ -932,6 +934,8 @@ const colors = {
 
 const canvas = document.querySelector("#graphCanvas");
 const ctx = canvas.getContext("2d");
+const minimapCanvas = document.querySelector("#graphMinimap");
+const minimapCtx = minimapCanvas.getContext("2d");
 const scanButton = document.querySelector("#scanButton");
 const scanCancelButton = document.querySelector("#scanCancelButton");
 const projectSelect = document.querySelector("#projectSelect");
@@ -1191,6 +1195,11 @@ canvas.addEventListener("pointerup", onPointerUp);
 canvas.addEventListener("pointerleave", onPointerLeave);
 canvas.addEventListener("keydown", onCanvasKeyDown);
 canvas.addEventListener("wheel", onWheel, { passive: false });
+minimapCanvas.addEventListener("pointerdown", onMinimapPointerDown);
+minimapCanvas.addEventListener("pointermove", onMinimapPointerMove);
+minimapCanvas.addEventListener("pointerup", onMinimapPointerUp);
+minimapCanvas.addEventListener("pointerleave", onMinimapPointerUp);
+minimapCanvas.addEventListener("keydown", onCanvasKeyDown);
 window.addEventListener("resize", resizeCanvas);
 
 syncApiTokenCookie();
@@ -6231,6 +6240,136 @@ function draw() {
 
   drawNodeLabels(labelCandidates);
   ctx.restore();
+  drawGraphMinimap();
+}
+
+function graphWorldBounds(padding = 32) {
+  if (state.visibleNodes.length === 0) return null;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  state.visibleNodes.forEach((node) => {
+    const position = state.positions.get(node.id);
+    if (!position) return;
+    const radius = nodeRadius(node);
+    minX = Math.min(minX, position.x - radius);
+    minY = Math.min(minY, position.y - radius);
+    maxX = Math.max(maxX, position.x + radius);
+    maxY = Math.max(maxY, position.y + radius);
+  });
+
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
+
+  if (maxX - minX < 1) {
+    minX -= 40;
+    maxX += 40;
+  }
+  if (maxY - minY < 1) {
+    minY -= 40;
+    maxY += 40;
+  }
+
+  return {
+    minX: minX - padding,
+    minY: minY - padding,
+    maxX: maxX + padding,
+    maxY: maxY + padding,
+  };
+}
+
+function minimapTransform() {
+  const rect = minimapCanvas.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width));
+  const height = Math.max(1, Math.floor(rect.height));
+  const bounds = graphWorldBounds(48);
+  if (!bounds) return null;
+
+  if (minimapCanvas.width !== width || minimapCanvas.height !== height) {
+    minimapCanvas.width = width;
+    minimapCanvas.height = height;
+  }
+
+  const padding = 10;
+  const graphWidth = Math.max(1, bounds.maxX - bounds.minX);
+  const graphHeight = Math.max(1, bounds.maxY - bounds.minY);
+  const scale = Math.min(
+    Math.max(1, width - padding * 2) / graphWidth,
+    Math.max(1, height - padding * 2) / graphHeight,
+  );
+  const offsetX = (width - graphWidth * scale) / 2 - bounds.minX * scale;
+  const offsetY = (height - graphHeight * scale) / 2 - bounds.minY * scale;
+  return { bounds, width, height, scale, offsetX, offsetY };
+}
+
+function worldToMinimap(point, transform) {
+  return {
+    x: point.x * transform.scale + transform.offsetX,
+    y: point.y * transform.scale + transform.offsetY,
+  };
+}
+
+function minimapToWorld(point, transform) {
+  return {
+    x: (point.x - transform.offsetX) / transform.scale,
+    y: (point.y - transform.offsetY) / transform.scale,
+  };
+}
+
+function drawGraphMinimap() {
+  if (state.visibleNodes.length === 0) {
+    minimapCanvas.hidden = true;
+    return;
+  }
+  minimapCanvas.hidden = false;
+
+  const transform = minimapTransform();
+  if (!transform) return;
+
+  minimapCtx.clearRect(0, 0, transform.width, transform.height);
+  minimapCtx.fillStyle = "rgba(16, 18, 20, 0.82)";
+  minimapCtx.fillRect(0, 0, transform.width, transform.height);
+
+  const visibleIds = new Set(state.visibleNodes.map((node) => node.id));
+  minimapCtx.lineWidth = 1;
+  minimapCtx.strokeStyle = "rgba(237, 241, 242, 0.16)";
+  state.visibleEdges.forEach((edge) => {
+    if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) return;
+    const source = state.positions.get(edge.source);
+    const target = state.positions.get(edge.target);
+    if (!source || !target) return;
+    const start = worldToMinimap(source, transform);
+    const end = worldToMinimap(target, transform);
+    minimapCtx.beginPath();
+    minimapCtx.moveTo(start.x, start.y);
+    minimapCtx.lineTo(end.x, end.y);
+    minimapCtx.stroke();
+  });
+
+  state.visibleNodes.forEach((node) => {
+    const position = state.positions.get(node.id);
+    if (!position) return;
+    const point = worldToMinimap(position, transform);
+    const selected = node.id === state.selectedId;
+    const focused = nodeIsFocused(node);
+    minimapCtx.beginPath();
+    minimapCtx.arc(point.x, point.y, selected || focused ? 3.5 : 2.4, 0, Math.PI * 2);
+    minimapCtx.fillStyle = selected ? "#ffffff" : focused ? "#5cc8a7" : colorFor(node.kind);
+    minimapCtx.fill();
+  });
+
+  const topLeft = worldToMinimap(screenToWorld(0, 0), transform);
+  const bottomRight = worldToMinimap(screenToWorld(canvas.width, canvas.height), transform);
+  const viewX = Math.min(topLeft.x, bottomRight.x);
+  const viewY = Math.min(topLeft.y, bottomRight.y);
+  const viewWidth = Math.abs(bottomRight.x - topLeft.x);
+  const viewHeight = Math.abs(bottomRight.y - topLeft.y);
+  minimapCtx.fillStyle = "rgba(92, 200, 167, 0.12)";
+  minimapCtx.strokeStyle = "rgba(92, 200, 167, 0.92)";
+  minimapCtx.lineWidth = 1.4;
+  minimapCtx.fillRect(viewX, viewY, viewWidth, viewHeight);
+  minimapCtx.strokeRect(viewX, viewY, viewWidth, viewHeight);
 }
 
 function drawRiskHalo(position, radius, severity, emphasized) {
@@ -7563,6 +7702,12 @@ function edgeSelectionKey(edge) {
   return index == null ? edgeKey(edge) : `edge:${index}`;
 }
 
+function centerViewportOnWorld(point) {
+  state.pan.x = canvas.width / 2 - point.x * state.zoom;
+  state.pan.y = canvas.height / 2 - point.y * state.zoom;
+  draw();
+}
+
 function onPointerDown(event) {
   canvas.setPointerCapture(event.pointerId);
   const world = screenToWorld(event.offsetX, event.offsetY);
@@ -7621,6 +7766,33 @@ function onPointerLeave() {
     draw();
   }
   canvas.style.cursor = "";
+}
+
+function recenterFromMinimapEvent(event) {
+  const transform = minimapTransform();
+  if (!transform) return;
+  const world = minimapToWorld({ x: event.offsetX, y: event.offsetY }, transform);
+  centerViewportOnWorld(world);
+}
+
+function onMinimapPointerDown(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  minimapCanvas.setPointerCapture(event.pointerId);
+  recenterFromMinimapEvent(event);
+}
+
+function onMinimapPointerMove(event) {
+  if (event.buttons !== 1) return;
+  event.preventDefault();
+  event.stopPropagation();
+  recenterFromMinimapEvent(event);
+}
+
+function onMinimapPointerUp(event) {
+  if (minimapCanvas.hasPointerCapture(event.pointerId)) {
+    minimapCanvas.releasePointerCapture(event.pointerId);
+  }
 }
 
 function onWheel(event) {
