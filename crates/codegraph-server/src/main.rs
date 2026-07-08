@@ -6778,6 +6778,11 @@ mod tests {
         assert!(app.contains("exportLastErrorTraceReport"));
         assert!(app.contains("codegraph.error_trace.v1"));
         assert!(app.contains("\"button.downloadErrorTrace\""));
+        assert!(app.contains("exportLastSelectionCard"));
+        assert!(app.contains("codegraph.selection_card.v1"));
+        assert!(app.contains("data-export-selection-card"));
+        assert!(app.contains("\"button.downloadCard\""));
+        assert!(app.contains("\"export.selectionCard\""));
         assert!(app.contains("clientEntrypointReachableIds"));
         assert!(app.contains("unreachable_error_flow"));
         assert!(index.contains("unreachable scope:config"));

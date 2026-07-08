@@ -101,6 +101,7 @@ Implemented now:
 - Dependency cards can be opened from graph edges, query results, traces, and node neighbor lists.
 - Dependency cards can focus or query their exact `edge_index` for fast canvas narrowing and agent handoff.
 - Web node and dependency-card selections are reflected in shareable `node` and `edge` URL parameters with copy-link actions for exact human/agent handoff.
+- Web node and dependency cards can be downloaded as JSON with source, dependency, and risk context for portable agent handoff.
 - Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
 - Initial English/Russian web UI localization with a persistent language selector.
 - Minimal-by-default graph labels with collision-aware, sparse Auto/Focus modes so node cards stay readable without captions covering the graph.

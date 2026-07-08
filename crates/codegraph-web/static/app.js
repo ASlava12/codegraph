@@ -162,6 +162,7 @@ const I18N = {
     "button.downloadEntryFlows": "Download Flows",
     "button.downloadConfigTrace": "Download Config Trace",
     "button.downloadErrorTrace": "Download Error Trace",
+    "button.downloadCard": "Download Card",
     "button.graphFile": "Graph File",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
@@ -345,9 +346,11 @@ const I18N = {
     "export.entryFlows": "Entrypoint Traces JSON",
     "export.configTrace": "Config Trace JSON",
     "export.errorTrace": "Error Trace JSON",
+    "export.selectionCard": "Selection Card JSON",
     "export.noEntryFlows": "Trace entrypoints before exporting flows.",
     "export.noConfigTrace": "Trace config before exporting results.",
     "export.noErrorTrace": "Trace errors before exporting results.",
+    "export.noSelectionCard": "Select a node or edge card before exporting.",
     "export.noSourceSearch": "Run source search before exporting results.",
     "export.noCheck": "Run a quality check before exporting its result.",
     "export.noQueryResult": "Run a graph query before exporting its result.",
@@ -578,6 +581,7 @@ const I18N = {
     "button.downloadEntryFlows": "Скачать потоки",
     "button.downloadConfigTrace": "Скачать трассу конфига",
     "button.downloadErrorTrace": "Скачать трассу ошибок",
+    "button.downloadCard": "Скачать карточку",
     "button.graphFile": "Граф файла",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
@@ -761,9 +765,11 @@ const I18N = {
     "export.entryFlows": "JSON потоков входа",
     "export.configTrace": "JSON трассы конфига",
     "export.errorTrace": "JSON трассы ошибок",
+    "export.selectionCard": "JSON карточки выбора",
     "export.noEntryFlows": "Сначала трассируйте точки входа.",
     "export.noConfigTrace": "Сначала трассируйте конфиг.",
     "export.noErrorTrace": "Сначала трассируйте ошибки.",
+    "export.noSelectionCard": "Сначала выберите карточку узла или связи.",
     "export.noSourceSearch": "Сначала выполните поиск в коде.",
     "export.noCheck": "Сначала запустите проверку качества.",
     "export.noQueryResult": "Сначала выполните запрос к графу.",
@@ -997,6 +1003,7 @@ const state = {
   lastEntryFlowReport: null,
   lastConfigTraceReport: null,
   lastErrorTraceReport: null,
+  lastSelectionCard: null,
   pendingSelectionLink: null,
   pendingQueryLink: null,
   pendingGraphPageLink: false,
@@ -4646,6 +4653,90 @@ function safeFilePart(value) {
     .slice(0, 80) || "project";
 }
 
+function selectionCardRoot() {
+  return pathInput.value.trim() || state.graphPage.root || ".";
+}
+
+function setLastSelectionCard(card) {
+  state.lastSelectionCard = card;
+}
+
+function clearLastSelectionCard() {
+  state.lastSelectionCard = null;
+}
+
+function buildNodeSelectionCard(node, edges, context, card) {
+  return {
+    generated_at: new Date().toISOString(),
+    root: selectionCardRoot(),
+    card_type: "node",
+    selection: {
+      node,
+      context: context || null,
+      fallback_edges: context ? [] : edges,
+      card: card || null,
+    },
+  };
+}
+
+function buildEdgeSelectionCard(edge, source, target) {
+  return {
+    generated_at: new Date().toISOString(),
+    root: selectionCardRoot(),
+    card_type: "edge",
+    selection: {
+      edge_index: edgeIndexOf(edge),
+      edge,
+      source: source || null,
+      target: target || null,
+    },
+  };
+}
+
+function renderSelectionCardExportNote(fileName, size) {
+  selectionBody.querySelector("[data-selection-card-export-note]")?.remove();
+  selectionBody
+    .querySelector(".selection-actions")
+    ?.insertAdjacentHTML(
+      "afterend",
+      `<div class="query-summary" data-selection-card-export-note>
+        <span>${escapeHtml(t("export.selectionCard"))}</span>
+        <span>${escapeHtml(formatBytes(size))}</span>
+        <span class="query-expression">${escapeHtml(fileName)}</span>
+      </div>`,
+    );
+}
+
+function exportLastSelectionCard() {
+  if (!state.lastSelectionCard) {
+    selectionBody.querySelector("[data-selection-card-export-note]")?.remove();
+    selectionBody.insertAdjacentHTML(
+      "afterbegin",
+      `<p class="empty" data-selection-card-export-note>${escapeHtml(t("export.noSelectionCard"))}</p>`,
+    );
+    return;
+  }
+  const payload = {
+    schema: "codegraph.selection_card.v1",
+    ...state.lastSelectionCard,
+  };
+  const serialized = JSON.stringify(payload, null, 2);
+  const blob = new Blob([serialized], { type: "application/json" });
+  const label =
+    payload.card_type === "edge"
+      ? `edge-${payload.selection?.edge_index ?? "selected"}`
+      : payload.selection?.node?.label || "selection";
+  const fileName = `codegraph-${safeFilePart(payload.root)}-${safeFilePart(label)}-card.json`;
+  downloadBlob(blob, fileName);
+  renderSelectionCardExportNote(fileName, blob.size);
+}
+
+function attachSelectionCardExportAction() {
+  selectionBody.querySelectorAll("[data-export-selection-card]").forEach((button) => {
+    button.addEventListener("click", () => exportLastSelectionCard());
+  });
+}
+
 function renderCacheDiff(report) {
   const added = report.added || [];
   const modified = report.modified || [];
@@ -7348,6 +7439,7 @@ function renderSelection() {
     if (edgeRecord) {
       renderEdgeSelectionPanel(edgeRecord.edge, edgeRecord.source, edgeRecord.target);
     } else {
+      clearLastSelectionCard();
       selectionTitle.textContent = t("selection.edge");
       selectionBody.innerHTML = `<p class="empty">${escapeHtml(t("selection.noEdge"))}</p>`;
     }
@@ -7355,6 +7447,7 @@ function renderSelection() {
   }
   const node = state.graph.nodes.find((candidate) => candidate.id === state.selectedId);
   if (!node) {
+    clearLastSelectionCard();
     if (state.selectedId != null) {
       selectionTitle.textContent = `${t("selection.node")} ${state.selectedId}`;
       selectionBody.innerHTML = `<p class="empty">${escapeHtml(t("selection.loading"))}</p>`;
@@ -7393,6 +7486,7 @@ function renderEdgeSelectionPanel(edge, source = null, target = null) {
     .filter(([key]) => key !== "edge_index")
     .map(([key, value]) => [formatKind(key), value]);
 
+  setLastSelectionCard(buildEdgeSelectionCard(edge, source, target));
   selectionTitle.textContent = t("selection.edge");
   selectionBody.innerHTML = `
     <div class="node-card edge-card">
@@ -7412,6 +7506,7 @@ function renderEdgeSelectionPanel(edge, source = null, target = null) {
             ? ""
             : `<button type="button" data-copy-selection-link="edge" data-selection-link-id="${edgeIndex}">${escapeHtml(t("button.copyLink"))}</button>`
         }
+        <button type="button" data-export-selection-card>${escapeHtml(t("button.downloadCard"))}</button>
         ${
           edgeIndex == null
             ? ""
@@ -7455,6 +7550,7 @@ function renderEdgeSelectionPanel(edge, source = null, target = null) {
   attachQueryNavigation(selectionBody);
   attachEdgeExplainActions(selectionBody);
   attachCopyLinkActions(selectionBody);
+  attachSelectionCardExportAction();
   selectionBody.querySelectorAll("[data-focus-edge-index]").forEach((button) => {
     button.addEventListener("click", () => focusEdgeIndex(Number(button.dataset.focusEdgeIndex)));
   });
@@ -7500,6 +7596,11 @@ async function loadNodeContext(nodeId, requestId) {
 }
 
 function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, context = null, card = null) {
+  if (loading) {
+    clearLastSelectionCard();
+  } else {
+    setLastSelectionCard(buildNodeSelectionCard(node, edges, context, card));
+  }
   selectionTitle.textContent = node.label;
   const summaryRows = renderNodeSummaryRows(node);
   const metadataRows = renderNodeMetadataRows(node);
@@ -7540,6 +7641,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
       </header>
       <div class="selection-actions">
         <button type="button" data-copy-selection-link="node" data-selection-link-id="${node.id}">${escapeHtml(t("button.copyLink"))}</button>
+        <button type="button" data-export-selection-card ${loading ? "disabled" : ""}>${escapeHtml(t("button.downloadCard"))}</button>
         <button type="button" data-path-endpoint="from">${escapeHtml(t("selection.from"))}</button>
         <button type="button" data-path-endpoint="to">${escapeHtml(t("selection.to"))}</button>
         ${
@@ -7690,6 +7792,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
 
   attachEdgeExplainActions(selectionBody);
   attachCopyLinkActions(selectionBody);
+  attachSelectionCardExportAction();
 }
 
 function renderNodeSummaryRows(node) {
