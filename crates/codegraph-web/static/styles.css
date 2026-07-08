@@ -2044,7 +2044,7 @@ button.cancel-action:hover:not(:disabled) {
 
 .trace-controls {
   display: grid;
-  grid-template-columns: minmax(72px, 0.7fr) repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(72px, 0.7fr) repeat(3, minmax(0, 1fr));
   gap: 8px;
   align-items: end;
 }
@@ -2164,6 +2164,114 @@ button.cancel-action:hover:not(:disabled) {
 
 .trace-edge em::before {
   content: "-> ";
+}
+
+.workflow-diagram {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.workflow-blocks {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-block {
+  display: grid;
+  gap: 4px;
+  padding-left: calc(var(--depth, 0) * 12px);
+}
+
+.workflow-block button {
+  display: grid;
+  grid-template-columns: minmax(78px, auto) minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 8px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  text-align: left;
+}
+
+.workflow-block button:hover {
+  background: rgba(92, 200, 167, 0.12);
+  border-color: rgba(92, 200, 167, 0.25);
+}
+
+.workflow-block span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.workflow-block strong,
+.workflow-block em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-style: normal;
+}
+
+.workflow-block em {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.workflow-risk-count {
+  grid-column: 2 / -1;
+  width: fit-content;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(224, 108, 117, 0.16);
+  color: #f1b0b5 !important;
+  text-transform: none !important;
+}
+
+.workflow-risk-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-left: 8px;
+}
+
+.workflow-risk {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.workflow-risk.error {
+  color: #f1b0b5;
+  background: rgba(224, 108, 117, 0.18);
+}
+
+.workflow-risk.warning {
+  color: #ecd19d;
+  background: rgba(229, 180, 84, 0.16);
+}
+
+.workflow-transitions {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.workflow-transitions h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .source-preview {

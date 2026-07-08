@@ -68,6 +68,7 @@ const I18N = {
     "selection.configGraph": "Config Graph",
     "selection.errorGraph": "Error Graph",
     "selection.trace": "Trace",
+    "selection.flow": "Flow",
     "selection.dependents": "Dependents",
     "selection.traceDepth": "Depth",
     "selection.openSource": "Open Source",
@@ -486,6 +487,12 @@ const I18N = {
     "errorTrace.sourcePath": "source path",
     "errorTrace.focusTitle": "Error: {label}",
     "trace.tracing": "Tracing...",
+    "workflow.loading": "Loading workflow...",
+    "workflow.noBlocks": "No workflow blocks.",
+    "workflow.blockCount": "{count} blocks",
+    "workflow.transitionCount": "{count} transitions",
+    "workflow.truncated": "Workflow truncated by depth or block limit.",
+    "workflow.risks": "{count} risks",
     "trace.tracingDependents": "Tracing dependents...",
     "trace.noDependents": "No incoming dependents.",
     "trace.dependents": "Dependents",
@@ -545,6 +552,14 @@ const I18N = {
     "kind.error": "error",
     "kind.warning": "warning",
     "kind.info": "info",
+    "kind.start": "start",
+    "kind.call": "call",
+    "kind.config_read": "config read",
+    "kind.environment_read": "env read",
+    "kind.dependency": "dependency",
+    "kind.import": "import",
+    "kind.reference": "reference",
+    "kind.external_boundary": "external boundary",
     "kind.full_scan": "full scan",
     "kind.partial_rescan": "partial rescan",
     "kind.noop": "no changes",
@@ -630,6 +645,7 @@ const I18N = {
     "selection.configGraph": "Граф конфига",
     "selection.errorGraph": "Граф ошибок",
     "selection.trace": "Трассировать",
+    "selection.flow": "Блок-схема",
     "selection.dependents": "Зависимые",
     "selection.traceDepth": "Глубина",
     "selection.openSource": "Открыть источник",
@@ -1048,6 +1064,12 @@ const I18N = {
     "errorTrace.sourcePath": "путь источника",
     "errorTrace.focusTitle": "Ошибка: {label}",
     "trace.tracing": "Трассирую...",
+    "workflow.loading": "Загружаю блок-схему...",
+    "workflow.noBlocks": "Блоков потока нет.",
+    "workflow.blockCount": "блоков: {count}",
+    "workflow.transitionCount": "переходов: {count}",
+    "workflow.truncated": "Блок-схема усечена глубиной или лимитом блоков.",
+    "workflow.risks": "рисков: {count}",
     "trace.tracingDependents": "Трассирую зависимые узлы...",
     "trace.noDependents": "Входящих зависимых нет.",
     "trace.dependents": "Зависимые",
@@ -1107,6 +1129,14 @@ const I18N = {
     "kind.error": "ошибка",
     "kind.warning": "предупреждение",
     "kind.info": "инфо",
+    "kind.start": "старт",
+    "kind.call": "вызов",
+    "kind.config_read": "чтение конфига",
+    "kind.environment_read": "чтение env",
+    "kind.dependency": "зависимость",
+    "kind.import": "импорт",
+    "kind.reference": "ссылка",
+    "kind.external_boundary": "внешняя граница",
     "kind.full_scan": "полный скан",
     "kind.partial_rescan": "частичный перескан",
     "kind.noop": "без изменений",
@@ -1213,6 +1243,7 @@ const state = {
   animationFrame: null,
   selectionRequest: 0,
   traceRequest: 0,
+  workflowRequest: 0,
   dependentsRequest: 0,
   edgeExplainRequest: 0,
   entryFlowRequest: 0,
@@ -8334,6 +8365,7 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
             <input id="traceDepthInput" type="number" min="1" max="8" value="3" />
           </label>
           <button id="traceButton" type="button">${escapeHtml(t("selection.trace"))}</button>
+          <button id="workflowButton" type="button">${escapeHtml(t("selection.flow"))}</button>
           <button id="dependentsButton" type="button">${escapeHtml(t("selection.dependents"))}</button>
         </div>
         <div id="traceResult" class="trace-result"></div>
@@ -8400,6 +8432,10 @@ function renderSelectionPanel(node, edges, nodeMap, requestId, loading = false, 
   const traceButton = document.querySelector("#traceButton");
   if (traceButton) {
     traceButton.addEventListener("click", () => loadTrace(node));
+  }
+  const workflowButton = document.querySelector("#workflowButton");
+  if (workflowButton) {
+    workflowButton.addEventListener("click", () => loadWorkflow(node));
   }
   const dependentsButton = document.querySelector("#dependentsButton");
   if (dependentsButton) {
@@ -8678,6 +8714,7 @@ async function runNodeCardQuery(expression) {
 
 async function loadTrace(node) {
   state.traceRequest += 1;
+  state.workflowRequest += 1;
   state.dependentsRequest += 1;
   const requestId = state.traceRequest;
   const target = document.querySelector("#traceResult");
@@ -8709,8 +8746,44 @@ async function loadTrace(node) {
   }
 }
 
+async function loadWorkflow(node) {
+  state.traceRequest += 1;
+  state.workflowRequest += 1;
+  state.dependentsRequest += 1;
+  const requestId = state.workflowRequest;
+  const target = document.querySelector("#traceResult");
+  if (!target) return;
+
+  target.innerHTML = `<p class="empty">${escapeHtml(t("workflow.loading"))}</p>`;
+  const depthInput = document.querySelector("#traceDepthInput");
+  const depth = clampNumber(Number(depthInput?.value || 4), 1, 8);
+  if (depthInput) depthInput.value = String(depth);
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    node_id: String(node.id),
+    depth: String(depth),
+    block_limit: "120",
+  });
+
+  try {
+    const response = await apiFetch(`/api/workflow?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.workflowRequest) return;
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(body, response, "workflow failed"));
+    }
+    target.innerHTML = renderWorkflow(body);
+    attachWorkflowNavigation(target);
+    attachEdgeExplainActions(target);
+  } catch (error) {
+    if (requestId !== state.workflowRequest) return;
+    target.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
+}
+
 async function loadDependents(node) {
   state.traceRequest += 1;
+  state.workflowRequest += 1;
   state.dependentsRequest += 1;
   const requestId = state.dependentsRequest;
   const target = document.querySelector("#traceResult");
@@ -8743,6 +8816,108 @@ async function loadDependents(node) {
     if (requestId !== state.dependentsRequest) return;
     target.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   }
+}
+
+function renderWorkflow(report) {
+  if (!report) {
+    return `<p class="empty">${escapeHtml(t("trace.noStart"))}</p>`;
+  }
+  const blocks = Array.isArray(report.blocks) ? report.blocks : [];
+  const transitions = Array.isArray(report.transitions) ? report.transitions : [];
+  if (blocks.length === 0) {
+    return `<p class="empty">${escapeHtml(t("workflow.noBlocks"))}</p>`;
+  }
+
+  const orderedBlocks = [...blocks].sort(
+    (left, right) =>
+      Number(left.depth || 0) - Number(right.depth || 0) ||
+      String(left.node?.label || "").localeCompare(String(right.node?.label || "")),
+  );
+  const nodeMap = new Map(orderedBlocks.map((block) => [block.node?.id, block.node]).filter(([id]) => id != null));
+  const blockRows = orderedBlocks.map((block) => renderWorkflowBlock(block)).join("");
+  const transitionRows = transitions
+    .map((transition) => renderWorkflowTransition(transition, nodeMap))
+    .join("");
+  const truncated = report.truncated
+    ? `<p class="empty">${escapeHtml(t("workflow.truncated"))}</p>`
+    : "";
+
+  return `
+    <div class="trace-summary">
+      <span>${escapeHtml(t("workflow.blockCount", { count: formatNumber(blocks.length) }))}</span>
+      <span>${escapeHtml(t("workflow.transitionCount", { count: formatNumber(transitions.length) }))}</span>
+      <span>${escapeHtml(t("trace.depth", { depth: formatNumber(report.max_depth || 0) }))}</span>
+    </div>
+    <div class="workflow-diagram" aria-label="${escapeHtml(t("selection.flow"))}">
+      <ol class="workflow-blocks">${blockRows}</ol>
+    </div>
+    ${
+      transitionRows
+        ? `<section class="workflow-transitions">
+            <h3>${escapeHtml(t("label.edges"))}</h3>
+            <ul class="trace-list trace-edge-list">${transitionRows}</ul>
+          </section>`
+        : ""
+    }
+    ${truncated}
+  `;
+}
+
+function renderWorkflowBlock(block) {
+  const node = block.node || {};
+  const risks = Array.isArray(block.risk_refs) ? block.risk_refs : [];
+  const riskSummary =
+    risks.length > 0
+      ? `<span class="workflow-risk-count">${escapeHtml(t("workflow.risks", { count: risks.length }))}</span>`
+      : "";
+  const riskRows = risks
+    .slice(0, 3)
+    .map((risk) => {
+      const severity = risk.severity || "info";
+      return `<span class="workflow-risk ${escapeHtml(severity)}">${escapeHtml(formatKind(severity))} · ${escapeHtml(formatKind(risk.kind || "insight"))}</span>`;
+    })
+    .join("");
+  return `
+    <li class="workflow-block ${escapeHtml(block.kind || "unknown")}" style="--depth:${Number(block.depth || 0)}">
+      <button type="button" data-node-id="${node.id || ""}">
+        <span>${escapeHtml(formatKind(block.kind || "unknown"))}</span>
+        <strong>${escapeHtml(node.label || String(node.id || ""))}</strong>
+        <em>#${escapeHtml(String(node.id || ""))}</em>
+        ${riskSummary}
+      </button>
+      ${riskRows ? `<div class="workflow-risk-list">${riskRows}</div>` : ""}
+    </li>
+  `;
+}
+
+function renderWorkflowTransition(transition, nodeMap) {
+  const edge = transition.edge || {};
+  const source = nodeMap.get(transition.source_node_id) || nodeMap.get(edge.source);
+  const target = nodeMap.get(transition.target_node_id) || nodeMap.get(edge.target);
+  const riskCount = Array.isArray(transition.risk_refs) ? transition.risk_refs.length : 0;
+  const riskBadge =
+    riskCount > 0
+      ? `<span class="edge-facts">${escapeHtml(t("workflow.risks", { count: riskCount }))}</span>`
+      : "";
+  return `
+    <li>
+      <div class="edge-row">
+        <button class="trace-edge" type="button" data-node-id="${edge.target || transition.target_node_id || ""}">
+          <span>${escapeHtml(formatKind(edge.kind || "unknown"))}</span>
+          <strong>${escapeHtml(source?.label || String(edge.source || transition.source_node_id || ""))}</strong>
+          <em>${escapeHtml(target?.label || String(edge.target || transition.target_node_id || ""))}</em>
+          ${renderEdgeFacts(edge)}
+          ${riskBadge}
+        </button>
+        ${renderEdgeActions(edge, source, target)}
+      </div>
+      <div class="edge-explanation" data-edge-explanation hidden></div>
+    </li>
+  `;
+}
+
+function attachWorkflowNavigation(container) {
+  attachTraceNavigation(container);
 }
 
 function renderTrace(trace, options = {}) {

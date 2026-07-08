@@ -7214,6 +7214,22 @@ fn helper() {
     }
 
     #[test]
+    fn embedded_web_assets_include_workflow_panel() {
+        let app = include_str!("../../codegraph-web/static/app.js");
+        let styles = include_str!("../../codegraph-web/static/styles.css");
+
+        assert!(app.contains("workflowButton"));
+        assert!(app.contains("/api/workflow?"));
+        assert!(app.contains("renderWorkflow"));
+        assert!(app.contains("workflow.blockCount"));
+        assert!(app.contains("workflow.transitionCount"));
+        assert!(app.contains("\"selection.flow\""));
+        assert!(styles.contains(".workflow-diagram"));
+        assert!(styles.contains(".workflow-block"));
+        assert!(styles.contains(".workflow-transitions"));
+    }
+
+    #[test]
     fn embedded_web_assets_localize_static_aria_labels() {
         let index = include_str!("../../codegraph-web/static/index.html");
         let app = include_str!("../../codegraph-web/static/app.js");
