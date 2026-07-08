@@ -5,6 +5,8 @@ const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
 const LABEL_MODE_STORAGE_VERSION = "12";
 const API_TOKEN_STORAGE_KEY = "codegraph.apiToken";
+const QUERY_HISTORY_STORAGE_KEY = "codegraph.queryHistory";
+const QUERY_HISTORY_LIMIT = 8;
 
 const I18N = {
   en: {
@@ -362,6 +364,9 @@ const I18N = {
     "semantic.errors": "Errors",
     "semantic.unmatched": "Unmatched",
     "legend.riskFilter": "Filter graph by {severity} risks",
+    "queryHistory.recent": "Recent Queries",
+    "queryHistory.clear": "Clear",
+    "queryHistory.run": "Run recent query: {query}",
     "status.idle": "idle",
     "status.queue": "queue",
     "status.scan": "scan",
@@ -748,6 +753,9 @@ const I18N = {
     "semantic.errors": "Ошибки",
     "semantic.unmatched": "Без совпадения",
     "legend.riskFilter": "Фильтр графа по рискам: {severity}",
+    "queryHistory.recent": "Недавние запросы",
+    "queryHistory.clear": "Очистить",
+    "queryHistory.run": "Запустить недавний запрос: {query}",
     "status.idle": "ожидание",
     "status.queue": "очередь",
     "status.scan": "скан",
@@ -824,6 +832,21 @@ function getInitialLabelMode() {
     // Local storage can be disabled; the in-memory label mode still works.
   }
   return DEFAULT_LABEL_MODE;
+}
+
+function getInitialQueryHistory() {
+  try {
+    const raw = window.localStorage?.getItem(QUERY_HISTORY_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => typeof item === "string" && item.trim())
+      .map((item) => item.trim())
+      .slice(0, QUERY_HISTORY_LIMIT);
+  } catch (error) {
+    // Local storage can be disabled or user-edited; start with an empty history.
+    return [];
+  }
 }
 
 const state = {
@@ -913,6 +936,7 @@ const state = {
   },
   locale: getInitialLocale(),
   labelMode: getInitialLabelMode(),
+  queryHistory: getInitialQueryHistory(),
   pendingSelectionLink: null,
   pendingQueryLink: null,
   pendingGraphPageLink: false,
@@ -1008,6 +1032,9 @@ const pageClearButton = document.querySelector("#pageClearButton");
 const queryInput = document.querySelector("#queryInput");
 const queryButton = document.querySelector("#queryButton");
 const queryCopyButton = document.querySelector("#queryCopyButton");
+const queryHistory = document.querySelector("#queryHistory");
+const queryHistoryList = document.querySelector("#queryHistoryList");
+const clearQueryHistoryButton = document.querySelector("#clearQueryHistoryButton");
 const queryResult = document.querySelector("#queryResult");
 const sourceSearchInput = document.querySelector("#sourceSearchInput");
 const sourcePathFilterInput = document.querySelector("#sourcePathFilterInput");
@@ -1092,6 +1119,7 @@ searchInput.addEventListener("input", () => {
 clearCanvasFiltersButton.addEventListener("click", () => clearCanvasFilters());
 queryButton.addEventListener("click", () => runGraphQuery());
 queryCopyButton.addEventListener("click", () => copyCurrentQueryLink(queryCopyButton));
+clearQueryHistoryButton.addEventListener("click", () => clearQueryHistory());
 queryInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runGraphQuery();
 });
@@ -1273,6 +1301,7 @@ function applyLocale() {
   renderJobQueue();
   renderInsights();
   renderLegend(state.enabledKinds);
+  renderQueryHistory();
   renderSelection();
   draw();
 }
@@ -3788,6 +3817,7 @@ async function runGraphQuery(options = {}) {
     attachQueryNavigation(queryResult);
     attachEdgeExplainActions(queryResult);
     attachQueryFocusActions(queryResult, body);
+    rememberQuery(expression);
     if (options.focus) {
       focusQueryResult(body, queryResult);
       fitVisibleGraph();
@@ -4977,6 +5007,56 @@ async function openSourceSearchMatch(match) {
     if (requestId !== state.selectionRequest) return;
     preview.innerHTML = `<span class="source-error">${escapeHtml(error.message)}</span>`;
   }
+}
+
+function rememberQuery(expression) {
+  const query = expression.trim();
+  if (!query) return;
+  state.queryHistory = [
+    query,
+    ...state.queryHistory.filter((item) => item.toLowerCase() !== query.toLowerCase()),
+  ].slice(0, QUERY_HISTORY_LIMIT);
+  persistQueryHistory();
+  renderQueryHistory();
+}
+
+function persistQueryHistory() {
+  try {
+    window.localStorage?.setItem(QUERY_HISTORY_STORAGE_KEY, JSON.stringify(state.queryHistory));
+  } catch (error) {
+    // The in-memory history remains usable when storage is unavailable.
+  }
+}
+
+function clearQueryHistory() {
+  state.queryHistory = [];
+  persistQueryHistory();
+  renderQueryHistory();
+}
+
+function renderQueryHistory() {
+  if (!state.queryHistory.length) {
+    queryHistory.hidden = true;
+    queryHistoryList.innerHTML = "";
+    return;
+  }
+
+  queryHistory.hidden = false;
+  queryHistoryList.innerHTML = state.queryHistory
+    .map(
+      (query) => `
+        <button type="button" data-query-history="${escapeHtml(query)}" aria-label="${escapeHtml(t("queryHistory.run", { query }))}">
+          ${escapeHtml(query)}
+        </button>
+      `,
+    )
+    .join("");
+  queryHistoryList.querySelectorAll("[data-query-history]").forEach((button) => {
+    button.addEventListener("click", () => {
+      queryInput.value = button.dataset.queryHistory || "";
+      runGraphQuery();
+    });
+  });
 }
 
 function renderQueryResult(result, options = {}) {

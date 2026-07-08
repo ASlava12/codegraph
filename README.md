@@ -156,6 +156,7 @@ Implemented now:
 - Insight focus API and web interaction for turning findings into focused graph views.
 - Web query panel for running focused graph queries, narrowing the canvas to query results, and jumping to matching nodes.
 - Web query panel supports shareable `query` deep-links and copy-link actions for reusable investigations.
+- Web query panel keeps a local recent-query history so repeated investigations can be rerun quickly.
 - Web graph page filters, node/edge offsets, and page limits can be copied as shareable deep-links for reproducible large-repository slices.
 - Web graph page filters and offsets can be cleared in one action after opening focused or shared large-repository slices.
 - Web canvas search, kind, risk, and query-focus filters show active-filter status in the HUD and can be cleared in one action.

@@ -952,7 +952,9 @@ button.cancel-action:hover:not(:disabled) {
   gap: 6px;
 }
 
-.query-presets button {
+.query-presets button,
+.query-history-list button,
+.query-history header button {
   min-height: 28px;
   padding: 0 8px;
   border: 1px solid rgba(92, 200, 167, 0.26);
@@ -963,10 +965,50 @@ button.cancel-action:hover:not(:disabled) {
   font-weight: 800;
 }
 
-.query-presets button:hover {
+.query-presets button:hover,
+.query-history-list button:hover,
+.query-history header button:hover {
   border-color: rgba(92, 200, 167, 0.68);
   color: var(--text);
   background: rgba(92, 200, 167, 0.12);
+}
+
+.query-history {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+}
+
+.query-history[hidden] {
+  display: none;
+}
+
+.query-history header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.query-history header span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.query-history-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.query-history-list button {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .source-search header,

@@ -6751,15 +6751,22 @@ mod tests {
     fn embedded_web_assets_keep_shareable_investigation_links() {
         let index = include_str!("../../codegraph-web/static/index.html");
         let app = include_str!("../../codegraph-web/static/app.js");
+        let styles = include_str!("../../codegraph-web/static/styles.css");
 
         assert!(index.contains("queryCopyButton"));
         assert!(index.contains("button.copyQueryLink"));
+        assert!(index.contains("queryHistory"));
+        assert!(index.contains("clearQueryHistoryButton"));
         assert!(index.contains("pageCopyButton"));
         assert!(index.contains("pageClearButton"));
         assert!(index.contains("button.copyPageLink"));
         assert!(index.contains("button.clearFilters"));
         assert!(app.contains("buildSelectionUrl"));
         assert!(app.contains("buildQueryUrl"));
+        assert!(app.contains("QUERY_HISTORY_STORAGE_KEY"));
+        assert!(app.contains("rememberQuery"));
+        assert!(app.contains("renderQueryHistory"));
+        assert!(app.contains("\"queryHistory.recent\""));
         assert!(app.contains("buildGraphPageUrl"));
         assert!(app.contains("pendingQueryLink"));
         assert!(app.contains("restorePendingQueryLink"));
@@ -6775,6 +6782,7 @@ mod tests {
         assert!(app.contains("url.searchParams.delete(\"query\")"));
         assert!(app.contains("url.searchParams.delete(\"node\")"));
         assert!(app.contains("navigator.clipboard?.writeText"));
+        assert!(styles.contains(".query-history"));
     }
 
     #[test]
