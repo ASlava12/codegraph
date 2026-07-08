@@ -6786,6 +6786,9 @@ mod tests {
         assert!(app.contains("ambiguous_call_resolution"));
         assert!(index.contains("insights kind:ambiguous_call_resolution"));
         assert!(app.contains("\"queryPreset.ambiguousCalls\""));
+        assert!(app.contains("\"check.running\""));
+        assert!(app.contains("\"sourceSearch.enterText\""));
+        assert!(app.contains("\"sourceSearch.noMatches\""));
         assert!(app.contains("clientEntrypointReachableIds"));
         assert!(app.contains("unreachable_error_flow"));
         assert!(index.contains("unreachable scope:config"));

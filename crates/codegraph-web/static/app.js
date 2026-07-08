@@ -356,6 +356,20 @@ const I18N = {
     "export.noCheck": "Run a quality check before exporting its result.",
     "export.noQueryResult": "Run a graph query before exporting its result.",
     "export.noSlice": "No visible graph slice to export.",
+    "check.running": "Running check...",
+    "check.failedFallback": "check failed",
+    "check.passed": "Passed",
+    "check.failed": "Failed",
+    "check.failOn": "fail on {severity}",
+    "check.failingCount": "{count} failing",
+    "check.matchedCount": "{count} matched",
+    "insights.count": "{count} insights",
+    "sourceSearch.enterText": "Enter source text.",
+    "sourceSearch.searching": "Searching source...",
+    "sourceSearch.failedFallback": "source search failed",
+    "sourceSearch.matchCount": "{count} matches",
+    "sourceSearch.truncated": "truncated",
+    "sourceSearch.noMatches": "No source matches.",
     "trace.tracing": "Tracing...",
     "trace.tracingDependents": "Tracing dependents...",
     "trace.noDependents": "No incoming dependents.",
@@ -777,6 +791,20 @@ const I18N = {
     "export.noCheck": "Сначала запустите проверку качества.",
     "export.noQueryResult": "Сначала выполните запрос к графу.",
     "export.noSlice": "Нет видимого среза графа для экспорта.",
+    "check.running": "Проверяю...",
+    "check.failedFallback": "проверка не удалась",
+    "check.passed": "Пройдено",
+    "check.failed": "Провалено",
+    "check.failOn": "порог: {severity}",
+    "check.failingCount": "нарушений: {count}",
+    "check.matchedCount": "совпадений: {count}",
+    "insights.count": "находок: {count}",
+    "sourceSearch.enterText": "Введите текст для поиска.",
+    "sourceSearch.searching": "Ищу в коде...",
+    "sourceSearch.failedFallback": "поиск в коде не удался",
+    "sourceSearch.matchCount": "совпадений: {count}",
+    "sourceSearch.truncated": "результат усечён",
+    "sourceSearch.noMatches": "Совпадений в коде нет.",
     "trace.tracing": "Трассирую...",
     "trace.tracingDependents": "Трассирую зависимые узлы...",
     "trace.noDependents": "Входящих зависимых нет.",
@@ -3863,14 +3891,14 @@ async function runCheck() {
   params.set("limit", "50");
 
   checkButton.disabled = true;
-  checkResult.innerHTML = '<p class="empty">Running check...</p>';
+  checkResult.innerHTML = `<p class="empty">${escapeHtml(t("check.running"))}</p>`;
 
   try {
     const response = await apiFetch(`/api/check?${params.toString()}`);
     const body = await response.json();
     if (requestId !== state.checkRequest) return;
     if (!response.ok) {
-      throw new Error(apiErrorMessage(body, response, "check failed"));
+      throw new Error(apiErrorMessage(body, response, t("check.failedFallback")));
     }
     state.lastCheckResult = {
       generated_at: new Date().toISOString(),
@@ -3924,8 +3952,8 @@ function exportLastCheckResult() {
       <div class="query-summary">
         <span>${escapeHtml(t("export.check"))}</span>
         <span>${escapeHtml(formatBytes(blob.size))}</span>
-        <span>${escapeHtml(payload.result?.passed ? "passed" : "failed")}</span>
-        <span>${escapeHtml(formatNumber(payload.result?.failing_insights ?? 0))} failing</span>
+        <span>${escapeHtml(payload.result?.passed ? t("check.passed") : t("check.failed"))}</span>
+        <span>${escapeHtml(t("check.failingCount", { count: formatNumber(payload.result?.failing_insights ?? 0) }))}</span>
         <span class="query-expression">${escapeHtml(fileName)}</span>
       </div>
     `,
@@ -3961,7 +3989,7 @@ function exportCurrentInsights() {
     <div class="query-summary">
       <span>${escapeHtml(t("export.insights"))}</span>
       <span>${escapeHtml(formatBytes(blob.size))}</span>
-      <span>${escapeHtml(formatNumber(report.total ?? report.insights?.length ?? 0))} insights</span>
+      <span>${escapeHtml(t("insights.count", { count: formatNumber(report.total ?? report.insights?.length ?? 0) }))}</span>
       <span class="query-expression">${escapeHtml(fileName)}</span>
     </div>
   `;
@@ -3977,13 +4005,13 @@ function countInsightField(insights, field) {
 
 function renderCheckReport(check) {
   const stateClass = check.passed ? "passed" : "failed";
-  const label = check.passed ? "Passed" : "Failed";
+  const label = check.passed ? t("check.passed") : t("check.failed");
   return `
     <div class="check-card ${stateClass}">
-      <strong>${label}</strong>
-      <span>fail on ${escapeHtml(formatKind(check.fail_on || "error"))}</span>
-      <span>${check.failing_insights || 0} failing</span>
-      <span>${check.report?.total || 0} matched</span>
+      <strong>${escapeHtml(label)}</strong>
+      <span>${escapeHtml(t("check.failOn", { severity: formatKind(check.fail_on || "error") }))}</span>
+      <span>${escapeHtml(t("check.failingCount", { count: formatNumber(check.failing_insights || 0) }))}</span>
+      <span>${escapeHtml(t("check.matchedCount", { count: formatNumber(check.report?.total || 0) }))}</span>
     </div>
   `;
 }
@@ -4086,14 +4114,14 @@ async function runGraphQuery(options = {}) {
 async function runSourceSearch() {
   const query = sourceSearchInput.value.trim();
   if (!query) {
-    sourceSearchResult.innerHTML = '<p class="empty">Enter source text.</p>';
+    sourceSearchResult.innerHTML = `<p class="empty">${escapeHtml(t("sourceSearch.enterText"))}</p>`;
     return;
   }
 
   state.sourceSearchRequest += 1;
   const requestId = state.sourceSearchRequest;
   sourceSearchButton.disabled = true;
-  sourceSearchResult.innerHTML = '<p class="empty">Searching source...</p>';
+  sourceSearchResult.innerHTML = `<p class="empty">${escapeHtml(t("sourceSearch.searching"))}</p>`;
 
   const params = new URLSearchParams({
     path: pathInput.value.trim() || ".",
@@ -4109,7 +4137,7 @@ async function runSourceSearch() {
     const body = await response.json();
     if (requestId !== state.sourceSearchRequest) return;
     if (!response.ok) {
-      throw new Error(apiErrorMessage(body, response, "source search failed"));
+      throw new Error(apiErrorMessage(body, response, t("sourceSearch.failedFallback")));
     }
     state.lastSourceSearchResult = {
       generated_at: new Date().toISOString(),
@@ -4161,7 +4189,7 @@ function exportLastSourceSearchResult() {
       <div class="query-summary">
         <span>${escapeHtml(t("export.sourceSearch"))}</span>
         <span>${escapeHtml(formatBytes(blob.size))}</span>
-        <span>${escapeHtml(formatNumber(payload.result?.total_matches ?? payload.result?.matches?.length ?? 0))} matches</span>
+        <span>${escapeHtml(t("sourceSearch.matchCount", { count: formatNumber(payload.result?.total_matches ?? payload.result?.matches?.length ?? 0) }))}</span>
         <span class="query-expression">${escapeHtml(fileName)}</span>
       </div>
     `,
@@ -5492,8 +5520,8 @@ function attachErrorTraceActions(container, result) {
 function renderSourceSearchResult(result) {
   const summary = `
     <div class="query-summary">
-      <span>${result.total_matches} matches</span>
-      ${result.truncated ? "<span>truncated</span>" : ""}
+      <span>${escapeHtml(t("sourceSearch.matchCount", { count: formatNumber(result.total_matches || 0) }))}</span>
+      ${result.truncated ? `<span>${escapeHtml(t("sourceSearch.truncated"))}</span>` : ""}
       <span class="query-expression">${escapeHtml(result.query)}</span>
     </div>
   `;
@@ -5502,7 +5530,7 @@ function renderSourceSearchResult(result) {
     .join("");
   return `
     ${summary}
-    ${rows ? `<ul class="query-list">${rows}</ul>` : '<p class="empty">No source matches.</p>'}
+    ${rows ? `<ul class="query-list">${rows}</ul>` : `<p class="empty">${escapeHtml(t("sourceSearch.noMatches"))}</p>`}
   `;
 }
 
