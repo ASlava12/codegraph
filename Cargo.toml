@@ -9,6 +9,7 @@ members = [
     "crates/codegraph-parser",
     "crates/codegraph-server",
     "crates/codegraph-storage",
+    "crates/codegraph-ui",
 ]
 
 [workspace.package]

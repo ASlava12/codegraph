@@ -67,6 +67,7 @@ Implemented now:
 - Lightweight liveness and readiness probe endpoints for deployment health checks.
 - Server package version is published through runtime probes, health, metrics, capabilities, and API schema responses.
 - Multi-stage Docker image definition for running the web/API server with a mounted repository and persistent cache volume.
+- Native desktop launcher (`codegraph-ui`) that starts a local CodeGraph backend and opens the explorer in a system WebView window.
 - Built-in HTTP access logs with method, target, status, and latency for server operations.
 - Per-response `x-request-id` correlation headers mirrored in access logs and JSON error bodies.
 - Per-response `x-response-time-ms` timing headers for browser, proxy, and agent-side latency diagnostics.
@@ -558,6 +559,25 @@ Open:
 http://127.0.0.1:3765
 ```
 
+Run as a local desktop application:
+
+```bash
+cargo run -p codegraph-ui -- --root .
+```
+
+The desktop launcher starts `codegraph-server` on an automatically selected
+local port, waits for `/api/health`, and opens CodeGraph in a native WebView
+window. Pass `--port <port>` to choose a stable local backend port, or attach to
+an already running backend:
+
+```bash
+cargo run -p codegraph-ui -- --server-url http://127.0.0.1:3765
+```
+
+If the launcher cannot find a sibling `codegraph-server` binary, it falls back
+to `cargo run -p codegraph-server -- ...` from the workspace. Packaged builds
+can pass `--server-bin <path>` or set `CODEGRAPH_SERVER_BIN`.
+
 The server stores persistent graph cache records outside the project by default
 (`CODEGRAPH_CACHE_DIR`, `XDG_CACHE_HOME/codegraph`, `~/Library/Caches/codegraph`
 on macOS, or a temp fallback). Use `--cache-dir <path>` to choose a directory or
@@ -826,13 +846,7 @@ crates/
   codegraph-cli/       command-line interface
   codegraph-server/    HTTP API and embedded static web app
   codegraph-web/       browser UI assets
-```
-
-Expected future crates:
-
-```text
-crates/
-  codegraph-ui/        optional Tauri desktop shell
+  codegraph-ui/        native desktop launcher with an embedded WebView
 ```
 
 ## Development

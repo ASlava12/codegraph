@@ -362,7 +362,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Surface project report quality gate status in the web overview risk summary.
 - [x] Let the web overview quality gate chip run the matching quality check.
 - [x] Back web overview summary, coverage, topology, hotspots, and risks from one report snapshot to reduce duplicate scans.
-- Add optional `codegraph-ui` with Tauri after the web UI stabilizes.
+- [x] Add optional `codegraph-ui` desktop launcher with a native WebView shell.
 - [x] Add source preview.
 - [x] Add trace panels.
 - [x] Support opening local repositories from a desktop shell.
