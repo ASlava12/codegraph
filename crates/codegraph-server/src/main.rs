@@ -6947,6 +6947,18 @@ mod tests {
     }
 
     #[test]
+    fn embedded_web_assets_localize_source_match_cards() {
+        let app = include_str!("../../codegraph-web/static/app.js");
+
+        assert!(app.contains("\"selection.sourceMatch\""));
+        assert!(app.contains("\"selection.sourceLoading\""));
+        assert!(app.contains("selectionTitle.textContent = t(\"selection.sourceMatch\")"));
+        assert!(app.contains("escapeHtml(t(\"selection.source\"))"));
+        assert!(app.contains("escapeHtml(t(\"selection.sourceLoading\"))"));
+        assert!(app.contains("\"Совпадение в коде\""));
+    }
+
+    #[test]
     fn embedded_web_assets_support_keyboard_graph_navigation() {
         let index = include_str!("../../codegraph-web/static/index.html");
         let app = include_str!("../../codegraph-web/static/app.js");

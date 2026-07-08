@@ -18,6 +18,8 @@ const I18N = {
     "selection.edge": "Dependency",
     "selection.noEdge": "Selected edge is no longer visible.",
     "selection.loading": "Loading node context...",
+    "selection.sourceMatch": "Source Match",
+    "selection.sourceLoading": "Loading...",
     "selection.node": "Node",
     "selection.kind": "Kind",
     "selection.id": "Id",
@@ -524,6 +526,8 @@ const I18N = {
     "selection.edge": "Зависимость",
     "selection.noEdge": "Выбранная связь больше не видна.",
     "selection.loading": "Загружаю контекст узла...",
+    "selection.sourceMatch": "Совпадение в коде",
+    "selection.sourceLoading": "Загружаю...",
     "selection.node": "Узел",
     "selection.kind": "Тип",
     "selection.id": "Id",
@@ -5751,14 +5755,14 @@ async function openSourceSearchMatch(match) {
   state.selectionRequest += 1;
   const requestId = state.selectionRequest;
   clearSelection({ render: false });
-  selectionTitle.textContent = "Source Match";
+  selectionTitle.textContent = t("selection.sourceMatch");
   selectionBody.innerHTML = `
     <section class="source-preview">
       <header>
-        <span>Source</span>
+        <span>${escapeHtml(t("selection.source"))}</span>
         <strong>${escapeHtml(match.path)}:${match.line}</strong>
       </header>
-      <pre id="sourceMatchPreview"><code>Loading...</code></pre>
+      <pre id="sourceMatchPreview"><code>${escapeHtml(t("selection.sourceLoading"))}</code></pre>
     </section>
   `;
   const preview = selectionBody.querySelector("#sourceMatchPreview code");
