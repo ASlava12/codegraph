@@ -219,7 +219,8 @@ Goal: answer practical code investigation questions.
 - [x] Add first workflow API endpoint with depth and block-limit controls.
 - [x] Add first web selected-node Flow panel with workflow blocks, transitions, risk badges, and node navigation.
 - [x] Add first web workflow export downloads in JSON and Mermaid.
-- [ ] Extend workflow generation from selected labels to entrypoints, routes, CI jobs, Makefile targets, Docker commands, and selected query slices.
+- [x] Add entrypoint workflow reports across CLI and API for matched startup surfaces.
+- [ ] Extend workflow generation from selected labels and entrypoints to routes, CI jobs, Makefile targets, Docker commands, and selected query slices.
 - [ ] Classify workflow blocks as start, call, config/env read, dependency, branch, error, return, and external boundary.
 - [ ] Add workflow graph compaction so repeated helper calls, import-only hops, and low-signal nodes collapse into readable blocks.
 - [ ] Add CLI workflow commands for routes, CI jobs, Makefile targets, Docker commands, and selected nodes.

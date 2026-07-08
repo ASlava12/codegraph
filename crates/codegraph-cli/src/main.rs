@@ -4,12 +4,12 @@ use codegraph_analysis::{
     ConfigTraceRequest, DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
     DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_COMMUNITY_LIMIT,
     DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
-    EntrypointTraceRequest, ErrorTraceRequest, ExplainEdgeRequest, InsightFilter, InsightSeverity,
-    ProjectReport, ProjectReportLimits, SourceSearchRequest, TraceRequest, TraceStart,
-    WorkflowRequest, architecture_map, check_insights, communities, entrypoints, explain_edge,
-    filter_insight_report, hotspots, insights, language_dependencies, project_report, query_graph,
-    search_source, summarize, trace, trace_config, trace_dependents, trace_entrypoints,
-    trace_errors, workflow, workflow_mermaid,
+    EntrypointTraceRequest, EntrypointWorkflowRequest, ErrorTraceRequest, ExplainEdgeRequest,
+    InsightFilter, InsightSeverity, ProjectReport, ProjectReportLimits, SourceSearchRequest,
+    TraceRequest, TraceStart, WorkflowRequest, architecture_map, check_insights, communities,
+    entrypoints, explain_edge, filter_insight_report, hotspots, insights, language_dependencies,
+    project_report, query_graph, search_source, summarize, trace, trace_config, trace_dependents,
+    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_mermaid,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -299,6 +299,44 @@ enum Command {
         /// Maximum workflow blocks to return.
         #[arg(long, default_value_t = 200)]
         block_limit: usize,
+
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
+        format: WorkflowFormat,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Emit block-style workflows from entrypoint candidates.
+    WorkflowEntrypoints {
+        /// Filter entrypoints by label, kind, language, or metadata.
+        #[arg(long)]
+        search: Option<String>,
+
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Maximum outgoing dependency depth.
+        #[arg(long, default_value_t = 4)]
+        depth: usize,
+
+        /// Maximum workflow blocks per entrypoint.
+        #[arg(long, default_value_t = 200)]
+        block_limit: usize,
+
+        /// Maximum entrypoint workflows to return.
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
 
         /// Output format.
         #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
@@ -1266,6 +1304,49 @@ fn main() -> Result<()> {
                 }
                 (WorkflowFormat::Mermaid, None) => {
                     println!("flowchart TD");
+                }
+            }
+        }
+        Command::WorkflowEntrypoints {
+            search,
+            path,
+            depth,
+            block_limit,
+            limit,
+            format,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
+            let report = workflow_entrypoints(
+                &graph,
+                EntrypointWorkflowRequest {
+                    search,
+                    max_depth: depth,
+                    block_limit,
+                    limit,
+                },
+            );
+            match format {
+                WorkflowFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                }
+                WorkflowFormat::Mermaid => {
+                    let rendered = report
+                        .workflows
+                        .iter()
+                        .map(|workflow| {
+                            format!(
+                                "%% {}\n{}",
+                                workflow.start.label,
+                                workflow_mermaid(workflow)
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    println!("{rendered}");
                 }
             }
         }

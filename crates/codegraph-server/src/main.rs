@@ -12,9 +12,10 @@ use codegraph_analysis::{
     CheckReport, ConfigTraceRequest, ConfigTraceResult, DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
     DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_COMMUNITY_LIMIT,
     DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
-    EntrypointTraceReport, EntrypointTraceRequest, ErrorTraceRequest, ErrorTraceResult,
-    ExplainEdgeRequest, FocusRequest, GraphSlice, GraphSliceRequest, GraphSummary, InsightFilter,
-    InsightReport, InsightSeverity, KNOWN_INSIGHT_KINDS, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT,
+    EntrypointTraceReport, EntrypointTraceRequest, EntrypointWorkflowReport,
+    EntrypointWorkflowRequest, ErrorTraceRequest, ErrorTraceResult, ExplainEdgeRequest,
+    FocusRequest, GraphSlice, GraphSliceRequest, GraphSummary, InsightFilter, InsightReport,
+    InsightSeverity, KNOWN_INSIGHT_KINDS, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT,
     MAX_REPORT_ARCHITECTURE_GROUP_LIMIT, MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
     MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, NodeCard, NodeContext, ProjectReport,
     ProjectReportLimits, SourcePreview, SourceSearchRequest, SourceSearchResult, TraceRequest,
@@ -22,7 +23,7 @@ use codegraph_analysis::{
     entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph,
     hotspots, insights, language_dependencies, node_card, node_context, project_report,
     query_graph, read_source_preview, search_source, slice_graph, summarize, trace, trace_config,
-    trace_dependents, trace_entrypoints, trace_errors, workflow,
+    trace_dependents, trace_entrypoints, trace_errors, workflow, workflow_entrypoints,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -375,6 +376,15 @@ struct EntrypointTraceQuery {
     path: Option<PathBuf>,
     search: Option<String>,
     depth: Option<usize>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EntrypointWorkflowQuery {
+    path: Option<PathBuf>,
+    search: Option<String>,
+    depth: Option<usize>,
+    block_limit: Option<usize>,
     limit: Option<usize>,
 }
 
@@ -985,6 +995,7 @@ async fn main() -> Result<()> {
         .route("/api/communities", get(communities_api))
         .route("/api/entrypoints", get(entrypoints_api))
         .route("/api/entrypoint-traces", get(entrypoint_traces_api))
+        .route("/api/entrypoint-workflows", get(entrypoint_workflows_api))
         .route("/api/insights", get(insights_api))
         .route("/api/check", get(check_api))
         .route("/api/query", get(query_api))
@@ -2602,6 +2613,22 @@ async fn entrypoint_traces_api(
         EntrypointTraceRequest {
             search: normalize_query_string(query.search),
             max_depth: query.depth.unwrap_or(3).clamp(1, 32),
+            limit: query.limit.unwrap_or(25).clamp(1, 500),
+        },
+    )))
+}
+
+async fn entrypoint_workflows_api(
+    State(state): State<AppState>,
+    Query(query): Query<EntrypointWorkflowQuery>,
+) -> Result<Json<EntrypointWorkflowReport>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    Ok(Json(workflow_entrypoints(
+        &graph,
+        EntrypointWorkflowRequest {
+            search: normalize_query_string(query.search),
+            max_depth: query.depth.unwrap_or(4).clamp(1, 32),
+            block_limit: query.block_limit.unwrap_or(200).clamp(1, 1_000),
             limit: query.limit.unwrap_or(25).clamp(1, 500),
         },
     )))
@@ -4601,6 +4628,46 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 )
                 .with_response_fields(entrypoint_trace_response_fields()),
                 api_get(
+                    "/api/entrypoint-workflows",
+                    "Convert detected entrypoints into block-style workflow reports.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "search",
+                            false,
+                            "string",
+                            None,
+                            "Filter entrypoints by label/kind/language/metadata.",
+                        ),
+                        query_param(
+                            "depth",
+                            false,
+                            "usize",
+                            Some("4"),
+                            "Maximum workflow traversal depth.",
+                        )
+                        .with_range(1, 32),
+                        query_param(
+                            "block_limit",
+                            false,
+                            "usize",
+                            Some("200"),
+                            "Maximum workflow blocks per entrypoint.",
+                        )
+                        .with_range(1, 1_000),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            Some("25"),
+                            "Maximum entrypoint workflows.",
+                        )
+                        .with_range(1, 500),
+                    ],
+                    "EntrypointWorkflowReport",
+                )
+                .with_response_fields(entrypoint_workflow_response_fields()),
+                api_get(
                     "/api/insights",
                     "List investigation insights with severity, kind, and search filters.",
                     insight_params(),
@@ -5828,6 +5895,41 @@ fn entrypoint_trace_response_fields() -> Vec<ApiParameterSpec> {
     ]
 }
 
+fn entrypoint_workflow_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "max_depth",
+            true,
+            "usize",
+            "Applied workflow traversal depth.",
+        ),
+        response_field(
+            "block_limit",
+            true,
+            "usize",
+            "Applied maximum block count per entrypoint.",
+        ),
+        response_field(
+            "total_entrypoints",
+            true,
+            "usize",
+            "Total matched entrypoints before limiting.",
+        ),
+        response_field(
+            "workflows",
+            true,
+            "WorkflowReport[]",
+            "Block-style workflow reports from matched entrypoints.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether more entrypoint workflows exist or any workflow was truncated.",
+        ),
+    ]
+}
+
 fn trace_result_response_fields() -> Vec<ApiParameterSpec> {
     vec![
         response_field("start", true, "Node", "Trace start node."),
@@ -6253,6 +6355,7 @@ fn capability_features(cache_enabled: bool, access_log_enabled: bool) -> Vec<&'s
         "focused_subgraphs",
         "query_language",
         "entrypoint_traces",
+        "entrypoint_workflows",
         "config_traces",
         "error_traces",
         "reverse_dependents",
@@ -6366,6 +6469,7 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
                 "GET /api/communities",
                 "GET /api/entrypoints",
                 "GET /api/entrypoint-traces",
+                "GET /api/entrypoint-workflows",
                 "GET /api/insights",
                 "GET /api/check",
                 "GET /api/trace",
@@ -6958,6 +7062,62 @@ fn helper() {
     }
 
     #[tokio::test]
+    async fn entrypoint_workflows_api_returns_filtered_reports() {
+        let root = temp_server_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "api"
+path = "src/main.rs"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            r#"fn main() {
+    helper();
+}
+
+fn helper() {}
+"#,
+        )
+        .unwrap();
+        let state = test_state(root.clone(), vec![], true);
+
+        let Json(report) = entrypoint_workflows_api(
+            State(state),
+            Query(EntrypointWorkflowQuery {
+                path: Some(root.clone()),
+                search: Some("api".to_string()),
+                depth: Some(2),
+                block_limit: Some(20),
+                limit: Some(10),
+            }),
+        )
+        .await
+        .expect("entrypoint workflow response");
+
+        assert_eq!(report.max_depth, 2);
+        assert_eq!(report.block_limit, 20);
+        assert_eq!(report.total_entrypoints, 1);
+        assert_eq!(report.workflows.len(), 1);
+        assert!(report.workflows[0].start.label.contains("api"));
+        assert!(
+            report.workflows[0]
+                .blocks
+                .iter()
+                .any(|block| block.node.label == "main")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn source_search_api_rejects_oversized_query_before_scan() {
         let root = temp_server_root();
         fs::create_dir_all(&root).unwrap();
@@ -7003,6 +7163,7 @@ fn helper() {
         assert!(endpoints.contains(&"GET /api/node-context"));
         assert!(endpoints.contains(&"GET /api/node-card"));
         assert!(endpoints.contains(&"GET /api/workflow"));
+        assert!(endpoints.contains(&"GET /api/entrypoint-workflows"));
         assert!(endpoints.contains(&"POST /api/scan-jobs"));
         assert!(endpoints.contains(&"POST /api/semantic-jobs"));
     }
@@ -7998,6 +8159,26 @@ fn helper() {
                 .response_fields
                 .iter()
                 .any(|field| field.name == "traces" && field.value_type == "TraceResult[]")
+        );
+        let entrypoint_workflows_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/entrypoint-workflows")
+            .expect("schema should list entrypoint-workflows endpoint");
+        assert!(
+            entrypoint_workflows_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name == "block_limit")
+        );
+        assert!(
+            entrypoint_workflows_endpoint
+                .response_fields
+                .iter()
+                .any(|field| {
+                    field.name == "workflows" && field.value_type == "WorkflowReport[]"
+                })
         );
         let trace_endpoint = schema
             .groups

@@ -261,6 +261,23 @@ pub struct EntrypointTraceReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntrypointWorkflowRequest {
+    pub search: Option<String>,
+    pub max_depth: usize,
+    pub block_limit: usize,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntrypointWorkflowReport {
+    pub max_depth: usize,
+    pub block_limit: usize,
+    pub total_entrypoints: usize,
+    pub workflows: Vec<WorkflowReport>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigTraceRequest {
     pub target: String,
     pub max_depth: usize,
@@ -2064,6 +2081,59 @@ pub fn trace_entrypoints(
 }
 
 pub fn workflow(graph: &CodeGraph, request: WorkflowRequest) -> Option<WorkflowReport> {
+    let insight_report = insights(graph);
+    workflow_with_insight_report(graph, request, &insight_report)
+}
+
+pub fn workflow_entrypoints(
+    graph: &CodeGraph,
+    request: EntrypointWorkflowRequest,
+) -> EntrypointWorkflowReport {
+    let max_depth = request.max_depth.clamp(1, 32);
+    let block_limit = request.block_limit.clamp(1, 1_000);
+    let limit = request.limit.clamp(1, 500);
+    let search = request
+        .search
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
+    let matched = entrypoints(graph)
+        .into_iter()
+        .filter(|node| search.is_none_or(|expected| node_search_matches(node, expected)))
+        .collect::<Vec<_>>();
+    let insight_report = insights(graph);
+    let workflows = matched
+        .iter()
+        .take(limit)
+        .filter_map(|node| {
+            workflow_with_insight_report(
+                graph,
+                WorkflowRequest {
+                    start: TraceStart::NodeId(node.id),
+                    max_depth,
+                    block_limit,
+                },
+                &insight_report,
+            )
+        })
+        .collect::<Vec<_>>();
+    let truncated =
+        matched.len() > workflows.len() || workflows.iter().any(|workflow| workflow.truncated);
+
+    EntrypointWorkflowReport {
+        max_depth,
+        block_limit,
+        total_entrypoints: matched.len(),
+        workflows,
+        truncated,
+    }
+}
+
+fn workflow_with_insight_report(
+    graph: &CodeGraph,
+    request: WorkflowRequest,
+    insight_report: &InsightReport,
+) -> Option<WorkflowReport> {
     let max_depth = request.max_depth.clamp(1, 32);
     let block_limit = request.block_limit.clamp(1, 1_000);
     let start = match &request.start {
@@ -2072,7 +2142,6 @@ pub fn workflow(graph: &CodeGraph, request: WorkflowRequest) -> Option<WorkflowR
     }
     .clone();
 
-    let insight_report = insights(graph);
     let mut visited = BTreeSet::new();
     let mut depths = BTreeMap::new();
     let mut incoming = BTreeMap::new();
@@ -2128,7 +2197,7 @@ pub fn workflow(graph: &CodeGraph, request: WorkflowRequest) -> Option<WorkflowR
                 node: node.clone(),
                 depth: depths.get(&node.id).copied().unwrap_or(0),
                 source_node_ids: vec![node.id],
-                risk_refs: workflow_risk_refs_for_node(&insight_report, node.id),
+                risk_refs: workflow_risk_refs_for_node(insight_report, node.id),
             }
         })
         .collect::<Vec<_>>();
@@ -2148,7 +2217,7 @@ pub fn workflow(graph: &CodeGraph, request: WorkflowRequest) -> Option<WorkflowR
                 target_node_id: edge.target,
                 edge: edge_with_index(*edge_index, edge),
                 edge_index: *edge_index,
-                risk_refs: workflow_risk_refs_for_edge(&insight_report, *edge_index),
+                risk_refs: workflow_risk_refs_for_edge(insight_report, *edge_index),
             })
         })
         .collect::<Vec<_>>();
@@ -11271,6 +11340,76 @@ mod tests {
         assert!(mermaid.starts_with("flowchart TD"));
         assert!(mermaid.contains("start: cargo bin:api"));
         assert!(mermaid.contains("reads_environment/heuristic"));
+    }
+
+    #[test]
+    fn workflow_entrypoints_returns_filtered_block_reports() {
+        let mut graph = CodeGraph::new("repo");
+        let api_entrypoint = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "cargo bin:api",
+            None,
+            BTreeMap::from([("entrypoint_kind".to_string(), "binary".to_string())]),
+        );
+        let worker_entrypoint = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "cargo bin:worker",
+            None,
+            BTreeMap::from([("entrypoint_kind".to_string(), "binary".to_string())]),
+        );
+        let api_main = graph.add_node(NodeKind::Function, "api_main");
+        let worker_main = graph.add_node(NodeKind::Function, "worker_main");
+        graph.add_edge(
+            graph.root,
+            api_entrypoint,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(
+            graph.root,
+            worker_entrypoint,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(
+            api_entrypoint,
+            api_main,
+            EdgeKind::References,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            worker_entrypoint,
+            worker_main,
+            EdgeKind::References,
+            Confidence::Syntactic,
+        );
+
+        let report = workflow_entrypoints(
+            &graph,
+            EntrypointWorkflowRequest {
+                search: Some("api".to_string()),
+                max_depth: 2,
+                block_limit: 10,
+                limit: 10,
+            },
+        );
+
+        assert_eq!(report.max_depth, 2);
+        assert_eq!(report.block_limit, 10);
+        assert_eq!(report.total_entrypoints, 1);
+        assert_eq!(report.workflows.len(), 1);
+        assert_eq!(report.workflows[0].start.id, api_entrypoint);
+        assert!(
+            report.workflows[0].blocks.iter().any(
+                |block| block.node.id == api_main && block.kind == WorkflowBlockKind::Reference
+            )
+        );
+        assert!(
+            !report.workflows[0]
+                .blocks
+                .iter()
+                .any(|block| block.node.id == worker_main)
+        );
     }
 
     #[test]
