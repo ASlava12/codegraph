@@ -18,14 +18,14 @@ use codegraph_analysis::{
     InsightSeverity, KNOWN_INSIGHT_KINDS, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT,
     MAX_REPORT_ARCHITECTURE_GROUP_LIMIT, MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
     MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, NodeCard, NodeContext, ProjectReport,
-    ProjectReportLimits, SourcePreview, SourceSearchRequest, SourceSearchResult, TraceRequest,
-    TraceStart, WorkflowFilters, WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport,
-    WorkflowRequest, architecture_map, check_insights, communities, entrypoints, explain_edge,
-    export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots, insights,
-    language_dependencies, node_card, node_context, project_report, query_graph,
-    read_source_preview, search_source, slice_graph, summarize, trace, trace_config,
-    trace_dependents, trace_entrypoints, trace_errors, workflow, workflow_entrypoints,
-    workflow_query,
+    ProjectReportLimits, ProjectReportMarkdownOptions, SourcePreview, SourceSearchRequest,
+    SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryReport,
+    WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map, check_insights,
+    communities, entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report,
+    focus_subgraph, hotspots, insights, language_dependencies, node_card, node_context,
+    project_report, project_report_markdown, query_graph, read_source_preview, search_source,
+    slice_graph, summarize, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    workflow, workflow_entrypoints, workflow_query,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -466,6 +466,7 @@ struct CheckQuery {
 #[derive(Debug, Deserialize)]
 struct ProjectReportQuery {
     path: Option<PathBuf>,
+    format: Option<ProjectReportFormat>,
     architecture_group_limit: Option<usize>,
     architecture_edge_limit: Option<usize>,
     language_link_limit: Option<usize>,
@@ -473,6 +474,13 @@ struct ProjectReportQuery {
     community_limit: Option<usize>,
     insight_limit: Option<usize>,
     fail_on: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProjectReportFormat {
+    Json,
+    Markdown,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2532,8 +2540,9 @@ async fn focus_api(
 async fn report_api(
     State(state): State<AppState>,
     Query(query): Query<ProjectReportQuery>,
-) -> Result<Json<ProjectReportResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     let limits = project_report_limits_from_query(&query)?;
+    let format = query.format.unwrap_or(ProjectReportFormat::Json);
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let root_label = root.display().to_string();
     let options = scan_options(&state, &root)?;
@@ -2556,7 +2565,29 @@ async fn report_api(
     .map_err(|error| ApiError::internal(format!("project report task failed: {error}")))?
     .map_err(ApiError::internal)?;
 
-    Ok(Json(response))
+    let (content_type, body) = match format {
+        ProjectReportFormat::Json => (
+            "application/json; charset=utf-8",
+            serde_json::to_string_pretty(&response)
+                .map_err(|error| ApiError::internal(error.to_string()))?,
+        ),
+        ProjectReportFormat::Markdown => (
+            "text/markdown; charset=utf-8",
+            project_report_markdown(
+                &response.report,
+                &ProjectReportMarkdownOptions {
+                    title: "CodeGraph Project Report".to_string(),
+                    root: Some(response.root.clone()),
+                    generated_at_unix: Some(response.generated_at_unix),
+                },
+            ),
+        ),
+    };
+    Ok((
+        [(header::CONTENT_TYPE, HeaderValue::from_static(content_type))],
+        body,
+    )
+        .into_response())
 }
 
 async fn summary(
@@ -3541,6 +3572,7 @@ fn api_schema_response() -> ApiSchemaResponse {
         groups: api_schema_groups(),
         enum_values: BTreeMap::from([
             ("export_format", vec!["json", "dot", "ndjson"]),
+            ("report_format", vec!["json", "markdown"]),
             (
                 "graph_node_kind",
                 vec![
@@ -5192,6 +5224,13 @@ fn graph_slice_params() -> Vec<ApiParameterSpec> {
 fn report_params() -> Vec<ApiParameterSpec> {
     vec![
         path_param(),
+        query_param(
+            "format",
+            false,
+            "report_format",
+            Some("json"),
+            "Report response format.",
+        ),
         query_param(
             "architecture_group_limit",
             false,
@@ -7271,6 +7310,7 @@ mod tests {
     fn project_report_query_limits_are_clamped_to_capabilities() {
         let limits = project_report_limits_from_query(&ProjectReportQuery {
             path: None,
+            format: None,
             architecture_group_limit: Some(usize::MAX),
             architecture_edge_limit: Some(usize::MAX),
             language_link_limit: Some(usize::MAX),
@@ -7540,7 +7580,10 @@ fn helper() {}
         let app = include_str!("../../codegraph-web/static/app.js");
 
         assert!(index.contains("riskSummaryList"));
+        assert!(index.contains("reportMarkdown"));
         assert!(app.contains("apiFetch(`/api/report?${reportParams.toString()}`)"));
+        assert!(app.contains("reportFormat: \"markdown\""));
+        assert!(app.contains("\"export.reportMarkdown\""));
         assert!(app.contains("state.report?.quality_gate"));
         assert!(app.contains("\"risk.gate\""));
         assert!(index.contains("insightExportButton"));
@@ -7935,6 +7978,12 @@ fn helper() {}
         assert_eq!(schema.api_version, 1);
         assert_eq!(schema.server_version, SERVER_VERSION);
         assert!(schema.enum_values.contains_key("export_format"));
+        assert!(
+            schema
+                .enum_values
+                .get("report_format")
+                .is_some_and(|formats| formats == &vec!["json", "markdown"])
+        );
         assert!(
             schema
                 .enum_values
@@ -8443,6 +8492,9 @@ fn helper() {}
             .flat_map(|group| group.endpoints.iter())
             .find(|endpoint| endpoint.path == "/api/report")
             .expect("schema should list report endpoint");
+        assert!(report_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "format" && parameter.value_type == "report_format"
+        }));
         let report_insight_limit = report_endpoint
             .parameters
             .iter()

@@ -418,6 +418,7 @@ const I18N = {
     "risk.gate": "Gate",
     "risk.clean": "Clean",
     "export.report": "Report JSON",
+    "export.reportMarkdown": "Report Markdown",
     "export.slice": "Visible Slice JSON",
     "export.queryResult": "Query Result JSON",
     "export.insights": "Insights JSON",
@@ -1015,6 +1016,7 @@ const I18N = {
     "risk.gate": "Гейт",
     "risk.clean": "Чисто",
     "export.report": "JSON-отчёт",
+    "export.reportMarkdown": "Markdown-отчёт",
     "export.slice": "JSON видимого среза",
     "export.queryResult": "JSON результата запроса",
     "export.insights": "JSON insights",
@@ -5074,6 +5076,8 @@ async function runGraphExport() {
   const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
   if (metadata.endpoint === "/api/export") {
     params.set("format", metadata.format);
+  } else if (metadata.reportFormat) {
+    params.set("format", metadata.reportFormat);
   }
 
   try {
@@ -5310,6 +5314,8 @@ function exportFormatMetadata(format) {
       return { format: "ndjson", extension: "ndjson", label: "NDJSON", endpoint: "/api/export" };
     case "report":
       return { format: "report", extension: "report.json", label: t("export.report"), endpoint: "/api/report" };
+    case "reportMarkdown":
+      return { format: "reportMarkdown", extension: "report.md", label: t("export.reportMarkdown"), endpoint: "/api/report", reportFormat: "markdown" };
     case "json":
     default:
       return { format: "json", extension: "json", label: "JSON", endpoint: "/api/export" };
