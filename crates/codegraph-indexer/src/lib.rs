@@ -2878,6 +2878,9 @@ fn index_github_actions_workflow_entrypoints(
         metadata.insert("uses_count".to_string(), uses_count.to_string());
         metadata.insert("run_count".to_string(), run_count.to_string());
         metadata.insert("needs_count".to_string(), job.needs.len().to_string());
+        if !job.needs.is_empty() {
+            metadata.insert("needs".to_string(), job.needs.join(","));
+        }
         if let Some(display_name) = job.display_name.as_deref() {
             metadata.insert("name".to_string(), display_name.to_string());
         }
@@ -3155,6 +3158,12 @@ fn index_gitlab_ci_entrypoints(
             "dependencies_count".to_string(),
             job.dependencies.len().to_string(),
         );
+        if !job.needs.is_empty() {
+            metadata.insert("needs".to_string(), job.needs.join(","));
+        }
+        if !job.dependencies.is_empty() {
+            metadata.insert("dependencies".to_string(), job.dependencies.join(","));
+        }
         if let Some(stage) = job.stage.as_deref() {
             metadata.insert("stage".to_string(), stage.to_string());
         }
@@ -12558,6 +12567,15 @@ jobs:
             graph
                 .nodes
                 .iter()
+                .find(|node| node.id == deploy)
+                .and_then(|node| node.metadata.get("needs"))
+                .map(String::as_str),
+            Some("build")
+        );
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
                 .find(|node| node.id == run_step)
                 .and_then(|node| node.metadata.get("command_path"))
                 .map(String::as_str),
@@ -12681,6 +12699,24 @@ deploy:
                 .and_then(|node| node.metadata.get("image"))
                 .map(String::as_str),
             Some("rust:1.78")
+        );
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == test)
+                .and_then(|node| node.metadata.get("needs"))
+                .map(String::as_str),
+            Some("build")
+        );
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == test)
+                .and_then(|node| node.metadata.get("dependencies"))
+                .map(String::as_str),
+            Some("build")
         );
         assert_eq!(
             graph

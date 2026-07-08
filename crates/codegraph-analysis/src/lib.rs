@@ -793,8 +793,10 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unresolved_dockerfile_command_path",
     "unresolved_entrypoint_target",
     "unresolved_framework_route_handler",
+    "unresolved_github_actions_job_need",
     "unresolved_github_actions_local_action",
     "unresolved_github_actions_run_path",
+    "unresolved_gitlab_ci_job_dependency",
     "unresolved_gitlab_ci_script_path",
     "unresolved_kubernetes_config_ref",
     "unresolved_kubernetes_ingress_backend",
@@ -1353,8 +1355,10 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unresolved_compose_command_path_insights(graph, &mut insights);
     add_unresolved_compose_env_file_path_insights(graph, &mut insights);
     add_unresolved_compose_volume_source_path_insights(graph, &mut insights);
+    add_unresolved_github_actions_job_need_insights(graph, &mut insights);
     add_unresolved_github_actions_local_action_insights(graph, &mut insights);
     add_unresolved_github_actions_run_path_insights(graph, &mut insights);
+    add_unresolved_gitlab_ci_job_dependency_insights(graph, &mut insights);
     add_unresolved_gitlab_ci_script_path_insights(graph, &mut insights);
     add_unresolved_kubernetes_config_ref_insights(graph, &mut insights);
     add_unresolved_kubernetes_ingress_backend_insights(graph, &mut insights);
@@ -6686,6 +6690,58 @@ fn compose_volume_reader_ids(graph: &CodeGraph, volume: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
+fn add_unresolved_github_actions_job_need_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Entrypoint
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "github_actions_job")
+        {
+            continue;
+        }
+        let workflow = node
+            .metadata
+            .get("workflow")
+            .map(String::as_str)
+            .unwrap_or("workflow");
+        let job = node
+            .metadata
+            .get("job")
+            .map(String::as_str)
+            .unwrap_or("job");
+        for dependency in metadata_list(node, "needs") {
+            if github_actions_job_exists(graph, workflow, &dependency) {
+                continue;
+            }
+            insights.push(Insight {
+                kind: "unresolved_github_actions_job_need".to_string(),
+                severity: InsightSeverity::Warning,
+                message: format!(
+                    "GitHub Actions job `{workflow}/{job}` declares need `{dependency}` but no matching job was found"
+                ),
+                nodes: vec![node.id],
+                edges: incoming_edge_indexes(graph, node.id, EdgeKind::Entrypoint),
+            });
+        }
+    }
+}
+
+fn github_actions_job_exists(graph: &CodeGraph, workflow: &str, job: &str) -> bool {
+    graph.nodes.iter().any(|node| {
+        node.kind == NodeKind::Entrypoint
+            && node
+                .metadata
+                .get("item_kind")
+                .is_some_and(|kind| kind == "github_actions_job")
+            && node
+                .metadata
+                .get("workflow")
+                .is_some_and(|value| value == workflow)
+            && node.metadata.get("job").is_some_and(|value| value == job)
+    })
+}
+
 fn add_unresolved_github_actions_local_action_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
@@ -6850,6 +6906,65 @@ fn github_actions_run_path_is_resolved(
                 .get("resolution")
                 .is_some_and(|value| value == "github_actions_run_command_path")
     })
+}
+
+fn add_unresolved_gitlab_ci_job_dependency_insights(
+    graph: &CodeGraph,
+    insights: &mut Vec<Insight>,
+) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Entrypoint
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "gitlab_ci_job")
+        {
+            continue;
+        }
+        let job = node
+            .metadata
+            .get("job")
+            .map(String::as_str)
+            .unwrap_or("job");
+        for (field, relation_label) in [("needs", "need"), ("dependencies", "dependency")] {
+            for dependency in metadata_list(node, field) {
+                if gitlab_ci_job_exists(graph, &dependency) {
+                    continue;
+                }
+                insights.push(Insight {
+                    kind: "unresolved_gitlab_ci_job_dependency".to_string(),
+                    severity: InsightSeverity::Warning,
+                    message: format!(
+                        "GitLab CI job `{job}` declares {relation_label} `{dependency}` but no matching job was found"
+                    ),
+                    nodes: vec![node.id],
+                    edges: incoming_edge_indexes(graph, node.id, EdgeKind::Entrypoint),
+                });
+            }
+        }
+    }
+}
+
+fn gitlab_ci_job_exists(graph: &CodeGraph, job: &str) -> bool {
+    graph.nodes.iter().any(|node| {
+        node.kind == NodeKind::Entrypoint
+            && node
+                .metadata
+                .get("item_kind")
+                .is_some_and(|kind| kind == "gitlab_ci_job")
+            && node.metadata.get("job").is_some_and(|value| value == job)
+    })
+}
+
+fn metadata_list(node: &Node, key: &str) -> Vec<String> {
+    node.metadata
+        .get(key)
+        .into_iter()
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn add_unresolved_gitlab_ci_script_path_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
@@ -12958,6 +13073,50 @@ mod tests {
     }
 
     #[test]
+    fn insights_report_unresolved_github_actions_job_needs() {
+        let mut graph = CodeGraph::new("repo");
+        let build = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "github workflow:CI/build",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "github_actions_job".to_string()),
+                ("workflow".to_string(), "CI".to_string()),
+                ("job".to_string(), "build".to_string()),
+            ]),
+        );
+        let deploy = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "github workflow:CI/deploy",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "github_actions_job".to_string()),
+                ("workflow".to_string(), "CI".to_string()),
+                ("job".to_string(), "deploy".to_string()),
+                ("needs".to_string(), "build,missing".to_string()),
+            ]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_github_actions_job_need")
+            .expect("expected unresolved GitHub Actions job need insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert_eq!(insight.nodes, vec![deploy]);
+        assert!(insight.message.contains("missing"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_github_actions_job_need"
+                && insight.message.contains("build")
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_github_actions_job_need" && insight.nodes.contains(&build)
+        }));
+    }
+
+    #[test]
     fn insights_report_unresolved_github_actions_run_paths() {
         let mut graph = CodeGraph::new("repo");
         let build = graph.add_node_with_metadata(
@@ -13099,6 +13258,63 @@ mod tests {
         assert!(insight.message.contains("scripts/missing.sh"));
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unresolved_gitlab_ci_script_path" && insight.nodes.contains(&resolved)
+        }));
+    }
+
+    #[test]
+    fn insights_report_unresolved_gitlab_ci_job_dependencies() {
+        let mut graph = CodeGraph::new("repo");
+        let build = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "gitlab job:build",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "gitlab_ci_job".to_string()),
+                ("job".to_string(), "build".to_string()),
+            ]),
+        );
+        let deploy = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "gitlab job:deploy",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "gitlab_ci_job".to_string()),
+                ("job".to_string(), "deploy".to_string()),
+                ("needs".to_string(), "build,missing-need".to_string()),
+                (
+                    "dependencies".to_string(),
+                    "build,missing-artifacts".to_string(),
+                ),
+            ]),
+        );
+
+        let report = insights(&graph);
+        let missing_need = report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "unresolved_gitlab_ci_job_dependency"
+                    && insight.message.contains("missing-need")
+            })
+            .expect("expected unresolved GitLab CI need insight");
+        let missing_artifacts = report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "unresolved_gitlab_ci_job_dependency"
+                    && insight.message.contains("missing-artifacts")
+            })
+            .expect("expected unresolved GitLab CI dependency insight");
+
+        assert_eq!(missing_need.severity, InsightSeverity::Warning);
+        assert_eq!(missing_need.nodes, vec![deploy]);
+        assert_eq!(missing_artifacts.nodes, vec![deploy]);
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_gitlab_ci_job_dependency"
+                && insight.message.contains("`build`")
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_gitlab_ci_job_dependency" && insight.nodes.contains(&build)
         }));
     }
 
