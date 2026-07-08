@@ -442,6 +442,7 @@ const I18N = {
     "semantic.noServer": "no server",
     "semantic.errors": "Errors",
     "semantic.unmatched": "Unmatched",
+    "legend.kindFilter": "Toggle {kind} nodes",
     "legend.riskFilter": "Filter graph by {severity} risks",
     "queryHistory.recent": "Recent Queries",
     "queryHistory.clear": "Clear",
@@ -913,6 +914,7 @@ const I18N = {
     "semantic.noServer": "нет сервера",
     "semantic.errors": "Ошибки",
     "semantic.unmatched": "Без совпадения",
+    "legend.kindFilter": "Переключить узлы типа {kind}",
     "legend.riskFilter": "Фильтр графа по рискам: {severity}",
     "queryHistory.recent": "Недавние запросы",
     "queryHistory.clear": "Очистить",
@@ -1487,7 +1489,8 @@ function applyLocale() {
   renderRuntimeMetrics();
   renderJobQueue();
   renderInsights();
-  renderLegend(state.enabledKinds);
+  renderKindFilters(graphKindList());
+  renderLegend();
   renderQueryHistory();
   renderQueryExportState();
   renderCheckExportState();
@@ -3938,14 +3941,14 @@ async function loadInsights() {
     state.insightReport = body;
     refreshRiskIndex();
     renderInsights();
-    renderLegend(state.enabledKinds);
+    renderLegend();
     draw();
   } catch (error) {
     if (requestId !== state.insightRequest) return;
     state.insightReport = null;
     refreshRiskIndex();
     renderInsights();
-    renderLegend(state.enabledKinds);
+    renderLegend();
     draw();
   } finally {
     if (requestId === state.insightRequest) {
@@ -4108,7 +4111,7 @@ function initializeGraph(options = {}) {
   state.enabledKinds = new Set(kinds);
   refreshRiskIndex();
   renderKindFilters(kinds);
-  renderLegend(kinds);
+  renderLegend();
   state.layoutPaused = false;
   renderViewportControls();
 
@@ -5967,7 +5970,7 @@ function clearCanvasFilters() {
   state.activeRiskSeverity = null;
   state.enabledKinds = new Set(state.graph.nodes.map((node) => node.kind));
   renderKindFilters([...state.enabledKinds].sort());
-  renderLegend(state.enabledKinds);
+  renderLegend();
   document.querySelectorAll("[data-clear-focus]").forEach((button) => {
     button.disabled = true;
   });
@@ -6772,11 +6775,10 @@ function renderKindFilters(kinds) {
 
     const input = document.createElement("input");
     input.type = "checkbox";
-    input.checked = true;
+    input.checked = state.enabledKinds.has(kind);
+    input.dataset.nodeKind = kind;
     input.addEventListener("change", () => {
-      if (input.checked) state.enabledKinds.add(kind);
-      else state.enabledKinds.delete(kind);
-      applyFilters();
+      setNodeKindFilter(kind, input.checked);
     });
 
     const swatch = document.createElement("span");
@@ -6791,11 +6793,35 @@ function renderKindFilters(kinds) {
   });
 }
 
-function renderLegend(kinds) {
+function setNodeKindFilter(kind, enabled) {
+  if (enabled) state.enabledKinds.add(kind);
+  else state.enabledKinds.delete(kind);
+  syncKindFilterControls();
+  applyFilters();
+  renderLegend();
+  draw();
+}
+
+function syncKindFilterControls() {
+  kindFilters.querySelectorAll("[data-node-kind]").forEach((input) => {
+    input.checked = state.enabledKinds.has(input.dataset.nodeKind);
+  });
+}
+
+function graphKindList() {
+  return [...new Set(state.graph.nodes.map((node) => node.kind))].sort();
+}
+
+function renderLegend() {
   legend.innerHTML = "";
-  kinds.forEach((kind) => {
-    const item = document.createElement("span");
-    item.className = "legend-item";
+  graphKindList().forEach((kind) => {
+    const active = state.enabledKinds.has(kind);
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = `legend-item node-kind${active ? " active" : ""}`;
+    item.dataset.nodeKind = kind;
+    item.setAttribute("aria-pressed", active ? "true" : "false");
+    item.setAttribute("aria-label", t("legend.kindFilter", { kind: formatKind(kind) }));
     const swatch = document.createElement("span");
     swatch.className = "swatch";
     swatch.style.background = colorFor(kind);
@@ -6803,6 +6829,12 @@ function renderLegend(kinds) {
     text.textContent = formatKind(kind);
     item.append(swatch, text);
     legend.append(item);
+  });
+  legend.querySelectorAll("[data-node-kind]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const kind = button.dataset.nodeKind;
+      setNodeKindFilter(kind, !state.enabledKinds.has(kind));
+    });
   });
   const riskSeverities = visibleRiskSeverities();
   ["error", "warning", "info"].forEach((severity) => {
@@ -6827,7 +6859,7 @@ function renderLegend(kinds) {
       const severity = button.dataset.riskSeverity || "";
       state.activeRiskSeverity = state.activeRiskSeverity === severity ? null : severity;
       applyFilters();
-      renderLegend(state.enabledKinds);
+      renderLegend();
       draw();
     });
   });

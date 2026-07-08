@@ -6888,6 +6888,9 @@ mod tests {
         assert!(app.contains("renderGraphHud"));
         assert!(app.contains("renderGraphPageScope"));
         assert!(app.contains("shiftEdgePage"));
+        assert!(app.contains("setNodeKindFilter"));
+        assert!(app.contains("syncKindFilterControls"));
+        assert!(app.contains("data-node-kind"));
         assert!(app.contains("clearCanvasFilters"));
         assert!(app.contains("canvasFilterCount"));
         assert!(app.contains("drawGraphMinimap"));
@@ -6897,6 +6900,7 @@ mod tests {
         assert!(app.contains("\"graph.layout\""));
         assert!(app.contains("\"graph.slice\""));
         assert!(app.contains("\"graph.filters\""));
+        assert!(app.contains("\"legend.kindFilter\""));
         assert!(app.contains("\"aria.graphMinimap\""));
         assert!(app.contains("\"button.clearCanvasFilters\""));
         assert!(app.contains("truncated_edges"));
@@ -6904,6 +6908,7 @@ mod tests {
         assert!(styles.contains(".page-scope"));
         assert!(styles.contains(".page-action-info"));
         assert!(styles.contains(".filters > button"));
+        assert!(styles.contains(".legend-item.node-kind"));
         assert!(styles.contains(".graph-minimap"));
     }
 

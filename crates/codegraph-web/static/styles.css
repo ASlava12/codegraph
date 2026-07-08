@@ -2425,6 +2425,14 @@ button.cancel-action:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.07);
 }
 
+.legend-item.node-kind:not(.active) {
+  opacity: 0.48;
+}
+
+.legend-item.node-kind:not(.active) .swatch {
+  filter: grayscale(1);
+}
+
 .legend-item.risk {
   font-weight: 800;
 }
