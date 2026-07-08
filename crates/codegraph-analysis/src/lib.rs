@@ -786,6 +786,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unreachable_error_flow",
     "unreachable_source_file",
     "unresolved_call",
+    "unresolved_compose_command_path",
     "unresolved_dockerfile_command_path",
     "unresolved_entrypoint_target",
     "unresolved_framework_route_handler",
@@ -1339,6 +1340,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
     add_unresolved_entrypoint_insights(graph, &mut insights);
+    add_unresolved_compose_command_path_insights(graph, &mut insights);
     add_unresolved_dockerfile_command_path_insights(graph, &mut insights);
     add_unresolved_makefile_command_path_insights(graph, &mut insights);
     add_entrypoint_dead_end_insights(graph, &mut insights);
@@ -6451,6 +6453,17 @@ fn add_unresolved_dockerfile_command_path_insights(graph: &CodeGraph, insights: 
         "docker_command_path",
         "unresolved_dockerfile_command_path",
         "Dockerfile instruction",
+    );
+}
+
+fn add_unresolved_compose_command_path_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    add_unresolved_workflow_command_path_insights(
+        graph,
+        insights,
+        "compose_service",
+        "compose_command_path",
+        "unresolved_compose_command_path",
+        "Compose service",
     );
 }
 
@@ -11940,6 +11953,63 @@ mod tests {
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unresolved_dockerfile_command_path"
                 && insight.nodes.contains(&resolved)
+        }));
+    }
+
+    #[test]
+    fn insights_report_unresolved_compose_command_paths() {
+        let mut graph = CodeGraph::new("repo");
+        let broken = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "compose service:web",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "compose_service".to_string()),
+                ("command".to_string(), "./scripts/start.sh".to_string()),
+                ("command_path".to_string(), "scripts/start.sh".to_string()),
+            ]),
+        );
+        let resolved = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "compose service:worker",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "compose_service".to_string()),
+                ("command".to_string(), "./scripts/worker.sh".to_string()),
+                ("command_path".to_string(), "scripts/worker.sh".to_string()),
+            ]),
+        );
+        let worker_script = graph.add_node(NodeKind::File, "scripts/worker.sh");
+        graph.add_edge(graph.root, broken, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(
+            graph.root,
+            resolved,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge_with_metadata(
+            resolved,
+            worker_script,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("relation".to_string(), "entrypoint_file".to_string()),
+                ("resolution".to_string(), "compose_command_path".to_string()),
+            ]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_compose_command_path")
+            .expect("expected unresolved Compose command path insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert_eq!(insight.nodes, vec![broken]);
+        assert!(insight.message.contains("scripts/start.sh"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_compose_command_path" && insight.nodes.contains(&resolved)
         }));
     }
 

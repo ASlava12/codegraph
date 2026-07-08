@@ -139,6 +139,17 @@ struct DockerfileEntrypoint {
     line: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ComposeService {
+    name: String,
+    command: Option<String>,
+    command_kind: Option<String>,
+    build_context: Option<String>,
+    dockerfile: Option<String>,
+    depends_on: Vec<String>,
+    line: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct FileStamp {
     len: u64,
@@ -1120,6 +1131,7 @@ fn index_manifest_facts(
     index_manifest_entrypoints(context, file_id, path, label, source);
     index_makefile_entrypoints(context, file_id, path, label, source);
     index_dockerfile_entrypoints(context, file_id, path, label, source);
+    index_compose_entrypoints(context, file_id, path, label, source);
 }
 
 fn index_script_entrypoint(
@@ -2322,6 +2334,129 @@ fn index_dockerfile_entrypoints(
     }
 }
 
+fn index_compose_entrypoints(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if !is_compose_file_path(path) {
+        return;
+    }
+    let services = compose_services(source);
+    if services.is_empty() {
+        return;
+    }
+
+    let mut service_nodes = BTreeMap::new();
+    for service in &services {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "compose_service".to_string());
+        metadata.insert("entrypoint_kind".to_string(), "service".to_string());
+        metadata.insert("ecosystem".to_string(), "docker-compose".to_string());
+        metadata.insert("source".to_string(), "compose".to_string());
+        metadata.insert("service".to_string(), service.name.clone());
+        metadata.insert("line".to_string(), service.line.to_string());
+        if let Some(command) = service.command.as_deref() {
+            metadata.insert("command".to_string(), command.to_string());
+            if let Some(kind) = service.command_kind.as_deref() {
+                metadata.insert("command_kind".to_string(), kind.to_string());
+            }
+            if let Some(command_path) = normalized_command_path_candidate(label, command) {
+                metadata.insert("command_path".to_string(), command_path);
+            }
+        }
+        if let Some(context_path) = service.build_context.as_deref() {
+            metadata.insert("build_context".to_string(), context_path.to_string());
+        }
+        if let Some(dockerfile) = compose_service_dockerfile_path(label, service) {
+            metadata.insert("dockerfile".to_string(), dockerfile);
+        }
+
+        let entrypoint_id = context.graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            format!("compose service:{}", service.name),
+            Some(line_span(label, source, service.line)),
+            metadata,
+        );
+        service_nodes.insert(service.name.clone(), entrypoint_id);
+        add_edge_once(
+            &mut context.graph,
+            file_id,
+            entrypoint_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+        );
+        let root_id = context.graph.root;
+        add_edge_once(
+            &mut context.graph,
+            root_id,
+            entrypoint_id,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        add_entrypoint_reference(
+            &mut context.graph,
+            entrypoint_id,
+            file_id,
+            "entrypoint_file",
+            "compose_service",
+            Confidence::Exact,
+            None,
+        );
+        if let Some(command) = service.command.clone() {
+            context
+                .pending_entrypoint_targets
+                .push(PendingEntrypointTarget {
+                    entrypoint: entrypoint_id,
+                    manifest_label: label.to_string(),
+                    target: command,
+                    ecosystem: "compose".to_string(),
+                    entrypoint_kind: "service".to_string(),
+                });
+        }
+        if let Some(dockerfile) = compose_service_dockerfile_target(service) {
+            context
+                .pending_entrypoint_targets
+                .push(PendingEntrypointTarget {
+                    entrypoint: entrypoint_id,
+                    manifest_label: label.to_string(),
+                    target: dockerfile,
+                    ecosystem: "compose-dockerfile".to_string(),
+                    entrypoint_kind: "service".to_string(),
+                });
+        }
+    }
+
+    for service in &services {
+        let Some(source_id) = service_nodes.get(&service.name).copied() else {
+            continue;
+        };
+        for dependency in &service.depends_on {
+            let Some(target_id) = service_nodes.get(dependency).copied() else {
+                continue;
+            };
+            let mut metadata = BTreeMap::new();
+            metadata.insert(
+                "relation".to_string(),
+                "compose_service_depends_on".to_string(),
+            );
+            metadata.insert("source".to_string(), "compose".to_string());
+            metadata.insert("service".to_string(), service.name.clone());
+            metadata.insert("dependency".to_string(), dependency.clone());
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                source_id,
+                target_id,
+                EdgeKind::DependsOn,
+                Confidence::Exact,
+                metadata,
+            );
+        }
+    }
+}
+
 fn manifest_dependencies(
     path: &Path,
     source: &str,
@@ -2372,6 +2507,204 @@ fn is_dockerfile_path(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name == "Dockerfile" || name.ends_with(".Dockerfile"))
+}
+
+fn is_compose_file_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            matches!(
+                name,
+                "docker-compose.yml"
+                    | "docker-compose.yaml"
+                    | "compose.yml"
+                    | "compose.yaml"
+                    | "docker-compose.override.yml"
+                    | "docker-compose.override.yaml"
+            ) || name.ends_with(".compose.yml")
+                || name.ends_with(".compose.yaml")
+        })
+}
+
+fn compose_services(source: &str) -> Vec<ComposeService> {
+    let mut services = Vec::new();
+    let mut in_services = false;
+    let mut services_indent = 0usize;
+    let mut active_service: Option<ComposeService> = None;
+    let mut active_section: Option<(String, usize)> = None;
+
+    for (index, raw_line) in source.lines().enumerate() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = yaml_indent(raw_line);
+
+        if !in_services {
+            if yaml_key(trimmed).is_some_and(|key| key == "services") {
+                in_services = true;
+                services_indent = indent;
+            }
+            continue;
+        }
+
+        if indent <= services_indent && yaml_key(trimmed).is_some() {
+            break;
+        }
+
+        if indent == services_indent + 2 {
+            if let Some(service) = active_service.take() {
+                services.push(service);
+            }
+            active_section = None;
+            let Some(name) = yaml_key(trimmed).filter(|name| !compose_service_reserved_key(name))
+            else {
+                continue;
+            };
+            active_service = Some(ComposeService {
+                name,
+                command: None,
+                command_kind: None,
+                build_context: None,
+                dockerfile: None,
+                depends_on: Vec::new(),
+                line: index as u32 + 1,
+            });
+            continue;
+        }
+
+        let Some(service) = active_service.as_mut() else {
+            continue;
+        };
+
+        if indent == services_indent + 4 {
+            active_section = None;
+            if let Some(value) = yaml_key_value(trimmed, "command") {
+                service.command = compose_command_string(&value);
+                service.command_kind = Some("command".to_string());
+            } else if let Some(value) = yaml_key_value(trimmed, "entrypoint") {
+                service.command = compose_command_string(&value);
+                service.command_kind = Some("entrypoint".to_string());
+            } else if let Some(value) = yaml_key_value(trimmed, "build") {
+                service.build_context = Some(value);
+            } else if yaml_key(trimmed).is_some_and(|key| key == "build") {
+                active_section = Some(("build".to_string(), indent));
+            } else if let Some(value) = yaml_key_value(trimmed, "depends_on") {
+                service.depends_on.extend(compose_inline_depends_on(&value));
+            } else if yaml_key(trimmed).is_some_and(|key| key == "depends_on") {
+                active_section = Some(("depends_on".to_string(), indent));
+            }
+            continue;
+        }
+
+        let Some((section, section_indent)) = active_section.as_ref() else {
+            continue;
+        };
+        if indent <= *section_indent {
+            active_section = None;
+            continue;
+        }
+
+        match section.as_str() {
+            "build" => {
+                if let Some(value) = yaml_key_value(trimmed, "context") {
+                    service.build_context = Some(value);
+                } else if let Some(value) = yaml_key_value(trimmed, "dockerfile") {
+                    service.dockerfile = Some(value);
+                }
+            }
+            "depends_on" => {
+                if let Some(value) = trimmed.strip_prefix("- ") {
+                    let dependency = yaml_clean_scalar(value);
+                    if !dependency.is_empty() {
+                        service.depends_on.push(dependency);
+                    }
+                } else if let Some(name) = yaml_key(trimmed)
+                    && !compose_depends_on_option_key(&name)
+                {
+                    service.depends_on.push(name);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(service) = active_service {
+        services.push(service);
+    }
+    dedupe_compose_service_dependencies(&mut services);
+    services
+}
+
+fn compose_service_reserved_key(name: &str) -> bool {
+    matches!(
+        name,
+        "build" | "command" | "depends_on" | "entrypoint" | "image" | "networks" | "volumes"
+    )
+}
+
+fn compose_depends_on_option_key(name: &str) -> bool {
+    matches!(
+        name,
+        "condition" | "restart" | "required" | "service_healthy" | "service_started"
+    )
+}
+
+fn compose_command_string(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if value.starts_with('[') {
+        dockerfile_exec_form_command(value)
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn compose_inline_depends_on(value: &str) -> Vec<String> {
+    let value = value.trim();
+    if value.starts_with('[') {
+        quoted_strings(value)
+    } else if value.is_empty() {
+        Vec::new()
+    } else {
+        vec![value.to_string()]
+    }
+}
+
+fn compose_service_dockerfile_path(
+    compose_label: &str,
+    service: &ComposeService,
+) -> Option<String> {
+    compose_service_dockerfile_target(service)
+        .and_then(|target| normalize_manifest_relative_path(compose_label, &target))
+}
+
+fn compose_service_dockerfile_target(service: &ComposeService) -> Option<String> {
+    if service.build_context.is_none() && service.dockerfile.is_none() {
+        return None;
+    }
+    let dockerfile = service.dockerfile.as_deref().unwrap_or("Dockerfile").trim();
+    let context = service.build_context.as_deref().unwrap_or(".").trim();
+    if context.contains("://") || Path::new(context).is_absolute() || dockerfile.is_empty() {
+        return None;
+    }
+    Some(if context == "." {
+        dockerfile.to_string()
+    } else {
+        join_path(Some(context), dockerfile)
+    })
+}
+
+fn dedupe_compose_service_dependencies(services: &mut [ComposeService]) {
+    for service in services {
+        service.depends_on.sort();
+        service.depends_on.dedup();
+        service
+            .depends_on
+            .retain(|dependency| dependency != &service.name);
+    }
 }
 
 fn dockerfile_entrypoints(source: &str) -> Vec<DockerfileEntrypoint> {
@@ -6006,6 +6339,26 @@ fn entrypoint_target_candidates(
             })
             .into_iter()
             .collect(),
+        "compose" => command_path_candidate(pending)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "compose_command_path",
+            })
+            .into_iter()
+            .collect(),
+        "compose-dockerfile" => manifest_path_candidate(
+            pending,
+            &pending.target,
+            None,
+            Confidence::Exact,
+            Confidence::Exact,
+            "compose_dockerfile",
+        )
+        .into_iter()
+        .collect(),
         _ => Vec::new(),
     }
 }
@@ -6344,6 +6697,8 @@ fn add_entrypoint_reference(
         "makefile"
     } else if resolution.starts_with("docker") {
         "dockerfile"
+    } else if resolution.starts_with("compose") {
+        "compose"
     } else {
         "manifest"
     };
@@ -8890,6 +9245,135 @@ generated/output.txt:
             cmd_node.metadata.get("command_path").map(String::as_str),
             Some("docker/migrate.sh")
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_adds_compose_service_entrypoints() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join("docker-compose.yml"),
+            r#"services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["./scripts/start.sh", "--serve"]
+    depends_on:
+      - db
+  worker:
+    image: demo/worker
+    entrypoint: ./scripts/worker.sh
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: postgres:16
+"#,
+        )
+        .unwrap();
+        fs::write(root.join("Dockerfile"), "FROM debian:stable-slim\n").unwrap();
+        fs::write(
+            root.join("scripts").join("start.sh"),
+            "#!/usr/bin/env bash\necho start\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("scripts").join("worker.sh"),
+            "#!/usr/bin/env bash\necho worker\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let compose = node_id(&graph, NodeKind::File, "docker-compose.yml");
+        let dockerfile = node_id(&graph, NodeKind::File, "Dockerfile");
+        let start_script = node_id(&graph, NodeKind::File, "scripts/start.sh");
+        let worker_script = node_id(&graph, NodeKind::File, "scripts/worker.sh");
+        let web = node_id(&graph, NodeKind::Entrypoint, "compose service:web");
+        let worker = node_id(&graph, NodeKind::Entrypoint, "compose service:worker");
+        let db = node_id(&graph, NodeKind::Entrypoint, "compose service:db");
+
+        for service in [web, worker, db] {
+            assert!(has_entrypoint_reference(
+                &graph,
+                service,
+                compose,
+                "entrypoint_file",
+                Confidence::Exact,
+            ));
+        }
+        assert!(has_entrypoint_reference(
+            &graph,
+            web,
+            start_script,
+            "entrypoint_file",
+            Confidence::Heuristic,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            worker,
+            worker_script,
+            "entrypoint_file",
+            Confidence::Heuristic,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            web,
+            dockerfile,
+            "entrypoint_file",
+            Confidence::Exact,
+        ));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == web
+                && edge.target == db
+                && edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "compose_service_depends_on")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == worker
+                && edge.target == db
+                && edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "compose_service_depends_on")
+        }));
+
+        let web_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == web)
+            .expect("missing compose web service");
+        assert_eq!(
+            web_node.metadata.get("item_kind").map(String::as_str),
+            Some("compose_service")
+        );
+        assert_eq!(
+            web_node.metadata.get("command_path").map(String::as_str),
+            Some("scripts/start.sh")
+        );
+        assert_eq!(
+            web_node.metadata.get("dockerfile").map(String::as_str),
+            Some("Dockerfile")
+        );
+        let db_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == db)
+            .expect("missing compose db service");
+        assert!(!db_node.metadata.contains_key("dockerfile"));
+        assert!(!has_entrypoint_reference(
+            &graph,
+            db,
+            dockerfile,
+            "entrypoint_file",
+            Confidence::Exact,
+        ));
 
         fs::remove_dir_all(root).unwrap();
     }

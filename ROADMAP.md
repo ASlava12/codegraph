@@ -45,6 +45,7 @@ Goal: extract language-independent structure from source files.
 - [x] Detect CMake `add_executable` entrypoints for C and C++ projects.
 - [x] Detect Makefile task targets as build/test/run entrypoints.
 - [x] Detect Dockerfile `ENTRYPOINT` and `CMD` instructions as runtime entrypoints.
+- [x] Detect Docker Compose services as runtime entrypoints with service dependency edges.
 - Add graph export formats:
   - [x] JSON
   - [x] DOT/Graphviz
@@ -136,6 +137,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect local imports/includes whose target file cannot be resolved.
 - [x] Detect Makefile task targets that reference missing local command paths.
 - [x] Detect Dockerfile entrypoints that reference missing local command paths.
+- [x] Detect Docker Compose services that reference missing local command paths.
 - [x] Detect custom architectural boundary violations on graph edges.
 - [x] Detect config and environment reads that are not reachable from entrypoints.
 - [x] Detect potential error/exception flows whose source is not reachable from entrypoints.
