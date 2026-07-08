@@ -387,7 +387,8 @@ fn classify_node(
             "require_expression"
             | "include_expression"
             | "include_once_expression"
-            | "require_once_expression" => ParsedItemKind::Import,
+            | "require_once_expression"
+            | "namespace_use_declaration" => ParsedItemKind::Import,
             _ => return None,
         },
         Language::Bash => match kind {
@@ -1344,6 +1345,34 @@ $port = getenv('PORT') ?: '8080';
             port.metadata.get("default_value").map(String::as_str),
             Some("8080")
         );
+    }
+
+    #[test]
+    fn parses_php_namespace_use_declarations_as_imports() {
+        let parsed = parse_source(
+            "src/App.php",
+            br#"<?php
+use Monolog\Logger;
+use Symfony\Component\{Console\Application, HttpFoundation\Request as HttpRequest};
+class App {}
+"#,
+            Language::Php,
+        )
+        .unwrap();
+
+        let imports = parsed
+            .items
+            .iter()
+            .filter(|item| item.kind == ParsedItemKind::Import)
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(imports.contains(&"use Monolog\\Logger;"));
+        assert!(imports.iter().any(|label| {
+            label.contains("Symfony\\Component")
+                && label.contains("Console\\Application")
+                && label.contains("HttpFoundation\\Request")
+        }));
     }
 
     #[test]

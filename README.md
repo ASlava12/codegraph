@@ -35,7 +35,7 @@ Implemented now:
 - Rust/Axum route entrypoints handle multiline `.route(...)` calls and ignore string literal route markers.
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
-- Local import/include resolution for relative JavaScript/TypeScript imports and CommonJS requires, Python relative/absolute project imports, Go module-local imports, quoted C/C++ includes with CMake and compile database include directories, PHP include/require paths, Bash source paths, and common Rust module paths.
+- Local import/include resolution for relative JavaScript/TypeScript imports and CommonJS requires, Python relative/absolute project imports, Go module-local imports, quoted C/C++ includes with CMake and compile database include directories, PHP include/require paths and namespace imports, Bash source paths, and common Rust module paths.
 - Manifest dependency extraction from Cargo, npm/package-lock/pnpm-lock, Go including indirect requirements, Python/Poetry, setup.py/setup.cfg/Pipfile, Composer/composer.lock, vcpkg, Conan, and CMake `find_package` projects.
 - Heuristic config reads, environment reads, and potential error/exception constructs.
 - CLI command that emits graph JSON.
@@ -229,6 +229,7 @@ Implemented now:
 - Dependency consistency insights for package declarations with conflicting manifest constraints.
 - Dependency consistency insights for packages declared across multiple dependency scopes such as runtime and dev/build.
 - Dependency consistency insights for production imports of packages declared only in non-runtime scopes, including Go `// indirect` requirements.
+- Composer dependency consistency insights map common PHP namespace imports such as `Monolog\*`, `Symfony\Component\Console\*`, and `PHPUnit\Framework\*` back to package nodes.
 - Dependency consistency insights for production-like source files importing packages declared only in non-runtime scopes.
 - Dependency consistency insights for runtime dependencies that are imported only from test-like source files.
 - Focused package graph queries that connect manifest declarations, import sites, and source files for mixed-language dependency investigation.

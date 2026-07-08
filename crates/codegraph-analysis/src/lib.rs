@@ -6889,7 +6889,11 @@ fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>
     let declared = declared_package_ids(graph);
     let declared_ecosystems: BTreeSet<_> = declared
         .iter()
-        .filter_map(|package_id| package_id.split_once(':').map(|(ecosystem, _)| ecosystem))
+        .filter_map(|package_id| {
+            package_id
+                .split_once(':')
+                .map(|(ecosystem, _)| ecosystem.to_string())
+        })
         .collect();
 
     if declared_ecosystems.is_empty() {
@@ -6923,13 +6927,20 @@ fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>
         if matches!(language, "c" | "cpp") {
             continue;
         }
-        let Some(import) = import_package_candidate(language, &import_node.label) else {
-            continue;
-        };
-        if !declared_ecosystems.contains(import.ecosystem.as_str()) {
+        let imports = import_package_candidates(language, &import_node.label, &declared_ecosystems);
+        if imports.is_empty() {
             continue;
         }
-        if is_declared_package(&declared, &import.ecosystem, &import.package) {
+        let Some(import) = imports
+            .iter()
+            .find(|import| declared_ecosystems.contains(import.ecosystem.as_str()))
+        else {
+            continue;
+        };
+        if imports
+            .iter()
+            .any(|import| is_declared_package(&declared, &import.ecosystem, &import.package))
+        {
             continue;
         }
 
@@ -7799,6 +7810,13 @@ fn import_package_candidate(language: &str, label: &str) -> Option<ImportPackage
             ecosystem: "go".to_string(),
             package,
         }),
+        "php" => php_import_packages(label)
+            .into_iter()
+            .next()
+            .map(|package| ImportPackage {
+                ecosystem: "composer".to_string(),
+                package,
+            }),
         _ => None,
     }
 }
@@ -7818,6 +7836,19 @@ fn import_package_candidates(
             .map(|ecosystem| ImportPackage {
                 ecosystem: ecosystem.to_string(),
                 package: package.clone(),
+            })
+            .collect();
+    }
+
+    if language == "php" {
+        if !declared_ecosystems.contains("composer") {
+            return Vec::new();
+        }
+        return php_import_packages(label)
+            .into_iter()
+            .map(|package| ImportPackage {
+                ecosystem: "composer".to_string(),
+                package,
             })
             .collect();
     }
@@ -7844,7 +7875,7 @@ fn import_matches_package_id(package_id: &str, import: &ImportPackage) -> bool {
             package == canonical || package == hyphenated || package == underscored
         }
         "python" => package == canonical_python_package_name(&import.package),
-        "npm" => package == import.package.to_ascii_lowercase(),
+        "npm" | "composer" => package == import.package.to_ascii_lowercase(),
         "vcpkg" | "conan" | "cmake" => package == import.package.to_ascii_lowercase(),
         _ => package == import.package,
     }
@@ -7937,6 +7968,153 @@ fn go_import_package(label: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn php_import_packages(label: &str) -> Vec<String> {
+    let mut packages = Vec::new();
+    for namespace in php_import_namespaces(label) {
+        for package in php_namespace_package_candidates(&namespace) {
+            if !packages.contains(&package) {
+                packages.push(package);
+            }
+        }
+    }
+    packages
+}
+
+fn php_import_namespaces(label: &str) -> Vec<String> {
+    let mut value = label.trim().trim_end_matches(';').trim();
+    if let Some(rest) = value.strip_prefix("use ") {
+        value = rest.trim();
+    }
+    value = value
+        .strip_prefix("function ")
+        .or_else(|| value.strip_prefix("const "))
+        .unwrap_or(value)
+        .trim();
+
+    if let Some((prefix, rest)) = value.split_once('{') {
+        let prefix = prefix.trim().trim_end_matches('\\');
+        let Some((group, _)) = rest.split_once('}') else {
+            return Vec::new();
+        };
+        return group
+            .split(',')
+            .filter_map(|part| {
+                let clause = php_namespace_without_alias(part);
+                if clause.is_empty() {
+                    None
+                } else if prefix.is_empty() {
+                    Some(clause.to_string())
+                } else {
+                    Some(format!("{prefix}\\{clause}"))
+                }
+            })
+            .collect();
+    }
+
+    let namespace = php_namespace_without_alias(value);
+    if namespace.is_empty() {
+        Vec::new()
+    } else {
+        vec![namespace.to_string()]
+    }
+}
+
+fn php_namespace_without_alias(value: &str) -> &str {
+    value
+        .split_once(" as ")
+        .map(|(namespace, _)| namespace)
+        .unwrap_or(value)
+        .trim()
+        .trim_start_matches('\\')
+}
+
+fn php_namespace_package_candidates(namespace: &str) -> Vec<String> {
+    let parts = namespace
+        .split('\\')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.len() < 2 || is_php_non_composer_namespace_root(parts[0]) {
+        return Vec::new();
+    }
+
+    let vendor = composer_package_part(parts[0]);
+    let mut packages = Vec::new();
+    match parts.as_slice() {
+        ["Monolog", ..] => packages.push("monolog/monolog".to_string()),
+        ["PHPUnit", ..] => packages.push("phpunit/phpunit".to_string()),
+        ["GuzzleHttp", ..] => packages.push("guzzlehttp/guzzle".to_string()),
+        ["Symfony", "Component", component, ..] => {
+            packages.push(format!("symfony/{}", composer_package_part(component)));
+        }
+        ["Psr", component, ..] => {
+            packages.push(format!("psr/{}", composer_package_part(component)));
+        }
+        _ => {}
+    }
+
+    if let Some(component) = parts.get(1) {
+        packages.push(format!("{vendor}/{}", composer_package_part(component)));
+    }
+    packages.push(format!("{vendor}/{vendor}"));
+    packages.retain(|package| package.split('/').all(|part| !part.is_empty()));
+    packages.dedup();
+    packages
+}
+
+fn is_php_non_composer_namespace_root(root: &str) -> bool {
+    matches!(
+        root,
+        "App"
+            | "Tests"
+            | "Test"
+            | "Database"
+            | "Config"
+            | "DateTime"
+            | "DateTimeImmutable"
+            | "DateTimeInterface"
+            | "DateInterval"
+            | "DateTimeZone"
+            | "Exception"
+            | "RuntimeException"
+            | "InvalidArgumentException"
+            | "Throwable"
+            | "Closure"
+            | "ArrayObject"
+            | "Iterator"
+            | "IteratorAggregate"
+            | "Traversable"
+            | "Countable"
+            | "JsonSerializable"
+            | "PDO"
+    )
+}
+
+fn composer_package_part(value: &str) -> String {
+    let mut normalized = String::new();
+    let mut previous_separator = false;
+    for character in value.trim().chars() {
+        if matches!(character, '_' | '-' | '.') {
+            if !previous_separator && !normalized.is_empty() {
+                normalized.push('-');
+                previous_separator = true;
+            }
+            continue;
+        }
+        if character.is_ascii_uppercase() {
+            if !normalized.is_empty() && !previous_separator {
+                normalized.push('-');
+            }
+            normalized.push(character.to_ascii_lowercase());
+            previous_separator = false;
+        } else if character.is_ascii_alphanumeric() {
+            normalized.push(character.to_ascii_lowercase());
+            previous_separator = false;
+        }
+    }
+    normalized.trim_matches('-').to_string()
 }
 
 fn c_family_include_package(label: &str) -> Option<String> {
@@ -8072,6 +8250,7 @@ fn is_declared_package(declared: &BTreeSet<String>, ecosystem: &str, package: &s
             canonical_python_package_name(package)
         )),
         "npm" => declared.contains(&format!("npm:{}", package.to_ascii_lowercase())),
+        "composer" => declared.contains(&format!("composer:{}", package.to_ascii_lowercase())),
         "vcpkg" | "conan" | "cmake" => {
             declared.contains(&format!("{ecosystem}:{}", package.to_ascii_lowercase()))
         }
@@ -13040,6 +13219,136 @@ mod tests {
                 .iter()
                 .any(|insight| insight.kind == "semantic_diagnostic")
         );
+    }
+
+    #[test]
+    fn insights_match_php_composer_namespace_imports() {
+        let mut graph = CodeGraph::new("repo");
+        let manifest = graph.add_node(NodeKind::File, "composer.json");
+        let app = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/App.php",
+            None,
+            BTreeMap::from([("language".to_string(), "php".to_string())]),
+        );
+        let test = graph.add_node_with_metadata(
+            NodeKind::File,
+            "tests/AppTest.php",
+            None,
+            BTreeMap::from([("language".to_string(), "php".to_string())]),
+        );
+
+        let monolog = dependency_node(&mut graph, "monolog/monolog", "composer:monolog/monolog");
+        let symfony_console =
+            dependency_node(&mut graph, "symfony/console", "composer:symfony/console");
+        let phpunit = dependency_node(&mut graph, "phpunit/phpunit", "composer:phpunit/phpunit");
+        let doctrine = dependency_node(&mut graph, "doctrine/orm", "composer:doctrine/orm");
+        for dependency in [monolog, symfony_console, doctrine] {
+            graph.add_edge_with_metadata(
+                manifest,
+                dependency,
+                EdgeKind::DependsOn,
+                Confidence::Exact,
+                BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+            );
+        }
+        graph.add_edge_with_metadata(
+            manifest,
+            phpunit,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "dev".to_string())]),
+        );
+
+        let monolog_import = import_node(&mut graph, "use Monolog\\Logger;", "php");
+        let symfony_import = import_node(
+            &mut graph,
+            "use Symfony\\Component\\Console\\Application;",
+            "php",
+        );
+        let phpunit_app_import =
+            import_node(&mut graph, "use PHPUnit\\Framework\\TestCase;", "php");
+        let phpunit_test_import =
+            import_node(&mut graph, "use PHPUnit\\Framework\\TestCase;", "php");
+        let undeclared_import = import_node(
+            &mut graph,
+            "use Acme\\Missing\\Client as MissingClient;",
+            "php",
+        );
+        let local_import = import_node(&mut graph, "use App\\Domain\\Service;", "php");
+        let builtin_import = import_node(&mut graph, "use DateTimeImmutable;", "php");
+
+        graph.add_edge(
+            app,
+            monolog_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            app,
+            symfony_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            app,
+            phpunit_app_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            test,
+            phpunit_test_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            app,
+            undeclared_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(app, local_import, EdgeKind::Imports, Confidence::Syntactic);
+        graph.add_edge(
+            app,
+            builtin_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+
+        let report = insights(&graph);
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&monolog)
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&symfony_console)
+        }));
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&doctrine)
+        }));
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "undeclared_external_import"
+                && insight.message.contains("acme/missing")
+                && insight.nodes.contains(&undeclared_import)
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "undeclared_external_import" && insight.nodes.contains(&local_import)
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "undeclared_external_import" && insight.nodes.contains(&builtin_import)
+        }));
+        let non_runtime = report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "non_runtime_dependency_import" && insight.nodes.contains(&phpunit)
+            })
+            .expect("expected PHP production import of dev Composer dependency");
+        assert!(non_runtime.message.contains("phpunit/phpunit"));
+        assert!(non_runtime.nodes.contains(&app));
+        assert!(non_runtime.nodes.contains(&phpunit_app_import));
+        assert!(!non_runtime.nodes.contains(&test));
+        assert!(!non_runtime.nodes.contains(&phpunit_test_import));
     }
 
     #[test]
