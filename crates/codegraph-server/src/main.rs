@@ -6757,14 +6757,19 @@ mod tests {
         assert!(index.contains("graphHud"));
         assert!(index.contains("graph-hud"));
         assert!(index.contains("pageScope"));
+        assert!(index.contains("edgePrevButton"));
+        assert!(index.contains("edgeNextButton"));
         assert!(app.contains("renderGraphHud"));
         assert!(app.contains("renderGraphPageScope"));
+        assert!(app.contains("shiftEdgePage"));
+        assert!(app.contains("edge_offset: String(state.graphPage.edgeOffset)"));
         assert!(app.contains("\"graph.zoom\""));
         assert!(app.contains("\"graph.layout\""));
         assert!(app.contains("\"graph.slice\""));
         assert!(app.contains("truncated_edges"));
         assert!(styles.contains(".graph-hud"));
         assert!(styles.contains(".page-scope"));
+        assert!(styles.contains(".page-action-info"));
     }
 
     #[test]

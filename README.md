@@ -132,6 +132,7 @@ Implemented now:
 - Confidence-aware edge queries and UI edge labels for fact provenance.
 - Server-side graph paging and filtering endpoint for large repository exploration.
 - Web graph page controls backed by server-side paging, search, kind, item, language, edge, confidence, relation, and source filters.
+- Web graph page controls can page dense edge slices independently with the `/api/graph` `edge_offset` contract.
 - Web graph and insight filter inputs use API schema enum suggestions for node kinds, edge kinds, confidence levels, insight severities, and insight kinds.
 - Web graph viewport controls for zooming, fitting visible nodes, restarting layout, and pausing layout simulation.
 - Web graph page and viewport HUD show loaded-vs-total slice status so large-repository canvases are clearly marked as partial views.

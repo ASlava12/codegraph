@@ -903,6 +903,20 @@ button.cancel-action:hover:not(:disabled) {
   font-size: 13px;
 }
 
+.page-action-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
 .query,
 .source-search,
 .cache-diff,

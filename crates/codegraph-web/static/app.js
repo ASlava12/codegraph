@@ -889,6 +889,7 @@ const state = {
   graphPage: {
     nodeOffset: 0,
     nodeLimit: 250,
+    edgeOffset: 0,
     edgeLimit: 500,
     totalNodes: 0,
     totalEdges: 0,
@@ -969,6 +970,7 @@ const entryFlowButton = document.querySelector("#entryFlowButton");
 const entryFlowResult = document.querySelector("#entryFlowResult");
 const pageInfo = document.querySelector("#pageInfo");
 const pageScope = document.querySelector("#pageScope");
+const edgePageInfo = document.querySelector("#edgePageInfo");
 const nodeLimitInput = document.querySelector("#nodeLimitInput");
 const edgeLimitInput = document.querySelector("#edgeLimitInput");
 const serverKindInput = document.querySelector("#serverKindInput");
@@ -982,6 +984,8 @@ const serverEdgeSourceInput = document.querySelector("#serverEdgeSourceInput");
 const pagePrevButton = document.querySelector("#pagePrevButton");
 const pageReloadButton = document.querySelector("#pageReloadButton");
 const pageNextButton = document.querySelector("#pageNextButton");
+const edgePrevButton = document.querySelector("#edgePrevButton");
+const edgeNextButton = document.querySelector("#edgeNextButton");
 const queryInput = document.querySelector("#queryInput");
 const queryButton = document.querySelector("#queryButton");
 const queryCopyButton = document.querySelector("#queryCopyButton");
@@ -1135,6 +1139,8 @@ for (const input of [semanticWorkLanguageInput, semanticWorkStatusInput, semanti
 pagePrevButton.addEventListener("click", () => shiftGraphPage(-1));
 pageNextButton.addEventListener("click", () => shiftGraphPage(1));
 pageReloadButton.addEventListener("click", () => loadGraphPage({ resetPage: true }));
+edgePrevButton.addEventListener("click", () => shiftEdgePage(-1));
+edgeNextButton.addEventListener("click", () => shiftEdgePage(1));
 zoomOutButton.addEventListener("click", () => zoomAtCanvasCenter(0.82));
 zoomInButton.addEventListener("click", () => zoomAtCanvasCenter(1.18));
 fitGraphButton.addEventListener("click", () => fitVisibleGraph());
@@ -2038,9 +2044,12 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
   pageReloadButton.disabled = true;
   pagePrevButton.disabled = true;
   pageNextButton.disabled = true;
+  edgePrevButton.disabled = true;
+  edgeNextButton.disabled = true;
 
   if (resetPage) {
     state.graphPage.nodeOffset = 0;
+    state.graphPage.edgeOffset = 0;
   }
 
   const nodeLimit = clampNumber(Number(nodeLimitInput.value || 250), 20, 1000);
@@ -2054,6 +2063,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     path: pathInput.value.trim() || ".",
     node_offset: String(state.graphPage.nodeOffset),
     node_limit: String(nodeLimit),
+    edge_offset: String(state.graphPage.edgeOffset),
     edge_limit: String(edgeLimit),
   });
   const kind = serverKindInput.value.trim();
@@ -2087,6 +2097,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     state.graphPage.totalEdges = body.total_edges;
     state.graphPage.nodeOffset = body.node_offset;
     state.graphPage.nodeLimit = body.node_limit;
+    state.graphPage.edgeOffset = body.edge_offset;
     state.graphPage.edgeLimit = body.edge_limit;
     state.graphPage.truncatedNodes = body.truncated_nodes;
     state.graphPage.truncatedEdges = body.truncated_edges;
@@ -2416,6 +2427,7 @@ function applySemanticEnrichResult(result, root) {
   state.summary = result.summary || null;
   state.graphPage.root = root;
   state.graphPage.nodeOffset = 0;
+  state.graphPage.edgeOffset = 0;
   state.graphPage.totalNodes = state.graph.nodes.length;
   state.graphPage.totalEdges = state.graph.edges.length;
   state.graphPage.truncatedNodes = false;
@@ -3276,6 +3288,13 @@ function annotationLabel(key, value) {
 function shiftGraphPage(direction) {
   const nextOffset = state.graphPage.nodeOffset + direction * state.graphPage.nodeLimit;
   state.graphPage.nodeOffset = Math.max(0, nextOffset);
+  state.graphPage.edgeOffset = 0;
+  loadGraphPage({ resetLayout: true });
+}
+
+function shiftEdgePage(direction) {
+  const nextOffset = state.graphPage.edgeOffset + direction * state.graphPage.edgeLimit;
+  state.graphPage.edgeOffset = Math.max(0, nextOffset);
   loadGraphPage({ resetLayout: true });
 }
 
@@ -3285,9 +3304,17 @@ function updateGraphPageControls() {
     state.graphPage.totalNodes,
     state.graphPage.nodeOffset + state.graphPage.nodeLimit,
   );
+  const edgeStart = state.graphPage.totalEdges === 0 ? 0 : state.graphPage.edgeOffset + 1;
+  const edgeEnd = Math.min(
+    state.graphPage.totalEdges,
+    state.graphPage.edgeOffset + state.graphPage.edgeLimit,
+  );
   pageInfo.textContent = `${start}-${end} / ${state.graphPage.totalNodes}`;
+  edgePageInfo.textContent = `${edgeStart}-${edgeEnd} / ${state.graphPage.totalEdges} ${t("label.edges").toLowerCase()}`;
   pagePrevButton.disabled = state.graphPage.nodeOffset === 0;
   pageNextButton.disabled = !state.graphPage.truncatedNodes;
+  edgePrevButton.disabled = state.graphPage.edgeOffset === 0;
+  edgeNextButton.disabled = !state.graphPage.truncatedEdges;
   pageReloadButton.disabled = false;
   renderGraphPageScope();
 }
@@ -4224,6 +4251,7 @@ function showIncrementalScanGraph(scan) {
   const plan = scan.plan || {};
   state.graph = { nodes: graph.nodes || [], edges: graph.edges || [] };
   state.graphPage.nodeOffset = 0;
+  state.graphPage.edgeOffset = 0;
   state.graphPage.totalNodes = state.graph.nodes.length;
   state.graphPage.totalEdges = state.graph.edges.length;
   state.graphPage.truncatedNodes = false;
@@ -4241,6 +4269,9 @@ function showIncrementalScanGraph(scan) {
   renderGraphPageScope({ focused: true });
   pagePrevButton.disabled = true;
   pageNextButton.disabled = true;
+  edgePrevButton.disabled = true;
+  edgeNextButton.disabled = true;
+  renderStaticEdgePageInfo();
   pageReloadButton.disabled = false;
 }
 
@@ -4249,6 +4280,7 @@ function showIncrementalMergePreviewGraph(preview) {
   const merge = preview.merge || {};
   state.graph = { nodes: graph.nodes || [], edges: graph.edges || [] };
   state.graphPage.nodeOffset = 0;
+  state.graphPage.edgeOffset = 0;
   state.graphPage.totalNodes = state.graph.nodes.length;
   state.graphPage.totalEdges = state.graph.edges.length;
   state.graphPage.truncatedNodes = false;
@@ -4266,6 +4298,9 @@ function showIncrementalMergePreviewGraph(preview) {
   renderGraphPageScope({ focused: true });
   pagePrevButton.disabled = true;
   pageNextButton.disabled = true;
+  edgePrevButton.disabled = true;
+  edgeNextButton.disabled = true;
+  renderStaticEdgePageInfo();
   pageReloadButton.disabled = false;
 }
 
@@ -5274,6 +5309,7 @@ async function runEdgeIndexQuery(edgeIndex) {
 function showFocusedGraph(result, label, selectedId = null, options = {}) {
   state.graph = { nodes: result.nodes, edges: result.edges };
   state.graphPage.nodeOffset = 0;
+  state.graphPage.edgeOffset = 0;
   state.graphPage.totalNodes = result.total_nodes;
   state.graphPage.totalEdges = result.total_edges;
   state.graphPage.truncatedNodes = false;
@@ -5290,6 +5326,9 @@ function showFocusedGraph(result, label, selectedId = null, options = {}) {
   renderGraphPageScope({ focused: true });
   pagePrevButton.disabled = true;
   pageNextButton.disabled = true;
+  edgePrevButton.disabled = true;
+  edgeNextButton.disabled = true;
+  renderStaticEdgePageInfo();
   pageReloadButton.disabled = false;
   if (selectedId != null) {
     selectNodeById(selectedId, { syncUrl: options.syncUrl !== false });
@@ -5755,6 +5794,10 @@ function graphSliceLabel() {
     return `${formatNumber(state.visibleNodes.length)} · ${formatNumber(state.visibleEdges.length)}`;
   }
   return `${formatNumber(state.graph.nodes.length)}/${formatNumber(state.graphPage.totalNodes)} · ${formatNumber(state.graph.edges.length)}/${formatNumber(state.graphPage.totalEdges)}`;
+}
+
+function renderStaticEdgePageInfo() {
+  edgePageInfo.textContent = `${formatNumber(state.graph.edges.length)} ${t("label.edges").toLowerCase()}`;
 }
 
 function zoomAtCanvasCenter(scale) {
