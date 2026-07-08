@@ -6739,6 +6739,9 @@ mod tests {
         assert!(app.contains("exportVisibleGraphSlice"));
         assert!(app.contains("codegraph.visible_slice.v1"));
         assert!(app.contains("\"button.downloadSlice\""));
+        assert!(app.contains("openSourceFileGraph"));
+        assert!(app.contains("data-source-file-graph"));
+        assert!(app.contains("\"button.graphFile\""));
         assert!(index.contains("annotations key:domain edge_limit:300"));
         assert!(app.contains("\"queryPreset.annotations\""));
         assert!(app.contains("limits.max_api_body_bytes"));

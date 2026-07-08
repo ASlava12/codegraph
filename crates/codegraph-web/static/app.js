@@ -158,6 +158,7 @@ const I18N = {
     "button.downloadQueryResult": "Download Result",
     "button.downloadInsights": "Download Insights",
     "button.downloadCheck": "Download Check",
+    "button.graphFile": "Graph File",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
     "button.queryEdge": "Query",
@@ -558,6 +559,7 @@ const I18N = {
     "button.downloadQueryResult": "Скачать результат",
     "button.downloadInsights": "Скачать insights",
     "button.downloadCheck": "Скачать проверку",
+    "button.graphFile": "Граф файла",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
     "button.queryEdge": "Запрос",
@@ -5171,6 +5173,9 @@ function renderSourceSearchMatch(match, index) {
         <span>${escapeHtml(match.path)}:${match.line}:${match.column}</span>
         <strong>${escapeHtml(match.line_text || " ")}</strong>
       </button>
+      <button class="query-inline-action" type="button" data-source-file-graph="${index}">
+        ${escapeHtml(t("button.graphFile"))}
+      </button>
       ${context ? `<pre class="source-context"><code>${context}</code></pre>` : ""}
     </li>
   `;
@@ -5183,6 +5188,18 @@ function attachSourceSearchActions(container, result) {
       if (match) openSourceSearchMatch(match);
     });
   });
+  container.querySelectorAll("[data-source-file-graph]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const match = result.matches?.[Number(button.dataset.sourceFileGraph)];
+      if (match?.path) openSourceFileGraph(match.path);
+    });
+  });
+}
+
+async function openSourceFileGraph(path) {
+  queryInput.value = `files path:${quoteQueryValue(path)} direction:out edge_limit:300`;
+  await runGraphQuery({ focus: true });
+  queryResult.scrollIntoView({ block: "nearest" });
 }
 
 async function openSourceSearchMatch(match) {
