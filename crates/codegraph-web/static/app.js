@@ -6146,6 +6146,7 @@ function buildClientInsights(graph) {
   const entrypointIds = new Set(
     graph.edges.filter((edge) => edge.kind === "entrypoint").map((edge) => edge.target),
   );
+  const reachableIds = clientEntrypointReachableIds(graph, entrypointIds);
   const calledIds = new Set(
     graph.edges
       .filter(
@@ -6241,6 +6242,14 @@ function buildClientInsights(graph) {
         message: `${source?.label || edge.source} may error via ${target?.label || edge.target}`,
         nodeId: source?.id || target?.id,
       });
+      if (reachableIds.size > 0 && !reachableIds.has(edge.source)) {
+        insights.push({
+          kind: "unreachable_error_flow",
+          severity: "warning",
+          message: `${source?.label || edge.source} may error via ${target?.label || edge.target} but is not reachable from any entrypoint`,
+          nodeId: source?.id || target?.id,
+        });
+      }
     });
 
   addUndeclaredImportInsights(graph, insights);
@@ -6252,6 +6261,48 @@ function buildClientInsights(graph) {
       left.kind.localeCompare(right.kind) ||
       left.message.localeCompare(right.message),
   );
+}
+
+function clientEntrypointReachableIds(graph, entrypointIds) {
+  const reachable = new Set();
+  const queue = [];
+  const outgoing = new Map();
+
+  (graph.edges || []).forEach((edge) => {
+    if (!clientTraceEdge(edge)) return;
+    const list = outgoing.get(edge.source) || [];
+    list.push(edge.target);
+    outgoing.set(edge.source, list);
+  });
+
+  entrypointIds.forEach((id) => {
+    if (reachable.has(id)) return;
+    reachable.add(id);
+    queue.push(id);
+  });
+
+  while (queue.length > 0) {
+    const id = queue.shift();
+    (outgoing.get(id) || []).forEach((target) => {
+      if (reachable.has(target)) return;
+      reachable.add(target);
+      queue.push(target);
+    });
+  }
+
+  return reachable;
+}
+
+function clientTraceEdge(edge) {
+  return [
+    "calls",
+    "references",
+    "imports",
+    "reads_config",
+    "reads_environment",
+    "may_error",
+    "depends_on",
+  ].includes(edge?.kind);
 }
 
 function addUndeclaredImportInsights(graph, insights) {

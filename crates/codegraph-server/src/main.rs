@@ -6758,6 +6758,8 @@ mod tests {
         assert!(app.contains("exportLastErrorTraceReport"));
         assert!(app.contains("codegraph.error_trace.v1"));
         assert!(app.contains("\"button.downloadErrorTrace\""));
+        assert!(app.contains("clientEntrypointReachableIds"));
+        assert!(app.contains("unreachable_error_flow"));
         assert!(index.contains("annotations key:domain edge_limit:300"));
         assert!(app.contains("\"queryPreset.annotations\""));
         assert!(app.contains("limits.max_api_body_bytes"));
