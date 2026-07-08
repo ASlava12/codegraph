@@ -7788,6 +7788,8 @@ fn helper() {}
         assert!(index.contains("insights kind:non_runtime_dependency_import"));
         assert!(index.contains("insights kind:test_only_runtime_dependency"));
         assert!(index.contains("insights kind:sensitive_config_default"));
+        assert!(index.contains("nodes item_kind:app_sql_query"));
+        assert!(index.contains("insights kind:unresolved_sql_table_reference"));
         assert!(app.contains("\"queryPreset.ambiguousCalls\""));
         assert!(app.contains("\"queryPreset.ambiguousEntrypoints\""));
         assert!(app.contains("\"queryPreset.dependencyScopes\""));
@@ -7795,6 +7797,8 @@ fn helper() {}
         assert!(app.contains("\"queryPreset.runtimeImports\""));
         assert!(app.contains("\"queryPreset.testOnlyRuntime\""));
         assert!(app.contains("\"queryPreset.sensitiveDefaults\""));
+        assert!(app.contains("\"queryPreset.sqlQueries\""));
+        assert!(app.contains("\"queryPreset.sqlMissingTables\""));
         assert!(app.contains("\"queryPreset.docs\""));
         assert!(app.contains("\"selection.documentGraph\""));
         assert!(app.contains("documentGraphQueryForNode"));
@@ -7802,8 +7806,10 @@ fn helper() {}
         assert!(app.contains("\"kind.non_runtime_dependency_import\""));
         assert!(app.contains("\"kind.test_only_runtime_dependency\""));
         assert!(app.contains("\"kind.conflicting_dependency_declaration\""));
+        assert!(app.contains("\"kind.unresolved_sql_table_reference\""));
         assert!(app.contains("\"mixed dependency scope\""));
         assert!(app.contains("\"смешанный scope зависимости\""));
+        assert!(app.contains("\"SQL-ссылка на неизвестную таблицу\""));
         assert!(app.contains("phpImportPackage"));
         assert!(app.contains("phpNonComposerNamespaceRoots"));
         assert!(app.contains("target?.metadata?.import_scope === \"local\""));
