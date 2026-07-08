@@ -760,6 +760,7 @@ pub struct InsightFilter {
 
 pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "ambiguous_call_resolution",
+    "ambiguous_entrypoint_target",
     "conflicting_config_default",
     "conflicting_dependency_declaration",
     "cross_language_heuristic_edge",
@@ -1329,6 +1330,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_cross_language_heuristic_edge_insights(graph, &mut insights);
     add_duplicate_function_insights(graph, &mut insights);
     add_duplicate_entrypoint_insights(graph, &mut insights);
+    add_ambiguous_entrypoint_target_insights(graph, &mut insights);
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
     add_unresolved_entrypoint_insights(graph, &mut insights);
@@ -6253,6 +6255,70 @@ fn add_duplicate_entrypoint_insights(graph: &CodeGraph, insights: &mut Vec<Insig
     }
 }
 
+fn add_ambiguous_entrypoint_target_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Entrypoint
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "manifest_entrypoint")
+        {
+            continue;
+        }
+
+        for relation in ["entrypoint_file", "entrypoint_function"] {
+            let matches = graph
+                .edges
+                .iter()
+                .enumerate()
+                .filter(|(_, edge)| {
+                    edge.source == node.id
+                        && edge.kind == EdgeKind::References
+                        && edge
+                            .metadata
+                            .get("relation")
+                            .is_some_and(|value| value == relation)
+                })
+                .collect::<Vec<_>>();
+            let targets = matches
+                .iter()
+                .map(|(_, edge)| edge.target)
+                .collect::<BTreeSet<_>>();
+            if targets.len() < 2 {
+                continue;
+            }
+
+            let relation_label = if relation == "entrypoint_file" {
+                "files"
+            } else {
+                "functions"
+            };
+            let target_labels = targets
+                .iter()
+                .filter_map(|target| node_label(graph, *target))
+                .take(5)
+                .map(|label| format!("`{label}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut nodes = Vec::with_capacity(targets.len() + 1);
+            nodes.push(node.id);
+            nodes.extend(targets.iter().copied());
+            let edges = matches.iter().map(|(index, _)| *index).collect();
+
+            insights.push(Insight {
+                kind: "ambiguous_entrypoint_target".to_string(),
+                severity: InsightSeverity::Warning,
+                message: format!(
+                    "Entrypoint `{}` resolves to multiple {relation_label}: {target_labels}",
+                    node.label
+                ),
+                nodes,
+                edges,
+            });
+        }
+    }
+}
+
 fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let entrypoints: BTreeSet<NodeId> = graph
         .edges
@@ -10728,6 +10794,84 @@ mod tests {
         assert!(duplicate.message.contains("npm script:start"));
         assert_eq!(duplicate.edges.len(), 2);
         assert!(!duplicate.nodes.contains(&unique));
+    }
+
+    #[test]
+    fn insights_report_ambiguous_manifest_entrypoint_targets() {
+        let mut graph = CodeGraph::new("repo");
+        let ambiguous = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "python console_script:serve",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "manifest_entrypoint".to_string()),
+                ("target".to_string(), "app:serve".to_string()),
+            ]),
+        );
+        let first = graph.add_node(NodeKind::Function, "app::serve");
+        let second = graph.add_node(NodeKind::Function, "legacy::serve");
+        let resolved = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "cargo bin:api",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "manifest_entrypoint".to_string()),
+                ("target".to_string(), "src/main.rs".to_string()),
+            ]),
+        );
+        let file = graph.add_node(NodeKind::File, "src/main.rs");
+        let main = graph.add_node(NodeKind::Function, "main");
+        graph.add_edge(
+            graph.root,
+            ambiguous,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(
+            graph.root,
+            resolved,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        for target in [first, second] {
+            graph.add_edge_with_metadata(
+                ambiguous,
+                target,
+                EdgeKind::References,
+                Confidence::Heuristic,
+                BTreeMap::from([("relation".to_string(), "entrypoint_function".to_string())]),
+            );
+        }
+        graph.add_edge_with_metadata(
+            resolved,
+            file,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "entrypoint_file".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            resolved,
+            main,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "entrypoint_function".to_string())]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "ambiguous_entrypoint_target")
+            .expect("expected ambiguous entrypoint target insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.message.contains("python console_script:serve"));
+        assert!(insight.message.contains("functions"));
+        assert!(insight.nodes.contains(&ambiguous));
+        assert!(insight.nodes.contains(&first));
+        assert!(insight.nodes.contains(&second));
+        assert!(!insight.nodes.contains(&resolved));
+        assert_eq!(insight.edges.len(), 2);
     }
 
     #[test]
