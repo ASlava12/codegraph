@@ -786,6 +786,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unreachable_error_flow",
     "unreachable_source_file",
     "unresolved_call",
+    "unresolved_dockerfile_command_path",
     "unresolved_entrypoint_target",
     "unresolved_framework_route_handler",
     "unresolved_local_import",
@@ -1338,6 +1339,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
     add_unresolved_entrypoint_insights(graph, &mut insights);
+    add_unresolved_dockerfile_command_path_insights(graph, &mut insights);
     add_unresolved_makefile_command_path_insights(graph, &mut insights);
     add_entrypoint_dead_end_insights(graph, &mut insights);
     add_unreachable_config_read_insights(graph, &mut insights);
@@ -6441,13 +6443,42 @@ fn add_unresolved_entrypoint_insights(graph: &CodeGraph, insights: &mut Vec<Insi
     }
 }
 
+fn add_unresolved_dockerfile_command_path_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    add_unresolved_workflow_command_path_insights(
+        graph,
+        insights,
+        "dockerfile_entrypoint",
+        "docker_command_path",
+        "unresolved_dockerfile_command_path",
+        "Dockerfile instruction",
+    );
+}
+
 fn add_unresolved_makefile_command_path_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    add_unresolved_workflow_command_path_insights(
+        graph,
+        insights,
+        "makefile_target",
+        "make_command_path",
+        "unresolved_makefile_command_path",
+        "Makefile target",
+    );
+}
+
+fn add_unresolved_workflow_command_path_insights(
+    graph: &CodeGraph,
+    insights: &mut Vec<Insight>,
+    item_kind: &str,
+    resolution: &str,
+    insight_kind: &str,
+    label_prefix: &str,
+) {
     for node in &graph.nodes {
         if node.kind != NodeKind::Entrypoint
             || node
                 .metadata
                 .get("item_kind")
-                .is_none_or(|kind| kind != "makefile_target")
+                .is_none_or(|kind| kind != item_kind)
         {
             continue;
         }
@@ -6465,7 +6496,7 @@ fn add_unresolved_makefile_command_path_insights(graph: &CodeGraph, insights: &m
                 && edge
                     .metadata
                     .get("resolution")
-                    .is_some_and(|resolution| resolution == "make_command_path")
+                    .is_some_and(|value| value == resolution)
         });
         if resolved {
             continue;
@@ -6477,10 +6508,10 @@ fn add_unresolved_makefile_command_path_insights(graph: &CodeGraph, insights: &m
             .map(String::as_str)
             .unwrap_or(command_path);
         insights.push(Insight {
-            kind: "unresolved_makefile_command_path".to_string(),
+            kind: insight_kind.to_string(),
             severity: InsightSeverity::Warning,
             message: format!(
-                "Makefile target `{}` runs `{command}` but command path `{command_path}` was not found",
+                "{label_prefix} `{}` runs `{command}` but command path `{command_path}` was not found",
                 node.label
             ),
             nodes: vec![node.id],
@@ -11851,6 +11882,64 @@ mod tests {
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unresolved_makefile_command_path"
                 && (insight.nodes.contains(&resolved) || insight.nodes.contains(&shell_only))
+        }));
+    }
+
+    #[test]
+    fn insights_report_unresolved_dockerfile_command_paths() {
+        let mut graph = CodeGraph::new("repo");
+        let broken = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "docker entrypoint:./docker/start.sh",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "dockerfile_entrypoint".to_string()),
+                ("command".to_string(), "./docker/start.sh".to_string()),
+                ("command_path".to_string(), "docker/start.sh".to_string()),
+            ]),
+        );
+        let resolved = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "docker cmd:./docker/migrate.sh",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "dockerfile_entrypoint".to_string()),
+                ("command".to_string(), "./docker/migrate.sh".to_string()),
+                ("command_path".to_string(), "docker/migrate.sh".to_string()),
+            ]),
+        );
+        let migrate_script = graph.add_node(NodeKind::File, "docker/migrate.sh");
+        graph.add_edge(graph.root, broken, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(
+            graph.root,
+            resolved,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge_with_metadata(
+            resolved,
+            migrate_script,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("relation".to_string(), "entrypoint_file".to_string()),
+                ("resolution".to_string(), "docker_command_path".to_string()),
+            ]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_dockerfile_command_path")
+            .expect("expected unresolved Dockerfile command path insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert_eq!(insight.nodes, vec![broken]);
+        assert!(insight.message.contains("docker/start.sh"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_dockerfile_command_path"
+                && insight.nodes.contains(&resolved)
         }));
     }
 

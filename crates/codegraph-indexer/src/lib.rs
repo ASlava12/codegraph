@@ -132,6 +132,13 @@ struct MakefileTarget {
     line: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DockerfileEntrypoint {
+    instruction: String,
+    command: String,
+    line: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct FileStamp {
     len: u64,
@@ -1112,6 +1119,7 @@ fn index_manifest_facts(
     index_manifest_dependencies(context, file_id, path, source);
     index_manifest_entrypoints(context, file_id, path, label, source);
     index_makefile_entrypoints(context, file_id, path, label, source);
+    index_dockerfile_entrypoints(context, file_id, path, label, source);
 }
 
 fn index_script_entrypoint(
@@ -2197,9 +2205,7 @@ fn index_makefile_entrypoints(
         metadata.insert("line".to_string(), target.line.to_string());
         if let Some(command) = target.command.as_deref() {
             metadata.insert("command".to_string(), command.to_string());
-            if let Some(command_path) = command_source_path_candidate(command)
-                .and_then(|path| normalize_manifest_relative_path(label, &path))
-            {
+            if let Some(command_path) = normalized_command_path_candidate(label, command) {
                 metadata.insert("command_path".to_string(), command_path);
             }
         }
@@ -2249,6 +2255,73 @@ fn index_makefile_entrypoints(
     }
 }
 
+fn index_dockerfile_entrypoints(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if !is_dockerfile_path(path) {
+        return;
+    }
+
+    for entrypoint in dockerfile_entrypoints(source) {
+        let instruction = entrypoint.instruction.to_ascii_lowercase();
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "dockerfile_entrypoint".to_string());
+        metadata.insert("entrypoint_kind".to_string(), instruction.clone());
+        metadata.insert("ecosystem".to_string(), "docker".to_string());
+        metadata.insert("source".to_string(), "dockerfile".to_string());
+        metadata.insert("instruction".to_string(), entrypoint.instruction.clone());
+        metadata.insert("command".to_string(), entrypoint.command.clone());
+        metadata.insert("line".to_string(), entrypoint.line.to_string());
+        if let Some(command_path) = normalized_command_path_candidate(label, &entrypoint.command) {
+            metadata.insert("command_path".to_string(), command_path);
+        }
+
+        let entrypoint_id = context.graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            format!("docker {instruction}:{}", entrypoint.command),
+            Some(line_span(label, source, entrypoint.line)),
+            metadata,
+        );
+        add_edge_once(
+            &mut context.graph,
+            file_id,
+            entrypoint_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+        );
+        let root_id = context.graph.root;
+        add_edge_once(
+            &mut context.graph,
+            root_id,
+            entrypoint_id,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        add_entrypoint_reference(
+            &mut context.graph,
+            entrypoint_id,
+            file_id,
+            "entrypoint_file",
+            "dockerfile_instruction",
+            Confidence::Exact,
+            None,
+        );
+        context
+            .pending_entrypoint_targets
+            .push(PendingEntrypointTarget {
+                entrypoint: entrypoint_id,
+                manifest_label: label.to_string(),
+                target: entrypoint.command,
+                ecosystem: "docker".to_string(),
+                entrypoint_kind: instruction,
+            });
+    }
+}
+
 fn manifest_dependencies(
     path: &Path,
     source: &str,
@@ -2293,6 +2366,109 @@ fn is_makefile_path(path: &Path) -> bool {
         path.file_name().and_then(|name| name.to_str()),
         Some("Makefile" | "makefile" | "GNUmakefile")
     )
+}
+
+fn is_dockerfile_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "Dockerfile" || name.ends_with(".Dockerfile"))
+}
+
+fn dockerfile_entrypoints(source: &str) -> Vec<DockerfileEntrypoint> {
+    dockerfile_logical_lines(source)
+        .into_iter()
+        .filter_map(|(line, text)| dockerfile_entrypoint_line(&text, line))
+        .collect()
+}
+
+fn dockerfile_logical_lines(source: &str) -> Vec<(u32, String)> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut start_line = 1;
+
+    for (index, raw_line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let line = raw_line.trim();
+        if current.is_empty() {
+            start_line = line_number;
+        }
+        let continued = line.ends_with('\\');
+        let part = line.trim_end_matches('\\').trim_end();
+        if !current.is_empty() && !part.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(part);
+        if !continued {
+            lines.push((start_line, current.trim().to_string()));
+            current.clear();
+        }
+    }
+    if !current.trim().is_empty() {
+        lines.push((start_line, current.trim().to_string()));
+    }
+
+    lines
+}
+
+fn dockerfile_entrypoint_line(line: &str, line_number: u32) -> Option<DockerfileEntrypoint> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let instruction = parts.next()?.to_ascii_uppercase();
+    if !matches!(instruction.as_str(), "ENTRYPOINT" | "CMD") {
+        return None;
+    }
+    let body = parts.next()?.trim();
+    if body.is_empty() {
+        return None;
+    }
+    let command = if body.starts_with('[') {
+        dockerfile_exec_form_command(body)
+    } else {
+        Some(body.to_string())
+    }?;
+    (!command.is_empty()).then_some(DockerfileEntrypoint {
+        instruction,
+        command,
+        line: line_number,
+    })
+}
+
+fn dockerfile_exec_form_command(body: &str) -> Option<String> {
+    let values = quoted_strings(body);
+    (!values.is_empty()).then(|| values.join(" "))
+}
+
+fn quoted_strings(value: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut chars = value.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character != '"' && character != '\'' {
+            continue;
+        }
+        let quote = character;
+        let mut item = String::new();
+        let mut escaped = false;
+        for next in chars.by_ref() {
+            if escaped {
+                item.push(next);
+                escaped = false;
+                continue;
+            }
+            if next == '\\' {
+                escaped = true;
+                continue;
+            }
+            if next == quote {
+                break;
+            }
+            item.push(next);
+        }
+        values.push(item);
+    }
+    values
 }
 
 fn makefile_targets(source: &str) -> Vec<MakefileTarget> {
@@ -5820,6 +5996,16 @@ fn entrypoint_target_candidates(
             })
             .into_iter()
             .collect(),
+        "docker" => command_path_candidate(pending)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "docker_command_path",
+            })
+            .into_iter()
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -5875,14 +6061,14 @@ fn python_entrypoint_candidates(
 }
 
 fn command_path_candidate(pending: &PendingEntrypointTarget) -> Option<String> {
-    command_source_path_candidate(&pending.target)
-        .and_then(|path| normalize_manifest_relative_path(&pending.manifest_label, &path))
+    normalized_command_path_candidate(&pending.manifest_label, &pending.target)
 }
 
-fn command_source_path_candidate(command: &str) -> Option<String> {
+fn normalized_command_path_candidate(manifest_label: &str, command: &str) -> Option<String> {
     split_command_tokens(command)
         .into_iter()
-        .find(|token| is_command_path_candidate(token))
+        .filter(|token| is_command_path_candidate(token))
+        .find_map(|path| normalize_manifest_relative_path(manifest_label, &path))
 }
 
 fn cmake_command_bodies(source: &str, command_name: &str) -> Vec<String> {
@@ -6156,6 +6342,8 @@ fn add_entrypoint_reference(
         "framework"
     } else if resolution.starts_with("make") {
         "makefile"
+    } else if resolution.starts_with("docker") {
+        "dockerfile"
     } else {
         "manifest"
     };
@@ -8625,6 +8813,82 @@ generated/output.txt:
             !graph.nodes.iter().any(|node| {
                 node.kind == NodeKind::Entrypoint && node.label == "make target:%.o"
             })
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_adds_dockerfile_entrypoints() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("docker")).unwrap();
+        fs::write(
+            root.join("Dockerfile"),
+            "FROM debian:stable-slim\nENTRYPOINT [\"/bin/sh\", \"-c\", \"./docker/start.sh --serve\"]\nCMD ./docker/migrate.sh\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("docker").join("start.sh"),
+            "#!/usr/bin/env bash\necho start\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let dockerfile = node_id(&graph, NodeKind::File, "Dockerfile");
+        let start_script = node_id(&graph, NodeKind::File, "docker/start.sh");
+        let entrypoint = node_id(
+            &graph,
+            NodeKind::Entrypoint,
+            "docker entrypoint:/bin/sh -c ./docker/start.sh --serve",
+        );
+        let cmd = node_id(
+            &graph,
+            NodeKind::Entrypoint,
+            "docker cmd:./docker/migrate.sh",
+        );
+
+        assert!(has_entrypoint_reference(
+            &graph,
+            entrypoint,
+            dockerfile,
+            "entrypoint_file",
+            Confidence::Exact,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            entrypoint,
+            start_script,
+            "entrypoint_file",
+            Confidence::Heuristic,
+        ));
+
+        let entrypoint_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == entrypoint)
+            .expect("missing Dockerfile entrypoint");
+        assert_eq!(
+            entrypoint_node
+                .metadata
+                .get("item_kind")
+                .map(String::as_str),
+            Some("dockerfile_entrypoint")
+        );
+        assert_eq!(
+            entrypoint_node
+                .metadata
+                .get("command_path")
+                .map(String::as_str),
+            Some("docker/start.sh")
+        );
+        let cmd_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == cmd)
+            .expect("missing Dockerfile CMD");
+        assert_eq!(
+            cmd_node.metadata.get("command_path").map(String::as_str),
+            Some("docker/migrate.sh")
         );
 
         fs::remove_dir_all(root).unwrap();
