@@ -19,12 +19,13 @@ use codegraph_analysis::{
     MAX_REPORT_ARCHITECTURE_GROUP_LIMIT, MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
     MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, NodeCard, NodeContext, ProjectReport,
     ProjectReportLimits, SourcePreview, SourceSearchRequest, SourceSearchResult, TraceRequest,
-    TraceStart, WorkflowFilters, WorkflowReport, WorkflowRequest, architecture_map, check_insights,
-    communities, entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report,
-    focus_subgraph, hotspots, insights, language_dependencies, node_card, node_context,
-    project_report, query_graph, read_source_preview, search_source, slice_graph, summarize, trace,
-    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
-    workflow_entrypoints,
+    TraceStart, WorkflowFilters, WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport,
+    WorkflowRequest, architecture_map, check_insights, communities, entrypoints, explain_edge,
+    export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots, insights,
+    language_dependencies, node_card, node_context, project_report, query_graph,
+    read_source_preview, search_source, slice_graph, summarize, trace, trace_config,
+    trace_dependents, trace_entrypoints, trace_errors, workflow, workflow_entrypoints,
+    workflow_query,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -389,6 +390,20 @@ struct EntrypointTraceQuery {
 struct EntrypointWorkflowQuery {
     path: Option<PathBuf>,
     search: Option<String>,
+    depth: Option<usize>,
+    block_limit: Option<usize>,
+    limit: Option<usize>,
+    edge_kind: Option<String>,
+    confidence: Option<String>,
+    language: Option<String>,
+    risk_severity: Option<String>,
+    block_kind: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkflowQuerySliceQuery {
+    path: Option<PathBuf>,
+    q: String,
     depth: Option<usize>,
     block_limit: Option<usize>,
     limit: Option<usize>,
@@ -1013,6 +1028,7 @@ async fn main() -> Result<()> {
         .route("/api/explain-edge", get(explain_edge_api))
         .route("/api/trace", get(trace_api))
         .route("/api/workflow", get(workflow_api))
+        .route("/api/workflow-query", get(workflow_query_api))
         .route("/api/dependents", get(dependents_api))
         .route("/api/trace-config", get(trace_config_api))
         .route("/api/trace-errors", get(trace_errors_api))
@@ -2770,6 +2786,36 @@ async fn workflow_api(
             ),
         },
     )))
+}
+
+async fn workflow_query_api(
+    State(state): State<AppState>,
+    Query(query): Query<WorkflowQuerySliceQuery>,
+) -> Result<Json<WorkflowQueryReport>, ApiError> {
+    if query.q.len() > MAX_GRAPH_QUERY_LENGTH {
+        return Err(ApiError::bad_request(format!(
+            "query expression is too long; maximum is {MAX_GRAPH_QUERY_LENGTH} bytes"
+        )));
+    }
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let report = workflow_query(
+        &graph,
+        WorkflowQueryRequest {
+            query: query.q,
+            max_depth: query.depth.unwrap_or(4).clamp(1, 32),
+            block_limit: query.block_limit.unwrap_or(200).clamp(1, 1_000),
+            limit: query.limit.unwrap_or(25).clamp(1, 500),
+            filters: workflow_filters_from_query(
+                query.edge_kind,
+                query.confidence,
+                query.language,
+                query.risk_severity,
+                query.block_kind,
+            ),
+        },
+    )
+    .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    Ok(Json(report))
 }
 
 async fn dependents_api(
@@ -4845,6 +4891,82 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 )
                 .with_response_fields(workflow_response_fields()),
                 api_get(
+                    "/api/workflow-query",
+                    "Convert graph query result nodes into block-style workflow reports.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "q",
+                            true,
+                            "graph_query",
+                            None,
+                            "Graph query expression whose returned nodes become workflow starts.",
+                        )
+                        .with_max_length(MAX_GRAPH_QUERY_LENGTH),
+                        query_param(
+                            "depth",
+                            false,
+                            "usize",
+                            Some("4"),
+                            "Maximum workflow traversal depth.",
+                        )
+                        .with_range(1, 32),
+                        query_param(
+                            "block_limit",
+                            false,
+                            "usize",
+                            Some("200"),
+                            "Maximum returned workflow blocks per query node.",
+                        )
+                        .with_range(1, 1_000),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            Some("25"),
+                            "Maximum query-node workflows.",
+                        )
+                        .with_range(1, 500),
+                        query_param(
+                            "edge_kind",
+                            false,
+                            "graph_edge_kind",
+                            None,
+                            "Restrict workflow traversal to matching edge kinds.",
+                        ),
+                        query_param(
+                            "confidence",
+                            false,
+                            "graph_confidence",
+                            None,
+                            "Restrict workflow traversal to matching edge confidence.",
+                        ),
+                        query_param(
+                            "language",
+                            false,
+                            "string",
+                            None,
+                            "Restrict returned workflow blocks to matching node language metadata.",
+                        ),
+                        query_param(
+                            "risk_severity",
+                            false,
+                            "insight_severity",
+                            None,
+                            "Restrict returned workflow blocks and transitions to matching risk severity.",
+                        ),
+                        query_param(
+                            "block_kind",
+                            false,
+                            "workflow_block_kind",
+                            None,
+                            "Restrict returned workflow blocks to matching workflow block kinds.",
+                        ),
+                    ],
+                    "WorkflowQueryReport",
+                )
+                .with_response_fields(workflow_query_response_fields()),
+                api_get(
                     "/api/dependents",
                     "Trace incoming dependents that can reach a node.",
                     vec![
@@ -6126,6 +6248,60 @@ fn workflow_response_fields() -> Vec<ApiParameterSpec> {
     ]
 }
 
+fn workflow_query_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("query", true, "string", "Graph query expression."),
+        response_field(
+            "max_depth",
+            true,
+            "usize",
+            "Applied workflow traversal depth.",
+        ),
+        response_field(
+            "block_limit",
+            true,
+            "usize",
+            "Applied maximum returned block count per query node.",
+        ),
+        response_field(
+            "filters",
+            true,
+            "WorkflowFilters",
+            "Applied workflow block and traversal filters.",
+        ),
+        response_field(
+            "total_query_nodes",
+            true,
+            "usize",
+            "Total query result nodes before workflow limiting.",
+        ),
+        response_field(
+            "total_query_edges",
+            true,
+            "usize",
+            "Total query result edges.",
+        ),
+        response_field(
+            "total_candidates",
+            true,
+            "usize",
+            "Returned query nodes considered as workflow starts.",
+        ),
+        response_field(
+            "workflows",
+            true,
+            "WorkflowReport[]",
+            "Block-style workflow reports from query result nodes.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether the query, workflow count, or any workflow was truncated.",
+        ),
+    ]
+}
+
 fn config_trace_response_fields() -> Vec<ApiParameterSpec> {
     vec![
         response_field(
@@ -6480,6 +6656,7 @@ fn capability_features(cache_enabled: bool, access_log_enabled: bool) -> Vec<&'s
         "entrypoint_traces",
         "entrypoint_workflows",
         "workflow_filters",
+        "workflow_query",
         "config_traces",
         "error_traces",
         "reverse_dependents",
@@ -6581,6 +6758,7 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
                 "GET /api/query",
                 "GET /api/explain-edge",
                 "GET /api/workflow",
+                "GET /api/workflow-query",
             ],
         },
         EndpointGroupResponse {
@@ -7252,6 +7430,58 @@ fn helper() {}
     }
 
     #[tokio::test]
+    async fn workflow_query_api_returns_reports_from_query_nodes() {
+        let root = temp_server_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            r#"fn main() {
+    helper();
+}
+
+fn helper() {}
+"#,
+        )
+        .unwrap();
+        let state = test_state(root.clone(), vec![], true);
+
+        let Json(report) = workflow_query_api(
+            State(state),
+            Query(WorkflowQuerySliceQuery {
+                path: Some(root.clone()),
+                q: "nodes kind:function search:main".to_string(),
+                depth: Some(2),
+                block_limit: Some(20),
+                limit: Some(10),
+                edge_kind: Some("calls".to_string()),
+                confidence: Some("heuristic".to_string()),
+                language: None,
+                risk_severity: None,
+                block_kind: Some("call".to_string()),
+            }),
+        )
+        .await
+        .expect("workflow query response");
+
+        assert_eq!(report.query, "nodes kind:function search:main");
+        assert_eq!(report.max_depth, 2);
+        assert_eq!(report.block_limit, 20);
+        assert_eq!(report.filters.edge_kind.as_deref(), Some("calls"));
+        assert_eq!(report.total_query_nodes, 1);
+        assert_eq!(report.workflows.len(), 1);
+        assert!(report.workflows[0].blocks.iter().any(|block| {
+            block.node.label == "main" && block.kind == codegraph_analysis::WorkflowBlockKind::Start
+        }));
+        assert!(
+            report.workflows[0]
+                .blocks
+                .iter()
+                .any(|block| block.node.label == "helper")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn source_search_api_rejects_oversized_query_before_scan() {
         let root = temp_server_root();
         fs::create_dir_all(&root).unwrap();
@@ -7297,6 +7527,7 @@ fn helper() {}
         assert!(endpoints.contains(&"GET /api/node-context"));
         assert!(endpoints.contains(&"GET /api/node-card"));
         assert!(endpoints.contains(&"GET /api/workflow"));
+        assert!(endpoints.contains(&"GET /api/workflow-query"));
         assert!(endpoints.contains(&"GET /api/entrypoint-workflows"));
         assert!(endpoints.contains(&"POST /api/scan-jobs"));
         assert!(endpoints.contains(&"POST /api/semantic-jobs"));
@@ -7505,6 +7736,12 @@ fn helper() {}
         assert!(app.contains("exportLastQueryResult"));
         assert!(app.contains("codegraph.query_result.v1"));
         assert!(app.contains("\"button.downloadQueryResult\""));
+        assert!(app.contains("\"button.buildQueryWorkflows\""));
+        assert!(app.contains("data-query-workflows"));
+        assert!(app.contains("/api/workflow-query?"));
+        assert!(app.contains("renderWorkflowQueryReport"));
+        assert!(app.contains("attachWorkflowQueryActions"));
+        assert!(app.contains("\"query.workflowStarts\""));
         assert!(app.contains("QUERY_HISTORY_STORAGE_KEY"));
         assert!(app.contains("rememberQuery"));
         assert!(app.contains("renderQueryHistory"));
@@ -8401,6 +8638,25 @@ fn helper() {}
         assert!(workflow_endpoint.response_fields.iter().any(|field| {
             field.name == "transitions" && field.value_type == "WorkflowTransition[]"
         }));
+        let workflow_query_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/workflow-query")
+            .expect("schema should list workflow-query endpoint");
+        assert!(workflow_query_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "q"
+                && parameter.value_type == "graph_query"
+                && parameter.max_length == Some(MAX_GRAPH_QUERY_LENGTH)
+        }));
+        assert!(workflow_query_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "block_kind" && parameter.value_type == "workflow_block_kind"
+        }));
+        assert!(
+            workflow_query_endpoint.response_fields.iter().any(|field| {
+                field.name == "workflows" && field.value_type == "WorkflowReport[]"
+            })
+        );
         let config_trace_endpoint = schema
             .groups
             .iter()

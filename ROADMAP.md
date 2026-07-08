@@ -221,13 +221,13 @@ Goal: answer practical code investigation questions.
 - [x] Add first web workflow export downloads in JSON and Mermaid.
 - [x] Add entrypoint workflow reports across CLI and API for matched startup surfaces.
 - [x] Add web entrypoint workflow reports with focused graph slices and JSON/Mermaid exports.
-- [ ] Extend workflow generation from selected labels and entrypoints to routes, CI jobs, Makefile targets, Docker commands, and selected query slices.
+- [ ] Extend workflow generation from selected labels, entrypoints, and query result nodes to routes, CI jobs, Makefile targets, and Docker commands.
 - [ ] Classify workflow blocks as start, call, config/env read, dependency, branch, error, return, and external boundary.
 - [ ] Add workflow graph compaction so repeated helper calls, import-only hops, and low-signal nodes collapse into readable blocks.
 - [ ] Add CLI workflow commands for routes, CI jobs, Makefile targets, Docker commands, and selected nodes.
 - [x] Add workflow CLI/API filters for edge-kind, confidence, language, risk severity, and block kinds.
 - [x] Add web workflow filter controls for selected-node flows and entrypoint workflow reports.
-- [ ] Add workflow query slices so existing graph query results can open as block diagrams.
+- [x] Add workflow query slices so existing graph query results can open as block diagrams.
 - [ ] Add full web Flow view next to Graph/Cards/Risks with pan, zoom, minimap, and selectable workflow blocks.
 - [ ] Reuse node and dependency cards from workflow blocks, including source preview, related dependencies, risks, and edge explanations.
 - [ ] Add branch extraction for common if/match/try/catch constructs where parser or LSP facts support it.

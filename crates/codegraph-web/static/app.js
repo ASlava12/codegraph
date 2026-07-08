@@ -185,6 +185,7 @@ const I18N = {
     "button.clearCanvasFilters": "Clear Canvas Filters",
     "button.downloadSlice": "Download Slice",
     "button.downloadQueryResult": "Download Result",
+    "button.buildQueryWorkflows": "Build Flows",
     "button.downloadInsights": "Download Insights",
     "button.downloadCheck": "Download Check",
     "button.downloadSourceResults": "Download Results",
@@ -479,6 +480,7 @@ const I18N = {
     "entryFlows.entrypointCount": "{count} entrypoints",
     "entryFlows.traceCount": "{count} traces",
     "entryFlows.workflowCount": "{count} workflows",
+    "query.workflowStarts": "{count} starts",
     "entryFlows.noMatches": "No matching entrypoint flows.",
     "entryFlows.noWorkflowMatches": "No matching entrypoint workflows.",
     "entryFlows.traceTruncated": "Trace truncated by depth.",
@@ -780,6 +782,7 @@ const I18N = {
     "button.clearCanvasFilters": "Сбросить фильтры графа",
     "button.downloadSlice": "Скачать срез",
     "button.downloadQueryResult": "Скачать результат",
+    "button.buildQueryWorkflows": "Собрать Flow",
     "button.downloadInsights": "Скачать insights",
     "button.downloadCheck": "Скачать проверку",
     "button.downloadSourceResults": "Скачать результаты",
@@ -1074,6 +1077,7 @@ const I18N = {
     "entryFlows.entrypointCount": "точек входа: {count}",
     "entryFlows.traceCount": "трасс: {count}",
     "entryFlows.workflowCount": "блок-схем: {count}",
+    "query.workflowStarts": "стартов: {count}",
     "entryFlows.noMatches": "Подходящих потоков входа нет.",
     "entryFlows.noWorkflowMatches": "Подходящих блок-схем входа нет.",
     "entryFlows.traceTruncated": "Трасса усечена глубиной.",
@@ -1283,6 +1287,7 @@ const state = {
   dependentsRequest: 0,
   edgeExplainRequest: 0,
   entryFlowRequest: 0,
+  queryWorkflowRequest: 0,
   queryRequest: 0,
   sourceSearchRequest: 0,
   cacheDiffRequest: 0,
@@ -6454,6 +6459,7 @@ function renderQueryResult(result, options = {}) {
     ${renderQueryFacets(result.facets)}
     <div class="query-actions">
       <button data-focus-result type="button" ${hasResults ? "" : "disabled"}>Focus result</button>
+      <button data-query-workflows type="button" ${hasResults ? "" : "disabled"}>${escapeHtml(t("button.buildQueryWorkflows"))}</button>
       <button data-clear-focus type="button" ${state.queryFocus ? "" : "disabled"}>Clear focus</button>
     </div>
     ${nodeRows ? `<ul class="query-list">${nodeRows}</ul>` : ""}
@@ -6495,6 +6501,99 @@ function renderQueryFacetGroup(label, values) {
     )
     .join("");
   return `<section><h3>${escapeHtml(label)}</h3>${chips}</section>`;
+}
+
+async function runQueryWorkflow(expression) {
+  const query = String(expression || queryInput.value || "").trim();
+  if (!query) {
+    queryResult.innerHTML = `<p class="empty">${escapeHtml(t("query.enterExpression"))}</p>`;
+    return;
+  }
+  if (!graphQueryWithinClientLimit(query, queryResult)) return;
+
+  state.queryWorkflowRequest += 1;
+  const requestId = state.queryWorkflowRequest;
+  queryResult.innerHTML = `<p class="empty">${escapeHtml(t("workflow.loading"))}</p>`;
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    q: query,
+    depth: "4",
+    block_limit: "120",
+    limit: "15",
+  });
+
+  try {
+    const response = await apiFetch(`/api/workflow-query?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.queryWorkflowRequest) return;
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(body, response, "workflow query failed"));
+    }
+    queryResult.innerHTML = renderWorkflowQueryReport(body);
+    attachWorkflowQueryActions(queryResult, body);
+    attachEdgeExplainActions(queryResult);
+  } catch (error) {
+    if (requestId !== state.queryWorkflowRequest) return;
+    queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderWorkflowQueryReport(report) {
+  const workflows = Array.isArray(report.workflows) ? report.workflows : [];
+  const summary = `
+    <div class="query-summary">
+      <span>${escapeHtml(t("entryFlows.workflowCount", { count: formatNumber(workflows.length) }))}</span>
+      <span>${escapeHtml(t("query.workflowStarts", { count: formatReturnedCount(workflows.length, Number(report.total_candidates || workflows.length)) }))}</span>
+      <span>${escapeHtml(t("trace.depth", { depth: formatNumber(report.max_depth || 0) }))}</span>
+      ${report.query ? `<span class="query-expression">${escapeHtml(report.query)}</span>` : ""}
+      ${renderWorkflowFilterSummary(report.filters)}
+    </div>
+  `;
+  if (!workflows.length) {
+    return `${summary}<p class="empty">${escapeHtml(t("entryFlows.noWorkflowMatches"))}</p>`;
+  }
+
+  const rows = workflows
+    .slice(0, 15)
+    .map((workflow, index) => {
+      const start = workflow.start || {};
+      return `
+        <section class="trace-columns">
+          <h3>${escapeHtml(start.label || String(start.id || ""))}</h3>
+          <div class="query-actions">
+            <button type="button" data-query-workflow="${index}">${escapeHtml(t("entryFlows.focusWorkflow"))}</button>
+          </div>
+          ${renderWorkflow(workflow)}
+        </section>
+      `;
+    })
+    .join("");
+  const truncated = report.truncated
+    ? `<p class="empty">${escapeHtml(t("entryFlows.reportTruncated"))}</p>`
+    : "";
+  return `${summary}${rows}${truncated}`;
+}
+
+function attachWorkflowQueryActions(container, report) {
+  attachWorkflowNavigation(container);
+  container.querySelectorAll("[data-query-workflow]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const workflow = report.workflows?.[Number(button.dataset.queryWorkflow)];
+      if (!workflow) return;
+      const blocks = Array.isArray(workflow.blocks) ? workflow.blocks : [];
+      const transitions = Array.isArray(workflow.transitions) ? workflow.transitions : [];
+      const focused = {
+        query: `workflow-query ${report.query || ""}`,
+        nodes: blocks.map((block) => block.node).filter(Boolean),
+        edges: transitions.map((transition) => transition.edge).filter(Boolean),
+        total_nodes: blocks.length,
+        total_edges: transitions.length,
+        truncated: workflow.truncated,
+      };
+      showFocusedGraph(focused, t("entryFlows.focusTitle", { label: workflow.start?.label || "" }), workflow.start?.id);
+    });
+  });
 }
 
 function renderQueryNode(node) {
@@ -6540,12 +6639,16 @@ function attachQueryNavigation(container) {
 
 function attachQueryFocusActions(container, result) {
   const focusButton = container.querySelector("[data-focus-result]");
+  const workflowButton = container.querySelector("[data-query-workflows]");
   const clearButton = container.querySelector("[data-clear-focus]");
   if (focusButton) {
     focusButton.addEventListener("click", () => {
       focusQueryResult(result, container);
       if (result.query) syncQueryUrl(result.query, { focus: true });
     });
+  }
+  if (workflowButton) {
+    workflowButton.addEventListener("click", () => runQueryWorkflow(result.query || queryInput.value.trim()));
   }
   if (clearButton) {
     clearButton.addEventListener("click", () => {

@@ -137,6 +137,7 @@ Implemented now:
 - Workflow reports support edge kind, confidence, language, risk severity, and block kind filters across CLI and API for smaller human diagrams and agent handoffs.
 - Web Entry Flows can build block-style workflow reports for matched entrypoints, focus a workflow slice on the graph, and download JSON or Mermaid for agent handoff.
 - Web workflow filters are available for selected-node Flow panels and Entry Flows using edge kind, confidence, language, risk severity, and block kind controls.
+- Graph query results can be converted into block-style workflow reports from CLI, API, and web query result actions.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Web config trace reports can be downloaded as JSON with target, depth, matched readers, and dependency paths.
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
@@ -503,6 +504,7 @@ cargo run -p codegraph-cli -- trace main . --depth 3
 cargo run -p codegraph-cli -- workflow main . --depth 4 --format mermaid
 cargo run -p codegraph-cli -- workflow main . --edge-kind calls --confidence heuristic --block-kind call
 cargo run -p codegraph-cli -- workflow-entrypoints . --search server --depth 4
+cargo run -p codegraph-cli -- workflow-query 'nodes kind:function search:main' . --edge-kind calls
 ```
 
 Trace incoming dependents for impact analysis:
@@ -775,6 +777,10 @@ curl --get 'http://127.0.0.1:3765/api/explain-edge' \
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
 curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&depth=4&block_limit=200'
 curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&edge_kind=calls&confidence=heuristic&block_kind=call'
+curl --get 'http://127.0.0.1:3765/api/workflow-query' \
+  --data-urlencode 'path=.' \
+  --data-urlencode 'q=nodes kind:function search:main' \
+  --data-urlencode 'edge_kind=calls'
 curl 'http://127.0.0.1:3765/api/entrypoint-workflows?path=.&search=server&depth=4&block_limit=200&limit=25'
 curl 'http://127.0.0.1:3765/api/dependents?path=.&label=load_config&depth=3'
 curl 'http://127.0.0.1:3765/api/trace-config?path=.&target=DATABASE_URL&depth=6'

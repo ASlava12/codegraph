@@ -6,11 +6,11 @@ use codegraph_analysis::{
     DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
     EntrypointTraceRequest, EntrypointWorkflowRequest, ErrorTraceRequest, ExplainEdgeRequest,
     InsightFilter, InsightSeverity, ProjectReport, ProjectReportLimits, SourceSearchRequest,
-    TraceRequest, TraceStart, WorkflowFilters, WorkflowRequest, architecture_map, check_insights,
-    communities, entrypoints, explain_edge, filter_insight_report, hotspots, insights,
-    language_dependencies, project_report, query_graph, search_source, summarize, trace,
-    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
-    workflow_entrypoints, workflow_mermaid,
+    TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryRequest, WorkflowRequest,
+    architecture_map, check_insights, communities, entrypoints, explain_edge,
+    filter_insight_report, hotspots, insights, language_dependencies, project_report, query_graph,
+    search_source, summarize, trace, trace_config, trace_dependents, trace_entrypoints,
+    trace_errors, workflow, workflow_entrypoints, workflow_mermaid, workflow_query,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -356,6 +356,63 @@ enum Command {
         block_limit: usize,
 
         /// Maximum entrypoint workflows to return.
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+
+        /// Restrict traversal to an edge kind such as calls, reads_environment, may_error, or depends_on.
+        #[arg(long)]
+        edge_kind: Option<String>,
+
+        /// Restrict traversal to an edge confidence such as exact, semantic, syntactic, or heuristic.
+        #[arg(long)]
+        confidence: Option<String>,
+
+        /// Restrict returned blocks to a source language metadata value.
+        #[arg(long)]
+        language: Option<String>,
+
+        /// Restrict returned blocks/transitions to risk severity: info, warning, or error.
+        #[arg(long)]
+        risk_severity: Option<String>,
+
+        /// Restrict returned blocks to a workflow kind such as call, config_read, environment_read, or error.
+        #[arg(long)]
+        block_kind: Option<String>,
+
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
+        format: WorkflowFormat,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Emit block-style workflows from graph query result nodes.
+    WorkflowQuery {
+        /// Graph query expression whose returned nodes become workflow starts.
+        query: String,
+
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Maximum outgoing dependency depth.
+        #[arg(long, default_value_t = 4)]
+        depth: usize,
+
+        /// Maximum workflow blocks per query node.
+        #[arg(long, default_value_t = 200)]
+        block_limit: usize,
+
+        /// Maximum query-node workflows to return.
         #[arg(long, default_value_t = 25)]
         limit: usize,
 
@@ -1394,6 +1451,61 @@ fn main() -> Result<()> {
                     },
                 },
             );
+            match format {
+                WorkflowFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                }
+                WorkflowFormat::Mermaid => {
+                    let rendered = report
+                        .workflows
+                        .iter()
+                        .map(|workflow| {
+                            format!(
+                                "%% {}\n{}",
+                                workflow.start.label,
+                                workflow_mermaid(workflow)
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    println!("{rendered}");
+                }
+            }
+        }
+        Command::WorkflowQuery {
+            query,
+            path,
+            depth,
+            block_limit,
+            limit,
+            edge_kind,
+            confidence,
+            language,
+            risk_severity,
+            block_kind,
+            format,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
+            let report = workflow_query(
+                &graph,
+                WorkflowQueryRequest {
+                    query,
+                    max_depth: depth,
+                    block_limit,
+                    limit,
+                    filters: WorkflowFilters {
+                        edge_kind,
+                        confidence,
+                        language,
+                        risk_severity,
+                        block_kind,
+                    },
+                },
+            )?;
             match format {
                 WorkflowFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&report)?);

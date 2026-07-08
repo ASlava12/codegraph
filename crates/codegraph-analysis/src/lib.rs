@@ -291,6 +291,28 @@ pub struct EntrypointWorkflowReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowQueryRequest {
+    pub query: String,
+    pub max_depth: usize,
+    pub block_limit: usize,
+    pub limit: usize,
+    pub filters: WorkflowFilters,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowQueryReport {
+    pub query: String,
+    pub max_depth: usize,
+    pub block_limit: usize,
+    pub filters: WorkflowFilters,
+    pub total_query_nodes: usize,
+    pub total_query_edges: usize,
+    pub total_candidates: usize,
+    pub workflows: Vec<WorkflowReport>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigTraceRequest {
     pub target: String,
     pub max_depth: usize,
@@ -2142,6 +2164,50 @@ pub fn workflow_entrypoints(
         workflows,
         truncated,
     }
+}
+
+pub fn workflow_query(
+    graph: &CodeGraph,
+    request: WorkflowQueryRequest,
+) -> Result<WorkflowQueryReport, QueryError> {
+    let max_depth = request.max_depth.clamp(1, 32);
+    let block_limit = request.block_limit.clamp(1, 1_000);
+    let limit = request.limit.clamp(1, 500);
+    let filters = normalize_workflow_filters(request.filters);
+    let query_result = query_graph(graph, &request.query)?;
+    let candidates = query_result.nodes.clone();
+    let insight_report = insights(graph);
+    let workflows = candidates
+        .iter()
+        .take(limit)
+        .filter_map(|node| {
+            workflow_with_insight_report(
+                graph,
+                WorkflowRequest {
+                    start: TraceStart::NodeId(node.id),
+                    max_depth,
+                    block_limit,
+                    filters: filters.clone(),
+                },
+                &insight_report,
+            )
+        })
+        .collect::<Vec<_>>();
+    let truncated = query_result.truncated
+        || candidates.len() > workflows.len()
+        || workflows.iter().any(|workflow| workflow.truncated);
+
+    Ok(WorkflowQueryReport {
+        query: query_result.query,
+        max_depth,
+        block_limit,
+        filters,
+        total_query_nodes: query_result.total_nodes,
+        total_query_edges: query_result.total_edges,
+        total_candidates: candidates.len(),
+        workflows,
+        truncated,
+    })
 }
 
 fn workflow_with_insight_report(
@@ -11673,6 +11739,64 @@ mod tests {
                 .blocks
                 .iter()
                 .any(|block| block.node.id == worker_main)
+        );
+    }
+
+    #[test]
+    fn workflow_query_builds_reports_from_query_result_nodes() {
+        let mut graph = CodeGraph::new("repo");
+        let api = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "api_main",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let worker = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "worker_main",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let api_helper = graph.add_node(NodeKind::Function, "api_helper");
+        let worker_helper = graph.add_node(NodeKind::Function, "worker_helper");
+        graph.add_edge(api, api_helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(
+            worker,
+            worker_helper,
+            EdgeKind::Calls,
+            Confidence::Heuristic,
+        );
+
+        let report = workflow_query(
+            &graph,
+            WorkflowQueryRequest {
+                query: "nodes kind:function search:main".to_string(),
+                max_depth: 2,
+                block_limit: 20,
+                limit: 1,
+                filters: WorkflowFilters {
+                    edge_kind: Some("calls".to_string()),
+                    confidence: Some("heuristic".to_string()),
+                    ..WorkflowFilters::default()
+                },
+            },
+        )
+        .expect("workflow query report");
+
+        assert_eq!(report.query, "nodes kind:function search:main");
+        assert_eq!(report.max_depth, 2);
+        assert_eq!(report.block_limit, 20);
+        assert_eq!(report.filters.edge_kind.as_deref(), Some("calls"));
+        assert_eq!(report.total_query_nodes, 2);
+        assert_eq!(report.total_candidates, 2);
+        assert_eq!(report.workflows.len(), 1);
+        assert!(report.truncated);
+        assert_eq!(report.workflows[0].start.id, api);
+        assert!(
+            report.workflows[0]
+                .blocks
+                .iter()
+                .any(|block| block.node.id == api_helper)
         );
     }
 
