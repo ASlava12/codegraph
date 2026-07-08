@@ -41,7 +41,7 @@ Goal: extract language-independent structure from source files.
 - [x] Detect CommonJS `require(...)` imports for dependency and local-file analysis.
 - [x] Detect config and environment reads.
 - [x] Detect Dart/Flutter config reads, environment reads, asset string reads, and common throw/rethrow error constructs.
-- [ ] Detect Dart/Flutter platform-channel boundaries and Flutter-specific asset metadata from `pubspec.yaml`.
+- [x] Detect Dart/Flutter platform-channel boundaries and Flutter-specific asset metadata from `pubspec.yaml`.
 - [x] Detect basic error/exception constructs.
 - [x] Detect manifest-defined entrypoints from project metadata.
 - [x] Detect Dart and Flutter entrypoints from `main()`, Flutter `runApp(...)`, `bin/*.dart`, `test/*_test.dart`, and `pubspec.yaml` package metadata.
@@ -152,7 +152,8 @@ Goal: answer practical code investigation questions.
 - [x] Detect runtime dependencies that are imported only from test-like source files.
 - [x] Recognize common JS/TS, Go, Python, PHP, C/C++, Bash, Dart, and Flutter test/generated file conventions in dependency-scope insights.
 - [x] Recognize Dart and Flutter package scopes, dev dependencies, generated files, test conventions, and package import consistency issues.
-- [ ] Recognize Flutter asset metadata and platform-channel consistency issues.
+- [x] Recognize Flutter asset metadata and missing asset declaration consistency issues.
+- [ ] Match Dart/Flutter platform-channel declarations to native Android/iOS handler implementations.
 - [x] Detect duplicate framework route method/path declarations.
 - [x] Detect framework routes whose named handler cannot be resolved.
 - [x] Improve Rust/Axum route entrypoint labels for multiline routes and string literal false positives.

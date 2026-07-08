@@ -240,6 +240,19 @@ struct ComposeVolume {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct FlutterAsset {
+    path: String,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DartPlatformChannel {
+    name: String,
+    channel_kind: String,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct GithubActionsWorkflow {
     name: String,
     environment: Vec<CiEnvironment>,
@@ -1046,6 +1059,9 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
         script_entrypoint = index_script_entrypoint(context, file_id, label, source);
         index_manifest_facts(context, file_id, path, label, source);
         index_framework_configs(context, file_id, label, language, source);
+        if language == Some(Language::Dart) {
+            index_dart_platform_channels(context, file_id, label, source);
+        }
         if let Some(language) = language {
             index_commonjs_require_imports(context, file_id, label, language, source);
         }
@@ -1501,6 +1517,7 @@ fn index_manifest_facts(
 ) {
     index_manifest_dependencies(context, file_id, path, source);
     index_manifest_entrypoints(context, file_id, path, label, source);
+    index_pubspec_assets(context, file_id, path, label, source);
     index_makefile_entrypoints(context, file_id, path, label, source);
     index_dockerfile_entrypoints(context, file_id, path, label, source);
     index_compose_entrypoints(context, file_id, path, label, source);
@@ -1710,6 +1727,63 @@ fn commonjs_require_call(line: &str) -> Option<String> {
     None
 }
 
+fn index_dart_platform_channels(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+) {
+    for channel in dart_platform_channels(source) {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "platform_channel".to_string());
+        metadata.insert("source".to_string(), "dart".to_string());
+        metadata.insert("language".to_string(), "dart".to_string());
+        metadata.insert("framework".to_string(), "flutter".to_string());
+        metadata.insert("channel_kind".to_string(), channel.channel_kind.clone());
+        metadata.insert("channel_name".to_string(), channel.name.clone());
+        metadata.insert("line".to_string(), channel.line.to_string());
+        let channel_id = context.graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            format!("flutter {} channel:{}", channel.channel_kind, channel.name),
+            Some(line_span(label, source, channel.line)),
+            metadata,
+        );
+        let mut edge_metadata = BTreeMap::new();
+        edge_metadata.insert("source".to_string(), "dart".to_string());
+        edge_metadata.insert("relation".to_string(), "platform_channel".to_string());
+        edge_metadata.insert("channel_kind".to_string(), channel.channel_kind);
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            file_id,
+            channel_id,
+            EdgeKind::References,
+            Confidence::Syntactic,
+            edge_metadata,
+        );
+    }
+}
+
+fn dart_platform_channels(source: &str) -> Vec<DartPlatformChannel> {
+    let mut channels = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        for (constructor, channel_kind) in [
+            ("MethodChannel(", "method"),
+            ("EventChannel(", "event"),
+            ("BasicMessageChannel(", "basic_message"),
+        ] {
+            if let Some(name) = first_quoted_value_after(line, constructor) {
+                channels.push(DartPlatformChannel {
+                    name,
+                    channel_kind: channel_kind.to_string(),
+                    line: line_number,
+                });
+            }
+        }
+    }
+    channels
+}
+
 fn is_identifier_or_member_character(character: char) -> bool {
     character == '_' || character == '$' || character == '.' || character.is_ascii_alphanumeric()
 }
@@ -1774,7 +1848,8 @@ fn framework_configs(
         Some(Language::Go) => configs.extend(go_framework_configs(source)),
         Some(Language::Php) => configs.extend(php_framework_configs(source)),
         Some(Language::Bash) => configs.extend(bash_framework_configs(source)),
-        Some(Language::C | Language::Cpp | Language::Dart) | None => {}
+        Some(Language::Dart) => configs.extend(dart_framework_configs(source)),
+        Some(Language::C | Language::Cpp) | None => {}
     }
 
     configs.into_iter().collect()
@@ -2568,6 +2643,47 @@ fn index_manifest_entrypoints(
                     entrypoint_kind: entrypoint.kind,
                 });
         }
+    }
+}
+
+fn index_pubspec_assets(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if path.file_name().and_then(|name| name.to_str()) != Some("pubspec.yaml") {
+        return;
+    }
+
+    for asset in pubspec_flutter_assets(source) {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "flutter_asset".to_string());
+        metadata.insert("source".to_string(), "pubspec".to_string());
+        metadata.insert("framework".to_string(), "flutter".to_string());
+        metadata.insert("config_kind".to_string(), "flutter_asset".to_string());
+        metadata.insert("asset_path".to_string(), asset.path.clone());
+        metadata.insert("target".to_string(), label.to_string());
+        metadata.insert("line".to_string(), asset.line.to_string());
+        let asset_id = context.graph.add_node_with_metadata(
+            NodeKind::Config,
+            format!("flutter asset:{}", asset.path),
+            Some(line_span(label, source, asset.line)),
+            metadata,
+        );
+        let mut edge_metadata = BTreeMap::new();
+        edge_metadata.insert("source".to_string(), "pubspec".to_string());
+        edge_metadata.insert("framework".to_string(), "flutter".to_string());
+        edge_metadata.insert("config_kind".to_string(), "flutter_asset".to_string());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            file_id,
+            asset_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+            edge_metadata,
+        );
     }
 }
 
@@ -6672,6 +6788,15 @@ fn yaml_key_pair(trimmed: &str) -> Option<(String, String)> {
     (!key.is_empty() && !value.is_empty()).then_some((key, value))
 }
 
+fn yaml_list_scalar(trimmed: &str) -> Option<String> {
+    let value = trimmed.strip_prefix('-')?.trim();
+    if value.is_empty() || yaml_key_pair(value).is_some() {
+        None
+    } else {
+        Some(yaml_clean_scalar(value))
+    }
+}
+
 fn yaml_clean_scalar(value: &str) -> String {
     value
         .split(" #")
@@ -7043,6 +7168,62 @@ fn pubspec_dependencies(source: &str) -> Vec<ManifestDependency> {
     dependencies
 }
 
+fn pubspec_flutter_assets(source: &str) -> Vec<FlutterAsset> {
+    let mut assets = Vec::new();
+    let mut in_flutter: Option<usize> = None;
+    let mut in_assets: Option<usize> = None;
+
+    for (index, raw_line) in source.lines().enumerate() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = yaml_indent(raw_line);
+
+        if let Some(flutter_indent) = in_flutter
+            && indent <= flutter_indent
+            && yaml_key(trimmed).is_some()
+        {
+            in_flutter = None;
+            in_assets = None;
+        }
+        if let Some(assets_indent) = in_assets
+            && indent <= assets_indent
+            && yaml_key(trimmed).is_some()
+        {
+            in_assets = None;
+        }
+
+        if indent == 0 && yaml_key(trimmed).is_some_and(|key| key == "flutter") {
+            in_flutter = Some(indent);
+            in_assets = None;
+            continue;
+        }
+        if in_flutter.is_some() && yaml_key(trimmed).is_some_and(|key| key == "assets") {
+            in_assets = Some(indent);
+            continue;
+        }
+        if in_assets.is_some()
+            && let Some(asset) = yaml_list_scalar(trimmed)
+            && is_flutter_asset_path(&asset)
+        {
+            assets.push(FlutterAsset {
+                path: asset,
+                line: index as u32 + 1,
+            });
+        }
+    }
+
+    assets
+}
+
+fn is_flutter_asset_path(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('$')
+        && !value.contains("://")
+        && !Path::new(value).is_absolute()
+}
+
 fn go_module_name(source: &str) -> Option<String> {
     source.lines().find_map(|line| {
         let line = line.split("//").next().unwrap_or("").trim();
@@ -7406,6 +7587,35 @@ fn bash_framework_configs(source: &str) -> Vec<FrameworkConfig> {
                 Some(value),
                 line_number,
             ));
+        }
+    }
+    configs
+}
+
+fn dart_framework_configs(source: &str) -> Vec<FrameworkConfig> {
+    let mut configs = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let trimmed = line.trim();
+
+        for needle in [
+            "rootBundle.loadString(",
+            "rootBundle.load(",
+            "AssetImage(",
+            "Image.asset(",
+            "SvgPicture.asset(",
+        ] {
+            if let Some(value) = first_quoted_value_after(trimmed, needle)
+                && is_flutter_asset_path(&value)
+            {
+                configs.push(framework_config(
+                    "flutter",
+                    format!("flutter asset read:{value}"),
+                    "flutter_asset_read",
+                    Some(value),
+                    line_number,
+                ));
+            }
         }
     }
     configs
@@ -10772,12 +10982,12 @@ mod tests {
         fs::create_dir_all(root.join("test")).unwrap();
         fs::write(
             root.join("pubspec.yaml"),
-            "name: demo_app\nversion: 0.1.0\ndependencies:\n  flutter:\n    sdk: flutter\n  http: ^1.2.0\ndev_dependencies:\n  test: any\n",
+            "name: demo_app\nversion: 0.1.0\ndependencies:\n  flutter:\n    sdk: flutter\n  http: ^1.2.0\ndev_dependencies:\n  test: any\nflutter:\n  assets:\n    - assets/config/app.json\n    - assets/images/\n",
         )
         .unwrap();
         fs::write(
             root.join("lib").join("main.dart"),
-            "import 'package:flutter/material.dart';\nimport 'package:demo_app/src/app.dart';\nimport 'src/local.dart';\npart 'src/main_part.dart';\n\nclass Shell {}\nvoid main() {\n  const port = String.fromEnvironment('PORT', defaultValue: '8080');\n  final api = Platform.environment['API_URL'] ?? 'http://localhost';\n  final config = rootBundle.loadString('assets/config/app.json');\n  runApp(App());\n  throw StateError('broken');\n}\n",
+            "import 'package:flutter/material.dart';\nimport 'package:demo_app/src/app.dart';\nimport 'src/local.dart';\npart 'src/main_part.dart';\n\nconst channel = MethodChannel('com.example.demo/native');\nclass Shell {}\nvoid main() {\n  const port = String.fromEnvironment('PORT', defaultValue: '8080');\n  final api = Platform.environment['API_URL'] ?? 'http://localhost';\n  final config = rootBundle.loadString('assets/config/app.json');\n  final logo = Image.asset('assets/images/logo.png');\n  runApp(App());\n  throw StateError('broken');\n}\n",
         )
         .unwrap();
         fs::write(
@@ -10871,6 +11081,71 @@ mod tests {
                 .iter()
                 .any(|node| node.kind == NodeKind::Config && node.label == "assets/config/app.json")
         );
+        let declared_asset = node_id(
+            &graph,
+            NodeKind::Config,
+            "flutter asset:assets/config/app.json",
+        );
+        let declared_asset_dir = node_id(&graph, NodeKind::Config, "flutter asset:assets/images/");
+        let asset_read = node_id(
+            &graph,
+            NodeKind::Config,
+            "flutter asset read:assets/config/app.json",
+        );
+        let image_asset_read = node_id(
+            &graph,
+            NodeKind::Config,
+            "flutter asset read:assets/images/logo.png",
+        );
+        for asset in [declared_asset, declared_asset_dir] {
+            let node = graph
+                .nodes
+                .iter()
+                .find(|node| node.id == asset)
+                .expect("missing declared Flutter asset node");
+            assert_eq!(
+                node.metadata.get("item_kind").map(String::as_str),
+                Some("flutter_asset")
+            );
+            assert_eq!(
+                node.metadata.get("source").map(String::as_str),
+                Some("pubspec")
+            );
+        }
+        for asset_read in [asset_read, image_asset_read] {
+            assert!(graph.edges.iter().any(|edge| {
+                edge.source == main_file
+                    && edge.target == asset_read
+                    && edge.kind == EdgeKind::ReadsConfig
+                    && edge
+                        .metadata
+                        .get("config_kind")
+                        .is_some_and(|value| value == "flutter_asset_read")
+            }));
+        }
+        let channel = node_id(
+            &graph,
+            NodeKind::ExternalDependency,
+            "flutter method channel:com.example.demo/native",
+        );
+        let channel_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == channel)
+            .expect("missing platform channel node");
+        assert_eq!(
+            channel_node.metadata.get("item_kind").map(String::as_str),
+            Some("platform_channel")
+        );
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == main_file
+                && edge.target == channel
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "platform_channel")
+        }));
         assert!(
             graph
                 .edges

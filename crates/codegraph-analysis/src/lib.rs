@@ -927,6 +927,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "skipped_large_file",
     "syntax_error",
     "test_only_runtime_dependency",
+    "undeclared_flutter_asset",
     "undeclared_external_import",
     "unreachable_config_read",
     "unreachable_error_flow",
@@ -1762,6 +1763,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unreachable_source_file_insights(graph, &mut insights);
     add_conflicting_config_default_insights(graph, &mut insights);
     add_mixed_config_requirement_insights(graph, &mut insights);
+    add_undeclared_flutter_asset_insights(graph, &mut insights);
     add_rationale_risk_comment_insights(graph, &mut insights);
     add_sensitive_ci_environment_literal_insights(graph, &mut insights);
     add_sensitive_config_default_insights(graph, &mut insights);
@@ -8320,6 +8322,102 @@ fn add_sensitive_config_default_insights(graph: &CodeGraph, insights: &mut Vec<I
             edges,
         });
     }
+}
+
+fn add_undeclared_flutter_asset_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let declared_assets = flutter_declared_assets(graph);
+    if declared_assets.is_empty() {
+        return;
+    }
+
+    let mut reported = BTreeSet::new();
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind != EdgeKind::ReadsConfig {
+            continue;
+        }
+        let Some(target) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+            continue;
+        };
+        let Some(asset_path) = flutter_asset_read_path(target) else {
+            continue;
+        };
+        if flutter_asset_is_declared(&asset_path, &declared_assets) {
+            continue;
+        }
+        if !reported.insert(asset_path.clone()) {
+            continue;
+        }
+        let reader = node_label(graph, edge.source).unwrap_or("unknown");
+        insights.push(Insight {
+            kind: "undeclared_flutter_asset".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "`{reader}` reads Flutter asset `{asset_path}` but no matching `pubspec.yaml` asset declaration was found"
+            ),
+            nodes: vec![edge.source, edge.target],
+            edges: vec![edge_index],
+        });
+    }
+}
+
+fn flutter_declared_assets(graph: &CodeGraph) -> Vec<String> {
+    graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == NodeKind::Config
+                && node
+                    .metadata
+                    .get("item_kind")
+                    .is_some_and(|value| value == "flutter_asset")
+        })
+        .filter_map(|node| {
+            node.metadata.get("asset_path").cloned().or_else(|| {
+                node.label
+                    .strip_prefix("flutter asset:")
+                    .map(str::to_string)
+            })
+        })
+        .collect()
+}
+
+fn flutter_asset_read_path(node: &Node) -> Option<String> {
+    if node.kind != NodeKind::Config {
+        return None;
+    }
+    if node
+        .metadata
+        .get("config_kind")
+        .is_some_and(|value| value == "flutter_asset_read")
+    {
+        return node.metadata.get("value").cloned().or_else(|| {
+            node.label
+                .strip_prefix("flutter asset read:")
+                .map(str::to_string)
+        });
+    }
+    let label = node.label.trim();
+    (looks_like_flutter_asset_path(label)).then(|| label.to_string())
+}
+
+fn looks_like_flutter_asset_path(path: &str) -> bool {
+    let path = path.trim();
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains("://")
+        && (path.starts_with("assets/")
+            || path.starts_with("asset/")
+            || path.contains("/assets/")
+            || path.contains("/asset/"))
+}
+
+fn flutter_asset_is_declared(asset_path: &str, declarations: &[String]) -> bool {
+    declarations.iter().any(|declared| {
+        let declared = declared.trim();
+        !declared.is_empty()
+            && (asset_path == declared
+                || (declared.ends_with('/') && asset_path.starts_with(declared)))
+    })
 }
 
 fn add_rationale_risk_comment_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
@@ -15417,6 +15515,104 @@ mod tests {
         assert!(!insight.nodes.contains(&unused_required_port));
         assert_eq!(insight.edges.len(), 2);
         assert_eq!(report.by_kind.get("mixed_config_requirement"), Some(&1));
+    }
+
+    #[test]
+    fn insights_report_undeclared_flutter_asset_reads() {
+        let mut graph = CodeGraph::new("repo");
+        let pubspec = graph.add_node(NodeKind::File, "pubspec.yaml");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let declared_file = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "flutter asset:assets/config/app.json",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "flutter_asset".to_string()),
+                (
+                    "asset_path".to_string(),
+                    "assets/config/app.json".to_string(),
+                ),
+            ]),
+        );
+        let declared_dir = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "flutter asset:assets/images/",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "flutter_asset".to_string()),
+                ("asset_path".to_string(), "assets/images/".to_string()),
+            ]),
+        );
+        let declared_read = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "flutter asset read:assets/config/app.json",
+            None,
+            BTreeMap::from([
+                ("config_kind".to_string(), "flutter_asset_read".to_string()),
+                ("value".to_string(), "assets/config/app.json".to_string()),
+            ]),
+        );
+        let directory_read = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "flutter asset read:assets/images/logo.png",
+            None,
+            BTreeMap::from([
+                ("config_kind".to_string(), "flutter_asset_read".to_string()),
+                ("value".to_string(), "assets/images/logo.png".to_string()),
+            ]),
+        );
+        let missing_read = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "flutter asset read:assets/missing/secret.json",
+            None,
+            BTreeMap::from([
+                ("config_kind".to_string(), "flutter_asset_read".to_string()),
+                (
+                    "value".to_string(),
+                    "assets/missing/secret.json".to_string(),
+                ),
+            ]),
+        );
+        graph.add_edge(
+            pubspec,
+            declared_file,
+            EdgeKind::Contains,
+            Confidence::Exact,
+        );
+        graph.add_edge(pubspec, declared_dir, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(
+            main,
+            declared_read,
+            EdgeKind::ReadsConfig,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            main,
+            directory_read,
+            EdgeKind::ReadsConfig,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            main,
+            missing_read,
+            EdgeKind::ReadsConfig,
+            Confidence::Syntactic,
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "undeclared_flutter_asset")
+            .expect("expected undeclared Flutter asset insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.message.contains("assets/missing/secret.json"));
+        assert!(insight.nodes.contains(&main));
+        assert!(insight.nodes.contains(&missing_read));
+        assert!(!insight.nodes.contains(&declared_read));
+        assert!(!insight.nodes.contains(&directory_read));
+        assert_eq!(report.by_kind.get("undeclared_flutter_asset"), Some(&1));
     }
 
     #[test]
