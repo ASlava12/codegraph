@@ -182,6 +182,7 @@ const I18N = {
     "queryPreset.unreachableConfig": "Unreachable Config",
     "queryPreset.unreachableErrors": "Unreachable Errors",
     "queryPreset.diagnostics": "Diagnostics",
+    "queryPreset.ambiguousCalls": "Ambiguous Calls",
     "queryPreset.annotations": "Annotations",
     "queryPreset.risks": "Risks",
     "queryPreset.symbols": "Symbols",
@@ -602,6 +603,7 @@ const I18N = {
     "queryPreset.unreachableConfig": "Недостижимые конфиги",
     "queryPreset.unreachableErrors": "Недостижимые ошибки",
     "queryPreset.diagnostics": "Диагностика",
+    "queryPreset.ambiguousCalls": "Неоднозначные вызовы",
     "queryPreset.annotations": "Аннотации",
     "queryPreset.risks": "Риски",
     "queryPreset.symbols": "Символы",
@@ -6326,6 +6328,31 @@ function buildClientInsights(graph) {
         nodeId: nodes[0].id,
       });
     }
+  });
+
+  const callsByLabel = new Map();
+  graph.edges
+    .filter((edge) => edge.kind === "calls" && edge.metadata?.call_label)
+    .forEach((edge) => {
+      const key = `${edge.source}:${edge.metadata.call_label}`;
+      const list = callsByLabel.get(key) || [];
+      list.push(edge);
+      callsByLabel.set(key, list);
+    });
+  callsByLabel.forEach((edges) => {
+    const targets = Array.from(new Set(edges.map((edge) => edge.target)));
+    if (targets.length < 2) return;
+    const source = graph.nodes.find((node) => node.id === edges[0].source);
+    const targetLabels = targets
+      .map((id) => graph.nodes.find((node) => node.id === id)?.label || id)
+      .slice(0, 5)
+      .join(", ");
+    insights.push({
+      kind: "ambiguous_call_resolution",
+      severity: "warning",
+      message: `${source?.label || edges[0].source} calls ${edges[0].metadata.call_label} but it resolves to multiple targets: ${targetLabels}`,
+      nodeId: source?.id || targets[0],
+    });
   });
 
   graph.edges
