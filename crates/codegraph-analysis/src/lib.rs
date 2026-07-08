@@ -6800,12 +6800,83 @@ fn sensitive_config_label(label: &str) -> bool {
 }
 
 fn credential_like_default(default_value: &str) -> bool {
-    let normalized = default_value.to_ascii_lowercase();
+    let normalized = default_value
+        .trim()
+        .trim_matches(|character| matches!(character, '"' | '\'' | '`'))
+        .to_ascii_lowercase();
     (normalized.contains("://") && normalized.contains('@'))
         || normalized.contains("password=")
         || normalized.contains("passwd=")
         || normalized.contains("token=")
         || normalized.contains("secret=")
+        || placeholder_credential_default(&normalized)
+}
+
+fn placeholder_credential_default(default_value: &str) -> bool {
+    let tokens = default_value
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    let compact = tokens.join("");
+    if matches!(
+        compact.as_str(),
+        "changeme"
+            | "changeit"
+            | "replaceme"
+            | "replaceit"
+            | "replacewithsecret"
+            | "replacewithtoken"
+            | "replacewithapikey"
+            | "yourpassword"
+            | "yoursecret"
+            | "yourtoken"
+            | "yourapikey"
+            | "examplesecret"
+            | "exampletoken"
+            | "exampleapikey"
+            | "dummysecret"
+            | "dummytoken"
+            | "dummyapikey"
+            | "todosecret"
+            | "todotoken"
+            | "fixmesecret"
+            | "fixmetoken"
+    ) {
+        return true;
+    }
+
+    let has_placeholder = tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "changeme"
+                | "changeit"
+                | "replace"
+                | "replaceit"
+                | "replaceme"
+                | "todo"
+                | "fixme"
+                | "example"
+                | "sample"
+                | "dummy"
+                | "placeholder"
+                | "your"
+        )
+    });
+    let has_credential = tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "password"
+                | "passwd"
+                | "passphrase"
+                | "secret"
+                | "token"
+                | "credential"
+                | "credentials"
+                | "apikey"
+                | "jwt"
+        ) || *token == "key"
+    });
+    has_placeholder && has_credential
 }
 
 fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
@@ -11341,6 +11412,12 @@ mod tests {
                 "postgres://demo:password@localhost/app".to_string(),
             )]),
         );
+        let auth_header = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "service.auth_header",
+            None,
+            BTreeMap::from([("default_value".to_string(), "replace-me-token".to_string())]),
+        );
         let port = graph.add_node_with_metadata(
             NodeKind::Environment,
             "PORT",
@@ -11352,6 +11429,15 @@ mod tests {
             "PUBLIC_KEY",
             None,
             BTreeMap::from([("default_value".to_string(), "public-demo-key".to_string())]),
+        );
+        let callback_url = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "CALLBACK_URL",
+            None,
+            BTreeMap::from([(
+                "default_value".to_string(),
+                "https://example.com/callback".to_string(),
+            )]),
         );
         graph.add_edge(
             api,
@@ -11366,6 +11452,12 @@ mod tests {
             Confidence::Heuristic,
         );
         graph.add_edge(
+            api,
+            auth_header,
+            EdgeKind::ReadsConfig,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
             worker,
             port,
             EdgeKind::ReadsEnvironment,
@@ -11377,6 +11469,12 @@ mod tests {
             EdgeKind::ReadsEnvironment,
             Confidence::Heuristic,
         );
+        graph.add_edge(
+            worker,
+            callback_url,
+            EdgeKind::ReadsConfig,
+            Confidence::Heuristic,
+        );
 
         let report = insights(&graph);
         let sensitive = report
@@ -11385,7 +11483,7 @@ mod tests {
             .filter(|insight| insight.kind == "sensitive_config_default")
             .collect::<Vec<_>>();
 
-        assert_eq!(sensitive.len(), 2);
+        assert_eq!(sensitive.len(), 3);
         assert!(sensitive.iter().any(|insight| {
             insight.nodes.contains(&secret)
                 && insight.nodes.contains(&api)
@@ -11397,11 +11495,19 @@ mod tests {
                 && insight.message.contains("DATABASE_URL")
                 && !insight.message.contains("postgres://")
         }));
-        assert!(!sensitive
-            .iter()
-            .any(|insight| insight.nodes.contains(&port) || insight.nodes.contains(&public_key)));
-        assert_eq!(report.by_kind.get("sensitive_config_default"), Some(&2));
-        assert_eq!(report.by_severity.get("warning"), Some(&2));
+        assert!(sensitive.iter().any(|insight| {
+            insight.nodes.contains(&auth_header)
+                && insight.nodes.contains(&api)
+                && insight.message.contains("service.auth_header")
+                && !insight.message.contains("replace-me-token")
+        }));
+        assert!(
+            !sensitive.iter().any(|insight| insight.nodes.contains(&port)
+                || insight.nodes.contains(&public_key)
+                || insight.nodes.contains(&callback_url))
+        );
+        assert_eq!(report.by_kind.get("sensitive_config_default"), Some(&3));
+        assert_eq!(report.by_severity.get("warning"), Some(&3));
     }
 
     #[test]

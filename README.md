@@ -223,7 +223,7 @@ Implemented now:
 - Investigation insights for non-test source files with code symbols that are not reachable from any detected entrypoint.
 - Investigation insights for config/environment keys that are read with conflicting fallback defaults, including common inline Rust, Python, JavaScript/TypeScript, Go, C, C++, PHP, and Bash environment-read patterns.
 - Investigation insights for config/environment keys that are read both as required and with fallback defaults.
-- Investigation insights for sensitive config/environment keys that have non-empty fallback defaults, without echoing the fallback value in reports.
+- Investigation insights for sensitive config/environment keys, credential-like defaults, and placeholder secret fallbacks, without echoing fallback values in reports.
 - Dependency consistency insights for external imports/CommonJS requires that are not backed by declared manifest dependencies.
 - Dependency consistency insights for runtime manifest dependencies with no matching import.
 - Dependency consistency insights for package declarations with conflicting manifest constraints.
