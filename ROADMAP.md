@@ -29,16 +29,20 @@ Goal: extract language-independent structure from source files.
 - [x] Detect languages by extension and file name.
 - [x] Extract files, modules, imports, top-level declarations, functions, and classes/types.
 - [x] Support Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, PHP, and Bash at syntax level.
+- [ ] Add Dart syntax support for `.dart` files with files, libraries, imports/exports/parts, classes, mixins, extensions, functions, methods, constructors, and approximate call sites.
 - [x] Extract approximate call sites.
 - [x] Resolve local import/include file dependencies where syntax-level paths are explicit.
+- [ ] Resolve Dart relative imports, package imports from `pubspec.yaml`, `part`/`part of` relationships, and generated-file conventions.
 - [x] Resolve Python project-local absolute imports when they match scanned files.
 - [x] Resolve Go module-local imports from `go.mod` module paths when package files are scanned.
 - [x] Resolve quoted C/C++ includes through CMake include directories when header files are scanned.
 - [x] Resolve quoted C/C++ includes through `compile_commands.json` include directories.
 - [x] Detect CommonJS `require(...)` imports for dependency and local-file analysis.
 - [x] Detect config and environment reads.
+- [ ] Detect Dart/Flutter config reads, environment reads, asset references, platform-channel boundaries, and common exception/error constructs.
 - [x] Detect basic error/exception constructs.
 - [x] Detect manifest-defined entrypoints from project metadata.
+- [ ] Detect Dart and Flutter entrypoints from `main()`, Flutter `runApp(...)`, `bin/*.dart`, `test/*_test.dart`, and `pubspec.yaml` package metadata.
 - [x] Resolve manifest entrypoints to target files and functions where possible.
 - [x] Detect shebang script entrypoints for Bash, Python, Node.js, and PHP CLI files.
 - [x] Detect Go module and `cmd/*` entrypoints from `go.mod`.
@@ -92,6 +96,7 @@ Goal: improve precision where language tooling exists.
 - [x] Add Rust enrichment through `rust-analyzer`.
 - [x] Add TypeScript/JavaScript enrichment through tsserver-compatible tooling.
 - [x] Add Go enrichment through `gopls`.
+- [ ] Add Dart semantic enrichment through the Dart analysis server or an LSP-compatible Dart language server.
 - [x] Mark facts by confidence:
   - [x] `exact`
   - [x] `semantic`
@@ -143,6 +148,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect production-like source imports of packages declared only in non-runtime dependency scopes.
 - [x] Detect runtime dependencies that are imported only from test-like source files.
 - [x] Recognize common JS/TS, Go, Python, PHP, C/C++, and Bash test file conventions in dependency-scope insights.
+- [ ] Recognize Dart and Flutter package scopes, dev dependencies, generated files, assets, test conventions, and package import consistency issues.
 - [x] Detect duplicate framework route method/path declarations.
 - [x] Detect framework routes whose named handler cannot be resolved.
 - [x] Improve Rust/Axum route entrypoint labels for multiline routes and string literal false positives.
@@ -216,7 +222,7 @@ Goal: answer practical code investigation questions.
 - [ ] Reuse node and dependency cards from workflow blocks, including source preview, related dependencies, risks, and edge explanations.
 - [ ] Add branch extraction for common if/match/try/catch constructs where parser or LSP facts support it.
 - [ ] Add loop and async/concurrency markers for common constructs where confidence is high.
-- [ ] Add workflow regression fixtures for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, CI, Docker, and Kubernetes runtime paths.
+- [ ] Add workflow regression fixtures for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, Dart/Flutter, CI, Docker, and Kubernetes runtime paths.
 - [ ] Add workflow export downloads in JSON, Mermaid, DOT, and visible-slice JSON.
 - [ ] Localize workflow UI, commands, schema descriptions, and block labels in English and Russian.
 
@@ -402,6 +408,7 @@ Goal: handle real repositories efficiently.
 - [x] Publish cache and incremental workflow enum values in the API schema for agents.
 - [x] Cache parser facts.
 - [x] Cache LSP facts.
+- [ ] Cache Dart parser and semantic facts with invalidation for `pubspec.yaml`, `.dart_tool/package_config.json`, and generated Dart files.
 - [x] Add first large graph filtering and paging endpoint.
 - [x] Support first UI-driven large graph paging.
 - [x] Add first CLI scan benchmarks.

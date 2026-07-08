@@ -784,6 +784,10 @@ At the current stage, supported source languages are detected by extension:
 - PHP: `php`, `phtml`
 - Bash/shell: `sh`, `bash`, `zsh`, `ksh`, `Makefile`
 
+Planned language support:
+
+- Dart and Flutter: `.dart`, `pubspec.yaml`, `.dart_tool/package_config.json`, `main()`, `runApp(...)`, `bin/*.dart`, `test/*_test.dart`, package imports, relative imports, `part` files, assets, generated files, and Dart analysis server semantic enrichment.
+
 Supported package manifests:
 
 - Rust/Cargo: `Cargo.toml`
