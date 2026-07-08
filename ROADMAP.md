@@ -236,8 +236,8 @@ Goal: answer practical code investigation questions.
 - [x] Add workflow query slices so existing graph query results can open as block diagrams.
 - [ ] Add full web Flow view next to Graph/Cards/Risks with pan, zoom, minimap, and selectable workflow blocks.
 - [ ] Reuse node and dependency cards from workflow blocks, including source preview, related dependencies, risks, and edge explanations.
-- [ ] Add branch extraction for common if/match/try/catch constructs where parser or LSP facts support it.
-- [ ] Add loop and async/concurrency markers for common constructs where confidence is high.
+- [x] Add branch extraction for common if/match/try/catch constructs where parser or LSP facts support it.
+- [x] Add loop and async/concurrency markers for common constructs where confidence is high.
 - [ ] Add workflow regression fixtures for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, Dart/Flutter, CI, Docker, and Kubernetes runtime paths.
 - [x] Add remaining workflow export downloads for DOT and visible-slice JSON.
 - [ ] Localize workflow UI, commands, schema descriptions, and block labels in English and Russian.

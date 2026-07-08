@@ -37,6 +37,7 @@ Implemented now:
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
 - Source rationale comments such as `WHY`, `NOTE`, `TODO`, `FIXME`, `HACK`, `BUG`, `XXX`, and `SECURITY` are indexed as linked graph facts with source spans for human and agent review.
+- Common branch, loop, and async/concurrency constructs are indexed as source-spanned graph facts for workflow diagrams and node-card investigation.
 - Markdown, ADR, and RFC documents are indexed as repository knowledge facts with section nodes plus local file/directory and symbol references from Markdown links and inline code.
 - SQL schema files are indexed as repository knowledge facts for tables, views, columns, indexes, and foreign-key references with exact source spans.
 - SQL query strings in application code are indexed as query cards and linked back to schema table nodes for common `SELECT`, `JOIN`, `INSERT`, `UPDATE`, and `DELETE` references.

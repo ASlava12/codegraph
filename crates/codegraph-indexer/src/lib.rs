@@ -1153,7 +1153,10 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
                         ParsedItemKind::Call
                         | ParsedItemKind::EnvironmentRead
                         | ParsedItemKind::ConfigRead
-                        | ParsedItemKind::Error => {
+                        | ParsedItemKind::Error
+                        | ParsedItemKind::Branch
+                        | ParsedItemKind::Loop
+                        | ParsedItemKind::Async => {
                             unreachable!("non-symbol facts are processed separately")
                         }
                     };
@@ -1289,13 +1292,19 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
                     let node_kind = match item.kind {
                         ParsedItemKind::EnvironmentRead => NodeKind::Environment,
                         ParsedItemKind::ConfigRead => NodeKind::Config,
-                        ParsedItemKind::Error => NodeKind::Unknown,
+                        ParsedItemKind::Error
+                        | ParsedItemKind::Branch
+                        | ParsedItemKind::Loop
+                        | ParsedItemKind::Async => NodeKind::Unknown,
                         _ => unreachable!("only effect facts are processed here"),
                     };
                     let edge_kind = match item.kind {
                         ParsedItemKind::EnvironmentRead => EdgeKind::ReadsEnvironment,
                         ParsedItemKind::ConfigRead => EdgeKind::ReadsConfig,
                         ParsedItemKind::Error => EdgeKind::MayError,
+                        ParsedItemKind::Branch | ParsedItemKind::Loop | ParsedItemKind::Async => {
+                            EdgeKind::References
+                        }
                         _ => unreachable!("only effect facts are processed here"),
                     };
                     let mut item_metadata = BTreeMap::new();
@@ -12052,6 +12061,9 @@ fn parsed_item_kind_name(kind: ParsedItemKind) -> &'static str {
         ParsedItemKind::EnvironmentRead => "environment_read",
         ParsedItemKind::ConfigRead => "config_read",
         ParsedItemKind::Error => "error",
+        ParsedItemKind::Branch => "branch",
+        ParsedItemKind::Loop => "loop",
+        ParsedItemKind::Async => "async",
     }
 }
 
@@ -12069,7 +12081,12 @@ fn is_symbol_item(kind: ParsedItemKind) -> bool {
 fn is_effect_item(kind: ParsedItemKind) -> bool {
     matches!(
         kind,
-        ParsedItemKind::EnvironmentRead | ParsedItemKind::ConfigRead | ParsedItemKind::Error
+        ParsedItemKind::EnvironmentRead
+            | ParsedItemKind::ConfigRead
+            | ParsedItemKind::Error
+            | ParsedItemKind::Branch
+            | ParsedItemKind::Loop
+            | ParsedItemKind::Async
     )
 }
 
@@ -13536,6 +13553,69 @@ CREATE TABLE users (
                 && edge.metadata.get("call_label").map(String::as_str) == Some("helper")
                 && edge.metadata.get("resolution").map(String::as_str) == Some("resolved")
         }));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_indexes_control_flow_facts() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("lib")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            "async fn worker() { if ready() { for item in items() { item.await; } } }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("lib").join("main.dart"),
+            "void worker() async { if (ready) { for (final item in items) { await item; } } }\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let rust_worker = function_id_in_file(&graph, "worker", "src/main.rs");
+        let dart_worker = function_id_in_file(&graph, "worker", "lib/main.dart");
+
+        for (language, source_id, expected) in [
+            (
+                "rust",
+                rust_worker,
+                ["branch: if", "loop: for", "async: await"],
+            ),
+            (
+                "dart",
+                dart_worker,
+                ["branch: if", "loop: for", "async: await"],
+            ),
+        ] {
+            for label in expected {
+                let fact = graph
+                    .nodes
+                    .iter()
+                    .find(|node| {
+                        node.kind == NodeKind::Unknown
+                            && node.label == label
+                            && node.metadata.get("language").map(String::as_str) == Some(language)
+                    })
+                    .unwrap_or_else(|| panic!("missing {language} control-flow fact {label}"));
+                assert!(matches!(
+                    fact.metadata.get("item_kind").map(String::as_str),
+                    Some("branch" | "loop" | "async")
+                ));
+                assert_eq!(
+                    fact.metadata.get("parent").map(String::as_str),
+                    Some("worker")
+                );
+                assert!(fact.metadata.contains_key("control_kind"));
+                assert!(graph.edges.iter().any(|edge| {
+                    edge.source == source_id
+                        && edge.target == fact.id
+                        && edge.kind == EdgeKind::References
+                        && edge.confidence == Confidence::Heuristic
+                }));
+            }
+        }
 
         fs::remove_dir_all(root).unwrap();
     }

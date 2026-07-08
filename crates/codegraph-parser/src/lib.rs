@@ -263,6 +263,9 @@ pub enum ParsedItemKind {
     EnvironmentRead,
     ConfigRead,
     Error,
+    Branch,
+    Loop,
+    Async,
 }
 
 pub fn parse_source(
@@ -313,6 +316,11 @@ fn collect_items(
     if let Some(effect) = classify_effect(language, node, source, path, current_function.as_deref())
     {
         items.push(effect);
+    }
+    if let Some(control_flow) =
+        classify_control_flow(language, node, source, path, current_function.as_deref())
+    {
+        items.push(control_flow);
     }
 
     if let Some(function_name) = current_function.as_deref()
@@ -507,6 +515,138 @@ fn classify_effect(
         parent: function_name.map(ToString::to_string),
         metadata,
     })
+}
+
+fn classify_control_flow(
+    language: Language,
+    node: Node<'_>,
+    source: &[u8],
+    path: &str,
+    function_name: Option<&str>,
+) -> Option<ParsedItem> {
+    let (kind, control_kind) = control_flow_fact(language, node)?;
+    let mut metadata = BTreeMap::new();
+    metadata.insert("control_kind".to_string(), control_kind.to_string());
+    metadata.insert("syntax_node".to_string(), node.kind().to_string());
+    if let Some(snippet) = short_node_text(node, source) {
+        metadata.insert(
+            "snippet".to_string(),
+            truncate_label(compact_label(snippet), 160),
+        );
+    }
+
+    Some(ParsedItem {
+        kind,
+        label: format!("{}: {}", parsed_item_kind_label(kind), control_kind),
+        span: span_for(path, node),
+        parent: function_name.map(ToString::to_string),
+        metadata,
+    })
+}
+
+fn control_flow_fact(language: Language, node: Node<'_>) -> Option<(ParsedItemKind, &'static str)> {
+    let kind = node.kind();
+    match language {
+        Language::Rust => match kind {
+            "if_expression" => Some((ParsedItemKind::Branch, "if")),
+            "match_expression" => Some((ParsedItemKind::Branch, "match")),
+            "try_expression" => Some((ParsedItemKind::Branch, "try")),
+            "for_expression" => Some((ParsedItemKind::Loop, "for")),
+            "while_expression" => Some((ParsedItemKind::Loop, "while")),
+            "loop_expression" => Some((ParsedItemKind::Loop, "loop")),
+            "await_expression" => Some((ParsedItemKind::Async, "await")),
+            "async_block" => Some((ParsedItemKind::Async, "async")),
+            _ => None,
+        },
+        Language::Python => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "match_statement" => Some((ParsedItemKind::Branch, "match")),
+            "try_statement" => Some((ParsedItemKind::Branch, "try")),
+            "except_clause" => Some((ParsedItemKind::Branch, "except")),
+            "for_statement" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "await" => Some((ParsedItemKind::Async, "await")),
+            "async_function_definition" => Some((ParsedItemKind::Async, "function")),
+            "async_for_statement" => Some((ParsedItemKind::Async, "for")),
+            "async_with_statement" => Some((ParsedItemKind::Async, "with")),
+            _ => None,
+        },
+        Language::JavaScript | Language::TypeScript | Language::Tsx => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "switch_statement" => Some((ParsedItemKind::Branch, "switch")),
+            "switch_case" => Some((ParsedItemKind::Branch, "case")),
+            "try_statement" => Some((ParsedItemKind::Branch, "try")),
+            "catch_clause" => Some((ParsedItemKind::Branch, "catch")),
+            "ternary_expression" => Some((ParsedItemKind::Branch, "ternary")),
+            "for_statement" | "for_in_statement" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "do_statement" => Some((ParsedItemKind::Loop, "do")),
+            "await_expression" => Some((ParsedItemKind::Async, "await")),
+            _ => None,
+        },
+        Language::Go => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "switch_statement" | "expression_switch_statement" | "type_switch_statement" => {
+                Some((ParsedItemKind::Branch, "switch"))
+            }
+            "select_statement" => Some((ParsedItemKind::Branch, "select")),
+            "for_statement" => Some((ParsedItemKind::Loop, "for")),
+            "go_statement" => Some((ParsedItemKind::Async, "go")),
+            "defer_statement" => Some((ParsedItemKind::Async, "defer")),
+            _ => None,
+        },
+        Language::C | Language::Cpp => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "switch_statement" => Some((ParsedItemKind::Branch, "switch")),
+            "case_statement" => Some((ParsedItemKind::Branch, "case")),
+            "for_statement" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "do_statement" => Some((ParsedItemKind::Loop, "do")),
+            "try_statement" => Some((ParsedItemKind::Branch, "try")),
+            "catch_clause" => Some((ParsedItemKind::Branch, "catch")),
+            _ => None,
+        },
+        Language::Php => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "match_expression" => Some((ParsedItemKind::Branch, "match")),
+            "switch_statement" => Some((ParsedItemKind::Branch, "switch")),
+            "try_statement" => Some((ParsedItemKind::Branch, "try")),
+            "catch_clause" => Some((ParsedItemKind::Branch, "catch")),
+            "foreach_statement" => Some((ParsedItemKind::Loop, "foreach")),
+            "for_statement" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "do_statement" => Some((ParsedItemKind::Loop, "do")),
+            _ => None,
+        },
+        Language::Dart => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "switch_statement" | "switch_expression" => Some((ParsedItemKind::Branch, "switch")),
+            "try_statement" => Some((ParsedItemKind::Branch, "try")),
+            "catch_clause" => Some((ParsedItemKind::Branch, "catch")),
+            "for_statement" | "for_element" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "do_statement" => Some((ParsedItemKind::Loop, "do")),
+            "await_expression" => Some((ParsedItemKind::Async, "await")),
+            _ => None,
+        },
+        Language::Bash => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "case_statement" => Some((ParsedItemKind::Branch, "case")),
+            "for_statement" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "until_statement" => Some((ParsedItemKind::Loop, "until")),
+            _ => None,
+        },
+    }
+}
+
+fn parsed_item_kind_label(kind: ParsedItemKind) -> &'static str {
+    match kind {
+        ParsedItemKind::Branch => "branch",
+        ParsedItemKind::Loop => "loop",
+        ParsedItemKind::Async => "async",
+        _ => "fact",
+    }
 }
 
 fn is_environment_read(language: Language, node: Node<'_>, source: &[u8]) -> bool {
@@ -1292,6 +1432,82 @@ mod tests {
                 && item.label == "helper"
                 && item.parent.as_deref() == Some("main")
         }));
+    }
+
+    #[test]
+    fn parses_control_flow_markers_with_parent_function() {
+        let cases = [
+            (
+                "src/main.rs",
+                Language::Rust,
+                "async fn worker() { if ready() { for item in items() { item.await; } } }\n",
+                "worker",
+                ["branch: if", "loop: for", "async: await"],
+            ),
+            (
+                "app.py",
+                Language::Python,
+                "async def worker():\n    if ready:\n        for item in items:\n            await item\n",
+                "worker",
+                ["branch: if", "loop: for", "async: await"],
+            ),
+            (
+                "index.js",
+                Language::JavaScript,
+                "async function worker() { if (ready) { for (const item of items) { await item; } } }\n",
+                "worker",
+                ["branch: if", "loop: for", "async: await"],
+            ),
+            (
+                "main.go",
+                Language::Go,
+                "package main\nfunc worker() { if ready { for _, item := range items { go use(item) } } }\n",
+                "worker",
+                ["branch: if", "loop: for", "async: go"],
+            ),
+            (
+                "main.c",
+                Language::C,
+                "void worker() { if (ready) { for (int i = 0; i < 3; i++) {} } }\n",
+                "worker",
+                ["branch: if", "loop: for", ""],
+            ),
+            (
+                "app.php",
+                Language::Php,
+                "<?php function worker() { if ($ready) { foreach ($items as $item) {} } }\n",
+                "worker",
+                ["branch: if", "loop: foreach", ""],
+            ),
+            (
+                "script.sh",
+                Language::Bash,
+                "worker() { if true; then for item in a b; do echo \"$item\"; done; fi; }\n",
+                "worker",
+                ["branch: if", "loop: for", ""],
+            ),
+        ];
+
+        for (path, language, source, parent, expected_labels) in cases {
+            let parsed = parse_source(path, source.as_bytes(), language).unwrap();
+            for expected_label in expected_labels
+                .into_iter()
+                .filter(|label| !label.is_empty())
+            {
+                assert!(
+                    parsed.items.iter().any(|item| {
+                        matches!(
+                            item.kind,
+                            ParsedItemKind::Branch | ParsedItemKind::Loop | ParsedItemKind::Async
+                        ) && item.label == expected_label
+                            && item.parent.as_deref() == Some(parent)
+                            && item.metadata.get("control_kind").is_some()
+                    }),
+                    "missing {expected_label} in {path}: {:#?}",
+                    parsed.items
+                );
+            }
+        }
     }
 
     #[test]

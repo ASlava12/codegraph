@@ -266,6 +266,9 @@ pub enum WorkflowBlockKind {
     EnvironmentRead,
     Dependency,
     Import,
+    Branch,
+    Loop,
+    Async,
     Error,
     Reference,
     ExternalBoundary,
@@ -13227,6 +13230,12 @@ fn workflow_block_kind(
     if node.kind == NodeKind::ExternalDependency {
         return WorkflowBlockKind::ExternalBoundary;
     }
+    match node.metadata.get("item_kind").map(String::as_str) {
+        Some("branch") => return WorkflowBlockKind::Branch,
+        Some("loop") => return WorkflowBlockKind::Loop,
+        Some("async") => return WorkflowBlockKind::Async,
+        _ => {}
+    }
     match incoming_edge.map(|edge| &edge.kind) {
         Some(EdgeKind::Calls) => WorkflowBlockKind::Call,
         Some(EdgeKind::ReadsConfig) => WorkflowBlockKind::ConfigRead,
@@ -13247,6 +13256,9 @@ fn workflow_block_kind_label(kind: &WorkflowBlockKind) -> &'static str {
         WorkflowBlockKind::EnvironmentRead => "env",
         WorkflowBlockKind::Dependency => "dependency",
         WorkflowBlockKind::Import => "import",
+        WorkflowBlockKind::Branch => "branch",
+        WorkflowBlockKind::Loop => "loop",
+        WorkflowBlockKind::Async => "async",
         WorkflowBlockKind::Error => "error",
         WorkflowBlockKind::Reference => "reference",
         WorkflowBlockKind::ExternalBoundary => "external",
@@ -14818,6 +14830,94 @@ mod tests {
         assert!(mermaid.starts_with("flowchart TD"));
         assert!(mermaid.contains("start: cargo bin:api"));
         assert!(mermaid.contains("reads_environment/heuristic"));
+    }
+
+    #[test]
+    fn workflow_classifies_control_flow_blocks_from_item_kind() {
+        let mut graph = CodeGraph::new("repo");
+        let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:api");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let branch = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "branch: if",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "branch".to_string()),
+                ("language".to_string(), "rust".to_string()),
+                ("control_kind".to_string(), "if".to_string()),
+            ]),
+        );
+        let loop_node = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "loop: for",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "loop".to_string()),
+                ("language".to_string(), "rust".to_string()),
+                ("control_kind".to_string(), "for".to_string()),
+            ]),
+        );
+        let async_node = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "async: await",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "async".to_string()),
+                ("language".to_string(), "rust".to_string()),
+                ("control_kind".to_string(), "await".to_string()),
+            ]),
+        );
+        graph.add_edge(
+            graph.root,
+            entrypoint,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(
+            entrypoint,
+            main,
+            EdgeKind::References,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(main, branch, EdgeKind::References, Confidence::Heuristic);
+        graph.add_edge(main, loop_node, EdgeKind::References, Confidence::Heuristic);
+        graph.add_edge(
+            main,
+            async_node,
+            EdgeKind::References,
+            Confidence::Heuristic,
+        );
+
+        let report = workflow(
+            &graph,
+            WorkflowRequest {
+                start: TraceStart::Label("cargo bin:api".to_string()),
+                max_depth: 2,
+                block_limit: 20,
+                filters: WorkflowFilters::default(),
+                compact: false,
+            },
+        )
+        .expect("workflow report");
+
+        assert!(
+            report
+                .blocks
+                .iter()
+                .any(|block| block.node.id == branch && block.kind == WorkflowBlockKind::Branch)
+        );
+        assert!(
+            report
+                .blocks
+                .iter()
+                .any(|block| block.node.id == loop_node && block.kind == WorkflowBlockKind::Loop)
+        );
+        assert!(
+            report
+                .blocks
+                .iter()
+                .any(|block| block.node.id == async_node && block.kind == WorkflowBlockKind::Async)
+        );
     }
 
     #[test]

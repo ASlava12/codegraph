@@ -3700,6 +3700,9 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "environment_read",
                     "dependency",
                     "import",
+                    "branch",
+                    "loop",
+                    "async",
                     "error",
                     "reference",
                     "external_boundary",
@@ -8452,6 +8455,9 @@ fn helper() {}
                 .get("workflow_block_kind")
                 .is_some_and(|kinds| kinds.contains(&"start")
                     && kinds.contains(&"config_read")
+                    && kinds.contains(&"branch")
+                    && kinds.contains(&"loop")
+                    && kinds.contains(&"async")
                     && kinds.contains(&"external_boundary"))
         );
         assert!(schema.enum_values.get("insight_kind").is_some_and(|kinds| {
