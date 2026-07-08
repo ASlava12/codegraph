@@ -7404,7 +7404,7 @@ function drawEdge(edge, source, target, emphasis) {
     ctx.beginPath();
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(end.x, end.y);
-    ctx.lineWidth = (emphasis === "hover" ? 5 : 6) / state.zoom;
+    ctx.lineWidth = edgeBackplateWidth(emphasis) / state.zoom;
     ctx.strokeStyle = "rgba(13, 15, 16, 0.76)";
     ctx.stroke();
   }
@@ -7412,7 +7412,7 @@ function drawEdge(edge, source, target, emphasis) {
   ctx.beginPath();
   ctx.moveTo(start.x, start.y);
   ctx.lineTo(end.x, end.y);
-  ctx.lineWidth = (emphasis === "normal" ? 1 : emphasis === "hover" ? 2.4 : 3.2) / state.zoom;
+  ctx.lineWidth = edgeStrokeWidth(emphasis) / state.zoom;
   ctx.strokeStyle = emphasis === "normal" ? edgeColor(edge) : edgeHighlightColor(emphasis);
   ctx.stroke();
 
@@ -8974,12 +8974,34 @@ function edgeEmphasis(edge) {
   if (edgeSelectionKey(edge) === state.selectedEdgeKey) return "selected";
   if (state.queryFocus?.edgeKeys?.has(edgeKey(edge))) return "focus";
   if (edgeSelectionKey(edge) === state.hoveredEdgeKey) return "hover";
+  if (state.selectedId != null && edgeTouchesNode(edge, state.selectedId)) return "selected-node";
+  if (state.hoveredId != null && edgeTouchesNode(edge, state.hoveredId)) return "hover-node";
   return "normal";
+}
+
+function edgeTouchesNode(edge, nodeId) {
+  return edge.source === nodeId || edge.target === nodeId;
+}
+
+function edgeBackplateWidth(emphasis) {
+  if (emphasis === "hover-node") return 4.2;
+  if (emphasis === "selected-node") return 5;
+  return emphasis === "hover" ? 5 : 6;
+}
+
+function edgeStrokeWidth(emphasis) {
+  if (emphasis === "normal") return 1;
+  if (emphasis === "hover-node") return 1.8;
+  if (emphasis === "selected-node") return 2.4;
+  if (emphasis === "hover") return 2.4;
+  return 3.2;
 }
 
 function edgeHighlightColor(emphasis) {
   if (emphasis === "selected") return "rgba(92, 200, 167, 0.98)";
   if (emphasis === "hover") return "rgba(237, 241, 242, 0.92)";
+  if (emphasis === "selected-node") return "rgba(92, 200, 167, 0.86)";
+  if (emphasis === "hover-node") return "rgba(237, 241, 242, 0.72)";
   return state.queryFocus?.mode === "path" ? "rgba(92, 200, 167, 0.98)" : "rgba(237, 241, 242, 0.9)";
 }
 

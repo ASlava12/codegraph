@@ -6937,6 +6937,10 @@ mod tests {
 
         assert!(app.contains("hoveredEdgeKey"));
         assert!(app.contains("edgeEmphasis"));
+        assert!(app.contains("edgeTouchesNode"));
+        assert!(app.contains("\"selected-node\""));
+        assert!(app.contains("\"hover-node\""));
+        assert!(app.contains("edgeStrokeWidth"));
         assert!(app.contains("\"hover\""));
         assert!(app.contains("onPointerLeave"));
         assert!(app.contains("edgeHighlightColor"));
