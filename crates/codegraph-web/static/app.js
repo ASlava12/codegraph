@@ -7169,6 +7169,7 @@ function draw() {
   ctx.scale(state.zoom, state.zoom);
 
   const visibleIds = new Set(state.visibleNodes.map((node) => node.id));
+  const neighborhood = graphNeighborhoodContext(visibleIds);
   const highlightedEdges = [];
   state.visibleEdges.forEach((edge) => {
     if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) return;
@@ -7179,7 +7180,10 @@ function draw() {
     }
     const source = state.positions.get(edge.source);
     const target = state.positions.get(edge.target);
+    const alpha = edgeNeighborhoodAlpha(edge, neighborhood);
+    if (alpha < 1) ctx.globalAlpha = alpha;
     drawEdge(edge, source, target, "normal");
+    if (alpha < 1) ctx.globalAlpha = 1;
   });
 
   highlightedEdges.forEach(([edge, emphasis]) => {
@@ -7195,13 +7199,16 @@ function draw() {
     const selected = node.id === state.selectedId;
     const hovered = node.id === state.hoveredId;
     const focused = nodeIsFocused(node);
+    const neighbor = nodeIsNeighborhoodNeighbor(node, neighborhood);
+    const muted = nodeIsNeighborhoodMuted(node, neighborhood, selected, hovered, focused);
     const radius = nodeRadius(node);
 
+    if (muted) ctx.globalAlpha = 0.34;
     ctx.beginPath();
     ctx.arc(
       position.x,
       position.y,
-      radius + (selected ? 6 : focused ? 5 : hovered ? 3 : 0),
+      radius + (selected ? 6 : focused ? 5 : hovered ? 3 : neighbor ? 4 : 0),
       0,
       Math.PI * 2,
     );
@@ -7211,6 +7218,8 @@ function draw() {
         ? "rgba(237, 241, 242, 0.16)"
         : hovered
           ? "rgba(255,255,255,0.12)"
+          : neighbor
+            ? "rgba(92, 200, 167, 0.13)"
           : "rgba(0,0,0,0.22)";
     ctx.fill();
 
@@ -7218,16 +7227,23 @@ function draw() {
     ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
     ctx.fillStyle = colorFor(node.kind);
     ctx.fill();
-    ctx.lineWidth = selected ? 2.6 / state.zoom : focused ? 2.2 / state.zoom : 1 / state.zoom;
-    ctx.strokeStyle = selected ? "#ffffff" : focused ? "rgba(237, 241, 242, 0.92)" : "rgba(255,255,255,0.55)";
+    ctx.lineWidth = selected ? 2.6 / state.zoom : focused ? 2.2 / state.zoom : neighbor ? 1.8 / state.zoom : 1 / state.zoom;
+    ctx.strokeStyle = selected
+      ? "#ffffff"
+      : focused
+        ? "rgba(237, 241, 242, 0.92)"
+        : neighbor
+          ? "rgba(92, 200, 167, 0.84)"
+          : "rgba(255,255,255,0.55)";
     ctx.stroke();
 
     const riskSeverity = riskByNode.get(Number(node.id));
     if (riskSeverity) {
-      drawRiskHalo(position, radius, riskSeverity, selected || focused || hovered);
+      drawRiskHalo(position, radius, riskSeverity, selected || focused || hovered || neighbor);
     }
+    if (muted) ctx.globalAlpha = 1;
 
-    if (shouldShowNodeLabel(node, selected, hovered, focused)) {
+    if (!muted && shouldShowNodeLabel(node, selected, hovered, focused)) {
       labelCandidates.push({
         node,
         position,
@@ -8972,6 +8988,49 @@ function riskColor(severity) {
 
 function nodeIsFocused(node) {
   return Boolean(state.queryFocus?.nodeIds?.has(node.id));
+}
+
+function graphNeighborhoodContext(visibleIds) {
+  const anchorId = state.selectedId ?? state.hoveredId;
+  if (anchorId == null || !visibleIds.has(anchorId)) return null;
+  const nodeIds = new Set([anchorId]);
+  const edgeKeys = new Set();
+  state.visibleEdges.forEach((edge) => {
+    if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) return;
+    if (!edgeTouchesNode(edge, anchorId)) return;
+    nodeIds.add(edge.source);
+    nodeIds.add(edge.target);
+    edgeKeys.add(edgeKey(edge));
+  });
+  return {
+    anchorId,
+    nodeIds,
+    edgeKeys,
+    mode: state.selectedId != null ? "selected" : "hover",
+  };
+}
+
+function nodeIsNeighborhoodNeighbor(node, neighborhood) {
+  return Boolean(
+    neighborhood &&
+      node.id !== neighborhood.anchorId &&
+      neighborhood.nodeIds.has(node.id),
+  );
+}
+
+function nodeIsNeighborhoodMuted(node, neighborhood, selected, hovered, focused) {
+  return Boolean(
+    neighborhood &&
+      !selected &&
+      !hovered &&
+      !focused &&
+      !neighborhood.nodeIds.has(node.id),
+  );
+}
+
+function edgeNeighborhoodAlpha(edge, neighborhood) {
+  if (!neighborhood) return 1;
+  return neighborhood.edgeKeys.has(edgeKey(edge)) ? 1 : 0.28;
 }
 
 function edgeEmphasis(edge) {

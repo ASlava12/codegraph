@@ -6938,6 +6938,11 @@ mod tests {
         assert!(app.contains("hoveredEdgeKey"));
         assert!(app.contains("edgeEmphasis"));
         assert!(app.contains("edgeTouchesNode"));
+        assert!(app.contains("graphNeighborhoodContext"));
+        assert!(app.contains("nodeIsNeighborhoodNeighbor"));
+        assert!(app.contains("nodeIsNeighborhoodMuted"));
+        assert!(app.contains("edgeNeighborhoodAlpha"));
+        assert!(app.contains("!muted && shouldShowNodeLabel"));
         assert!(app.contains("\"selected-node\""));
         assert!(app.contains("\"hover-node\""));
         assert!(app.contains("edgeStrokeWidth"));
