@@ -1,9 +1,9 @@
 const DEFAULT_LOCALE = "en";
-const DEFAULT_LABEL_MODE = "minimal";
-const LABEL_MODES = new Set(["minimal", "focus", "auto"]);
+const DEFAULT_LABEL_MODE = "hover";
+const LABEL_MODES = new Set(["minimal", "hover", "focus", "auto"]);
 const LABEL_MODE_STORAGE_KEY = "codegraph.labelMode";
 const LABEL_MODE_STORAGE_VERSION_KEY = "codegraph.labelModeVersion";
-const LABEL_MODE_STORAGE_VERSION = "11";
+const LABEL_MODE_STORAGE_VERSION = "12";
 const API_TOKEN_STORAGE_KEY = "codegraph.apiToken";
 
 const I18N = {
@@ -133,6 +133,7 @@ const I18N = {
     "button.pause": "Pause",
     "button.resume": "Resume",
     "button.labelsMinimal": "Off",
+    "button.labelsHover": "Hover",
     "button.labelsAuto": "Auto",
     "button.labelsFocus": "Focus",
     "button.card": "Card",
@@ -505,6 +506,7 @@ const I18N = {
     "button.pause": "Пауза",
     "button.resume": "Продолжить",
     "button.labelsMinimal": "Выкл",
+    "button.labelsHover": "Наведение",
     "button.labelsAuto": "Авто",
     "button.labelsFocus": "Фокус",
     "button.card": "Карточка",
@@ -5989,6 +5991,7 @@ function shouldShowNodeLabel(node, selected, hovered, focused) {
 function drawNodeLabels(candidates) {
   const occupied = [];
   const nodeBoxes = nodeOcclusionBoxes();
+  const edgeBoxes = edgeOcclusionBoxes();
   const budget = nodeLabelBudget();
   let drawnAutoLabels = 0;
   const ordered = candidates.sort((left, right) => {
@@ -6004,7 +6007,7 @@ function drawNodeLabels(candidates) {
   ordered.forEach((candidate) => {
     const forced = candidate.forced;
     if (!forced && drawnAutoLabels >= budget) return;
-    const geometry = labelGeometry(candidate, occupied, nodeBoxes);
+    const geometry = labelGeometry(candidate, occupied, nodeBoxes, edgeBoxes);
     if (!geometry) return;
     drawLabelGeometry(geometry);
     occupied.push(geometry);
@@ -6012,7 +6015,7 @@ function drawNodeLabels(candidates) {
   });
 }
 
-function labelGeometry(candidate, occupied, nodeBoxes) {
+function labelGeometry(candidate, occupied, nodeBoxes, edgeBoxes) {
   const { node, position, radius, forced, selected } = candidate;
   const zoom = Math.max(0.18, state.zoom);
   const lines = forced
@@ -6045,7 +6048,7 @@ function labelGeometry(candidate, occupied, nodeBoxes) {
   );
   const usable = geometries.find(
     (geometry) =>
-      boxIntersectsViewport(geometry) && !labelIntersectsScene(geometry, occupied, nodeBoxes),
+      boxIntersectsViewport(geometry) && !labelIntersectsScene(geometry, occupied, nodeBoxes, edgeBoxes),
   );
   if (usable) return usable;
   return null;
@@ -6171,6 +6174,27 @@ function nodeOcclusionBoxes() {
     .filter(Boolean);
 }
 
+function edgeOcclusionBoxes() {
+  const pad = 5 / Math.max(0.18, state.zoom);
+  return state.visibleEdges
+    .map((edge) => {
+      const source = state.positions.get(edge.source);
+      const target = state.positions.get(edge.target);
+      if (!source || !target) return null;
+      const minX = Math.min(source.x, target.x) - pad;
+      const minY = Math.min(source.y, target.y) - pad;
+      return {
+        source: edge.source,
+        target: edge.target,
+        x: minX,
+        y: minY,
+        width: Math.abs(source.x - target.x) + pad * 2,
+        height: Math.abs(source.y - target.y) + pad * 2,
+      };
+    })
+    .filter(Boolean);
+}
+
 function truncateGraphLabel(value, maxLength) {
   return CodeGraphLabelPolicy.truncateGraphLabel(value, maxLength);
 }
@@ -6188,10 +6212,16 @@ function boxIntersectsViewport(box) {
   return !(right < -margin || left > canvas.width + margin || bottom < -margin || top > canvas.height + margin);
 }
 
-function labelIntersectsScene(label, occupied, nodeBoxes) {
+function labelIntersectsScene(label, occupied, nodeBoxes, edgeBoxes) {
   return (
     occupied.some((box) => boxesIntersect(box, label)) ||
-    nodeBoxes.some((box) => box.nodeId !== label.nodeId && boxesIntersect(box, label))
+    nodeBoxes.some((box) => box.nodeId !== label.nodeId && boxesIntersect(box, label)) ||
+    edgeBoxes.some(
+      (box) =>
+        box.source !== label.nodeId &&
+        box.target !== label.nodeId &&
+        boxesIntersect(box, label),
+    )
   );
 }
 
