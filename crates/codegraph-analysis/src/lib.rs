@@ -789,6 +789,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unresolved_entrypoint_target",
     "unresolved_framework_route_handler",
     "unresolved_local_import",
+    "unresolved_makefile_command_path",
     "unused_declared_dependency",
 ];
 
@@ -1337,6 +1338,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_orphan_function_insights(graph, &mut insights);
     add_error_flow_insights(graph, &mut insights);
     add_unresolved_entrypoint_insights(graph, &mut insights);
+    add_unresolved_makefile_command_path_insights(graph, &mut insights);
     add_entrypoint_dead_end_insights(graph, &mut insights);
     add_unreachable_config_read_insights(graph, &mut insights);
     add_unreachable_error_flow_insights(graph, &mut insights);
@@ -6431,6 +6433,54 @@ fn add_unresolved_entrypoint_insights(graph: &CodeGraph, insights: &mut Vec<Insi
             severity: InsightSeverity::Warning,
             message: format!(
                 "Entrypoint `{}` declares target `{target}` but no matching file or function was found",
+                node.label
+            ),
+            nodes: vec![node.id],
+            edges: incoming_edge_indexes(graph, node.id, EdgeKind::Entrypoint),
+        });
+    }
+}
+
+fn add_unresolved_makefile_command_path_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Entrypoint
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "makefile_target")
+        {
+            continue;
+        }
+        let Some(command_path) = node
+            .metadata
+            .get("command_path")
+            .map(|path| path.trim())
+            .filter(|path| !path.is_empty())
+        else {
+            continue;
+        };
+        let resolved = graph.edges.iter().any(|edge| {
+            edge.source == node.id
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|resolution| resolution == "make_command_path")
+        });
+        if resolved {
+            continue;
+        }
+
+        let command = node
+            .metadata
+            .get("command")
+            .map(String::as_str)
+            .unwrap_or(command_path);
+        insights.push(Insight {
+            kind: "unresolved_makefile_command_path".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Makefile target `{}` runs `{command}` but command path `{command_path}` was not found",
                 node.label
             ),
             nodes: vec![node.id],
@@ -11725,6 +11775,82 @@ mod tests {
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unresolved_entrypoint_target"
                 && (insight.nodes.contains(&resolved) || insight.nodes.contains(&targetless))
+        }));
+    }
+
+    #[test]
+    fn insights_report_unresolved_makefile_command_paths() {
+        let mut graph = CodeGraph::new("repo");
+        let broken = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "make target:deploy",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "makefile_target".to_string()),
+                (
+                    "command".to_string(),
+                    "./scripts/deploy.sh --prod".to_string(),
+                ),
+                ("command_path".to_string(), "scripts/deploy.sh".to_string()),
+            ]),
+        );
+        let resolved = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "make target:test",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "makefile_target".to_string()),
+                ("command".to_string(), "./scripts/test.sh".to_string()),
+                ("command_path".to_string(), "scripts/test.sh".to_string()),
+            ]),
+        );
+        let shell_only = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "make target:build",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "makefile_target".to_string()),
+                ("command".to_string(), "cargo test --workspace".to_string()),
+            ]),
+        );
+        let test_script = graph.add_node(NodeKind::File, "scripts/test.sh");
+        graph.add_edge(graph.root, broken, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(
+            graph.root,
+            resolved,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(
+            graph.root,
+            shell_only,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge_with_metadata(
+            resolved,
+            test_script,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("relation".to_string(), "entrypoint_file".to_string()),
+                ("resolution".to_string(), "make_command_path".to_string()),
+            ]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_makefile_command_path")
+            .expect("expected unresolved Makefile command path insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert_eq!(insight.nodes, vec![broken]);
+        assert!(insight.message.contains("scripts/deploy.sh"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_makefile_command_path"
+                && (insight.nodes.contains(&resolved) || insight.nodes.contains(&shell_only))
         }));
     }
 

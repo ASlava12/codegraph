@@ -2197,6 +2197,11 @@ fn index_makefile_entrypoints(
         metadata.insert("line".to_string(), target.line.to_string());
         if let Some(command) = target.command.as_deref() {
             metadata.insert("command".to_string(), command.to_string());
+            if let Some(command_path) = command_source_path_candidate(command)
+                .and_then(|path| normalize_manifest_relative_path(label, &path))
+            {
+                metadata.insert("command_path".to_string(), command_path);
+            }
         }
 
         let entrypoint_id = context.graph.add_node_with_metadata(
@@ -8608,6 +8613,10 @@ generated/output.txt:
         assert_eq!(
             deploy.metadata.get("command").map(String::as_str),
             Some("./scripts/deploy.sh --prod")
+        );
+        assert_eq!(
+            deploy.metadata.get("command_path").map(String::as_str),
+            Some("scripts/deploy.sh")
         );
         assert!(!graph.nodes.iter().any(|node| {
             node.kind == NodeKind::Entrypoint && node.label == "make target:generated/output.txt"

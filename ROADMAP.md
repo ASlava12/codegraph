@@ -133,6 +133,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect framework routes whose named handler cannot be resolved.
 - [x] Improve Rust/Axum route entrypoint labels for multiline routes and string literal false positives.
 - [x] Detect local imports/includes whose target file cannot be resolved.
+- [x] Detect Makefile task targets that reference missing local command paths.
 - [x] Detect custom architectural boundary violations on graph edges.
 - [x] Detect config and environment reads that are not reachable from entrypoints.
 - [x] Detect potential error/exception flows whose source is not reachable from entrypoints.
