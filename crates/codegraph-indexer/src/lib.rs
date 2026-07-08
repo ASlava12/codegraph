@@ -104,6 +104,8 @@ struct IndexContext {
     pending_entrypoint_targets: Vec<PendingEntrypointTarget>,
     pending_compose_config_targets: Vec<PendingComposeConfigTarget>,
     pending_compose_volume_targets: Vec<PendingComposeVolumeTarget>,
+    kubernetes_configs: BTreeMap<KubernetesConfigKey, NodeId>,
+    pending_kubernetes_config_refs: Vec<PendingKubernetesConfigRef>,
 }
 
 struct PendingCall {
@@ -138,6 +140,20 @@ struct PendingComposeVolumeTarget {
     volume: NodeId,
     manifest_label: String,
     target: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct KubernetesConfigKey {
+    namespace: String,
+    config_kind: String,
+    name: String,
+}
+
+struct PendingKubernetesConfigRef {
+    config_ref: NodeId,
+    namespace: String,
+    config_kind: String,
+    name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -199,6 +215,34 @@ struct ComposeVolume {
     kind: String,
     read_only: bool,
     raw: Option<String>,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KubernetesDocument {
+    kind: String,
+    name: String,
+    namespace: String,
+    line: u32,
+    config_refs: Vec<KubernetesConfigRef>,
+    service_ports: Vec<KubernetesServicePort>,
+    container_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KubernetesConfigRef {
+    config_kind: String,
+    ref_kind: String,
+    name: String,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KubernetesServicePort {
+    name: Option<String>,
+    port: Option<String>,
+    target_port: Option<String>,
+    protocol: String,
     line: u32,
 }
 
@@ -614,6 +658,8 @@ fn scan_project_with_scope(
         pending_entrypoint_targets: Vec::new(),
         pending_compose_config_targets: Vec::new(),
         pending_compose_volume_targets: Vec::new(),
+        kubernetes_configs: BTreeMap::new(),
+        pending_kubernetes_config_refs: Vec::new(),
     };
 
     for entry in WalkDir::new(root)
@@ -670,6 +716,7 @@ fn scan_project_with_scope(
     resolve_pending_entrypoint_targets(&mut context);
     resolve_pending_compose_config_targets(&mut context);
     resolve_pending_compose_volume_targets(&mut context);
+    resolve_pending_kubernetes_config_refs(&mut context);
     apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
 
@@ -1190,6 +1237,7 @@ fn index_manifest_facts(
     index_makefile_entrypoints(context, file_id, path, label, source);
     index_dockerfile_entrypoints(context, file_id, path, label, source);
     index_compose_entrypoints(context, file_id, path, label, source);
+    index_kubernetes_manifest_facts(context, file_id, path, label, source);
 }
 
 fn index_script_entrypoint(
@@ -2707,6 +2755,246 @@ fn index_compose_entrypoints(
     }
 }
 
+fn index_kubernetes_manifest_facts(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if !is_kubernetes_manifest_candidate(path, source) {
+        return;
+    }
+    let documents = kubernetes_documents(source);
+    if documents.is_empty() {
+        return;
+    }
+
+    for document in &documents {
+        if let Some(config_kind) = kubernetes_config_kind(&document.kind) {
+            let key = KubernetesConfigKey {
+                namespace: document.namespace.clone(),
+                config_kind: config_kind.to_string(),
+                name: document.name.clone(),
+            };
+            let mut metadata = BTreeMap::new();
+            metadata.insert("item_kind".to_string(), "kubernetes_config".to_string());
+            metadata.insert("source".to_string(), "kubernetes".to_string());
+            metadata.insert("ecosystem".to_string(), "kubernetes".to_string());
+            metadata.insert("kubernetes_kind".to_string(), document.kind.clone());
+            metadata.insert("config_kind".to_string(), config_kind.to_string());
+            metadata.insert("name".to_string(), document.name.clone());
+            metadata.insert("namespace".to_string(), document.namespace.clone());
+            metadata.insert("line".to_string(), document.line.to_string());
+            let config_id = context.graph.add_node_with_metadata(
+                NodeKind::Config,
+                kubernetes_resource_label(config_kind, &document.namespace, &document.name),
+                Some(line_span(label, source, document.line)),
+                metadata,
+            );
+            context.kubernetes_configs.insert(key, config_id);
+            add_edge_once(
+                &mut context.graph,
+                file_id,
+                config_id,
+                EdgeKind::Contains,
+                Confidence::Exact,
+            );
+            continue;
+        }
+
+        if document.kind == "Service" {
+            index_kubernetes_service(context, file_id, label, source, document);
+            continue;
+        }
+
+        if kubernetes_workload_kind(&document.kind) {
+            index_kubernetes_workload(context, file_id, label, source, document);
+        }
+    }
+}
+
+fn index_kubernetes_service(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+    document: &KubernetesDocument,
+) {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("item_kind".to_string(), "kubernetes_service".to_string());
+    metadata.insert("source".to_string(), "kubernetes".to_string());
+    metadata.insert("ecosystem".to_string(), "kubernetes".to_string());
+    metadata.insert("kubernetes_kind".to_string(), document.kind.clone());
+    metadata.insert("name".to_string(), document.name.clone());
+    metadata.insert("namespace".to_string(), document.namespace.clone());
+    metadata.insert("line".to_string(), document.line.to_string());
+    metadata.insert(
+        "port_count".to_string(),
+        document.service_ports.len().to_string(),
+    );
+    let service_id = context.graph.add_node_with_metadata(
+        NodeKind::Config,
+        kubernetes_resource_label("service", &document.namespace, &document.name),
+        Some(line_span(label, source, document.line)),
+        metadata,
+    );
+    add_edge_once(
+        &mut context.graph,
+        file_id,
+        service_id,
+        EdgeKind::Contains,
+        Confidence::Exact,
+    );
+
+    for port in &document.service_ports {
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "item_kind".to_string(),
+            "kubernetes_service_port".to_string(),
+        );
+        metadata.insert("source".to_string(), "kubernetes".to_string());
+        metadata.insert("ecosystem".to_string(), "kubernetes".to_string());
+        metadata.insert("service".to_string(), document.name.clone());
+        metadata.insert("namespace".to_string(), document.namespace.clone());
+        metadata.insert("protocol".to_string(), port.protocol.clone());
+        metadata.insert("line".to_string(), port.line.to_string());
+        if let Some(name) = port.name.as_deref() {
+            metadata.insert("name".to_string(), name.to_string());
+        }
+        if let Some(value) = port.port.as_deref() {
+            metadata.insert("port".to_string(), value.to_string());
+        }
+        if let Some(value) = port.target_port.as_deref() {
+            metadata.insert("target_port".to_string(), value.to_string());
+        }
+        let port_id = context.graph.add_node_with_metadata(
+            NodeKind::Config,
+            kubernetes_service_port_label(document, port),
+            Some(line_span(label, source, port.line)),
+            metadata,
+        );
+        let mut edge_metadata = BTreeMap::new();
+        edge_metadata.insert("source".to_string(), "kubernetes".to_string());
+        edge_metadata.insert(
+            "relation".to_string(),
+            "kubernetes_service_port".to_string(),
+        );
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            service_id,
+            port_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            edge_metadata,
+        );
+    }
+}
+
+fn index_kubernetes_workload(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+    document: &KubernetesDocument,
+) {
+    let kind_slug = document.kind.to_ascii_lowercase();
+    let mut metadata = BTreeMap::new();
+    metadata.insert("item_kind".to_string(), "kubernetes_workload".to_string());
+    metadata.insert("entrypoint_kind".to_string(), "workload".to_string());
+    metadata.insert("source".to_string(), "kubernetes".to_string());
+    metadata.insert("ecosystem".to_string(), "kubernetes".to_string());
+    metadata.insert("kubernetes_kind".to_string(), document.kind.clone());
+    metadata.insert("name".to_string(), document.name.clone());
+    metadata.insert("namespace".to_string(), document.namespace.clone());
+    metadata.insert("line".to_string(), document.line.to_string());
+    metadata.insert(
+        "config_ref_count".to_string(),
+        document.config_refs.len().to_string(),
+    );
+    metadata.insert(
+        "container_count".to_string(),
+        document.container_count.to_string(),
+    );
+    let workload_id = context.graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        kubernetes_resource_label(&kind_slug, &document.namespace, &document.name),
+        Some(line_span(label, source, document.line)),
+        metadata,
+    );
+    add_edge_once(
+        &mut context.graph,
+        file_id,
+        workload_id,
+        EdgeKind::Contains,
+        Confidence::Exact,
+    );
+    let root_id = context.graph.root;
+    add_edge_once(
+        &mut context.graph,
+        root_id,
+        workload_id,
+        EdgeKind::Entrypoint,
+        Confidence::Exact,
+    );
+    let mut edge_metadata = BTreeMap::new();
+    edge_metadata.insert("relation".to_string(), "entrypoint_file".to_string());
+    edge_metadata.insert("resolution".to_string(), "kubernetes_manifest".to_string());
+    edge_metadata.insert("source".to_string(), "kubernetes".to_string());
+    add_edge_once_with_metadata(
+        &mut context.graph,
+        workload_id,
+        file_id,
+        EdgeKind::References,
+        Confidence::Exact,
+        edge_metadata,
+    );
+
+    for config_ref in &document.config_refs {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "kubernetes_config_ref".to_string());
+        metadata.insert("source".to_string(), "kubernetes".to_string());
+        metadata.insert("ecosystem".to_string(), "kubernetes".to_string());
+        metadata.insert("config_kind".to_string(), config_ref.config_kind.clone());
+        metadata.insert("ref_kind".to_string(), config_ref.ref_kind.clone());
+        metadata.insert("name".to_string(), config_ref.name.clone());
+        metadata.insert("namespace".to_string(), document.namespace.clone());
+        metadata.insert("workload".to_string(), document.name.clone());
+        metadata.insert("workload_kind".to_string(), document.kind.clone());
+        metadata.insert("line".to_string(), config_ref.line.to_string());
+        let config_ref_id = context.graph.add_node_with_metadata(
+            NodeKind::Config,
+            kubernetes_config_ref_label(
+                &config_ref.config_kind,
+                &document.namespace,
+                &config_ref.name,
+            ),
+            Some(line_span(label, source, config_ref.line)),
+            metadata,
+        );
+        let mut edge_metadata = BTreeMap::new();
+        edge_metadata.insert("source".to_string(), "kubernetes".to_string());
+        edge_metadata.insert("relation".to_string(), "kubernetes_config_ref".to_string());
+        edge_metadata.insert("ref_kind".to_string(), config_ref.ref_kind.clone());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            workload_id,
+            config_ref_id,
+            EdgeKind::ReadsConfig,
+            Confidence::Exact,
+            edge_metadata,
+        );
+        context
+            .pending_kubernetes_config_refs
+            .push(PendingKubernetesConfigRef {
+                config_ref: config_ref_id,
+                namespace: document.namespace.clone(),
+                config_kind: config_ref.config_kind.clone(),
+                name: config_ref.name.clone(),
+            });
+    }
+}
+
 fn manifest_dependencies(
     path: &Path,
     source: &str,
@@ -2774,6 +3062,287 @@ fn is_compose_file_path(path: &Path) -> bool {
             ) || name.ends_with(".compose.yml")
                 || name.ends_with(".compose.yaml")
         })
+}
+
+fn is_kubernetes_manifest_candidate(path: &Path, source: &str) -> bool {
+    let yaml_path = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| matches!(extension, "yaml" | "yml"));
+    yaml_path && source.contains("apiVersion:") && source.contains("kind:")
+}
+
+fn kubernetes_documents(source: &str) -> Vec<KubernetesDocument> {
+    let mut documents = Vec::new();
+    let mut start_line = 1u32;
+    let mut lines = Vec::new();
+
+    for (index, raw_line) in source.lines().enumerate() {
+        if raw_line.trim() == "---" {
+            if let Some(document) = kubernetes_document_from_lines(&lines, start_line) {
+                documents.push(document);
+            }
+            lines.clear();
+            start_line = index as u32 + 2;
+            continue;
+        }
+        lines.push(raw_line.to_string());
+    }
+
+    if let Some(document) = kubernetes_document_from_lines(&lines, start_line) {
+        documents.push(document);
+    }
+    documents
+}
+
+fn kubernetes_document_from_lines(lines: &[String], start_line: u32) -> Option<KubernetesDocument> {
+    let mut has_api_version = false;
+    let mut kind = None;
+    let mut metadata_indent = None;
+    let mut name = None;
+    let mut namespace = None;
+    let mut config_refs = Vec::new();
+    let mut service_ports = Vec::new();
+    let mut active_ref: Option<(String, String, usize, u32)> = None;
+    let mut active_ports_indent = None;
+    let mut active_service_port: Option<(KubernetesServicePort, usize)> = None;
+    let mut active_containers_indent = None;
+    let mut container_count = 0usize;
+
+    for (index, raw_line) in lines.iter().enumerate() {
+        let line = start_line + index as u32;
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let item_trimmed = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+        let indent = yaml_indent(raw_line);
+
+        if let Some((_, _, ref_indent, _)) = active_ref.as_ref()
+            && indent <= *ref_indent
+        {
+            active_ref = None;
+        }
+        if let Some((config_kind, ref_kind, _, ref_line)) = active_ref.as_ref()
+            && let Some(value) = yaml_key_value(trimmed, "name")
+        {
+            config_refs.push(KubernetesConfigRef {
+                config_kind: config_kind.clone(),
+                ref_kind: ref_kind.clone(),
+                name: value,
+                line: *ref_line,
+            });
+            active_ref = None;
+            continue;
+        }
+
+        if indent == 0 {
+            if yaml_key_value(trimmed, "apiVersion").is_some() {
+                has_api_version = true;
+            } else if let Some(value) = yaml_key_value(trimmed, "kind") {
+                kind = Some(value);
+            } else if yaml_key(trimmed).is_some_and(|key| key == "metadata") {
+                metadata_indent = Some(indent);
+            }
+        }
+
+        if let Some(parent_indent) = metadata_indent {
+            if indent <= parent_indent && yaml_key(trimmed).is_some_and(|key| key != "metadata") {
+                metadata_indent = None;
+            } else if indent > parent_indent {
+                if let Some(value) = yaml_key_value(trimmed, "name") {
+                    name = Some(value);
+                } else if let Some(value) = yaml_key_value(trimmed, "namespace") {
+                    namespace = Some(value);
+                }
+            }
+        }
+
+        if let Some((_, port_indent)) = active_service_port.as_ref()
+            && indent <= *port_indent
+        {
+            flush_kubernetes_service_port(&mut service_ports, &mut active_service_port);
+        }
+        if let Some(ports_indent) = active_ports_indent
+            && indent <= ports_indent
+        {
+            flush_kubernetes_service_port(&mut service_ports, &mut active_service_port);
+            active_ports_indent = None;
+        }
+        if let Some(containers_indent) = active_containers_indent
+            && indent <= containers_indent
+        {
+            active_containers_indent = None;
+        }
+
+        if yaml_key(trimmed).is_some_and(|key| key == "ports") {
+            active_ports_indent = Some(indent);
+            continue;
+        }
+        if yaml_key(trimmed).is_some_and(|key| key == "containers") {
+            active_containers_indent = Some(indent);
+            continue;
+        }
+
+        if let Some((config_kind, ref_kind)) = kubernetes_ref_key(item_trimmed) {
+            if let Some(value) = yaml_key_value(item_trimmed, &ref_kind)
+                && let Some(name) = yaml_inline_mapping_value(&value, "name")
+            {
+                config_refs.push(KubernetesConfigRef {
+                    config_kind,
+                    ref_kind,
+                    name,
+                    line,
+                });
+            } else {
+                active_ref = Some((config_kind, ref_kind, indent, line));
+            }
+            continue;
+        }
+
+        if let Some(containers_indent) = active_containers_indent
+            && indent == containers_indent + 2
+            && trimmed
+                .strip_prefix("- ")
+                .and_then(|value| yaml_key_value(value, "name"))
+                .is_some()
+        {
+            container_count += 1;
+        }
+
+        if active_ports_indent.is_some() {
+            if let Some(value) = trimmed.strip_prefix("- ") {
+                flush_kubernetes_service_port(&mut service_ports, &mut active_service_port);
+                let mut port = KubernetesServicePort {
+                    name: None,
+                    port: None,
+                    target_port: None,
+                    protocol: "TCP".to_string(),
+                    line,
+                };
+                if let Some((key, value)) = yaml_key_pair(value) {
+                    apply_kubernetes_service_port_field(&mut port, key, value);
+                }
+                active_service_port = Some((port, indent));
+            } else if let Some((key, value)) = yaml_key_pair(trimmed)
+                && let Some((port, _)) = active_service_port.as_mut()
+            {
+                apply_kubernetes_service_port_field(port, key, value);
+            }
+        }
+    }
+
+    flush_kubernetes_service_port(&mut service_ports, &mut active_service_port);
+
+    let kind = kind?;
+    let name = name?;
+    if !has_api_version || !kubernetes_known_kind(&kind) {
+        return None;
+    }
+
+    Some(KubernetesDocument {
+        kind,
+        name,
+        namespace: namespace.unwrap_or_else(|| "default".to_string()),
+        line: start_line,
+        config_refs,
+        service_ports,
+        container_count,
+    })
+}
+
+fn kubernetes_ref_key(trimmed: &str) -> Option<(String, String)> {
+    let ref_kind = yaml_key(trimmed)?;
+    let config_kind = match ref_kind.as_str() {
+        "configMapRef" | "configMapKeyRef" => "configmap",
+        "secretRef" | "secretKeyRef" => "secret",
+        _ => return None,
+    };
+    Some((config_kind.to_string(), ref_kind))
+}
+
+fn yaml_inline_mapping_value(value: &str, expected_key: &str) -> Option<String> {
+    let value = value
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim();
+    for part in value.split(',') {
+        if let Some(found) = yaml_key_value(part.trim(), expected_key) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn apply_kubernetes_service_port_field(
+    port: &mut KubernetesServicePort,
+    key: String,
+    value: String,
+) {
+    match key.as_str() {
+        "name" if !value.is_empty() => port.name = Some(value),
+        "port" if !value.is_empty() => port.port = Some(value),
+        "targetPort" if !value.is_empty() => port.target_port = Some(value),
+        "protocol" if !value.is_empty() => port.protocol = value.to_ascii_uppercase(),
+        _ => {}
+    }
+}
+
+fn flush_kubernetes_service_port(
+    ports: &mut Vec<KubernetesServicePort>,
+    active_port: &mut Option<(KubernetesServicePort, usize)>,
+) {
+    let Some((port, _)) = active_port.take() else {
+        return;
+    };
+    if port.port.is_some() || port.target_port.is_some() {
+        ports.push(port);
+    }
+}
+
+fn kubernetes_known_kind(kind: &str) -> bool {
+    kubernetes_config_kind(kind).is_some() || kind == "Service" || kubernetes_workload_kind(kind)
+}
+
+fn kubernetes_config_kind(kind: &str) -> Option<&'static str> {
+    match kind {
+        "ConfigMap" => Some("configmap"),
+        "Secret" => Some("secret"),
+        _ => None,
+    }
+}
+
+fn kubernetes_workload_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "Deployment" | "StatefulSet" | "DaemonSet" | "Job" | "CronJob" | "Pod"
+    )
+}
+
+fn kubernetes_resource_label(kind: &str, namespace: &str, name: &str) -> String {
+    format!("k8s {kind}:{namespace}/{name}")
+}
+
+fn kubernetes_config_ref_label(config_kind: &str, namespace: &str, name: &str) -> String {
+    format!("k8s config ref:{config_kind} {namespace}/{name}")
+}
+
+fn kubernetes_service_port_label(
+    document: &KubernetesDocument,
+    port: &KubernetesServicePort,
+) -> String {
+    let port_value = port.port.as_deref().unwrap_or("unknown");
+    match port.target_port.as_deref() {
+        Some(target) => format!(
+            "k8s service port:{}/{}:{}->{}/{}",
+            document.namespace, document.name, port_value, target, port.protocol
+        ),
+        None => format!(
+            "k8s service port:{}/{}:{}/{}",
+            document.namespace, document.name, port_value, port.protocol
+        ),
+    }
 }
 
 fn compose_services(source: &str) -> Vec<ComposeService> {
@@ -6964,6 +7533,36 @@ fn resolve_pending_compose_volume_targets(context: &mut IndexContext) {
     }
 }
 
+fn resolve_pending_kubernetes_config_refs(context: &mut IndexContext) {
+    let pending_refs = std::mem::take(&mut context.pending_kubernetes_config_refs);
+
+    for pending in pending_refs {
+        let key = KubernetesConfigKey {
+            namespace: pending.namespace,
+            config_kind: pending.config_kind,
+            name: pending.name,
+        };
+        let Some(config_id) = context.kubernetes_configs.get(&key).copied() else {
+            continue;
+        };
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), "config_definition".to_string());
+        metadata.insert(
+            "resolution".to_string(),
+            "kubernetes_config_ref".to_string(),
+        );
+        metadata.insert("source".to_string(), "kubernetes".to_string());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.config_ref,
+            config_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
 fn entrypoint_target_candidates(
     pending: &PendingEntrypointTarget,
 ) -> Vec<EntrypointTargetCandidate> {
@@ -10320,6 +10919,183 @@ generated/output.txt:
             "entrypoint_file",
             Confidence::Exact,
         ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_adds_kubernetes_runtime_config_refs() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("k8s")).unwrap();
+        fs::write(
+            root.join("k8s").join("app.yaml"),
+            r#"apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: prod
+data:
+  APP_ENV: production
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+  namespace: prod
+stringData:
+  token: demo
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: prod
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: web
+          image: demo/web
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef: { name: app-secret }
+          env:
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: token
+            - name: MISSING
+              valueFrom:
+                configMapKeyRef:
+                  name: missing-config
+                  key: value
+"#,
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let manifest = node_id(&graph, NodeKind::File, "k8s/app.yaml");
+        let deployment = node_id(&graph, NodeKind::Entrypoint, "k8s deployment:prod/web");
+        let configmap = node_id(&graph, NodeKind::Config, "k8s configmap:prod/app-config");
+        let secret = node_id(&graph, NodeKind::Config, "k8s secret:prod/app-secret");
+        let service = node_id(&graph, NodeKind::Config, "k8s service:prod/web");
+        let service_port = node_id(
+            &graph,
+            NodeKind::Config,
+            "k8s service port:prod/web:80->8080/TCP",
+        );
+        let app_config_ref = node_id(
+            &graph,
+            NodeKind::Config,
+            "k8s config ref:configmap prod/app-config",
+        );
+        let app_secret_ref = node_id(
+            &graph,
+            NodeKind::Config,
+            "k8s config ref:secret prod/app-secret",
+        );
+        let missing_config_ref = node_id(
+            &graph,
+            NodeKind::Config,
+            "k8s config ref:configmap prod/missing-config",
+        );
+
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == graph.root
+                && edge.target == deployment
+                && edge.kind == EdgeKind::Entrypoint
+                && edge.confidence == Confidence::Exact
+        }));
+        for node in [deployment, configmap, secret, service] {
+            assert!(graph.edges.iter().any(|edge| {
+                edge.source == manifest
+                    && edge.target == node
+                    && edge.kind == EdgeKind::Contains
+                    && edge.confidence == Confidence::Exact
+            }));
+        }
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == deployment
+                && edge.target == manifest
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|value| value == "kubernetes_manifest")
+        }));
+        for config_ref in [app_config_ref, app_secret_ref, missing_config_ref] {
+            assert!(graph.edges.iter().any(|edge| {
+                edge.source == deployment
+                    && edge.target == config_ref
+                    && edge.kind == EdgeKind::ReadsConfig
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|value| value == "kubernetes_config_ref")
+            }));
+        }
+        for (config_ref, config) in [(app_config_ref, configmap), (app_secret_ref, secret)] {
+            assert!(graph.edges.iter().any(|edge| {
+                edge.source == config_ref
+                    && edge.target == config
+                    && edge.kind == EdgeKind::References
+                    && edge.confidence == Confidence::Exact
+                    && edge
+                        .metadata
+                        .get("resolution")
+                        .is_some_and(|value| value == "kubernetes_config_ref")
+            }));
+        }
+        assert!(!graph.edges.iter().any(|edge| {
+            edge.source == missing_config_ref
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|value| value == "kubernetes_config_ref")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == service
+                && edge.target == service_port
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "kubernetes_service_port")
+        }));
+        let deployment_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == deployment)
+            .expect("missing Kubernetes deployment");
+        assert_eq!(
+            deployment_node
+                .metadata
+                .get("config_ref_count")
+                .map(String::as_str),
+            Some("4")
+        );
+        assert_eq!(
+            deployment_node
+                .metadata
+                .get("container_count")
+                .map(String::as_str),
+            Some("1")
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

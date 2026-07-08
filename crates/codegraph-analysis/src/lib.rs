@@ -793,6 +793,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unresolved_dockerfile_command_path",
     "unresolved_entrypoint_target",
     "unresolved_framework_route_handler",
+    "unresolved_kubernetes_config_ref",
     "unresolved_local_import",
     "unresolved_makefile_command_path",
     "unused_declared_dependency",
@@ -1347,6 +1348,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unresolved_compose_command_path_insights(graph, &mut insights);
     add_unresolved_compose_env_file_path_insights(graph, &mut insights);
     add_unresolved_compose_volume_source_path_insights(graph, &mut insights);
+    add_unresolved_kubernetes_config_ref_insights(graph, &mut insights);
     add_unresolved_dockerfile_command_path_insights(graph, &mut insights);
     add_unresolved_makefile_command_path_insights(graph, &mut insights);
     add_entrypoint_dead_end_insights(graph, &mut insights);
@@ -6669,6 +6671,85 @@ fn compose_volume_reader_ids(graph: &CodeGraph, volume: NodeId) -> Vec<NodeId> {
                     .metadata
                     .get("relation")
                     .is_some_and(|relation| relation == "compose_volume")
+        })
+        .map(|edge| edge.source)
+        .collect()
+}
+
+fn add_unresolved_kubernetes_config_ref_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node.kind != NodeKind::Config
+            || node
+                .metadata
+                .get("item_kind")
+                .is_none_or(|kind| kind != "kubernetes_config_ref")
+        {
+            continue;
+        }
+        let resolved = graph.edges.iter().any(|edge| {
+            edge.source == node.id
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|value| value == "kubernetes_config_ref")
+        });
+        if resolved {
+            continue;
+        }
+
+        let config_kind = node
+            .metadata
+            .get("config_kind")
+            .map(String::as_str)
+            .unwrap_or("config");
+        let name = node
+            .metadata
+            .get("name")
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        let namespace = node
+            .metadata
+            .get("namespace")
+            .map(String::as_str)
+            .unwrap_or("default");
+        let workload = node
+            .metadata
+            .get("workload")
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        let workload_kind = node
+            .metadata
+            .get("workload_kind")
+            .map(String::as_str)
+            .unwrap_or("workload");
+        let mut nodes = vec![node.id];
+        nodes.extend(kubernetes_config_ref_reader_ids(graph, node.id));
+        nodes.sort();
+        nodes.dedup();
+        insights.push(Insight {
+            kind: "unresolved_kubernetes_config_ref".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Kubernetes {workload_kind} `{workload}` references {config_kind} `{namespace}/{name}` but no matching manifest was found"
+            ),
+            nodes,
+            edges: incoming_edge_indexes(graph, node.id, EdgeKind::ReadsConfig),
+        });
+    }
+}
+
+fn kubernetes_config_ref_reader_ids(graph: &CodeGraph, config_ref: NodeId) -> Vec<NodeId> {
+    graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.target == config_ref
+                && edge.kind == EdgeKind::ReadsConfig
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "kubernetes_config_ref")
         })
         .map(|edge| edge.source)
         .collect()
@@ -12382,6 +12463,98 @@ mod tests {
         assert!(!report.insights.iter().any(|insight| {
             insight.kind == "unresolved_compose_volume_source_path"
                 && insight.nodes.contains(&resolved)
+        }));
+    }
+
+    #[test]
+    fn insights_report_unresolved_kubernetes_config_refs() {
+        let mut graph = CodeGraph::new("repo");
+        let web = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "k8s deployment:prod/web",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "kubernetes_workload".to_string()),
+                ("kubernetes_kind".to_string(), "Deployment".to_string()),
+                ("name".to_string(), "web".to_string()),
+                ("namespace".to_string(), "prod".to_string()),
+            ]),
+        );
+        let missing = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "k8s config ref:configmap prod/missing-config",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "kubernetes_config_ref".to_string()),
+                ("config_kind".to_string(), "configmap".to_string()),
+                ("name".to_string(), "missing-config".to_string()),
+                ("namespace".to_string(), "prod".to_string()),
+                ("workload".to_string(), "web".to_string()),
+                ("workload_kind".to_string(), "Deployment".to_string()),
+            ]),
+        );
+        let resolved = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "k8s config ref:secret prod/app-secret",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "kubernetes_config_ref".to_string()),
+                ("config_kind".to_string(), "secret".to_string()),
+                ("name".to_string(), "app-secret".to_string()),
+                ("namespace".to_string(), "prod".to_string()),
+                ("workload".to_string(), "web".to_string()),
+                ("workload_kind".to_string(), "Deployment".to_string()),
+            ]),
+        );
+        let secret = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "k8s secret:prod/app-secret",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "kubernetes_config".to_string()),
+                ("config_kind".to_string(), "secret".to_string()),
+                ("name".to_string(), "app-secret".to_string()),
+                ("namespace".to_string(), "prod".to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            web,
+            missing,
+            EdgeKind::ReadsConfig,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "kubernetes_config_ref".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            web,
+            resolved,
+            EdgeKind::ReadsConfig,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "kubernetes_config_ref".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            resolved,
+            secret,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([(
+                "resolution".to_string(),
+                "kubernetes_config_ref".to_string(),
+            )]),
+        );
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_kubernetes_config_ref")
+            .expect("expected unresolved Kubernetes config ref insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.nodes.contains(&missing));
+        assert!(insight.nodes.contains(&web));
+        assert!(insight.message.contains("prod/missing-config"));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unresolved_kubernetes_config_ref" && insight.nodes.contains(&resolved)
         }));
     }
 
