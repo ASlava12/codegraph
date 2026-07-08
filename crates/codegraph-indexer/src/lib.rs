@@ -115,6 +115,7 @@ struct IndexContext {
     sql_tables: BTreeMap<String, NodeId>,
     sql_columns: BTreeMap<String, NodeId>,
     pending_sql_foreign_keys: Vec<PendingSqlForeignKey>,
+    pending_sql_query_table_refs: Vec<PendingSqlQueryTableRef>,
 }
 
 struct PendingCall {
@@ -204,6 +205,14 @@ struct PendingSqlForeignKey {
     source_column: Option<String>,
     target_table: String,
     target_column: Option<String>,
+    line: u32,
+}
+
+struct PendingSqlQueryTableRef {
+    query: NodeId,
+    table: String,
+    operation: String,
+    role: String,
     line: u32,
 }
 
@@ -817,6 +826,7 @@ fn scan_project_with_scope(
         sql_tables: BTreeMap::new(),
         sql_columns: BTreeMap::new(),
         pending_sql_foreign_keys: Vec::new(),
+        pending_sql_query_table_refs: Vec::new(),
     };
 
     for entry in WalkDir::new(root)
@@ -879,6 +889,7 @@ fn scan_project_with_scope(
     resolve_pending_document_path_refs(&mut context);
     resolve_pending_document_symbol_refs(&mut context);
     resolve_pending_sql_foreign_keys(&mut context);
+    resolve_pending_sql_query_table_refs(&mut context);
     apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
 
@@ -1256,6 +1267,15 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
                         label,
                         language,
                         source,
+                        &local_functions,
+                    );
+                    index_inline_sql_queries(
+                        context,
+                        file_id,
+                        label,
+                        language,
+                        source,
+                        &parsed,
                         &local_functions,
                     );
                 }
@@ -1775,6 +1795,117 @@ struct SqlTableConstraint {
     line: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceSqlLiteral {
+    value: String,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SqlQueryTableRef {
+    operation: String,
+    table: String,
+    role: String,
+}
+
+fn index_inline_sql_queries(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    language: Language,
+    source: &str,
+    parsed: &ParsedFile,
+    local_functions: &BTreeMap<String, NodeId>,
+) {
+    let function_ranges = parsed
+        .items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.kind,
+                ParsedItemKind::Function | ParsedItemKind::Entrypoint
+            )
+        })
+        .filter_map(|item| {
+            resolve_local_function(local_functions, &item.label).map(|id| {
+                (
+                    item.span.start_line,
+                    item.span.end_line.max(item.span.start_line),
+                    id,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for literal in source_sql_literals(source) {
+        let table_refs = sql_query_table_refs(&literal.value);
+        if table_refs.is_empty() {
+            continue;
+        }
+
+        let operation = table_refs
+            .iter()
+            .map(|reference| reference.operation.as_str())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(",");
+        let tables = table_refs
+            .iter()
+            .map(|reference| reference.table.as_str())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(",");
+        let source_id = function_ranges
+            .iter()
+            .find(|(start, end, _)| literal.line >= *start && literal.line <= *end)
+            .map(|(_, _, id)| *id)
+            .unwrap_or(file_id);
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("language".to_string(), language.to_string());
+        metadata.insert("item_kind".to_string(), "app_sql_query".to_string());
+        metadata.insert("source".to_string(), "source_sql_literal".to_string());
+        metadata.insert("line".to_string(), literal.line.to_string());
+        metadata.insert("operation".to_string(), operation);
+        metadata.insert("tables".to_string(), tables);
+        metadata.insert(
+            "query".to_string(),
+            truncate_metadata_value(&literal.value, 500),
+        );
+        let query_id = context.graph.add_node_with_metadata(
+            NodeKind::Config,
+            format!("sql query:{label}:{}", literal.line),
+            Some(line_span(label, source, literal.line)),
+            metadata,
+        );
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            source_id,
+            query_id,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("relation".to_string(), "app_sql_query".to_string()),
+                ("source".to_string(), "source_sql_literal".to_string()),
+            ]),
+        );
+
+        for reference in table_refs {
+            context
+                .pending_sql_query_table_refs
+                .push(PendingSqlQueryTableRef {
+                    query: query_id,
+                    table: reference.table,
+                    operation: reference.operation,
+                    role: reference.role,
+                    line: literal.line,
+                });
+        }
+    }
+}
+
 fn index_sql_create_table(
     context: &mut IndexContext,
     file_id: NodeId,
@@ -1960,6 +2091,310 @@ fn index_sql_create_index(
             ]),
         );
     }
+}
+
+fn source_sql_literals(source: &str) -> Vec<SourceSqlLiteral> {
+    let mut literals = Vec::new();
+    let mut cursor = 0;
+
+    while cursor < source.len() {
+        if let Some((value, end)) = raw_string_literal_at(source, cursor) {
+            literals.push(SourceSqlLiteral {
+                value,
+                line: byte_line_number(source, cursor),
+            });
+            cursor = end;
+            continue;
+        }
+
+        let Some(character) = source[cursor..].chars().next() else {
+            break;
+        };
+        if !matches!(character, '"' | '\'' | '`') {
+            cursor += character.len_utf8();
+            continue;
+        }
+
+        let delimiter = character.to_string();
+        let triple_delimiter = delimiter.repeat(3);
+        if character != '`' && source[cursor..].starts_with(&triple_delimiter) {
+            let content_start = cursor + triple_delimiter.len();
+            if let Some(relative_end) = source[content_start..].find(&triple_delimiter) {
+                literals.push(SourceSqlLiteral {
+                    value: source[content_start..content_start + relative_end].to_string(),
+                    line: byte_line_number(source, cursor),
+                });
+                cursor = content_start + relative_end + triple_delimiter.len();
+                continue;
+            }
+        }
+
+        let content_start = cursor + character.len_utf8();
+        let mut escaped = false;
+        let mut value = String::new();
+        let mut end = None;
+        for (relative, next) in source[content_start..].char_indices() {
+            if escaped {
+                value.push(next);
+                escaped = false;
+                continue;
+            }
+            if next == '\\' {
+                escaped = true;
+                continue;
+            }
+            if next == character {
+                end = Some(content_start + relative + next.len_utf8());
+                break;
+            }
+            value.push(next);
+        }
+
+        if let Some(end) = end {
+            literals.push(SourceSqlLiteral {
+                value,
+                line: byte_line_number(source, cursor),
+            });
+            cursor = end;
+        } else {
+            cursor += character.len_utf8();
+        }
+    }
+
+    literals
+}
+
+fn raw_string_literal_at(source: &str, cursor: usize) -> Option<(String, usize)> {
+    let rest = source.get(cursor..)?;
+    if !rest.starts_with('r') {
+        return None;
+    }
+
+    let bytes = rest.as_bytes();
+    let mut index = 1;
+    while bytes.get(index).is_some_and(|byte| *byte == b'#') {
+        index += 1;
+    }
+    if bytes.get(index) != Some(&b'"') {
+        return None;
+    }
+
+    let hashes = &rest[1..index];
+    let content_start = cursor + index + 1;
+    let delimiter = format!("\"{hashes}");
+    let relative_end = source[content_start..].find(&delimiter)?;
+    Some((
+        source[content_start..content_start + relative_end].to_string(),
+        content_start + relative_end + delimiter.len(),
+    ))
+}
+
+fn sql_query_table_refs(query: &str) -> Vec<SqlQueryTableRef> {
+    let tokens = sql_query_tokens(query);
+    let mut refs = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for (index, token) in tokens.iter().enumerate() {
+        let lower = token.to_ascii_lowercase();
+        let reference = match lower.as_str() {
+            "from" => next_sql_table_token(&tokens, index + 1).map(|table| SqlQueryTableRef {
+                operation: "select".to_string(),
+                table,
+                role: "source".to_string(),
+            }),
+            "join" => next_sql_table_token(&tokens, index + 1).map(|table| SqlQueryTableRef {
+                operation: "select".to_string(),
+                table,
+                role: "join".to_string(),
+            }),
+            "into" if previous_sql_keyword(&tokens, index, "insert") => {
+                next_sql_table_token(&tokens, index + 1).map(|table| SqlQueryTableRef {
+                    operation: "insert".to_string(),
+                    table,
+                    role: "target".to_string(),
+                })
+            }
+            "update" => next_sql_table_token(&tokens, index + 1).map(|table| SqlQueryTableRef {
+                operation: "update".to_string(),
+                table,
+                role: "target".to_string(),
+            }),
+            "delete" => tokens
+                .get(index + 1)
+                .filter(|token| token.eq_ignore_ascii_case("from"))
+                .and_then(|_| next_sql_table_token(&tokens, index + 2))
+                .map(|table| SqlQueryTableRef {
+                    operation: "delete".to_string(),
+                    table,
+                    role: "target".to_string(),
+                }),
+            _ => None,
+        };
+
+        if let Some(reference) = reference {
+            let key = (
+                reference.operation.clone(),
+                sql_identifier_key(&reference.table),
+                reference.role.clone(),
+            );
+            if seen.insert(key) {
+                refs.push(reference);
+            }
+        }
+    }
+
+    refs
+}
+
+fn sql_query_tokens(query: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut cursor = 0;
+
+    while cursor < query.len() {
+        let Some(character) = query[cursor..].chars().next() else {
+            break;
+        };
+
+        if character.is_whitespace() {
+            cursor += character.len_utf8();
+            continue;
+        }
+        if matches!(character, '(' | ')' | ',' | ';') {
+            tokens.push(character.to_string());
+            cursor += character.len_utf8();
+            continue;
+        }
+        if character == '\'' {
+            cursor = skip_quoted_sql_fragment(query, cursor, '\'');
+            continue;
+        }
+        if matches!(character, '"' | '`') {
+            let quote = character;
+            let content_start = cursor + quote.len_utf8();
+            let mut value = String::new();
+            let mut end = None;
+            for (relative, next) in query[content_start..].char_indices() {
+                if next == quote {
+                    end = Some(content_start + relative + next.len_utf8());
+                    break;
+                }
+                value.push(next);
+            }
+            if !value.trim().is_empty() {
+                tokens.push(value);
+            }
+            cursor = end.unwrap_or(content_start);
+            continue;
+        }
+        if character == '[' {
+            let content_start = cursor + 1;
+            if let Some(relative_end) = query[content_start..].find(']') {
+                let value = query[content_start..content_start + relative_end].trim();
+                if !value.is_empty() {
+                    tokens.push(value.to_string());
+                }
+                cursor = content_start + relative_end + 1;
+                continue;
+            }
+        }
+
+        let start = cursor;
+        cursor += character.len_utf8();
+        while cursor < query.len() {
+            let Some(next) = query[cursor..].chars().next() else {
+                break;
+            };
+            if next.is_whitespace()
+                || matches!(next, '(' | ')' | ',' | ';' | '\'' | '"' | '`' | '[' | ']')
+            {
+                break;
+            }
+            cursor += next.len_utf8();
+        }
+        let token = query[start..cursor]
+            .trim_matches(|character: char| matches!(character, ':' | ';'))
+            .to_string();
+        if !token.is_empty() {
+            tokens.push(token);
+        }
+    }
+
+    tokens
+}
+
+fn skip_quoted_sql_fragment(query: &str, cursor: usize, quote: char) -> usize {
+    let content_start = cursor + quote.len_utf8();
+    let mut escaped = false;
+    for (relative, next) in query[content_start..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if next == '\\' {
+            escaped = true;
+            continue;
+        }
+        if next == quote {
+            return content_start + relative + next.len_utf8();
+        }
+    }
+    content_start
+}
+
+fn previous_sql_keyword(tokens: &[String], index: usize, keyword: &str) -> bool {
+    tokens[..index]
+        .iter()
+        .rev()
+        .take_while(|token| !matches!(token.as_str(), ";" | ")" | "("))
+        .any(|token| token.eq_ignore_ascii_case(keyword))
+}
+
+fn next_sql_table_token(tokens: &[String], start: usize) -> Option<String> {
+    let mut index = start;
+    while let Some(token) = tokens.get(index) {
+        let lower = token.to_ascii_lowercase();
+        if matches!(lower.as_str(), "only" | "," | "(") {
+            index += 1;
+            continue;
+        }
+        if lower == "select" || lower == "values" {
+            return None;
+        }
+        if is_sql_non_table_keyword(&lower) {
+            return None;
+        }
+        let table = token
+            .trim_matches(|character: char| matches!(character, '"' | '\'' | '`' | '[' | ']'))
+            .trim()
+            .to_string();
+        return (!table.is_empty()).then_some(table);
+    }
+    None
+}
+
+fn is_sql_non_table_keyword(token: &str) -> bool {
+    matches!(
+        token,
+        "as" | "by"
+            | "case"
+            | "cross"
+            | "distinct"
+            | "full"
+            | "group"
+            | "having"
+            | "inner"
+            | "left"
+            | "limit"
+            | "offset"
+            | "on"
+            | "order"
+            | "outer"
+            | "returning"
+            | "right"
+            | "set"
+            | "using"
+            | "where"
+    )
 }
 
 fn sql_statements(source: &str) -> Vec<SqlStatement> {
@@ -2318,6 +2753,23 @@ fn sql_line_offset(statement: &str, part: &str) -> u32 {
         .find(part.trim())
         .map(|index| statement[..index].lines().count().saturating_sub(1) as u32)
         .unwrap_or(0)
+}
+
+fn byte_line_number(source: &str, offset: usize) -> u32 {
+    source[..offset.min(source.len())]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count() as u32
+        + 1
+}
+
+fn truncate_metadata_value(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let mut truncated = value.chars().take(max_chars).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }
 
 fn is_sql_file(path: &Path) -> bool {
@@ -10899,6 +11351,36 @@ fn resolve_pending_sql_foreign_keys(context: &mut IndexContext) {
     }
 }
 
+fn resolve_pending_sql_query_table_refs(context: &mut IndexContext) {
+    let pending_refs = std::mem::take(&mut context.pending_sql_query_table_refs);
+
+    for pending in pending_refs {
+        let table_key = sql_identifier_key(&pending.table);
+        let Some(table_id) = context.sql_tables.get(&table_key).copied() else {
+            continue;
+        };
+
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.query,
+            table_id,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                (
+                    "relation".to_string(),
+                    "app_sql_table_reference".to_string(),
+                ),
+                ("source".to_string(), "source_sql_literal".to_string()),
+                ("operation".to_string(), pending.operation),
+                ("role".to_string(), pending.role),
+                ("table".to_string(), pending.table),
+                ("line".to_string(), pending.line.to_string()),
+            ]),
+        );
+    }
+}
+
 fn github_actions_local_action_target(context: &IndexContext, target: &str) -> Option<NodeId> {
     let candidates = [
         target.to_string(),
@@ -12169,6 +12651,128 @@ CREATE VIEW active_users AS SELECT id, email FROM users;
 
         let coverage = scan_coverage(&root, &IndexOptions::default()).unwrap();
         assert_eq!(coverage.languages.get("sql"), Some(&1));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_links_source_sql_queries_to_schema_tables() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("db")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("db").join("schema.sql"),
+            r#"
+CREATE TABLE organizations (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    org_id INTEGER NOT NULL REFERENCES organizations(id),
+    email TEXT NOT NULL
+);
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("repo.py"),
+            r#"def load_users(db):
+    rows = db.execute("""
+        SELECT users.id, organizations.name
+        FROM users
+        JOIN organizations ON organizations.id = users.org_id
+        WHERE users.email = ?
+    """)
+    db.execute("INSERT INTO users (email, org_id) VALUES (?, ?)")
+    return rows
+"#,
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let load_users = function_id_in_file(&graph, "load_users", "src/repo.py");
+        let select_query = node_id(&graph, NodeKind::Config, "sql query:src/repo.py:2");
+        let insert_query = node_id(&graph, NodeKind::Config, "sql query:src/repo.py:8");
+        let users = node_id(&graph, NodeKind::Type, "sql table:users");
+        let organizations = node_id(&graph, NodeKind::Type, "sql table:organizations");
+
+        let select_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == select_query)
+            .expect("missing select query");
+        assert_eq!(
+            select_node.metadata.get("item_kind").map(String::as_str),
+            Some("app_sql_query")
+        );
+        assert_eq!(
+            select_node.metadata.get("operation").map(String::as_str),
+            Some("select")
+        );
+        assert!(
+            select_node
+                .metadata
+                .get("tables")
+                .is_some_and(|value| value.contains("users") && value.contains("organizations"))
+        );
+
+        for query in [select_query, insert_query] {
+            assert!(graph.edges.iter().any(|edge| {
+                edge.source == load_users
+                    && edge.target == query
+                    && edge.kind == EdgeKind::References
+                    && edge.confidence == Confidence::Heuristic
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|value| value == "app_sql_query")
+            }));
+        }
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == select_query
+                && edge.target == users
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "app_sql_table_reference")
+                && edge
+                    .metadata
+                    .get("operation")
+                    .is_some_and(|value| value == "select")
+                && edge
+                    .metadata
+                    .get("role")
+                    .is_some_and(|value| value == "source")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == select_query
+                && edge.target == organizations
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "app_sql_table_reference")
+                && edge
+                    .metadata
+                    .get("role")
+                    .is_some_and(|value| value == "join")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == insert_query
+                && edge.target == users
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "app_sql_table_reference")
+                && edge
+                    .metadata
+                    .get("operation")
+                    .is_some_and(|value| value == "insert")
+        }));
 
         fs::remove_dir_all(root).unwrap();
     }

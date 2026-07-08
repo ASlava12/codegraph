@@ -482,7 +482,8 @@ Repository knowledge ingestion:
 - [x] Promote source comments such as `NOTE`, `WHY`, `TODO`, `FIXME`, and security/risk markers into linked rationale nodes.
 - [x] Add first deterministic SQL schema extraction for tables, views, columns, foreign keys, and indexes.
 - [ ] Add deeper SQL query extraction, JOIN relationships, migration ordering, and schema consistency insights.
-- [ ] Link application code to SQL/schema nodes through query strings, migrations, ORM metadata, and database config.
+- [x] Link application code to SQL/schema nodes through common SQL query strings.
+- [ ] Link application code to SQL/schema nodes through migrations, ORM metadata, database config, and deeper query semantics.
 - [ ] Add document ingestion for Markdown, plain text, PDFs, Office files, and generated Markdown sidecars, with size limits and provenance.
 - [ ] Add optional local or configured-model semantic extraction for non-code documents while keeping code-only scans fully offline.
 - [ ] Add media ingestion hooks for transcripts from audio/video sidecars, with explicit opt-in for transcription backends.
