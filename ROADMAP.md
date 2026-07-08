@@ -150,8 +150,9 @@ Goal: answer practical code investigation questions.
 - [x] Detect packages declared across multiple dependency scopes such as runtime and dev/build.
 - [x] Detect production-like source imports of packages declared only in non-runtime dependency scopes.
 - [x] Detect runtime dependencies that are imported only from test-like source files.
-- [x] Recognize common JS/TS, Go, Python, PHP, C/C++, and Bash test file conventions in dependency-scope insights.
-- [ ] Recognize Dart and Flutter package scopes, dev dependencies, generated files, assets, test conventions, and package import consistency issues.
+- [x] Recognize common JS/TS, Go, Python, PHP, C/C++, Bash, Dart, and Flutter test/generated file conventions in dependency-scope insights.
+- [x] Recognize Dart and Flutter package scopes, dev dependencies, generated files, test conventions, and package import consistency issues.
+- [ ] Recognize Flutter asset metadata and platform-channel consistency issues.
 - [x] Detect duplicate framework route method/path declarations.
 - [x] Detect framework routes whose named handler cannot be resolved.
 - [x] Improve Rust/Axum route entrypoint labels for multiline routes and string literal false positives.

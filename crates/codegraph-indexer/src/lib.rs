@@ -8763,7 +8763,9 @@ fn canonical_package_name(ecosystem: &str, name: &str) -> String {
             }
             normalized
         }
-        "cargo" | "npm" | "composer" | "vcpkg" | "conan" | "cmake" => trimmed.to_ascii_lowercase(),
+        "cargo" | "npm" | "composer" | "vcpkg" | "conan" | "cmake" | "dart" => {
+            trimmed.to_ascii_lowercase()
+        }
         "go" => trimmed.to_string(),
         _ => trimmed.to_string(),
     }

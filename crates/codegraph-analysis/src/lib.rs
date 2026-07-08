@@ -9456,6 +9456,10 @@ fn import_package_candidate(language: &str, label: &str) -> Option<ImportPackage
             ecosystem: "go".to_string(),
             package,
         }),
+        "dart" => dart_import_package(label).map(|package| ImportPackage {
+            ecosystem: "dart".to_string(),
+            package,
+        }),
         "php" => php_import_packages(label)
             .into_iter()
             .next()
@@ -9521,7 +9525,7 @@ fn import_matches_package_id(package_id: &str, import: &ImportPackage) -> bool {
             package == canonical || package == hyphenated || package == underscored
         }
         "python" => package == canonical_python_package_name(&import.package),
-        "npm" | "composer" => package == import.package.to_ascii_lowercase(),
+        "npm" | "composer" | "dart" => package == import.package.to_ascii_lowercase(),
         "vcpkg" | "conan" | "cmake" => package == import.package.to_ascii_lowercase(),
         _ => package == import.package,
     }
@@ -9614,6 +9618,23 @@ fn go_import_package(label: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn dart_import_package(label: &str) -> Option<String> {
+    let uri = first_quoted_string(label)?;
+    if uri.starts_with('.')
+        || uri.starts_with('/')
+        || uri.starts_with("dart:")
+        || uri.contains("://")
+    {
+        return None;
+    }
+    let rest = uri.strip_prefix("package:")?;
+    rest.split('/')
+        .next()
+        .map(str::trim)
+        .filter(|package| !package.is_empty())
+        .map(|package| package.to_ascii_lowercase())
 }
 
 fn php_import_packages(label: &str) -> Vec<String> {
@@ -10428,6 +10449,13 @@ fn is_test_like_source_path(path: &str) -> bool {
         || file_name.ends_with(".bats")
         || original_file_name.ends_with("Test.php")
         || original_file_name.ends_with("Spec.php")
+        || file_name.ends_with("_test.dart")
+        || file_name.ends_with(".g.dart")
+        || file_name.ends_with(".freezed.dart")
+        || file_name.ends_with(".mocks.dart")
+        || file_name.ends_with(".gen.dart")
+        || normalized.contains("/.dart_tool/")
+        || normalized.contains("/generated/")
 }
 
 fn is_dependency_manifest_source_path(path: &str) -> bool {
@@ -16402,6 +16430,131 @@ mod tests {
     }
 
     #[test]
+    fn insights_match_dart_pubspec_dependency_scopes() {
+        let mut graph = CodeGraph::new("repo");
+        let manifest = graph.add_node(NodeKind::File, "pubspec.yaml");
+        let app = graph.add_node_with_metadata(
+            NodeKind::File,
+            "lib/main.dart",
+            None,
+            BTreeMap::from([("language".to_string(), "dart".to_string())]),
+        );
+        let test = graph.add_node_with_metadata(
+            NodeKind::File,
+            "test/widget_test.dart",
+            None,
+            BTreeMap::from([("language".to_string(), "dart".to_string())]),
+        );
+        let generated = graph.add_node_with_metadata(
+            NodeKind::File,
+            "lib/src/user.freezed.dart",
+            None,
+            BTreeMap::from([("language".to_string(), "dart".to_string())]),
+        );
+        let http = dependency_node(&mut graph, "http", "dart:http");
+        let build_runner = dependency_node(&mut graph, "build_runner", "dart:build_runner");
+        let test_dep = dependency_node(&mut graph, "test", "dart:test");
+        let collection = dependency_node(&mut graph, "collection", "dart:collection");
+        graph.add_edge_with_metadata(
+            manifest,
+            http,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            manifest,
+            build_runner,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "dev".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            manifest,
+            test_dep,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            manifest,
+            collection,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+
+        let http_import = import_node(&mut graph, "import 'package:http/http.dart';", "dart");
+        let build_runner_import = import_node(
+            &mut graph,
+            "import 'package:build_runner/build_runner.dart';",
+            "dart",
+        );
+        let test_import = import_node(&mut graph, "import 'package:test/test.dart';", "dart");
+        let undeclared_import = import_node(
+            &mut graph,
+            "import 'package:riverpod/riverpod.dart';",
+            "dart",
+        );
+        let sdk_import = import_node(&mut graph, "import 'dart:io';", "dart");
+        let generated_build_import = import_node(
+            &mut graph,
+            "import 'package:build_runner/build_runner.dart';",
+            "dart",
+        );
+        graph.add_edge(app, http_import, EdgeKind::Imports, Confidence::Syntactic);
+        graph.add_edge(
+            app,
+            build_runner_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(test, test_import, EdgeKind::Imports, Confidence::Syntactic);
+        graph.add_edge(
+            app,
+            undeclared_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(app, sdk_import, EdgeKind::Imports, Confidence::Syntactic);
+        graph.add_edge(
+            generated,
+            generated_build_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+
+        let report = insights(&graph);
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "undeclared_external_import" && insight.message.contains("http")
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "undeclared_external_import" && insight.message.contains("dart:io")
+        }));
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "undeclared_external_import"
+                && insight.message.contains("riverpod")
+                && insight.nodes.contains(&undeclared_import)
+        }));
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&collection)
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&http)
+        }));
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "non_runtime_dependency_import"
+                && insight.nodes.contains(&build_runner_import)
+                && !insight.nodes.contains(&generated_build_import)
+        }));
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "test_only_runtime_dependency"
+                && insight.nodes.contains(&test_dep)
+                && insight.nodes.contains(&test_import)
+        }));
+    }
+
+    #[test]
     fn test_like_source_paths_cover_common_language_conventions() {
         for path in [
             "src/__tests__/app.spec.tsx",
@@ -16416,6 +16569,12 @@ mod tests {
             "scripts/deploy_test.sh",
             "scripts/deploy.bats",
             "pkg/testdata/input.go",
+            "test/widget_test.dart",
+            "integration_test/app_test.dart",
+            "lib/src/user.g.dart",
+            "lib/src/user.freezed.dart",
+            "lib/generated/assets.gen.dart",
+            ".dart_tool/build/generated/app/lib/main.dart",
         ] {
             assert!(
                 is_test_like_source_path(path),
@@ -16430,6 +16589,8 @@ mod tests {
             "cmd/server/main.go",
             "native/parser.cpp",
             "scripts/deploy.sh",
+            "lib/main.dart",
+            "lib/src/user.dart",
         ] {
             assert!(
                 !is_test_like_source_path(path),
