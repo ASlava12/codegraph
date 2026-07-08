@@ -36,7 +36,7 @@ Implemented now:
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
 - Local import/include resolution for relative JavaScript/TypeScript imports and CommonJS requires, Python relative/absolute project imports, Go module-local imports, quoted C/C++ includes with CMake and compile database include directories, PHP include/require paths, Bash source paths, and common Rust module paths.
-- Manifest dependency extraction from Cargo, npm/package-lock/pnpm-lock, Go including indirect requirements, Python/Poetry, setup.py/setup.cfg/Pipfile, Composer, vcpkg, Conan, and CMake `find_package` projects.
+- Manifest dependency extraction from Cargo, npm/package-lock/pnpm-lock, Go including indirect requirements, Python/Poetry, setup.py/setup.cfg/Pipfile, Composer/composer.lock, vcpkg, Conan, and CMake `find_package` projects.
 - Heuristic config reads, environment reads, and potential error/exception constructs.
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
@@ -766,7 +766,7 @@ Supported package manifests:
 - JavaScript/TypeScript/npm-compatible: `package.json`, `package-lock.json`, `pnpm-lock.yaml`
 - Go modules: `go.mod`
 - Python: `requirements.txt`, `pyproject.toml`, `setup.py`, `setup.cfg`, `Pipfile`
-- PHP/Composer: `composer.json`
+- PHP/Composer: `composer.json`, `composer.lock`
 - C/C++ package managers: `vcpkg.json`, `conanfile.txt`, `CMakeLists.txt` `find_package(...)`
 
 Manifest dependencies are normalized into canonical package nodes with a stable
@@ -774,7 +774,8 @@ Manifest dependencies are normalized into canonical package nodes with a stable
 manifest files connect to those package nodes with `depends_on` edges; the edge
 metadata records whether the declaration is runtime, dev, optional, peer,
 build, or test dependency data when the manifest format exposes that
-distinction, plus the raw `dependency_version` constraint when the manifest declares one. Cargo
+distinction, plus the raw `dependency_version` constraint or locked package
+version when the manifest declares one. Cargo
 `workspace = true` dependencies resolve to the root workspace constraint when
 one exists; path-only workspace dependencies omit `dependency_version`.
 

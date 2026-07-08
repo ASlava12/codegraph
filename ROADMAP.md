@@ -110,6 +110,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect legacy Python `setup.py`/`setup.cfg` dependencies and console script entrypoints.
 - [x] Detect Python `Pipfile` runtime and dev package dependencies.
 - [x] Detect modern Poetry dependency groups from `pyproject.toml`.
+- [x] Detect Composer `composer.lock` runtime and dev locked dependencies.
 - [x] Detect C/C++ package manifest dependencies from `vcpkg.json` and `conanfile.txt`.
 - [x] Detect CMake `find_package(...)` dependencies and match them to C/C++ include usage.
 - [x] Detect duplicate entrypoint labels that make startup traces ambiguous.

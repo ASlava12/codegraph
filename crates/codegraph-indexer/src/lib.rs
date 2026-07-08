@@ -2181,6 +2181,7 @@ fn manifest_dependencies(
         Some("setup.cfg") => setup_cfg_dependencies(source),
         Some("Pipfile") => pipfile_dependencies(source),
         Some("composer.json") => composer_dependencies(source),
+        Some("composer.lock") => composer_lock_dependencies(source),
         Some("vcpkg.json") => vcpkg_dependencies(source),
         Some("conanfile.txt") => conanfile_txt_dependencies(source),
         Some("CMakeLists.txt") => cmake_dependencies(source),
@@ -3009,6 +3010,49 @@ fn composer_dependencies(source: &str) -> Vec<ManifestDependency> {
     collect_json_object_keys(&value, "require-dev", "dev", "composer", &mut dependencies);
     dependencies.retain(|dependency| dependency.name != "php");
     dependencies
+}
+
+fn composer_lock_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+    collect_composer_lock_packages(&value, "packages", "runtime", &mut dependencies);
+    collect_composer_lock_packages(&value, "packages-dev", "dev", &mut dependencies);
+    dependencies
+}
+
+fn collect_composer_lock_packages(
+    value: &serde_json::Value,
+    array_name: &str,
+    dependency_kind: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(packages) = value.get(array_name).and_then(|value| value.as_array()) else {
+        return;
+    };
+    for package in packages {
+        let Some(name) = package
+            .get("name")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let version = package
+            .get("version")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        dependencies.push(manifest_dependency(
+            name.to_string(),
+            dependency_kind,
+            "composer",
+            version,
+        ));
+    }
 }
 
 fn vcpkg_dependencies(source: &str) -> Vec<ManifestDependency> {
@@ -6132,6 +6176,7 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
                 | "Pipfile"
                 | "requirements.txt"
                 | "composer.json"
+                | "composer.lock"
                 | "vcpkg.json"
                 | "conanfile.txt"
                 | "CMakeLists.txt"
@@ -7200,6 +7245,19 @@ cli =
         )
         .unwrap();
         fs::write(
+            root.join("composer.lock"),
+            r#"{
+  "packages": [
+    { "name": "monolog/monolog", "version": "3.8.1" },
+    { "name": "symfony/console", "version": "v7.2.1" }
+  ],
+  "packages-dev": [
+    { "name": "phpunit/phpunit", "version": "11.5.0" }
+  ]
+}"#,
+        )
+        .unwrap();
+        fs::write(
             root.join("vcpkg.json"),
             r#"{
   "name": "demo",
@@ -7284,6 +7342,8 @@ find_package(Boost 1.83 REQUIRED COMPONENTS filesystem)
             "hypothesis",
             "rich",
             "monolog/monolog",
+            "symfony/console",
+            "phpunit/phpunit",
             "fmt",
             "zlib",
             "spdlog",
@@ -7784,6 +7844,55 @@ find_package(Boost 1.83 REQUIRED COMPONENTS filesystem)
                     .metadata
                     .get("dependency_version")
                     .is_some_and(|value| value == "^3.0")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "3.8.1")
+        }));
+        let symfony_console_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "composer:symfony/console")
+            })
+            .expect("missing composer.lock symfony/console dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == symfony_console_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "runtime")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "v7.2.1")
+        }));
+        let phpunit_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "composer:phpunit/phpunit")
+            })
+            .expect("missing composer.lock phpunit dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == phpunit_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "dev")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "11.5.0")
         }));
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == EdgeKind::DependsOn
