@@ -3715,6 +3715,7 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "symbols",
                     "files",
                     "docs",
+                    "sql",
                     "entrypoints",
                     "routes",
                     "packages",
@@ -3894,6 +3895,43 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "type",
                     "heading",
                     "anchor",
+                    "path",
+                    "source_path",
+                    "file",
+                    "file_path",
+                    "path_prefix",
+                    "target",
+                    "relation",
+                    "edge_kind",
+                    "confidence",
+                    "direction",
+                    "dir",
+                    "edge_limit",
+                    "metadata.*",
+                ],
+            ),
+            (
+                "graph_query_sql_term",
+                vec![
+                    "id",
+                    "node",
+                    "node_id",
+                    "label",
+                    "search",
+                    "language",
+                    "kind",
+                    "node_kind",
+                    "item_kind",
+                    "table",
+                    "table_name",
+                    "table_key",
+                    "column",
+                    "column_name",
+                    "column_key",
+                    "operation",
+                    "query",
+                    "resolution",
+                    "unresolved",
                     "path",
                     "source_path",
                     "file",
@@ -4647,7 +4685,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/query",
-                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, symbols, files, docs, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, annotations, or insights. QueryResult includes returned counts, edge metadata.edge_index values, and facets for node kinds, edge kinds, languages, item kinds, and confidence.",
+                    "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, symbols, files, docs, sql, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, annotations, or insights. QueryResult includes returned counts, edge metadata.edge_index values, and facets for node kinds, edge kinds, languages, item kinds, and confidence.",
                     vec![
                         path_param(),
                         query_param(
@@ -4655,7 +4693,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Graph query expression, for example `symbols label:load_config direction:out`, `files path:src/main.rs direction:out`, `docs target:src/main.rs relation:markdown_link`, `entrypoints language:rust`, `routes method:GET path:/users`, `packages package:serde ecosystem:cargo`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable scope:errors search:LegacyError`, `diagnostics severity:error language:rust`, `annotations key:domain value:payments`, or `insights severity:error`.",
+                            "Graph query expression, for example `symbols label:load_config direction:out`, `files path:src/main.rs direction:out`, `docs target:src/main.rs relation:markdown_link`, `sql table:users operation:select`, `entrypoints language:rust`, `routes method:GET path:/users`, `packages package:serde ecosystem:cargo`, `configs target:DATABASE_URL`, `errors target:panic`, `cycles edge_kind:calls`, `hotspots language:rust min_score:5`, `unreachable scope:errors search:LegacyError`, `diagnostics severity:error language:rust`, `annotations key:domain value:payments`, or `insights severity:error`.",
                         )
                         .with_max_length(MAX_GRAPH_QUERY_LENGTH)
                         .with_capability_limit("max_graph_query_length"),
@@ -7788,7 +7826,7 @@ fn helper() {}
         assert!(index.contains("insights kind:non_runtime_dependency_import"));
         assert!(index.contains("insights kind:test_only_runtime_dependency"));
         assert!(index.contains("insights kind:sensitive_config_default"));
-        assert!(index.contains("nodes item_kind:app_sql_query"));
+        assert!(index.contains("sql edge_limit:300"));
         assert!(index.contains("insights kind:unresolved_sql_table_reference"));
         assert!(app.contains("\"queryPreset.ambiguousCalls\""));
         assert!(app.contains("\"queryPreset.ambiguousEntrypoints\""));
@@ -7801,7 +7839,9 @@ fn helper() {}
         assert!(app.contains("\"queryPreset.sqlMissingTables\""));
         assert!(app.contains("\"queryPreset.docs\""));
         assert!(app.contains("\"selection.documentGraph\""));
+        assert!(app.contains("\"selection.sqlGraph\""));
         assert!(app.contains("documentGraphQueryForNode"));
+        assert!(app.contains("sqlGraphQueryForNode"));
         assert!(app.contains("\"kind.mixed_dependency_scope\""));
         assert!(app.contains("\"kind.non_runtime_dependency_import\""));
         assert!(app.contains("\"kind.test_only_runtime_dependency\""));
@@ -8229,6 +8269,7 @@ fn helper() {}
                         && commands.contains(&"symbols")
                         && commands.contains(&"files")
                         && commands.contains(&"docs")
+                        && commands.contains(&"sql")
                         && commands.contains(&"routes")
                         && commands.contains(&"packages")
                         && commands.contains(&"configs")
@@ -8285,6 +8326,17 @@ fn helper() {}
                     terms.contains(&"document_kind")
                         && terms.contains(&"heading")
                         && terms.contains(&"target")
+                        && terms.contains(&"relation")
+                })
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("graph_query_sql_term")
+                .is_some_and(|terms| {
+                    terms.contains(&"table")
+                        && terms.contains(&"operation")
+                        && terms.contains(&"unresolved")
                         && terms.contains(&"relation")
                 })
         );

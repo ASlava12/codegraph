@@ -3327,6 +3327,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         "docs" | "doc" | "documents" | "document" | "adr" | "adrs" | "rfc" | "rfcs" => {
             query_documents(graph, spec)
         }
+        "sql" | "schema" | "database" | "db" => query_sql(graph, spec),
         "entrypoints" | "entrypoint" | "starts" | "startup" => query_entrypoints(graph, spec),
         "routes" | "route" | "endpoints" | "endpoint" => query_routes(graph, spec),
         "packages" | "package" | "deps" | "external" | "externals" => query_packages(graph, spec),
@@ -3342,7 +3343,7 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
         }
         "path" | "paths" => query_path(graph, spec),
         other => Err(QueryError::new(format!(
-            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, symbols, files, docs, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, annotations, insights, or path"
+            "unknown query command `{other}`; expected nodes, edges, calls, dependencies, trace, dependents, neighbors, symbols, files, docs, sql, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, annotations, insights, or path"
         ))),
     }
 }
@@ -3818,6 +3819,13 @@ fn node_card_actions(node: &Node) -> Vec<NodeCardAction> {
             kind: "document_graph".to_string(),
             label: "Document graph".to_string(),
             query: format!("docs node_id:{} edge_limit:300", node.id.0),
+        });
+    }
+    if is_sql_query_node(node) {
+        actions.push(NodeCardAction {
+            kind: "sql_graph".to_string(),
+            label: "SQL graph".to_string(),
+            query: format!("sql node_id:{} edge_limit:300", node.id.0),
         });
     }
     if is_code_symbol(&node.kind) {
@@ -4550,6 +4558,80 @@ fn query_documents(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult
 
     for (index, edge) in graph.edges.iter().enumerate() {
         if !document_edge_matches(graph, edge, &selected_ids, &spec, &path_index, direction) {
+            continue;
+        }
+        edge_indexes.insert(index);
+        node_ids.insert(edge.source);
+        node_ids.insert(edge.target);
+    }
+
+    let total_edges = edge_indexes.len();
+    let edges = graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| edge_indexes.contains(index))
+        .take(edge_limit)
+        .map(|(_, edge)| edge.clone())
+        .collect::<Vec<_>>();
+    let nodes = graph
+        .nodes
+        .iter()
+        .filter(|node| node_ids.contains(&node.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let total_nodes = nodes.len();
+
+    Ok(QueryResult::new(
+        graph,
+        spec.original,
+        nodes,
+        edges,
+        total_nodes,
+        total_edges,
+        matched.len() > spec.limit || total_edges > edge_limit,
+    ))
+}
+
+fn query_sql(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryResult, QueryError> {
+    if let Some(first) = spec.positional.first() {
+        spec.terms
+            .entry("search".to_string())
+            .or_insert(first.clone());
+    }
+    validate_sql_terms(&spec)?;
+    let direction = spec
+        .terms
+        .get("direction")
+        .or_else(|| spec.terms.get("dir"))
+        .map(|value| parse_neighbor_direction(value, "sql"))
+        .transpose()?
+        .unwrap_or(NeighborDirection::Both);
+    let edge_limit = spec
+        .terms
+        .get("edge_limit")
+        .map(|value| parse_limit(value).map(|value| value.clamp(1, 2_000)))
+        .transpose()?
+        .unwrap_or(500);
+    let path_index = node_path_index(graph);
+    let matched: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            is_sql_query_node(node) && sql_query_matches(graph, node, &spec, &path_index)
+        })
+        .cloned()
+        .collect();
+    let selected_ids: BTreeSet<_> = matched
+        .iter()
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let mut node_ids = selected_ids.clone();
+    let mut edge_indexes = BTreeSet::new();
+
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if !sql_edge_matches(graph, edge, &selected_ids, &spec, &path_index, direction) {
             continue;
         }
         edge_indexes.insert(index);
@@ -5782,6 +5864,51 @@ fn validate_document_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     Ok(())
 }
 
+fn validate_sql_terms(spec: &QuerySpec) -> Result<(), QueryError> {
+    for key in spec.terms.keys() {
+        if matches!(
+            key.as_str(),
+            "id" | "node"
+                | "node_id"
+                | "label"
+                | "search"
+                | "language"
+                | "kind"
+                | "node_kind"
+                | "item_kind"
+                | "table"
+                | "table_name"
+                | "table_key"
+                | "column"
+                | "column_name"
+                | "column_key"
+                | "operation"
+                | "query"
+                | "resolution"
+                | "unresolved"
+                | "path"
+                | "source_path"
+                | "file"
+                | "file_path"
+                | "path_prefix"
+                | "target"
+                | "relation"
+                | "edge_kind"
+                | "confidence"
+                | "direction"
+                | "dir"
+                | "edge_limit"
+        ) || key.starts_with("metadata.")
+        {
+            continue;
+        }
+        return Err(QueryError::new(format!(
+            "unsupported sql query term `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_entrypoint_terms(spec: &QuerySpec) -> Result<(), QueryError> {
     for key in spec.terms.keys() {
         if matches!(
@@ -6542,6 +6669,252 @@ fn document_edge_target_matches(graph: &CodeGraph, edge: &Edge, expected: &str) 
             .iter()
             .find(|node| node.id == edge.target)
             .is_some_and(|node| node_search_matches(node, expected))
+}
+
+fn is_sql_query_node(node: &Node) -> bool {
+    node.metadata
+        .get("language")
+        .is_some_and(|language| language == "sql")
+        || node
+            .metadata
+            .get("source")
+            .is_some_and(|source| source == "sql")
+        || node.metadata.get("item_kind").is_some_and(|kind| {
+            matches!(
+                kind.as_str(),
+                "sql_schema"
+                    | "sql_table"
+                    | "sql_column"
+                    | "sql_index"
+                    | "sql_view"
+                    | "app_sql_query"
+            )
+        })
+}
+
+fn sql_query_matches(
+    graph: &CodeGraph,
+    node: &Node,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+) -> bool {
+    spec.terms.iter().all(|(key, expected)| match key.as_str() {
+        "id" | "node" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        "label" => text_matches(&node.label, expected),
+        "search" => {
+            node_search_matches(node, expected)
+                || sql_edges_search(graph, node.id, expected)
+                || sql_table_filter_matches(node, expected)
+        }
+        "language" | "item_kind" | "operation" | "resolution" => {
+            metadata_matches(node, key, expected)
+        }
+        "kind" | "node_kind" => text_matches(&kind_name(&node.kind), expected),
+        "table" | "table_name" | "table_key" | "target" => sql_table_filter_matches(node, expected),
+        "column" | "column_name" | "column_key" => sql_column_filter_matches(node, expected),
+        "query" => metadata_matches(node, "query", expected),
+        "unresolved" => sql_unresolved_filter_matches(node, expected),
+        "path" | "source_path" | "file" | "file_path" | "path_prefix" => {
+            node_path_matches(node, path_index, expected)
+                || sql_source_nodes(graph, node.id)
+                    .iter()
+                    .any(|source| node_path_matches(source, path_index, expected))
+        }
+        "relation" => sql_node_has_relation(graph, node.id, expected),
+        "edge_kind" | "confidence" | "direction" | "dir" | "edge_limit" => true,
+        key if key.starts_with("metadata.") => node
+            .metadata
+            .get(key.trim_start_matches("metadata."))
+            .is_some_and(|value| text_matches(value, expected)),
+        _ => false,
+    })
+}
+
+fn sql_edge_matches(
+    graph: &CodeGraph,
+    edge: &Edge,
+    selected_ids: &BTreeSet<NodeId>,
+    spec: &QuerySpec,
+    path_index: &BTreeMap<NodeId, String>,
+    direction: NeighborDirection,
+) -> bool {
+    if !sql_relevant_edge(graph, edge) {
+        return false;
+    }
+    let touches_selected = match direction {
+        NeighborDirection::Both => {
+            selected_ids.contains(&edge.source) || selected_ids.contains(&edge.target)
+        }
+        NeighborDirection::Out => selected_ids.contains(&edge.source),
+        NeighborDirection::In => selected_ids.contains(&edge.target),
+    };
+    if !touches_selected {
+        return false;
+    }
+    spec.terms.iter().all(|(key, expected)| match key.as_str() {
+        "relation" => edge_metadata_matches(edge, "relation", expected),
+        "edge_kind" => text_matches(&edge_kind_name(&edge.kind), expected),
+        "confidence" => text_matches(&confidence_name(edge.confidence), expected),
+        "target" => sql_edge_target_matches(graph, edge, expected),
+        "table" | "table_name" | "table_key" => {
+            edge_metadata_matches(edge, "table", expected)
+                || edge_metadata_matches(edge, "source_table", expected)
+                || edge_metadata_matches(edge, "target_table", expected)
+                || sql_edge_endpoint_matches(graph, edge, expected)
+        }
+        "column" | "column_name" | "column_key" => {
+            edge_metadata_matches(edge, "source_column", expected)
+                || edge_metadata_matches(edge, "target_column", expected)
+                || sql_edge_endpoint_matches(graph, edge, expected)
+        }
+        "operation" => edge_metadata_matches(edge, "operation", expected),
+        "path" | "source_path" | "file" | "file_path" | "path_prefix" => {
+            graph.nodes.iter().any(|node| {
+                (node.id == edge.source || node.id == edge.target)
+                    && node_path_matches(node, path_index, expected)
+            })
+        }
+        _ => true,
+    })
+}
+
+fn sql_relevant_edge(graph: &CodeGraph, edge: &Edge) -> bool {
+    if edge.metadata.get("relation").is_some_and(|relation| {
+        matches!(
+            relation.as_str(),
+            "sql_table"
+                | "sql_column"
+                | "sql_index"
+                | "sql_view"
+                | "sql_index_table"
+                | "sql_foreign_key"
+                | "app_sql_query"
+                | "app_sql_table_reference"
+        )
+    }) {
+        return true;
+    }
+    graph
+        .nodes
+        .iter()
+        .find(|node| node.id == edge.source)
+        .is_some_and(is_sql_query_node)
+        || graph
+            .nodes
+            .iter()
+            .find(|node| node.id == edge.target)
+            .is_some_and(is_sql_query_node)
+}
+
+fn sql_edges_search(graph: &CodeGraph, node_id: NodeId, expected: &str) -> bool {
+    graph.edges.iter().any(|edge| {
+        (edge.source == node_id || edge.target == node_id)
+            && sql_relevant_edge(graph, edge)
+            && (edge
+                .metadata
+                .iter()
+                .any(|(key, value)| text_matches(key, expected) || text_matches(value, expected))
+                || sql_edge_endpoint_matches(graph, edge, expected))
+    })
+}
+
+fn sql_node_has_relation(graph: &CodeGraph, node_id: NodeId, expected: &str) -> bool {
+    graph.edges.iter().any(|edge| {
+        (edge.source == node_id || edge.target == node_id)
+            && sql_relevant_edge(graph, edge)
+            && edge_metadata_matches(edge, "relation", expected)
+    })
+}
+
+fn sql_edge_target_matches(graph: &CodeGraph, edge: &Edge, expected: &str) -> bool {
+    edge.metadata
+        .get("target")
+        .is_some_and(|value| text_matches(value, expected))
+        || graph
+            .nodes
+            .iter()
+            .find(|node| node.id == edge.target)
+            .is_some_and(|node| node_search_matches(node, expected))
+}
+
+fn sql_edge_endpoint_matches(graph: &CodeGraph, edge: &Edge, expected: &str) -> bool {
+    graph
+        .nodes
+        .iter()
+        .filter(|node| node.id == edge.source || node.id == edge.target)
+        .any(|node| node_search_matches(node, expected) || sql_table_filter_matches(node, expected))
+}
+
+fn sql_table_filter_matches(node: &Node, expected: &str) -> bool {
+    ["table_name", "table_key", "target_table", "source_table"]
+        .iter()
+        .any(|key| metadata_matches(node, key, expected))
+        || node
+            .metadata
+            .get("tables")
+            .is_some_and(|tables| comma_list_matches(tables, expected))
+        || node
+            .metadata
+            .get("unresolved_tables")
+            .is_some_and(|tables| comma_list_matches(tables, expected))
+        || node_search_matches(node, expected)
+}
+
+fn sql_column_filter_matches(node: &Node, expected: &str) -> bool {
+    [
+        "column_name",
+        "column_key",
+        "target_column",
+        "source_column",
+    ]
+    .iter()
+    .any(|key| metadata_matches(node, key, expected))
+        || node_search_matches(node, expected)
+}
+
+fn sql_unresolved_filter_matches(node: &Node, expected: &str) -> bool {
+    let expected = expected.trim().to_ascii_lowercase();
+    let is_unresolved = node
+        .metadata
+        .get("unresolved_tables")
+        .is_some_and(|tables| !tables.trim().is_empty())
+        || node
+            .metadata
+            .get("resolution")
+            .is_some_and(|resolution| matches!(resolution.as_str(), "unresolved" | "partial"));
+    match expected.as_str() {
+        "true" | "yes" | "1" | "missing" => is_unresolved,
+        "false" | "no" | "0" | "resolved" => !is_unresolved,
+        other => node
+            .metadata
+            .get("unresolved_tables")
+            .is_some_and(|tables| comma_list_matches(tables, other)),
+    }
+}
+
+fn comma_list_matches(value: &str, expected: &str) -> bool {
+    value
+        .split(',')
+        .map(str::trim)
+        .any(|item| !item.is_empty() && text_matches(item, expected))
+}
+
+fn sql_source_nodes(graph: &CodeGraph, node_id: NodeId) -> Vec<&Node> {
+    graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            (edge.source == node_id || edge.target == node_id) && sql_relevant_edge(graph, edge)
+        })
+        .filter_map(|edge| {
+            let other = if edge.source == node_id {
+                edge.target
+            } else {
+                edge.source
+            };
+            graph.nodes.iter().find(|node| node.id == other)
+        })
+        .collect()
 }
 
 fn route_query_matches(
@@ -13865,6 +14238,159 @@ mod tests {
         let error = query_graph(&graph, "docs unsupported:value")
             .expect_err("invalid docs term should fail");
         assert!(error.to_string().contains("unsupported docs query term"));
+    }
+
+    #[test]
+    fn query_sql_returns_schema_and_source_query_context() {
+        let mut graph = CodeGraph::new("repo");
+        let schema = graph.add_node_with_metadata(
+            NodeKind::File,
+            "db/schema.sql",
+            None,
+            BTreeMap::from([
+                ("language".to_string(), "sql".to_string()),
+                ("item_kind".to_string(), "sql_schema".to_string()),
+            ]),
+        );
+        let users = graph.add_node_with_metadata(
+            NodeKind::Type,
+            "sql table:users",
+            None,
+            BTreeMap::from([
+                ("language".to_string(), "sql".to_string()),
+                ("item_kind".to_string(), "sql_table".to_string()),
+                ("table_name".to_string(), "users".to_string()),
+                ("table_key".to_string(), "users".to_string()),
+            ]),
+        );
+        let user_id = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "sql column:users.id",
+            None,
+            BTreeMap::from([
+                ("language".to_string(), "sql".to_string()),
+                ("item_kind".to_string(), "sql_column".to_string()),
+                ("table_name".to_string(), "users".to_string()),
+                ("column_name".to_string(), "id".to_string()),
+            ]),
+        );
+        let rust_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/repo.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let load_users = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "load_users",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let query = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "sql query:src/repo.rs:4",
+            None,
+            BTreeMap::from([
+                ("language".to_string(), "rust".to_string()),
+                ("item_kind".to_string(), "app_sql_query".to_string()),
+                ("operation".to_string(), "select".to_string()),
+                ("tables".to_string(), "audit_log,users".to_string()),
+                ("unresolved_tables".to_string(), "audit_log".to_string()),
+                ("resolution".to_string(), "partial".to_string()),
+            ]),
+        );
+
+        graph.add_edge_with_metadata(
+            schema,
+            users,
+            EdgeKind::Contains,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "sql_table".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            users,
+            user_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "sql_column".to_string())]),
+        );
+        graph.add_edge(rust_file, load_users, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge_with_metadata(
+            load_users,
+            query,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([("relation".to_string(), "app_sql_query".to_string())]),
+        );
+        graph.add_edge_with_metadata(
+            query,
+            users,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                (
+                    "relation".to_string(),
+                    "app_sql_table_reference".to_string(),
+                ),
+                ("operation".to_string(), "select".to_string()),
+                ("table".to_string(), "users".to_string()),
+            ]),
+        );
+
+        let result = query_graph(&graph, "sql table:users edge_limit:20").unwrap();
+
+        assert!(result.nodes.iter().any(|node| node.id == users));
+        assert!(result.nodes.iter().any(|node| node.id == user_id));
+        assert!(result.nodes.iter().any(|node| node.id == schema));
+        assert!(result.nodes.iter().any(|node| node.id == query));
+        assert!(result.nodes.iter().any(|node| node.id == load_users));
+        assert!(!result.nodes.iter().any(|node| node.id == rust_file));
+        assert!(result.edges.iter().any(|edge| {
+            edge.source == schema
+                && edge.target == users
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "sql_table")
+        }));
+        assert!(result.edges.iter().any(|edge| {
+            edge.source == users
+                && edge.target == user_id
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "sql_column")
+        }));
+        assert!(result.edges.iter().any(|edge| {
+            edge.source == query
+                && edge.target == users
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "app_sql_table_reference")
+        }));
+        assert_eq!(result.facets.item_kinds.get("sql_table"), Some(&1));
+        assert_eq!(result.facets.item_kinds.get("app_sql_query"), Some(&1));
+
+        let unresolved = query_graph(&graph, "sql unresolved:true").unwrap();
+        assert!(unresolved.nodes.iter().any(|node| node.id == query));
+        assert!(unresolved.nodes.iter().any(|node| node.id == users));
+        assert!(unresolved.total_nodes >= 2);
+
+        let by_operation = query_graph(&graph, "database operation:select").unwrap();
+        assert!(by_operation.nodes.iter().any(|node| node.id == query));
+
+        let error =
+            query_graph(&graph, "sql unsupported:value").expect_err("invalid sql term should fail");
+        assert!(error.to_string().contains("unsupported sql query term"));
+
+        let card = node_card(&graph, None, query, 10, 1, 10)
+            .expect("SQL query card should not error")
+            .expect("expected SQL query card");
+        assert!(card.actions.iter().any(|action| {
+            action.kind == "sql_graph"
+                && action.query == format!("sql node_id:{} edge_limit:300", query.0)
+        }));
     }
 
     #[test]

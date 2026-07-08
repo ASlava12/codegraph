@@ -147,6 +147,7 @@ Implemented now:
 - Web error trace reports can be downloaded as JSON with target, depth, source nodes, and exception-flow paths.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, trace, diagnostic, insight/risk, and unreachable-code slices.
+- SQL/schema graph query slices for tables, columns, indexes, views, app SQL query cards, code-to-query references, schema references, and missing-table triage.
 - Agent-friendly annotation graph queries for focused user-owned metadata slices from `.codegraph/annotations.toml`.
 - Focused query responses include returned counts and facets for node kinds, edge kinds, languages, item kinds, and confidence.
 - Agent-friendly symbol graph queries for focused function/type/module context with containing files and nearby dependency edges.
@@ -478,6 +479,7 @@ cargo run -p codegraph-cli -- query 'neighbors label:main direction:out depth:2 
 cargo run -p codegraph-cli -- query 'symbols label:load_config direction:out edge_limit:300' .
 cargo run -p codegraph-cli -- query 'files path:src/main.rs direction:out edge_limit:300' .
 cargo run -p codegraph-cli -- query 'docs target:src/main.rs relation:markdown_link edge_limit:300' .
+cargo run -p codegraph-cli -- query 'sql table:users operation:select edge_limit:300' .
 cargo run -p codegraph-cli -- query 'entrypoints language:rust' .
 cargo run -p codegraph-cli -- query 'routes method:GET path:/health depth:3 edge_limit:300' .
 cargo run -p codegraph-cli -- query 'packages package:serde ecosystem:cargo edge_limit:300' .

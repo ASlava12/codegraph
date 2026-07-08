@@ -65,6 +65,7 @@ const I18N = {
     "selection.packageGraph": "Packages",
     "selection.fileGraph": "File Graph",
     "selection.documentGraph": "Document Graph",
+    "selection.sqlGraph": "SQL Graph",
     "selection.symbolGraph": "Symbol Graph",
     "selection.configGraph": "Config Graph",
     "selection.errorGraph": "Error Graph",
@@ -670,6 +671,7 @@ const I18N = {
     "selection.packageGraph": "Пакеты",
     "selection.fileGraph": "Граф файла",
     "selection.documentGraph": "Граф документа",
+    "selection.sqlGraph": "SQL-граф",
     "selection.symbolGraph": "Граф символа",
     "selection.configGraph": "Граф конфига",
     "selection.errorGraph": "Граф ошибок",
@@ -9128,6 +9130,11 @@ function localNodeCardActions(node) {
       label: "Document graph",
       query: documentGraphQueryForNode(node),
     },
+    sqlGraphQueryForNode(node) && {
+      kind: "sql_graph",
+      label: "SQL graph",
+      query: sqlGraphQueryForNode(node),
+    },
     symbolGraphQueryForNode(node) && {
       kind: "symbol_graph",
       label: "Symbol graph",
@@ -9155,6 +9162,7 @@ function nodeCardActionLabel(action) {
   const labels = {
     file_graph: "selection.fileGraph",
     document_graph: "selection.documentGraph",
+    sql_graph: "selection.sqlGraph",
     symbol_graph: "selection.symbolGraph",
     package_graph: "selection.packageGraph",
     config_graph: "selection.configGraph",
@@ -9190,6 +9198,20 @@ function documentGraphQueryForNode(node) {
   const language = node.metadata?.language || "";
   if (!["document", "document_section"].includes(itemKind) && language !== "markdown") return null;
   return `docs node_id:${node.id} edge_limit:300`;
+}
+
+function sqlGraphQueryForNode(node) {
+  const itemKind = node.metadata?.item_kind || "";
+  const language = node.metadata?.language || "";
+  const source = node.metadata?.source || "";
+  if (
+    language !== "sql" &&
+    source !== "sql" &&
+    !["sql_schema", "sql_table", "sql_column", "sql_index", "sql_view", "app_sql_query"].includes(itemKind)
+  ) {
+    return null;
+  }
+  return `sql node_id:${node.id} edge_limit:300`;
 }
 
 function symbolGraphQueryForNode(node) {
