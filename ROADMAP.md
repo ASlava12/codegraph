@@ -175,6 +175,8 @@ Goal: answer practical code investigation questions.
 - [x] Detect config and environment keys that are read both as required and with fallback defaults.
 - [x] Detect sensitive config and environment keys, credential-like values, and placeholder secret defaults without leaking fallback values in reports.
 - [x] Detect literal sensitive CI environment assignments without leaking assigned values in reports.
+- [x] Promote source comments such as `WHY`, `NOTE`, `TODO`, `FIXME`, `HACK`, `BUG`, `XXX`, and `SECURITY` into linked rationale graph nodes.
+- [x] Emit risk insights for actionable rationale markers such as `SECURITY`, `FIXME`, `HACK`, `BUG`, and `XXX`.
 - [x] Back web insights with server analysis during paged graph exploration.
 - [x] Add CLI, server-side, and web filters for insight severity, kind, and search.
 - [x] Add insight severity and kind breakdowns for triage.
@@ -449,8 +451,8 @@ Graphify-inspired gaps to close:
 
 - [x] Add first deterministic graph community reports for subsystems with stable ids, local-first labels, sample nodes, and internal/external edge counts.
 - [ ] Add god-node and hotspot reports that separate real architectural hubs from noisy utility hubs.
-- [ ] Add Markdown/ADR/RFC extraction so rationale comments, design docs, decisions, and citations become first-class graph nodes.
-- [ ] Promote source comments such as `NOTE`, `WHY`, `TODO`, `FIXME`, and security/risk markers into linked rationale nodes.
+- [ ] Add Markdown/ADR/RFC extraction so design docs, decisions, and citations become first-class graph nodes.
+- [x] Promote source comments such as `NOTE`, `WHY`, `TODO`, `FIXME`, and security/risk markers into linked rationale nodes.
 - [ ] Add deterministic SQL schema extraction for tables, views, columns, foreign keys, indexes, queries, and JOIN relationships.
 - [ ] Link application code to SQL/schema nodes through query strings, migrations, ORM metadata, and database config.
 - [ ] Add document ingestion for Markdown, plain text, PDFs, Office files, and generated Markdown sidecars, with size limits and provenance.

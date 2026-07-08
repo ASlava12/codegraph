@@ -36,6 +36,7 @@ Implemented now:
 - Rust/Axum route entrypoints handle multiline `.route(...)` calls and ignore string literal route markers.
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
+- Source rationale comments such as `WHY`, `NOTE`, `TODO`, `FIXME`, `HACK`, `BUG`, `XXX`, and `SECURITY` are indexed as linked graph facts with source spans for human and agent review.
 - Local import/include resolution for relative JavaScript/TypeScript imports and CommonJS requires, Python relative/absolute project imports, Go module-local imports, quoted C/C++ includes with CMake and compile database include directories, PHP include/require paths and namespace imports, Bash source paths, and common Rust module paths.
 - Manifest dependency extraction from Cargo, npm/package-lock/pnpm-lock, Go including indirect requirements, Python/Poetry, setup.py/setup.cfg/Pipfile, Composer/composer.lock, vcpkg, Conan, and CMake `find_package` projects.
 - Heuristic config reads, environment reads, and potential error/exception constructs.
@@ -229,6 +230,7 @@ Implemented now:
 - Investigation insights for config/environment keys that are read with conflicting fallback defaults, including common inline Rust, Python, JavaScript/TypeScript, Go, C, C++, PHP, and Bash environment-read patterns.
 - Investigation insights for config/environment keys that are read both as required and with fallback defaults.
 - Investigation insights for sensitive config/environment keys, credential-like defaults, placeholder secret fallbacks, and literal sensitive CI environment assignments, without echoing fallback values in reports.
+- Investigation insights for risky source rationale markers such as `SECURITY`, `FIXME`, `HACK`, `BUG`, and `XXX`, while lower-noise `WHY`, `NOTE`, and `TODO` comments remain graph facts for context.
 - Dependency consistency insights for external imports/CommonJS requires that are not backed by declared manifest dependencies.
 - Dependency consistency insights for runtime manifest dependencies with no matching import.
 - Dependency consistency insights for package declarations with conflicting manifest constraints.
@@ -360,6 +362,7 @@ cargo run -p codegraph-cli -- insights .
 cargo run -p codegraph-cli -- insights . --severity warning --kind dependency --limit 25
 cargo run -p codegraph-cli -- insights . --kind custom_rule
 cargo run -p codegraph-cli -- insights . --kind sensitive_config_default
+cargo run -p codegraph-cli -- insights . --kind rationale_risk_comment
 ```
 
 Fail CI or agent workflows when findings meet a severity threshold:
@@ -472,6 +475,7 @@ cargo run -p codegraph-cli -- query 'insights severity:error kind:dependency' .
 cargo run -p codegraph-cli -- query 'insights kind:ambiguous_entrypoint_target' .
 cargo run -p codegraph-cli -- query 'insights kind:ambiguous_call_resolution' .
 cargo run -p codegraph-cli -- query 'insights kind:sensitive_config_default' .
+cargo run -p codegraph-cli -- query 'insights kind:rationale_risk_comment' .
 cargo run -p codegraph-cli -- query 'annotations key:domain value:payments direction:out edge_limit:300' .
 cargo run -p codegraph-cli -- query 'nodes metadata.annotation.domain:payments' .
 ```

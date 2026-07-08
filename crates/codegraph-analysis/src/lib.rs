@@ -803,6 +803,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "orphan_function",
     "parse_error",
     "potential_error_flow",
+    "rationale_risk_comment",
     "semantic_diagnostic",
     "sensitive_ci_environment_literal",
     "sensitive_config_default",
@@ -1644,6 +1645,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unreachable_source_file_insights(graph, &mut insights);
     add_conflicting_config_default_insights(graph, &mut insights);
     add_mixed_config_requirement_insights(graph, &mut insights);
+    add_rationale_risk_comment_insights(graph, &mut insights);
     add_sensitive_ci_environment_literal_insights(graph, &mut insights);
     add_sensitive_config_default_insights(graph, &mut insights);
     add_undeclared_import_insights(graph, &mut insights);
@@ -7940,6 +7942,49 @@ fn add_sensitive_config_default_insights(graph: &CodeGraph, insights: &mut Vec<I
             severity: InsightSeverity::Warning,
             message: format!(
                 "{kind} `{}` looks sensitive and has a non-empty fallback value",
+                node.label
+            ),
+            nodes: std::iter::once(node.id)
+                .chain(
+                    edges
+                        .iter()
+                        .filter_map(|index| graph.edges.get(*index).map(|edge| edge.source)),
+                )
+                .collect(),
+            edges,
+        });
+    }
+}
+
+fn add_rationale_risk_comment_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if node
+            .metadata
+            .get("item_kind")
+            .is_none_or(|kind| kind != "rationale_comment")
+        {
+            continue;
+        }
+        let Some(kind) = node.metadata.get("rationale_kind").map(String::as_str) else {
+            continue;
+        };
+        let severity = match kind {
+            "security" => InsightSeverity::Error,
+            "fixme" | "hack" | "bug" | "xxx" => InsightSeverity::Warning,
+            _ => continue,
+        };
+        let edges = incoming_edge_indexes(graph, node.id, EdgeKind::Contains);
+        let location = node
+            .span
+            .as_ref()
+            .map(|span| format!("{}:{}", span.path, span.start_line))
+            .unwrap_or_else(|| "unknown location".to_string());
+        insights.push(Insight {
+            kind: "rationale_risk_comment".to_string(),
+            severity,
+            message: format!(
+                "{} comment `{}` should be reviewed at {location}",
+                kind.to_ascii_uppercase(),
                 node.label
             ),
             nodes: std::iter::once(node.id)
@@ -14399,6 +14444,91 @@ mod tests {
         assert!(!insight.nodes.contains(&unused_required_port));
         assert_eq!(insight.edges.len(), 2);
         assert_eq!(report.by_kind.get("mixed_config_requirement"), Some(&1));
+    }
+
+    #[test]
+    fn insights_report_rationale_risk_comments() {
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node(NodeKind::File, "src/auth.rs");
+        let security = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "SECURITY: verify token audience",
+            Some(SourceSpan {
+                path: "src/auth.rs".to_string(),
+                start_line: 7,
+                start_column: 1,
+                end_line: 7,
+                end_column: 35,
+            }),
+            BTreeMap::from([
+                ("item_kind".to_string(), "rationale_comment".to_string()),
+                ("rationale_kind".to_string(), "security".to_string()),
+            ]),
+        );
+        let fixme = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "FIXME: handle retry backoff",
+            Some(SourceSpan {
+                path: "src/auth.rs".to_string(),
+                start_line: 12,
+                start_column: 5,
+                end_line: 12,
+                end_column: 33,
+            }),
+            BTreeMap::from([
+                ("item_kind".to_string(), "rationale_comment".to_string()),
+                ("rationale_kind".to_string(), "fixme".to_string()),
+            ]),
+        );
+        let why = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "WHY: keep startup simple",
+            Some(SourceSpan {
+                path: "src/auth.rs".to_string(),
+                start_line: 3,
+                start_column: 1,
+                end_line: 3,
+                end_column: 27,
+            }),
+            BTreeMap::from([
+                ("item_kind".to_string(), "rationale_comment".to_string()),
+                ("rationale_kind".to_string(), "why".to_string()),
+            ]),
+        );
+        for node in [security, fixme, why] {
+            graph.add_edge_with_metadata(
+                file,
+                node,
+                EdgeKind::Contains,
+                Confidence::Exact,
+                BTreeMap::from([("relation".to_string(), "rationale_comment".to_string())]),
+            );
+        }
+
+        let report = insights(&graph);
+        let rationale = report
+            .insights
+            .iter()
+            .filter(|insight| insight.kind == "rationale_risk_comment")
+            .collect::<Vec<_>>();
+
+        assert_eq!(rationale.len(), 2);
+        assert!(rationale.iter().any(|insight| {
+            insight.severity == InsightSeverity::Error
+                && insight.nodes.contains(&security)
+                && insight.nodes.contains(&file)
+                && insight.message.contains("SECURITY")
+                && insight.message.contains("src/auth.rs:7")
+        }));
+        assert!(rationale.iter().any(|insight| {
+            insight.severity == InsightSeverity::Warning
+                && insight.nodes.contains(&fixme)
+                && insight.nodes.contains(&file)
+                && insight.message.contains("FIXME")
+                && insight.message.contains("src/auth.rs:12")
+        }));
+        assert!(!rationale.iter().any(|insight| insight.nodes.contains(&why)));
+        assert_eq!(report.by_kind.get("rationale_risk_comment"), Some(&2));
     }
 
     #[test]

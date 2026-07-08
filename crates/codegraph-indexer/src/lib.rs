@@ -1033,6 +1033,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
     let source_text = fs::read_to_string(path).ok();
     let mut script_entrypoint = None;
     if let Some(source) = source_text.as_deref() {
+        index_rationale_comments(context, file_id, label, language, source);
         script_entrypoint = index_script_entrypoint(context, file_id, label, source);
         index_manifest_facts(context, file_id, path, label, source);
         index_framework_configs(context, file_id, label, language, source);
@@ -1241,6 +1242,153 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
             ),
         }
     }
+}
+
+fn index_rationale_comments(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    language: Option<Language>,
+    source: &str,
+) {
+    for comment in rationale_comments(label, language, source) {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "rationale_comment".to_string());
+        metadata.insert("source".to_string(), "source_comment".to_string());
+        metadata.insert("rationale_kind".to_string(), comment.kind.to_string());
+        metadata.insert("line".to_string(), comment.line.to_string());
+        metadata.insert("text".to_string(), comment.text.clone());
+        if let Some(language) = language {
+            metadata.insert("language".to_string(), language.to_string());
+        }
+        let rationale_id = context.graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            comment.label,
+            Some(line_span(label, source, comment.line)),
+            metadata,
+        );
+        context.graph.add_edge_with_metadata(
+            file_id,
+            rationale_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "rationale_comment".to_string())]),
+        );
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RationaleComment {
+    kind: &'static str,
+    label: String,
+    text: String,
+    line: u32,
+}
+
+fn rationale_comments(
+    label: &str,
+    language: Option<Language>,
+    source: &str,
+) -> Vec<RationaleComment> {
+    source
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            rationale_comment_text(language, line)
+                .and_then(|text| rationale_marker(text))
+                .map(|(kind, text)| {
+                    let text = normalize_rationale_text(text);
+                    RationaleComment {
+                        kind,
+                        label: format!("{}: {}", kind.to_ascii_uppercase(), rationale_label(&text)),
+                        text,
+                        line: index as u32 + 1,
+                    }
+                })
+        })
+        .filter(|comment| !comment.text.is_empty() && comment.text != label)
+        .collect()
+}
+
+fn rationale_comment_text(language: Option<Language>, line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    match language {
+        Some(Language::Python | Language::Bash) => trimmed.strip_prefix('#'),
+        Some(
+            Language::Rust
+            | Language::JavaScript
+            | Language::TypeScript
+            | Language::Tsx
+            | Language::Go
+            | Language::C
+            | Language::Cpp,
+        ) => trimmed.strip_prefix("//").or_else(|| {
+            trimmed
+                .strip_prefix("/*")
+                .map(|text| text.trim_end_matches("*/").trim())
+        }),
+        Some(Language::Php) => trimmed
+            .strip_prefix("//")
+            .or_else(|| trimmed.strip_prefix('#'))
+            .or_else(|| {
+                trimmed
+                    .strip_prefix("/*")
+                    .map(|text| text.trim_end_matches("*/").trim())
+            }),
+        None => trimmed
+            .strip_prefix("//")
+            .or_else(|| trimmed.strip_prefix('#'))
+            .or_else(|| {
+                trimmed
+                    .strip_prefix("/*")
+                    .map(|text| text.trim_end_matches("*/").trim())
+            }),
+    }
+}
+
+fn rationale_marker(text: &str) -> Option<(&'static str, &str)> {
+    let trimmed = text.trim_start();
+    let normalized = trimmed.to_ascii_uppercase();
+    for marker in [
+        "SECURITY", "FIXME", "TODO", "WHY", "NOTE", "HACK", "BUG", "XXX",
+    ] {
+        if normalized == marker {
+            return Some((rationale_kind(marker), ""));
+        }
+        for separator in [":", "-", " "] {
+            let prefix = format!("{marker}{separator}");
+            if normalized.starts_with(&prefix) {
+                return Some((rationale_kind(marker), trimmed[prefix.len()..].trim()));
+            }
+        }
+    }
+    None
+}
+
+fn rationale_kind(marker: &str) -> &'static str {
+    match marker {
+        "SECURITY" => "security",
+        "FIXME" => "fixme",
+        "TODO" => "todo",
+        "WHY" => "why",
+        "NOTE" => "note",
+        "HACK" => "hack",
+        "BUG" => "bug",
+        "XXX" => "xxx",
+        _ => "note",
+    }
+}
+
+fn normalize_rationale_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn rationale_label(text: &str) -> String {
+    let mut label = text.chars().take(96).collect::<String>();
+    if text.chars().count() > 96 {
+        label.push_str("...");
+    }
+    label
 }
 
 fn parse_source_cached(
@@ -10731,6 +10879,69 @@ mod tests {
                 .iter()
                 .any(|edge| edge.kind == EdgeKind::MayError)
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_adds_rationale_comment_nodes() {
+        let root = temp_project_root();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("main.py"),
+            r#"# WHY: keep startup simple until plugins stabilize
+def main():
+    # FIXME: handle retry backoff
+    return True
+"#,
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+
+        let why = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("item_kind")
+                    .is_some_and(|value| value == "rationale_comment")
+                    && node
+                        .metadata
+                        .get("rationale_kind")
+                        .is_some_and(|value| value == "why")
+            })
+            .expect("WHY comment should be indexed");
+        assert_eq!(
+            why.label,
+            "WHY: keep startup simple until plugins stabilize"
+        );
+        assert_eq!(why.span.as_ref().map(|span| span.start_line), Some(1));
+        assert_eq!(
+            why.metadata.get("language").map(String::as_str),
+            Some("python")
+        );
+        let fixme = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("item_kind")
+                    .is_some_and(|value| value == "rationale_comment")
+                    && node
+                        .metadata
+                        .get("rationale_kind")
+                        .is_some_and(|value| value == "fixme")
+            })
+            .expect("FIXME comment should be indexed");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Contains
+                && edge.target == fixme.id
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "rationale_comment")
+        }));
 
         fs::remove_dir_all(root).unwrap();
     }
