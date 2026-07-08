@@ -134,6 +134,7 @@ Implemented now:
 - Entrypoint trace API, CLI command, and web panel for comparing startup flows from manifest/code entrypoints.
 - Web entrypoint trace reports can be downloaded as JSON with search, depth, and returned startup flows.
 - Block-style workflow reports from a selected entrypoint, matched entrypoint set, or node label in CLI and API, with stable block ids, source node ids, edge indexes, confidence metadata, risk references, Mermaid flowchart output from CLI/web, and a selected-node web Flow panel with JSON/Mermaid downloads.
+- Web Entry Flows can build block-style workflow reports for matched entrypoints, focus a workflow slice on the graph, and download JSON or Mermaid for agent handoff.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Web config trace reports can be downloaded as JSON with target, depth, matched readers, and dependency paths.
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.

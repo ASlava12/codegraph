@@ -187,6 +187,9 @@ const I18N = {
     "button.downloadCheck": "Download Check",
     "button.downloadSourceResults": "Download Results",
     "button.downloadEntryFlows": "Download Flows",
+    "button.buildEntryWorkflows": "Build Workflows",
+    "button.downloadEntryWorkflows": "Download Workflows",
+    "button.downloadEntryWorkflowMermaid": "Download Mermaid",
     "button.downloadPathResult": "Download Path",
     "button.downloadConfigTrace": "Download Config Trace",
     "button.downloadErrorTrace": "Download Error Trace",
@@ -418,6 +421,8 @@ const I18N = {
     "export.check": "Check Result JSON",
     "export.sourceSearch": "Source Search JSON",
     "export.entryFlows": "Entrypoint Traces JSON",
+    "export.entryWorkflows": "Entrypoint Workflows JSON",
+    "export.entryWorkflowMermaid": "Entrypoint Workflows Mermaid",
     "export.pathResult": "Path Result JSON",
     "export.configTrace": "Config Trace JSON",
     "export.errorTrace": "Error Trace JSON",
@@ -425,6 +430,7 @@ const I18N = {
     "export.workflow": "Workflow JSON",
     "export.workflowMermaid": "Workflow Mermaid",
     "export.noEntryFlows": "Trace entrypoints before exporting flows.",
+    "export.noEntryWorkflows": "Build entrypoint workflows before exporting.",
     "export.noPathResult": "Find a path before exporting its result.",
     "export.noConfigTrace": "Trace config before exporting results.",
     "export.noErrorTrace": "Trace errors before exporting results.",
@@ -465,13 +471,18 @@ const I18N = {
     "trace.noStart": "No matching start node.",
     "trace.noOutgoing": "No outgoing dependency edges.",
     "entryFlows.tracing": "Tracing entrypoints...",
+    "entryFlows.buildingWorkflows": "Building entrypoint workflows...",
     "entryFlows.failedFallback": "entrypoint trace failed",
+    "entryFlows.workflowFailedFallback": "entrypoint workflow failed",
     "entryFlows.entrypointCount": "{count} entrypoints",
     "entryFlows.traceCount": "{count} traces",
+    "entryFlows.workflowCount": "{count} workflows",
     "entryFlows.noMatches": "No matching entrypoint flows.",
+    "entryFlows.noWorkflowMatches": "No matching entrypoint workflows.",
     "entryFlows.traceTruncated": "Trace truncated by depth.",
     "entryFlows.reportTruncated": "Report truncated by limit or depth.",
     "entryFlows.focusFlow": "Focus flow",
+    "entryFlows.focusWorkflow": "Focus workflow",
     "entryFlows.focusTitle": "Entry: {label}",
     "configTrace.enterTarget": "Enter a config file or environment variable.",
     "configTrace.tracing": "Tracing config...",
@@ -769,6 +780,9 @@ const I18N = {
     "button.downloadCheck": "Скачать проверку",
     "button.downloadSourceResults": "Скачать результаты",
     "button.downloadEntryFlows": "Скачать потоки",
+    "button.buildEntryWorkflows": "Собрать блок-схемы",
+    "button.downloadEntryWorkflows": "Скачать блок-схемы",
+    "button.downloadEntryWorkflowMermaid": "Скачать Mermaid",
     "button.downloadPathResult": "Скачать путь",
     "button.downloadConfigTrace": "Скачать трассу конфига",
     "button.downloadErrorTrace": "Скачать трассу ошибок",
@@ -1000,6 +1014,8 @@ const I18N = {
     "export.check": "JSON проверки",
     "export.sourceSearch": "JSON поиска в коде",
     "export.entryFlows": "JSON потоков входа",
+    "export.entryWorkflows": "JSON блок-схем входа",
+    "export.entryWorkflowMermaid": "Mermaid блок-схем входа",
     "export.pathResult": "JSON результата пути",
     "export.configTrace": "JSON трассы конфига",
     "export.errorTrace": "JSON трассы ошибок",
@@ -1007,6 +1023,7 @@ const I18N = {
     "export.workflow": "JSON блок-схемы",
     "export.workflowMermaid": "Mermaid блок-схемы",
     "export.noEntryFlows": "Сначала трассируйте точки входа.",
+    "export.noEntryWorkflows": "Сначала соберите блок-схемы точек входа.",
     "export.noPathResult": "Сначала найдите путь.",
     "export.noConfigTrace": "Сначала трассируйте конфиг.",
     "export.noErrorTrace": "Сначала трассируйте ошибки.",
@@ -1047,13 +1064,18 @@ const I18N = {
     "trace.noStart": "Начальный узел не найден.",
     "trace.noOutgoing": "Исходящих связей зависимостей нет.",
     "entryFlows.tracing": "Трассирую точки входа...",
+    "entryFlows.buildingWorkflows": "Собираю блок-схемы точек входа...",
     "entryFlows.failedFallback": "трасса точек входа не удалась",
+    "entryFlows.workflowFailedFallback": "блок-схема точек входа не удалась",
     "entryFlows.entrypointCount": "точек входа: {count}",
     "entryFlows.traceCount": "трасс: {count}",
+    "entryFlows.workflowCount": "блок-схем: {count}",
     "entryFlows.noMatches": "Подходящих потоков входа нет.",
+    "entryFlows.noWorkflowMatches": "Подходящих блок-схем входа нет.",
     "entryFlows.traceTruncated": "Трасса усечена глубиной.",
     "entryFlows.reportTruncated": "Отчёт усечён лимитом или глубиной.",
     "entryFlows.focusFlow": "Фокус потока",
+    "entryFlows.focusWorkflow": "Фокус блок-схемы",
     "entryFlows.focusTitle": "Вход: {label}",
     "configTrace.enterTarget": "Введите конфиг-файл или переменную окружения.",
     "configTrace.tracing": "Трассирую конфиг...",
@@ -1328,6 +1350,7 @@ const state = {
   lastCheckResult: null,
   lastSourceSearchResult: null,
   lastEntryFlowReport: null,
+  lastEntryWorkflowReport: null,
   lastPathResult: null,
   lastConfigTraceReport: null,
   lastErrorTraceReport: null,
@@ -1405,7 +1428,10 @@ const entrypointList = document.querySelector("#entrypointList");
 const entryFlowSearchInput = document.querySelector("#entryFlowSearchInput");
 const entryFlowDepthInput = document.querySelector("#entryFlowDepthInput");
 const entryFlowButton = document.querySelector("#entryFlowButton");
+const entryFlowWorkflowButton = document.querySelector("#entryFlowWorkflowButton");
 const entryFlowExportButton = document.querySelector("#entryFlowExportButton");
+const entryFlowWorkflowExportButton = document.querySelector("#entryFlowWorkflowExportButton");
+const entryFlowWorkflowMermaidExportButton = document.querySelector("#entryFlowWorkflowMermaidExportButton");
 const entryFlowResult = document.querySelector("#entryFlowResult");
 const pageInfo = document.querySelector("#pageInfo");
 const pageScope = document.querySelector("#pageScope");
@@ -1555,7 +1581,10 @@ cacheDiffLimitInput.addEventListener("keydown", (event) => {
 exportButton.addEventListener("click", () => runGraphExport());
 exportSliceButton.addEventListener("click", () => exportVisibleGraphSlice());
 entryFlowButton.addEventListener("click", () => runEntryFlowTrace());
+entryFlowWorkflowButton.addEventListener("click", () => runEntryFlowWorkflows());
 entryFlowExportButton.addEventListener("click", () => exportLastEntryFlowReport());
+entryFlowWorkflowExportButton.addEventListener("click", () => exportLastEntryWorkflowReport("json"));
+entryFlowWorkflowMermaidExportButton.addEventListener("click", () => exportLastEntryWorkflowReport("mermaid"));
 for (const input of [entryFlowSearchInput, entryFlowDepthInput]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") runEntryFlowTrace();
@@ -1722,6 +1751,7 @@ function applyLocale() {
   renderCheckExportState();
   renderSourceSearchExportState();
   renderEntryFlowExportState();
+  renderEntryWorkflowExportState();
   renderPathExportState();
   renderConfigTraceExportState();
   renderErrorTraceExportState();
@@ -2449,6 +2479,7 @@ async function scan() {
   state.insightReport = null;
   renderInsights();
   clearLastEntryFlowReport();
+  clearLastEntryWorkflowReport();
   clearLastConfigTraceReport();
   clearLastErrorTraceReport();
   clearLastCheckResult();
@@ -4074,6 +4105,7 @@ async function runEntryFlowTrace() {
   state.entryFlowRequest += 1;
   const requestId = state.entryFlowRequest;
   entryFlowButton.disabled = true;
+  entryFlowWorkflowButton.disabled = true;
   entryFlowResult.innerHTML = `<p class="empty">${escapeHtml(t("entryFlows.tracing"))}</p>`;
 
   const params = new URLSearchParams({
@@ -4101,7 +4133,9 @@ async function runEntryFlowTrace() {
       },
       report: body,
     };
+    state.lastEntryWorkflowReport = null;
     renderEntryFlowExportState();
+    renderEntryWorkflowExportState();
     entryFlowResult.innerHTML = renderEntryFlowReport(body);
     attachEntryFlowActions(entryFlowResult, body);
   } catch (error) {
@@ -4110,6 +4144,59 @@ async function runEntryFlowTrace() {
   } finally {
     if (requestId === state.entryFlowRequest) {
       entryFlowButton.disabled = false;
+      entryFlowWorkflowButton.disabled = false;
+    }
+  }
+}
+
+async function runEntryFlowWorkflows() {
+  const depth = clampNumber(Number(entryFlowDepthInput.value || 3), 1, 32);
+  entryFlowDepthInput.value = String(depth);
+  state.entryFlowRequest += 1;
+  const requestId = state.entryFlowRequest;
+  entryFlowButton.disabled = true;
+  entryFlowWorkflowButton.disabled = true;
+  entryFlowResult.innerHTML = `<p class="empty">${escapeHtml(t("entryFlows.buildingWorkflows"))}</p>`;
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    depth: String(depth),
+    block_limit: "120",
+    limit: "15",
+  });
+  const search = entryFlowSearchInput.value.trim();
+  if (search) params.set("search", search);
+
+  try {
+    const response = await apiFetch(`/api/entrypoint-workflows?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.entryFlowRequest) return;
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(body, response, t("entryFlows.workflowFailedFallback")));
+    }
+    state.lastEntryWorkflowReport = {
+      generated_at: new Date().toISOString(),
+      root: pathInput.value.trim() || ".",
+      filters: {
+        search,
+        depth,
+        block_limit: 120,
+        limit: 15,
+      },
+      report: body,
+    };
+    state.lastEntryFlowReport = null;
+    renderEntryFlowExportState();
+    renderEntryWorkflowExportState();
+    entryFlowResult.innerHTML = renderEntryWorkflowReport(body);
+    attachEntryWorkflowActions(entryFlowResult, body);
+  } catch (error) {
+    if (requestId !== state.entryFlowRequest) return;
+    entryFlowResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.entryFlowRequest) {
+      entryFlowButton.disabled = false;
+      entryFlowWorkflowButton.disabled = false;
     }
   }
 }
@@ -4118,9 +4205,19 @@ function renderEntryFlowExportState() {
   entryFlowExportButton.disabled = !state.lastEntryFlowReport;
 }
 
+function renderEntryWorkflowExportState() {
+  entryFlowWorkflowExportButton.disabled = !state.lastEntryWorkflowReport;
+  entryFlowWorkflowMermaidExportButton.disabled = !state.lastEntryWorkflowReport;
+}
+
 function clearLastEntryFlowReport() {
   state.lastEntryFlowReport = null;
   renderEntryFlowExportState();
+}
+
+function clearLastEntryWorkflowReport() {
+  state.lastEntryWorkflowReport = null;
+  renderEntryWorkflowExportState();
 }
 
 function exportLastEntryFlowReport() {
@@ -4146,6 +4243,47 @@ function exportLastEntryFlowReport() {
         <span>${escapeHtml(formatBytes(blob.size))}</span>
         <span>${escapeHtml(t("entryFlows.traceCount", { count: formatNumber(payload.report?.traces?.length ?? 0) }))}</span>
         <span>${escapeHtml(t("entryFlows.entrypointCount", { count: formatNumber(payload.report?.total_entrypoints ?? 0) }))}</span>
+        <span class="query-expression">${escapeHtml(fileName)}</span>
+      </div>
+    `,
+  );
+}
+
+function exportLastEntryWorkflowReport(format) {
+  if (!state.lastEntryWorkflowReport) {
+    entryFlowResult.innerHTML = `<p class="empty">${escapeHtml(t("export.noEntryWorkflows"))}</p>`;
+    renderEntryWorkflowExportState();
+    return;
+  }
+
+  const payload = {
+    schema: "codegraph.entrypoint_workflows.v1",
+    ...state.lastEntryWorkflowReport,
+  };
+  const root = safeFilePart(payload.root);
+  if (format === "mermaid") {
+    const mermaid = entryWorkflowReportToMermaid(payload.report);
+    const blob = new Blob([mermaid], { type: "text/vnd.mermaid;charset=utf-8" });
+    const fileName = `codegraph-${root}-entrypoint-workflows.mmd`;
+    downloadBlob(blob, fileName);
+    renderEntryFlowExportNote(fileName, blob.size, t("export.entryWorkflowMermaid"));
+    return;
+  }
+
+  const serialized = JSON.stringify(payload, null, 2);
+  const blob = new Blob([serialized], { type: "application/json" });
+  const fileName = `codegraph-${root}-entrypoint-workflows.json`;
+  downloadBlob(blob, fileName);
+  renderEntryFlowExportNote(fileName, blob.size, t("export.entryWorkflows"));
+}
+
+function renderEntryFlowExportNote(fileName, size, label) {
+  entryFlowResult.insertAdjacentHTML(
+    "afterbegin",
+    `
+      <div class="query-summary">
+        <span>${escapeHtml(label)}</span>
+        <span>${escapeHtml(formatBytes(size))}</span>
         <span class="query-expression">${escapeHtml(fileName)}</span>
       </div>
     `,
@@ -4207,6 +4345,40 @@ function renderEntryFlowReport(report) {
   return `${summary}${rows}${truncated}`;
 }
 
+function renderEntryWorkflowReport(report) {
+  const workflows = Array.isArray(report.workflows) ? report.workflows : [];
+  const summary = `
+    <div class="query-summary">
+      <span>${escapeHtml(t("entryFlows.entrypointCount", { count: formatNumber(report.total_entrypoints || 0) }))}</span>
+      <span>${escapeHtml(t("entryFlows.workflowCount", { count: formatNumber(workflows.length) }))}</span>
+      <span>${escapeHtml(t("trace.depth", { depth: formatNumber(report.max_depth || 0) }))}</span>
+    </div>
+  `;
+  if (!workflows.length) {
+    return `${summary}<p class="empty">${escapeHtml(t("entryFlows.noWorkflowMatches"))}</p>`;
+  }
+
+  const rows = workflows
+    .slice(0, 15)
+    .map((workflow, index) => {
+      const start = workflow.start || {};
+      return `
+        <section class="trace-columns">
+          <h3>${escapeHtml(start.label || String(start.id || ""))}</h3>
+          <div class="query-actions">
+            <button type="button" data-entry-workflow="${index}">${escapeHtml(t("entryFlows.focusWorkflow"))}</button>
+          </div>
+          ${renderWorkflow(workflow)}
+        </section>
+      `;
+    })
+    .join("");
+  const truncated = report.truncated
+    ? `<p class="empty">${escapeHtml(t("entryFlows.reportTruncated"))}</p>`
+    : "";
+  return `${summary}${rows}${truncated}`;
+}
+
 function attachEntryFlowActions(container, report) {
   attachQueryNavigation(container);
   container.querySelectorAll("[data-entry-flow]").forEach((button) => {
@@ -4222,6 +4394,28 @@ function attachEntryFlowActions(container, report) {
         truncated: trace.truncated,
       };
       showFocusedGraph(focused, t("entryFlows.focusTitle", { label: trace.start.label }), trace.start.id);
+    });
+  });
+}
+
+function attachEntryWorkflowActions(container, report) {
+  attachWorkflowNavigation(container);
+  attachEdgeExplainActions(container);
+  container.querySelectorAll("[data-entry-workflow]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const workflow = report.workflows?.[Number(button.dataset.entryWorkflow)];
+      if (!workflow) return;
+      const blocks = Array.isArray(workflow.blocks) ? workflow.blocks : [];
+      const transitions = Array.isArray(workflow.transitions) ? workflow.transitions : [];
+      const focused = {
+        query: `workflow-entrypoints ${workflow.start?.label || ""}`,
+        nodes: blocks.map((block) => block.node).filter(Boolean),
+        edges: transitions.map((transition) => transition.edge).filter(Boolean),
+        total_nodes: blocks.length,
+        total_edges: transitions.length,
+        truncated: workflow.truncated,
+      };
+      showFocusedGraph(focused, t("entryFlows.focusTitle", { label: workflow.start?.label || "" }), workflow.start?.id);
     });
   });
 }
@@ -8941,6 +9135,13 @@ function workflowReportToMermaid(report) {
     );
   });
   return `${lines.join("\n")}\n`;
+}
+
+function entryWorkflowReportToMermaid(report) {
+  const workflows = Array.isArray(report?.workflows) ? report.workflows : [];
+  return workflows
+    .map((workflow) => `%% ${mermaidEscape(workflow?.start?.label || "entrypoint")}\n${workflowReportToMermaid(workflow)}`)
+    .join("\n");
 }
 
 function workflowMermaidNodeId(id) {

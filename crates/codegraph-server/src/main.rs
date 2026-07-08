@@ -7215,6 +7215,16 @@ fn helper() {}
         assert!(app.contains("exportLastEntryFlowReport"));
         assert!(app.contains("codegraph.entrypoint_traces.v1"));
         assert!(app.contains("\"button.downloadEntryFlows\""));
+        assert!(index.contains("entryFlowWorkflowButton"));
+        assert!(index.contains("entryFlowWorkflowExportButton"));
+        assert!(index.contains("entryFlowWorkflowMermaidExportButton"));
+        assert!(app.contains("/api/entrypoint-workflows?"));
+        assert!(app.contains("exportLastEntryWorkflowReport"));
+        assert!(app.contains("entryWorkflowReportToMermaid"));
+        assert!(app.contains("codegraph.entrypoint_workflows.v1"));
+        assert!(app.contains("\"button.buildEntryWorkflows\""));
+        assert!(app.contains("\"button.downloadEntryWorkflows\""));
+        assert!(app.contains("\"button.downloadEntryWorkflowMermaid\""));
         assert!(index.contains("configTraceExportButton"));
         assert!(app.contains("exportLastConfigTraceReport"));
         assert!(app.contains("codegraph.config_trace.v1"));

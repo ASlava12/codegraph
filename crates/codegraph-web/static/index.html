@@ -151,8 +151,31 @@
               <input id="entryFlowDepthInput" type="number" min="1" max="32" value="3" />
             </label>
           </div>
-          <button id="entryFlowButton" type="button" data-i18n="button.traceEntrypoints">Trace Entrypoints</button>
-          <button id="entryFlowExportButton" type="button" data-i18n="button.downloadEntryFlows" disabled>Download Flows</button>
+          <div class="entrypoint-flow-actions">
+            <button id="entryFlowButton" type="button" data-i18n="button.traceEntrypoints">Trace Entrypoints</button>
+            <button id="entryFlowWorkflowButton" type="button" data-i18n="button.buildEntryWorkflows">
+              Build Workflows
+            </button>
+            <button id="entryFlowExportButton" type="button" data-i18n="button.downloadEntryFlows" disabled>
+              Download Flows
+            </button>
+            <button
+              id="entryFlowWorkflowExportButton"
+              type="button"
+              data-i18n="button.downloadEntryWorkflows"
+              disabled
+            >
+              Download Workflows
+            </button>
+            <button
+              id="entryFlowWorkflowMermaidExportButton"
+              type="button"
+              data-i18n="button.downloadEntryWorkflowMermaid"
+              disabled
+            >
+              Download Mermaid
+            </button>
+          </div>
           <div id="entryFlowResult" class="query-result"></div>
         </section>
 
