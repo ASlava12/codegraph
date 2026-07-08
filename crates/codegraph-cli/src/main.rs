@@ -6,10 +6,10 @@ use codegraph_analysis::{
     DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
     EntrypointTraceRequest, ErrorTraceRequest, ExplainEdgeRequest, InsightFilter, InsightSeverity,
     ProjectReport, ProjectReportLimits, SourceSearchRequest, TraceRequest, TraceStart,
-    architecture_map, check_insights, communities, entrypoints, explain_edge,
+    WorkflowRequest, architecture_map, check_insights, communities, entrypoints, explain_edge,
     filter_insight_report, hotspots, insights, language_dependencies, project_report, query_graph,
     search_source, summarize, trace, trace_config, trace_dependents, trace_entrypoints,
-    trace_errors,
+    trace_errors, workflow, workflow_mermaid,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -270,6 +270,39 @@ enum Command {
         /// Maximum entrypoint traces to return.
         #[arg(long, default_value_t = 25)]
         limit: usize,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Emit a block-style workflow from an entrypoint or node label.
+    Workflow {
+        /// Entrypoint/function/node label to convert into workflow blocks.
+        label: String,
+
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Maximum outgoing dependency depth.
+        #[arg(long, default_value_t = 4)]
+        depth: usize,
+
+        /// Maximum workflow blocks to return.
+        #[arg(long, default_value_t = 200)]
+        block_limit: usize,
+
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
+        format: WorkflowFormat,
 
         /// Include hidden files and directories.
         #[arg(long)]
@@ -653,6 +686,12 @@ enum OutputFormat {
     Json,
     Dot,
     Ndjson,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum WorkflowFormat {
+    Json,
+    Mermaid,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1197,6 +1236,38 @@ fn main() -> Result<()> {
                 },
             );
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::Workflow {
+            label,
+            path,
+            depth,
+            block_limit,
+            format,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
+            let report = workflow(
+                &graph,
+                WorkflowRequest {
+                    start: TraceStart::Label(label),
+                    max_depth: depth,
+                    block_limit,
+                },
+            );
+            match (format, report) {
+                (WorkflowFormat::Json, report) => {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                }
+                (WorkflowFormat::Mermaid, Some(report)) => {
+                    println!("{}", workflow_mermaid(&report));
+                }
+                (WorkflowFormat::Mermaid, None) => {
+                    println!("flowchart TD");
+                }
+            }
         }
         Command::TraceConfig {
             target,

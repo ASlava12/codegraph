@@ -212,13 +212,16 @@ Goal: answer practical code investigation questions.
 - [x] Add web source-search actions for opening matching files as focused graph slices.
 - [x] Add web source-search result JSON downloads for agent handoff.
 - [x] Add edge explanation for confidence and provenance evidence across CLI, API, and web.
-- [ ] Add a derived workflow model that converts entrypoint traces into block-style execution steps.
+- [x] Add a derived workflow model that converts selected outgoing traces into block-style execution steps.
+- [x] Add workflow JSON output for agents with stable block ids, source node ids, edge provenance, confidence, and risk references.
+- [x] Add first Mermaid flowchart export for human-readable workflow diagrams.
+- [x] Add first CLI workflow command for selected entrypoint/function/node labels.
+- [x] Add first workflow API endpoint with depth and block-limit controls.
+- [ ] Extend workflow generation from selected labels to entrypoints, routes, CI jobs, Makefile targets, Docker commands, and selected query slices.
 - [ ] Classify workflow blocks as start, call, config/env read, dependency, branch, error, return, and external boundary.
 - [ ] Add workflow graph compaction so repeated helper calls, import-only hops, and low-signal nodes collapse into readable blocks.
-- [ ] Add workflow JSON output for agents with stable block ids, source node ids, edge provenance, confidence, and risk references.
-- [ ] Add Mermaid flowchart export for human-readable workflow diagrams.
-- [ ] Add CLI workflow commands for entrypoints, routes, CI jobs, Makefile targets, Docker commands, and selected nodes.
-- [ ] Add workflow API endpoints with depth, edge-kind, confidence, language, and risk filters.
+- [ ] Add CLI workflow commands for routes, CI jobs, Makefile targets, Docker commands, and selected nodes.
+- [ ] Add workflow API filters for edge-kind, confidence, language, risk severity, and block kinds.
 - [ ] Add workflow query slices so existing graph query results can open as block diagrams.
 - [ ] Add web Flow view next to Graph/Cards/Risks with pan, zoom, minimap, and selectable workflow blocks.
 - [ ] Reuse node and dependency cards from workflow blocks, including source preview, related dependencies, risks, and edge explanations.

@@ -18,11 +18,11 @@ use codegraph_analysis::{
     MAX_REPORT_ARCHITECTURE_GROUP_LIMIT, MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
     MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, NodeCard, NodeContext, ProjectReport,
     ProjectReportLimits, SourcePreview, SourceSearchRequest, SourceSearchResult, TraceRequest,
-    TraceStart, architecture_map, check_insights, communities, entrypoints, explain_edge,
-    export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots, insights,
-    language_dependencies, node_card, node_context, project_report, query_graph,
-    read_source_preview, search_source, slice_graph, summarize, trace, trace_config,
-    trace_dependents, trace_entrypoints, trace_errors,
+    TraceStart, WorkflowReport, WorkflowRequest, architecture_map, check_insights, communities,
+    entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph,
+    hotspots, insights, language_dependencies, node_card, node_context, project_report,
+    query_graph, read_source_preview, search_source, slice_graph, summarize, trace, trace_config,
+    trace_dependents, trace_entrypoints, trace_errors, workflow,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -359,6 +359,15 @@ struct TraceQuery {
     label: Option<String>,
     node_id: Option<u64>,
     depth: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkflowQuery {
+    path: Option<PathBuf>,
+    label: Option<String>,
+    node_id: Option<u64>,
+    depth: Option<usize>,
+    block_limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -981,6 +990,7 @@ async fn main() -> Result<()> {
         .route("/api/query", get(query_api))
         .route("/api/explain-edge", get(explain_edge_api))
         .route("/api/trace", get(trace_api))
+        .route("/api/workflow", get(workflow_api))
         .route("/api/dependents", get(dependents_api))
         .route("/api/trace-config", get(trace_config_api))
         .route("/api/trace-errors", get(trace_errors_api))
@@ -2686,6 +2696,30 @@ async fn trace_api(
     )))
 }
 
+async fn workflow_api(
+    State(state): State<AppState>,
+    Query(query): Query<WorkflowQuery>,
+) -> Result<Json<Option<WorkflowReport>>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let start = match (query.node_id, query.label) {
+        (Some(id), _) => TraceStart::NodeId(codegraph_core::NodeId(id)),
+        (None, Some(label)) => TraceStart::Label(label),
+        (None, None) => {
+            return Err(ApiError::bad_request(
+                "workflow requires either node_id or label query parameter",
+            ));
+        }
+    };
+    Ok(Json(workflow(
+        &graph,
+        WorkflowRequest {
+            start,
+            max_depth: query.depth.unwrap_or(4).clamp(1, 32),
+            block_limit: query.block_limit.unwrap_or(200).clamp(1, 1_000),
+        },
+    )))
+}
+
 async fn dependents_api(
     State(state): State<AppState>,
     Query(query): Query<TraceQuery>,
@@ -3427,6 +3461,21 @@ fn api_schema_response() -> ApiSchemaResponse {
             (
                 "graph_confidence",
                 vec!["exact", "semantic", "syntactic", "heuristic", "unknown"],
+            ),
+            (
+                "workflow_block_kind",
+                vec![
+                    "start",
+                    "call",
+                    "config_read",
+                    "environment_read",
+                    "dependency",
+                    "import",
+                    "error",
+                    "reference",
+                    "external_boundary",
+                    "unknown",
+                ],
             ),
             (
                 "job_status",
@@ -4584,6 +4633,39 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "TraceResult?",
                 )
                 .with_response_fields(trace_result_response_fields()),
+                api_get(
+                    "/api/workflow",
+                    "Convert an outgoing trace from a node id or label into block-style workflow steps.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "label",
+                            false,
+                            "string",
+                            None,
+                            "Start node or entrypoint label.",
+                        ),
+                        query_param("node_id", false, "u64", None, "Start node id."),
+                        query_param(
+                            "depth",
+                            false,
+                            "usize",
+                            Some("4"),
+                            "Maximum workflow traversal depth.",
+                        )
+                        .with_range(1, 32),
+                        query_param(
+                            "block_limit",
+                            false,
+                            "usize",
+                            Some("200"),
+                            "Maximum returned workflow blocks.",
+                        )
+                        .with_range(1, 1_000),
+                    ],
+                    "WorkflowReport?",
+                )
+                .with_response_fields(workflow_response_fields()),
                 api_get(
                     "/api/dependents",
                     "Trace incoming dependents that can reach a node.",
@@ -5771,6 +5853,54 @@ fn trace_result_response_fields() -> Vec<ApiParameterSpec> {
     ]
 }
 
+fn workflow_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("start", true, "Node", "Workflow start node."),
+        response_field(
+            "max_depth",
+            true,
+            "usize",
+            "Applied workflow traversal depth.",
+        ),
+        response_field(
+            "block_limit",
+            true,
+            "usize",
+            "Applied maximum returned block count.",
+        ),
+        response_field(
+            "blocks",
+            true,
+            "WorkflowBlock[]",
+            "Block-style execution steps with node ids, kinds, depth, source node ids, and risk references.",
+        ),
+        response_field(
+            "transitions",
+            true,
+            "WorkflowTransition[]",
+            "Directed transitions between workflow blocks with edge indexes and confidence metadata.",
+        ),
+        response_field(
+            "total_blocks",
+            true,
+            "usize",
+            "Returned workflow block count.",
+        ),
+        response_field(
+            "total_transitions",
+            true,
+            "usize",
+            "Returned workflow transition count.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether traversal depth or block limits omitted additional steps.",
+        ),
+    ]
+}
+
 fn config_trace_response_fields() -> Vec<ApiParameterSpec> {
     vec![
         response_field(
@@ -6223,6 +6353,7 @@ fn capability_endpoints() -> Vec<EndpointGroupResponse> {
                 "GET /api/summary",
                 "GET /api/query",
                 "GET /api/explain-edge",
+                "GET /api/workflow",
             ],
         },
         EndpointGroupResponse {
@@ -6777,6 +6908,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workflow_api_returns_block_report_for_label() {
+        let root = temp_server_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            r#"fn main() {
+    helper();
+}
+
+fn helper() {
+    panic!("broken");
+}
+"#,
+        )
+        .unwrap();
+        let state = test_state(root.clone(), vec![], true);
+
+        let Json(report) = workflow_api(
+            State(state),
+            Query(WorkflowQuery {
+                path: Some(root.clone()),
+                label: Some("main".to_string()),
+                node_id: None,
+                depth: Some(3),
+                block_limit: Some(20),
+            }),
+        )
+        .await
+        .expect("workflow response");
+        let report = report.expect("workflow report");
+
+        assert_eq!(report.start.label, "main");
+        assert!(report.blocks.iter().any(|block| {
+            block.kind == codegraph_analysis::WorkflowBlockKind::Start && block.node.label == "main"
+        }));
+        assert!(report.blocks.iter().any(|block| {
+            block.kind == codegraph_analysis::WorkflowBlockKind::Call
+                && block.node.label == "helper"
+        }));
+        assert!(
+            report
+                .transitions
+                .iter()
+                .any(|transition| transition.edge_index.to_string()
+                    == transition.edge.metadata["edge_index"])
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn source_search_api_rejects_oversized_query_before_scan() {
         let root = temp_server_root();
         fs::create_dir_all(&root).unwrap();
@@ -6821,6 +7002,7 @@ mod tests {
         assert!(endpoints.contains(&"GET /api/query"));
         assert!(endpoints.contains(&"GET /api/node-context"));
         assert!(endpoints.contains(&"GET /api/node-card"));
+        assert!(endpoints.contains(&"GET /api/workflow"));
         assert!(endpoints.contains(&"POST /api/scan-jobs"));
         assert!(endpoints.contains(&"POST /api/semantic-jobs"));
     }
@@ -7189,6 +7371,14 @@ mod tests {
                 .get("graph_confidence")
                 .is_some_and(|confidences| confidences.contains(&"semantic")
                     && confidences.contains(&"heuristic"))
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("workflow_block_kind")
+                .is_some_and(|kinds| kinds.contains(&"start")
+                    && kinds.contains(&"config_read")
+                    && kinds.contains(&"external_boundary"))
         );
         assert!(schema.enum_values.get("insight_kind").is_some_and(|kinds| {
             kinds.contains(&"sensitive_config_default")
@@ -7798,6 +7988,21 @@ mod tests {
                 .iter()
                 .any(|field| { field.name == "edges" && field.value_type == "Edge[]" })
         );
+        let workflow_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/workflow")
+            .expect("schema should list workflow endpoint");
+        assert!(
+            workflow_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "blocks" && field.value_type == "WorkflowBlock[]" })
+        );
+        assert!(workflow_endpoint.response_fields.iter().any(|field| {
+            field.name == "transitions" && field.value_type == "WorkflowTransition[]"
+        }));
         let config_trace_endpoint = schema
             .groups
             .iter()

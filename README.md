@@ -133,6 +133,7 @@ Implemented now:
 - Reverse dependency/dependent traces for impact analysis from CLI, API, query language, and web detail panels.
 - Entrypoint trace API, CLI command, and web panel for comparing startup flows from manifest/code entrypoints.
 - Web entrypoint trace reports can be downloaded as JSON with search, depth, and returned startup flows.
+- Block-style workflow reports from a selected entrypoint or node label in CLI and API, with stable block ids, source node ids, edge indexes, confidence metadata, risk references, and Mermaid flowchart output from the CLI.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Web config trace reports can be downloaded as JSON with target, depth, matched readers, and dependency paths.
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
@@ -496,6 +497,7 @@ Trace outgoing dependencies from a label:
 
 ```bash
 cargo run -p codegraph-cli -- trace main . --depth 3
+cargo run -p codegraph-cli -- workflow main . --depth 4 --format mermaid
 ```
 
 Trace incoming dependents for impact analysis:
@@ -765,6 +767,7 @@ curl --get 'http://127.0.0.1:3765/api/explain-edge' \
   --data-urlencode 'target=load_config' \
   --data-urlencode 'kind=calls'
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
+curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&depth=4&block_limit=200'
 curl 'http://127.0.0.1:3765/api/dependents?path=.&label=load_config&depth=3'
 curl 'http://127.0.0.1:3765/api/trace-config?path=.&target=DATABASE_URL&depth=6'
 curl --get 'http://127.0.0.1:3765/api/trace-errors' \

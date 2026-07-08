@@ -181,6 +181,71 @@ pub struct TraceResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowRequest {
+    pub start: TraceStart,
+    pub max_depth: usize,
+    pub block_limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowReport {
+    pub start: Node,
+    pub max_depth: usize,
+    pub block_limit: usize,
+    pub blocks: Vec<WorkflowBlock>,
+    pub transitions: Vec<WorkflowTransition>,
+    pub total_blocks: usize,
+    pub total_transitions: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowBlock {
+    pub id: String,
+    pub kind: WorkflowBlockKind,
+    pub node: Node,
+    pub depth: usize,
+    pub source_node_ids: Vec<NodeId>,
+    pub risk_refs: Vec<WorkflowRiskRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowBlockKind {
+    Start,
+    Call,
+    ConfigRead,
+    EnvironmentRead,
+    Dependency,
+    Import,
+    Error,
+    Reference,
+    ExternalBoundary,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowTransition {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+    pub source_node_id: NodeId,
+    pub target_node_id: NodeId,
+    pub edge: Edge,
+    pub edge_index: usize,
+    pub risk_refs: Vec<WorkflowRiskRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowRiskRef {
+    pub insight_index: usize,
+    pub kind: String,
+    pub severity: InsightSeverity,
+    pub message: String,
+    pub edge_indexes: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntrypointTraceRequest {
     pub search: Option<String>,
     pub max_depth: usize,
@@ -1996,6 +2061,137 @@ pub fn trace_entrypoints(
         traces,
         truncated,
     }
+}
+
+pub fn workflow(graph: &CodeGraph, request: WorkflowRequest) -> Option<WorkflowReport> {
+    let max_depth = request.max_depth.clamp(1, 32);
+    let block_limit = request.block_limit.clamp(1, 1_000);
+    let start = match &request.start {
+        TraceStart::NodeId(id) => graph.nodes.iter().find(|node| node.id == *id)?,
+        TraceStart::Label(label) => graph.nodes.iter().find(|node| node.label == *label)?,
+    }
+    .clone();
+
+    let insight_report = insights(graph);
+    let mut visited = BTreeSet::new();
+    let mut depths = BTreeMap::new();
+    let mut incoming = BTreeMap::new();
+    let mut queue = VecDeque::new();
+    let mut transition_indexes = BTreeSet::new();
+    let mut truncated = false;
+
+    visited.insert(start.id);
+    depths.insert(start.id, 0);
+    queue.push_back((start.id, 0));
+
+    while let Some((node_id, depth)) = queue.pop_front() {
+        if depth >= max_depth {
+            if trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
+                .next()
+                .is_some()
+            {
+                truncated = true;
+            }
+            continue;
+        }
+
+        for (edge_index, edge) in trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
+        {
+            let next = edge.target;
+            if visited.contains(&next) {
+                transition_indexes.insert(edge_index);
+                continue;
+            }
+            if visited.len() >= block_limit {
+                truncated = true;
+                continue;
+            }
+            visited.insert(next);
+            depths.insert(next, depth + 1);
+            incoming.insert(next, edge_index);
+            transition_indexes.insert(edge_index);
+            queue.push_back((next, depth + 1));
+        }
+    }
+
+    let blocks = graph
+        .nodes
+        .iter()
+        .filter(|node| visited.contains(&node.id))
+        .map(|node| {
+            let incoming_edge = incoming
+                .get(&node.id)
+                .and_then(|edge_index| graph.edges.get(*edge_index));
+            WorkflowBlock {
+                id: workflow_block_id(node.id),
+                kind: workflow_block_kind(node, incoming_edge, node.id == start.id),
+                node: node.clone(),
+                depth: depths.get(&node.id).copied().unwrap_or(0),
+                source_node_ids: vec![node.id],
+                risk_refs: workflow_risk_refs_for_node(&insight_report, node.id),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let transitions = transition_indexes
+        .iter()
+        .filter_map(|edge_index| {
+            let edge = graph.edges.get(*edge_index)?;
+            if !visited.contains(&edge.source) || !visited.contains(&edge.target) {
+                return None;
+            }
+            Some(WorkflowTransition {
+                id: format!("wt-{edge_index}"),
+                source: workflow_block_id(edge.source),
+                target: workflow_block_id(edge.target),
+                source_node_id: edge.source,
+                target_node_id: edge.target,
+                edge: edge_with_index(*edge_index, edge),
+                edge_index: *edge_index,
+                risk_refs: workflow_risk_refs_for_edge(&insight_report, *edge_index),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Some(WorkflowReport {
+        start,
+        max_depth,
+        block_limit,
+        total_blocks: blocks.len(),
+        total_transitions: transitions.len(),
+        blocks,
+        transitions,
+        truncated,
+    })
+}
+
+pub fn workflow_mermaid(report: &WorkflowReport) -> String {
+    let mut lines = vec!["flowchart TD".to_string()];
+    for block in &report.blocks {
+        lines.push(format!(
+            "  {}[\"{}\"]",
+            mermaid_block_id(block.node.id),
+            mermaid_escape(&format!(
+                "{}: {}",
+                workflow_block_kind_label(&block.kind),
+                block.node.label
+            ))
+        ));
+    }
+    for transition in &report.transitions {
+        let edge_label = format!(
+            "{}/{}",
+            edge_kind_name(&transition.edge.kind),
+            confidence_name(transition.edge.confidence)
+        );
+        lines.push(format!(
+            "  {} -->|{}| {}",
+            mermaid_block_id(transition.source_node_id),
+            mermaid_escape(&edge_label),
+            mermaid_block_id(transition.target_node_id)
+        ));
+    }
+    lines.join("\n")
 }
 
 pub fn trace_config(graph: &CodeGraph, request: ConfigTraceRequest) -> ConfigTraceResult {
@@ -9711,10 +9907,110 @@ fn is_trace_edge(kind: &EdgeKind) -> bool {
     )
 }
 
+fn workflow_block_id(id: NodeId) -> String {
+    format!("wb-{}", id.0)
+}
+
+fn workflow_block_kind(
+    node: &Node,
+    incoming_edge: Option<&Edge>,
+    is_start: bool,
+) -> WorkflowBlockKind {
+    if is_start {
+        return WorkflowBlockKind::Start;
+    }
+    if node.kind == NodeKind::ExternalDependency {
+        return WorkflowBlockKind::ExternalBoundary;
+    }
+    match incoming_edge.map(|edge| &edge.kind) {
+        Some(EdgeKind::Calls) => WorkflowBlockKind::Call,
+        Some(EdgeKind::ReadsConfig) => WorkflowBlockKind::ConfigRead,
+        Some(EdgeKind::ReadsEnvironment) => WorkflowBlockKind::EnvironmentRead,
+        Some(EdgeKind::MayError) => WorkflowBlockKind::Error,
+        Some(EdgeKind::DependsOn) => WorkflowBlockKind::Dependency,
+        Some(EdgeKind::Imports) => WorkflowBlockKind::Import,
+        Some(EdgeKind::References) => WorkflowBlockKind::Reference,
+        _ => WorkflowBlockKind::Unknown,
+    }
+}
+
+fn workflow_block_kind_label(kind: &WorkflowBlockKind) -> &'static str {
+    match kind {
+        WorkflowBlockKind::Start => "start",
+        WorkflowBlockKind::Call => "call",
+        WorkflowBlockKind::ConfigRead => "config",
+        WorkflowBlockKind::EnvironmentRead => "env",
+        WorkflowBlockKind::Dependency => "dependency",
+        WorkflowBlockKind::Import => "import",
+        WorkflowBlockKind::Error => "error",
+        WorkflowBlockKind::Reference => "reference",
+        WorkflowBlockKind::ExternalBoundary => "external",
+        WorkflowBlockKind::Unknown => "node",
+    }
+}
+
+fn workflow_risk_refs_for_node(report: &InsightReport, node_id: NodeId) -> Vec<WorkflowRiskRef> {
+    report
+        .insights
+        .iter()
+        .enumerate()
+        .filter(|(_, insight)| insight.nodes.contains(&node_id))
+        .take(8)
+        .map(|(insight_index, insight)| workflow_risk_ref(insight_index, insight))
+        .collect()
+}
+
+fn workflow_risk_refs_for_edge(report: &InsightReport, edge_index: usize) -> Vec<WorkflowRiskRef> {
+    report
+        .insights
+        .iter()
+        .enumerate()
+        .filter(|(_, insight)| insight.edges.contains(&edge_index))
+        .take(8)
+        .map(|(insight_index, insight)| workflow_risk_ref(insight_index, insight))
+        .collect()
+}
+
+fn workflow_risk_ref(insight_index: usize, insight: &Insight) -> WorkflowRiskRef {
+    WorkflowRiskRef {
+        insight_index,
+        kind: insight.kind.clone(),
+        severity: insight.severity,
+        message: insight.message.clone(),
+        edge_indexes: insight.edges.clone(),
+    }
+}
+
+fn mermaid_block_id(id: NodeId) -> String {
+    format!("B{}", id.0)
+}
+
+fn mermaid_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ")
+        .replace('|', " ")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TraceDirection {
     Outgoing,
     Incoming,
+}
+
+fn trace_edges_from_indexed(
+    graph: &CodeGraph,
+    node_id: NodeId,
+    direction: TraceDirection,
+) -> impl Iterator<Item = (usize, &Edge)> {
+    graph.edges.iter().enumerate().filter(move |(_, edge)| {
+        is_trace_edge(&edge.kind)
+            && match direction {
+                TraceDirection::Outgoing => edge.source == node_id,
+                TraceDirection::Incoming => edge.target == node_id,
+            }
+    })
 }
 
 fn trace_edges_from(
@@ -9722,13 +10018,7 @@ fn trace_edges_from(
     node_id: NodeId,
     direction: TraceDirection,
 ) -> impl Iterator<Item = &Edge> {
-    graph.edges.iter().filter(move |edge| {
-        is_trace_edge(&edge.kind)
-            && match direction {
-                TraceDirection::Outgoing => edge.source == node_id,
-                TraceDirection::Incoming => edge.target == node_id,
-            }
-    })
+    trace_edges_from_indexed(graph, node_id, direction).map(|(_, edge)| edge)
 }
 
 fn trace_next_node(edge: &Edge, node_id: NodeId, direction: TraceDirection) -> NodeId {
@@ -10473,7 +10763,15 @@ mod tests {
         metadata.insert("item_kind".to_string(), "call".to_string());
         metadata.insert("unresolved".to_string(), "true".to_string());
         let call = graph.add_node_with_metadata(NodeKind::Unknown, "missing", None, metadata);
-        let env = graph.add_node(NodeKind::Environment, "DATABASE_URL");
+        let env = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "DATABASE_URL",
+            None,
+            BTreeMap::from([(
+                "default_value".to_string(),
+                "postgres://demo:password@localhost/app".to_string(),
+            )]),
+        );
         let mut error_metadata = BTreeMap::new();
         error_metadata.insert("item_kind".to_string(), "error".to_string());
         let error = graph.add_node_with_metadata(NodeKind::Unknown, "panic", None, error_metadata);
@@ -10531,8 +10829,8 @@ mod tests {
                 .iter()
                 .any(|line| line.highlight && line.text.contains("missing"))
         );
-        assert_eq!(card.total_insights, 2);
-        assert_eq!(card.insight_summary.by_severity.get("warning"), Some(&1));
+        assert_eq!(card.total_insights, 3);
+        assert_eq!(card.insight_summary.by_severity.get("warning"), Some(&2));
         assert_eq!(card.insight_summary.by_severity.get("info"), Some(&1));
         assert_eq!(
             card.insight_summary.by_kind.get("orphan_function"),
@@ -10540,6 +10838,10 @@ mod tests {
         );
         assert_eq!(
             card.insight_summary.by_kind.get("potential_error_flow"),
+            Some(&1)
+        );
+        assert_eq!(
+            card.insight_summary.by_kind.get("sensitive_config_default"),
             Some(&1)
         );
         assert!(
@@ -10551,6 +10853,11 @@ mod tests {
             card.insights
                 .iter()
                 .any(|insight| insight.kind == "potential_error_flow")
+        );
+        assert!(
+            card.insights
+                .iter()
+                .any(|insight| insight.kind == "sensitive_config_default")
         );
         assert!(card.actions.iter().any(|action| {
             action.kind == "symbol_graph"
@@ -10565,7 +10872,7 @@ mod tests {
             .unwrap()
             .expect("expected file node card");
         assert_eq!(file_card.context.node.id, file);
-        assert_eq!(file_card.total_insights, 2);
+        assert_eq!(file_card.total_insights, 3);
         assert_eq!(
             file_card.insight_summary.by_kind.get("orphan_function"),
             Some(&1)
@@ -10575,6 +10882,13 @@ mod tests {
                 .insight_summary
                 .by_kind
                 .get("potential_error_flow"),
+            Some(&1)
+        );
+        assert_eq!(
+            file_card
+                .insight_summary
+                .by_kind
+                .get("sensitive_config_default"),
             Some(&1)
         );
         assert!(
@@ -10588,6 +10902,12 @@ mod tests {
                 .insights
                 .iter()
                 .any(|insight| insight.kind == "potential_error_flow")
+        );
+        assert!(
+            file_card
+                .insights
+                .iter()
+                .any(|insight| insight.kind == "sensitive_config_default")
         );
         assert_eq!(
             file_card.source.as_ref().map(|source| source.path.as_str()),
@@ -10853,6 +11173,104 @@ mod tests {
                 .iter()
                 .any(|node| node.node.id == cli_main)
         );
+    }
+
+    #[test]
+    fn workflow_builds_block_steps_with_risk_context() {
+        let mut graph = CodeGraph::new("repo");
+        let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:api");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let load_config = graph.add_node(NodeKind::Function, "load_config");
+        let env = graph.add_node(NodeKind::Environment, "DATABASE_URL");
+        let config = graph.add_node(NodeKind::Config, "config/app.toml");
+        let error = graph.add_node(NodeKind::Unknown, "panic: missing config");
+        let package = graph.add_node(NodeKind::ExternalDependency, "serde");
+        graph.add_edge(
+            graph.root,
+            entrypoint,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(
+            entrypoint,
+            main,
+            EdgeKind::References,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(main, load_config, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(
+            load_config,
+            env,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            load_config,
+            config,
+            EdgeKind::ReadsConfig,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            load_config,
+            error,
+            EdgeKind::MayError,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(load_config, package, EdgeKind::DependsOn, Confidence::Exact);
+
+        let report = workflow(
+            &graph,
+            WorkflowRequest {
+                start: TraceStart::Label("cargo bin:api".to_string()),
+                max_depth: 3,
+                block_limit: 20,
+            },
+        )
+        .expect("workflow report");
+
+        assert_eq!(report.start.id, entrypoint);
+        assert_eq!(report.total_blocks, 7);
+        assert_eq!(report.total_transitions, 6);
+        assert!(report.blocks.iter().any(|block| {
+            block.node.id == entrypoint
+                && block.id == format!("wb-{}", entrypoint.0)
+                && block.kind == WorkflowBlockKind::Start
+                && block.depth == 0
+        }));
+        assert!(report.blocks.iter().any(|block| {
+            block.node.id == load_config && block.kind == WorkflowBlockKind::Call
+        }));
+        assert!(report.blocks.iter().any(|block| {
+            block.node.id == env && block.kind == WorkflowBlockKind::EnvironmentRead
+        }));
+        assert!(report.blocks.iter().any(|block| {
+            block.node.id == config && block.kind == WorkflowBlockKind::ConfigRead
+        }));
+        assert!(report.blocks.iter().any(|block| {
+            block.node.id == error
+                && block.kind == WorkflowBlockKind::Error
+                && block
+                    .risk_refs
+                    .iter()
+                    .any(|risk| risk.kind == "potential_error_flow")
+        }));
+        assert!(report.blocks.iter().any(|block| {
+            block.node.id == package && block.kind == WorkflowBlockKind::ExternalBoundary
+        }));
+        assert!(report.transitions.iter().any(|transition| {
+            transition.source_node_id == load_config
+                && transition.target_node_id == error
+                && transition.edge.metadata.get("edge_index").is_some()
+                && transition
+                    .risk_refs
+                    .iter()
+                    .any(|risk| risk.kind == "potential_error_flow")
+        }));
+
+        let mermaid = workflow_mermaid(&report);
+        assert!(mermaid.starts_with("flowchart TD"));
+        assert!(mermaid.contains("start: cargo bin:api"));
+        assert!(mermaid.contains("reads_environment/heuristic"));
     }
 
     #[test]
