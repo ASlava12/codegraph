@@ -134,6 +134,7 @@ Implemented now:
 - Entrypoint trace API, CLI command, and web panel for comparing startup flows from manifest/code entrypoints.
 - Web entrypoint trace reports can be downloaded as JSON with search, depth, and returned startup flows.
 - Block-style workflow reports from a selected entrypoint, matched entrypoint set, or node label in CLI and API, with stable block ids, source node ids, edge indexes, confidence metadata, risk references, Mermaid flowchart output from CLI/web, and a selected-node web Flow panel with JSON/Mermaid downloads.
+- Workflow reports support edge kind, confidence, language, risk severity, and block kind filters across CLI and API for smaller human diagrams and agent handoffs.
 - Web Entry Flows can build block-style workflow reports for matched entrypoints, focus a workflow slice on the graph, and download JSON or Mermaid for agent handoff.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Web config trace reports can be downloaded as JSON with target, depth, matched readers, and dependency paths.
@@ -499,6 +500,7 @@ Trace outgoing dependencies from a label:
 ```bash
 cargo run -p codegraph-cli -- trace main . --depth 3
 cargo run -p codegraph-cli -- workflow main . --depth 4 --format mermaid
+cargo run -p codegraph-cli -- workflow main . --edge-kind calls --confidence heuristic --block-kind call
 cargo run -p codegraph-cli -- workflow-entrypoints . --search server --depth 4
 ```
 
@@ -771,6 +773,7 @@ curl --get 'http://127.0.0.1:3765/api/explain-edge' \
   --data-urlencode 'kind=calls'
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
 curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&depth=4&block_limit=200'
+curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&edge_kind=calls&confidence=heuristic&block_kind=call'
 curl 'http://127.0.0.1:3765/api/entrypoint-workflows?path=.&search=server&depth=4&block_limit=200&limit=25'
 curl 'http://127.0.0.1:3765/api/dependents?path=.&label=load_config&depth=3'
 curl 'http://127.0.0.1:3765/api/trace-config?path=.&target=DATABASE_URL&depth=6'

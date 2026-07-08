@@ -185,6 +185,16 @@ pub struct WorkflowRequest {
     pub start: TraceStart,
     pub max_depth: usize,
     pub block_limit: usize,
+    pub filters: WorkflowFilters,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowFilters {
+    pub edge_kind: Option<String>,
+    pub confidence: Option<String>,
+    pub language: Option<String>,
+    pub risk_severity: Option<String>,
+    pub block_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,6 +202,7 @@ pub struct WorkflowReport {
     pub start: Node,
     pub max_depth: usize,
     pub block_limit: usize,
+    pub filters: WorkflowFilters,
     pub blocks: Vec<WorkflowBlock>,
     pub transitions: Vec<WorkflowTransition>,
     pub total_blocks: usize,
@@ -266,12 +277,14 @@ pub struct EntrypointWorkflowRequest {
     pub max_depth: usize,
     pub block_limit: usize,
     pub limit: usize,
+    pub filters: WorkflowFilters,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntrypointWorkflowReport {
     pub max_depth: usize,
     pub block_limit: usize,
+    pub filters: WorkflowFilters,
     pub total_entrypoints: usize,
     pub workflows: Vec<WorkflowReport>,
     pub truncated: bool,
@@ -2112,6 +2125,7 @@ pub fn workflow_entrypoints(
                     start: TraceStart::NodeId(node.id),
                     max_depth,
                     block_limit,
+                    filters: request.filters.clone(),
                 },
                 &insight_report,
             )
@@ -2123,6 +2137,7 @@ pub fn workflow_entrypoints(
     EntrypointWorkflowReport {
         max_depth,
         block_limit,
+        filters: normalize_workflow_filters(request.filters),
         total_entrypoints: matched.len(),
         workflows,
         truncated,
@@ -2136,6 +2151,7 @@ fn workflow_with_insight_report(
 ) -> Option<WorkflowReport> {
     let max_depth = request.max_depth.clamp(1, 32);
     let block_limit = request.block_limit.clamp(1, 1_000);
+    let filters = normalize_workflow_filters(request.filters);
     let start = match &request.start {
         TraceStart::NodeId(id) => graph.nodes.iter().find(|node| node.id == *id)?,
         TraceStart::Label(label) => graph.nodes.iter().find(|node| node.label == *label)?,
@@ -2156,6 +2172,7 @@ fn workflow_with_insight_report(
     while let Some((node_id, depth)) = queue.pop_front() {
         if depth >= max_depth {
             if trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
+                .filter(|(_, edge)| workflow_edge_filter_matches(edge, &filters))
                 .next()
                 .is_some()
             {
@@ -2166,6 +2183,9 @@ fn workflow_with_insight_report(
 
         for (edge_index, edge) in trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
         {
+            if !workflow_edge_filter_matches(edge, &filters) {
+                continue;
+            }
             let next = edge.target;
             if visited.contains(&next) {
                 transition_indexes.insert(edge_index);
@@ -2183,7 +2203,7 @@ fn workflow_with_insight_report(
         }
     }
 
-    let blocks = graph
+    let all_blocks = graph
         .nodes
         .iter()
         .filter(|node| visited.contains(&node.id))
@@ -2202,7 +2222,7 @@ fn workflow_with_insight_report(
         })
         .collect::<Vec<_>>();
 
-    let transitions = transition_indexes
+    let all_transitions = transition_indexes
         .iter()
         .filter_map(|edge_index| {
             let edge = graph.edges.get(*edge_index)?;
@@ -2221,11 +2241,26 @@ fn workflow_with_insight_report(
             })
         })
         .collect::<Vec<_>>();
+    let included_node_ids =
+        workflow_included_node_ids(&start, &all_blocks, &all_transitions, &filters);
+    let blocks = all_blocks
+        .into_iter()
+        .filter(|block| included_node_ids.contains(&block.node.id))
+        .collect::<Vec<_>>();
+    let transitions = all_transitions
+        .into_iter()
+        .filter(|transition| {
+            included_node_ids.contains(&transition.source_node_id)
+                && included_node_ids.contains(&transition.target_node_id)
+                && workflow_transition_filter_matches(transition, &filters)
+        })
+        .collect::<Vec<_>>();
 
     Some(WorkflowReport {
         start,
         max_depth,
         block_limit,
+        filters,
         total_blocks: blocks.len(),
         total_transitions: transitions.len(),
         blocks,
@@ -9976,6 +10011,116 @@ fn is_trace_edge(kind: &EdgeKind) -> bool {
     )
 }
 
+fn normalize_workflow_filters(filters: WorkflowFilters) -> WorkflowFilters {
+    WorkflowFilters {
+        edge_kind: normalize_workflow_filter(filters.edge_kind),
+        confidence: normalize_workflow_filter(filters.confidence),
+        language: normalize_workflow_filter(filters.language),
+        risk_severity: normalize_workflow_filter(filters.risk_severity),
+        block_kind: normalize_workflow_filter(filters.block_kind),
+    }
+}
+
+fn normalize_workflow_filter(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn workflow_included_node_ids(
+    start: &Node,
+    blocks: &[WorkflowBlock],
+    transitions: &[WorkflowTransition],
+    filters: &WorkflowFilters,
+) -> BTreeSet<NodeId> {
+    let has_block_filters = filters.language.is_some()
+        || filters.risk_severity.is_some()
+        || filters.block_kind.is_some();
+    if !has_block_filters {
+        return blocks.iter().map(|block| block.node.id).collect();
+    }
+
+    let mut included = BTreeSet::from([start.id]);
+    for block in blocks {
+        if workflow_block_filter_matches(block, filters) {
+            included.insert(block.node.id);
+        }
+    }
+    if filters.risk_severity.is_some() {
+        let block_by_node = blocks
+            .iter()
+            .map(|block| (block.node.id, block))
+            .collect::<BTreeMap<_, _>>();
+        for transition in transitions {
+            if !workflow_transition_filter_matches(transition, filters) {
+                continue;
+            }
+            let source_matches = block_by_node
+                .get(&transition.source_node_id)
+                .is_some_and(|block| workflow_block_non_risk_filters_match(block, filters));
+            let target_matches = block_by_node
+                .get(&transition.target_node_id)
+                .is_some_and(|block| workflow_block_non_risk_filters_match(block, filters));
+            if source_matches && target_matches {
+                included.insert(transition.source_node_id);
+                included.insert(transition.target_node_id);
+            }
+        }
+    }
+    included
+}
+
+fn workflow_edge_filter_matches(edge: &Edge, filters: &WorkflowFilters) -> bool {
+    filters
+        .edge_kind
+        .as_deref()
+        .is_none_or(|expected| text_matches(&edge_kind_name(&edge.kind), expected))
+        && filters
+            .confidence
+            .as_deref()
+            .is_none_or(|expected| text_matches(&confidence_name(edge.confidence), expected))
+}
+
+fn workflow_block_filter_matches(block: &WorkflowBlock, filters: &WorkflowFilters) -> bool {
+    workflow_block_non_risk_filters_match(block, filters)
+        && filters.risk_severity.as_deref().is_none_or(|expected| {
+            block
+                .risk_refs
+                .iter()
+                .any(|risk| text_matches(severity_name(risk.severity), expected))
+        })
+}
+
+fn workflow_block_non_risk_filters_match(block: &WorkflowBlock, filters: &WorkflowFilters) -> bool {
+    filters
+        .language
+        .as_deref()
+        .is_none_or(|expected| workflow_node_language_matches(&block.node, expected))
+        && filters.block_kind.as_deref().is_none_or(|expected| {
+            text_matches(&workflow_block_kind_filter_name(&block.kind), expected)
+                || text_matches(workflow_block_kind_label(&block.kind), expected)
+        })
+}
+
+fn workflow_node_language_matches(node: &Node, expected: &str) -> bool {
+    node.metadata
+        .get("language")
+        .is_some_and(|language| text_matches(language, expected))
+}
+
+fn workflow_transition_filter_matches(
+    transition: &WorkflowTransition,
+    filters: &WorkflowFilters,
+) -> bool {
+    workflow_edge_filter_matches(&transition.edge, filters)
+        && filters.risk_severity.as_deref().is_none_or(|expected| {
+            transition
+                .risk_refs
+                .iter()
+                .any(|risk| text_matches(severity_name(risk.severity), expected))
+        })
+}
+
 fn workflow_block_id(id: NodeId) -> String {
     format!("wb-{}", id.0)
 }
@@ -10016,6 +10161,10 @@ fn workflow_block_kind_label(kind: &WorkflowBlockKind) -> &'static str {
         WorkflowBlockKind::ExternalBoundary => "external",
         WorkflowBlockKind::Unknown => "node",
     }
+}
+
+fn workflow_block_kind_filter_name(kind: &WorkflowBlockKind) -> String {
+    serde_json_name(kind).unwrap_or_else(|| workflow_block_kind_label(kind).to_string())
 }
 
 fn workflow_risk_refs_for_node(report: &InsightReport, node_id: NodeId) -> Vec<WorkflowRiskRef> {
@@ -11293,6 +11442,7 @@ mod tests {
                 start: TraceStart::Label("cargo bin:api".to_string()),
                 max_depth: 3,
                 block_limit: 20,
+                filters: WorkflowFilters::default(),
             },
         )
         .expect("workflow report");
@@ -11340,6 +11490,119 @@ mod tests {
         assert!(mermaid.starts_with("flowchart TD"));
         assert!(mermaid.contains("start: cargo bin:api"));
         assert!(mermaid.contains("reads_environment/heuristic"));
+    }
+
+    #[test]
+    fn workflow_filters_blocks_edges_language_and_risk() {
+        let mut graph = CodeGraph::new("repo");
+        let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:api");
+        let main = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "main",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let load_config = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "load_config",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let env = graph.add_node_with_metadata(
+            NodeKind::Environment,
+            "DATABASE_URL",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let error = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "panic: missing config",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        graph.add_edge(
+            graph.root,
+            entrypoint,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(entrypoint, main, EdgeKind::References, Confidence::Exact);
+        graph.add_edge(main, load_config, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(
+            load_config,
+            env,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            load_config,
+            error,
+            EdgeKind::MayError,
+            Confidence::Heuristic,
+        );
+
+        let env_only = workflow(
+            &graph,
+            WorkflowRequest {
+                start: TraceStart::Label("main".to_string()),
+                max_depth: 3,
+                block_limit: 20,
+                filters: WorkflowFilters {
+                    language: Some("rust".to_string()),
+                    block_kind: Some("environment_read".to_string()),
+                    ..WorkflowFilters::default()
+                },
+            },
+        )
+        .expect("environment workflow");
+        assert_eq!(
+            env_only.filters.block_kind.as_deref(),
+            Some("environment_read")
+        );
+        assert!(
+            env_only
+                .blocks
+                .iter()
+                .any(|block| block.node.id == main && block.kind == WorkflowBlockKind::Start)
+        );
+        assert!(env_only.blocks.iter().any(|block| {
+            block.node.id == env && block.kind == WorkflowBlockKind::EnvironmentRead
+        }));
+        assert!(!env_only.blocks.iter().any(|block| block.node.id == error));
+
+        let risky_errors = workflow(
+            &graph,
+            WorkflowRequest {
+                start: TraceStart::Label("load_config".to_string()),
+                max_depth: 1,
+                block_limit: 20,
+                filters: WorkflowFilters {
+                    edge_kind: Some("may_error".to_string()),
+                    confidence: Some("heuristic".to_string()),
+                    risk_severity: Some("warning".to_string()),
+                    ..WorkflowFilters::default()
+                },
+            },
+        )
+        .expect("risk workflow");
+        assert_eq!(risky_errors.total_blocks, 2);
+        assert_eq!(risky_errors.total_transitions, 1);
+        assert!(risky_errors.blocks.iter().any(|block| {
+            block.node.id == error
+                && block.kind == WorkflowBlockKind::Error
+                && block
+                    .risk_refs
+                    .iter()
+                    .any(|risk| risk.severity == InsightSeverity::Warning)
+        }));
+        assert!(risky_errors.transitions.iter().all(|transition| {
+            transition.edge.kind == EdgeKind::MayError
+                && transition.edge.confidence == Confidence::Heuristic
+                && transition
+                    .risk_refs
+                    .iter()
+                    .any(|risk| risk.severity == InsightSeverity::Warning)
+        }));
     }
 
     #[test]
@@ -11391,6 +11654,7 @@ mod tests {
                 max_depth: 2,
                 block_limit: 10,
                 limit: 10,
+                filters: WorkflowFilters::default(),
             },
         );
 

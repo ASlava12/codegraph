@@ -19,11 +19,12 @@ use codegraph_analysis::{
     MAX_REPORT_ARCHITECTURE_GROUP_LIMIT, MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
     MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, NodeCard, NodeContext, ProjectReport,
     ProjectReportLimits, SourcePreview, SourceSearchRequest, SourceSearchResult, TraceRequest,
-    TraceStart, WorkflowReport, WorkflowRequest, architecture_map, check_insights, communities,
-    entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph,
-    hotspots, insights, language_dependencies, node_card, node_context, project_report,
-    query_graph, read_source_preview, search_source, slice_graph, summarize, trace, trace_config,
-    trace_dependents, trace_entrypoints, trace_errors, workflow, workflow_entrypoints,
+    TraceStart, WorkflowFilters, WorkflowReport, WorkflowRequest, architecture_map, check_insights,
+    communities, entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report,
+    focus_subgraph, hotspots, insights, language_dependencies, node_card, node_context,
+    project_report, query_graph, read_source_preview, search_source, slice_graph, summarize, trace,
+    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
+    workflow_entrypoints,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -369,6 +370,11 @@ struct WorkflowQuery {
     node_id: Option<u64>,
     depth: Option<usize>,
     block_limit: Option<usize>,
+    edge_kind: Option<String>,
+    confidence: Option<String>,
+    language: Option<String>,
+    risk_severity: Option<String>,
+    block_kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -386,6 +392,11 @@ struct EntrypointWorkflowQuery {
     depth: Option<usize>,
     block_limit: Option<usize>,
     limit: Option<usize>,
+    edge_kind: Option<String>,
+    confidence: Option<String>,
+    language: Option<String>,
+    risk_severity: Option<String>,
+    block_kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2630,6 +2641,13 @@ async fn entrypoint_workflows_api(
             max_depth: query.depth.unwrap_or(4).clamp(1, 32),
             block_limit: query.block_limit.unwrap_or(200).clamp(1, 1_000),
             limit: query.limit.unwrap_or(25).clamp(1, 500),
+            filters: workflow_filters_from_query(
+                query.edge_kind,
+                query.confidence,
+                query.language,
+                query.risk_severity,
+                query.block_kind,
+            ),
         },
     )))
 }
@@ -2743,6 +2761,13 @@ async fn workflow_api(
             start,
             max_depth: query.depth.unwrap_or(4).clamp(1, 32),
             block_limit: query.block_limit.unwrap_or(200).clamp(1, 1_000),
+            filters: workflow_filters_from_query(
+                query.edge_kind,
+                query.confidence,
+                query.language,
+                query.risk_severity,
+                query.block_kind,
+            ),
         },
     )))
 }
@@ -2972,6 +2997,22 @@ fn normalize_query_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn workflow_filters_from_query(
+    edge_kind: Option<String>,
+    confidence: Option<String>,
+    language: Option<String>,
+    risk_severity: Option<String>,
+    block_kind: Option<String>,
+) -> WorkflowFilters {
+    WorkflowFilters {
+        edge_kind: normalize_query_string(edge_kind),
+        confidence: normalize_query_string(confidence),
+        language: normalize_query_string(language),
+        risk_severity: normalize_query_string(risk_severity),
+        block_kind: normalize_query_string(block_kind),
+    }
 }
 
 fn parse_optional_job_status(value: Option<&str>) -> Result<Option<ScanJobStatus>, ApiError> {
@@ -4656,6 +4697,41 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         )
                         .with_range(1, 1_000),
                         query_param(
+                            "edge_kind",
+                            false,
+                            "graph_edge_kind",
+                            None,
+                            "Restrict workflow traversal to matching edge kinds.",
+                        ),
+                        query_param(
+                            "confidence",
+                            false,
+                            "graph_confidence",
+                            None,
+                            "Restrict workflow traversal to matching edge confidence.",
+                        ),
+                        query_param(
+                            "language",
+                            false,
+                            "string",
+                            None,
+                            "Restrict returned workflow blocks to matching node language metadata.",
+                        ),
+                        query_param(
+                            "risk_severity",
+                            false,
+                            "insight_severity",
+                            None,
+                            "Restrict returned workflow blocks and transitions to matching risk severity.",
+                        ),
+                        query_param(
+                            "block_kind",
+                            false,
+                            "workflow_block_kind",
+                            None,
+                            "Restrict returned workflow blocks to matching workflow block kinds.",
+                        ),
+                        query_param(
                             "limit",
                             false,
                             "usize",
@@ -4729,6 +4805,41 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "Maximum returned workflow blocks.",
                         )
                         .with_range(1, 1_000),
+                        query_param(
+                            "edge_kind",
+                            false,
+                            "graph_edge_kind",
+                            None,
+                            "Restrict workflow traversal to matching edge kinds.",
+                        ),
+                        query_param(
+                            "confidence",
+                            false,
+                            "graph_confidence",
+                            None,
+                            "Restrict workflow traversal to matching edge confidence.",
+                        ),
+                        query_param(
+                            "language",
+                            false,
+                            "string",
+                            None,
+                            "Restrict returned workflow blocks to matching node language metadata.",
+                        ),
+                        query_param(
+                            "risk_severity",
+                            false,
+                            "insight_severity",
+                            None,
+                            "Restrict returned workflow blocks and transitions to matching risk severity.",
+                        ),
+                        query_param(
+                            "block_kind",
+                            false,
+                            "workflow_block_kind",
+                            None,
+                            "Restrict returned workflow blocks to matching workflow block kinds.",
+                        ),
                     ],
                     "WorkflowReport?",
                 )
@@ -5910,6 +6021,12 @@ fn entrypoint_workflow_response_fields() -> Vec<ApiParameterSpec> {
             "Applied maximum block count per entrypoint.",
         ),
         response_field(
+            "filters",
+            true,
+            "WorkflowFilters",
+            "Applied workflow block and traversal filters.",
+        ),
+        response_field(
             "total_entrypoints",
             true,
             "usize",
@@ -5969,6 +6086,12 @@ fn workflow_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "usize",
             "Applied maximum returned block count.",
+        ),
+        response_field(
+            "filters",
+            true,
+            "WorkflowFilters",
+            "Applied workflow block and traversal filters.",
         ),
         response_field(
             "blocks",
@@ -6356,6 +6479,7 @@ fn capability_features(cache_enabled: bool, access_log_enabled: bool) -> Vec<&'s
         "query_language",
         "entrypoint_traces",
         "entrypoint_workflows",
+        "workflow_filters",
         "config_traces",
         "error_traces",
         "reverse_dependents",
@@ -7037,6 +7161,11 @@ fn helper() {
                 node_id: None,
                 depth: Some(3),
                 block_limit: Some(20),
+                edge_kind: None,
+                confidence: None,
+                language: None,
+                risk_severity: None,
+                block_kind: None,
             }),
         )
         .await
@@ -7098,6 +7227,11 @@ fn helper() {}
                 depth: Some(2),
                 block_limit: Some(20),
                 limit: Some(10),
+                edge_kind: None,
+                confidence: None,
+                language: None,
+                risk_severity: None,
+                block_kind: None,
             }),
         )
         .await
@@ -8184,6 +8318,28 @@ fn helper() {}
         );
         assert!(
             entrypoint_workflows_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| {
+                    parameter.name == "edge_kind" && parameter.value_type == "graph_edge_kind"
+                })
+        );
+        assert!(
+            entrypoint_workflows_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| {
+                    parameter.name == "block_kind" && parameter.value_type == "workflow_block_kind"
+                })
+        );
+        assert!(
+            entrypoint_workflows_endpoint
+                .response_fields
+                .iter()
+                .any(|field| field.name == "filters" && field.value_type == "WorkflowFilters")
+        );
+        assert!(
+            entrypoint_workflows_endpoint
                 .response_fields
                 .iter()
                 .any(|field| {
@@ -8213,6 +8369,18 @@ fn helper() {}
                 .response_fields
                 .iter()
                 .any(|field| { field.name == "blocks" && field.value_type == "WorkflowBlock[]" })
+        );
+        assert!(workflow_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "confidence" && parameter.value_type == "graph_confidence"
+        }));
+        assert!(workflow_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "risk_severity" && parameter.value_type == "insight_severity"
+        }));
+        assert!(
+            workflow_endpoint
+                .response_fields
+                .iter()
+                .any(|field| { field.name == "filters" && field.value_type == "WorkflowFilters" })
         );
         assert!(workflow_endpoint.response_fields.iter().any(|field| {
             field.name == "transitions" && field.value_type == "WorkflowTransition[]"

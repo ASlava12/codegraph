@@ -6,10 +6,11 @@ use codegraph_analysis::{
     DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
     EntrypointTraceRequest, EntrypointWorkflowRequest, ErrorTraceRequest, ExplainEdgeRequest,
     InsightFilter, InsightSeverity, ProjectReport, ProjectReportLimits, SourceSearchRequest,
-    TraceRequest, TraceStart, WorkflowRequest, architecture_map, check_insights, communities,
-    entrypoints, explain_edge, filter_insight_report, hotspots, insights, language_dependencies,
-    project_report, query_graph, search_source, summarize, trace, trace_config, trace_dependents,
-    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_mermaid,
+    TraceRequest, TraceStart, WorkflowFilters, WorkflowRequest, architecture_map, check_insights,
+    communities, entrypoints, explain_edge, filter_insight_report, hotspots, insights,
+    language_dependencies, project_report, query_graph, search_source, summarize, trace,
+    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
+    workflow_entrypoints, workflow_mermaid,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -300,6 +301,26 @@ enum Command {
         #[arg(long, default_value_t = 200)]
         block_limit: usize,
 
+        /// Restrict traversal to an edge kind such as calls, reads_environment, may_error, or depends_on.
+        #[arg(long)]
+        edge_kind: Option<String>,
+
+        /// Restrict traversal to an edge confidence such as exact, semantic, syntactic, or heuristic.
+        #[arg(long)]
+        confidence: Option<String>,
+
+        /// Restrict returned blocks to a source language metadata value.
+        #[arg(long)]
+        language: Option<String>,
+
+        /// Restrict returned blocks/transitions to risk severity: info, warning, or error.
+        #[arg(long)]
+        risk_severity: Option<String>,
+
+        /// Restrict returned blocks to a workflow kind such as call, config_read, environment_read, or error.
+        #[arg(long)]
+        block_kind: Option<String>,
+
         /// Output format.
         #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
         format: WorkflowFormat,
@@ -337,6 +358,26 @@ enum Command {
         /// Maximum entrypoint workflows to return.
         #[arg(long, default_value_t = 25)]
         limit: usize,
+
+        /// Restrict traversal to an edge kind such as calls, reads_environment, may_error, or depends_on.
+        #[arg(long)]
+        edge_kind: Option<String>,
+
+        /// Restrict traversal to an edge confidence such as exact, semantic, syntactic, or heuristic.
+        #[arg(long)]
+        confidence: Option<String>,
+
+        /// Restrict returned blocks to a source language metadata value.
+        #[arg(long)]
+        language: Option<String>,
+
+        /// Restrict returned blocks/transitions to risk severity: info, warning, or error.
+        #[arg(long)]
+        risk_severity: Option<String>,
+
+        /// Restrict returned blocks to a workflow kind such as call, config_read, environment_read, or error.
+        #[arg(long)]
+        block_kind: Option<String>,
 
         /// Output format.
         #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
@@ -1280,6 +1321,11 @@ fn main() -> Result<()> {
             path,
             depth,
             block_limit,
+            edge_kind,
+            confidence,
+            language,
+            risk_severity,
+            block_kind,
             format,
             include_hidden,
             include_ignored,
@@ -1293,6 +1339,13 @@ fn main() -> Result<()> {
                     start: TraceStart::Label(label),
                     max_depth: depth,
                     block_limit,
+                    filters: WorkflowFilters {
+                        edge_kind,
+                        confidence,
+                        language,
+                        risk_severity,
+                        block_kind,
+                    },
                 },
             );
             match (format, report) {
@@ -1313,6 +1366,11 @@ fn main() -> Result<()> {
             depth,
             block_limit,
             limit,
+            edge_kind,
+            confidence,
+            language,
+            risk_severity,
+            block_kind,
             format,
             include_hidden,
             include_ignored,
@@ -1327,6 +1385,13 @@ fn main() -> Result<()> {
                     max_depth: depth,
                     block_limit,
                     limit,
+                    filters: WorkflowFilters {
+                        edge_kind,
+                        confidence,
+                        language,
+                        risk_severity,
+                        block_kind,
+                    },
                 },
             );
             match format {

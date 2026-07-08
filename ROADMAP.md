@@ -225,7 +225,7 @@ Goal: answer practical code investigation questions.
 - [ ] Classify workflow blocks as start, call, config/env read, dependency, branch, error, return, and external boundary.
 - [ ] Add workflow graph compaction so repeated helper calls, import-only hops, and low-signal nodes collapse into readable blocks.
 - [ ] Add CLI workflow commands for routes, CI jobs, Makefile targets, Docker commands, and selected nodes.
-- [ ] Add workflow API filters for edge-kind, confidence, language, risk severity, and block kinds.
+- [x] Add workflow CLI/API filters for edge-kind, confidence, language, risk severity, and block kinds.
 - [ ] Add workflow query slices so existing graph query results can open as block diagrams.
 - [ ] Add full web Flow view next to Graph/Cards/Risks with pan, zoom, minimap, and selectable workflow blocks.
 - [ ] Reuse node and dependency cards from workflow blocks, including source preview, related dependencies, risks, and edge explanations.
