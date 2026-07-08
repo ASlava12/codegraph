@@ -1,4 +1,4 @@
-use codegraph_core::{CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind};
+use codegraph_core::{CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -75,6 +75,28 @@ pub struct LanguageDependency {
     pub edge_kinds: BTreeMap<String, usize>,
     pub confidences: BTreeMap<String, usize>,
     pub edge_indexes: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SurprisingLinkReport {
+    pub links: Vec<SurprisingLink>,
+    pub total_candidates: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SurprisingLink {
+    pub source: Node,
+    pub target: Node,
+    pub source_area: String,
+    pub target_area: String,
+    pub source_language: String,
+    pub target_language: String,
+    pub edge_kind: String,
+    pub confidence: String,
+    pub score: usize,
+    pub reasons: Vec<String>,
+    pub edge_index: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1041,6 +1063,7 @@ pub struct ProjectReport {
     pub quality_gate: CheckReport,
     pub architecture: ArchitectureMap,
     pub language_dependencies: LanguageDependencyReport,
+    pub surprising_links: SurprisingLinkReport,
     pub hotspots: HotspotReport,
     pub communities: CommunityReport,
 }
@@ -1411,6 +1434,109 @@ pub fn language_dependencies(graph: &CodeGraph, limit: usize) -> LanguageDepende
         total_edges,
         cross_language_edges,
         truncated: total_links > limit,
+    }
+}
+
+pub fn surprising_links(graph: &CodeGraph, limit: usize) -> SurprisingLinkReport {
+    let limit = limit.clamp(1, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT);
+    let nodes_by_id: BTreeMap<NodeId, &Node> =
+        graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let node_areas = node_architecture_areas(graph, &nodes_by_id);
+    let mut links = Vec::new();
+
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
+        if !is_architecture_dependency_edge(&edge.kind) {
+            continue;
+        }
+        let Some(source) = nodes_by_id.get(&edge.source) else {
+            continue;
+        };
+        let Some(target) = nodes_by_id.get(&edge.target) else {
+            continue;
+        };
+        let source_area = node_areas
+            .get(&edge.source)
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
+        let target_area = node_areas
+            .get(&edge.target)
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
+        let source_language = node_language(&nodes_by_id, edge.source);
+        let target_language = node_language(&nodes_by_id, edge.target);
+        let mut score = 0;
+        let mut reasons = Vec::new();
+
+        if source_area != "unknown" && target_area != "unknown" && source_area != target_area {
+            score += 5;
+            reasons.push("cross_area".to_string());
+        }
+        if source_language != "unknown"
+            && target_language != "unknown"
+            && source_language != target_language
+        {
+            score += 4;
+            reasons.push("cross_language".to_string());
+        }
+        match edge.confidence {
+            Confidence::Heuristic => {
+                score += 3;
+                reasons.push("heuristic_confidence".to_string());
+            }
+            Confidence::Unknown => {
+                score += 2;
+                reasons.push("unknown_confidence".to_string());
+            }
+            Confidence::Semantic | Confidence::Syntactic | Confidence::Exact => {}
+        }
+        if matches!(
+            edge.kind,
+            EdgeKind::MayError
+                | EdgeKind::ReadsConfig
+                | EdgeKind::ReadsEnvironment
+                | EdgeKind::DependsOn
+        ) {
+            score += 2;
+            reasons.push(format!("edge_kind:{}", edge_kind_name(&edge.kind)));
+        }
+        if source.kind == NodeKind::Entrypoint || target.kind == NodeKind::Entrypoint {
+            score += 1;
+            reasons.push("entrypoint_boundary".to_string());
+        }
+        if score == 0 {
+            continue;
+        }
+
+        links.push(SurprisingLink {
+            source: (*source).clone(),
+            target: (*target).clone(),
+            source_area,
+            target_area,
+            source_language,
+            target_language,
+            edge_kind: edge_kind_name(&edge.kind),
+            confidence: confidence_name(edge.confidence),
+            score,
+            reasons,
+            edge_index,
+        });
+    }
+
+    links.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.source_area.cmp(&right.source_area))
+            .then_with(|| left.target_area.cmp(&right.target_area))
+            .then_with(|| left.edge_index.cmp(&right.edge_index))
+    });
+    let total_candidates = links.len();
+    links.truncate(limit);
+
+    SurprisingLinkReport {
+        links,
+        total_candidates,
+        truncated: total_candidates > limit,
     }
 }
 
@@ -1997,6 +2123,7 @@ pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> Project
             limits.architecture_edge_limit,
         ),
         language_dependencies: language_dependencies(graph, limits.language_link_limit),
+        surprising_links: surprising_links(graph, limits.architecture_edge_limit),
         hotspots: hotspots(graph, limits.hotspot_limit),
         communities: communities(graph, limits.community_limit),
     }
@@ -2247,6 +2374,49 @@ pub fn project_report_markdown(
         }
     }
 
+    writeln!(output, "\n## Surprising Links").unwrap();
+    if report.surprising_links.links.is_empty() {
+        writeln!(output, "No surprising dependency links were found.").unwrap();
+    } else {
+        writeln!(
+            output,
+            "| Score | Source | Target | Areas | Languages | Edge | Confidence | Reasons | Evidence |"
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "| ---: | --- | --- | --- | --- | --- | --- | --- | --- |"
+        )
+        .unwrap();
+        for link in report.surprising_links.links.iter().take(15) {
+            writeln!(
+                output,
+                "| {} | {} | {} | `{}` -> `{}` | `{}` -> `{}` | `{}` | `{}` | {} | #{} |",
+                link.score,
+                node_ref(&link.source),
+                node_ref(&link.target),
+                markdown_code(&link.source_area),
+                markdown_code(&link.target_area),
+                markdown_code(&link.source_language),
+                markdown_code(&link.target_language),
+                markdown_code(&link.edge_kind),
+                markdown_code(&link.confidence),
+                markdown_table_cell(&link.reasons.join(", ")),
+                link.edge_index
+            )
+            .unwrap();
+        }
+        if report.surprising_links.truncated {
+            writeln!(
+                output,
+                "\nSurprising links are truncated: showing {} of {} candidates.",
+                report.surprising_links.links.len(),
+                report.surprising_links.total_candidates
+            )
+            .unwrap();
+        }
+    }
+
     writeln!(output, "\n## Risks And Insights").unwrap();
     if report.risk_summary.top_kinds.is_empty() {
         writeln!(output, "No investigation insights were reported.").unwrap();
@@ -2423,6 +2593,12 @@ fn project_report_suggested_questions(report: &ProjectReport) -> Vec<String> {
         questions.push(format!(
             "What evidence explains the architecture link from {} to {}?",
             edge.source, edge.target
+        ));
+    }
+    if let Some(link) = report.surprising_links.links.first() {
+        questions.push(format!(
+            "Why is the {} edge from {} to {} surprising?",
+            link.edge_kind, link.source.label, link.target.label
         ));
     }
     if let Some(risk) = report.risk_summary.top_kinds.first() {
@@ -11171,6 +11347,30 @@ fn architecture_group_for_path(path: &str) -> (String, String) {
     }
 }
 
+fn node_architecture_areas(
+    graph: &CodeGraph,
+    nodes_by_id: &BTreeMap<NodeId, &Node>,
+) -> BTreeMap<NodeId, String> {
+    let mut areas = BTreeMap::new();
+    for node in nodes_by_id.values() {
+        if node.kind == NodeKind::File {
+            let (area, _) = architecture_group_for_path(&node.label);
+            areas.insert(node.id, area);
+        }
+    }
+    for edge in graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Contains)
+    {
+        let Some(area) = areas.get(&edge.source).cloned() else {
+            continue;
+        };
+        areas.entry(edge.target).or_insert(area);
+    }
+    areas
+}
+
 fn is_architecture_symbol(kind: &NodeKind) -> bool {
     matches!(
         kind,
@@ -11362,6 +11562,7 @@ mod tests {
             report.hotspots.total_architectural_hubs + report.hotspots.total_utility_hubs,
             report.hotspots.total_candidates
         );
+        assert!(!report.surprising_links.links.is_empty());
         assert!(!report.communities.communities.is_empty());
         assert_eq!(report.quality_gate.fail_on, "warning");
         assert_eq!(report.insights.insights.len(), 1);
@@ -11441,6 +11642,7 @@ mod tests {
         assert!(markdown.contains("- Root: `repo`"));
         assert!(markdown.contains("## Key Concepts"));
         assert!(markdown.contains("## Communities"));
+        assert!(markdown.contains("## Surprising Links"));
         assert!(markdown.contains("## Risks And Insights"));
         assert!(markdown.contains("### Insight Evidence"));
         assert!(markdown.contains("## Suggested Questions"));
@@ -11486,6 +11688,55 @@ mod tests {
         assert_eq!(map.edges[0].target, "core");
         assert_eq!(map.edges[0].edge_kinds.get("calls"), Some(&1));
         assert_eq!(map.edges[0].edge_indexes, vec![4]);
+    }
+
+    #[test]
+    fn surprising_links_rank_cross_area_language_and_heuristic_edges() {
+        let mut graph = CodeGraph::new("repo");
+        let api_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "api/main.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let scripts_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "scripts/deploy.py",
+            None,
+            BTreeMap::from([("language".to_string(), "python".to_string())]),
+        );
+        let handler = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "handle_request",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let script = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "deploy",
+            None,
+            BTreeMap::from([("language".to_string(), "python".to_string())]),
+        );
+        graph.add_edge(api_file, handler, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(scripts_file, script, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(handler, script, EdgeKind::Calls, Confidence::Heuristic);
+
+        let report = surprising_links(&graph, 10);
+
+        assert_eq!(report.total_candidates, 1);
+        let link = &report.links[0];
+        assert_eq!(link.source.label, "handle_request");
+        assert_eq!(link.target.label, "deploy");
+        assert_eq!(link.source_area, "api");
+        assert_eq!(link.target_area, "scripts");
+        assert_eq!(link.source_language, "rust");
+        assert_eq!(link.target_language, "python");
+        assert_eq!(link.confidence, "heuristic");
+        assert!(link.score >= 12);
+        assert!(link.reasons.contains(&"cross_area".to_string()));
+        assert!(link.reasons.contains(&"cross_language".to_string()));
+        assert!(link.reasons.contains(&"heuristic_confidence".to_string()));
+        assert_eq!(link.edge_index, 2);
     }
 
     #[test]

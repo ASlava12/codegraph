@@ -352,12 +352,14 @@ const I18N = {
     "empty.noSemanticWork": "No semantic work items.",
     "empty.noArchitecture": "No architecture map.",
     "empty.noLanguageDependencies": "No language dependencies.",
+    "empty.noSurprisingLinks": "No surprising links.",
     "empty.loadingSource": "Loading...",
     "focus.entrypoint": "Focus: entrypoint",
     "focus.hotspot": "Focus: hotspot",
     "focus.community": "Focus: {label}",
     "focus.architectureEdge": "Focus: {source} -> {target}",
     "focus.languageDependency": "Focus: {source} -> {target}",
+    "focus.surprisingLink": "Focus: surprising link",
     "focus.semantic": "Semantic: {label}",
     "overview.maxFile": "Max file",
     "overview.policy": "Policy",
@@ -950,12 +952,14 @@ const I18N = {
     "empty.noSemanticWork": "Семантических задач нет.",
     "empty.noArchitecture": "Карта архитектуры не получена.",
     "empty.noLanguageDependencies": "Межъязыковых зависимостей нет.",
+    "empty.noSurprisingLinks": "Неожиданных связей нет.",
     "empty.loadingSource": "Загружаю...",
     "focus.entrypoint": "Фокус: точка входа",
     "focus.hotspot": "Фокус: горячий узел",
     "focus.community": "Фокус: {label}",
     "focus.architectureEdge": "Фокус: {source} -> {target}",
     "focus.languageDependency": "Фокус: {source} -> {target}",
+    "focus.surprisingLink": "Фокус: неожиданная связь",
     "focus.semantic": "Семантика: {label}",
     "overview.maxFile": "Макс. файл",
     "overview.policy": "Политика",
@@ -1432,6 +1436,7 @@ const semanticCancelButton = document.querySelector("#semanticCancelButton");
 const semanticWorkList = document.querySelector("#semanticWorkList");
 const architectureList = document.querySelector("#architectureList");
 const languageDependencyList = document.querySelector("#languageDependencyList");
+const surprisingLinkList = document.querySelector("#surprisingLinkList");
 const communityList = document.querySelector("#communityList");
 const hotspotList = document.querySelector("#hotspotList");
 const annotationList = document.querySelector("#annotationList");
@@ -3209,6 +3214,7 @@ function renderOverview() {
   renderSemanticWork(state.semanticPlan);
   renderArchitecture(state.architecture);
   renderLanguageDependencies(state.languageDependencies);
+  renderSurprisingLinks(state.report?.surprising_links);
   renderCommunities(state.communities);
   renderHotspots(state.hotspots);
 
@@ -3891,6 +3897,58 @@ async function focusLanguageDependency(link) {
         target: link.target_language || formatKind("unknown"),
       }),
     );
+  } catch (error) {
+    if (requestId !== state.insightFocusRequest) return;
+    queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderSurprisingLinks(report) {
+  if (!report) {
+    surprisingLinkList.innerHTML = `<p class="empty">${escapeHtml(t("empty.noSurprisingLinks"))}</p>`;
+    return;
+  }
+  const links = Array.isArray(report.links) ? report.links.slice(0, 6) : [];
+  surprisingLinkList.innerHTML =
+    links.length > 0
+      ? links
+          .map(
+            (link, index) => `
+              <button class="surprising-link-chip" type="button" data-surprising-link-index="${index}">
+                <span>${escapeHtml(link.source_area || "area")} -> ${escapeHtml(link.target_area || "area")}</span>
+                <strong>${Number(link.score || 0)}</strong>
+              </button>
+            `,
+          )
+          .join("")
+      : `<p class="empty">${escapeHtml(t("empty.noSurprisingLinks"))}</p>`;
+  surprisingLinkList.querySelectorAll("[data-surprising-link-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const link = report.links?.[Number(button.dataset.surprisingLinkIndex)];
+      if (!link) return;
+      focusSurprisingLink(link);
+    });
+  });
+}
+
+async function focusSurprisingLink(link) {
+  if (!Number.isFinite(Number(link.edge_index))) return;
+  state.insightFocusRequest += 1;
+  const requestId = state.insightFocusRequest;
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    edge_indexes: String(link.edge_index),
+    edge_limit: "80",
+  });
+
+  try {
+    const response = await apiFetch(`/api/focus?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.insightFocusRequest) return;
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(body, response, "focus failed"));
+    }
+    showFocusedGraph(body, t("focus.surprisingLink"));
   } catch (error) {
     if (requestId !== state.insightFocusRequest) return;
     queryResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;

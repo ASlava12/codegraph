@@ -3665,6 +3665,7 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "quality_gate",
                     "architecture",
                     "language_dependencies",
+                    "surprising_links",
                     "hotspots",
                     "communities",
                     "cache",
@@ -5998,7 +5999,7 @@ fn project_report_response_fields() -> Vec<ApiParameterSpec> {
             "report",
             true,
             "ProjectReport",
-            "Production project report with summary, risks, quality gate, topology, and hotspots.",
+            "Production project report with summary, surprising links, risks, quality gate, topology, and hotspots.",
         ),
     ]
 }
@@ -7604,10 +7605,13 @@ fn helper() {}
         let app = include_str!("../../codegraph-web/static/app.js");
 
         assert!(index.contains("riskSummaryList"));
+        assert!(index.contains("surprisingLinkList"));
         assert!(index.contains("reportMarkdown"));
         assert!(app.contains("apiFetch(`/api/report?${reportParams.toString()}`)"));
         assert!(app.contains("reportFormat: \"markdown\""));
         assert!(app.contains("\"export.reportMarkdown\""));
+        assert!(app.contains("renderSurprisingLinks"));
+        assert!(app.contains("\"empty.noSurprisingLinks\""));
         assert!(app.contains("state.report?.quality_gate"));
         assert!(app.contains("\"risk.gate\""));
         assert!(index.contains("insightExportButton"));
@@ -8057,6 +8061,7 @@ fn helper() {}
                 .get("project_report_section")
                 .is_some_and(|sections| sections.contains(&"risk_summary")
                     && sections.contains(&"quality_gate")
+                    && sections.contains(&"surprising_links")
                     && sections.contains(&"coverage"))
         );
         assert!(

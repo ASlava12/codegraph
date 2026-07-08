@@ -480,6 +480,7 @@ button.cancel-action:hover:not(:disabled) {
 .lsp-list,
 .architecture-list,
 .language-dependency-list,
+.surprising-link-list,
 .community-list,
 .hotspot-list,
 .annotation-list {
@@ -500,6 +501,7 @@ button.cancel-action:hover:not(:disabled) {
 .architecture-chip,
 .architecture-edge-chip,
 .language-dependency-chip,
+.surprising-link-chip,
 .community-chip,
 .hotspot-chip,
 .annotation-chip {
@@ -528,6 +530,7 @@ button.cancel-action:hover:not(:disabled) {
 .architecture-chip span,
 .architecture-edge-chip span,
 .language-dependency-chip span,
+.surprising-link-chip span,
 .community-chip span,
 .hotspot-chip span,
 .annotation-chip span {
@@ -549,6 +552,7 @@ button.cancel-action:hover:not(:disabled) {
 .architecture-chip strong,
 .architecture-edge-chip strong,
 .language-dependency-chip strong,
+.surprising-link-chip strong,
 .community-chip strong,
 .hotspot-chip strong,
 .annotation-chip strong {
