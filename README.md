@@ -104,7 +104,7 @@ Implemented now:
 - Dependency cards can focus or query their exact `edge_index` for fast canvas narrowing and agent handoff.
 - Web node and dependency-card selections are reflected in shareable `node` and `edge` URL parameters with copy-link actions for exact human/agent handoff.
 - Web node and dependency cards can be downloaded as JSON with source, dependency, and risk context for portable agent handoff.
-- Web query presets include ambiguous call-resolution and ambiguous entrypoint-target investigations for fast logical inconsistency triage.
+- Web query presets include ambiguous calls, ambiguous entrypoints, dependency-scope/version issues, and sensitive defaults for fast logical inconsistency triage.
 - Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
 - Initial English/Russian web UI localization with a persistent language selector.
 - Static web landmarks and pagination controls expose localized ARIA labels for English/Russian accessibility.

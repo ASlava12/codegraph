@@ -6794,8 +6794,14 @@ mod tests {
         assert!(app.contains("ambiguous_entrypoint_target"));
         assert!(index.contains("insights kind:ambiguous_call_resolution"));
         assert!(index.contains("insights kind:ambiguous_entrypoint_target"));
+        assert!(index.contains("insights kind:mixed_dependency_scope"));
+        assert!(index.contains("insights kind:conflicting_dependency_declaration"));
+        assert!(index.contains("insights kind:sensitive_config_default"));
         assert!(app.contains("\"queryPreset.ambiguousCalls\""));
         assert!(app.contains("\"queryPreset.ambiguousEntrypoints\""));
+        assert!(app.contains("\"queryPreset.dependencyScopes\""));
+        assert!(app.contains("\"queryPreset.dependencyVersions\""));
+        assert!(app.contains("\"queryPreset.sensitiveDefaults\""));
         assert!(app.contains("\"check.running\""));
         assert!(app.contains("\"sourceSearch.enterText\""));
         assert!(app.contains("\"sourceSearch.noMatches\""));
