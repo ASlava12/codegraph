@@ -228,6 +228,7 @@ Implemented now:
 - Dependency consistency insights for runtime manifest dependencies with no matching import.
 - Dependency consistency insights for package declarations with conflicting manifest constraints.
 - Dependency consistency insights for packages declared across multiple dependency scopes such as runtime and dev/build.
+- Dependency consistency insights for production imports of packages declared only in non-runtime scopes, including Go `// indirect` requirements.
 - Dependency consistency insights for production-like source files importing packages declared only in non-runtime scopes.
 - Dependency consistency insights for runtime dependencies that are imported only from test-like source files.
 - Focused package graph queries that connect manifest declarations, import sites, and source files for mixed-language dependency investigation.

@@ -12535,6 +12535,49 @@ mod tests {
     }
 
     #[test]
+    fn insights_report_go_indirect_dependency_imports_from_production_sources() {
+        let mut graph = CodeGraph::new("repo");
+        let manifest = graph.add_node(NodeKind::File, "go.mod");
+        let app = graph.add_node_with_metadata(
+            NodeKind::File,
+            "cmd/server/main.go",
+            None,
+            BTreeMap::from([("language".to_string(), "go".to_string())]),
+        );
+        let sys = dependency_node(&mut graph, "golang.org/x/sys", "go:golang.org/x/sys");
+        graph.add_edge_with_metadata(
+            manifest,
+            sys,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "indirect".to_string())]),
+        );
+
+        let unix_import = import_node(&mut graph, "import \"golang.org/x/sys/unix\"", "go");
+        graph.add_edge(app, unix_import, EdgeKind::Imports, Confidence::Syntactic);
+
+        let report = insights(&graph);
+        let insight = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "non_runtime_dependency_import")
+            .expect("expected direct import of indirect Go dependency insight");
+
+        assert_eq!(insight.severity, InsightSeverity::Warning);
+        assert!(insight.message.contains("cmd/server/main.go"));
+        assert!(insight.message.contains("golang.org/x/sys"));
+        assert!(insight.message.contains("`indirect`"));
+        assert!(insight.nodes.contains(&manifest));
+        assert!(insight.nodes.contains(&app));
+        assert!(insight.nodes.contains(&sys));
+        assert!(insight.nodes.contains(&unix_import));
+        assert_eq!(
+            report.by_kind.get("non_runtime_dependency_import"),
+            Some(&1)
+        );
+    }
+
+    #[test]
     fn insights_report_runtime_dependencies_used_only_by_tests() {
         let mut graph = CodeGraph::new("repo");
         let manifest = graph.add_node(NodeKind::File, "package.json");
