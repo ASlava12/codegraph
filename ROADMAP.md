@@ -103,6 +103,7 @@ Goal: answer practical code investigation questions.
 - [x] Add investigation insights for semantic LSP diagnostics.
 - [x] Detect directed dependency cycles across calls, imports, references, and dependency edges.
 - [x] Detect package manifest dependency boundaries.
+- [x] Detect C/C++ package manifest dependencies from `vcpkg.json` and `conanfile.txt`.
 - [x] Detect duplicate entrypoint labels that make startup traces ambiguous.
 - [x] Detect manifest entrypoints that resolve to multiple possible files or functions.
 - [x] Detect ambiguous call resolutions where one call label points to multiple targets from the same caller.

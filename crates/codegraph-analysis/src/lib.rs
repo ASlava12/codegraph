@@ -6914,6 +6914,9 @@ fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>
         let Some(language) = import_node.metadata.get("language").map(String::as_str) else {
             continue;
         };
+        if matches!(language, "c" | "cpp") {
+            continue;
+        }
         let Some(import) = import_package_candidate(language, &import_node.label) else {
             continue;
         };
@@ -7127,6 +7130,7 @@ fn add_non_runtime_dependency_import_insights(graph: &CodeGraph, insights: &mut 
     if declarations.is_empty() {
         return;
     }
+    let declared_ecosystems = declared_ecosystems_from_package_ids(declarations.keys());
 
     let path_index = node_path_index(graph);
     let mut reported = BTreeSet::new();
@@ -7159,13 +7163,12 @@ fn add_non_runtime_dependency_import_insights(graph: &CodeGraph, insights: &mut 
         let Some(language) = import_node.metadata.get("language").map(String::as_str) else {
             continue;
         };
-        let Some(import) = import_package_candidate(language, &import_node.label) else {
-            continue;
-        };
-        let Some((package_id, package_declarations)) = declarations
-            .iter()
-            .find(|(package_id, _)| import_matches_package_id(package_id, &import))
-        else {
+        let imports = import_package_candidates(language, &import_node.label, &declared_ecosystems);
+        let Some((package_id, package_declarations)) = imports.iter().find_map(|import| {
+            declarations
+                .iter()
+                .find(|(package_id, _)| import_matches_package_id(package_id, import))
+        }) else {
             continue;
         };
         let scopes: BTreeSet<_> = package_declarations
@@ -7188,12 +7191,15 @@ fn add_non_runtime_dependency_import_insights(graph: &CodeGraph, insights: &mut 
         }
         let scope_list = format_backtick_list(scopes.iter().copied(), 6);
         let source_label = node_label(graph, edge.source).unwrap_or("unknown");
+        let package = package_declarations
+            .first()
+            .and_then(|declaration| node_label(graph, declaration.target))
+            .unwrap_or(package_id.as_str());
         insights.push(Insight {
             kind: "non_runtime_dependency_import".to_string(),
             severity: InsightSeverity::Warning,
             message: format!(
-                "`{source_label}` imports `{}` from production-like code, but the package is declared only as {scope_list}",
-                import.package
+                "`{source_label}` imports `{package}` from production-like code, but the package is declared only as {scope_list}"
             ),
             nodes: nodes.into_iter().collect(),
             edges,
@@ -7311,6 +7317,7 @@ fn dependency_import_usages_by_package(
 ) -> BTreeMap<String, Vec<DependencyImportUsage>> {
     let path_index = node_path_index(graph);
     let declared = declared_package_ids(graph);
+    let declared_ecosystems = declared_ecosystems_from_package_ids(declared.iter());
     let mut usages: BTreeMap<String, Vec<DependencyImportUsage>> = BTreeMap::new();
     for (edge_index, edge) in graph.edges.iter().enumerate() {
         if edge.kind != EdgeKind::Imports {
@@ -7332,14 +7339,13 @@ fn dependency_import_usages_by_package(
         let Some(language) = import_node.metadata.get("language").map(String::as_str) else {
             continue;
         };
-        let Some(import) = import_package_candidate(language, &import_node.label) else {
-            continue;
-        };
-        let Some(package_id) = declared
-            .iter()
-            .find(|package_id| import_matches_package_id(package_id, &import))
-            .cloned()
-        else {
+        let imports = import_package_candidates(language, &import_node.label, &declared_ecosystems);
+        let Some(package_id) = imports.iter().find_map(|import| {
+            declared
+                .iter()
+                .find(|package_id| import_matches_package_id(package_id, import))
+                .cloned()
+        }) else {
             continue;
         };
         let test_like = path_index
@@ -7707,17 +7713,26 @@ fn declared_package_ids(graph: &CodeGraph) -> BTreeSet<String> {
 }
 
 fn import_packages(graph: &CodeGraph) -> Vec<(usize, ImportPackage)> {
+    let declared = declared_package_ids(graph);
+    let declared_ecosystems = declared_ecosystems_from_package_ids(declared.iter());
     graph
         .edges
         .iter()
         .enumerate()
-        .filter_map(|(index, edge)| {
+        .flat_map(|(index, edge)| {
             if edge.kind != EdgeKind::Imports {
-                return None;
+                return Vec::new();
             }
-            let import_node = graph.nodes.iter().find(|node| node.id == edge.target)?;
-            let language = import_node.metadata.get("language")?;
-            import_package_candidate(language, &import_node.label).map(|import| (index, import))
+            let Some(import_node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+                return Vec::new();
+            };
+            let Some(language) = import_node.metadata.get("language") else {
+                return Vec::new();
+            };
+            import_package_candidates(language, &import_node.label, &declared_ecosystems)
+                .into_iter()
+                .map(move |import| (index, import))
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -7773,6 +7788,30 @@ fn import_package_candidate(language: &str, label: &str) -> Option<ImportPackage
     }
 }
 
+fn import_package_candidates(
+    language: &str,
+    label: &str,
+    declared_ecosystems: &BTreeSet<String>,
+) -> Vec<ImportPackage> {
+    if matches!(language, "c" | "cpp") {
+        let Some(package) = c_family_include_package(label) else {
+            return Vec::new();
+        };
+        return ["vcpkg", "conan"]
+            .into_iter()
+            .filter(|ecosystem| declared_ecosystems.contains(*ecosystem))
+            .map(|ecosystem| ImportPackage {
+                ecosystem: ecosystem.to_string(),
+                package: package.clone(),
+            })
+            .collect();
+    }
+
+    import_package_candidate(language, label)
+        .into_iter()
+        .collect()
+}
+
 fn import_matches_package_id(package_id: &str, import: &ImportPackage) -> bool {
     let Some((ecosystem, package)) = package_id.split_once(':') else {
         return false;
@@ -7791,6 +7830,7 @@ fn import_matches_package_id(package_id: &str, import: &ImportPackage) -> bool {
         }
         "python" => package == canonical_python_package_name(&import.package),
         "npm" => package == import.package.to_ascii_lowercase(),
+        "vcpkg" | "conan" => package == import.package.to_ascii_lowercase(),
         _ => package == import.package,
     }
 }
@@ -7884,6 +7924,119 @@ fn go_import_package(label: &str) -> Option<String> {
     None
 }
 
+fn c_family_include_package(label: &str) -> Option<String> {
+    let header = include_header_name(label)?;
+    let package = header
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_end_matches(".hpp")
+        .trim_end_matches(".hh")
+        .trim_end_matches(".hxx")
+        .trim_end_matches(".h")
+        .to_ascii_lowercase();
+    if package.is_empty()
+        || matches!(
+            package.as_str(),
+            "assert"
+                | "complex"
+                | "ctype"
+                | "errno"
+                | "float"
+                | "inttypes"
+                | "iso646"
+                | "limits"
+                | "locale"
+                | "math"
+                | "setjmp"
+                | "signal"
+                | "stdalign"
+                | "stdarg"
+                | "stdatomic"
+                | "stdbool"
+                | "stddef"
+                | "stdint"
+                | "stdio"
+                | "stdlib"
+                | "stdnoreturn"
+                | "string"
+                | "tgmath"
+                | "threads"
+                | "time"
+                | "uchar"
+                | "wchar"
+                | "wctype"
+                | "algorithm"
+                | "array"
+                | "atomic"
+                | "bit"
+                | "chrono"
+                | "concepts"
+                | "coroutine"
+                | "deque"
+                | "exception"
+                | "filesystem"
+                | "format"
+                | "fstream"
+                | "functional"
+                | "future"
+                | "initializer_list"
+                | "iostream"
+                | "istream"
+                | "iterator"
+                | "map"
+                | "memory"
+                | "mutex"
+                | "optional"
+                | "ostream"
+                | "queue"
+                | "ranges"
+                | "regex"
+                | "set"
+                | "span"
+                | "sstream"
+                | "stdexcept"
+                | "string_view"
+                | "thread"
+                | "tuple"
+                | "type_traits"
+                | "unordered_map"
+                | "unordered_set"
+                | "utility"
+                | "variant"
+                | "vector"
+        )
+    {
+        None
+    } else {
+        Some(package)
+    }
+}
+
+fn include_header_name(label: &str) -> Option<String> {
+    let value = label.trim();
+    if let Some(start) = value.find('<') {
+        let rest = &value[start + 1..];
+        let end = rest.find('>')?;
+        return Some(rest[..end].trim().to_string());
+    }
+    quoted_strings(value).into_iter().next()
+}
+
+fn declared_ecosystems_from_package_ids<'a>(
+    package_ids: impl IntoIterator<Item = &'a String>,
+) -> BTreeSet<String> {
+    package_ids
+        .into_iter()
+        .filter_map(|package_id| {
+            package_id
+                .split_once(':')
+                .map(|(ecosystem, _)| ecosystem.to_string())
+        })
+        .collect()
+}
+
 fn is_declared_package(declared: &BTreeSet<String>, ecosystem: &str, package: &str) -> bool {
     match ecosystem {
         "go" => declared.iter().any(|package_id| {
@@ -7904,6 +8057,9 @@ fn is_declared_package(declared: &BTreeSet<String>, ecosystem: &str, package: &s
             canonical_python_package_name(package)
         )),
         "npm" => declared.contains(&format!("npm:{}", package.to_ascii_lowercase())),
+        "vcpkg" | "conan" => {
+            declared.contains(&format!("{ecosystem}:{}", package.to_ascii_lowercase()))
+        }
         _ => declared.contains(&format!("{ecosystem}:{package}")),
     }
 }
@@ -11997,6 +12153,82 @@ mod tests {
         assert!(report.insights.iter().any(|insight| {
             insight.kind == "unused_declared_dependency" && insight.nodes.contains(&serde)
         }));
+    }
+
+    #[test]
+    fn insights_match_c_family_package_manager_includes() {
+        let mut graph = CodeGraph::new("repo");
+        let manifest = graph.add_node(NodeKind::File, "vcpkg.json");
+        let file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/main.cpp",
+            None,
+            BTreeMap::from([("language".to_string(), "cpp".to_string())]),
+        );
+        let fmt = dependency_node(&mut graph, "fmt", "vcpkg:fmt");
+        let zlib = dependency_node(&mut graph, "zlib", "vcpkg:zlib");
+        let curl = dependency_node(&mut graph, "curl", "vcpkg:curl");
+        let spdlog = dependency_node(&mut graph, "spdlog", "conan:spdlog");
+        let cmake = dependency_node(&mut graph, "cmake", "conan:cmake");
+
+        for dependency in [fmt, zlib, curl, spdlog] {
+            graph.add_edge_with_metadata(
+                manifest,
+                dependency,
+                EdgeKind::DependsOn,
+                Confidence::Exact,
+                BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+            );
+        }
+        graph.add_edge_with_metadata(
+            manifest,
+            cmake,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "build".to_string())]),
+        );
+
+        let fmt_include = import_node(&mut graph, "#include <fmt/core.h>", "cpp");
+        let zlib_include = import_node(&mut graph, "#include <zlib.h>", "cpp");
+        let spdlog_include = import_node(&mut graph, "#include <spdlog/spdlog.h>", "cpp");
+        let cmake_include = import_node(&mut graph, "#include <cmake/tool.h>", "cpp");
+        graph.add_edge(file, fmt_include, EdgeKind::Imports, Confidence::Syntactic);
+        graph.add_edge(file, zlib_include, EdgeKind::Imports, Confidence::Syntactic);
+        graph.add_edge(
+            file,
+            spdlog_include,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            file,
+            cmake_include,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+
+        let report = insights(&graph);
+        assert!(report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&curl)
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&fmt)
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&zlib)
+        }));
+        assert!(!report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.nodes.contains(&spdlog)
+        }));
+        let non_runtime = report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "non_runtime_dependency_import" && insight.nodes.contains(&cmake)
+            })
+            .expect("expected C++ build dependency import insight");
+        assert!(non_runtime.nodes.contains(&file));
+        assert!(non_runtime.nodes.contains(&cmake_include));
     }
 
     #[test]

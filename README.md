@@ -36,7 +36,7 @@ Implemented now:
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
 - Local import/include resolution for relative JavaScript/TypeScript imports and CommonJS requires, Python relative/absolute project imports, Go module-local imports, quoted C/C++ includes with CMake and compile database include directories, PHP include/require paths, Bash source paths, and common Rust module paths.
-- Manifest dependency extraction from Cargo, npm, Go, Python, and Composer projects.
+- Manifest dependency extraction from Cargo, npm, Go, Python, Composer, vcpkg, and Conan projects.
 - Heuristic config reads, environment reads, and potential error/exception constructs.
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
@@ -766,13 +766,14 @@ Supported package manifests:
 - Go modules: `go.mod`
 - Python: `requirements.txt`, `pyproject.toml`
 - PHP/Composer: `composer.json`
+- C/C++ package managers: `vcpkg.json`, `conanfile.txt`
 
 Manifest dependencies are normalized into canonical package nodes with a stable
 `package_id` metadata value such as `cargo:serde` or `python:fastapi`. Individual
 manifest files connect to those package nodes with `depends_on` edges; the edge
-metadata records whether the declaration is runtime, dev, optional, peer, or
-build dependency data when the manifest format exposes that distinction, plus
-the raw `dependency_version` constraint when the manifest declares one. Cargo
+metadata records whether the declaration is runtime, dev, optional, peer,
+build, or test dependency data when the manifest format exposes that
+distinction, plus the raw `dependency_version` constraint when the manifest declares one. Cargo
 `workspace = true` dependencies resolve to the root workspace constraint when
 one exists; path-only workspace dependencies omit `dependency_version`.
 

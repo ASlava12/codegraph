@@ -2176,6 +2176,8 @@ fn manifest_dependencies(
         Some("requirements.txt") => requirements_dependencies(source),
         Some("pyproject.toml") => pyproject_dependencies(source),
         Some("composer.json") => composer_dependencies(source),
+        Some("vcpkg.json") => vcpkg_dependencies(source),
+        Some("conanfile.txt") => conanfile_txt_dependencies(source),
         _ => Vec::new(),
     }
 }
@@ -2573,6 +2575,152 @@ fn composer_dependencies(source: &str) -> Vec<ManifestDependency> {
     collect_json_object_keys(&value, "require-dev", "dev", "composer", &mut dependencies);
     dependencies.retain(|dependency| dependency.name != "php");
     dependencies
+}
+
+fn vcpkg_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let override_versions = vcpkg_override_versions(&value);
+    let mut dependencies = Vec::new();
+    let Some(values) = value.get("dependencies").and_then(|value| value.as_array()) else {
+        return dependencies;
+    };
+
+    for value in values {
+        let name = value
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| {
+                value
+                    .as_object()
+                    .and_then(|object| object.get("name"))
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+            })
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty());
+        let Some(name) = name else {
+            continue;
+        };
+        let version = value
+            .as_object()
+            .and_then(vcpkg_dependency_version)
+            .or_else(|| override_versions.get(&name.to_ascii_lowercase()).cloned());
+        dependencies.push(manifest_dependency(name, "runtime", "vcpkg", version));
+    }
+
+    dependencies
+}
+
+fn vcpkg_override_versions(value: &serde_json::Value) -> BTreeMap<String, String> {
+    let mut versions = BTreeMap::new();
+    let Some(overrides) = value.get("overrides").and_then(|value| value.as_array()) else {
+        return versions;
+    };
+    for override_value in overrides {
+        let Some(object) = override_value.as_object() else {
+            continue;
+        };
+        let Some(name) = object
+            .get("name")
+            .and_then(|value| value.as_str())
+            .map(|name| name.trim().to_ascii_lowercase())
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        if let Some(version) = vcpkg_dependency_version(object) {
+            versions.insert(name, version);
+        }
+    }
+    versions
+}
+
+fn vcpkg_dependency_version(object: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    [
+        "version>=",
+        "version",
+        "version-string",
+        "version-date",
+        "version-semver",
+    ]
+    .into_iter()
+    .find_map(|key| {
+        object
+            .get(key)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                if key == "version>=" {
+                    format!(">={value}")
+                } else {
+                    value.to_string()
+                }
+            })
+    })
+}
+
+fn conanfile_txt_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut section: Option<String> = None;
+    for raw_line in source.lines() {
+        let line = raw_line
+            .split('#')
+            .next()
+            .unwrap_or("")
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
+            section = Some(name.trim().to_ascii_lowercase());
+            continue;
+        }
+        let Some(section_name) = section.as_deref() else {
+            continue;
+        };
+        let dependency_kind = match section_name {
+            "requires" => "runtime",
+            "tool_requires" | "build_requires" => "build",
+            "test_requires" => "test",
+            _ => continue,
+        };
+        let Some((name, version)) = conan_reference_name_and_version(line) else {
+            continue;
+        };
+        dependencies.push(manifest_dependency(name, dependency_kind, "conan", version));
+    }
+    dependencies
+}
+
+fn conan_reference_name_and_version(line: &str) -> Option<(String, Option<String>)> {
+    let reference = line
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim();
+    let (name, rest) = reference.split_once('/')?;
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let version = rest
+        .split('@')
+        .next()
+        .map(str::trim)
+        .filter(|version| !version.is_empty())
+        .map(str::to_string);
+    Some((name.to_string(), version))
 }
 
 fn go_mod_dependencies(source: &str) -> Vec<ManifestDependency> {
@@ -3918,7 +4066,7 @@ fn canonical_package_name(ecosystem: &str, name: &str) -> String {
             }
             normalized
         }
-        "cargo" | "npm" | "composer" => trimmed.to_ascii_lowercase(),
+        "cargo" | "npm" | "composer" | "vcpkg" | "conan" => trimmed.to_ascii_lowercase(),
         "go" => trimmed.to_string(),
         _ => trimmed.to_string(),
     }
@@ -5136,6 +5284,8 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
                 | "setup.py"
                 | "requirements.txt"
                 | "composer.json"
+                | "vcpkg.json"
+                | "conanfile.txt"
                 | "CMakeLists.txt"
                 | "compile_commands.json"
         )
@@ -6094,6 +6244,36 @@ dependencies = ["pydantic>=2"]
 }"#,
         )
         .unwrap();
+        fs::write(
+            root.join("vcpkg.json"),
+            r#"{
+  "name": "demo",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "fmt",
+    { "name": "zlib", "features": ["minizip"] }
+  ],
+  "overrides": [
+    { "name": "fmt", "version": "10.2.1" },
+    { "name": "zlib", "version>=": "1.3.1" }
+  ]
+}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("conanfile.txt"),
+            r#"[requires]
+spdlog/1.13.0
+openssl/[>=3 <4]
+
+[tool_requires]
+cmake/3.29.0
+
+[test_requires]
+gtest/1.14.0
+"#,
+        )
+        .unwrap();
 
         let graph = scan_project(&root, &IndexOptions::default()).unwrap();
         let dependency_labels: BTreeSet<_> = graph
@@ -6117,6 +6297,12 @@ dependencies = ["pydantic>=2"]
             "fastapi",
             "pydantic",
             "monolog/monolog",
+            "fmt",
+            "zlib",
+            "spdlog",
+            "openssl",
+            "cmake",
+            "gtest",
         ] {
             assert!(dependency_labels.contains(expected), "missing {expected}");
         }
@@ -6209,6 +6395,61 @@ dependencies = ["pydantic>=2"]
                     .get("dependency_version")
                     .is_some_and(|value| value == "^3.0")
         }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "10.2.1")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == ">=1.3.1")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "1.13.0")
+        }));
+        let cmake_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "conan:cmake")
+            })
+            .expect("missing conan cmake dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == cmake_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "build")
+        }));
+        let gtest_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "conan:gtest")
+            })
+            .expect("missing conan gtest dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == gtest_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "test")
+        }));
         assert!(graph.nodes.iter().any(|node| {
             node.metadata
                 .get("ecosystem")
@@ -6218,6 +6459,16 @@ dependencies = ["pydantic>=2"]
             node.metadata
                 .get("ecosystem")
                 .is_some_and(|value| value == "npm")
+        }));
+        assert!(graph.nodes.iter().any(|node| {
+            node.metadata
+                .get("ecosystem")
+                .is_some_and(|value| value == "vcpkg")
+        }));
+        assert!(graph.nodes.iter().any(|node| {
+            node.metadata
+                .get("ecosystem")
+                .is_some_and(|value| value == "conan")
         }));
 
         fs::remove_dir_all(root).unwrap();
