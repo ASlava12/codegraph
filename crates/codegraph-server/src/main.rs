@@ -6891,6 +6891,45 @@ mod tests {
     }
 
     #[test]
+    fn embedded_web_assets_localize_static_aria_labels() {
+        let index = include_str!("../../codegraph-web/static/index.html");
+        let app = include_str!("../../codegraph-web/static/app.js");
+
+        for key in [
+            "aria.interfaceLanguage",
+            "aria.scanControls",
+            "aria.graphSummary",
+            "aria.runtimeStatus",
+            "aria.jobs",
+            "aria.projectOverview",
+            "aria.entrypointFlows",
+            "aria.graphPage",
+            "aria.previousGraphPage",
+            "aria.nextGraphPage",
+            "aria.edgePage",
+            "aria.previousEdgePage",
+            "aria.nextEdgePage",
+            "aria.graphQuery",
+            "aria.queryPresets",
+            "aria.sourceSearch",
+            "aria.cacheDiagnostics",
+            "aria.graphExport",
+            "aria.graphPath",
+            "aria.configurationTrace",
+            "aria.errorTrace",
+            "aria.graphInsights",
+            "aria.graphFilters",
+            "aria.selectedNode",
+        ] {
+            assert!(index.contains(&format!("data-i18n-aria-label=\"{key}\"")));
+            assert!(app.contains(&format!("\"{key}\"")));
+        }
+
+        assert!(app.contains("\"Язык интерфейса\""));
+        assert!(app.contains("\"Следующая страница связей\""));
+    }
+
+    #[test]
     fn embedded_web_assets_surface_graph_viewport_hud() {
         let index = include_str!("../../codegraph-web/static/index.html");
         let app = include_str!("../../codegraph-web/static/app.js");

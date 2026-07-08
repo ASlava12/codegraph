@@ -15,7 +15,7 @@
             <p id="rootLabel">No project loaded</p>
           </div>
           <div class="brand-controls">
-            <label class="locale-field" aria-label="Interface language">
+            <label class="locale-field" aria-label="Interface language" data-i18n-aria-label="aria.interfaceLanguage">
               <select id="localeSelect">
                 <option value="en">English</option>
                 <option value="ru">Русский</option>
@@ -25,7 +25,7 @@
           </div>
         </header>
 
-        <section class="toolbar" aria-label="Scan controls">
+        <section class="toolbar" aria-label="Scan controls" data-i18n-aria-label="aria.scanControls">
           <label class="field project-field">
             <span data-i18n="label.project">Project</span>
             <select id="projectSelect"></select>
@@ -40,7 +40,7 @@
           </button>
         </section>
 
-        <section class="stats" aria-label="Graph summary">
+        <section class="stats" aria-label="Graph summary" data-i18n-aria-label="aria.graphSummary">
           <div><strong id="nodeCount">0</strong><span data-i18n="stat.nodes">Nodes</span></div>
           <div><strong id="edgeCount">0</strong><span data-i18n="stat.edges">Edges</span></div>
           <div><strong id="callCount">0</strong><span data-i18n="stat.calls">Calls</span></div>
@@ -51,7 +51,7 @@
           <div><strong id="skippedCount">0</strong><span data-i18n="stat.skipped">Skipped</span></div>
         </section>
 
-        <section class="runtime-status" aria-label="Runtime status">
+        <section class="runtime-status" aria-label="Runtime status" data-i18n-aria-label="aria.runtimeStatus">
           <header>
             <h2 data-i18n="section.runtime">Runtime</h2>
             <button id="metricsRefreshButton" type="button" data-i18n="button.refresh">Refresh</button>
@@ -59,7 +59,7 @@
           <div id="runtimeMetricsList" class="runtime-metrics-list"></div>
         </section>
 
-        <section class="job-queue" aria-label="Jobs">
+        <section class="job-queue" aria-label="Jobs" data-i18n-aria-label="aria.jobs">
           <header>
             <h2 data-i18n="section.jobs">Jobs</h2>
             <button id="jobRefreshButton" type="button" data-i18n="button.refresh">Refresh</button>
@@ -80,7 +80,7 @@
           </div>
         </section>
 
-        <section class="overview" aria-label="Project overview">
+        <section class="overview" aria-label="Project overview" data-i18n-aria-label="aria.projectOverview">
           <header>
             <h2 data-i18n="section.overview">Overview</h2>
             <span id="overviewTotals">0 nodes</span>
@@ -136,7 +136,7 @@
           <div id="entrypointList" class="entrypoint-list"></div>
         </section>
 
-        <section class="entrypoint-flows" aria-label="Entrypoint flows">
+        <section class="entrypoint-flows" aria-label="Entrypoint flows" data-i18n-aria-label="aria.entrypointFlows">
           <header>
             <h2 data-i18n="section.entryFlows">Entry Flows</h2>
           </header>
@@ -155,7 +155,7 @@
           <div id="entryFlowResult" class="query-result"></div>
         </section>
 
-        <section class="graph-page" aria-label="Graph page">
+        <section class="graph-page" aria-label="Graph page" data-i18n-aria-label="aria.graphPage">
           <header>
             <h2 data-i18n="section.graphPage">Graph Page</h2>
             <span id="pageInfo">0 / 0</span>
@@ -203,14 +203,14 @@
             </label>
           </div>
           <div class="page-actions">
-            <button id="pagePrevButton" type="button" aria-label="Previous graph page">&lt;</button>
+            <button id="pagePrevButton" type="button" aria-label="Previous graph page" data-i18n-aria-label="aria.previousGraphPage">&lt;</button>
             <button id="pageReloadButton" type="button" data-i18n="button.apply">Apply</button>
-            <button id="pageNextButton" type="button" aria-label="Next graph page">&gt;</button>
+            <button id="pageNextButton" type="button" aria-label="Next graph page" data-i18n-aria-label="aria.nextGraphPage">&gt;</button>
           </div>
-          <div class="page-actions edge-page-actions" aria-label="Edge page">
-            <button id="edgePrevButton" type="button" aria-label="Previous edge page">&lt;</button>
+          <div class="page-actions edge-page-actions" aria-label="Edge page" data-i18n-aria-label="aria.edgePage">
+            <button id="edgePrevButton" type="button" aria-label="Previous edge page" data-i18n-aria-label="aria.previousEdgePage">&lt;</button>
             <span id="edgePageInfo" class="page-action-info">0 / 0 edges</span>
-            <button id="edgeNextButton" type="button" aria-label="Next edge page">&gt;</button>
+            <button id="edgeNextButton" type="button" aria-label="Next edge page" data-i18n-aria-label="aria.nextEdgePage">&gt;</button>
           </div>
           <div class="page-link-actions">
             <button id="pageCopyButton" class="page-copy-button" type="button" data-i18n="button.copyPageLink">
@@ -223,7 +223,7 @@
           <div id="pageScope" class="page-scope" aria-live="polite"></div>
         </section>
 
-        <section class="query" aria-label="Graph query">
+        <section class="query" aria-label="Graph query" data-i18n-aria-label="aria.graphQuery">
           <label class="field">
             <span data-i18n="label.query">Query</span>
             <input id="queryInput" type="text" value="nodes kind:function label:main" autocomplete="off" />
@@ -231,7 +231,7 @@
           <button id="queryButton" type="button" data-i18n="button.run">Run</button>
           <button id="queryCopyButton" type="button" data-i18n="button.copyQueryLink">Copy Query Link</button>
           <button id="queryExportButton" type="button" data-i18n="button.downloadQueryResult" disabled>Download Result</button>
-          <div class="query-presets" aria-label="Query presets">
+          <div class="query-presets" aria-label="Query presets" data-i18n-aria-label="aria.queryPresets">
             <button type="button" data-query-preset="unreachable" data-i18n="queryPreset.unreachable">
               Unreachable
             </button>
@@ -306,7 +306,7 @@
           <div id="queryResult" class="query-result"></div>
         </section>
 
-        <section class="source-search" aria-label="Source search">
+        <section class="source-search" aria-label="Source search" data-i18n-aria-label="aria.sourceSearch">
           <header>
             <h2 data-i18n="section.sourceSearch">Source Search</h2>
           </header>
@@ -325,7 +325,7 @@
           <div id="sourceSearchResult" class="query-result"></div>
         </section>
 
-        <section class="cache-diff" aria-label="Cache diagnostics">
+        <section class="cache-diff" aria-label="Cache diagnostics" data-i18n-aria-label="aria.cacheDiagnostics">
           <header>
             <h2 data-i18n="section.cacheDiff">Cache Diff</h2>
             <span id="cacheDiffStatus">idle</span>
@@ -345,7 +345,7 @@
           <div id="cacheDiffResult" class="query-result"></div>
         </section>
 
-        <section class="graph-export" aria-label="Graph export">
+        <section class="graph-export" aria-label="Graph export" data-i18n-aria-label="aria.graphExport">
           <header>
             <h2 data-i18n="section.export">Export</h2>
           </header>
@@ -365,7 +365,7 @@
           <div id="exportResult" class="query-result"></div>
         </section>
 
-        <section class="path-query" aria-label="Graph path">
+        <section class="path-query" aria-label="Graph path" data-i18n-aria-label="aria.graphPath">
           <header>
             <h2 data-i18n="section.path">Path</h2>
           </header>
@@ -391,7 +391,7 @@
           <div id="pathResult" class="query-result"></div>
         </section>
 
-        <section class="config-trace" aria-label="Configuration trace">
+        <section class="config-trace" aria-label="Configuration trace" data-i18n-aria-label="aria.configurationTrace">
           <header>
             <h2 data-i18n="section.configTrace">Config Trace</h2>
           </header>
@@ -412,7 +412,7 @@
           <div id="configTraceResult" class="query-result"></div>
         </section>
 
-        <section class="error-trace" aria-label="Error trace">
+        <section class="error-trace" aria-label="Error trace" data-i18n-aria-label="aria.errorTrace">
           <header>
             <h2 data-i18n="section.errorTrace">Error Trace</h2>
           </header>
@@ -433,7 +433,7 @@
           <div id="errorTraceResult" class="query-result"></div>
         </section>
 
-        <section class="insights" aria-label="Graph insights">
+        <section class="insights" aria-label="Graph insights" data-i18n-aria-label="aria.graphInsights">
           <header>
             <h2 data-i18n="section.insights">Insights</h2>
             <span id="insightCount">0</span>
@@ -464,7 +464,7 @@
           <div id="insightList" class="insight-list"></div>
         </section>
 
-        <section class="filters" aria-label="Graph filters">
+        <section class="filters" aria-label="Graph filters" data-i18n-aria-label="aria.graphFilters">
           <label class="field">
             <span data-i18n="label.search">Search</span>
             <input id="searchInput" type="search" autocomplete="off" />
@@ -473,7 +473,7 @@
           <div id="kindFilters" class="kind-filters"></div>
         </section>
 
-        <section class="selection" aria-label="Selected node">
+        <section class="selection" aria-label="Selected node" data-i18n-aria-label="aria.selectedNode">
           <h2 id="selectionTitle" data-i18n-fallback="selection.title">Selection</h2>
           <div id="selectionBody" class="selection-body"></div>
         </section>

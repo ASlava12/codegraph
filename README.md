@@ -107,6 +107,7 @@ Implemented now:
 - Web query presets include ambiguous call-resolution and ambiguous entrypoint-target investigations for fast logical inconsistency triage.
 - Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
 - Initial English/Russian web UI localization with a persistent language selector.
+- Static web landmarks and pagination controls expose localized ARIA labels for English/Russian accessibility.
 - Web quality-check and source-search workflows use localized status, result, empty-state, and export summary text.
 - Web source-search match cards use localized titles and loading states for English/Russian UI sessions.
 - Web entrypoint trace workflow uses localized status, counters, empty states, truncation notes, export summary text, and focused graph titles.
