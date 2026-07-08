@@ -2581,9 +2581,38 @@ fn pyproject_dependencies(source: &str) -> Vec<ManifestDependency> {
             &mut dependencies,
             None,
         );
+        collect_poetry_group_dependencies(poetry, &mut dependencies);
     }
 
     dependencies
+}
+
+fn collect_poetry_group_dependencies(
+    poetry: &toml::Value,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(groups) = poetry.get("group").and_then(|value| value.as_table()) else {
+        return;
+    };
+    for (group_name, group) in groups {
+        let dependency_kind = poetry_group_dependency_kind(group_name);
+        collect_toml_table_keys(
+            group,
+            "dependencies",
+            dependency_kind,
+            "python",
+            dependencies,
+            None,
+        );
+    }
+}
+
+fn poetry_group_dependency_kind(group_name: &str) -> &'static str {
+    match group_name.to_ascii_lowercase().as_str() {
+        "dev" | "develop" | "development" => "dev",
+        "test" | "tests" | "testing" => "test",
+        _ => "optional",
+    }
 }
 
 fn setup_py_dependencies(source: &str) -> Vec<ManifestDependency> {
@@ -7038,6 +7067,15 @@ importers:
             root.join("pyproject.toml"),
             r#"[project]
 dependencies = ["pydantic>=2"]
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.8"
+
+[tool.poetry.group.test.dependencies]
+pytest-asyncio = { version = "^0.24" }
+
+[tool.poetry.group.docs.dependencies]
+sphinx = "^8.0"
 "#,
         )
         .unwrap();
@@ -7159,6 +7197,9 @@ gtest/1.14.0
             "github.com/gin-gonic/gin",
             "fastapi",
             "pydantic",
+            "black",
+            "pytest-asyncio",
+            "sphinx",
             "flask",
             "python-dotenv",
             "pytest-cov",
@@ -7397,6 +7438,69 @@ gtest/1.14.0
                     .metadata
                     .get("dependency_version")
                     .is_some_and(|value| value == ">=2")
+        }));
+        let black_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "python:black")
+            })
+            .expect("missing Poetry group black dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == black_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "dev")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "^24.8")
+        }));
+        let pytest_asyncio_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "python:pytest-asyncio")
+            })
+            .expect("missing Poetry group pytest-asyncio dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == pytest_asyncio_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "test")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "^0.24")
+        }));
+        let sphinx_dep = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("package_id")
+                    .is_some_and(|value| value == "python:sphinx")
+            })
+            .expect("missing Poetry group sphinx dependency");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::DependsOn
+                && edge.target == sphinx_dep.id
+                && edge
+                    .metadata
+                    .get("dependency_kind")
+                    .is_some_and(|value| value == "optional")
+                && edge
+                    .metadata
+                    .get("dependency_version")
+                    .is_some_and(|value| value == "^8.0")
         }));
         let flask_dep = graph
             .nodes

@@ -107,6 +107,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect direct pnpm `pnpm-lock.yaml` importer dependencies with locked versions.
 - [x] Detect legacy Python `setup.py`/`setup.cfg` dependencies and console script entrypoints.
 - [x] Detect Python `Pipfile` runtime and dev package dependencies.
+- [x] Detect modern Poetry dependency groups from `pyproject.toml`.
 - [x] Detect C/C++ package manifest dependencies from `vcpkg.json` and `conanfile.txt`.
 - [x] Detect duplicate entrypoint labels that make startup traces ambiguous.
 - [x] Detect manifest entrypoints that resolve to multiple possible files or functions.
