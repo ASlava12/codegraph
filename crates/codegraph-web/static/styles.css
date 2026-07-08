@@ -1574,6 +1574,13 @@ button.cancel-action:hover:not(:disabled) {
   gap: 12px;
 }
 
+.filters > button {
+  justify-self: start;
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
 .kind-filters {
   display: flex;
   flex-wrap: wrap;

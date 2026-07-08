@@ -222,6 +222,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Keep hover labels lightweight and gate selected-node label cards by zoom and graph density.
 - [x] Add a graph viewport HUD for visible size, zoom, and layout state.
 - [x] Surface loaded-vs-total graph slice status for paged large-repository views.
+- [x] Add visible canvas-filter status and one-click reset for local graph filters.
 - [x] Add web controls for paging dense edge slices through the existing `edge_offset` API contract.
 - [x] Add keyboard-accessible graph canvas navigation.
 - [x] Add web label policy regression tests for caption density and interaction labels.

@@ -81,6 +81,9 @@ const I18N = {
     "graph.zoom": "Zoom",
     "graph.layout": "Layout",
     "graph.slice": "Slice",
+    "graph.filters": "Filters",
+    "graph.filtersActive": "{count} active",
+    "graph.filtersNone": "None",
     "graph.running": "Running",
     "graph.paused": "Paused",
     "graph.scopeLoaded": "Loaded {nodes} of {totalNodes} nodes and {edges} of {totalEdges} edges.",
@@ -147,6 +150,7 @@ const I18N = {
     "button.copyQueryLink": "Copy Query Link",
     "button.copyPageLink": "Copy Page Link",
     "button.clearFilters": "Clear Filters",
+    "button.clearCanvasFilters": "Clear Canvas Filters",
     "button.copied": "Copied",
     "button.focusEdge": "Focus",
     "button.queryEdge": "Query",
@@ -462,6 +466,9 @@ const I18N = {
     "graph.zoom": "Масштаб",
     "graph.layout": "Раскладка",
     "graph.slice": "Срез",
+    "graph.filters": "Фильтры",
+    "graph.filtersActive": "Активно: {count}",
+    "graph.filtersNone": "Нет",
     "graph.running": "Идет",
     "graph.paused": "Пауза",
     "graph.scopeLoaded": "Загружено {nodes} из {totalNodes} узлов и {edges} из {totalEdges} связей.",
@@ -528,6 +535,7 @@ const I18N = {
     "button.copyQueryLink": "Ссылка на запрос",
     "button.copyPageLink": "Ссылка на страницу",
     "button.clearFilters": "Сбросить фильтры",
+    "button.clearCanvasFilters": "Сбросить фильтры графа",
     "button.copied": "Скопировано",
     "button.focusEdge": "Фокус",
     "button.queryEdge": "Запрос",
@@ -1037,6 +1045,7 @@ const insightFilterButton = document.querySelector("#insightFilterButton");
 const checkButton = document.querySelector("#checkButton");
 const checkResult = document.querySelector("#checkResult");
 const kindFilters = document.querySelector("#kindFilters");
+const clearCanvasFiltersButton = document.querySelector("#clearCanvasFiltersButton");
 const selectionTitle = document.querySelector("#selectionTitle");
 const selectionBody = document.querySelector("#selectionBody");
 const legend = document.querySelector("#legend");
@@ -1076,6 +1085,7 @@ searchInput.addEventListener("input", () => {
   state.search = searchInput.value.trim().toLowerCase();
   applyFilters();
 });
+clearCanvasFiltersButton.addEventListener("click", () => clearCanvasFilters());
 queryButton.addEventListener("click", () => runGraphQuery());
 queryCopyButton.addEventListener("click", () => copyCurrentQueryLink(queryCopyButton));
 queryInput.addEventListener("keydown", (event) => {
@@ -5132,6 +5142,36 @@ function clearQueryFocus() {
   });
 }
 
+function clearCanvasFilters() {
+  state.search = "";
+  searchInput.value = "";
+  state.queryFocus = null;
+  state.activeRiskSeverity = null;
+  state.enabledKinds = new Set(state.graph.nodes.map((node) => node.kind));
+  renderKindFilters([...state.enabledKinds].sort());
+  renderLegend(state.enabledKinds);
+  document.querySelectorAll("[data-clear-focus]").forEach((button) => {
+    button.disabled = true;
+  });
+  applyFilters();
+  draw();
+}
+
+function canvasFilterCount() {
+  let count = 0;
+  if (state.search) count += 1;
+  if (state.queryFocus) count += 1;
+  if (state.activeRiskSeverity) count += 1;
+
+  const graphKinds = new Set(state.graph.nodes.map((node) => node.kind));
+  if (graphKinds.size > 0) {
+    const missingKind = [...graphKinds].some((kind) => !state.enabledKinds.has(kind));
+    if (state.enabledKinds.size !== graphKinds.size || missingKind) count += 1;
+  }
+
+  return count;
+}
+
 function quoteQueryValue(value) {
   if (/^[A-Za-z0-9._/@:+-]+$/.test(value)) return value;
   if (!value.includes('"')) return `"${value}"`;
@@ -5924,6 +5964,7 @@ function renderViewportControls() {
   zoomInButton.disabled = state.graph.nodes.length === 0;
   zoomOutButton.disabled = state.graph.nodes.length === 0;
   toggleLayoutButton.disabled = state.graph.nodes.length === 0;
+  clearCanvasFiltersButton.disabled = canvasFilterCount() === 0;
   labelModeButtons.forEach((button) => {
     const active = button.dataset.labelMode === state.labelMode;
     button.setAttribute("aria-pressed", active ? "true" : "false");
@@ -5935,10 +5976,17 @@ function renderGraphHud() {
   const zoom = `${Math.round(state.zoom * 100)}%`;
   const layout = state.layoutPaused ? t("graph.paused") : t("graph.running");
   const slice = graphSliceLabel();
+  const filters = canvasFilterCount();
   const items = [
     [t("label.nodes"), formatNumber(state.visibleNodes.length)],
     [t("label.edges"), formatNumber(state.visibleEdges.length)],
     [t("graph.slice"), slice],
+    [
+      t("graph.filters"),
+      filters > 0
+        ? t("graph.filtersActive", { count: formatNumber(filters) })
+        : t("graph.filtersNone"),
+    ],
     [t("graph.zoom"), zoom],
     [t("graph.layout"), layout],
   ];
