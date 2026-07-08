@@ -49,7 +49,7 @@ Implemented now:
 - API capabilities limits include graph page, node-card, focus, query, report, source preview, and source-search ceilings for production clients.
 - API capabilities publish the effective maximum JSON API request body size for POST clients.
 - API capabilities publish insight/check result limits and API schema parameters link overview/report limits to matching capability keys.
-- API capabilities publish bounded project report snapshot limits for architecture groups, architecture edges, language links, hotspots, graph communities, and returned insights.
+- API capabilities publish bounded project report snapshot limits for architecture groups, architecture edges, language links, hotspots, graph communities, compact file summaries, and returned insights.
 - API and web UI enforce the published maximum graph query expression length before running repository scans.
 - API and web UI enforce the published maximum source-search text length before scanning source files.
 - Machine-readable API schema endpoint for agents and integrations.
@@ -81,6 +81,7 @@ Implemented now:
 - Embedded web asset ETags support conditional `304 Not Modified` responses during browser revalidation.
 - Optional API bearer-token protection through `--api-token` or `CODEGRAPH_API_TOKEN`, with same-origin web UI token prompting.
 - Project report snapshots in CLI, API, and web export for summary, full-risk scoring, quality gate, insights, topology reports, cache, and scan coverage.
+- Project report snapshots include compact file summaries with symbol, trace, config, environment, error, unresolved-call, and related-risk counts for agent navigation without broad raw-file reads.
 - Web overview chips for server package version, server capabilities, API/schema versions, cache state, supported language/export counts, job limits, and route groups.
 - Web overview surfaces the API schema common response-header contract for agent/client diagnostics.
 - Web overview risk summary chips for report quality gate, grade, weighted score, severity counts, and top finding kinds with quick insight filtering plus one-click quality checks.
@@ -354,7 +355,7 @@ cargo run -p codegraph-cli -- report . --fail-on warning --insight-limit 100
 cargo run -p codegraph-cli -- report . --format markdown --output CODEGRAPH_REPORT.md
 ```
 
-The JSON report includes a `risk_summary` with total findings, severity counts, a weighted score, a grade, and the top insight kinds. The quality gate is calculated from the full insight set even when the returned insight list is capped with `--insight-limit`. The Markdown report is a Graphify-style handoff artifact for humans and agents, with summary, key concepts, communities, surprising links, architecture links, risks, evidence ids, suggested questions, and confidence wording that maps CodeGraph evidence to extracted/resolved/inferred/ambiguous labels.
+The JSON report includes a `risk_summary` with total findings, severity counts, a weighted score, a grade, and the top insight kinds. The quality gate is calculated from the full insight set even when the returned insight list is capped with `--insight-limit`. The Markdown report is a Graphify-style handoff artifact for humans and agents, with summary, compact file summaries, key concepts, communities, surprising links, architecture links, risks, evidence ids, suggested questions, and confidence wording that maps CodeGraph evidence to extracted/resolved/inferred/ambiguous labels.
 
 Explain scan coverage before or after a full graph scan:
 

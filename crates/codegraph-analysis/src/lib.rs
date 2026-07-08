@@ -1028,6 +1028,8 @@ pub const DEFAULT_REPORT_COMMUNITY_LIMIT: usize = 25;
 pub const MAX_REPORT_COMMUNITY_LIMIT: usize = 500;
 pub const DEFAULT_REPORT_INSIGHT_LIMIT: usize = 50;
 pub const MAX_REPORT_INSIGHT_LIMIT: usize = 500;
+pub const DEFAULT_REPORT_FILE_SUMMARY_LIMIT: usize = 25;
+pub const MAX_REPORT_FILE_SUMMARY_LIMIT: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectReportLimits {
@@ -1037,6 +1039,7 @@ pub struct ProjectReportLimits {
     pub hotspot_limit: usize,
     pub community_limit: usize,
     pub insight_limit: usize,
+    pub file_summary_limit: usize,
     pub fail_on: InsightSeverity,
 }
 
@@ -1049,9 +1052,25 @@ impl Default for ProjectReportLimits {
             hotspot_limit: DEFAULT_REPORT_HOTSPOT_LIMIT,
             community_limit: DEFAULT_REPORT_COMMUNITY_LIMIT,
             insight_limit: DEFAULT_REPORT_INSIGHT_LIMIT,
+            file_summary_limit: DEFAULT_REPORT_FILE_SUMMARY_LIMIT,
             fail_on: InsightSeverity::Error,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectCompactFileSummaryReport {
+    pub files: Vec<ProjectCompactFileSummary>,
+    pub total_files: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectCompactFileSummary {
+    pub node: Node,
+    pub summary: FileNodeSummary,
+    pub insight_summary: NodeInsightSummary,
+    pub score: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1067,6 +1086,7 @@ pub struct ProjectReport {
     pub surprising_links: SurprisingLinkReport,
     pub hotspots: HotspotReport,
     pub communities: CommunityReport,
+    pub file_summaries: ProjectCompactFileSummaryReport,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2102,6 +2122,8 @@ pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> Project
     let full_insight_report = insights(graph);
     let risk_summary = project_risk_summary(&full_insight_report);
     let quality_gate = check_insights(full_insight_report.clone(), limits.fail_on);
+    let file_summaries =
+        compact_file_summaries(graph, &full_insight_report, limits.file_summary_limit);
     let insight_report = filter_insight_report(
         full_insight_report,
         &InsightFilter {
@@ -2128,6 +2150,7 @@ pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> Project
         surprising_links: surprising_links(graph, limits.architecture_edge_limit),
         hotspots: hotspots(graph, limits.hotspot_limit),
         communities: communities(graph, limits.community_limit),
+        file_summaries,
     }
 }
 
@@ -2208,6 +2231,49 @@ pub fn project_report_markdown(
         &report.summary.edge_confidences,
         12,
     );
+
+    writeln!(output, "\n## Compact File Summaries").unwrap();
+    if report.file_summaries.files.is_empty() {
+        writeln!(output, "No file summaries were found.").unwrap();
+    } else {
+        writeln!(
+            output,
+            "| Score | File | Symbols | Trace | Imports | Config | Env | Errors | Unresolved | Risks | Trace kinds |"
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |"
+        )
+        .unwrap();
+        for file in report.file_summaries.files.iter().take(20) {
+            writeln!(
+                output,
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+                file.score,
+                node_ref(&file.node),
+                file.summary.code_symbols,
+                file.summary.trace_edges,
+                file.summary.imports,
+                file.summary.config_reads,
+                file.summary.environment_reads,
+                file.summary.error_facts,
+                file.summary.unresolved_calls,
+                count_map_inline(&file.insight_summary.by_severity, 4),
+                count_map_inline(&file.summary.trace_edge_kinds, 5)
+            )
+            .unwrap();
+        }
+        if report.file_summaries.truncated {
+            writeln!(
+                output,
+                "\nFile summaries are truncated: showing {} of {} files.",
+                report.file_summaries.files.len(),
+                report.file_summaries.total_files
+            )
+            .unwrap();
+        }
+    }
 
     writeln!(output, "\n## Confidence Guide").unwrap();
     writeln!(
@@ -2726,8 +2792,87 @@ fn normalize_project_report_limits(limits: ProjectReportLimits) -> ProjectReport
         hotspot_limit: limits.hotspot_limit.clamp(1, MAX_REPORT_HOTSPOT_LIMIT),
         community_limit: limits.community_limit.clamp(1, MAX_REPORT_COMMUNITY_LIMIT),
         insight_limit: limits.insight_limit.clamp(1, MAX_REPORT_INSIGHT_LIMIT),
+        file_summary_limit: limits
+            .file_summary_limit
+            .clamp(1, MAX_REPORT_FILE_SUMMARY_LIMIT),
         fail_on: limits.fail_on,
     }
+}
+
+fn compact_file_summaries(
+    graph: &CodeGraph,
+    insight_report: &InsightReport,
+    limit: usize,
+) -> ProjectCompactFileSummaryReport {
+    let path_index = node_path_index(graph);
+    let mut files: Vec<ProjectCompactFileSummary> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::File)
+        .filter_map(|node| {
+            let summary = file_node_summary(graph, node)?;
+            let related_insights: Vec<Insight> = insight_report
+                .insights
+                .iter()
+                .filter(|insight| {
+                    node_card_insight_matches(graph, node, Some(&path_index), insight)
+                })
+                .cloned()
+                .collect();
+            let insight_summary = node_insight_summary(&related_insights);
+            let score = compact_file_summary_score(&summary, &insight_summary);
+            Some(ProjectCompactFileSummary {
+                node: node.clone(),
+                summary,
+                insight_summary,
+                score,
+            })
+        })
+        .collect();
+
+    files.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.node.label.cmp(&right.node.label))
+            .then_with(|| left.node.id.cmp(&right.node.id))
+    });
+
+    let total_files = files.len();
+    let truncated = files.len() > limit;
+    files.truncate(limit);
+
+    ProjectCompactFileSummaryReport {
+        files,
+        total_files,
+        truncated,
+    }
+}
+
+fn compact_file_summary_score(
+    summary: &FileNodeSummary,
+    insight_summary: &NodeInsightSummary,
+) -> usize {
+    let risk_score: usize = insight_summary
+        .by_severity
+        .iter()
+        .map(|(severity, count)| match severity.as_str() {
+            "error" => *count * 100,
+            "warning" => *count * 40,
+            "info" => *count * 10,
+            _ => *count,
+        })
+        .sum();
+
+    risk_score
+        + summary.trace_edges * 10
+        + summary.unresolved_calls * 20
+        + summary.error_facts * 20
+        + summary.config_reads * 8
+        + summary.environment_reads * 8
+        + summary.code_symbols * 5
+        + summary.direct_dependencies * 3
+        + summary.imports
 }
 
 fn failing_insight_count(report: &InsightReport, fail_on: InsightSeverity) -> usize {
@@ -12275,6 +12420,7 @@ mod tests {
                 hotspot_limit: 1,
                 community_limit: 5,
                 insight_limit: 1,
+                file_summary_limit: 1,
                 fail_on: InsightSeverity::Warning,
             },
         );
@@ -12291,6 +12437,9 @@ mod tests {
         assert!(!report.communities.communities.is_empty());
         assert_eq!(report.quality_gate.fail_on, "warning");
         assert_eq!(report.insights.insights.len(), 1);
+        assert_eq!(report.file_summaries.files.len(), 1);
+        assert_eq!(report.file_summaries.total_files, 2);
+        assert!(report.file_summaries.truncated);
         assert_eq!(report.insights.total, report.quality_gate.report.total);
         assert_eq!(report.risk_summary.total, report.quality_gate.report.total);
         assert_eq!(report.risk_summary.errors, 1);
@@ -12351,6 +12500,7 @@ mod tests {
                 hotspot_limit: 5,
                 community_limit: 5,
                 insight_limit: 5,
+                file_summary_limit: 5,
                 fail_on: InsightSeverity::Warning,
             },
         );
@@ -12366,6 +12516,8 @@ mod tests {
         assert!(markdown.contains("# CodeGraph Project Report"));
         assert!(markdown.contains("- Root: `repo`"));
         assert!(markdown.contains("## Confidence Guide"));
+        assert!(markdown.contains("## Compact File Summaries"));
+        assert!(markdown.contains("src/main.rs"));
         assert!(markdown.contains("| `exact` | extracted |"));
         assert!(markdown.contains("| `heuristic` | inferred |"));
         assert!(markdown.contains("| `unknown` | ambiguous |"));
