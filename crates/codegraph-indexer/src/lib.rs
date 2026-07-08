@@ -263,6 +263,26 @@ struct GithubActionsStep {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct GitlabCiJob {
+    name: String,
+    stage: Option<String>,
+    image: Option<String>,
+    extends: Vec<String>,
+    needs: Vec<String>,
+    dependencies: Vec<String>,
+    scripts: Vec<GitlabCiScript>,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitlabCiScript {
+    command: String,
+    script_kind: String,
+    ordinal: usize,
+    line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct KubernetesDocument {
     kind: String,
     name: String,
@@ -1308,6 +1328,7 @@ fn index_manifest_facts(
     index_dockerfile_entrypoints(context, file_id, path, label, source);
     index_compose_entrypoints(context, file_id, path, label, source);
     index_github_actions_workflow_entrypoints(context, file_id, path, label, source);
+    index_gitlab_ci_entrypoints(context, file_id, path, label, source);
     index_kubernetes_manifest_facts(context, file_id, path, label, source);
 }
 
@@ -3012,7 +3033,7 @@ fn index_github_actions_run_step(
     metadata.insert("job".to_string(), job.id.clone());
     metadata.insert("line".to_string(), step.line.to_string());
     metadata.insert("command".to_string(), command.to_string());
-    if let Some(command_path) = github_actions_run_command_path_candidate(command) {
+    if let Some(command_path) = root_relative_command_path_candidate(command) {
         metadata.insert("command_path".to_string(), command_path);
     }
     if let Some(name) = step.name.as_deref() {
@@ -3102,6 +3123,192 @@ fn github_actions_external_action_node(
     );
     context.external_dependencies.insert(package_id, id);
     id
+}
+
+fn index_gitlab_ci_entrypoints(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if !is_gitlab_ci_path(label, path) {
+        return;
+    }
+    let jobs = gitlab_ci_jobs(source);
+    if jobs.is_empty() {
+        return;
+    }
+
+    let mut job_nodes = BTreeMap::new();
+    for job in &jobs {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "gitlab_ci_job".to_string());
+        metadata.insert("entrypoint_kind".to_string(), "pipeline_job".to_string());
+        metadata.insert("ecosystem".to_string(), "gitlab-ci".to_string());
+        metadata.insert("source".to_string(), "gitlab-ci".to_string());
+        metadata.insert("job".to_string(), job.name.clone());
+        metadata.insert("line".to_string(), job.line.to_string());
+        metadata.insert("script_count".to_string(), job.scripts.len().to_string());
+        metadata.insert("needs_count".to_string(), job.needs.len().to_string());
+        metadata.insert(
+            "dependencies_count".to_string(),
+            job.dependencies.len().to_string(),
+        );
+        if let Some(stage) = job.stage.as_deref() {
+            metadata.insert("stage".to_string(), stage.to_string());
+        }
+        if let Some(image) = job.image.as_deref() {
+            metadata.insert("image".to_string(), image.to_string());
+        }
+        if !job.extends.is_empty() {
+            metadata.insert("extends".to_string(), job.extends.join(","));
+        }
+
+        let job_id = context.graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            format!("gitlab job:{}", job.name),
+            Some(line_span(label, source, job.line)),
+            metadata,
+        );
+        job_nodes.insert(job.name.clone(), job_id);
+        add_edge_once(
+            &mut context.graph,
+            file_id,
+            job_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+        );
+        let root_id = context.graph.root;
+        add_edge_once(
+            &mut context.graph,
+            root_id,
+            job_id,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        add_entrypoint_reference(
+            &mut context.graph,
+            job_id,
+            file_id,
+            "entrypoint_file",
+            "gitlab_ci_config",
+            Confidence::Exact,
+            None,
+        );
+
+        for script in &job.scripts {
+            index_gitlab_ci_script(context, job_id, label, source, job, script);
+        }
+    }
+
+    for job in &jobs {
+        let Some(source_id) = job_nodes.get(&job.name).copied() else {
+            continue;
+        };
+        for dependency in &job.needs {
+            add_gitlab_ci_job_dependency_edge(
+                &mut context.graph,
+                source_id,
+                &job_nodes,
+                job,
+                dependency,
+                "gitlab_ci_needs",
+            );
+        }
+        for dependency in &job.dependencies {
+            add_gitlab_ci_job_dependency_edge(
+                &mut context.graph,
+                source_id,
+                &job_nodes,
+                job,
+                dependency,
+                "gitlab_ci_dependencies",
+            );
+        }
+    }
+}
+
+fn index_gitlab_ci_script(
+    context: &mut IndexContext,
+    job_id: NodeId,
+    label: &str,
+    source: &str,
+    job: &GitlabCiJob,
+    script: &GitlabCiScript,
+) {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("item_kind".to_string(), "gitlab_ci_script".to_string());
+    metadata.insert("source".to_string(), "gitlab-ci".to_string());
+    metadata.insert("ecosystem".to_string(), "gitlab-ci".to_string());
+    metadata.insert("job".to_string(), job.name.clone());
+    metadata.insert("line".to_string(), script.line.to_string());
+    metadata.insert("ordinal".to_string(), script.ordinal.to_string());
+    metadata.insert("script_kind".to_string(), script.script_kind.clone());
+    metadata.insert("command".to_string(), script.command.clone());
+    if let Some(stage) = job.stage.as_deref() {
+        metadata.insert("stage".to_string(), stage.to_string());
+    }
+    if let Some(command_path) = root_relative_command_path_candidate(&script.command) {
+        metadata.insert("command_path".to_string(), command_path);
+    }
+    let script_id = context.graph.add_node_with_metadata(
+        NodeKind::Config,
+        format!(
+            "gitlab script:{}/{}#{}",
+            job.name, script.line, script.ordinal
+        ),
+        Some(line_span(label, source, script.line)),
+        metadata,
+    );
+    let mut edge_metadata = BTreeMap::new();
+    edge_metadata.insert("source".to_string(), "gitlab-ci".to_string());
+    edge_metadata.insert("relation".to_string(), "gitlab_ci_script".to_string());
+    edge_metadata.insert("job".to_string(), job.name.clone());
+    edge_metadata.insert("script_kind".to_string(), script.script_kind.clone());
+    add_edge_once_with_metadata(
+        &mut context.graph,
+        job_id,
+        script_id,
+        EdgeKind::References,
+        Confidence::Exact,
+        edge_metadata,
+    );
+    context
+        .pending_entrypoint_targets
+        .push(PendingEntrypointTarget {
+            entrypoint: job_id,
+            manifest_label: label.to_string(),
+            target: script.command.clone(),
+            ecosystem: "gitlab-ci".to_string(),
+            entrypoint_kind: "pipeline_job".to_string(),
+        });
+}
+
+fn add_gitlab_ci_job_dependency_edge(
+    graph: &mut CodeGraph,
+    source_id: NodeId,
+    job_nodes: &BTreeMap<String, NodeId>,
+    job: &GitlabCiJob,
+    dependency: &str,
+    relation: &str,
+) {
+    let Some(target_id) = job_nodes.get(dependency).copied() else {
+        return;
+    };
+    let mut metadata = BTreeMap::new();
+    metadata.insert("relation".to_string(), relation.to_string());
+    metadata.insert("source".to_string(), "gitlab-ci".to_string());
+    metadata.insert("job".to_string(), job.name.clone());
+    metadata.insert("dependency".to_string(), dependency.to_string());
+    add_edge_once_with_metadata(
+        graph,
+        source_id,
+        target_id,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        metadata,
+    );
 }
 
 fn index_kubernetes_manifest_facts(
@@ -4231,6 +4438,201 @@ fn is_github_actions_workflow_path(label: &str, path: &Path) -> bool {
     let name = path.file_name().and_then(|name| name.to_str());
     matches!(name, Some(name) if name.ends_with(".yml") || name.ends_with(".yaml"))
         && label.starts_with(".github/workflows/")
+}
+
+fn gitlab_ci_jobs(source: &str) -> Vec<GitlabCiJob> {
+    let mut jobs = Vec::new();
+    let mut active_job: Option<GitlabCiJob> = None;
+    let mut active_section: Option<(String, usize)> = None;
+
+    for (index, raw_line) in source.lines().enumerate() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = yaml_indent(raw_line);
+        if indent == 0 {
+            flush_gitlab_ci_job(&mut active_job, &mut jobs);
+            active_section = None;
+            let Some(name) = yaml_key(trimmed) else {
+                continue;
+            };
+            if gitlab_ci_reserved_key(&name) || name.starts_with('.') {
+                continue;
+            }
+            active_job = Some(GitlabCiJob {
+                name,
+                stage: None,
+                image: None,
+                extends: Vec::new(),
+                needs: Vec::new(),
+                dependencies: Vec::new(),
+                scripts: Vec::new(),
+                line: index as u32 + 1,
+            });
+            continue;
+        }
+
+        let Some(job) = active_job.as_mut() else {
+            continue;
+        };
+
+        if indent == 2 {
+            active_section = None;
+            if let Some(value) = yaml_key_value(trimmed, "stage") {
+                job.stage = Some(value);
+            } else if let Some(value) = yaml_key_value(trimmed, "image") {
+                job.image = Some(value);
+            } else if let Some(value) = yaml_key_value(trimmed, "extends") {
+                job.extends.extend(gitlab_ci_name_values(&value));
+            } else if yaml_key(trimmed).is_some_and(|key| key == "extends") {
+                active_section = Some(("extends".to_string(), indent));
+            } else if let Some(value) = yaml_key_value(trimmed, "needs") {
+                job.needs.extend(gitlab_ci_name_values(&value));
+            } else if yaml_key(trimmed).is_some_and(|key| key == "needs") {
+                active_section = Some(("needs".to_string(), indent));
+            } else if let Some(value) = yaml_key_value(trimmed, "dependencies") {
+                job.dependencies.extend(gitlab_ci_name_values(&value));
+            } else if yaml_key(trimmed).is_some_and(|key| key == "dependencies") {
+                active_section = Some(("dependencies".to_string(), indent));
+            } else if let Some(value) = yaml_key_value(trimmed, "script") {
+                push_gitlab_ci_script(job, "script", value, index as u32 + 1);
+            } else if yaml_key(trimmed).is_some_and(|key| key == "script") {
+                active_section = Some(("script".to_string(), indent));
+            } else if let Some(value) = yaml_key_value(trimmed, "before_script") {
+                push_gitlab_ci_script(job, "before_script", value, index as u32 + 1);
+            } else if yaml_key(trimmed).is_some_and(|key| key == "before_script") {
+                active_section = Some(("before_script".to_string(), indent));
+            } else if let Some(value) = yaml_key_value(trimmed, "after_script") {
+                push_gitlab_ci_script(job, "after_script", value, index as u32 + 1);
+            } else if yaml_key(trimmed).is_some_and(|key| key == "after_script") {
+                active_section = Some(("after_script".to_string(), indent));
+            }
+            continue;
+        }
+
+        let Some((section, section_indent)) = active_section.as_ref() else {
+            continue;
+        };
+        if indent <= *section_indent {
+            active_section = None;
+            continue;
+        }
+
+        match section.as_str() {
+            "extends" => {
+                if let Some(value) = trimmed.strip_prefix("- ") {
+                    job.extends.extend(gitlab_ci_name_values(value));
+                }
+            }
+            "needs" => {
+                if let Some(value) = trimmed.strip_prefix("- ") {
+                    job.needs.extend(gitlab_ci_need_values(value));
+                } else if let Some(value) = yaml_key_value(trimmed, "job") {
+                    job.needs.push(value);
+                }
+            }
+            "dependencies" => {
+                if let Some(value) = trimmed.strip_prefix("- ") {
+                    job.dependencies.extend(gitlab_ci_name_values(value));
+                }
+            }
+            "script" | "before_script" | "after_script" => {
+                if let Some(value) = trimmed.strip_prefix("- ") {
+                    push_gitlab_ci_script(job, section, yaml_clean_scalar(value), index as u32 + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    flush_gitlab_ci_job(&mut active_job, &mut jobs);
+    jobs
+}
+
+fn flush_gitlab_ci_job(active_job: &mut Option<GitlabCiJob>, jobs: &mut Vec<GitlabCiJob>) {
+    let Some(mut job) = active_job.take() else {
+        return;
+    };
+    job.extends.sort();
+    job.extends.dedup();
+    job.needs.sort();
+    job.needs.dedup();
+    job.dependencies.sort();
+    job.dependencies.dedup();
+    if !job.scripts.is_empty() || !job.needs.is_empty() || !job.dependencies.is_empty() {
+        jobs.push(job);
+    }
+}
+
+fn push_gitlab_ci_script(job: &mut GitlabCiJob, script_kind: &str, command: String, line: u32) {
+    let inline = yaml_inline_list_values(&command);
+    if !inline.is_empty() {
+        for command in inline {
+            if !command.is_empty() {
+                job.scripts.push(GitlabCiScript {
+                    command,
+                    script_kind: script_kind.to_string(),
+                    ordinal: job.scripts.len() + 1,
+                    line,
+                });
+            }
+        }
+        return;
+    }
+    let command = yaml_clean_scalar(&command);
+    if command.is_empty() || command == "|" || command == ">" {
+        return;
+    }
+    job.scripts.push(GitlabCiScript {
+        command,
+        script_kind: script_kind.to_string(),
+        ordinal: job.scripts.len() + 1,
+        line,
+    });
+}
+
+fn gitlab_ci_name_values(value: &str) -> Vec<String> {
+    let inline = yaml_inline_list_values(value);
+    if !inline.is_empty() {
+        return inline;
+    }
+    let value = yaml_clean_scalar(value);
+    (!value.is_empty()).then_some(value).into_iter().collect()
+}
+
+fn gitlab_ci_need_values(value: &str) -> Vec<String> {
+    if let Some(job) = yaml_key_value(value.trim(), "job") {
+        return vec![job];
+    }
+    gitlab_ci_name_values(value)
+}
+
+fn gitlab_ci_reserved_key(key: &str) -> bool {
+    matches!(
+        key,
+        "after_script"
+            | "before_script"
+            | "cache"
+            | "default"
+            | "image"
+            | "include"
+            | "services"
+            | "stages"
+            | "variables"
+            | "workflow"
+    )
+}
+
+fn is_gitlab_ci_path(label: &str, path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == ".gitlab-ci.yml" || name == ".gitlab-ci.yaml")
+        || label.starts_with(".gitlab/ci/")
+            && matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some(name) if name.ends_with(".yml") || name.ends_with(".yaml")
+            )
 }
 
 fn kubernetes_config_ref_label(config_kind: &str, namespace: &str, name: &str) -> String {
@@ -8692,6 +9094,16 @@ fn entrypoint_target_candidates(
             })
             .into_iter()
             .collect(),
+        "gitlab-ci" => root_relative_command_path_candidate(&pending.target)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "gitlab_ci_script_command_path",
+            })
+            .into_iter()
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -8758,6 +9170,10 @@ fn normalized_command_path_candidate(manifest_label: &str, command: &str) -> Opt
 }
 
 fn github_actions_run_command_path_candidate(command: &str) -> Option<String> {
+    root_relative_command_path_candidate(command)
+}
+
+fn root_relative_command_path_candidate(command: &str) -> Option<String> {
     split_command_tokens(command)
         .into_iter()
         .filter(|token| is_command_path_candidate(token))
@@ -9041,6 +9457,8 @@ fn add_entrypoint_reference(
         "compose"
     } else if resolution.starts_with("github_actions") {
         "github-actions"
+    } else if resolution.starts_with("gitlab_ci") {
+        "gitlab-ci"
     } else {
         "manifest"
     };
@@ -9202,7 +9620,7 @@ fn should_enter(
     if entry.path() == root {
         return true;
     }
-    if !options.include_hidden && is_github_actions_infrastructure_path(entry.path(), root) {
+    if !options.include_hidden && is_ci_infrastructure_path(entry.path(), root) {
         return entry_exclusion_without_hidden(entry, root, options, ignored_globs).is_none();
     }
 
@@ -9254,7 +9672,7 @@ fn is_hidden(entry: &DirEntry) -> bool {
         .is_some_and(|name| name.starts_with('.') && name != ".")
 }
 
-fn is_github_actions_infrastructure_path(path: &Path, root: &Path) -> bool {
+fn is_ci_infrastructure_path(path: &Path, root: &Path) -> bool {
     let Ok(relative) = path.strip_prefix(root) else {
         return false;
     };
@@ -9267,7 +9685,13 @@ fn is_github_actions_infrastructure_path(path: &Path, root: &Path) -> bool {
         .collect();
     matches!(
         parts.as_slice(),
-        [".github"] | [".github", "workflows", ..] | [".github", "actions", ..]
+        [".github"]
+            | [".github", "workflows", ..]
+            | [".github", "actions", ..]
+            | [".gitlab-ci.yml"]
+            | [".gitlab-ci.yaml"]
+            | [".gitlab"]
+            | [".gitlab", "ci", ..]
     )
 }
 
@@ -12138,6 +12562,152 @@ jobs:
                 .and_then(|node| node.metadata.get("command_path"))
                 .map(String::as_str),
             Some("scripts/test.sh")
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_adds_gitlab_ci_job_entrypoints() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join(".gitlab-ci.yml"),
+            r#"stages:
+  - build
+  - test
+  - deploy
+
+.base:
+  script:
+    - echo template
+
+build:
+  stage: build
+  image: rust:1.78
+  script:
+    - ./scripts/build.sh
+    - cargo test
+
+test:
+  stage: test
+  needs: [build]
+  dependencies:
+    - build
+  script: ["./scripts/test.sh", "cargo clippy"]
+
+deploy:
+  stage: deploy
+  needs:
+    - job: test
+  script:
+    - ./scripts/missing.sh
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("scripts").join("build.sh"),
+            "#!/usr/bin/env bash\necho build\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("scripts").join("test.sh"),
+            "#!/usr/bin/env bash\necho test\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let gitlab_file = node_id(&graph, NodeKind::File, ".gitlab-ci.yml");
+        let build_script = node_id(&graph, NodeKind::File, "scripts/build.sh");
+        let test_script_file = node_id(&graph, NodeKind::File, "scripts/test.sh");
+        let build = node_id(&graph, NodeKind::Entrypoint, "gitlab job:build");
+        let test = node_id(&graph, NodeKind::Entrypoint, "gitlab job:test");
+        let deploy = node_id(&graph, NodeKind::Entrypoint, "gitlab job:deploy");
+        let build_script_fact = node_id(&graph, NodeKind::Config, "gitlab script:build/14#1");
+        let test_script_fact = node_id(&graph, NodeKind::Config, "gitlab script:test/22#1");
+        let deploy_script_fact = node_id(&graph, NodeKind::Config, "gitlab script:deploy/29#1");
+
+        for job in [build, test, deploy] {
+            assert!(has_entrypoint_reference(
+                &graph,
+                job,
+                gitlab_file,
+                "entrypoint_file",
+                Confidence::Exact,
+            ));
+        }
+        assert!(has_entrypoint_reference(
+            &graph,
+            build,
+            build_script,
+            "entrypoint_file",
+            Confidence::Heuristic,
+        ));
+        assert!(has_entrypoint_reference(
+            &graph,
+            test,
+            test_script_file,
+            "entrypoint_file",
+            Confidence::Heuristic,
+        ));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == test
+                && edge.target == build
+                && edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "gitlab_ci_needs")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == deploy
+                && edge.target == test
+                && edge.kind == EdgeKind::DependsOn
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "gitlab_ci_needs")
+        }));
+        assert!(
+            !graph.nodes.iter().any(|node| {
+                node.kind == NodeKind::Entrypoint && node.label == "gitlab job:.base"
+            })
+        );
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == build)
+                .and_then(|node| node.metadata.get("image"))
+                .map(String::as_str),
+            Some("rust:1.78")
+        );
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == build_script_fact)
+                .and_then(|node| node.metadata.get("command_path"))
+                .map(String::as_str),
+            Some("scripts/build.sh")
+        );
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == test_script_fact)
+                .and_then(|node| node.metadata.get("command_path"))
+                .map(String::as_str),
+            Some("scripts/test.sh")
+        );
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == deploy_script_fact)
+                .and_then(|node| node.metadata.get("command_path"))
+                .map(String::as_str),
+            Some("scripts/missing.sh")
         );
 
         fs::remove_dir_all(root).unwrap();

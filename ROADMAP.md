@@ -51,6 +51,8 @@ Goal: extract language-independent structure from source files.
 - [x] Detect Docker Compose bind/local volumes as runtime dependency facts.
 - [x] Detect GitHub Actions workflow jobs as CI/CD entrypoints.
 - [x] Link GitHub Actions workflow job `needs`, `uses`, local actions, and local run-script paths.
+- [x] Detect GitLab CI pipeline jobs as CI/CD entrypoints.
+- [x] Link GitLab CI job `needs`, `dependencies`, and local script command paths.
 - [x] Detect Kubernetes workloads, services, and ConfigMap/Secret runtime config references from YAML manifests.
 - [x] Detect Kubernetes Ingress entrypoints and backend Service references.
 - [x] Link Kubernetes Services to workloads through selector and pod-template label matching.
@@ -150,6 +152,7 @@ Goal: answer practical code investigation questions.
 - [x] Detect Docker Compose services that publish conflicting host ports.
 - [x] Detect Docker Compose services that mount missing local bind volume paths.
 - [x] Detect GitHub Actions workflow jobs that reference missing local actions.
+- [x] Detect GitLab CI jobs that reference missing local script paths.
 - [x] Detect Kubernetes workloads that reference missing local ConfigMap or Secret manifests.
 - [x] Detect Kubernetes Ingresses that reference missing local Service manifests.
 - [x] Detect Kubernetes Services whose selectors do not match any scanned workload.
