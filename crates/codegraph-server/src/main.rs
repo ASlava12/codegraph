@@ -6804,6 +6804,11 @@ mod tests {
         assert!(app.contains("\"queryPreset.dependencyVersions\""));
         assert!(app.contains("\"queryPreset.runtimeImports\""));
         assert!(app.contains("\"queryPreset.sensitiveDefaults\""));
+        assert!(app.contains("\"kind.mixed_dependency_scope\""));
+        assert!(app.contains("\"kind.non_runtime_dependency_import\""));
+        assert!(app.contains("\"kind.conflicting_dependency_declaration\""));
+        assert!(app.contains("\"mixed dependency scope\""));
+        assert!(app.contains("\"смешанный scope зависимости\""));
         assert!(app.contains("\"check.running\""));
         assert!(app.contains("\"sourceSearch.enterText\""));
         assert!(app.contains("\"sourceSearch.noMatches\""));
