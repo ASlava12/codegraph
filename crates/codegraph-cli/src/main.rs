@@ -6,15 +6,15 @@ use codegraph_analysis::{
     DEFAULT_REPORT_COMMUNITY_LIMIT, DEFAULT_REPORT_FILE_SUMMARY_LIMIT,
     DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
     DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceRequest, EntrypointWorkflowRequest,
-    ErrorTraceRequest, ExplainEdgeRequest, InsightFilter, InsightSeverity, JourneyRequest,
-    NaturalQueryRequest, ProjectReport, ProjectReportLimits, ProjectReportMarkdownOptions,
-    SourceSearchRequest, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryRequest,
-    WorkflowRequest, architecture_map, check_insights, communities, compact_query_result,
-    component_contract, component_dependencies, entrypoints, explain_edge, filter_insight_report,
-    hotspots, insights, journey, language_dependencies, natural_query, project_report,
-    project_report_markdown, query_graph, search_source, summarize, surprising_links, trace,
-    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
-    workflow_entrypoints, workflow_mermaid, workflow_query,
+    ErrorTraceRequest, ExplainEdgeRequest, ImpactRequest, InsightFilter, InsightSeverity,
+    JourneyRequest, NaturalQueryRequest, ProjectReport, ProjectReportLimits,
+    ProjectReportMarkdownOptions, SourceSearchRequest, TraceRequest, TraceStart, WorkflowFilters,
+    WorkflowQueryRequest, WorkflowRequest, architecture_map, check_insights, communities,
+    compact_query_result, component_contract, component_dependencies, entrypoints, explain_edge,
+    filter_insight_report, hotspots, impact, insights, journey, language_dependencies,
+    natural_query, project_report, project_report_markdown, query_graph, search_source, summarize,
+    surprising_links, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    workflow, workflow_entrypoints, workflow_mermaid, workflow_query,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -197,6 +197,35 @@ enum Command {
         /// Maximum ranked alternative paths to return.
         #[arg(long, default_value_t = 3)]
         paths: usize,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Report the blast radius of changing a node: dependents, entrypoints, tests, and impact score.
+    Impact {
+        /// Impact target label or node id, for example: load_config or n42.
+        target: String,
+
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Maximum reverse dependency depth.
+        #[arg(long, default_value_t = 6)]
+        depth: usize,
+
+        /// Maximum listed dependents.
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
 
         /// Include hidden files and directories.
         #[arg(long)]
@@ -1483,6 +1512,27 @@ fn main() -> Result<()> {
                     to,
                     max_depth: depth,
                     path_limit: paths,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::Impact {
+            target,
+            path,
+            depth,
+            limit,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
+            let report = impact(
+                &graph,
+                ImpactRequest {
+                    target,
+                    max_depth: depth,
+                    limit,
                 },
             )?;
             println!("{}", serde_json::to_string_pretty(&report)?);

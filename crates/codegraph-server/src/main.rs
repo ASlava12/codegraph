@@ -16,9 +16,9 @@ use codegraph_analysis::{
     DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
     DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceReport, EntrypointTraceRequest,
     EntrypointWorkflowReport, EntrypointWorkflowRequest, ErrorTraceRequest, ErrorTraceResult,
-    ExplainEdgeRequest, FocusRequest, GraphSlice, GraphSliceRequest, GraphSummary, InsightFilter,
-    InsightReport, InsightSeverity, JourneyReport, JourneyRequest, KNOWN_INSIGHT_KINDS,
-    MAX_REPORT_ARCHITECTURE_EDGE_LIMIT, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
+    ExplainEdgeRequest, FocusRequest, GraphSlice, GraphSliceRequest, GraphSummary, ImpactReport,
+    ImpactRequest, InsightFilter, InsightReport, InsightSeverity, JourneyReport, JourneyRequest,
+    KNOWN_INSIGHT_KINDS, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
     MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_FILE_SUMMARY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
     MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, MAX_REPORT_NODE_SUMMARY_LIMIT,
     NaturalQueryReport, NaturalQueryRequest, NodeCard, NodeContext, ProjectReport,
@@ -27,7 +27,7 @@ use codegraph_analysis::{
     WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map, check_insights,
     communities, compact_query_result, component_contract, component_dependencies, entrypoints,
     explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots,
-    insights, journey, language_dependencies, natural_query, node_card, node_context,
+    impact, insights, journey, language_dependencies, natural_query, node_card, node_context,
     project_report, project_report_markdown, query_graph, read_source_preview, search_source,
     slice_graph, summarize, surprising_links, trace, trace_config, trace_dependents,
     trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_query,
@@ -450,6 +450,14 @@ struct GraphQuery {
     path: Option<PathBuf>,
     q: String,
     compact: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImpactQuery {
+    path: Option<PathBuf>,
+    target: String,
+    depth: Option<usize>,
+    limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1100,6 +1108,7 @@ async fn main() -> Result<()> {
             get(component_dependencies_api),
         )
         .route("/api/component-contract", get(component_contract_api))
+        .route("/api/impact", get(impact_api))
         .route("/api/dependents", get(dependents_api))
         .route("/api/trace-config", get(trace_config_api))
         .route("/api/trace-errors", get(trace_errors_api))
@@ -2926,6 +2935,23 @@ async fn workflow_api(
             compact: query.compact.unwrap_or(false),
         },
     )))
+}
+
+async fn impact_api(
+    State(state): State<AppState>,
+    Query(query): Query<ImpactQuery>,
+) -> Result<Json<ImpactReport>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let report = impact(
+        &graph,
+        ImpactRequest {
+            target: query.target,
+            max_depth: query.depth.unwrap_or(6).clamp(1, 32),
+            limit: query.limit.unwrap_or(100).clamp(1, 1_000),
+        },
+    )
+    .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    Ok(Json(report))
 }
 
 async fn component_dependencies_api(
@@ -5452,6 +5478,38 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 )
                 .with_response_fields(component_contract_response_fields()),
                 api_get(
+                    "/api/impact",
+                    "Report the blast radius of changing a node: dependents, affected entrypoints/routes/tests, and a risk-weighted impact score.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "target",
+                            true,
+                            "string",
+                            None,
+                            "Impact target label or node id such as load_config or n42.",
+                        ),
+                        query_param(
+                            "depth",
+                            false,
+                            "usize",
+                            Some("6"),
+                            "Maximum reverse dependency depth.",
+                        )
+                        .with_range(1, 32),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            Some("100"),
+                            "Maximum listed dependents.",
+                        )
+                        .with_range(1, 1_000),
+                    ],
+                    "ImpactReport",
+                )
+                .with_response_fields(impact_response_fields()),
+                api_get(
                     "/api/dependents",
                     "Trace incoming dependents that can reach a node.",
                     vec![
@@ -6896,6 +6954,78 @@ fn workflow_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "bool",
             "Whether traversal depth or block limits omitted additional steps.",
+        ),
+    ]
+}
+
+fn impact_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("target", true, "Node", "Resolved impact target node."),
+        response_field(
+            "area",
+            false,
+            "string",
+            "Architecture area containing the target node.",
+        ),
+        response_field(
+            "total_dependents",
+            true,
+            "usize",
+            "Total transitive dependents within the depth bound (excluding containment).",
+        ),
+        response_field(
+            "affected_entrypoints",
+            true,
+            "ImpactEntrypoint[]",
+            "Entrypoint dependents with entrypoint kind and reverse distance.",
+        ),
+        response_field(
+            "affected_routes",
+            true,
+            "usize",
+            "Affected entrypoints whose kind is route.",
+        ),
+        response_field(
+            "affected_tests",
+            true,
+            "usize",
+            "Dependents located in test-like source paths.",
+        ),
+        response_field(
+            "languages",
+            true,
+            "map<string,usize>",
+            "Dependent counts by language metadata.",
+        ),
+        response_field(
+            "areas",
+            true,
+            "map<string,usize>",
+            "Dependent counts by architecture area.",
+        ),
+        response_field(
+            "severity_counts",
+            true,
+            "map<string,usize>",
+            "Risk severity counts across dependents.",
+        ),
+        response_field(
+            "impact_score",
+            true,
+            "usize",
+            "Risk-weighted score: dependents + 5 per entrypoint + 1 per test + 5/2/1 per error/warning/info risk.",
+        ),
+        response_field(
+            "dependents",
+            true,
+            "ImpactDependent[]",
+            "Dependents sorted by reverse distance with test flags and risk counts, capped by limit.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether traversal hit the depth bound or the dependent list was capped.",
         ),
     ]
 }
@@ -9921,6 +10051,27 @@ fn helper() {}
         );
         assert!(contract_endpoint.response_fields.iter().any(|field| {
             field.name == "edges" && field.value_type == "ComponentContractEdge[]"
+        }));
+        let impact_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/impact")
+            .expect("schema should list impact endpoint");
+        assert!(
+            impact_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name == "target" && parameter.required)
+        );
+        assert!(
+            impact_endpoint
+                .response_fields
+                .iter()
+                .any(|field| field.name == "impact_score" && field.value_type == "usize")
+        );
+        assert!(impact_endpoint.response_fields.iter().any(|field| {
+            field.name == "dependents" && field.value_type == "ImpactDependent[]"
         }));
         let config_trace_endpoint = schema
             .groups

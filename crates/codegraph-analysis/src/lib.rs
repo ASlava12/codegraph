@@ -458,6 +458,47 @@ pub struct ComponentContractReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImpactRequest {
+    pub target: String,
+    pub max_depth: usize,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImpactDependent {
+    pub node: Node,
+    pub distance: usize,
+    pub is_test: bool,
+    pub risk_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImpactEntrypoint {
+    pub node: Node,
+    #[serde(default)]
+    pub entrypoint_kind: Option<String>,
+    pub distance: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImpactReport {
+    pub target: Node,
+    #[serde(default)]
+    pub area: Option<String>,
+    pub max_depth: usize,
+    pub total_dependents: usize,
+    pub affected_entrypoints: Vec<ImpactEntrypoint>,
+    pub affected_routes: usize,
+    pub affected_tests: usize,
+    pub languages: BTreeMap<String, usize>,
+    pub areas: BTreeMap<String, usize>,
+    pub severity_counts: BTreeMap<String, usize>,
+    pub impact_score: usize,
+    pub dependents: Vec<ImpactDependent>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JourneyReport {
     pub from: Node,
     pub to: Node,
@@ -3971,6 +4012,149 @@ fn component_resolve_area(
                 .join(", ")
         ))),
     }
+}
+
+pub fn impact(graph: &CodeGraph, request: ImpactRequest) -> Result<ImpactReport, QueryError> {
+    let max_depth = request.max_depth.clamp(1, 32);
+    let limit = request.limit.clamp(1, 1_000);
+    let target = request.target.trim();
+    if target.is_empty() {
+        return Err(QueryError::new(
+            "impact requires a `target` label or node id",
+        ));
+    }
+    let target_id = resolve_node_reference(graph, target)
+        .ok_or_else(|| QueryError::new(format!("impact target `{target}` did not match a node")))?;
+    let target_node = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == target_id)
+        .cloned()
+        .ok_or_else(|| QueryError::new(format!("impact target `{target}` did not match a node")))?;
+    let nodes_by_id: BTreeMap<NodeId, &Node> =
+        graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let node_areas = node_architecture_areas(graph, &nodes_by_id);
+    let insight_report = insights(graph);
+
+    let mut visited = BTreeSet::from([target_id]);
+    let mut queue = VecDeque::from([(target_id, 0usize)]);
+    let mut reached: Vec<(NodeId, usize)> = Vec::new();
+    let mut truncated = false;
+    while let Some((node_id, depth)) = queue.pop_front() {
+        if depth >= max_depth {
+            if trace_edges_from_indexed(graph, node_id, TraceDirection::Incoming)
+                .next()
+                .is_some()
+            {
+                truncated = true;
+            }
+            continue;
+        }
+        for (_, edge) in trace_edges_from_indexed(graph, node_id, TraceDirection::Incoming) {
+            if edge.kind == EdgeKind::Contains {
+                continue;
+            }
+            if !visited.insert(edge.source) {
+                continue;
+            }
+            reached.push((edge.source, depth + 1));
+            queue.push_back((edge.source, depth + 1));
+        }
+    }
+
+    let mut dependents = Vec::new();
+    let mut affected_entrypoints = Vec::new();
+    let mut affected_routes = 0usize;
+    let mut affected_tests = 0usize;
+    let mut languages: BTreeMap<String, usize> = BTreeMap::new();
+    let mut areas: BTreeMap<String, usize> = BTreeMap::new();
+    let mut severity_counts: BTreeMap<String, usize> = BTreeMap::new();
+
+    for (node_id, distance) in &reached {
+        let Some(node) = nodes_by_id.get(node_id) else {
+            continue;
+        };
+        if node.kind == NodeKind::Repository {
+            continue;
+        }
+        let risk_refs = workflow_risk_refs_for_node(&insight_report, *node_id);
+        for risk in &risk_refs {
+            *severity_counts
+                .entry(severity_name(risk.severity).to_string())
+                .or_insert(0) += 1;
+        }
+        if let Some(language) = node.metadata.get("language") {
+            *languages.entry(language.clone()).or_insert(0) += 1;
+        }
+        if let Some(area) = node_areas.get(node_id) {
+            *areas.entry(area.clone()).or_insert(0) += 1;
+        }
+        let is_test = node
+            .span
+            .as_ref()
+            .map(|span| is_test_like_source_path(&span.path))
+            .or_else(|| {
+                (node.kind == NodeKind::File).then(|| is_test_like_source_path(&node.label))
+            })
+            .unwrap_or(false);
+        if is_test {
+            affected_tests += 1;
+        }
+        if node.kind == NodeKind::Entrypoint {
+            let entrypoint_kind = node.metadata.get("entrypoint_kind").cloned();
+            if entrypoint_kind.as_deref() == Some("route") {
+                affected_routes += 1;
+            }
+            affected_entrypoints.push(ImpactEntrypoint {
+                node: (*node).clone(),
+                entrypoint_kind,
+                distance: *distance,
+            });
+        }
+        dependents.push(ImpactDependent {
+            node: (*node).clone(),
+            distance: *distance,
+            is_test,
+            risk_count: risk_refs.len(),
+        });
+    }
+
+    dependents.sort_by(|left, right| {
+        left.distance
+            .cmp(&right.distance)
+            .then_with(|| left.node.label.cmp(&right.node.label))
+    });
+    affected_entrypoints.sort_by(|left, right| {
+        left.distance
+            .cmp(&right.distance)
+            .then_with(|| left.node.label.cmp(&right.node.label))
+    });
+    let total_dependents = dependents.len();
+    let listed_truncated = total_dependents > limit;
+    dependents.truncate(limit);
+
+    let impact_score = total_dependents
+        + affected_entrypoints.len() * 5
+        + affected_tests
+        + severity_counts.get("error").copied().unwrap_or(0) * 5
+        + severity_counts.get("warning").copied().unwrap_or(0) * 2
+        + severity_counts.get("info").copied().unwrap_or(0);
+
+    Ok(ImpactReport {
+        area: node_areas.get(&target_id).cloned(),
+        target: target_node,
+        max_depth,
+        total_dependents,
+        affected_entrypoints,
+        affected_routes,
+        affected_tests,
+        languages,
+        areas,
+        severity_counts,
+        impact_score,
+        dependents,
+        truncated: truncated || listed_truncated,
+    })
 }
 
 fn journey_shortest_path(
@@ -16269,6 +16453,91 @@ mod tests {
                 target: "ghost".to_string(),
                 group_limit: 25,
                 edge_limit: 10,
+            },
+        );
+        assert!(missing.is_err());
+    }
+
+    #[test]
+    fn impact_reports_blast_radius_with_risk_weighted_score() {
+        let mut graph = CodeGraph::new("repo");
+        let src_file = graph.add_node(NodeKind::File, "crates/app/src/lib.rs");
+        let test_file = graph.add_node(NodeKind::File, "crates/app/tests/api_test.rs");
+        let target = graph.add_node(NodeKind::Function, "load_config");
+        let caller = graph.add_node(NodeKind::Function, "handler");
+        let test_caller = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "config_roundtrip_test",
+            Some(codegraph_core::SourceSpan {
+                path: "crates/app/tests/api_test.rs".to_string(),
+                start_line: 1,
+                start_column: 1,
+                end_line: 3,
+                end_column: 1,
+            }),
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let entrypoint = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "GET /config",
+            None,
+            BTreeMap::from([("entrypoint_kind".to_string(), "route".to_string())]),
+        );
+        let unrelated = graph.add_node(NodeKind::Function, "unrelated");
+        graph.add_edge(graph.root, src_file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(graph.root, test_file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(src_file, target, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(src_file, caller, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(src_file, unrelated, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(caller, target, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(test_caller, target, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(
+            entrypoint,
+            caller,
+            EdgeKind::References,
+            Confidence::Syntactic,
+        );
+
+        let report = impact(
+            &graph,
+            ImpactRequest {
+                target: "load_config".to_string(),
+                max_depth: 8,
+                limit: 100,
+            },
+        )
+        .expect("impact report");
+
+        assert_eq!(report.target.label, "load_config");
+        assert_eq!(report.total_dependents, 3);
+        assert_eq!(report.affected_entrypoints.len(), 1);
+        assert_eq!(
+            report.affected_entrypoints[0].entrypoint_kind.as_deref(),
+            Some("route")
+        );
+        assert_eq!(report.affected_routes, 1);
+        assert_eq!(report.affected_tests, 1);
+        assert!(
+            report
+                .dependents
+                .iter()
+                .any(|dependent| dependent.node.id == test_caller && dependent.is_test)
+        );
+        assert!(
+            !report
+                .dependents
+                .iter()
+                .any(|dependent| dependent.node.id == unrelated)
+        );
+        assert!(report.impact_score >= report.total_dependents + 5 + 1);
+        assert_eq!(report.dependents[0].distance, 1);
+
+        let missing = impact(
+            &graph,
+            ImpactRequest {
+                target: "ghost".to_string(),
+                max_depth: 8,
+                limit: 100,
             },
         );
         assert!(missing.is_err());
