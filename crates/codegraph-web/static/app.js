@@ -140,6 +140,7 @@ const I18N = {
     "label.confidence": "Confidence",
     "label.riskSeverity": "Risk",
     "label.block": "Block",
+    "label.entrypointKind": "Entry kind",
     "label.relation": "Relation",
     "label.source": "Source",
     "label.query": "Query",
@@ -765,6 +766,7 @@ const I18N = {
     "label.confidence": "Уверенность",
     "label.riskSeverity": "Риск",
     "label.block": "Блок",
+    "label.entrypointKind": "Тип входа",
     "label.relation": "Отношение",
     "label.source": "Источник",
     "label.query": "Запрос",
@@ -1493,6 +1495,7 @@ const annotationList = document.querySelector("#annotationList");
 const entrypointList = document.querySelector("#entrypointList");
 const entryFlowSearchInput = document.querySelector("#entryFlowSearchInput");
 const entryFlowDepthInput = document.querySelector("#entryFlowDepthInput");
+const entryWorkflowEntrypointKindInput = document.querySelector("#entryWorkflowEntrypointKindInput");
 const entryWorkflowEdgeKindInput = document.querySelector("#entryWorkflowEdgeKindInput");
 const entryWorkflowConfidenceInput = document.querySelector("#entryWorkflowConfidenceInput");
 const entryWorkflowLanguageInput = document.querySelector("#entryWorkflowLanguageInput");
@@ -1599,6 +1602,7 @@ const edgeKindOptions = document.querySelector("#edgeKindOptions");
 const confidenceOptions = document.querySelector("#confidenceOptions");
 const severityOptions = document.querySelector("#severityOptions");
 const workflowBlockKindOptions = document.querySelector("#workflowBlockKindOptions");
+const entrypointKindOptions = document.querySelector("#entrypointKindOptions");
 const insightKindOptions = document.querySelector("#insightKindOptions");
 
 localeSelect.value = state.locale;
@@ -2265,6 +2269,7 @@ function renderApiSchemaOptions() {
   renderDatalist(confidenceOptions, enums.graph_confidence || []);
   renderDatalist(severityOptions, enums.insight_severity || []);
   renderDatalist(workflowBlockKindOptions, enums.workflow_block_kind || []);
+  renderDatalist(entrypointKindOptions, enums.entrypoint_kind || []);
   renderDatalist(insightKindOptions, enums.insight_kind || []);
 }
 
@@ -4352,6 +4357,8 @@ async function runEntryFlowWorkflows() {
   });
   const search = entryFlowSearchInput.value.trim();
   if (search) params.set("search", search);
+  const entrypointKind = entryWorkflowEntrypointKindInput.value.trim();
+  if (entrypointKind) params.set("entrypoint_kind", entrypointKind);
   const workflowFilters = readWorkflowFilters("entryWorkflow");
   appendWorkflowFilterParams(params, workflowFilters);
 
@@ -4367,6 +4374,7 @@ async function runEntryFlowWorkflows() {
       root: pathInput.value.trim() || ".",
       filters: {
         search,
+        entrypoint_kind: entrypointKind,
         depth,
         block_limit: 120,
         limit: 15,

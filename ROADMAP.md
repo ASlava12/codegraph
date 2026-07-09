@@ -227,10 +227,10 @@ Goal: answer practical code investigation questions.
 - [x] Add first web workflow export downloads in JSON and Mermaid.
 - [x] Add entrypoint workflow reports across CLI and API for matched startup surfaces.
 - [x] Add web entrypoint workflow reports with focused graph slices and JSON/Mermaid exports.
-- [ ] Extend workflow generation from selected labels, entrypoints, and query result nodes to routes, CI jobs, Makefile targets, and Docker commands.
+- [x] Extend workflow generation from selected labels, entrypoints, and query result nodes to routes, CI jobs, Makefile targets, and Docker commands through entrypoint-kind filters.
 - [ ] Classify workflow blocks as start, call, config/env read, dependency, branch, error, return, and external boundary.
 - [x] Add workflow graph compaction so repeated helper calls, import-only hops, and low-signal nodes collapse into readable blocks.
-- [ ] Add CLI workflow commands for routes, CI jobs, Makefile targets, Docker commands, and selected nodes.
+- [x] Add CLI workflow commands for routes, CI jobs, Makefile targets, Docker commands, and selected nodes through `workflow`, `workflow-query`, and `workflow-entrypoints --entrypoint-kind`.
 - [x] Add workflow CLI/API filters for edge-kind, confidence, language, risk severity, and block kinds.
 - [x] Add web workflow filter controls for selected-node flows and entrypoint workflow reports.
 - [x] Add workflow query slices so existing graph query results can open as block diagrams.
@@ -253,6 +253,8 @@ codegraph trace-errors "failed to load data"
 codegraph workflow --entrypoint main --format json
 codegraph workflow --entrypoint "POST /users" --format mermaid
 codegraph workflow --entrypoint "github workflow:CI/deploy" --depth 4
+codegraph workflow-entrypoints --entrypoint-kind route --depth 4
+codegraph workflow-entrypoints --entrypoint-kind make_target --format mermaid
 codegraph query 'neighbors label:main direction:out depth:2 edge_kind:calls'
 codegraph query 'calls(function:main)'
 ```

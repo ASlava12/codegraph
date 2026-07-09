@@ -318,6 +318,8 @@ pub struct EntrypointTraceReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntrypointWorkflowRequest {
     pub search: Option<String>,
+    #[serde(default)]
+    pub entrypoint_kind: Option<String>,
     pub max_depth: usize,
     pub block_limit: usize,
     pub limit: usize,
@@ -330,6 +332,8 @@ pub struct EntrypointWorkflowRequest {
 pub struct EntrypointWorkflowReport {
     pub max_depth: usize,
     pub block_limit: usize,
+    #[serde(default)]
+    pub entrypoint_kind: Option<String>,
     pub filters: WorkflowFilters,
     pub total_entrypoints: usize,
     pub workflows: Vec<WorkflowReport>,
@@ -3361,9 +3365,19 @@ pub fn workflow_entrypoints(
         .as_ref()
         .map(|value| value.trim())
         .filter(|value| !value.is_empty());
+    let entrypoint_kind = request
+        .entrypoint_kind
+        .as_ref()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
     let matched = entrypoints(graph)
         .into_iter()
         .filter(|node| search.is_none_or(|expected| node_search_matches(node, expected)))
+        .filter(|node| {
+            entrypoint_kind
+                .as_deref()
+                .is_none_or(|expected| entrypoint_kind_matches(node, expected))
+        })
         .collect::<Vec<_>>();
     let insight_report = insights(graph);
     let workflows = matched
@@ -3389,6 +3403,7 @@ pub fn workflow_entrypoints(
     EntrypointWorkflowReport {
         max_depth,
         block_limit,
+        entrypoint_kind,
         filters: normalize_workflow_filters(request.filters),
         total_entrypoints: matched.len(),
         workflows,
@@ -8858,6 +8873,12 @@ fn node_search_matches(node: &Node, expected: &str) -> bool {
             .metadata
             .iter()
             .any(|(key, value)| text_matches(key, expected) || text_matches(value, expected))
+}
+
+fn entrypoint_kind_matches(node: &Node, expected: &str) -> bool {
+    node.metadata
+        .get("entrypoint_kind")
+        .is_some_and(|value| value.eq_ignore_ascii_case(expected))
 }
 
 fn edge_matches(
@@ -15146,6 +15167,7 @@ mod tests {
             &graph,
             EntrypointWorkflowRequest {
                 search: Some("api".to_string()),
+                entrypoint_kind: None,
                 max_depth: 2,
                 block_limit: 10,
                 limit: 10,
@@ -15170,6 +15192,79 @@ mod tests {
                 .iter()
                 .any(|block| block.node.id == worker_main)
         );
+    }
+
+    #[test]
+    fn workflow_entrypoints_filters_by_entrypoint_kind() {
+        let mut graph = CodeGraph::new("repo");
+        let route_entrypoint = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "GET /health",
+            None,
+            BTreeMap::from([("entrypoint_kind".to_string(), "route".to_string())]),
+        );
+        let make_entrypoint = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "make build",
+            None,
+            BTreeMap::from([
+                ("entrypoint_kind".to_string(), "make_target".to_string()),
+                ("item_kind".to_string(), "makefile_target".to_string()),
+            ]),
+        );
+        let route_handler = graph.add_node(NodeKind::Function, "health_handler");
+        let build_script = graph.add_node(NodeKind::File, "scripts/build.sh");
+        graph.add_edge(
+            graph.root,
+            route_entrypoint,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(
+            graph.root,
+            make_entrypoint,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(
+            route_entrypoint,
+            route_handler,
+            EdgeKind::References,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(
+            make_entrypoint,
+            build_script,
+            EdgeKind::References,
+            Confidence::Syntactic,
+        );
+
+        let request = |entrypoint_kind: &str| EntrypointWorkflowRequest {
+            search: None,
+            entrypoint_kind: Some(entrypoint_kind.to_string()),
+            max_depth: 2,
+            block_limit: 10,
+            limit: 10,
+            filters: WorkflowFilters::default(),
+            compact: false,
+        };
+
+        let route_report = workflow_entrypoints(&graph, request("Route"));
+        assert_eq!(route_report.entrypoint_kind.as_deref(), Some("route"));
+        assert_eq!(route_report.total_entrypoints, 1);
+        assert_eq!(route_report.workflows.len(), 1);
+        assert_eq!(route_report.workflows[0].start.id, route_entrypoint);
+
+        let make_report = workflow_entrypoints(&graph, request("make_target"));
+        assert_eq!(make_report.total_entrypoints, 1);
+        assert_eq!(make_report.workflows[0].start.id, make_entrypoint);
+
+        let item_kind_report = workflow_entrypoints(&graph, request("makefile_target"));
+        assert_eq!(item_kind_report.total_entrypoints, 0);
+
+        let none_report = workflow_entrypoints(&graph, request("service"));
+        assert_eq!(none_report.total_entrypoints, 0);
+        assert!(none_report.workflows.is_empty());
     }
 
     #[test]

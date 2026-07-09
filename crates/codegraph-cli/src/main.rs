@@ -383,6 +383,10 @@ enum Command {
         #[arg(long)]
         search: Option<String>,
 
+        /// Restrict entrypoints to a matching entrypoint_kind metadata value such as route, workflow_job, pipeline_job, make_target, service, or cmd.
+        #[arg(long)]
+        entrypoint_kind: Option<String>,
+
         /// Project root to scan.
         #[arg(default_value = ".")]
         path: PathBuf,
@@ -1548,6 +1552,7 @@ fn main() -> Result<()> {
         }
         Command::WorkflowEntrypoints {
             search,
+            entrypoint_kind,
             path,
             depth,
             block_limit,
@@ -1569,6 +1574,7 @@ fn main() -> Result<()> {
                 &graph,
                 EntrypointWorkflowRequest {
                     search,
+                    entrypoint_kind,
                     max_depth: depth,
                     block_limit,
                     limit,

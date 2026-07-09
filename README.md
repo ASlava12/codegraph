@@ -140,6 +140,7 @@ Implemented now:
 - Web entrypoint trace reports can be downloaded as JSON with search, depth, and returned startup flows.
 - Block-style workflow reports from a selected entrypoint, matched entrypoint set, or node label in CLI and API, with stable block ids, source node ids, edge indexes, confidence metadata, risk references, optional low-signal block compaction, Mermaid/DOT flowchart output from CLI/web, and a selected-node web Flow panel with JSON/Mermaid/DOT downloads.
 - Workflow reports support edge kind, confidence, language, risk severity, block kind filters, and compact mode across CLI and API for smaller human diagrams and agent handoffs.
+- Entrypoint workflow reports can be restricted to an entrypoint kind such as routes, CI workflow/pipeline jobs, Makefile targets, Docker/Compose commands, and Kubernetes workloads across CLI, API, and web, with known kinds published as API schema enum suggestions.
 - Web Entry Flows can build block-style workflow reports for matched entrypoints, focus a workflow slice on the graph, and download JSON, Mermaid, or DOT for agent handoff and external diagramming.
 - Web workflow filters are available for selected-node Flow panels and Entry Flows using edge kind, confidence, language, risk severity, and block kind controls.
 - Graph query results can be converted into block-style workflow reports from CLI, API, and web query result actions.
@@ -528,6 +529,7 @@ cargo run -p codegraph-cli -- trace main . --depth 3
 cargo run -p codegraph-cli -- workflow main . --depth 4 --format mermaid
 cargo run -p codegraph-cli -- workflow main . --edge-kind calls --confidence heuristic --block-kind call
 cargo run -p codegraph-cli -- workflow-entrypoints . --search server --depth 4
+cargo run -p codegraph-cli -- workflow-entrypoints . --entrypoint-kind route --depth 4
 cargo run -p codegraph-cli -- workflow-query 'nodes kind:function search:main' . --edge-kind calls
 ```
 
@@ -816,6 +818,7 @@ curl --get 'http://127.0.0.1:3765/api/workflow-query' \
   --data-urlencode 'q=nodes kind:function search:main' \
   --data-urlencode 'edge_kind=calls'
 curl 'http://127.0.0.1:3765/api/entrypoint-workflows?path=.&search=server&depth=4&block_limit=200&limit=25'
+curl 'http://127.0.0.1:3765/api/entrypoint-workflows?path=.&entrypoint_kind=route&depth=4&block_limit=200&limit=25'
 curl 'http://127.0.0.1:3765/api/dependents?path=.&label=load_config&depth=3'
 curl 'http://127.0.0.1:3765/api/trace-config?path=.&target=DATABASE_URL&depth=6'
 curl --get 'http://127.0.0.1:3765/api/trace-errors' \

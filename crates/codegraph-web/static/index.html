@@ -154,6 +154,15 @@
           </div>
           <div class="workflow-filter-fields">
             <label class="field compact">
+              <span data-i18n="label.entrypointKind">Entry kind</span>
+              <input
+                id="entryWorkflowEntrypointKindInput"
+                type="text"
+                list="entrypointKindOptions"
+                autocomplete="off"
+              />
+            </label>
+            <label class="field compact">
               <span data-i18n="label.edge">Edge</span>
               <input id="entryWorkflowEdgeKindInput" type="text" list="edgeKindOptions" autocomplete="off" />
             </label>
@@ -603,6 +612,7 @@
     <datalist id="confidenceOptions"></datalist>
     <datalist id="severityOptions"></datalist>
     <datalist id="workflowBlockKindOptions"></datalist>
+    <datalist id="entrypointKindOptions"></datalist>
     <datalist id="insightKindOptions"></datalist>
 
     <script src="/label-policy.js"></script>

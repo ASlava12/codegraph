@@ -400,6 +400,7 @@ struct EntrypointTraceQuery {
 struct EntrypointWorkflowQuery {
     path: Option<PathBuf>,
     search: Option<String>,
+    entrypoint_kind: Option<String>,
     depth: Option<usize>,
     block_limit: Option<usize>,
     limit: Option<usize>,
@@ -2731,6 +2732,7 @@ async fn entrypoint_workflows_api(
         &graph,
         EntrypointWorkflowRequest {
             search: normalize_query_string(query.search),
+            entrypoint_kind: normalize_query_string(query.entrypoint_kind),
             max_depth: query.depth.unwrap_or(4).clamp(1, 32),
             block_limit: query.block_limit.unwrap_or(200).clamp(1, 1_000),
             limit: query.limit.unwrap_or(25).clamp(1, 500),
@@ -3707,6 +3709,24 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "reference",
                     "external_boundary",
                     "unknown",
+                ],
+            ),
+            (
+                "entrypoint_kind",
+                vec![
+                    "route",
+                    "script",
+                    "binary",
+                    "console_script",
+                    "executable",
+                    "make_target",
+                    "workflow_job",
+                    "pipeline_job",
+                    "service",
+                    "workload",
+                    "ingress",
+                    "entrypoint",
+                    "cmd",
                 ],
             ),
             (
@@ -4974,6 +4994,13 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "string",
                             None,
                             "Filter entrypoints by label/kind/language/metadata.",
+                        ),
+                        query_param(
+                            "entrypoint_kind",
+                            false,
+                            "entrypoint_kind",
+                            None,
+                            "Restrict entrypoints to a matching entrypoint_kind metadata value such as route, workflow_job, pipeline_job, make_target, service, or cmd.",
                         ),
                         query_param(
                             "depth",
@@ -6556,6 +6583,12 @@ fn entrypoint_workflow_response_fields() -> Vec<ApiParameterSpec> {
             "Applied maximum block count per entrypoint.",
         ),
         response_field(
+            "entrypoint_kind",
+            false,
+            "string",
+            "Applied entrypoint kind filter such as route, workflow_job, pipeline_job, make_target, service, or cmd.",
+        ),
+        response_field(
             "filters",
             true,
             "WorkflowFilters",
@@ -7849,6 +7882,7 @@ fn helper() {}
             Query(EntrypointWorkflowQuery {
                 path: Some(root.clone()),
                 search: Some("api".to_string()),
+                entrypoint_kind: None,
                 depth: Some(2),
                 block_limit: Some(20),
                 limit: Some(10),
@@ -7874,6 +7908,42 @@ fn helper() {}
                 .iter()
                 .any(|block| block.node.label == "main")
         );
+
+        let entrypoint_kind_query = |entrypoint_kind: &str| EntrypointWorkflowQuery {
+            path: Some(root.clone()),
+            search: None,
+            entrypoint_kind: Some(entrypoint_kind.to_string()),
+            depth: Some(2),
+            block_limit: Some(20),
+            limit: Some(10),
+            edge_kind: None,
+            confidence: None,
+            language: None,
+            risk_severity: None,
+            block_kind: None,
+            compact: None,
+        };
+        let state = test_state(root.clone(), vec![], true);
+        let Json(binary_report) =
+            entrypoint_workflows_api(State(state.clone()), Query(entrypoint_kind_query("binary")))
+                .await
+                .expect("binary entrypoint workflow response");
+        assert_eq!(binary_report.entrypoint_kind.as_deref(), Some("binary"));
+        assert_eq!(binary_report.total_entrypoints, 2);
+        assert!(binary_report.workflows.iter().all(|workflow| {
+            workflow
+                .start
+                .metadata
+                .get("entrypoint_kind")
+                .map(String::as_str)
+                == Some("binary")
+        }));
+        let Json(route_report) =
+            entrypoint_workflows_api(State(state), Query(entrypoint_kind_query("route")))
+                .await
+                .expect("route entrypoint workflow response");
+        assert_eq!(route_report.total_entrypoints, 0);
+        assert!(route_report.workflows.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -9217,6 +9287,31 @@ fn helper() {}
                 .iter()
                 .any(|parameter| {
                     parameter.name == "block_kind" && parameter.value_type == "workflow_block_kind"
+                })
+        );
+        assert!(
+            entrypoint_workflows_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| {
+                    parameter.name == "entrypoint_kind" && parameter.value_type == "entrypoint_kind"
+                })
+        );
+        assert!(
+            entrypoint_workflows_endpoint
+                .response_fields
+                .iter()
+                .any(|field| field.name == "entrypoint_kind" && field.value_type == "string")
+        );
+        assert!(
+            schema
+                .enum_values
+                .get("entrypoint_kind")
+                .is_some_and(|kinds| {
+                    kinds.contains(&"route")
+                        && kinds.contains(&"make_target")
+                        && kinds.contains(&"workflow_job")
+                        && kinds.contains(&"service")
                 })
         );
         assert!(
