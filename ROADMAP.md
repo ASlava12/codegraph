@@ -532,3 +532,47 @@ Exit criteria:
 - Mixed repositories can combine code, architecture docs, SQL schemas, and runtime metadata in one typed graph.
 - Agents can use CodeGraph as persistent repository memory through CLI/API/MCP without re-reading whole projects.
 - Humans can inspect communities, rationale, docs, schema links, and code flow from one UI.
+
+## Phase 8: Execution Journeys And Refactoring Intelligence
+
+Goal: turn the graph into a guided refactoring tool for humans and agents:
+follow one execution flow from an entrypoint to a chosen target as an ordered
+chain of events, understand what each component depends on, see potential
+problems along the way, and drill into the implementation of any step.
+
+Near-term execution order is tracked in `docs/ROADMAP_NEXT.md`.
+
+Journey flows:
+
+- [ ] Add target-directed journey reports that expand entrypoint-to-target paths into ordered execution chains with step numbers, reusing workflow blocks (CLI `journey`, API `/api/journey`).
+- [ ] Keep branch, loop, async, error, and return markers on journey steps so chains read like actual execution order.
+- [ ] Rank alternative journey paths by edge confidence and length, with per-hop provenance explanations for why each transition exists.
+- [ ] Add a web journey view for choosing a start entrypoint and target node with a step-numbered chain and expandable branch groups.
+
+Dependency understanding:
+
+- [ ] Add component dependency reports that group a node's incoming and outgoing dependencies by architecture area, package, and language.
+- [ ] Add component contract views listing the exact edges between two selected areas or components with confidence and related risks.
+
+Problems along the flow:
+
+- [ ] Add journey risk summaries for risky steps, unresolved or ambiguous calls, low-confidence hops, and cycles crossing the flow.
+- [ ] Flag fragile journey transitions where a refactor is most likely to break behavior: heuristic edges, duplicate labels, and multi-target calls.
+
+Drill-down:
+
+- [ ] Expand a journey step into a nested sub-flow with breadcrumb context back to the parent journey.
+- [ ] Open node cards, dependency cards, and source previews directly from journey steps.
+
+Refactoring reports:
+
+- [ ] Add blast-radius reports for a selected node: dependents, affected entrypoints/routes/tests, and a risk-weighted impact score (CLI `impact`, API `/api/impact`).
+- [ ] Add coupling/seam reports that suggest boundaries where extraction or splitting is safest and where it is most needed.
+- [ ] Add a machine-readable refactor context bundle combining journey, dependencies, risks, and source spans for one-shot agent handoff.
+
+Exit criteria:
+
+- A human can pick an entrypoint and a target and read the program's path between them as a step-by-step chain of events.
+- Every journey step can be expanded into implementation detail without losing the journey context.
+- Fragile hops and risky steps are visible before a refactor starts, not after it breaks.
+- An agent can request one bundle with enough context to plan a refactor without raw repository reads.

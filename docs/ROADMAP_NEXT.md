@@ -4,9 +4,10 @@ This is the near-term execution plan on top of `../ROADMAP.md`. The main
 roadmap tracks everything ever planned; this file orders the next concrete
 features into milestones so work can continue one focused commit at a time.
 
-Priorities follow `GRAPHIFY_PARITY.md`: finish the in-flight workflow surface
-first, then close the highest-leverage parity gap (agent interfaces), then
-team workflows, exports, and deeper knowledge ingestion.
+Priorities: finish the in-flight workflow surface first because it is the
+foundation for execution journeys, then build the refactoring journey product
+(ROADMAP Phase 8), then close the highest-leverage parity gap (agent
+interfaces), then team workflows, exports, and deeper knowledge ingestion.
 
 Each checkbox is intended to be one commit: implementation, tests, README and
 ROADMAP updates together.
@@ -28,7 +29,31 @@ Exit criteria:
 - Workflow output shape is guarded by fixtures across all supported languages and runtime surfaces.
 - A human can explore a workflow visually without leaving the web UI.
 
-## Milestone 2: Agent Interfaces (highest parity leverage)
+## Milestone 2: Execution Journeys And Refactoring Intelligence
+
+Goal: the core refactoring product from ROADMAP Phase 8 — follow one
+execution flow from an entrypoint to a chosen target as an ordered chain of
+events, understand component dependencies, see potential problems along the
+way, and drill into the implementation of any step. Depends on the Milestone 1
+Flow view and block-to-card actions.
+
+- [ ] Add target-directed journey reports (CLI `journey --from <entrypoint> --to <target>`, API `/api/journey`) that expand entrypoint-to-target paths into step-numbered execution chains built from workflow blocks.
+- [ ] Rank alternative journey paths by edge confidence and length, and attach per-hop provenance explanations for why each transition exists.
+- [ ] Add journey risk summaries: risky steps, unresolved or ambiguous calls, low-confidence hops, and cycles crossing the flow, with fragile-transition flags for refactor planning.
+- [ ] Add component dependency reports grouping a node's incoming/outgoing dependencies by architecture area, package, and language, plus contract views for the exact edges between two selected components.
+- [ ] Add journey step drill-down: expand a step into a nested sub-flow with breadcrumbs back to the parent journey, and open node/dependency cards and source previews from steps.
+- [ ] Add a web journey view: pick start and target, read the step-numbered chain with expandable branches, and jump between journey, graph, and cards.
+- [ ] Add blast-radius reports for a selected node (CLI `impact`, API `/api/impact`): dependents, affected entrypoints/routes/tests, and a risk-weighted impact score.
+- [ ] Add coupling/seam reports that suggest boundaries where extraction is safest and where it is most needed.
+- [ ] Add a machine-readable refactor context bundle combining journey, dependencies, risks, and source spans for one-shot agent handoff.
+
+Exit criteria:
+
+- A human can pick an entrypoint and a target and read the program's path between them as a chain of events, expanding any step without losing context.
+- Fragile hops and risky steps are visible before a refactor starts.
+- An agent can request one bundle with enough context to plan a refactor without raw repository reads.
+
+## Milestone 3: Agent Interfaces (highest parity leverage)
 
 Goal: let coding agents use CodeGraph before broad file reads, as persistent
 repository memory rather than a fresh index.
@@ -45,7 +70,7 @@ Exit criteria:
 - An external assistant can query the graph through MCP without shelling out to the CLI.
 - Investigation outcomes survive between sessions and go stale safely when sources change.
 
-## Milestone 3: Updates And Team Workflows
+## Milestone 4: Updates And Team Workflows
 
 Goal: keep graphs fresh automatically and usable across repositories.
 
@@ -59,7 +84,7 @@ Exit criteria:
 - Re-scans happen without manual commands during normal development.
 - Two repositories can be queried through one registry.
 
-## Milestone 4: Exports And Dashboards
+## Milestone 5: Exports And Dashboards
 
 Goal: make graph knowledge portable into external tools.
 
@@ -74,7 +99,7 @@ Exit criteria:
 
 - Graph artifacts open in at least one external graph tool and one wiki tool without conversion.
 
-## Milestone 5: Deeper Knowledge Ingestion
+## Milestone 6: Deeper Knowledge Ingestion
 
 Goal: extend deterministic extraction where it is still shallow.
 
