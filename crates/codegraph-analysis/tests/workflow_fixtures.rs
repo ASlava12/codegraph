@@ -6,7 +6,8 @@
 //! output contract used by CLI, API, and web consumers.
 
 use codegraph_analysis::{
-    TraceStart, WorkflowBlockKind, WorkflowFilters, WorkflowRequest, workflow,
+    EntrypointWorkflowRequest, TraceStart, WorkflowBlockKind, WorkflowFilters, WorkflowRequest,
+    workflow, workflow_entrypoints,
 };
 use codegraph_indexer::{IndexOptions, scan_project};
 use std::fs;
@@ -321,4 +322,135 @@ fn workflow_language_fixtures_keep_block_and_transition_shape() {
 
         fs::remove_dir_all(root).ok();
     }
+}
+
+#[test]
+fn workflow_entrypoint_kind_fixtures_keep_runtime_reports() {
+    let root = temp_fixture_root("runtime");
+    fs::create_dir_all(root.join(".github").join("workflows"))
+        .expect("workflow directory should be creatable");
+    fs::create_dir_all(root.join("scripts")).expect("scripts directory should be creatable");
+    fs::write(
+        root.join(".github").join("workflows").join("ci.yml"),
+        r#"name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./scripts/deploy.sh
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - run: echo deploy
+"#,
+    )
+    .expect("workflow fixture should be writable");
+    fs::write(
+        root.join("scripts").join("deploy.sh"),
+        "#!/usr/bin/env bash\necho deploy\n",
+    )
+    .expect("script fixture should be writable");
+    fs::write(
+        root.join("Makefile"),
+        "build:\n\t./scripts/deploy.sh\n\ntest:\n\techo test\n",
+    )
+    .expect("makefile fixture should be writable");
+    fs::write(
+        root.join("Dockerfile"),
+        "FROM alpine:3.20\nCOPY scripts/deploy.sh /deploy.sh\nENTRYPOINT [\"/deploy.sh\"]\nCMD [\"--help\"]\n",
+    )
+    .expect("dockerfile fixture should be writable");
+    fs::write(
+        root.join("docker-compose.yml"),
+        r#"services:
+  app:
+    build: .
+    depends_on:
+      - db
+  db:
+    image: postgres:16
+"#,
+    )
+    .expect("compose fixture should be writable");
+    fs::write(
+        root.join("k8s.yaml"),
+        r#"apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      containers:
+        - name: app
+          image: app:latest
+"#,
+    )
+    .expect("kubernetes fixture should be writable");
+
+    let graph = scan_project(&root, &IndexOptions::default()).expect("runtime fixture should scan");
+
+    let cases: &[(&str, usize, bool)] = &[
+        ("workflow_job", 2, true),
+        ("make_target", 2, true),
+        ("entrypoint", 1, false),
+        ("cmd", 1, false),
+        ("service", 2, true),
+        ("workload", 1, false),
+    ];
+    for (entrypoint_kind, expected_entrypoints, expects_transition) in cases {
+        let report = workflow_entrypoints(
+            &graph,
+            EntrypointWorkflowRequest {
+                search: None,
+                entrypoint_kind: Some((*entrypoint_kind).to_string()),
+                max_depth: 3,
+                block_limit: 100,
+                limit: 20,
+                filters: WorkflowFilters::default(),
+                compact: false,
+            },
+        );
+
+        assert_eq!(
+            report.total_entrypoints, *expected_entrypoints,
+            "{entrypoint_kind} fixture should match {expected_entrypoints} entrypoints",
+        );
+        assert_eq!(report.workflows.len(), *expected_entrypoints);
+        for entry_workflow in &report.workflows {
+            let start = entry_workflow
+                .blocks
+                .iter()
+                .find(|block| block.kind == WorkflowBlockKind::Start)
+                .unwrap_or_else(|| panic!("{entrypoint_kind} workflow should keep a start block"));
+            assert_eq!(
+                start
+                    .node
+                    .metadata
+                    .get("entrypoint_kind")
+                    .map(String::as_str),
+                Some(*entrypoint_kind),
+                "{entrypoint_kind} start block should carry the requested entrypoint kind",
+            );
+        }
+        if *expects_transition {
+            assert!(
+                report
+                    .workflows
+                    .iter()
+                    .any(|entry_workflow| !entry_workflow.transitions.is_empty()),
+                "{entrypoint_kind} fixture should keep at least one linked transition",
+            );
+        }
+    }
+
+    fs::remove_dir_all(root).ok();
 }

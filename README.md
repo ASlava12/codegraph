@@ -228,7 +228,7 @@ Implemented now:
 - Repository-owned scan policy from `.codegraph/config.toml` for file-size budgets plus ignored names and globs.
 - Effective scan policy API and web overview chips for explaining the active file-size, hidden-file, ignored-file, ignored-name, and ignored-glob rules.
 - CI checks for formatting, clippy, tests, UI syntax, web label policy, Docker build and container smoke, embedded web assets, CLI scan, server cache, and safe incremental update smoke tests.
-- Workflow regression fixtures guard block classification and transition shape for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, and Dart runtime paths.
+- Workflow regression fixtures guard block classification and transition shape for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, and Dart runtime paths, plus entrypoint-kind workflow reports for CI jobs, Makefile targets, Docker/Compose commands, and Kubernetes workloads.
 - Embedded web asset smoke checks cover shareable node, dependency, and query investigation links.
 - Investigation insights for unresolved calls, parse errors, duplicate labels, orphan functions, and error-flow facts.
 - Investigation insights for semantic LSP diagnostics, preserving language-server severity, source, code, file location, and the affected source node for node-card triage.
