@@ -1,19 +1,20 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
-    ConfigTraceRequest, DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
-    DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_COMMUNITY_LIMIT,
-    DEFAULT_REPORT_FILE_SUMMARY_LIMIT, DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT,
-    DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceRequest,
-    EntrypointWorkflowRequest, ErrorTraceRequest, ExplainEdgeRequest, InsightFilter,
-    InsightSeverity, JourneyRequest, NaturalQueryRequest, ProjectReport, ProjectReportLimits,
-    ProjectReportMarkdownOptions, SourceSearchRequest, TraceRequest, TraceStart, WorkflowFilters,
-    WorkflowQueryRequest, WorkflowRequest, architecture_map, check_insights, communities,
-    compact_query_result, entrypoints, explain_edge, filter_insight_report, hotspots, insights,
-    journey, language_dependencies, natural_query, project_report, project_report_markdown,
-    query_graph, search_source, summarize, surprising_links, trace, trace_config, trace_dependents,
-    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_mermaid,
-    workflow_query,
+    ComponentContractRequest, ComponentDependencyRequest, ConfigTraceRequest,
+    DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT, DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT,
+    DEFAULT_REPORT_COMMUNITY_LIMIT, DEFAULT_REPORT_FILE_SUMMARY_LIMIT,
+    DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
+    DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceRequest, EntrypointWorkflowRequest,
+    ErrorTraceRequest, ExplainEdgeRequest, InsightFilter, InsightSeverity, JourneyRequest,
+    NaturalQueryRequest, ProjectReport, ProjectReportLimits, ProjectReportMarkdownOptions,
+    SourceSearchRequest, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryRequest,
+    WorkflowRequest, architecture_map, check_insights, communities, compact_query_result,
+    component_contract, component_dependencies, entrypoints, explain_edge, filter_insight_report,
+    hotspots, insights, journey, language_dependencies, natural_query, project_report,
+    project_report_markdown, query_graph, search_source, summarize, surprising_links, trace,
+    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
+    workflow_entrypoints, workflow_mermaid, workflow_query,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -196,6 +197,67 @@ enum Command {
         /// Maximum ranked alternative paths to return.
         #[arg(long, default_value_t = 3)]
         paths: usize,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Group a node's incoming/outgoing dependencies by architecture area, package, and language.
+    #[command(visible_alias = "component")]
+    ComponentDependencies {
+        /// Component target label or node id, for example: load_config or n42.
+        target: String,
+
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Maximum groups per facet.
+        #[arg(long, default_value_t = 25)]
+        group_limit: usize,
+
+        /// Maximum sample edge indexes per group.
+        #[arg(long, default_value_t = 10)]
+        edge_limit: usize,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// List the exact dependency edges between two architecture areas with confidence and risks.
+    #[command(visible_alias = "contract")]
+    ComponentContract {
+        /// Source architecture area, for example: crates or web.
+        #[arg(long)]
+        source: String,
+
+        /// Target architecture area.
+        #[arg(long)]
+        target: String,
+
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Maximum listed contract edges.
+        #[arg(long, default_value_t = 100)]
+        edge_limit: usize,
 
         /// Include hidden files and directories.
         #[arg(long)]
@@ -1421,6 +1483,48 @@ fn main() -> Result<()> {
                     to,
                     max_depth: depth,
                     path_limit: paths,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::ComponentDependencies {
+            target,
+            path,
+            group_limit,
+            edge_limit,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
+            let report = component_dependencies(
+                &graph,
+                ComponentDependencyRequest {
+                    target,
+                    group_limit,
+                    edge_limit,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::ComponentContract {
+            source,
+            target,
+            path,
+            edge_limit,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
+            let report = component_contract(
+                &graph,
+                ComponentContractRequest {
+                    source,
+                    target,
+                    edge_limit,
                 },
             )?;
             println!("{}", serde_json::to_string_pretty(&report)?);

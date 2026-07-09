@@ -552,8 +552,8 @@ Journey flows:
 
 Dependency understanding:
 
-- [ ] Add component dependency reports that group a node's incoming and outgoing dependencies by architecture area, package, and language.
-- [ ] Add component contract views listing the exact edges between two selected areas or components with confidence and related risks.
+- [x] Add component dependency reports that group a node's incoming and outgoing dependencies by architecture area, package, and language.
+- [x] Add component contract views listing the exact edges between two selected areas or components with confidence and related risks.
 
 Problems along the flow:
 

@@ -401,6 +401,63 @@ pub struct JourneyPath {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComponentDependencyRequest {
+    pub target: String,
+    pub group_limit: usize,
+    pub edge_limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComponentDependencyGroup {
+    pub key: String,
+    pub incoming: usize,
+    pub outgoing: usize,
+    pub edge_kinds: BTreeMap<String, usize>,
+    pub confidence_counts: BTreeMap<String, usize>,
+    pub sample_edge_indexes: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComponentDependencyReport {
+    pub target: Node,
+    #[serde(default)]
+    pub area: Option<String>,
+    pub total_incoming: usize,
+    pub total_outgoing: usize,
+    pub areas: Vec<ComponentDependencyGroup>,
+    pub packages: Vec<ComponentDependencyGroup>,
+    pub languages: Vec<ComponentDependencyGroup>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComponentContractRequest {
+    pub source: String,
+    pub target: String,
+    pub edge_limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComponentContractEdge {
+    pub edge_index: usize,
+    pub edge: Edge,
+    pub source_label: String,
+    pub target_label: String,
+    pub risk_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComponentContractReport {
+    pub source_area: String,
+    pub target_area: String,
+    pub total_edges: usize,
+    pub edge_kinds: BTreeMap<String, usize>,
+    pub confidence_counts: BTreeMap<String, usize>,
+    pub edges: Vec<ComponentContractEdge>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JourneyReport {
     pub from: Node,
     pub to: Node,
@@ -3650,6 +3707,270 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
         truncated: truncated && paths.is_empty(),
         paths,
     })
+}
+
+pub fn component_dependencies(
+    graph: &CodeGraph,
+    request: ComponentDependencyRequest,
+) -> Result<ComponentDependencyReport, QueryError> {
+    let group_limit = request.group_limit.clamp(1, 100);
+    let edge_limit = request.edge_limit.clamp(1, 50);
+    let target = request.target.trim();
+    if target.is_empty() {
+        return Err(QueryError::new(
+            "component dependencies require a `target` label or node id",
+        ));
+    }
+    let target_id = resolve_node_reference(graph, target).ok_or_else(|| {
+        QueryError::new(format!("component target `{target}` did not match a node"))
+    })?;
+    let target_node = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == target_id)
+        .cloned()
+        .ok_or_else(|| {
+            QueryError::new(format!("component target `{target}` did not match a node"))
+        })?;
+    let nodes_by_id: BTreeMap<NodeId, &Node> =
+        graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let areas = node_architecture_areas(graph, &nodes_by_id);
+
+    let mut area_groups: BTreeMap<String, ComponentDependencyGroup> = BTreeMap::new();
+    let mut package_groups: BTreeMap<String, ComponentDependencyGroup> = BTreeMap::new();
+    let mut language_groups: BTreeMap<String, ComponentDependencyGroup> = BTreeMap::new();
+    let mut total_incoming = 0usize;
+    let mut total_outgoing = 0usize;
+
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind == EdgeKind::Contains {
+            continue;
+        }
+        let (neighbor_id, incoming) = if edge.target == target_id {
+            (edge.source, true)
+        } else if edge.source == target_id {
+            (edge.target, false)
+        } else {
+            continue;
+        };
+        let Some(neighbor) = nodes_by_id.get(&neighbor_id) else {
+            continue;
+        };
+        if incoming {
+            total_incoming += 1;
+        } else {
+            total_outgoing += 1;
+        }
+
+        let area_key = areas
+            .get(&neighbor_id)
+            .cloned()
+            .unwrap_or_else(|| "(external)".to_string());
+        component_group_add(
+            &mut area_groups,
+            area_key,
+            edge,
+            edge_index,
+            incoming,
+            edge_limit,
+        );
+        if let Some(package_id) = neighbor.metadata.get("package_id") {
+            component_group_add(
+                &mut package_groups,
+                package_id.clone(),
+                edge,
+                edge_index,
+                incoming,
+                edge_limit,
+            );
+        }
+        if let Some(language) = neighbor.metadata.get("language") {
+            component_group_add(
+                &mut language_groups,
+                language.clone(),
+                edge,
+                edge_index,
+                incoming,
+                edge_limit,
+            );
+        }
+    }
+
+    let (areas_list, areas_truncated) = component_sorted_groups(area_groups, group_limit);
+    let (packages_list, packages_truncated) = component_sorted_groups(package_groups, group_limit);
+    let (languages_list, languages_truncated) =
+        component_sorted_groups(language_groups, group_limit);
+
+    Ok(ComponentDependencyReport {
+        area: areas.get(&target_id).cloned(),
+        target: target_node,
+        total_incoming,
+        total_outgoing,
+        areas: areas_list,
+        packages: packages_list,
+        languages: languages_list,
+        truncated: areas_truncated || packages_truncated || languages_truncated,
+    })
+}
+
+fn component_group_add(
+    groups: &mut BTreeMap<String, ComponentDependencyGroup>,
+    key: String,
+    edge: &Edge,
+    edge_index: usize,
+    incoming: bool,
+    edge_limit: usize,
+) {
+    let group = groups
+        .entry(key.clone())
+        .or_insert_with(|| ComponentDependencyGroup {
+            key,
+            incoming: 0,
+            outgoing: 0,
+            edge_kinds: BTreeMap::new(),
+            confidence_counts: BTreeMap::new(),
+            sample_edge_indexes: Vec::new(),
+        });
+    if incoming {
+        group.incoming += 1;
+    } else {
+        group.outgoing += 1;
+    }
+    *group
+        .edge_kinds
+        .entry(edge_kind_name(&edge.kind).to_string())
+        .or_insert(0) += 1;
+    *group
+        .confidence_counts
+        .entry(confidence_name(edge.confidence).to_string())
+        .or_insert(0) += 1;
+    if group.sample_edge_indexes.len() < edge_limit {
+        group.sample_edge_indexes.push(edge_index);
+    }
+}
+
+fn component_sorted_groups(
+    groups: BTreeMap<String, ComponentDependencyGroup>,
+    group_limit: usize,
+) -> (Vec<ComponentDependencyGroup>, bool) {
+    let total = groups.len();
+    let mut list = groups.into_values().collect::<Vec<_>>();
+    list.sort_by(|left, right| {
+        (right.incoming + right.outgoing)
+            .cmp(&(left.incoming + left.outgoing))
+            .then_with(|| left.key.cmp(&right.key))
+    });
+    list.truncate(group_limit);
+    (list, total > group_limit)
+}
+
+pub fn component_contract(
+    graph: &CodeGraph,
+    request: ComponentContractRequest,
+) -> Result<ComponentContractReport, QueryError> {
+    let edge_limit = request.edge_limit.clamp(1, 500);
+    let nodes_by_id: BTreeMap<NodeId, &Node> =
+        graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let areas = node_architecture_areas(graph, &nodes_by_id);
+    let known_areas = areas.values().cloned().collect::<BTreeSet<_>>();
+    let source_area = component_resolve_area(&known_areas, &request.source)?;
+    let target_area = component_resolve_area(&known_areas, &request.target)?;
+    let insight_report = insights(graph);
+
+    let mut edge_kinds: BTreeMap<String, usize> = BTreeMap::new();
+    let mut confidence_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut edges = Vec::new();
+    let mut total_edges = 0usize;
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
+        if !is_architecture_dependency_edge(&edge.kind) {
+            continue;
+        }
+        if areas.get(&edge.source) != Some(&source_area)
+            || areas.get(&edge.target) != Some(&target_area)
+        {
+            continue;
+        }
+        if source_area == target_area && edge.source == edge.target {
+            continue;
+        }
+        total_edges += 1;
+        *edge_kinds
+            .entry(edge_kind_name(&edge.kind).to_string())
+            .or_insert(0) += 1;
+        *confidence_counts
+            .entry(confidence_name(edge.confidence).to_string())
+            .or_insert(0) += 1;
+        if edges.len() < edge_limit {
+            edges.push(ComponentContractEdge {
+                edge_index,
+                edge: edge_with_index(edge_index, edge),
+                source_label: nodes_by_id
+                    .get(&edge.source)
+                    .map(|node| node.label.clone())
+                    .unwrap_or_default(),
+                target_label: nodes_by_id
+                    .get(&edge.target)
+                    .map(|node| node.label.clone())
+                    .unwrap_or_default(),
+                risk_count: workflow_risk_refs_for_edge(&insight_report, edge_index).len(),
+            });
+        }
+    }
+
+    Ok(ComponentContractReport {
+        source_area,
+        target_area,
+        truncated: edges.len() < total_edges,
+        total_edges,
+        edge_kinds,
+        confidence_counts,
+        edges,
+    })
+}
+
+fn component_resolve_area(
+    known_areas: &BTreeSet<String>,
+    requested: &str,
+) -> Result<String, QueryError> {
+    let requested = requested.trim();
+    if requested.is_empty() {
+        return Err(QueryError::new(
+            "component contract requires `source` and `target` area names",
+        ));
+    }
+    if let Some(exact) = known_areas
+        .iter()
+        .find(|area| area.eq_ignore_ascii_case(requested))
+    {
+        return Ok(exact.clone());
+    }
+    let matches = known_areas
+        .iter()
+        .filter(|area| {
+            area.to_ascii_lowercase()
+                .contains(&requested.to_ascii_lowercase())
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [only] => Ok((*only).clone()),
+        [] => Err(QueryError::new(format!(
+            "component area `{requested}` did not match any architecture area; known areas: {}",
+            known_areas
+                .iter()
+                .take(12)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+        many => Err(QueryError::new(format!(
+            "component area `{requested}` is ambiguous; candidates: {}",
+            many.iter()
+                .take(12)
+                .map(|area| area.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+    }
 }
 
 fn journey_shortest_path(
@@ -15843,6 +16164,170 @@ mod tests {
             "load_config -> main back edge should count as a cycle crossing the flow"
         );
         assert!(alternative.risk_summary.cycle_back_edges >= 1);
+    }
+
+    #[test]
+    fn component_dependencies_group_by_area_package_and_language() {
+        let mut graph = CodeGraph::new("repo");
+        let app_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "crates/app/src/main.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let lib_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "crates/lib/src/lib.rs",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let web_file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "web/static/app.js",
+            None,
+            BTreeMap::from([("language".to_string(), "javascript".to_string())]),
+        );
+        let target = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "load_config",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let caller = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "handler",
+            None,
+            BTreeMap::from([("language".to_string(), "javascript".to_string())]),
+        );
+        let callee = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "read_file",
+            None,
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let package = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "serde",
+            None,
+            BTreeMap::from([("package_id".to_string(), "cargo:serde".to_string())]),
+        );
+        graph.add_edge(graph.root, app_file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(graph.root, lib_file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(graph.root, web_file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(app_file, target, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(web_file, caller, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(lib_file, callee, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(caller, target, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(target, callee, EdgeKind::Calls, Confidence::Exact);
+        graph.add_edge(target, package, EdgeKind::DependsOn, Confidence::Exact);
+
+        let report = component_dependencies(
+            &graph,
+            ComponentDependencyRequest {
+                target: "load_config".to_string(),
+                group_limit: 25,
+                edge_limit: 10,
+            },
+        )
+        .expect("component dependency report");
+
+        assert_eq!(report.target.label, "load_config");
+        assert_eq!(report.area.as_deref(), Some("crates"));
+        assert_eq!(report.total_incoming, 1);
+        assert_eq!(report.total_outgoing, 2);
+        let web_area = report
+            .areas
+            .iter()
+            .find(|group| group.key == "web")
+            .expect("web area group");
+        assert_eq!(web_area.incoming, 1);
+        assert_eq!(web_area.outgoing, 0);
+        assert_eq!(web_area.confidence_counts.get("heuristic"), Some(&1));
+        let crates_area = report
+            .areas
+            .iter()
+            .find(|group| group.key == "crates")
+            .expect("crates area group");
+        assert_eq!(crates_area.outgoing, 1);
+        let package_group = report
+            .packages
+            .iter()
+            .find(|group| group.key == "cargo:serde")
+            .expect("package group");
+        assert_eq!(package_group.outgoing, 1);
+        assert!(!package_group.sample_edge_indexes.is_empty());
+        let js_language = report
+            .languages
+            .iter()
+            .find(|group| group.key == "javascript")
+            .expect("javascript language group");
+        assert_eq!(js_language.incoming, 1);
+
+        let missing = component_dependencies(
+            &graph,
+            ComponentDependencyRequest {
+                target: "ghost".to_string(),
+                group_limit: 25,
+                edge_limit: 10,
+            },
+        );
+        assert!(missing.is_err());
+    }
+
+    #[test]
+    fn component_contract_lists_exact_cross_area_edges() {
+        let mut graph = CodeGraph::new("repo");
+        let web_file = graph.add_node(NodeKind::File, "web/static/app.js");
+        let core_file = graph.add_node(NodeKind::File, "crates/core/src/lib.rs");
+        let caller = graph.add_node(NodeKind::Function, "handler");
+        let callee = graph.add_node(NodeKind::Function, "load_config");
+        graph.add_edge(graph.root, web_file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(graph.root, core_file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(web_file, caller, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(core_file, callee, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(caller, callee, EdgeKind::Calls, Confidence::Heuristic);
+
+        let report = component_contract(
+            &graph,
+            ComponentContractRequest {
+                source: "web".to_string(),
+                target: "crates".to_string(),
+                edge_limit: 100,
+            },
+        )
+        .expect("component contract report");
+
+        assert_eq!(report.source_area, "web");
+        assert_eq!(report.target_area, "crates");
+        assert_eq!(report.total_edges, 1);
+        assert!(!report.truncated);
+        assert_eq!(report.edge_kinds.get("calls"), Some(&1));
+        assert_eq!(report.confidence_counts.get("heuristic"), Some(&1));
+        let edge = &report.edges[0];
+        assert_eq!(edge.source_label, "handler");
+        assert_eq!(edge.target_label, "load_config");
+        assert!(
+            edge.edge
+                .metadata
+                .get("edge_index")
+                .is_some_and(|value| value == &edge.edge_index.to_string())
+        );
+
+        let unknown = component_contract(
+            &graph,
+            ComponentContractRequest {
+                source: "ghost".to_string(),
+                target: "crates".to_string(),
+                edge_limit: 100,
+            },
+        );
+        assert!(unknown.is_err());
+        assert!(
+            unknown
+                .unwrap_err()
+                .to_string()
+                .contains("did not match any architecture area")
+        );
     }
 
     #[test]

@@ -150,6 +150,7 @@ Implemented now:
 - Graph query results can be converted into block-style workflow reports from CLI, API, and web query result actions.
 - Target-directed journey reports (CLI `journey --from <start> --to <target>`, API `/api/journey`) expand entrypoint-to-target paths into step-numbered execution chains of workflow blocks with control-flow markers, edge provenance, and risk references on every step.
 - Journey reports rank up to `--paths` alternative routes by edge confidence and length, report per-path `confidence_score` and `lowest_confidence`, and attach structured per-hop explanations (confidence note, relation, provenance source) for why each transition exists.
+- Component dependency reports (CLI `component-dependencies`, API `/api/component-dependencies`) group a node's incoming/outgoing dependencies by architecture area, package, and language; component contract views (CLI `component-contract`, API `/api/component-contract`) list the exact cross-area edges with confidence and risk counts.
 - Journey paths carry a `risk_summary` (risky steps/transitions, low-confidence hops, unresolved and ambiguous calls, duplicate labels, cycle back edges, severity counts) and per-step `fragile` flags with reasons so refactor-breaking hops are visible before changes start.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Web config trace reports can be downloaded as JSON with target, depth, matched readers, and dependency paths.
@@ -549,6 +550,15 @@ cargo run -p codegraph-cli -- journey --from "cargo bin:codegraph-server" --to s
 ```
 
 Journey steps reuse workflow blocks, so each step keeps its block kind (start, call, branch, loop, async, return, error), node, incoming transition with edge provenance, and related risk references. Up to `--paths` alternative routes are returned, ranked by edge confidence and then length (exact evidence beats heuristic guesses even when the heuristic route is shorter); alternatives avoid edges already used by better-ranked paths, each path reports its `confidence_score` and `lowest_confidence`, and every hop carries a structured explanation of why the transition exists.
+
+Understand what a component depends on and what depends on it:
+
+```bash
+cargo run -p codegraph-cli -- component-dependencies load_config .
+cargo run -p codegraph-cli -- component-contract --source web --target crates .
+```
+
+`component-dependencies` groups a node's incoming/outgoing edges by architecture area, canonical package, and language with confidence counts and sample edge indexes; `component-contract` lists the exact directed dependency edges between two architecture areas with edge kinds, confidence counts, and related risk counts for boundary reviews.
 
 Trace incoming dependents for impact analysis:
 

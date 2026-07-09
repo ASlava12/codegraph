@@ -9,26 +9,28 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
-    CheckReport, ConfigTraceRequest, ConfigTraceResult, DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
-    DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_COMMUNITY_LIMIT,
-    DEFAULT_REPORT_FILE_SUMMARY_LIMIT, DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT,
-    DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceReport,
-    EntrypointTraceRequest, EntrypointWorkflowReport, EntrypointWorkflowRequest, ErrorTraceRequest,
-    ErrorTraceResult, ExplainEdgeRequest, FocusRequest, GraphSlice, GraphSliceRequest,
-    GraphSummary, InsightFilter, InsightReport, InsightSeverity, JourneyReport, JourneyRequest,
-    KNOWN_INSIGHT_KINDS, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
+    CheckReport, ComponentContractReport, ComponentContractRequest, ComponentDependencyReport,
+    ComponentDependencyRequest, ConfigTraceRequest, ConfigTraceResult,
+    DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT, DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT,
+    DEFAULT_REPORT_COMMUNITY_LIMIT, DEFAULT_REPORT_FILE_SUMMARY_LIMIT,
+    DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
+    DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceReport, EntrypointTraceRequest,
+    EntrypointWorkflowReport, EntrypointWorkflowRequest, ErrorTraceRequest, ErrorTraceResult,
+    ExplainEdgeRequest, FocusRequest, GraphSlice, GraphSliceRequest, GraphSummary, InsightFilter,
+    InsightReport, InsightSeverity, JourneyReport, JourneyRequest, KNOWN_INSIGHT_KINDS,
+    MAX_REPORT_ARCHITECTURE_EDGE_LIMIT, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
     MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_FILE_SUMMARY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
     MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, MAX_REPORT_NODE_SUMMARY_LIMIT,
     NaturalQueryReport, NaturalQueryRequest, NodeCard, NodeContext, ProjectReport,
     ProjectReportLimits, ProjectReportMarkdownOptions, SourcePreview, SourceSearchRequest,
     SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryReport,
     WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map, check_insights,
-    communities, compact_query_result, entrypoints, explain_edge, export_dot, export_ndjson,
-    filter_insight_report, focus_subgraph, hotspots, insights, journey, language_dependencies,
-    natural_query, node_card, node_context, project_report, project_report_markdown, query_graph,
-    read_source_preview, search_source, slice_graph, summarize, surprising_links, trace,
-    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
-    workflow_entrypoints, workflow_query,
+    communities, compact_query_result, component_contract, component_dependencies, entrypoints,
+    explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots,
+    insights, journey, language_dependencies, natural_query, node_card, node_context,
+    project_report, project_report_markdown, query_graph, read_source_preview, search_source,
+    slice_graph, summarize, surprising_links, trace, trace_config, trace_dependents,
+    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_query,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -448,6 +450,22 @@ struct GraphQuery {
     path: Option<PathBuf>,
     q: String,
     compact: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ComponentDependencyQuery {
+    path: Option<PathBuf>,
+    target: String,
+    group_limit: Option<usize>,
+    edge_limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ComponentContractQuery {
+    path: Option<PathBuf>,
+    source: String,
+    target: String,
+    edge_limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1077,6 +1095,11 @@ async fn main() -> Result<()> {
         .route("/api/workflow", get(workflow_api))
         .route("/api/workflow-query", get(workflow_query_api))
         .route("/api/journey", get(journey_api))
+        .route(
+            "/api/component-dependencies",
+            get(component_dependencies_api),
+        )
+        .route("/api/component-contract", get(component_contract_api))
         .route("/api/dependents", get(dependents_api))
         .route("/api/trace-config", get(trace_config_api))
         .route("/api/trace-errors", get(trace_errors_api))
@@ -2903,6 +2926,40 @@ async fn workflow_api(
             compact: query.compact.unwrap_or(false),
         },
     )))
+}
+
+async fn component_dependencies_api(
+    State(state): State<AppState>,
+    Query(query): Query<ComponentDependencyQuery>,
+) -> Result<Json<ComponentDependencyReport>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let report = component_dependencies(
+        &graph,
+        ComponentDependencyRequest {
+            target: query.target,
+            group_limit: query.group_limit.unwrap_or(25).clamp(1, 100),
+            edge_limit: query.edge_limit.unwrap_or(10).clamp(1, 50),
+        },
+    )
+    .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    Ok(Json(report))
+}
+
+async fn component_contract_api(
+    State(state): State<AppState>,
+    Query(query): Query<ComponentContractQuery>,
+) -> Result<Json<ComponentContractReport>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let report = component_contract(
+        &graph,
+        ComponentContractRequest {
+            source: query.source,
+            target: query.target,
+            edge_limit: query.edge_limit.unwrap_or(100).clamp(1, 500),
+        },
+    )
+    .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    Ok(Json(report))
 }
 
 async fn journey_api(
@@ -5332,6 +5389,69 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 )
                 .with_response_fields(journey_response_fields()),
                 api_get(
+                    "/api/component-dependencies",
+                    "Group a node's incoming/outgoing dependencies by architecture area, package, and language.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "target",
+                            true,
+                            "string",
+                            None,
+                            "Component target label or node id such as load_config or n42.",
+                        ),
+                        query_param(
+                            "group_limit",
+                            false,
+                            "usize",
+                            Some("25"),
+                            "Maximum groups per facet (areas, packages, languages).",
+                        )
+                        .with_range(1, 100),
+                        query_param(
+                            "edge_limit",
+                            false,
+                            "usize",
+                            Some("10"),
+                            "Maximum sample edge indexes per group.",
+                        )
+                        .with_range(1, 50),
+                    ],
+                    "ComponentDependencyReport",
+                )
+                .with_response_fields(component_dependency_response_fields()),
+                api_get(
+                    "/api/component-contract",
+                    "List the exact dependency edges between two architecture areas with confidence and related risks.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "source",
+                            true,
+                            "string",
+                            None,
+                            "Source architecture area name or unambiguous fragment.",
+                        ),
+                        query_param(
+                            "target",
+                            true,
+                            "string",
+                            None,
+                            "Target architecture area name or unambiguous fragment.",
+                        ),
+                        query_param(
+                            "edge_limit",
+                            false,
+                            "usize",
+                            Some("100"),
+                            "Maximum listed contract edges.",
+                        )
+                        .with_range(1, 500),
+                    ],
+                    "ComponentContractReport",
+                )
+                .with_response_fields(component_contract_response_fields()),
+                api_get(
                     "/api/dependents",
                     "Trace incoming dependents that can reach a node.",
                     vec![
@@ -6776,6 +6896,101 @@ fn workflow_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "bool",
             "Whether traversal depth or block limits omitted additional steps.",
+        ),
+    ]
+}
+
+fn component_dependency_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("target", true, "Node", "Resolved component target node."),
+        response_field(
+            "area",
+            false,
+            "string",
+            "Architecture area containing the target node.",
+        ),
+        response_field(
+            "total_incoming",
+            true,
+            "usize",
+            "Total non-containment incoming edges.",
+        ),
+        response_field(
+            "total_outgoing",
+            true,
+            "usize",
+            "Total non-containment outgoing edges.",
+        ),
+        response_field(
+            "areas",
+            true,
+            "ComponentDependencyGroup[]",
+            "Dependency groups keyed by architecture area with incoming/outgoing counts, edge kinds, confidence counts, and sample edge indexes.",
+        ),
+        response_field(
+            "packages",
+            true,
+            "ComponentDependencyGroup[]",
+            "Dependency groups keyed by canonical package id.",
+        ),
+        response_field(
+            "languages",
+            true,
+            "ComponentDependencyGroup[]",
+            "Dependency groups keyed by neighbor language metadata.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether any facet had more groups than group_limit.",
+        ),
+    ]
+}
+
+fn component_contract_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "source_area",
+            true,
+            "string",
+            "Resolved source architecture area.",
+        ),
+        response_field(
+            "target_area",
+            true,
+            "string",
+            "Resolved target architecture area.",
+        ),
+        response_field(
+            "total_edges",
+            true,
+            "usize",
+            "Total directed dependency edges from source to target area.",
+        ),
+        response_field(
+            "edge_kinds",
+            true,
+            "map<string,usize>",
+            "Edge kind counts across the contract.",
+        ),
+        response_field(
+            "confidence_counts",
+            true,
+            "map<string,usize>",
+            "Confidence counts across the contract.",
+        ),
+        response_field(
+            "edges",
+            true,
+            "ComponentContractEdge[]",
+            "Exact contract edges with stable edge_index, endpoint labels, and related risk counts.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether more contract edges exist than edge_limit.",
         ),
     ]
 }
@@ -9652,6 +9867,36 @@ fn helper() {}
                 .iter()
                 .any(|field| field.name == "paths" && field.value_type == "JourneyPath[]")
         );
+        let component_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/component-dependencies")
+            .expect("schema should list component-dependencies endpoint");
+        assert!(
+            component_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name == "target" && parameter.required)
+        );
+        assert!(component_endpoint.response_fields.iter().any(|field| {
+            field.name == "areas" && field.value_type == "ComponentDependencyGroup[]"
+        }));
+        let contract_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/component-contract")
+            .expect("schema should list component-contract endpoint");
+        assert!(
+            contract_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name == "source" && parameter.required)
+        );
+        assert!(contract_endpoint.response_fields.iter().any(|field| {
+            field.name == "edges" && field.value_type == "ComponentContractEdge[]"
+        }));
         let config_trace_endpoint = schema
             .groups
             .iter()
