@@ -342,6 +342,37 @@ pub struct EntrypointWorkflowReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JourneyRequest {
+    pub from: String,
+    pub to: String,
+    pub max_depth: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JourneyStep {
+    pub step: usize,
+    #[serde(default)]
+    pub transition: Option<WorkflowTransition>,
+    pub block: WorkflowBlock,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JourneyPath {
+    pub total_steps: usize,
+    pub steps: Vec<JourneyStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JourneyReport {
+    pub from: Node,
+    pub to: Node,
+    pub max_depth: usize,
+    pub total_paths: usize,
+    pub paths: Vec<JourneyPath>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowQueryRequest {
     pub query: String,
     pub max_depth: usize,
@@ -3455,6 +3486,137 @@ pub fn workflow_query(
         workflows,
         truncated,
     })
+}
+
+pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyReport, QueryError> {
+    let max_depth = request.max_depth.clamp(1, 32);
+    let from = request.from.trim();
+    let to = request.to.trim();
+    if from.is_empty() || to.is_empty() {
+        return Err(QueryError::new(
+            "journey requires `from` and `to` labels or node ids",
+        ));
+    }
+    let start = resolve_node_reference(graph, from)
+        .ok_or_else(|| QueryError::new(format!("journey start `{from}` did not match a node")))?;
+    let target = resolve_node_reference(graph, to)
+        .ok_or_else(|| QueryError::new(format!("journey target `{to}` did not match a node")))?;
+    let start_node = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == start)
+        .cloned()
+        .ok_or_else(|| QueryError::new(format!("journey start `{from}` did not match a node")))?;
+    let target_node = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == target)
+        .cloned()
+        .ok_or_else(|| QueryError::new(format!("journey target `{to}` did not match a node")))?;
+    let insight_report = insights(graph);
+
+    let mut edge_path = None;
+    let mut truncated = false;
+    if start != target {
+        let mut visited = BTreeSet::from([start]);
+        let mut parents: BTreeMap<NodeId, (NodeId, usize)> = BTreeMap::new();
+        let mut queue = VecDeque::from([(start, 0usize)]);
+
+        'search: while let Some((node_id, depth)) = queue.pop_front() {
+            if depth >= max_depth {
+                if trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
+                    .next()
+                    .is_some()
+                {
+                    truncated = true;
+                }
+                continue;
+            }
+            for (edge_index, edge) in
+                trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
+            {
+                if !visited.insert(edge.target) {
+                    continue;
+                }
+                parents.insert(edge.target, (node_id, edge_index));
+                if edge.target == target {
+                    edge_path = Some(reconstruct_path_edges(start, target, &parents)?);
+                    break 'search;
+                }
+                queue.push_back((edge.target, depth + 1));
+            }
+        }
+    } else {
+        edge_path = Some(Vec::new());
+    }
+
+    let paths = edge_path
+        .map(|edge_indexes| {
+            let mut steps = Vec::with_capacity(edge_indexes.len() + 1);
+            steps.push(JourneyStep {
+                step: 1,
+                transition: None,
+                block: journey_block(&insight_report, &start_node, None, true, 0),
+            });
+            for (offset, edge_index) in edge_indexes.iter().enumerate() {
+                let Some(edge) = graph.edges.get(*edge_index) else {
+                    continue;
+                };
+                let Some(node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+                    continue;
+                };
+                steps.push(JourneyStep {
+                    step: offset + 2,
+                    transition: Some(WorkflowTransition {
+                        id: format!("jt-{edge_index}"),
+                        source: workflow_block_id(edge.source),
+                        target: workflow_block_id(edge.target),
+                        source_node_id: edge.source,
+                        target_node_id: edge.target,
+                        edge: edge_with_index(*edge_index, edge),
+                        edge_index: *edge_index,
+                        risk_refs: workflow_risk_refs_for_edge(&insight_report, *edge_index),
+                        compacted: false,
+                        compacted_count: 1,
+                    }),
+                    block: journey_block(&insight_report, node, Some(edge), false, offset + 1),
+                });
+            }
+            JourneyPath {
+                total_steps: steps.len(),
+                steps,
+            }
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    Ok(JourneyReport {
+        from: start_node,
+        to: target_node,
+        max_depth,
+        total_paths: paths.len(),
+        truncated: truncated && paths.is_empty(),
+        paths,
+    })
+}
+
+fn journey_block(
+    insight_report: &InsightReport,
+    node: &Node,
+    incoming_edge: Option<&Edge>,
+    is_start: bool,
+    depth: usize,
+) -> WorkflowBlock {
+    WorkflowBlock {
+        id: workflow_block_id(node.id),
+        kind: workflow_block_kind(node, incoming_edge, is_start),
+        node: node.clone(),
+        depth,
+        source_node_ids: vec![node.id],
+        risk_refs: workflow_risk_refs_for_node(insight_report, node.id),
+        compacted: false,
+        compacted_count: 1,
+    }
 }
 
 fn workflow_with_insight_report(
@@ -15289,6 +15451,134 @@ mod tests {
         let none_report = workflow_entrypoints(&graph, request("service"));
         assert_eq!(none_report.total_entrypoints, 0);
         assert!(none_report.workflows.is_empty());
+    }
+
+    #[test]
+    fn journey_builds_step_numbered_chain_between_labels() {
+        let mut graph = CodeGraph::new("repo");
+        let entrypoint = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "cargo bin:api",
+            None,
+            BTreeMap::from([("entrypoint_kind".to_string(), "binary".to_string())]),
+        );
+        let main = graph.add_node(NodeKind::Function, "main");
+        let branch = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "branch: if",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "branch".to_string()),
+                ("control_kind".to_string(), "if".to_string()),
+            ]),
+        );
+        let load_config = graph.add_node(NodeKind::Function, "load_config");
+        let unrelated = graph.add_node(NodeKind::Function, "unrelated");
+        graph.add_edge(
+            graph.root,
+            entrypoint,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(
+            entrypoint,
+            main,
+            EdgeKind::References,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(main, unrelated, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(main, branch, EdgeKind::References, Confidence::Heuristic);
+        graph.add_edge(
+            branch,
+            load_config,
+            EdgeKind::References,
+            Confidence::Heuristic,
+        );
+
+        let report = journey(
+            &graph,
+            JourneyRequest {
+                from: "cargo bin:api".to_string(),
+                to: "load_config".to_string(),
+                max_depth: 8,
+            },
+        )
+        .expect("journey report");
+
+        assert_eq!(report.from.id, entrypoint);
+        assert_eq!(report.to.id, load_config);
+        assert_eq!(report.total_paths, 1);
+        let path = &report.paths[0];
+        assert_eq!(path.total_steps, 4);
+        assert_eq!(
+            path.steps.iter().map(|step| step.step).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4]
+        );
+        assert_eq!(path.steps[0].block.kind, WorkflowBlockKind::Start);
+        assert!(path.steps[0].transition.is_none());
+        assert_eq!(path.steps[2].block.kind, WorkflowBlockKind::Branch);
+        assert_eq!(path.steps[3].block.node.id, load_config);
+        for step in &path.steps[1..] {
+            let transition = step.transition.as_ref().expect("chained transition");
+            assert_eq!(transition.target_node_id, step.block.node.id);
+            assert!(
+                transition
+                    .edge
+                    .metadata
+                    .get("edge_index")
+                    .is_some_and(|value| value.parse::<usize>().is_ok())
+            );
+        }
+        assert!(
+            !path
+                .steps
+                .iter()
+                .any(|step| step.block.node.id == unrelated)
+        );
+    }
+
+    #[test]
+    fn journey_reports_unresolved_endpoints_and_missing_paths() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let isolated = graph.add_node(NodeKind::Function, "isolated");
+        graph.add_edge(graph.root, main, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(graph.root, isolated, EdgeKind::Contains, Confidence::Exact);
+
+        let missing_from = journey(
+            &graph,
+            JourneyRequest {
+                from: "ghost".to_string(),
+                to: "main".to_string(),
+                max_depth: 4,
+            },
+        );
+        assert!(missing_from.is_err());
+
+        let no_path = journey(
+            &graph,
+            JourneyRequest {
+                from: "main".to_string(),
+                to: "isolated".to_string(),
+                max_depth: 4,
+            },
+        )
+        .expect("journey report without path");
+        assert_eq!(no_path.total_paths, 0);
+        assert!(no_path.paths.is_empty());
+
+        let same = journey(
+            &graph,
+            JourneyRequest {
+                from: "main".to_string(),
+                to: "main".to_string(),
+                max_depth: 4,
+            },
+        )
+        .expect("same-node journey");
+        assert_eq!(same.total_paths, 1);
+        assert_eq!(same.paths[0].total_steps, 1);
+        assert_eq!(same.paths[0].steps[0].block.kind, WorkflowBlockKind::Start);
     }
 
     #[test]

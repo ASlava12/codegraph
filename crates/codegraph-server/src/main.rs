@@ -15,8 +15,8 @@ use codegraph_analysis::{
     DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceReport,
     EntrypointTraceRequest, EntrypointWorkflowReport, EntrypointWorkflowRequest, ErrorTraceRequest,
     ErrorTraceResult, ExplainEdgeRequest, FocusRequest, GraphSlice, GraphSliceRequest,
-    GraphSummary, InsightFilter, InsightReport, InsightSeverity, KNOWN_INSIGHT_KINDS,
-    MAX_REPORT_ARCHITECTURE_EDGE_LIMIT, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
+    GraphSummary, InsightFilter, InsightReport, InsightSeverity, JourneyReport, JourneyRequest,
+    KNOWN_INSIGHT_KINDS, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
     MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_FILE_SUMMARY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
     MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, MAX_REPORT_NODE_SUMMARY_LIMIT,
     NaturalQueryReport, NaturalQueryRequest, NodeCard, NodeContext, ProjectReport,
@@ -24,7 +24,7 @@ use codegraph_analysis::{
     SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryReport,
     WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map, check_insights,
     communities, compact_query_result, entrypoints, explain_edge, export_dot, export_ndjson,
-    filter_insight_report, focus_subgraph, hotspots, insights, language_dependencies,
+    filter_insight_report, focus_subgraph, hotspots, insights, journey, language_dependencies,
     natural_query, node_card, node_context, project_report, project_report_markdown, query_graph,
     read_source_preview, search_source, slice_graph, summarize, surprising_links, trace,
     trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
@@ -448,6 +448,14 @@ struct GraphQuery {
     path: Option<PathBuf>,
     q: String,
     compact: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JourneyQuery {
+    path: Option<PathBuf>,
+    from: String,
+    to: String,
+    depth: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1067,6 +1075,7 @@ async fn main() -> Result<()> {
         .route("/api/trace", get(trace_api))
         .route("/api/workflow", get(workflow_api))
         .route("/api/workflow-query", get(workflow_query_api))
+        .route("/api/journey", get(journey_api))
         .route("/api/dependents", get(dependents_api))
         .route("/api/trace-config", get(trace_config_api))
         .route("/api/trace-errors", get(trace_errors_api))
@@ -2893,6 +2902,23 @@ async fn workflow_api(
             compact: query.compact.unwrap_or(false),
         },
     )))
+}
+
+async fn journey_api(
+    State(state): State<AppState>,
+    Query(query): Query<JourneyQuery>,
+) -> Result<Json<JourneyReport>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let report = journey(
+        &graph,
+        JourneyRequest {
+            from: query.from,
+            to: query.to,
+            max_depth: query.depth.unwrap_or(8).clamp(1, 32),
+        },
+    )
+    .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    Ok(Json(report))
 }
 
 async fn workflow_query_api(
@@ -5265,6 +5291,37 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 )
                 .with_response_fields(workflow_query_response_fields()),
                 api_get(
+                    "/api/journey",
+                    "Expand the shortest entrypoint-to-target path into a step-numbered execution journey built from workflow blocks.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "from",
+                            true,
+                            "string",
+                            None,
+                            "Journey start label or node id such as main or n12.",
+                        ),
+                        query_param(
+                            "to",
+                            true,
+                            "string",
+                            None,
+                            "Journey target label or node id such as load_config or n42.",
+                        ),
+                        query_param(
+                            "depth",
+                            false,
+                            "usize",
+                            Some("8"),
+                            "Maximum path search depth between the endpoints.",
+                        )
+                        .with_range(1, 32),
+                    ],
+                    "JourneyReport",
+                )
+                .with_response_fields(journey_response_fields()),
+                api_get(
                     "/api/dependents",
                     "Trace incoming dependents that can reach a node.",
                     vec![
@@ -6713,6 +6770,37 @@ fn workflow_response_fields() -> Vec<ApiParameterSpec> {
     ]
 }
 
+fn journey_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("from", true, "Node", "Resolved journey start node."),
+        response_field("to", true, "Node", "Resolved journey target node."),
+        response_field(
+            "max_depth",
+            true,
+            "usize",
+            "Applied maximum path search depth.",
+        ),
+        response_field(
+            "total_paths",
+            true,
+            "usize",
+            "Returned journey path count; 0 when no directed path exists.",
+        ),
+        response_field(
+            "paths",
+            true,
+            "JourneyPath[]",
+            "Step-numbered execution chains; each step carries a workflow block and the incoming transition with edge provenance and risk references.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether the path search hit the depth bound before finding a path.",
+        ),
+    ]
+}
+
 fn workflow_query_response_fields() -> Vec<ApiParameterSpec> {
     vec![
         response_field("query", true, "string", "Graph query expression."),
@@ -7846,6 +7934,76 @@ fn helper() {
                 .any(|transition| transition.edge_index.to_string()
                     == transition.edge.metadata["edge_index"])
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn journey_api_returns_step_numbered_chain() {
+        let root = temp_server_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            r#"fn main() {
+    if ready() {
+        helper();
+    }
+}
+
+fn helper() {
+    load_config();
+}
+
+fn load_config() {}
+
+fn ready() -> bool {
+    true
+}
+"#,
+        )
+        .unwrap();
+        let state = test_state(root.clone(), vec![], true);
+
+        let Json(report) = journey_api(
+            State(state.clone()),
+            Query(JourneyQuery {
+                path: Some(root.clone()),
+                from: "main".to_string(),
+                to: "load_config".to_string(),
+                depth: Some(8),
+            }),
+        )
+        .await
+        .expect("journey response");
+
+        assert_eq!(report.from.label, "main");
+        assert_eq!(report.to.label, "load_config");
+        assert_eq!(report.total_paths, 1);
+        let path = &report.paths[0];
+        assert!(path.total_steps >= 3);
+        assert_eq!(
+            path.steps.iter().map(|step| step.step).collect::<Vec<_>>(),
+            (1..=path.total_steps).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            path.steps[0].block.kind,
+            codegraph_analysis::WorkflowBlockKind::Start
+        );
+        assert_eq!(path.steps.last().unwrap().block.node.label, "load_config");
+        assert!(path.steps[1..].iter().all(|step| step.transition.is_some()));
+
+        let error = journey_api(
+            State(state),
+            Query(JourneyQuery {
+                path: Some(root.clone()),
+                from: "ghost".to_string(),
+                to: "load_config".to_string(),
+                depth: Some(8),
+            }),
+        )
+        .await
+        .expect_err("unknown journey start should fail");
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert!(error.message.contains("journey start"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -9451,6 +9609,33 @@ fn helper() {}
             workflow_query_endpoint.response_fields.iter().any(|field| {
                 field.name == "workflows" && field.value_type == "WorkflowReport[]"
             })
+        );
+        let journey_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/journey")
+            .expect("schema should list journey endpoint");
+        assert!(
+            journey_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name == "from" && parameter.required)
+        );
+        assert!(
+            journey_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name == "to" && parameter.required)
+        );
+        assert!(journey_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "depth" && parameter.default.as_deref() == Some("8")
+        }));
+        assert!(
+            journey_endpoint
+                .response_fields
+                .iter()
+                .any(|field| field.name == "paths" && field.value_type == "JourneyPath[]")
         );
         let config_trace_endpoint = schema
             .groups

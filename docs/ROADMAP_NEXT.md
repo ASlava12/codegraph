@@ -37,7 +37,7 @@ events, understand component dependencies, see potential problems along the
 way, and drill into the implementation of any step. Depends on the Milestone 1
 Flow view and block-to-card actions.
 
-- [ ] Add target-directed journey reports (CLI `journey --from <entrypoint> --to <target>`, API `/api/journey`) that expand entrypoint-to-target paths into step-numbered execution chains built from workflow blocks.
+- [x] Add target-directed journey reports (CLI `journey --from <entrypoint> --to <target>`, API `/api/journey`) that expand entrypoint-to-target paths into step-numbered execution chains built from workflow blocks.
 - [ ] Rank alternative journey paths by edge confidence and length, and attach per-hop provenance explanations for why each transition exists.
 - [ ] Add journey risk summaries: risky steps, unresolved or ambiguous calls, low-confidence hops, and cycles crossing the flow, with fragile-transition flags for refactor planning.
 - [ ] Add component dependency reports grouping a node's incoming/outgoing dependencies by architecture area, package, and language, plus contract views for the exact edges between two selected components.

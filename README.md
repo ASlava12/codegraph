@@ -148,6 +148,7 @@ Implemented now:
 - Flow view transitions are selectable too: clicking a diagram edge opens the standard dependency card with confidence, provenance, edge-scoped risks, and exact edge explanation actions.
 - Selected-node Flow panels, Entry Flows, and query workflow results include an Open Flow view action that jumps into the block-diagram canvas.
 - Graph query results can be converted into block-style workflow reports from CLI, API, and web query result actions.
+- Target-directed journey reports (CLI `journey --from <start> --to <target>`, API `/api/journey`) expand the shortest entrypoint-to-target path into a step-numbered execution chain of workflow blocks with control-flow markers, edge provenance, and risk references on every step.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Web config trace reports can be downloaded as JSON with target, depth, matched readers, and dependency paths.
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
@@ -538,6 +539,15 @@ cargo run -p codegraph-cli -- workflow-entrypoints . --entrypoint-kind route --d
 cargo run -p codegraph-cli -- workflow-query 'nodes kind:function search:main' . --edge-kind calls
 ```
 
+Follow one execution journey from an entrypoint to a target as a step-numbered chain:
+
+```bash
+cargo run -p codegraph-cli -- journey --from main --to load_config .
+cargo run -p codegraph-cli -- journey --from "cargo bin:codegraph-server" --to scan_graph . --depth 12
+```
+
+Journey steps reuse workflow blocks, so each step keeps its block kind (start, call, branch, loop, async, return, error), node, incoming transition with edge provenance, and related risk references.
+
 Trace incoming dependents for impact analysis:
 
 ```bash
@@ -818,6 +828,7 @@ curl --get 'http://127.0.0.1:3765/api/explain-edge' \
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
 curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&depth=4&block_limit=200&compact=true'
 curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&edge_kind=calls&confidence=heuristic&block_kind=call'
+curl 'http://127.0.0.1:3765/api/journey?path=.&from=main&to=load_config&depth=8'
 curl --get 'http://127.0.0.1:3765/api/workflow-query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=nodes kind:function search:main' \

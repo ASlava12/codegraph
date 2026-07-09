@@ -545,8 +545,8 @@ Near-term execution order is tracked in `docs/ROADMAP_NEXT.md`.
 
 Journey flows:
 
-- [ ] Add target-directed journey reports that expand entrypoint-to-target paths into ordered execution chains with step numbers, reusing workflow blocks (CLI `journey`, API `/api/journey`).
-- [ ] Keep branch, loop, async, error, and return markers on journey steps so chains read like actual execution order.
+- [x] Add target-directed journey reports that expand entrypoint-to-target paths into ordered execution chains with step numbers, reusing workflow blocks (CLI `journey`, API `/api/journey`).
+- [x] Keep branch, loop, async, error, and return markers on journey steps so chains read like actual execution order.
 - [ ] Rank alternative journey paths by edge confidence and length, with per-hop provenance explanations for why each transition exists.
 - [ ] Add a web journey view for choosing a start entrypoint and target node with a step-numbered chain and expandable branch groups.
 

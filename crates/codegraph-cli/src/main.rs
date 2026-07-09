@@ -6,12 +6,12 @@ use codegraph_analysis::{
     DEFAULT_REPORT_FILE_SUMMARY_LIMIT, DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT,
     DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceRequest,
     EntrypointWorkflowRequest, ErrorTraceRequest, ExplainEdgeRequest, InsightFilter,
-    InsightSeverity, NaturalQueryRequest, ProjectReport, ProjectReportLimits,
+    InsightSeverity, JourneyRequest, NaturalQueryRequest, ProjectReport, ProjectReportLimits,
     ProjectReportMarkdownOptions, SourceSearchRequest, TraceRequest, TraceStart, WorkflowFilters,
     WorkflowQueryRequest, WorkflowRequest, architecture_map, check_insights, communities,
     compact_query_result, entrypoints, explain_edge, filter_insight_report, hotspots, insights,
-    language_dependencies, natural_query, project_report, project_report_markdown, query_graph,
-    search_source, summarize, surprising_links, trace, trace_config, trace_dependents,
+    journey, language_dependencies, natural_query, project_report, project_report_markdown,
+    query_graph, search_source, summarize, surprising_links, trace, trace_config, trace_dependents,
     trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_mermaid,
     workflow_query,
 };
@@ -170,6 +170,36 @@ enum Command {
         /// Collapse repeated low-signal nodes in the query result.
         #[arg(long)]
         compact: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Emit a step-numbered execution journey between two graph labels or node ids.
+    Journey {
+        /// Journey start label or node id, for example: main or n12.
+        #[arg(long)]
+        from: String,
+
+        /// Journey target label or node id, for example: load_config or n42.
+        #[arg(long)]
+        to: String,
+
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Maximum path search depth between the endpoints.
+        #[arg(long, default_value_t = 8)]
+        depth: usize,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
 
         #[command(flatten)]
         cache: CacheArgs,
@@ -1367,6 +1397,27 @@ fn main() -> Result<()> {
                 result
             };
             println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::Journey {
+            from,
+            to,
+            path,
+            depth,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
+            let report = journey(
+                &graph,
+                JourneyRequest {
+                    from,
+                    to,
+                    max_depth: depth,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Ask {
             question,
