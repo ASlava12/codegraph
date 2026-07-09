@@ -8853,6 +8853,27 @@ fn helper() {}
     }
 
     #[test]
+    fn embedded_web_assets_surface_journey_panel() {
+        let index = include_str!("../../codegraph-web/static/index.html");
+        let app = include_str!("../../codegraph-web/static/app.js");
+
+        assert!(index.contains("journeyFromInput"));
+        assert!(index.contains("journeyToInput"));
+        assert!(index.contains("journeyRunButton"));
+        assert!(index.contains("journeyExportButton"));
+        assert!(index.contains("data-i18n-aria-label=\"aria.journey\""));
+        assert!(app.contains("async function runJourney"));
+        assert!(app.contains("function renderJourneyReport"));
+        assert!(app.contains("function attachJourneyActions"));
+        assert!(app.contains("data-journey-focus"));
+        assert!(app.contains("/api/journey?"));
+        assert!(app.contains("codegraph.journey.v1"));
+        assert!(app.contains("\"journey.pathTitle\""));
+        assert!(app.contains("\"journey.fragile\""));
+        assert!(app.contains("\"button.buildJourney\""));
+    }
+
+    #[test]
     fn embedded_web_assets_highlight_hovered_graph_edges() {
         let app = include_str!("../../codegraph-web/static/app.js");
 

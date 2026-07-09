@@ -261,6 +261,29 @@ const I18N = {
     "section.jobs": "Jobs",
     "section.runtime": "Runtime",
     "section.entryFlows": "Entry Flows",
+    "section.journey": "Journey",
+    "journey.from": "From",
+    "journey.to": "To",
+    "journey.paths": "Paths",
+    "button.buildJourney": "Build Journey",
+    "button.downloadJourney": "Download JSON",
+    "journey.needEndpoints": "Enter From and To labels or node ids.",
+    "journey.building": "Building journey...",
+    "journey.failedFallback": "journey failed",
+    "journey.pathCount": "{count} paths",
+    "journey.noPaths": "No directed path found between the endpoints.",
+    "journey.truncatedNoPath": "No path found within the depth limit; try a larger depth.",
+    "journey.pathTitle": "Path {rank} · {steps} steps",
+    "journey.score": "score {score}",
+    "journey.lowest": "weakest hop: {confidence}",
+    "journey.fragile": "fragile: {reasons}",
+    "journey.fragileCount": "{count} fragile",
+    "journey.lowConfidenceCount": "{count} low-confidence",
+    "journey.riskyStepCount": "{count} risky steps",
+    "journey.cycleCount": "{count} cycle back edges",
+    "journey.focusPath": "Focus path",
+    "journey.focusTitle": "Journey: {from} → {to}",
+    "aria.journey": "Execution journey",
     "section.graphPage": "Graph Page",
     "section.sourceSearch": "Source Search",
     "section.cacheDiff": "Cache Diff",
@@ -901,6 +924,29 @@ const I18N = {
     "section.jobs": "Задачи",
     "section.runtime": "Рантайм",
     "section.entryFlows": "Потоки входа",
+    "section.journey": "Маршрут",
+    "journey.from": "Откуда",
+    "journey.to": "Куда",
+    "journey.paths": "Пути",
+    "button.buildJourney": "Построить маршрут",
+    "button.downloadJourney": "Скачать JSON",
+    "journey.needEndpoints": "Укажите метки или id нод «Откуда» и «Куда».",
+    "journey.building": "Строю маршрут...",
+    "journey.failedFallback": "маршрут не построен",
+    "journey.pathCount": "путей: {count}",
+    "journey.noPaths": "Направленный путь между точками не найден.",
+    "journey.truncatedNoPath": "Путь не найден в пределах глубины; увеличьте глубину.",
+    "journey.pathTitle": "Путь {rank} · шагов: {steps}",
+    "journey.score": "счёт {score}",
+    "journey.lowest": "слабейший переход: {confidence}",
+    "journey.fragile": "хрупкий: {reasons}",
+    "journey.fragileCount": "хрупких: {count}",
+    "journey.lowConfidenceCount": "низкой достоверности: {count}",
+    "journey.riskyStepCount": "рискованных шагов: {count}",
+    "journey.cycleCount": "обратных рёбер: {count}",
+    "journey.focusPath": "Показать на графе",
+    "journey.focusTitle": "Маршрут: {from} → {to}",
+    "aria.journey": "Маршрут выполнения",
     "section.graphPage": "Страница графа",
     "section.sourceSearch": "Поиск в коде",
     "section.cacheDiff": "Дифф кеша",
@@ -1386,6 +1432,7 @@ const state = {
   dependentsRequest: 0,
   edgeExplainRequest: 0,
   entryFlowRequest: 0,
+  journeyRequest: 0,
   queryWorkflowRequest: 0,
   queryRequest: 0,
   sourceSearchRequest: 0,
@@ -1458,6 +1505,7 @@ const state = {
   lastCheckResult: null,
   lastSourceSearchResult: null,
   lastEntryFlowReport: null,
+  lastJourneyReport: null,
   lastEntryWorkflowReport: null,
   lastPathResult: null,
   lastConfigTraceReport: null,
@@ -1549,6 +1597,13 @@ const entryWorkflowConfidenceInput = document.querySelector("#entryWorkflowConfi
 const entryWorkflowLanguageInput = document.querySelector("#entryWorkflowLanguageInput");
 const entryWorkflowRiskSeverityInput = document.querySelector("#entryWorkflowRiskSeverityInput");
 const entryWorkflowBlockKindInput = document.querySelector("#entryWorkflowBlockKindInput");
+const journeyFromInput = document.querySelector("#journeyFromInput");
+const journeyToInput = document.querySelector("#journeyToInput");
+const journeyDepthInput = document.querySelector("#journeyDepthInput");
+const journeyPathsInput = document.querySelector("#journeyPathsInput");
+const journeyRunButton = document.querySelector("#journeyRunButton");
+const journeyExportButton = document.querySelector("#journeyExportButton");
+const journeyResult = document.querySelector("#journeyResult");
 const entryFlowButton = document.querySelector("#entryFlowButton");
 const entryFlowWorkflowButton = document.querySelector("#entryFlowWorkflowButton");
 const entryFlowExportButton = document.querySelector("#entryFlowExportButton");
@@ -1711,6 +1766,13 @@ cacheDiffLimitInput.addEventListener("keydown", (event) => {
 });
 exportButton.addEventListener("click", () => runGraphExport());
 exportSliceButton.addEventListener("click", () => exportVisibleGraphSlice());
+journeyRunButton.addEventListener("click", () => runJourney());
+journeyExportButton.addEventListener("click", () => exportLastJourneyReport());
+for (const input of [journeyFromInput, journeyToInput]) {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") runJourney();
+  });
+}
 entryFlowButton.addEventListener("click", () => runEntryFlowTrace());
 entryFlowWorkflowButton.addEventListener("click", () => runEntryFlowWorkflows());
 entryFlowExportButton.addEventListener("click", () => exportLastEntryFlowReport());
@@ -4701,6 +4763,186 @@ function attachEntryWorkflowActions(container, report) {
       showFocusedGraph(focused, t("entryFlows.focusTitle", { label: workflow.start?.label || "" }), workflow.start?.id);
     });
   });
+}
+
+async function runJourney() {
+  const from = journeyFromInput.value.trim();
+  const to = journeyToInput.value.trim();
+  if (!from || !to) {
+    journeyResult.innerHTML = `<p class="empty">${escapeHtml(t("journey.needEndpoints"))}</p>`;
+    return;
+  }
+  const depth = clampNumber(Number(journeyDepthInput.value || 8), 1, 32);
+  const paths = clampNumber(Number(journeyPathsInput.value || 3), 1, 10);
+  journeyDepthInput.value = String(depth);
+  journeyPathsInput.value = String(paths);
+  state.journeyRequest += 1;
+  const requestId = state.journeyRequest;
+  journeyRunButton.disabled = true;
+  journeyResult.innerHTML = `<p class="empty">${escapeHtml(t("journey.building"))}</p>`;
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    from,
+    to,
+    depth: String(depth),
+    paths: String(paths),
+  });
+
+  try {
+    const response = await apiFetch(`/api/journey?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.journeyRequest) return;
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(body, response, t("journey.failedFallback")));
+    }
+    state.lastJourneyReport = {
+      generated_at: new Date().toISOString(),
+      root: pathInput.value.trim() || ".",
+      request: { from, to, depth, paths },
+      report: body,
+    };
+    renderJourneyExportState();
+    journeyResult.innerHTML = renderJourneyReport(body);
+    attachJourneyActions(journeyResult, body);
+  } catch (error) {
+    if (requestId !== state.journeyRequest) return;
+    state.lastJourneyReport = null;
+    renderJourneyExportState();
+    journeyResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.journeyRequest) {
+      journeyRunButton.disabled = false;
+    }
+  }
+}
+
+function renderJourneyReport(report) {
+  const paths = Array.isArray(report.paths) ? report.paths : [];
+  const summary = `
+    <div class="query-summary">
+      <span>${escapeHtml(`${report.from?.label || ""} → ${report.to?.label || ""}`)}</span>
+      <span>${escapeHtml(t("journey.pathCount", { count: formatNumber(report.total_paths || 0) }))}</span>
+      <span>${escapeHtml(t("trace.depth", { depth: formatNumber(report.max_depth || 0) }))}</span>
+    </div>
+  `;
+  if (!paths.length) {
+    const key = report.truncated ? "journey.truncatedNoPath" : "journey.noPaths";
+    return `${summary}<p class="empty">${escapeHtml(t(key))}</p>`;
+  }
+
+  const sections = paths
+    .map((path, index) => {
+      const risk = path.risk_summary || {};
+      const riskChips = [
+        risk.fragile_transitions
+          ? `<span class="workflow-risk warning">${escapeHtml(t("journey.fragileCount", { count: risk.fragile_transitions }))}</span>`
+          : "",
+        risk.low_confidence_hops
+          ? `<span class="workflow-risk info">${escapeHtml(t("journey.lowConfidenceCount", { count: risk.low_confidence_hops }))}</span>`
+          : "",
+        risk.risky_steps
+          ? `<span class="workflow-risk warning">${escapeHtml(t("journey.riskyStepCount", { count: risk.risky_steps }))}</span>`
+          : "",
+        risk.cycle_back_edges
+          ? `<span class="workflow-risk info">${escapeHtml(t("journey.cycleCount", { count: risk.cycle_back_edges }))}</span>`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("");
+      const steps = (path.steps || [])
+        .map((step) => {
+          const node = step.block?.node || {};
+          const fragile = step.fragile
+            ? `<span class="workflow-risk warning">${escapeHtml(
+                t("journey.fragile", { reasons: (step.fragile_reasons || []).map((reason) => formatKind(reason)).join(", ") }),
+              )}</span>`
+            : "";
+          const edge = step.transition?.edge;
+          const explanation = step.explanation?.summary
+            ? `<em class="journey-hop-note">${escapeHtml(step.explanation.summary)}</em>`
+            : "";
+          const edgeRow = edge
+            ? `<div class="edge-row">
+                <button class="trace-edge" type="button" data-node-id="${node.id ?? ""}">
+                  <span>${escapeHtml(formatKind(edge.kind || "unknown"))}</span>
+                  ${renderEdgeFacts(edge)}
+                </button>
+                ${renderEdgeActions(edge)}
+              </div>
+              <div class="edge-explanation" data-edge-explanation hidden></div>`
+            : "";
+          return `
+            <li class="workflow-block ${escapeHtml(step.block?.kind || "unknown")}">
+              <button type="button" data-node-id="${node.id ?? ""}">
+                <span>${escapeHtml(`${step.step}. ${formatKind(step.block?.kind || "unknown")}`)}</span>
+                <strong>${escapeHtml(node.label || String(node.id ?? ""))}</strong>
+                ${fragile}
+              </button>
+              ${explanation}
+              ${edgeRow}
+            </li>
+          `;
+        })
+        .join("");
+      return `
+        <section class="trace-columns">
+          <h3>${escapeHtml(t("journey.pathTitle", { rank: path.rank, steps: formatNumber(path.total_steps || 0) }))}</h3>
+          <div class="query-summary">
+            <span>${escapeHtml(t("journey.score", { score: formatNumber(path.confidence_score || 0) }))}</span>
+            ${path.lowest_confidence ? `<span>${escapeHtml(t("journey.lowest", { confidence: formatKind(path.lowest_confidence) }))}</span>` : ""}
+            ${riskChips}
+          </div>
+          <div class="query-actions">
+            <button type="button" data-journey-focus="${index}">${escapeHtml(t("journey.focusPath"))}</button>
+          </div>
+          <ol class="workflow-blocks">${steps}</ol>
+        </section>
+      `;
+    })
+    .join("");
+  return `${summary}${sections}`;
+}
+
+function attachJourneyActions(container, report) {
+  attachTraceNavigation(container);
+  attachEdgeExplainActions(container);
+  container.querySelectorAll("[data-journey-focus]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const path = report.paths?.[Number(button.dataset.journeyFocus)];
+      if (!path) return;
+      const steps = Array.isArray(path.steps) ? path.steps : [];
+      const focused = {
+        query: `journey ${report.from?.label || ""} -> ${report.to?.label || ""}`,
+        nodes: steps.map((step) => step.block?.node).filter(Boolean),
+        edges: steps.map((step) => step.transition?.edge).filter(Boolean),
+        total_nodes: steps.length,
+        total_edges: steps.filter((step) => step.transition).length,
+        truncated: false,
+      };
+      showFocusedGraph(
+        focused,
+        t("journey.focusTitle", { from: report.from?.label || "", to: report.to?.label || "" }),
+        report.from?.id,
+      );
+    });
+  });
+}
+
+function renderJourneyExportState() {
+  journeyExportButton.disabled = !state.lastJourneyReport;
+}
+
+function exportLastJourneyReport() {
+  if (!state.lastJourneyReport) return;
+  const payload = {
+    schema: "codegraph.journey.v1",
+    ...state.lastJourneyReport,
+  };
+  const serialized = JSON.stringify(payload, null, 2);
+  const blob = new Blob([serialized], { type: "application/json" });
+  const root = (state.lastJourneyReport.root || "project").replaceAll("/", "-").replaceAll(".", "") || "project";
+  downloadBlob(blob, `codegraph-${root}-journey.json`);
 }
 
 async function loadInsights() {

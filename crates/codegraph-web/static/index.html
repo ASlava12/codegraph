@@ -219,6 +219,37 @@
           <div id="entryFlowResult" class="query-result"></div>
         </section>
 
+        <section class="journey-panel" aria-label="Execution journey" data-i18n-aria-label="aria.journey">
+          <header>
+            <h2 data-i18n="section.journey">Journey</h2>
+          </header>
+          <div class="entrypoint-flow-fields">
+            <label class="field compact">
+              <span data-i18n="journey.from">From</span>
+              <input id="journeyFromInput" type="text" autocomplete="off" placeholder="main" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="journey.to">To</span>
+              <input id="journeyToInput" type="text" autocomplete="off" placeholder="load_config" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="label.depth">Depth</span>
+              <input id="journeyDepthInput" type="number" min="1" max="32" value="8" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="journey.paths">Paths</span>
+              <input id="journeyPathsInput" type="number" min="1" max="10" value="3" />
+            </label>
+          </div>
+          <div class="entrypoint-flow-actions">
+            <button id="journeyRunButton" type="button" data-i18n="button.buildJourney">Build Journey</button>
+            <button id="journeyExportButton" type="button" data-i18n="button.downloadJourney" disabled>
+              Download JSON
+            </button>
+          </div>
+          <div id="journeyResult" class="query-result"></div>
+        </section>
+
         <section class="graph-page" aria-label="Graph page" data-i18n-aria-label="aria.graphPage">
           <header>
             <h2 data-i18n="section.graphPage">Graph Page</h2>
