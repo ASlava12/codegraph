@@ -1373,6 +1373,8 @@ const state = {
     zoom: 1,
     selectedBlockId: null,
     hoveredBlockId: null,
+    selectedTransitionId: null,
+    hoveredTransitionId: null,
     lastPointer: null,
   },
   enabledKinds: new Set(),
@@ -10528,6 +10530,8 @@ function openFlowView(report, title) {
   state.flow.title = title || report.start?.label || "";
   state.flow.selectedBlockId = null;
   state.flow.hoveredBlockId = null;
+  state.flow.selectedTransitionId = null;
+  state.flow.hoveredTransitionId = null;
   layoutFlow();
   setStageView("flow");
   fitFlowView();
@@ -10647,6 +10651,81 @@ function flowBlockAt(world) {
   return null;
 }
 
+function flowTransitionGeometry(transition) {
+  const source = state.flow.positions.get(transition.source);
+  const target = state.flow.positions.get(transition.target);
+  if (!source || !target) return null;
+  const from = { x: source.x + FLOW_BLOCK_WIDTH, y: source.y + FLOW_BLOCK_HEIGHT / 2 };
+  const to = { x: target.x, y: target.y + FLOW_BLOCK_HEIGHT / 2 };
+  const forward = to.x >= from.x;
+  const bend = forward ? Math.max(36, (to.x - from.x) / 2) : 72;
+  if (forward) {
+    return {
+      from,
+      to,
+      c1: { x: from.x + bend, y: from.y },
+      c2: { x: to.x - bend, y: to.y },
+    };
+  }
+  const lift = Math.min(from.y, to.y) - FLOW_BLOCK_HEIGHT;
+  return {
+    from,
+    to,
+    c1: { x: from.x + bend, y: lift },
+    c2: { x: to.x - bend, y: lift },
+  };
+}
+
+function flowBezierPoint(geometry, t) {
+  const inverse = 1 - t;
+  const a = inverse * inverse * inverse;
+  const b = 3 * inverse * inverse * t;
+  const c = 3 * inverse * t * t;
+  const d = t * t * t;
+  return {
+    x: a * geometry.from.x + b * geometry.c1.x + c * geometry.c2.x + d * geometry.to.x,
+    y: a * geometry.from.y + b * geometry.c1.y + c * geometry.c2.y + d * geometry.to.y,
+  };
+}
+
+function flowTransitionAt(world) {
+  const threshold = 7 / Math.max(0.2, state.flow.zoom);
+  const thresholdSquared = threshold * threshold;
+  const transitions = flowTransitions();
+  for (let index = transitions.length - 1; index >= 0; index -= 1) {
+    const transition = transitions[index];
+    const geometry = flowTransitionGeometry(transition);
+    if (!geometry) continue;
+    const samples = 24;
+    for (let step = 0; step <= samples; step += 1) {
+      const point = flowBezierPoint(geometry, step / samples);
+      const dx = world.x - point.x;
+      const dy = world.y - point.y;
+      if (dx * dx + dy * dy <= thresholdSquared) return transition;
+    }
+  }
+  return null;
+}
+
+function flowBlockById(blockId) {
+  return flowBlocks().find((block) => block.id === blockId) || null;
+}
+
+function selectFlowTransition(transition) {
+  state.flow.selectedTransitionId = transition ? transition.id : null;
+  state.flow.selectedBlockId = null;
+  drawFlow();
+  if (!transition || !transition.edge) return;
+  const sourceBlock = flowBlockById(transition.source);
+  const targetBlock = flowBlockById(transition.target);
+  const selectionKey = registerEdgeSelection(
+    transition.edge,
+    sourceBlock?.node || null,
+    targetBlock?.node || null,
+  );
+  selectEdgeByKey(selectionKey);
+}
+
 function drawFlow() {
   if (flowCanvas.hidden) return;
   flowCtx.clearRect(0, 0, flowCanvas.width, flowCanvas.height);
@@ -10659,33 +10738,28 @@ function drawFlow() {
   flowCtx.scale(state.flow.zoom, state.flow.zoom);
 
   flowTransitions().forEach((transition) => {
-    const source = state.flow.positions.get(transition.source);
-    const target = state.flow.positions.get(transition.target);
-    if (!source || !target) return;
+    const geometry = flowTransitionGeometry(transition);
+    if (!geometry) return;
+    const focused =
+      state.flow.selectedTransitionId === transition.id ||
+      state.flow.hoveredTransitionId === transition.id;
     const active =
+      focused ||
       state.flow.selectedBlockId === transition.source ||
       state.flow.selectedBlockId === transition.target ||
       state.flow.hoveredBlockId === transition.source ||
       state.flow.hoveredBlockId === transition.target;
     const risky = Array.isArray(transition.risk_refs) && transition.risk_refs.length > 0;
-    const from = { x: source.x + FLOW_BLOCK_WIDTH, y: source.y + FLOW_BLOCK_HEIGHT / 2 };
-    const to = { x: target.x, y: target.y + FLOW_BLOCK_HEIGHT / 2 };
-    const forward = to.x >= from.x;
-    const bend = forward ? Math.max(36, (to.x - from.x) / 2) : 72;
+    const { from, c1, c2, to } = geometry;
     flowCtx.beginPath();
     flowCtx.moveTo(from.x, from.y);
-    if (forward) {
-      flowCtx.bezierCurveTo(from.x + bend, from.y, to.x - bend, to.y, to.x, to.y);
-    } else {
-      const lift = Math.min(from.y, to.y) - FLOW_BLOCK_HEIGHT;
-      flowCtx.bezierCurveTo(from.x + bend, lift, to.x - bend, lift, to.x, to.y);
-    }
+    flowCtx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, to.x, to.y);
     flowCtx.strokeStyle = risky
       ? "rgba(224, 108, 117, 0.85)"
       : active
         ? "rgba(92, 200, 167, 0.9)"
         : "rgba(169, 177, 214, 0.42)";
-    flowCtx.lineWidth = active ? 2.2 : 1.3;
+    flowCtx.lineWidth = focused ? 2.8 : active ? 2.2 : 1.3;
     flowCtx.stroke();
     flowCtx.beginPath();
     flowCtx.moveTo(to.x, to.y);
@@ -10820,6 +10894,7 @@ function renderFlowHud() {
 
 function selectFlowBlock(block) {
   state.flow.selectedBlockId = block ? block.id : null;
+  state.flow.selectedTransitionId = null;
   drawFlow();
   const nodeId = block?.node?.id;
   if (nodeId != null) selectNodeById(nodeId);
@@ -10828,18 +10903,32 @@ function selectFlowBlock(block) {
 function onFlowPointerDown(event) {
   flowCanvas.setPointerCapture(event.pointerId);
   state.flow.lastPointer = { x: event.offsetX, y: event.offsetY };
-  const hit = flowBlockAt(flowScreenToWorld(event.offsetX, event.offsetY));
-  if (hit) selectFlowBlock(hit);
+  const world = flowScreenToWorld(event.offsetX, event.offsetY);
+  const hit = flowBlockAt(world);
+  if (hit) {
+    selectFlowBlock(hit);
+    return;
+  }
+  const transitionHit = flowTransitionAt(world);
+  if (transitionHit) selectFlowTransition(transitionHit);
 }
 
 function onFlowPointerMove(event) {
-  const hit = flowBlockAt(flowScreenToWorld(event.offsetX, event.offsetY));
+  const world = flowScreenToWorld(event.offsetX, event.offsetY);
+  const hit = flowBlockAt(world);
+  const transitionHit = hit ? null : flowTransitionAt(world);
   const nextHoveredId = hit ? hit.id : null;
-  if (state.flow.hoveredBlockId !== nextHoveredId) {
+  const nextHoveredTransitionId = transitionHit ? transitionHit.id : null;
+  if (
+    state.flow.hoveredBlockId !== nextHoveredId ||
+    state.flow.hoveredTransitionId !== nextHoveredTransitionId
+  ) {
     state.flow.hoveredBlockId = nextHoveredId;
+    state.flow.hoveredTransitionId = nextHoveredTransitionId;
     drawFlow();
   }
-  flowCanvas.style.cursor = hit ? "pointer" : event.buttons === 1 ? "grabbing" : "grab";
+  flowCanvas.style.cursor =
+    hit || transitionHit ? "pointer" : event.buttons === 1 ? "grabbing" : "grab";
   if (!state.flow.lastPointer || event.buttons !== 1) return;
   state.flow.pan.x += event.offsetX - state.flow.lastPointer.x;
   state.flow.pan.y += event.offsetY - state.flow.lastPointer.y;

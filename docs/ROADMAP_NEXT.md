@@ -21,7 +21,7 @@ finished, regression-guarded feature for humans and agents.
 - [x] Add workflow regression fixtures for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, and Dart runtime paths with expected block/transition snapshots.
 - [x] Add workflow regression fixtures for CI, Docker, and Kubernetes entrypoint kinds using the new `entrypoint_kind` filters.
 - [x] Add a full web Flow view next to the graph canvas with pan, zoom, minimap, and selectable workflow blocks.
-- [ ] Reuse node and dependency cards from selected workflow blocks, including source preview, related risks, and edge explanations.
+- [x] Reuse node and dependency cards from selected workflow blocks, including source preview, related risks, and edge explanations.
 - [x] Localize workflow block labels and filter summaries in English and Russian (CLI help and API schema descriptions stay English as agent-facing contracts).
 
 Exit criteria:

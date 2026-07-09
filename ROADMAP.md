@@ -238,7 +238,7 @@ Goal: answer practical code investigation questions.
 - [x] Add web workflow filter controls for selected-node flows and entrypoint workflow reports.
 - [x] Add workflow query slices so existing graph query results can open as block diagrams.
 - [x] Add full web Flow view next to the graph canvas with pan, zoom, minimap, keyboard navigation, and selectable workflow blocks.
-- [ ] Reuse node and dependency cards from workflow blocks, including source preview, related dependencies, risks, and edge explanations.
+- [x] Reuse node and dependency cards from workflow blocks and transitions, including source preview, related dependencies, risks, and edge explanations.
 - [x] Add branch extraction for common if/match/try/catch constructs where parser or LSP facts support it.
 - [x] Add loop and async/concurrency markers for common constructs where confidence is high.
 - [x] Add workflow regression fixtures for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, and Dart runtime paths with expected block/transition shapes.

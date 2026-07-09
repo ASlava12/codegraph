@@ -8455,6 +8455,9 @@ fn helper() {}
         assert!(app.contains("function drawFlowMinimap"));
         assert!(app.contains("function onFlowPointerDown"));
         assert!(app.contains("function attachFlowViewActions"));
+        assert!(app.contains("function flowTransitionAt"));
+        assert!(app.contains("function selectFlowTransition"));
+        assert!(app.contains("registerEdgeSelection(\n    transition.edge,"));
         assert!(app.contains("data-flow-view"));
         assert!(app.contains("\"flow.openView\""));
         assert!(app.contains("\"flow.empty\""));

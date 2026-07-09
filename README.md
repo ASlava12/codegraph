@@ -145,6 +145,7 @@ Implemented now:
 - Web workflow filters are available for selected-node Flow panels and Entry Flows using edge kind, confidence, language, risk severity, and block kind controls.
 - Web workflow block-kind badges and applied-filter summaries are localized for English and Russian UI sessions.
 - Full web Flow view next to the graph canvas renders any built workflow as a depth-layered block diagram with pan, zoom, wheel/keyboard navigation, a minimap, hover highlighting, risk badges, and click-to-select blocks that open the standard node card.
+- Flow view transitions are selectable too: clicking a diagram edge opens the standard dependency card with confidence, provenance, edge-scoped risks, and exact edge explanation actions.
 - Selected-node Flow panels, Entry Flows, and query workflow results include an Open Flow view action that jumps into the block-diagram canvas.
 - Graph query results can be converted into block-style workflow reports from CLI, API, and web query result actions.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
