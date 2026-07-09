@@ -576,3 +576,46 @@ Exit criteria:
 - Every journey step can be expanded into implementation detail without losing the journey context.
 - Fragile hops and risky steps are visible before a refactor starts, not after it breaks.
 - An agent can request one bundle with enough context to plan a refactor without raw repository reads.
+
+## Phase 9: Feature Audit, Completion, And Usability
+
+Goal: walk through every shipped feature, finish what is incomplete, and make
+existing features genuinely convenient to use instead of merely present.
+
+Audit and completion:
+
+- [ ] Audit every checked roadmap item end-to-end across CLI, API, and web; file each found gap as a new unchecked item in its phase.
+- [ ] Sweep all phases for remaining unchecked items and finish, re-scope, or explicitly drop each one with a recorded reason.
+- [ ] Verify CLI/API/web feature parity: every analysis available in one surface is reachable from the other two or documented as intentionally surface-specific.
+- [ ] Dogfood CodeGraph on itself: run reports, insights, unreachable/journey queries against this repository and fix what the output makes hard to understand.
+
+Usability polish:
+
+- [ ] Unify CLI ergonomics: consistent flag names, sensible defaults, `--help` examples per command, and actionable error messages.
+- [ ] Improve web discoverability: panel onboarding hints, empty states that explain the next action, and sane default filters for large graphs.
+- [ ] Add task-oriented documentation guides (investigate a bug, trace a config value, plan a refactor) instead of feature-list documentation only.
+- [ ] Make agent-facing outputs self-describing: stable field docs, examples in the API schema, and copy-paste-ready CLI snippets in responses where useful.
+
+Exit criteria:
+
+- No roadmap item is silently half-implemented: everything is done, re-scoped, or dropped with a reason.
+- A new user can reach every major feature from `--help` and the web UI without reading the source.
+- Common investigation tasks are documented as step-by-step guides.
+
+## Phase 10: Code Refactoring And Internal Quality
+
+Goal: pay down structural debt so the codebase stays fast to change while
+behavior remains guarded by the existing test suite.
+
+- [ ] Split the monolithic crate files (`codegraph-analysis/src/lib.rs`, `codegraph-indexer/src/lib.rs`, `codegraph-parser/src/lib.rs`, `codegraph-server/src/main.rs`, `codegraph-web/static/app.js`) into focused modules with clear ownership.
+- [ ] Fix all clippy warnings on the current stable toolchain and keep `-D warnings` green in CI without allow-listing.
+- [ ] Extract shared report, filter, paging, and request-struct helpers to remove duplication between CLI, API, and web contracts.
+- [ ] Reduce long parameter lists by grouping them into request/options structs across analysis and server entry functions.
+- [ ] Add module-level documentation and tighten crate public APIs to intended surfaces.
+- [ ] Land refactors only behind green workspace tests, adding regression fixtures first where coverage is missing.
+
+Exit criteria:
+
+- No single source file dominates a crate; modules map to feature areas.
+- Clippy is clean on stable and enforced in CI.
+- A contributor can find the code for a feature from its module name alone.

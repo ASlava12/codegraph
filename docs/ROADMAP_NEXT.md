@@ -116,6 +116,41 @@ Exit criteria:
 - Dart/Flutter repositories reach the same fact depth as Rust/Go/TypeScript.
 - SQL and docs facts explain not only what exists but how it is connected.
 
+## Milestone 7: Feature Audit, Completion, And Usability
+
+Goal: ROADMAP Phase 9 — walk through every shipped feature, finish or
+explicitly close what is incomplete, and make existing features convenient
+rather than merely present.
+
+- [ ] Audit checked roadmap items end-to-end across CLI, API, and web; file every gap found as a new unchecked item in its phase.
+- [ ] Sweep all phases for remaining unchecked items and finish, re-scope, or drop each with a recorded reason.
+- [ ] Verify CLI/API/web feature parity and close or document intentional surface-specific gaps.
+- [ ] Dogfood CodeGraph on itself and fix what its own reports make hard to understand.
+- [ ] Unify CLI ergonomics: consistent flags, defaults, `--help` examples, actionable errors.
+- [ ] Improve web discoverability: onboarding hints, explanatory empty states, sane default filters for large graphs.
+- [ ] Add task-oriented guides (investigate a bug, trace a config value, plan a refactor).
+- [ ] Make agent-facing outputs self-describing with schema examples and copy-paste-ready snippets.
+
+Exit criteria:
+
+- Nothing is silently half-implemented; every item is done, re-scoped, or dropped with a reason.
+- Every major feature is reachable from `--help` and the web UI without reading source.
+
+## Milestone 8: Code Refactoring And Internal Quality
+
+Goal: ROADMAP Phase 10 — pay down structural debt behind green tests.
+
+- [ ] Split monolithic files into focused modules: `codegraph-analysis/src/lib.rs`, `codegraph-indexer/src/lib.rs`, `codegraph-parser/src/lib.rs`, `codegraph-server/src/main.rs`, `codegraph-web/static/app.js`.
+- [ ] Fix all clippy warnings on current stable and keep `-D warnings` green in CI without allow-listing.
+- [ ] Extract shared report/filter/paging helpers and request structs to remove CLI/API/web duplication and long parameter lists.
+- [ ] Add module-level docs and tighten crate public APIs to intended surfaces.
+- [ ] Add regression fixtures first wherever a planned refactor lacks coverage, then land the refactor behind green workspace tests.
+
+Exit criteria:
+
+- No single source file dominates a crate; modules map to feature areas.
+- Clippy is clean on stable and enforced in CI.
+
 ## Working Agreement
 
 - One checkbox per commit, with tests and doc updates in the same commit.
