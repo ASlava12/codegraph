@@ -2455,6 +2455,20 @@ button.cancel-action:hover:not(:disabled) {
   margin-left: auto;
 }
 
+.journey-subflow {
+  margin: 8px 0 4px 14px;
+  padding-left: 12px;
+  border-left: 2px solid rgba(92, 200, 167, 0.35);
+}
+
+.journey-breadcrumb {
+  align-items: center;
+}
+
+.journey-expand {
+  margin-top: 4px;
+}
+
 .graph-minimap {
   position: absolute;
   top: 16px;

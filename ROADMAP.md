@@ -562,8 +562,8 @@ Problems along the flow:
 
 Drill-down:
 
-- [ ] Expand a journey step into a nested sub-flow with breadcrumb context back to the parent journey.
-- [ ] Open node cards, dependency cards, and source previews directly from journey steps.
+- [x] Expand a journey step into a nested sub-flow with breadcrumb context back to the parent journey.
+- [x] Open node cards, dependency cards, and source previews directly from journey steps.
 
 Refactoring reports:
 

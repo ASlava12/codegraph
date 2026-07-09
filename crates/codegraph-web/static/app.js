@@ -283,6 +283,11 @@ const I18N = {
     "journey.cycleCount": "{count} cycle back edges",
     "journey.focusPath": "Focus path",
     "journey.focusTitle": "Journey: {from} → {to}",
+    "journey.expandStep": "Expand step",
+    "journey.collapseStep": "Back to journey",
+    "journey.subflowLoading": "Loading sub-flow...",
+    "journey.subflowFailedFallback": "sub-flow failed",
+    "journey.subflowTitle": "{from} → {to} · step {step} · {label}",
     "aria.journey": "Execution journey",
     "section.graphPage": "Graph Page",
     "section.sourceSearch": "Source Search",
@@ -946,6 +951,11 @@ const I18N = {
     "journey.cycleCount": "обратных рёбер: {count}",
     "journey.focusPath": "Показать на графе",
     "journey.focusTitle": "Маршрут: {from} → {to}",
+    "journey.expandStep": "Раскрыть шаг",
+    "journey.collapseStep": "Назад к маршруту",
+    "journey.subflowLoading": "Загружаю под-поток...",
+    "journey.subflowFailedFallback": "под-поток не построен",
+    "journey.subflowTitle": "{from} → {to} · шаг {step} · {label}",
     "aria.journey": "Маршрут выполнения",
     "section.graphPage": "Страница графа",
     "section.sourceSearch": "Поиск в коде",
@@ -4872,6 +4882,10 @@ function renderJourneyReport(report) {
               </div>
               <div class="edge-explanation" data-edge-explanation hidden></div>`
             : "";
+          const expand =
+            node.id != null
+              ? `<button type="button" class="journey-expand" data-journey-expand data-node-id-expand="${node.id}" data-step="${step.step}" data-label="${escapeHtml(node.label || String(node.id))}">${escapeHtml(t("journey.expandStep"))}</button>`
+              : "";
           return `
             <li class="workflow-block ${escapeHtml(step.block?.kind || "unknown")}">
               <button type="button" data-node-id="${node.id ?? ""}">
@@ -4881,6 +4895,8 @@ function renderJourneyReport(report) {
               </button>
               ${explanation}
               ${edgeRow}
+              ${expand}
+              <div class="journey-subflow" data-journey-subflow hidden></div>
             </li>
           `;
         })
@@ -4907,6 +4923,9 @@ function renderJourneyReport(report) {
 function attachJourneyActions(container, report) {
   attachTraceNavigation(container);
   attachEdgeExplainActions(container);
+  container.querySelectorAll("[data-journey-expand]").forEach((button) => {
+    button.addEventListener("click", () => expandJourneyStep(button, report));
+  });
   container.querySelectorAll("[data-journey-focus]").forEach((button) => {
     button.addEventListener("click", () => {
       const path = report.paths?.[Number(button.dataset.journeyFocus)];
@@ -4927,6 +4946,76 @@ function attachJourneyActions(container, report) {
       );
     });
   });
+}
+
+async function expandJourneyStep(button, report) {
+  const target = button.closest("li")?.querySelector("[data-journey-subflow]");
+  if (!target) return;
+  if (!target.hidden) {
+    target.hidden = true;
+    target.innerHTML = "";
+    button.textContent = t("journey.expandStep");
+    return;
+  }
+  const nodeId = Number(button.dataset.nodeIdExpand);
+  if (!Number.isInteger(nodeId)) return;
+  const requestToken = String((state.journeyRequest += 1));
+  button.dataset.expandToken = requestToken;
+  target.hidden = false;
+  target.innerHTML = `<p class="empty">${escapeHtml(t("journey.subflowLoading"))}</p>`;
+  button.disabled = true;
+
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    node_id: String(nodeId),
+    depth: "3",
+    block_limit: "60",
+    compact: "true",
+  });
+
+  try {
+    const response = await apiFetch(`/api/workflow?${params.toString()}`);
+    const body = await response.json();
+    if (button.dataset.expandToken !== requestToken) return;
+    if (!response.ok || !body) {
+      throw new Error(apiErrorMessage(body, response, t("journey.subflowFailedFallback")));
+    }
+    const breadcrumb = `
+      <div class="query-summary journey-breadcrumb">
+        <span>${escapeHtml(
+          t("journey.subflowTitle", {
+            from: report.from?.label || "",
+            to: report.to?.label || "",
+            step: button.dataset.step || "",
+            label: button.dataset.label || "",
+          }),
+        )}</span>
+        <button type="button" data-journey-collapse>${escapeHtml(t("journey.collapseStep"))}</button>
+      </div>
+    `;
+    target.innerHTML = `${breadcrumb}${renderWorkflow(body)}`;
+    attachWorkflowNavigation(target);
+    attachEdgeExplainActions(target);
+    attachFlowViewActions(
+      target,
+      () => body,
+      () => button.dataset.label || "",
+    );
+    target.querySelector("[data-journey-collapse]")?.addEventListener("click", () => {
+      target.hidden = true;
+      target.innerHTML = "";
+      button.textContent = t("journey.expandStep");
+    });
+    button.textContent = t("journey.collapseStep");
+  } catch (error) {
+    if (button.dataset.expandToken !== requestToken) return;
+    target.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (button.dataset.expandToken === requestToken) {
+      button.disabled = false;
+      delete button.dataset.expandToken;
+    }
+  }
 }
 
 function renderJourneyExportState() {

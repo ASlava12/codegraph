@@ -8869,6 +8869,10 @@ fn helper() {}
         assert!(app.contains("/api/journey?"));
         assert!(app.contains("codegraph.journey.v1"));
         assert!(app.contains("\"journey.pathTitle\""));
+        assert!(app.contains("async function expandJourneyStep"));
+        assert!(app.contains("data-journey-expand"));
+        assert!(app.contains("data-journey-collapse"));
+        assert!(app.contains("\"journey.subflowTitle\""));
         assert!(app.contains("\"journey.fragile\""));
         assert!(app.contains("\"button.buildJourney\""));
     }
