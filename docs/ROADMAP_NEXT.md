@@ -22,7 +22,7 @@ finished, regression-guarded feature for humans and agents.
 - [x] Add workflow regression fixtures for CI, Docker, and Kubernetes entrypoint kinds using the new `entrypoint_kind` filters.
 - [ ] Add a full web Flow view next to the graph canvas with pan, zoom, minimap, and selectable workflow blocks.
 - [ ] Reuse node and dependency cards from selected workflow blocks, including source preview, related risks, and edge explanations.
-- [ ] Localize workflow block labels, commands, and schema descriptions in English and Russian.
+- [x] Localize workflow block labels and filter summaries in English and Russian (CLI help and API schema descriptions stay English as agent-facing contracts).
 
 Exit criteria:
 

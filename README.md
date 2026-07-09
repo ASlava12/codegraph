@@ -143,6 +143,7 @@ Implemented now:
 - Entrypoint workflow reports can be restricted to an entrypoint kind such as routes, CI workflow/pipeline jobs, Makefile targets, Docker/Compose commands, and Kubernetes workloads across CLI, API, and web, with known kinds published as API schema enum suggestions.
 - Web Entry Flows can build block-style workflow reports for matched entrypoints, focus a workflow slice on the graph, and download JSON, Mermaid, or DOT for agent handoff and external diagramming.
 - Web workflow filters are available for selected-node Flow panels and Entry Flows using edge kind, confidence, language, risk severity, and block kind controls.
+- Web workflow block-kind badges and applied-filter summaries are localized for English and Russian UI sessions.
 - Graph query results can be converted into block-style workflow reports from CLI, API, and web query result actions.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Web config trace reports can be downloaded as JSON with target, depth, matched readers, and dependency paths.

@@ -244,7 +244,7 @@ Goal: answer practical code investigation questions.
 - [x] Add workflow regression fixtures for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, and Dart runtime paths with expected block/transition shapes.
 - [x] Add workflow regression fixtures for CI, Docker, and Kubernetes entrypoint-kind runtime paths.
 - [x] Add remaining workflow export downloads for DOT and visible-slice JSON.
-- [ ] Localize workflow UI, commands, schema descriptions, and block labels in English and Russian.
+- [x] Localize workflow web UI, block-kind labels, and filter summaries in English and Russian; CLI command help and API schema descriptions intentionally stay English as agent-facing contracts.
 
 Example commands:
 
