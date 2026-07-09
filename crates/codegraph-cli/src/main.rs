@@ -193,6 +193,10 @@ enum Command {
         #[arg(long, default_value_t = 8)]
         depth: usize,
 
+        /// Maximum ranked alternative paths to return.
+        #[arg(long, default_value_t = 3)]
+        paths: usize,
+
         /// Include hidden files and directories.
         #[arg(long)]
         include_hidden: bool,
@@ -1403,6 +1407,7 @@ fn main() -> Result<()> {
             to,
             path,
             depth,
+            paths,
             include_hidden,
             include_ignored,
             cache,
@@ -1415,6 +1420,7 @@ fn main() -> Result<()> {
                     from,
                     to,
                     max_depth: depth,
+                    path_limit: paths,
                 },
             )?;
             println!("{}", serde_json::to_string_pretty(&report)?);

@@ -148,7 +148,8 @@ Implemented now:
 - Flow view transitions are selectable too: clicking a diagram edge opens the standard dependency card with confidence, provenance, edge-scoped risks, and exact edge explanation actions.
 - Selected-node Flow panels, Entry Flows, and query workflow results include an Open Flow view action that jumps into the block-diagram canvas.
 - Graph query results can be converted into block-style workflow reports from CLI, API, and web query result actions.
-- Target-directed journey reports (CLI `journey --from <start> --to <target>`, API `/api/journey`) expand the shortest entrypoint-to-target path into a step-numbered execution chain of workflow blocks with control-flow markers, edge provenance, and risk references on every step.
+- Target-directed journey reports (CLI `journey --from <start> --to <target>`, API `/api/journey`) expand entrypoint-to-target paths into step-numbered execution chains of workflow blocks with control-flow markers, edge provenance, and risk references on every step.
+- Journey reports rank up to `--paths` alternative routes by edge confidence and length, report per-path `confidence_score` and `lowest_confidence`, and attach structured per-hop explanations (confidence note, relation, provenance source) for why each transition exists.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Web config trace reports can be downloaded as JSON with target, depth, matched readers, and dependency paths.
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.
@@ -543,10 +544,10 @@ Follow one execution journey from an entrypoint to a target as a step-numbered c
 
 ```bash
 cargo run -p codegraph-cli -- journey --from main --to load_config .
-cargo run -p codegraph-cli -- journey --from "cargo bin:codegraph-server" --to scan_graph . --depth 12
+cargo run -p codegraph-cli -- journey --from "cargo bin:codegraph-server" --to scan_graph . --depth 12 --paths 5
 ```
 
-Journey steps reuse workflow blocks, so each step keeps its block kind (start, call, branch, loop, async, return, error), node, incoming transition with edge provenance, and related risk references.
+Journey steps reuse workflow blocks, so each step keeps its block kind (start, call, branch, loop, async, return, error), node, incoming transition with edge provenance, and related risk references. Up to `--paths` alternative routes are returned, ranked by edge confidence and then length (exact evidence beats heuristic guesses even when the heuristic route is shorter); alternatives avoid edges already used by better-ranked paths, each path reports its `confidence_score` and `lowest_confidence`, and every hop carries a structured explanation of why the transition exists.
 
 Trace incoming dependents for impact analysis:
 
@@ -828,7 +829,7 @@ curl --get 'http://127.0.0.1:3765/api/explain-edge' \
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
 curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&depth=4&block_limit=200&compact=true'
 curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&edge_kind=calls&confidence=heuristic&block_kind=call'
-curl 'http://127.0.0.1:3765/api/journey?path=.&from=main&to=load_config&depth=8'
+curl 'http://127.0.0.1:3765/api/journey?path=.&from=main&to=load_config&depth=8&paths=3'
 curl --get 'http://127.0.0.1:3765/api/workflow-query' \
   --data-urlencode 'path=.' \
   --data-urlencode 'q=nodes kind:function search:main' \

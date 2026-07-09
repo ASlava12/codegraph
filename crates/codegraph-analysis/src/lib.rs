@@ -346,6 +346,19 @@ pub struct JourneyRequest {
     pub from: String,
     pub to: String,
     pub max_depth: usize,
+    #[serde(default)]
+    pub path_limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JourneyHopExplanation {
+    pub confidence: String,
+    pub confidence_note: String,
+    #[serde(default)]
+    pub relation: Option<String>,
+    #[serde(default)]
+    pub provenance_source: Option<String>,
+    pub summary: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,12 +366,18 @@ pub struct JourneyStep {
     pub step: usize,
     #[serde(default)]
     pub transition: Option<WorkflowTransition>,
+    #[serde(default)]
+    pub explanation: Option<JourneyHopExplanation>,
     pub block: WorkflowBlock,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JourneyPath {
+    pub rank: usize,
     pub total_steps: usize,
+    pub confidence_score: usize,
+    #[serde(default)]
+    pub lowest_confidence: Option<String>,
     pub steps: Vec<JourneyStep>,
 }
 
@@ -3514,48 +3533,40 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
         .cloned()
         .ok_or_else(|| QueryError::new(format!("journey target `{to}` did not match a node")))?;
     let insight_report = insights(graph);
-
-    let mut edge_path = None;
-    let mut truncated = false;
-    if start != target {
-        let mut visited = BTreeSet::from([start]);
-        let mut parents: BTreeMap<NodeId, (NodeId, usize)> = BTreeMap::new();
-        let mut queue = VecDeque::from([(start, 0usize)]);
-
-        'search: while let Some((node_id, depth)) = queue.pop_front() {
-            if depth >= max_depth {
-                if trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
-                    .next()
-                    .is_some()
-                {
-                    truncated = true;
-                }
-                continue;
-            }
-            for (edge_index, edge) in
-                trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
-            {
-                if !visited.insert(edge.target) {
-                    continue;
-                }
-                parents.insert(edge.target, (node_id, edge_index));
-                if edge.target == target {
-                    edge_path = Some(reconstruct_path_edges(start, target, &parents)?);
-                    break 'search;
-                }
-                queue.push_back((edge.target, depth + 1));
-            }
-        }
+    let path_limit = if request.path_limit == 0 {
+        3
     } else {
-        edge_path = Some(Vec::new());
+        request.path_limit.clamp(1, 10)
+    };
+
+    let mut edge_paths: Vec<Vec<usize>> = Vec::new();
+    let mut truncated = false;
+    if start == target {
+        edge_paths.push(Vec::new());
+    } else {
+        let mut banned_edges: BTreeSet<usize> = BTreeSet::new();
+        while edge_paths.len() < path_limit {
+            let (found, hit_depth_bound) =
+                journey_shortest_path(graph, start, target, max_depth, &banned_edges)?;
+            truncated = truncated || hit_depth_bound;
+            let Some(edge_indexes) = found else {
+                break;
+            };
+            banned_edges.extend(edge_indexes.iter().copied());
+            edge_paths.push(edge_indexes);
+        }
     }
 
-    let paths = edge_path
+    let mut paths = edge_paths
+        .into_iter()
         .map(|edge_indexes| {
             let mut steps = Vec::with_capacity(edge_indexes.len() + 1);
+            let mut confidence_score = 0usize;
+            let mut lowest: Option<Confidence> = None;
             steps.push(JourneyStep {
                 step: 1,
                 transition: None,
+                explanation: None,
                 block: journey_block(&insight_report, &start_node, None, true, 0),
             });
             for (offset, edge_index) in edge_indexes.iter().enumerate() {
@@ -3565,6 +3576,12 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
                 let Some(node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
                     continue;
                 };
+                confidence_score += journey_confidence_weight(edge.confidence);
+                if lowest.is_none_or(|current| {
+                    journey_confidence_weight(edge.confidence) > journey_confidence_weight(current)
+                }) {
+                    lowest = Some(edge.confidence);
+                }
                 steps.push(JourneyStep {
                     step: offset + 2,
                     transition: Some(WorkflowTransition {
@@ -3579,16 +3596,23 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
                         compacted: false,
                         compacted_count: 1,
                     }),
+                    explanation: Some(journey_hop_explanation(edge)),
                     block: journey_block(&insight_report, node, Some(edge), false, offset + 1),
                 });
             }
             JourneyPath {
+                rank: 0,
                 total_steps: steps.len(),
+                confidence_score,
+                lowest_confidence: lowest.map(|confidence| confidence_name(confidence).to_string()),
                 steps,
             }
         })
-        .into_iter()
         .collect::<Vec<_>>();
+    paths.sort_by_key(|path| (path.confidence_score, path.total_steps));
+    for (index, path) in paths.iter_mut().enumerate() {
+        path.rank = index + 1;
+    }
 
     Ok(JourneyReport {
         from: start_node,
@@ -3598,6 +3622,89 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
         truncated: truncated && paths.is_empty(),
         paths,
     })
+}
+
+fn journey_shortest_path(
+    graph: &CodeGraph,
+    start: NodeId,
+    target: NodeId,
+    max_depth: usize,
+    banned_edges: &BTreeSet<usize>,
+) -> Result<(Option<Vec<usize>>, bool), QueryError> {
+    let mut visited = BTreeSet::from([start]);
+    let mut parents: BTreeMap<NodeId, (NodeId, usize)> = BTreeMap::new();
+    let mut queue = VecDeque::from([(start, 0usize)]);
+    let mut hit_depth_bound = false;
+
+    while let Some((node_id, depth)) = queue.pop_front() {
+        if depth >= max_depth {
+            if trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
+                .any(|(edge_index, _)| !banned_edges.contains(&edge_index))
+            {
+                hit_depth_bound = true;
+            }
+            continue;
+        }
+        for (edge_index, edge) in trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
+        {
+            if banned_edges.contains(&edge_index) {
+                continue;
+            }
+            if !visited.insert(edge.target) {
+                continue;
+            }
+            parents.insert(edge.target, (node_id, edge_index));
+            if edge.target == target {
+                return Ok((
+                    Some(reconstruct_path_edges(start, target, &parents)?),
+                    hit_depth_bound,
+                ));
+            }
+            queue.push_back((edge.target, depth + 1));
+        }
+    }
+
+    Ok((None, hit_depth_bound))
+}
+
+fn journey_confidence_weight(confidence: Confidence) -> usize {
+    match confidence {
+        Confidence::Exact => 0,
+        Confidence::Semantic => 1,
+        Confidence::Syntactic => 2,
+        Confidence::Heuristic => 3,
+        Confidence::Unknown => 4,
+    }
+}
+
+fn journey_hop_explanation(edge: &Edge) -> JourneyHopExplanation {
+    let confidence = confidence_name(edge.confidence).to_string();
+    let confidence_note = confidence_evidence(edge.confidence)
+        .trim_start_matches("confidence_note=")
+        .to_string();
+    let relation = edge.metadata.get("relation").cloned();
+    let provenance_source = edge
+        .metadata
+        .get("source")
+        .or_else(|| edge.metadata.get("parser"))
+        .cloned();
+    let mut summary = format!(
+        "{} edge ({confidence}): {confidence_note}",
+        edge_kind_name(&edge.kind)
+    );
+    if let Some(relation) = &relation {
+        summary.push_str(&format!(", relation {relation}"));
+    }
+    if let Some(source) = &provenance_source {
+        summary.push_str(&format!(", via {source}"));
+    }
+    JourneyHopExplanation {
+        confidence,
+        confidence_note,
+        relation,
+        provenance_source,
+        summary,
+    }
 }
 
 fn journey_block(
@@ -15501,6 +15608,7 @@ mod tests {
                 from: "cargo bin:api".to_string(),
                 to: "load_config".to_string(),
                 max_depth: 8,
+                path_limit: 0,
             },
         )
         .expect("journey report");
@@ -15538,6 +15646,65 @@ mod tests {
     }
 
     #[test]
+    fn journey_ranks_alternative_paths_and_explains_hops() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        let via_exact = graph.add_node(NodeKind::Function, "via_exact");
+        let target = graph.add_node(NodeKind::Function, "load_config");
+        graph.add_edge(graph.root, main, EdgeKind::Contains, Confidence::Exact);
+        // Short but heuristic route: main -> load_config.
+        graph.add_edge(main, target, EdgeKind::Calls, Confidence::Heuristic);
+        // Longer but exact route: main -> via_exact -> load_config.
+        graph.add_edge(main, via_exact, EdgeKind::Calls, Confidence::Exact);
+        graph.add_edge(via_exact, target, EdgeKind::Calls, Confidence::Exact);
+
+        let report = journey(
+            &graph,
+            JourneyRequest {
+                from: "main".to_string(),
+                to: "load_config".to_string(),
+                max_depth: 8,
+                path_limit: 3,
+            },
+        )
+        .expect("journey report");
+
+        assert_eq!(report.total_paths, 2);
+        assert_eq!(
+            report
+                .paths
+                .iter()
+                .map(|path| path.rank)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        let best = &report.paths[0];
+        let alternative = &report.paths[1];
+        assert_eq!(best.total_steps, 3, "exact route should rank first");
+        assert_eq!(best.confidence_score, 0);
+        assert_eq!(best.lowest_confidence.as_deref(), Some("exact"));
+        assert!(
+            best.steps
+                .iter()
+                .any(|step| step.block.node.id == via_exact)
+        );
+        assert_eq!(alternative.total_steps, 2);
+        assert_eq!(alternative.lowest_confidence.as_deref(), Some("heuristic"));
+        assert!(alternative.confidence_score > best.confidence_score);
+
+        for path in &report.paths {
+            for step in &path.steps[1..] {
+                let explanation = step.explanation.as_ref().expect("hop explanation");
+                assert!(!explanation.confidence.is_empty());
+                assert!(!explanation.confidence_note.is_empty());
+                assert!(explanation.summary.contains("calls edge"));
+                assert!(explanation.summary.contains(&explanation.confidence));
+            }
+            assert!(path.steps[0].explanation.is_none());
+        }
+    }
+
+    #[test]
     fn journey_reports_unresolved_endpoints_and_missing_paths() {
         let mut graph = CodeGraph::new("repo");
         let main = graph.add_node(NodeKind::Function, "main");
@@ -15551,6 +15718,7 @@ mod tests {
                 from: "ghost".to_string(),
                 to: "main".to_string(),
                 max_depth: 4,
+                path_limit: 0,
             },
         );
         assert!(missing_from.is_err());
@@ -15561,6 +15729,7 @@ mod tests {
                 from: "main".to_string(),
                 to: "isolated".to_string(),
                 max_depth: 4,
+                path_limit: 0,
             },
         )
         .expect("journey report without path");
@@ -15573,6 +15742,7 @@ mod tests {
                 from: "main".to_string(),
                 to: "main".to_string(),
                 max_depth: 4,
+                path_limit: 0,
             },
         )
         .expect("same-node journey");

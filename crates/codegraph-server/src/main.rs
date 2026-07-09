@@ -456,6 +456,7 @@ struct JourneyQuery {
     from: String,
     to: String,
     depth: Option<usize>,
+    paths: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2915,6 +2916,7 @@ async fn journey_api(
             from: query.from,
             to: query.to,
             max_depth: query.depth.unwrap_or(8).clamp(1, 32),
+            path_limit: query.paths.unwrap_or(3).clamp(1, 10),
         },
     )
     .map_err(|error| ApiError::bad_request(error.to_string()))?;
@@ -5317,6 +5319,14 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "Maximum path search depth between the endpoints.",
                         )
                         .with_range(1, 32),
+                        query_param(
+                            "paths",
+                            false,
+                            "usize",
+                            Some("3"),
+                            "Maximum ranked alternative paths to return; alternatives avoid edges used by better-ranked paths.",
+                        )
+                        .with_range(1, 10),
                     ],
                     "JourneyReport",
                 )
@@ -6790,7 +6800,7 @@ fn journey_response_fields() -> Vec<ApiParameterSpec> {
             "paths",
             true,
             "JourneyPath[]",
-            "Step-numbered execution chains; each step carries a workflow block and the incoming transition with edge provenance and risk references.",
+            "Execution chains ranked by edge confidence then length; each path carries rank, confidence_score, lowest_confidence, and step-numbered blocks whose transitions include edge provenance, per-hop explanations, and risk references.",
         ),
         response_field(
             "truncated",
@@ -7970,6 +7980,7 @@ fn ready() -> bool {
                 from: "main".to_string(),
                 to: "load_config".to_string(),
                 depth: Some(8),
+                paths: None,
             }),
         )
         .await
@@ -7998,6 +8009,7 @@ fn ready() -> bool {
                 from: "ghost".to_string(),
                 to: "load_config".to_string(),
                 depth: Some(8),
+                paths: None,
             }),
         )
         .await
@@ -9630,6 +9642,9 @@ fn helper() {}
         );
         assert!(journey_endpoint.parameters.iter().any(|parameter| {
             parameter.name == "depth" && parameter.default.as_deref() == Some("8")
+        }));
+        assert!(journey_endpoint.parameters.iter().any(|parameter| {
+            parameter.name == "paths" && parameter.default.as_deref() == Some("3")
         }));
         assert!(
             journey_endpoint
