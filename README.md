@@ -152,6 +152,7 @@ Implemented now:
 - Journey reports rank up to `--paths` alternative routes by edge confidence and length, report per-path `confidence_score` and `lowest_confidence`, and attach structured per-hop explanations (confidence note, relation, provenance source) for why each transition exists.
 - Web Journey panel builds ranked entrypoint-to-target chains from `/api/journey`: step-numbered blocks with localized kind badges, fragile/risk chips, per-hop provenance notes, node/dependency card actions, graph focus per path, and JSON export for agent handoff.
 - Journey steps expand in place into nested sub-flows (bounded workflow slices from the step node) with breadcrumb context back to the parent journey, collapse actions, and the same block/edge card and Flow-view actions as regular workflows.
+- Coupling/seam reports (CLI `seams`, API `/api/seams`) rank cross-area boundaries by deterministic friction score both ways: safest thin seams for extraction and most tangled boundaries needing work, with edge-kind/confidence breakdowns and sample edge evidence.
 - Blast-radius reports (CLI `impact`, API `/api/impact`) list transitive dependents with distances, test flags, and risk counts, extract affected entrypoints/routes/tests, and compute a deterministic risk-weighted impact score for refactor planning.
 - Component dependency reports (CLI `component-dependencies`, API `/api/component-dependencies`) group a node's incoming/outgoing dependencies by architecture area, package, and language; component contract views (CLI `component-contract`, API `/api/component-contract`) list the exact cross-area edges with confidence and risk counts.
 - Journey paths carry a `risk_summary` (risky steps/transitions, low-confidence hops, unresolved and ambiguous calls, duplicate labels, cycle back edges, severity counts) and per-step `fragile` flags with reasons so refactor-breaking hops are visible before changes start.
@@ -562,6 +563,15 @@ cargo run -p codegraph-cli -- component-contract --source web --target crates .
 ```
 
 `component-dependencies` groups a node's incoming/outgoing edges by architecture area, canonical package, and language with confidence counts and sample edge indexes; `component-contract` lists the exact directed dependency edges between two architecture areas with edge kinds, confidence counts, and related risk counts for boundary reviews.
+
+Rank cross-area boundaries by coupling friction before choosing where to cut:
+
+```bash
+cargo run -p codegraph-cli -- seams . --limit 25
+curl 'http://127.0.0.1:3765/api/seams?path=.&limit=25'
+```
+
+The seam report aggregates directed dependency edges between architecture areas and ranks every boundary two ways: `safest` (ascending friction — thin, well-declared seams where extraction is safest) and `most_needed` (descending friction — tangled boundaries where splitting pays off most). `friction_score` = edges + 2×low-confidence edges + 3×edge risks + distinct edge kinds; each candidate carries edge-kind and confidence breakdowns plus sample edge indexes for exact evidence.
 
 Report the blast radius of changing a node before a refactor:
 

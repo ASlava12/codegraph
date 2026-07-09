@@ -568,7 +568,7 @@ Drill-down:
 Refactoring reports:
 
 - [x] Add blast-radius reports for a selected node: dependents, affected entrypoints/routes/tests, and a risk-weighted impact score (CLI `impact`, API `/api/impact`).
-- [ ] Add coupling/seam reports that suggest boundaries where extraction or splitting is safest and where it is most needed.
+- [x] Add coupling/seam reports that suggest boundaries where extraction or splitting is safest and where it is most needed.
 - [ ] Add a machine-readable refactor context bundle combining journey, dependencies, risks, and source spans for one-shot agent handoff.
 
 Exit criteria:

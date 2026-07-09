@@ -458,6 +458,33 @@ pub struct ComponentContractReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeamRequest {
+    pub limit: usize,
+    pub edge_limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeamCandidate {
+    pub source_area: String,
+    pub target_area: String,
+    pub edge_count: usize,
+    pub edge_kinds: BTreeMap<String, usize>,
+    pub confidence_counts: BTreeMap<String, usize>,
+    pub low_confidence_edges: usize,
+    pub risk_count: usize,
+    pub friction_score: usize,
+    pub sample_edge_indexes: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeamReport {
+    pub total_pairs: usize,
+    pub safest: Vec<SeamCandidate>,
+    pub most_needed: Vec<SeamCandidate>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImpactRequest {
     pub target: String,
     pub max_depth: usize,
@@ -4011,6 +4038,100 @@ fn component_resolve_area(
                 .collect::<Vec<_>>()
                 .join(", ")
         ))),
+    }
+}
+
+pub fn seams(graph: &CodeGraph, request: SeamRequest) -> SeamReport {
+    let limit = request.limit.clamp(1, 100);
+    let edge_limit = request.edge_limit.clamp(1, 50);
+    let nodes_by_id: BTreeMap<NodeId, &Node> =
+        graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let areas = node_architecture_areas(graph, &nodes_by_id);
+    let insight_report = insights(graph);
+
+    let mut pairs: BTreeMap<(String, String), SeamCandidate> = BTreeMap::new();
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
+        if !is_architecture_dependency_edge(&edge.kind) {
+            continue;
+        }
+        let (Some(source_area), Some(target_area)) =
+            (areas.get(&edge.source), areas.get(&edge.target))
+        else {
+            continue;
+        };
+        if source_area == target_area {
+            continue;
+        }
+        let candidate = pairs
+            .entry((source_area.clone(), target_area.clone()))
+            .or_insert_with(|| SeamCandidate {
+                source_area: source_area.clone(),
+                target_area: target_area.clone(),
+                edge_count: 0,
+                edge_kinds: BTreeMap::new(),
+                confidence_counts: BTreeMap::new(),
+                low_confidence_edges: 0,
+                risk_count: 0,
+                friction_score: 0,
+                sample_edge_indexes: Vec::new(),
+            });
+        candidate.edge_count += 1;
+        *candidate
+            .edge_kinds
+            .entry(edge_kind_name(&edge.kind).to_string())
+            .or_insert(0) += 1;
+        *candidate
+            .confidence_counts
+            .entry(confidence_name(edge.confidence).to_string())
+            .or_insert(0) += 1;
+        if matches!(edge.confidence, Confidence::Heuristic | Confidence::Unknown) {
+            candidate.low_confidence_edges += 1;
+        }
+        candidate.risk_count += workflow_risk_refs_for_edge(&insight_report, edge_index).len();
+        if candidate.sample_edge_indexes.len() < edge_limit {
+            candidate.sample_edge_indexes.push(edge_index);
+        }
+    }
+
+    let mut candidates = pairs.into_values().collect::<Vec<_>>();
+    for candidate in &mut candidates {
+        candidate.friction_score = candidate.edge_count
+            + candidate.low_confidence_edges * 2
+            + candidate.risk_count * 3
+            + candidate.edge_kinds.len();
+    }
+    let total_pairs = candidates.len();
+
+    let mut safest = candidates.clone();
+    safest.sort_by(|left, right| {
+        left.friction_score
+            .cmp(&right.friction_score)
+            .then_with(|| left.edge_count.cmp(&right.edge_count))
+            .then_with(|| {
+                (left.source_area.as_str(), left.target_area.as_str())
+                    .cmp(&(right.source_area.as_str(), right.target_area.as_str()))
+            })
+    });
+    safest.truncate(limit);
+
+    let mut most_needed = candidates;
+    most_needed.sort_by(|left, right| {
+        right
+            .friction_score
+            .cmp(&left.friction_score)
+            .then_with(|| right.edge_count.cmp(&left.edge_count))
+            .then_with(|| {
+                (left.source_area.as_str(), left.target_area.as_str())
+                    .cmp(&(right.source_area.as_str(), right.target_area.as_str()))
+            })
+    });
+    most_needed.truncate(limit);
+
+    SeamReport {
+        truncated: total_pairs > limit,
+        total_pairs,
+        safest,
+        most_needed,
     }
 }
 
@@ -16456,6 +16577,63 @@ mod tests {
             },
         );
         assert!(missing.is_err());
+    }
+
+    #[test]
+    fn seams_rank_safe_and_needed_boundaries() {
+        let mut graph = CodeGraph::new("repo");
+        let web_file = graph.add_node(NodeKind::File, "web/static/app.js");
+        let core_file = graph.add_node(NodeKind::File, "crates/core/src/lib.rs");
+        let docs_file = graph.add_node(NodeKind::File, "docs/ARCHITECTURE.md");
+        let handler = graph.add_node(NodeKind::Function, "handler");
+        let alpha = graph.add_node(NodeKind::Function, "alpha");
+        let beta = graph.add_node(NodeKind::Function, "beta");
+        let doc_section = graph.add_node(NodeKind::Module, "architecture#overview");
+        graph.add_edge(graph.root, web_file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(graph.root, core_file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(graph.root, docs_file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(web_file, handler, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(core_file, alpha, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(core_file, beta, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(
+            docs_file,
+            doc_section,
+            EdgeKind::Contains,
+            Confidence::Exact,
+        );
+        // Tangled boundary: web -> crates with several heuristic edges.
+        graph.add_edge(handler, alpha, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(handler, beta, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(handler, alpha, EdgeKind::References, Confidence::Heuristic);
+        // Thin, well-declared boundary: docs -> crates with one exact reference.
+        graph.add_edge(doc_section, alpha, EdgeKind::References, Confidence::Exact);
+
+        let report = seams(
+            &graph,
+            SeamRequest {
+                limit: 10,
+                edge_limit: 10,
+            },
+        );
+
+        assert_eq!(report.total_pairs, 2);
+        assert!(!report.truncated);
+        let safest = &report.safest[0];
+        assert_eq!(
+            (safest.source_area.as_str(), safest.target_area.as_str()),
+            ("docs", "crates")
+        );
+        assert_eq!(safest.edge_count, 1);
+        assert_eq!(safest.low_confidence_edges, 0);
+        let needed = &report.most_needed[0];
+        assert_eq!(
+            (needed.source_area.as_str(), needed.target_area.as_str()),
+            ("web", "crates")
+        );
+        assert_eq!(needed.edge_count, 3);
+        assert_eq!(needed.low_confidence_edges, 3);
+        assert!(needed.friction_score > safest.friction_score);
+        assert!(!needed.sample_edge_indexes.is_empty());
     }
 
     #[test]

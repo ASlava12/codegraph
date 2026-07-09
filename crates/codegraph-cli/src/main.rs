@@ -8,13 +8,14 @@ use codegraph_analysis::{
     DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceRequest, EntrypointWorkflowRequest,
     ErrorTraceRequest, ExplainEdgeRequest, ImpactRequest, InsightFilter, InsightSeverity,
     JourneyRequest, NaturalQueryRequest, ProjectReport, ProjectReportLimits,
-    ProjectReportMarkdownOptions, SourceSearchRequest, TraceRequest, TraceStart, WorkflowFilters,
-    WorkflowQueryRequest, WorkflowRequest, architecture_map, check_insights, communities,
-    compact_query_result, component_contract, component_dependencies, entrypoints, explain_edge,
-    filter_insight_report, hotspots, impact, insights, journey, language_dependencies,
-    natural_query, project_report, project_report_markdown, query_graph, search_source, summarize,
-    surprising_links, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
-    workflow, workflow_entrypoints, workflow_mermaid, workflow_query,
+    ProjectReportMarkdownOptions, SeamRequest, SourceSearchRequest, TraceRequest, TraceStart,
+    WorkflowFilters, WorkflowQueryRequest, WorkflowRequest, architecture_map, check_insights,
+    communities, compact_query_result, component_contract, component_dependencies, entrypoints,
+    explain_edge, filter_insight_report, hotspots, impact, insights, journey,
+    language_dependencies, natural_query, project_report, project_report_markdown, query_graph,
+    seams, search_source, summarize, surprising_links, trace, trace_config, trace_dependents,
+    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_mermaid,
+    workflow_query,
 };
 use codegraph_analysis::{export_dot, export_ndjson, node_card};
 use codegraph_core::NodeId;
@@ -197,6 +198,32 @@ enum Command {
         /// Maximum ranked alternative paths to return.
         #[arg(long, default_value_t = 3)]
         paths: usize,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Rank cross-area boundaries by coupling friction: safest seams to extract and most tangled ones.
+    Seams {
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Maximum ranked boundaries per list.
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+
+        /// Maximum sample edge indexes per boundary.
+        #[arg(long, default_value_t = 10)]
+        edge_limit: usize,
 
         /// Include hidden files and directories.
         #[arg(long)]
@@ -1514,6 +1541,19 @@ fn main() -> Result<()> {
                     path_limit: paths,
                 },
             )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::Seams {
+            path,
+            limit,
+            edge_limit,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph =
+                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
+            let report = seams(&graph, SeamRequest { limit, edge_limit });
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Impact {

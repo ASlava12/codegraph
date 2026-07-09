@@ -22,14 +22,14 @@ use codegraph_analysis::{
     MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_FILE_SUMMARY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
     MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, MAX_REPORT_NODE_SUMMARY_LIMIT,
     NaturalQueryReport, NaturalQueryRequest, NodeCard, NodeContext, ProjectReport,
-    ProjectReportLimits, ProjectReportMarkdownOptions, SourcePreview, SourceSearchRequest,
-    SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryReport,
-    WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map, check_insights,
-    communities, compact_query_result, component_contract, component_dependencies, entrypoints,
-    explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots,
-    impact, insights, journey, language_dependencies, natural_query, node_card, node_context,
-    project_report, project_report_markdown, query_graph, read_source_preview, search_source,
-    slice_graph, summarize, surprising_links, trace, trace_config, trace_dependents,
+    ProjectReportLimits, ProjectReportMarkdownOptions, SeamReport, SeamRequest, SourcePreview,
+    SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters,
+    WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map,
+    check_insights, communities, compact_query_result, component_contract, component_dependencies,
+    entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph,
+    hotspots, impact, insights, journey, language_dependencies, natural_query, node_card,
+    node_context, project_report, project_report_markdown, query_graph, read_source_preview, seams,
+    search_source, slice_graph, summarize, surprising_links, trace, trace_config, trace_dependents,
     trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_query,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
@@ -450,6 +450,13 @@ struct GraphQuery {
     path: Option<PathBuf>,
     q: String,
     compact: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SeamQuery {
+    path: Option<PathBuf>,
+    limit: Option<usize>,
+    edge_limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1109,6 +1116,7 @@ async fn main() -> Result<()> {
         )
         .route("/api/component-contract", get(component_contract_api))
         .route("/api/impact", get(impact_api))
+        .route("/api/seams", get(seams_api))
         .route("/api/dependents", get(dependents_api))
         .route("/api/trace-config", get(trace_config_api))
         .route("/api/trace-errors", get(trace_errors_api))
@@ -2933,6 +2941,20 @@ async fn workflow_api(
                 query.block_kind,
             ),
             compact: query.compact.unwrap_or(false),
+        },
+    )))
+}
+
+async fn seams_api(
+    State(state): State<AppState>,
+    Query(query): Query<SeamQuery>,
+) -> Result<Json<SeamReport>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    Ok(Json(seams(
+        &graph,
+        SeamRequest {
+            limit: query.limit.unwrap_or(25).clamp(1, 100),
+            edge_limit: query.edge_limit.unwrap_or(10).clamp(1, 50),
         },
     )))
 }
@@ -5510,6 +5532,31 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 )
                 .with_response_fields(impact_response_fields()),
                 api_get(
+                    "/api/seams",
+                    "Rank cross-area boundaries by coupling friction: safest seams to extract and most tangled boundaries needing work.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            Some("25"),
+                            "Maximum ranked boundaries per list.",
+                        )
+                        .with_range(1, 100),
+                        query_param(
+                            "edge_limit",
+                            false,
+                            "usize",
+                            Some("10"),
+                            "Maximum sample edge indexes per boundary.",
+                        )
+                        .with_range(1, 50),
+                    ],
+                    "SeamReport",
+                )
+                .with_response_fields(seam_response_fields()),
+                api_get(
                     "/api/dependents",
                     "Trace incoming dependents that can reach a node.",
                     vec![
@@ -6954,6 +7001,35 @@ fn workflow_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "bool",
             "Whether traversal depth or block limits omitted additional steps.",
+        ),
+    ]
+}
+
+fn seam_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "total_pairs",
+            true,
+            "usize",
+            "Total directed cross-area boundary pairs with dependency edges.",
+        ),
+        response_field(
+            "safest",
+            true,
+            "SeamCandidate[]",
+            "Boundaries ranked by ascending friction: thin, well-declared seams where extraction is safest.",
+        ),
+        response_field(
+            "most_needed",
+            true,
+            "SeamCandidate[]",
+            "Boundaries ranked by descending friction: tangled seams where splitting is most needed. friction_score = edges + 2*low-confidence edges + 3*edge risks + distinct edge kinds.",
+        ),
+        response_field(
+            "truncated",
+            true,
+            "bool",
+            "Whether more boundary pairs exist than limit.",
         ),
     ]
 }
@@ -10073,6 +10149,24 @@ fn helper() {}
         assert!(impact_endpoint.response_fields.iter().any(|field| {
             field.name == "dependents" && field.value_type == "ImpactDependent[]"
         }));
+        let seams_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/seams")
+            .expect("schema should list seams endpoint");
+        assert!(
+            seams_endpoint
+                .response_fields
+                .iter()
+                .any(|field| field.name == "safest" && field.value_type == "SeamCandidate[]")
+        );
+        assert!(
+            seams_endpoint
+                .response_fields
+                .iter()
+                .any(|field| field.name == "most_needed" && field.value_type == "SeamCandidate[]")
+        );
         let config_trace_endpoint = schema
             .groups
             .iter()
