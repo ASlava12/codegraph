@@ -17,7 +17,7 @@ ROADMAP updates together.
 Goal: close the remaining Phase 3 workflow items so block diagrams are a
 finished, regression-guarded feature for humans and agents.
 
-- [ ] Add a `return` workflow block kind classified from function exits where parser facts support it, wired through block-kind filters, API schema enums, and web suggestions.
+- [x] Add a `return` workflow block kind classified from function exits where parser facts support it, wired through block-kind filters, API schema enums, and web suggestions.
 - [ ] Add workflow regression fixtures for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, and Dart runtime paths with expected block/transition snapshots.
 - [ ] Add workflow regression fixtures for CI, Docker, and Kubernetes entrypoint kinds using the new `entrypoint_kind` filters.
 - [ ] Add a full web Flow view next to the graph canvas with pan, zoom, minimap, and selectable workflow blocks.

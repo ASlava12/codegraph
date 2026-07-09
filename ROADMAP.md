@@ -231,7 +231,7 @@ Goal: answer practical code investigation questions.
 - [x] Add entrypoint workflow reports across CLI and API for matched startup surfaces.
 - [x] Add web entrypoint workflow reports with focused graph slices and JSON/Mermaid exports.
 - [x] Extend workflow generation from selected labels, entrypoints, and query result nodes to routes, CI jobs, Makefile targets, and Docker commands through entrypoint-kind filters.
-- [ ] Classify workflow blocks as start, call, config/env read, dependency, branch, error, return, and external boundary.
+- [x] Classify workflow blocks as start, call, config/env read, dependency, branch, loop, async, error, return, and external boundary.
 - [x] Add workflow graph compaction so repeated helper calls, import-only hops, and low-signal nodes collapse into readable blocks.
 - [x] Add CLI workflow commands for routes, CI jobs, Makefile targets, Docker commands, and selected nodes through `workflow`, `workflow-query`, and `workflow-entrypoints --entrypoint-kind`.
 - [x] Add workflow CLI/API filters for edge-kind, confidence, language, risk severity, and block kinds.

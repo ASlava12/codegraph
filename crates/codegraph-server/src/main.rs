@@ -3705,6 +3705,7 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "branch",
                     "loop",
                     "async",
+                    "return",
                     "error",
                     "reference",
                     "external_boundary",
@@ -8528,6 +8529,7 @@ fn helper() {}
                     && kinds.contains(&"branch")
                     && kinds.contains(&"loop")
                     && kinds.contains(&"async")
+                    && kinds.contains(&"return")
                     && kinds.contains(&"external_boundary"))
         );
         assert!(schema.enum_values.get("insight_kind").is_some_and(|kinds| {

@@ -269,6 +269,7 @@ pub enum WorkflowBlockKind {
     Branch,
     Loop,
     Async,
+    Return,
     Error,
     Reference,
     ExternalBoundary,
@@ -13255,6 +13256,7 @@ fn workflow_block_kind(
         Some("branch") => return WorkflowBlockKind::Branch,
         Some("loop") => return WorkflowBlockKind::Loop,
         Some("async") => return WorkflowBlockKind::Async,
+        Some("return") => return WorkflowBlockKind::Return,
         _ => {}
     }
     match incoming_edge.map(|edge| &edge.kind) {
@@ -13280,6 +13282,7 @@ fn workflow_block_kind_label(kind: &WorkflowBlockKind) -> &'static str {
         WorkflowBlockKind::Branch => "branch",
         WorkflowBlockKind::Loop => "loop",
         WorkflowBlockKind::Async => "async",
+        WorkflowBlockKind::Return => "return",
         WorkflowBlockKind::Error => "error",
         WorkflowBlockKind::Reference => "reference",
         WorkflowBlockKind::ExternalBoundary => "external",
@@ -14888,6 +14891,16 @@ mod tests {
                 ("control_kind".to_string(), "await".to_string()),
             ]),
         );
+        let return_node = graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            "return: return",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "return".to_string()),
+                ("language".to_string(), "rust".to_string()),
+                ("control_kind".to_string(), "return".to_string()),
+            ]),
+        );
         graph.add_edge(
             graph.root,
             entrypoint,
@@ -14905,6 +14918,12 @@ mod tests {
         graph.add_edge(
             main,
             async_node,
+            EdgeKind::References,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            main,
+            return_node,
             EdgeKind::References,
             Confidence::Heuristic,
         );
@@ -14938,6 +14957,11 @@ mod tests {
                 .blocks
                 .iter()
                 .any(|block| block.node.id == async_node && block.kind == WorkflowBlockKind::Async)
+        );
+        assert!(
+            report.blocks.iter().any(
+                |block| block.node.id == return_node && block.kind == WorkflowBlockKind::Return
+            )
         );
     }
 

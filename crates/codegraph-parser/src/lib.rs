@@ -266,6 +266,7 @@ pub enum ParsedItemKind {
     Branch,
     Loop,
     Async,
+    Return,
 }
 
 pub fn parse_source(
@@ -556,6 +557,7 @@ fn control_flow_fact(language: Language, node: Node<'_>) -> Option<(ParsedItemKi
             "loop_expression" => Some((ParsedItemKind::Loop, "loop")),
             "await_expression" => Some((ParsedItemKind::Async, "await")),
             "async_block" => Some((ParsedItemKind::Async, "async")),
+            "return_expression" => Some((ParsedItemKind::Return, "return")),
             _ => None,
         },
         Language::Python => match kind {
@@ -569,6 +571,7 @@ fn control_flow_fact(language: Language, node: Node<'_>) -> Option<(ParsedItemKi
             "async_function_definition" => Some((ParsedItemKind::Async, "function")),
             "async_for_statement" => Some((ParsedItemKind::Async, "for")),
             "async_with_statement" => Some((ParsedItemKind::Async, "with")),
+            "return_statement" => Some((ParsedItemKind::Return, "return")),
             _ => None,
         },
         Language::JavaScript | Language::TypeScript | Language::Tsx => match kind {
@@ -582,6 +585,7 @@ fn control_flow_fact(language: Language, node: Node<'_>) -> Option<(ParsedItemKi
             "while_statement" => Some((ParsedItemKind::Loop, "while")),
             "do_statement" => Some((ParsedItemKind::Loop, "do")),
             "await_expression" => Some((ParsedItemKind::Async, "await")),
+            "return_statement" => Some((ParsedItemKind::Return, "return")),
             _ => None,
         },
         Language::Go => match kind {
@@ -593,6 +597,7 @@ fn control_flow_fact(language: Language, node: Node<'_>) -> Option<(ParsedItemKi
             "for_statement" => Some((ParsedItemKind::Loop, "for")),
             "go_statement" => Some((ParsedItemKind::Async, "go")),
             "defer_statement" => Some((ParsedItemKind::Async, "defer")),
+            "return_statement" => Some((ParsedItemKind::Return, "return")),
             _ => None,
         },
         Language::C | Language::Cpp => match kind {
@@ -604,6 +609,7 @@ fn control_flow_fact(language: Language, node: Node<'_>) -> Option<(ParsedItemKi
             "do_statement" => Some((ParsedItemKind::Loop, "do")),
             "try_statement" => Some((ParsedItemKind::Branch, "try")),
             "catch_clause" => Some((ParsedItemKind::Branch, "catch")),
+            "return_statement" => Some((ParsedItemKind::Return, "return")),
             _ => None,
         },
         Language::Php => match kind {
@@ -616,6 +622,7 @@ fn control_flow_fact(language: Language, node: Node<'_>) -> Option<(ParsedItemKi
             "for_statement" => Some((ParsedItemKind::Loop, "for")),
             "while_statement" => Some((ParsedItemKind::Loop, "while")),
             "do_statement" => Some((ParsedItemKind::Loop, "do")),
+            "return_statement" => Some((ParsedItemKind::Return, "return")),
             _ => None,
         },
         Language::Dart => match kind {
@@ -627,6 +634,7 @@ fn control_flow_fact(language: Language, node: Node<'_>) -> Option<(ParsedItemKi
             "while_statement" => Some((ParsedItemKind::Loop, "while")),
             "do_statement" => Some((ParsedItemKind::Loop, "do")),
             "await_expression" => Some((ParsedItemKind::Async, "await")),
+            "return_statement" => Some((ParsedItemKind::Return, "return")),
             _ => None,
         },
         Language::Bash => match kind {
@@ -645,6 +653,7 @@ fn parsed_item_kind_label(kind: ParsedItemKind) -> &'static str {
         ParsedItemKind::Branch => "branch",
         ParsedItemKind::Loop => "loop",
         ParsedItemKind::Async => "async",
+        ParsedItemKind::Return => "return",
         _ => "fact",
     }
 }
@@ -1507,6 +1516,61 @@ mod tests {
                     parsed.items
                 );
             }
+        }
+    }
+
+    #[test]
+    fn parses_return_markers_with_parent_function() {
+        let cases = [
+            (
+                "src/main.rs",
+                Language::Rust,
+                "fn worker() -> bool { if ready() { return true; } false }\n",
+            ),
+            (
+                "app.py",
+                Language::Python,
+                "def worker():\n    return compute()\n",
+            ),
+            (
+                "index.js",
+                Language::JavaScript,
+                "function worker() { return compute(); }\n",
+            ),
+            (
+                "main.go",
+                Language::Go,
+                "package main\nfunc worker() int { return compute() }\n",
+            ),
+            (
+                "main.c",
+                Language::C,
+                "int worker() { return compute(); }\n",
+            ),
+            (
+                "app.php",
+                Language::Php,
+                "<?php function worker() { return compute(); }\n",
+            ),
+            (
+                "lib/main.dart",
+                Language::Dart,
+                "void worker() { if (ready) { return; } compute(); }\n",
+            ),
+        ];
+
+        for (path, language, source) in cases {
+            let parsed = parse_source(path, source.as_bytes(), language).unwrap();
+            assert!(
+                parsed.items.iter().any(|item| {
+                    item.kind == ParsedItemKind::Return
+                        && item.label == "return: return"
+                        && item.parent.as_deref() == Some("worker")
+                        && item.metadata.get("control_kind").map(String::as_str) == Some("return")
+                }),
+                "missing return marker in {path}: {:#?}",
+                parsed.items
+            );
         }
     }
 

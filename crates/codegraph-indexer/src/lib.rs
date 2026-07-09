@@ -1156,7 +1156,8 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
                         | ParsedItemKind::Error
                         | ParsedItemKind::Branch
                         | ParsedItemKind::Loop
-                        | ParsedItemKind::Async => {
+                        | ParsedItemKind::Async
+                        | ParsedItemKind::Return => {
                             unreachable!("non-symbol facts are processed separately")
                         }
                     };
@@ -1295,16 +1296,18 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
                         ParsedItemKind::Error
                         | ParsedItemKind::Branch
                         | ParsedItemKind::Loop
-                        | ParsedItemKind::Async => NodeKind::Unknown,
+                        | ParsedItemKind::Async
+                        | ParsedItemKind::Return => NodeKind::Unknown,
                         _ => unreachable!("only effect facts are processed here"),
                     };
                     let edge_kind = match item.kind {
                         ParsedItemKind::EnvironmentRead => EdgeKind::ReadsEnvironment,
                         ParsedItemKind::ConfigRead => EdgeKind::ReadsConfig,
                         ParsedItemKind::Error => EdgeKind::MayError,
-                        ParsedItemKind::Branch | ParsedItemKind::Loop | ParsedItemKind::Async => {
-                            EdgeKind::References
-                        }
+                        ParsedItemKind::Branch
+                        | ParsedItemKind::Loop
+                        | ParsedItemKind::Async
+                        | ParsedItemKind::Return => EdgeKind::References,
                         _ => unreachable!("only effect facts are processed here"),
                     };
                     let mut item_metadata = BTreeMap::new();
@@ -12064,6 +12067,7 @@ fn parsed_item_kind_name(kind: ParsedItemKind) -> &'static str {
         ParsedItemKind::Branch => "branch",
         ParsedItemKind::Loop => "loop",
         ParsedItemKind::Async => "async",
+        ParsedItemKind::Return => "return",
     }
 }
 
@@ -12087,6 +12091,7 @@ fn is_effect_item(kind: ParsedItemKind) -> bool {
             | ParsedItemKind::Branch
             | ParsedItemKind::Loop
             | ParsedItemKind::Async
+            | ParsedItemKind::Return
     )
 }
 
@@ -13564,12 +13569,12 @@ CREATE TABLE users (
         fs::create_dir_all(root.join("lib")).unwrap();
         fs::write(
             root.join("src").join("main.rs"),
-            "async fn worker() { if ready() { for item in items() { item.await; } } }\n",
+            "async fn worker() { if ready() { for item in items() { item.await; } return; } }\n",
         )
         .unwrap();
         fs::write(
             root.join("lib").join("main.dart"),
-            "void worker() async { if (ready) { for (final item in items) { await item; } } }\n",
+            "void worker() async { if (ready) { for (final item in items) { await item; } return; } }\n",
         )
         .unwrap();
 
@@ -13581,12 +13586,12 @@ CREATE TABLE users (
             (
                 "rust",
                 rust_worker,
-                ["branch: if", "loop: for", "async: await"],
+                ["branch: if", "loop: for", "async: await", "return: return"],
             ),
             (
                 "dart",
                 dart_worker,
-                ["branch: if", "loop: for", "async: await"],
+                ["branch: if", "loop: for", "async: await", "return: return"],
             ),
         ] {
             for label in expected {
@@ -13601,7 +13606,7 @@ CREATE TABLE users (
                     .unwrap_or_else(|| panic!("missing {language} control-flow fact {label}"));
                 assert!(matches!(
                     fact.metadata.get("item_kind").map(String::as_str),
-                    Some("branch" | "loop" | "async")
+                    Some("branch" | "loop" | "async" | "return")
                 ));
                 assert_eq!(
                     fact.metadata.get("parent").map(String::as_str),

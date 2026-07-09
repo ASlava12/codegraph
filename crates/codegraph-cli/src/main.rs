@@ -353,7 +353,7 @@ enum Command {
         #[arg(long)]
         risk_severity: Option<String>,
 
-        /// Restrict returned blocks to a workflow kind such as call, branch, loop, async, config_read, environment_read, or error.
+        /// Restrict returned blocks to a workflow kind such as call, branch, loop, async, return, config_read, environment_read, or error.
         #[arg(long)]
         block_kind: Option<String>,
 
@@ -419,7 +419,7 @@ enum Command {
         #[arg(long)]
         risk_severity: Option<String>,
 
-        /// Restrict returned blocks to a workflow kind such as call, branch, loop, async, config_read, environment_read, or error.
+        /// Restrict returned blocks to a workflow kind such as call, branch, loop, async, return, config_read, environment_read, or error.
         #[arg(long)]
         block_kind: Option<String>,
 
@@ -480,7 +480,7 @@ enum Command {
         #[arg(long)]
         risk_severity: Option<String>,
 
-        /// Restrict returned blocks to a workflow kind such as call, branch, loop, async, config_read, environment_read, or error.
+        /// Restrict returned blocks to a workflow kind such as call, branch, loop, async, return, config_read, environment_read, or error.
         #[arg(long)]
         block_kind: Option<String>,
 
