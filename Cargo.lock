@@ -345,6 +345,7 @@ name = "codegraph-analysis"
 version = "0.1.0"
 dependencies = [
  "codegraph-core",
+ "codegraph-indexer",
  "globset",
  "serde",
  "serde_json",

@@ -241,7 +241,8 @@ Goal: answer practical code investigation questions.
 - [ ] Reuse node and dependency cards from workflow blocks, including source preview, related dependencies, risks, and edge explanations.
 - [x] Add branch extraction for common if/match/try/catch constructs where parser or LSP facts support it.
 - [x] Add loop and async/concurrency markers for common constructs where confidence is high.
-- [ ] Add workflow regression fixtures for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, Dart/Flutter, CI, Docker, and Kubernetes runtime paths.
+- [x] Add workflow regression fixtures for Rust, Python, JavaScript/TypeScript, Go, PHP, Bash, and Dart runtime paths with expected block/transition shapes.
+- [ ] Add workflow regression fixtures for CI, Docker, and Kubernetes entrypoint-kind runtime paths.
 - [x] Add remaining workflow export downloads for DOT and visible-slice JSON.
 - [ ] Localize workflow UI, commands, schema descriptions, and block labels in English and Russian.
 
