@@ -368,7 +368,24 @@ pub struct JourneyStep {
     pub transition: Option<WorkflowTransition>,
     #[serde(default)]
     pub explanation: Option<JourneyHopExplanation>,
+    #[serde(default)]
+    pub fragile: bool,
+    #[serde(default)]
+    pub fragile_reasons: Vec<String>,
     pub block: WorkflowBlock,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JourneyRiskSummary {
+    pub risky_steps: usize,
+    pub risky_transitions: usize,
+    pub fragile_transitions: usize,
+    pub low_confidence_hops: usize,
+    pub unresolved_calls: usize,
+    pub ambiguous_calls: usize,
+    pub duplicate_labels: usize,
+    pub cycle_back_edges: usize,
+    pub severity_counts: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -378,6 +395,8 @@ pub struct JourneyPath {
     pub confidence_score: usize,
     #[serde(default)]
     pub lowest_confidence: Option<String>,
+    #[serde(default)]
+    pub risk_summary: JourneyRiskSummary,
     pub steps: Vec<JourneyStep>,
 }
 
@@ -3567,6 +3586,8 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
                 step: 1,
                 transition: None,
                 explanation: None,
+                fragile: false,
+                fragile_reasons: Vec::new(),
                 block: journey_block(&insight_report, &start_node, None, true, 0),
             });
             for (offset, edge_index) in edge_indexes.iter().enumerate() {
@@ -3582,29 +3603,36 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
                 }) {
                     lowest = Some(edge.confidence);
                 }
+                let transition = WorkflowTransition {
+                    id: format!("jt-{edge_index}"),
+                    source: workflow_block_id(edge.source),
+                    target: workflow_block_id(edge.target),
+                    source_node_id: edge.source,
+                    target_node_id: edge.target,
+                    edge: edge_with_index(*edge_index, edge),
+                    edge_index: *edge_index,
+                    risk_refs: workflow_risk_refs_for_edge(&insight_report, *edge_index),
+                    compacted: false,
+                    compacted_count: 1,
+                };
+                let block = journey_block(&insight_report, node, Some(edge), false, offset + 1);
+                let fragile_reasons = journey_fragile_reasons(edge, &transition, &block);
                 steps.push(JourneyStep {
                     step: offset + 2,
-                    transition: Some(WorkflowTransition {
-                        id: format!("jt-{edge_index}"),
-                        source: workflow_block_id(edge.source),
-                        target: workflow_block_id(edge.target),
-                        source_node_id: edge.source,
-                        target_node_id: edge.target,
-                        edge: edge_with_index(*edge_index, edge),
-                        edge_index: *edge_index,
-                        risk_refs: workflow_risk_refs_for_edge(&insight_report, *edge_index),
-                        compacted: false,
-                        compacted_count: 1,
-                    }),
                     explanation: Some(journey_hop_explanation(edge)),
-                    block: journey_block(&insight_report, node, Some(edge), false, offset + 1),
+                    fragile: !fragile_reasons.is_empty(),
+                    fragile_reasons,
+                    transition: Some(transition),
+                    block,
                 });
             }
+            let risk_summary = journey_risk_summary(graph, &steps);
             JourneyPath {
                 rank: 0,
                 total_steps: steps.len(),
                 confidence_score,
                 lowest_confidence: lowest.map(|confidence| confidence_name(confidence).to_string()),
+                risk_summary,
                 steps,
             }
         })
@@ -3675,6 +3703,98 @@ fn journey_confidence_weight(confidence: Confidence) -> usize {
         Confidence::Heuristic => 3,
         Confidence::Unknown => 4,
     }
+}
+
+fn journey_fragile_reasons(
+    edge: &Edge,
+    transition: &WorkflowTransition,
+    block: &WorkflowBlock,
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if matches!(edge.confidence, Confidence::Heuristic | Confidence::Unknown) {
+        reasons.push("low_confidence_edge".to_string());
+    }
+    let risk_kinds = transition
+        .risk_refs
+        .iter()
+        .chain(block.risk_refs.iter())
+        .map(|risk| risk.kind.as_str())
+        .collect::<BTreeSet<_>>();
+    if risk_kinds.contains("ambiguous_call_resolution")
+        || edge.metadata.get("resolution").map(String::as_str) == Some("ambiguous")
+    {
+        reasons.push("ambiguous_call".to_string());
+    }
+    if risk_kinds.contains("unresolved_call")
+        || edge.metadata.get("resolution").map(String::as_str) == Some("unresolved")
+    {
+        reasons.push("unresolved_call".to_string());
+    }
+    if risk_kinds
+        .iter()
+        .any(|kind| kind.starts_with("duplicate_") && kind.ends_with("_label"))
+    {
+        reasons.push("duplicate_label".to_string());
+    }
+    reasons
+}
+
+fn journey_risk_summary(graph: &CodeGraph, steps: &[JourneyStep]) -> JourneyRiskSummary {
+    let mut summary = JourneyRiskSummary::default();
+    let mut step_order: BTreeMap<NodeId, usize> = BTreeMap::new();
+    for (index, step) in steps.iter().enumerate() {
+        step_order.entry(step.block.node.id).or_insert(index);
+    }
+
+    for step in steps {
+        if !step.block.risk_refs.is_empty() {
+            summary.risky_steps += 1;
+        }
+        for risk in &step.block.risk_refs {
+            *summary
+                .severity_counts
+                .entry(severity_name(risk.severity).to_string())
+                .or_insert(0) += 1;
+        }
+        if let Some(transition) = &step.transition {
+            if !transition.risk_refs.is_empty() {
+                summary.risky_transitions += 1;
+            }
+            for risk in &transition.risk_refs {
+                *summary
+                    .severity_counts
+                    .entry(severity_name(risk.severity).to_string())
+                    .or_insert(0) += 1;
+            }
+        }
+        if step.fragile {
+            summary.fragile_transitions += 1;
+        }
+        for reason in &step.fragile_reasons {
+            match reason.as_str() {
+                "low_confidence_edge" => summary.low_confidence_hops += 1,
+                "ambiguous_call" => summary.ambiguous_calls += 1,
+                "unresolved_call" => summary.unresolved_calls += 1,
+                "duplicate_label" => summary.duplicate_labels += 1,
+                _ => {}
+            }
+        }
+    }
+
+    for (step_index, step) in steps.iter().enumerate() {
+        for (_, edge) in
+            trace_edges_from_indexed(graph, step.block.node.id, TraceDirection::Outgoing)
+        {
+            if step_order
+                .get(&edge.target)
+                .is_some_and(|target_index| *target_index <= step_index)
+            {
+                summary.cycle_back_edges += 1;
+            }
+        }
+    }
+
+    summary
 }
 
 fn journey_hop_explanation(edge: &Edge) -> JourneyHopExplanation {
@@ -15657,6 +15777,8 @@ mod tests {
         // Longer but exact route: main -> via_exact -> load_config.
         graph.add_edge(main, via_exact, EdgeKind::Calls, Confidence::Exact);
         graph.add_edge(via_exact, target, EdgeKind::Calls, Confidence::Exact);
+        // Cycle back into the flow: load_config -> main.
+        graph.add_edge(target, main, EdgeKind::Calls, Confidence::Exact);
 
         let report = journey(
             &graph,
@@ -15702,6 +15824,25 @@ mod tests {
             }
             assert!(path.steps[0].explanation.is_none());
         }
+
+        assert_eq!(best.risk_summary.fragile_transitions, 0);
+        assert_eq!(best.risk_summary.low_confidence_hops, 0);
+        let fragile_step = alternative
+            .steps
+            .iter()
+            .find(|step| step.fragile)
+            .expect("heuristic hop should be fragile");
+        assert_eq!(
+            fragile_step.fragile_reasons,
+            vec!["low_confidence_edge".to_string()]
+        );
+        assert_eq!(alternative.risk_summary.fragile_transitions, 1);
+        assert_eq!(alternative.risk_summary.low_confidence_hops, 1);
+        assert!(
+            best.risk_summary.cycle_back_edges >= 1,
+            "load_config -> main back edge should count as a cycle crossing the flow"
+        );
+        assert!(alternative.risk_summary.cycle_back_edges >= 1);
     }
 
     #[test]

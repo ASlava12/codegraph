@@ -150,6 +150,7 @@ Implemented now:
 - Graph query results can be converted into block-style workflow reports from CLI, API, and web query result actions.
 - Target-directed journey reports (CLI `journey --from <start> --to <target>`, API `/api/journey`) expand entrypoint-to-target paths into step-numbered execution chains of workflow blocks with control-flow markers, edge provenance, and risk references on every step.
 - Journey reports rank up to `--paths` alternative routes by edge confidence and length, report per-path `confidence_score` and `lowest_confidence`, and attach structured per-hop explanations (confidence note, relation, provenance source) for why each transition exists.
+- Journey paths carry a `risk_summary` (risky steps/transitions, low-confidence hops, unresolved and ambiguous calls, duplicate labels, cycle back edges, severity counts) and per-step `fragile` flags with reasons so refactor-breaking hops are visible before changes start.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Web config trace reports can be downloaded as JSON with target, depth, matched readers, and dependency paths.
 - Error trace API, CLI command, and web panel for following potential error/exception paths back to entrypoints.

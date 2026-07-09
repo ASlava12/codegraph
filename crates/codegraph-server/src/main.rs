@@ -6800,7 +6800,7 @@ fn journey_response_fields() -> Vec<ApiParameterSpec> {
             "paths",
             true,
             "JourneyPath[]",
-            "Execution chains ranked by edge confidence then length; each path carries rank, confidence_score, lowest_confidence, and step-numbered blocks whose transitions include edge provenance, per-hop explanations, and risk references.",
+            "Execution chains ranked by edge confidence then length; each path carries rank, confidence_score, lowest_confidence, a risk_summary (risky steps/transitions, fragile transitions, low-confidence hops, unresolved/ambiguous calls, duplicate labels, cycle back edges, severity counts), and step-numbered blocks whose transitions include edge provenance, per-hop explanations, fragile flags with reasons, and risk references.",
         ),
         response_field(
             "truncated",

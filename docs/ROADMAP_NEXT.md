@@ -39,7 +39,7 @@ Flow view and block-to-card actions.
 
 - [x] Add target-directed journey reports (CLI `journey --from <entrypoint> --to <target>`, API `/api/journey`) that expand entrypoint-to-target paths into step-numbered execution chains built from workflow blocks.
 - [x] Rank alternative journey paths by edge confidence and length, and attach per-hop provenance explanations for why each transition exists.
-- [ ] Add journey risk summaries: risky steps, unresolved or ambiguous calls, low-confidence hops, and cycles crossing the flow, with fragile-transition flags for refactor planning.
+- [x] Add journey risk summaries: risky steps, unresolved or ambiguous calls, low-confidence hops, and cycles crossing the flow, with fragile-transition flags for refactor planning.
 - [ ] Add component dependency reports grouping a node's incoming/outgoing dependencies by architecture area, package, and language, plus contract views for the exact edges between two selected components.
 - [ ] Add journey step drill-down: expand a step into a nested sub-flow with breadcrumbs back to the parent journey, and open node/dependency cards and source previews from steps.
 - [ ] Add a web journey view: pick start and target, read the step-numbered chain with expandable branches, and jump between journey, graph, and cards.

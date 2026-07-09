@@ -557,8 +557,8 @@ Dependency understanding:
 
 Problems along the flow:
 
-- [ ] Add journey risk summaries for risky steps, unresolved or ambiguous calls, low-confidence hops, and cycles crossing the flow.
-- [ ] Flag fragile journey transitions where a refactor is most likely to break behavior: heuristic edges, duplicate labels, and multi-target calls.
+- [x] Add journey risk summaries for risky steps, unresolved or ambiguous calls, low-confidence hops, and cycles crossing the flow.
+- [x] Flag fragile journey transitions where a refactor is most likely to break behavior: heuristic edges, duplicate labels, and multi-target calls.
 
 Drill-down:
 
