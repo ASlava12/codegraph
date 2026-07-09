@@ -8436,6 +8436,35 @@ fn helper() {}
     }
 
     #[test]
+    fn embedded_web_assets_surface_flow_view() {
+        let index = include_str!("../../codegraph-web/static/index.html");
+        let app = include_str!("../../codegraph-web/static/app.js");
+        let styles = include_str!("../../codegraph-web/static/styles.css");
+
+        assert!(index.contains("flowCanvas"));
+        assert!(index.contains("flowMinimap"));
+        assert!(index.contains("flowHud"));
+        assert!(index.contains("data-stage-view=\"graph\""));
+        assert!(index.contains("data-stage-view=\"flow\""));
+        assert!(index.contains("data-i18n-aria-label=\"aria.flowCanvas\""));
+        assert!(index.contains("data-i18n-aria-label=\"aria.flowMinimap\""));
+        assert!(app.contains("function setStageView"));
+        assert!(app.contains("function openFlowView"));
+        assert!(app.contains("function layoutFlow"));
+        assert!(app.contains("function drawFlow"));
+        assert!(app.contains("function drawFlowMinimap"));
+        assert!(app.contains("function onFlowPointerDown"));
+        assert!(app.contains("function attachFlowViewActions"));
+        assert!(app.contains("data-flow-view"));
+        assert!(app.contains("\"flow.openView\""));
+        assert!(app.contains("\"flow.empty\""));
+        assert!(app.contains("\"aria.flowCanvas\""));
+        assert!(app.contains("\"button.viewFlow\""));
+        assert!(styles.contains("#flowCanvas"));
+        assert!(styles.contains(".graph-stage[data-view=\"flow\"]"));
+    }
+
+    #[test]
     fn embedded_web_assets_highlight_hovered_graph_edges() {
         let app = include_str!("../../codegraph-web/static/app.js");
 

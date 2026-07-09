@@ -2424,6 +2424,37 @@ button.cancel-action:hover:not(:disabled) {
   outline-offset: -4px;
 }
 
+#flowCanvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+#flowCanvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -4px;
+}
+
+#flowCanvas[hidden],
+#flowMinimap[hidden],
+#flowHud[hidden] {
+  display: none;
+}
+
+.graph-stage[data-view="flow"] #graphCanvas,
+.graph-stage[data-view="flow"] #graphMinimap,
+.graph-stage[data-view="flow"] #graphHud,
+.graph-stage[data-view="flow"] .graph-layout-controls,
+.graph-stage[data-view="flow"] .graph-label-modes,
+.graph-stage[data-view="flow"] .legend {
+  display: none;
+}
+
+.flow-open {
+  margin-left: auto;
+}
+
 .graph-minimap {
   position: absolute;
   top: 16px;

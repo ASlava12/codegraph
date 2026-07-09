@@ -144,6 +144,8 @@ Implemented now:
 - Web Entry Flows can build block-style workflow reports for matched entrypoints, focus a workflow slice on the graph, and download JSON, Mermaid, or DOT for agent handoff and external diagramming.
 - Web workflow filters are available for selected-node Flow panels and Entry Flows using edge kind, confidence, language, risk severity, and block kind controls.
 - Web workflow block-kind badges and applied-filter summaries are localized for English and Russian UI sessions.
+- Full web Flow view next to the graph canvas renders any built workflow as a depth-layered block diagram with pan, zoom, wheel/keyboard navigation, a minimap, hover highlighting, risk badges, and click-to-select blocks that open the standard node card.
+- Selected-node Flow panels, Entry Flows, and query workflow results include an Open Flow view action that jumps into the block-diagram canvas.
 - Graph query results can be converted into block-style workflow reports from CLI, API, and web query result actions.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
 - Web config trace reports can be downloaded as JSON with target, depth, matched readers, and dependency paths.

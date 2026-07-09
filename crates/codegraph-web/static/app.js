@@ -108,6 +108,9 @@ const I18N = {
     "aria.pauseLayout": "Pause graph layout",
     "aria.resumeLayout": "Resume graph layout",
     "aria.graphMinimap": "Graph minimap. Click or drag to recenter the viewport.",
+    "aria.stageViews": "Stage views",
+    "aria.flowCanvas": "Workflow flow view. Use arrow keys to pan, plus and minus to zoom, and Home to fit the diagram.",
+    "aria.flowMinimap": "Flow minimap. Click or drag to recenter the viewport.",
     "aria.nodeLabels": "Node labels",
     "aria.interfaceLanguage": "Interface language",
     "aria.scanControls": "Scan controls",
@@ -175,6 +178,10 @@ const I18N = {
     "button.traceErrors": "Trace Errors",
     "button.runCheck": "Run Check",
     "button.fit": "Fit",
+    "button.viewGraph": "Graph",
+    "button.viewFlow": "Flow",
+    "flow.openView": "Open Flow view",
+    "flow.empty": "Build a workflow from a selected node, Entry Flows, or a query, then open it here.",
     "button.reset": "Reset",
     "button.pause": "Pause",
     "button.resume": "Resume",
@@ -741,6 +748,9 @@ const I18N = {
     "aria.pauseLayout": "Поставить раскладку графа на паузу",
     "aria.resumeLayout": "Продолжить раскладку графа",
     "aria.graphMinimap": "Мини-карта графа. Нажмите или перетащите, чтобы сместить область просмотра.",
+    "aria.stageViews": "Виды сцены",
+    "aria.flowCanvas": "Flow-вид блок-схемы. Используйте стрелки для сдвига, плюс и минус для масштаба и Home, чтобы вписать диаграмму.",
+    "aria.flowMinimap": "Мини-карта потока. Нажмите или перетащите, чтобы сместить область просмотра.",
     "aria.nodeLabels": "Подписи узлов",
     "aria.interfaceLanguage": "Язык интерфейса",
     "aria.scanControls": "Управление сканированием",
@@ -808,6 +818,10 @@ const I18N = {
     "button.traceErrors": "Трассировать ошибки",
     "button.runCheck": "Проверить",
     "button.fit": "Вписать",
+    "button.viewGraph": "Граф",
+    "button.viewFlow": "Поток",
+    "flow.openView": "Открыть Flow-вид",
+    "flow.empty": "Постройте блок-схему из выбранной ноды, потоков входа или запроса и откройте её здесь.",
     "button.reset": "Сброс",
     "button.pause": "Пауза",
     "button.resume": "Продолжить",
@@ -1350,6 +1364,17 @@ const state = {
   pan: { x: 0, y: 0 },
   zoom: 1,
   lastPointer: null,
+  stageView: "graph",
+  flow: {
+    report: null,
+    title: "",
+    positions: new Map(),
+    pan: { x: 48, y: 48 },
+    zoom: 1,
+    selectedBlockId: null,
+    hoveredBlockId: null,
+    lastPointer: null,
+  },
   enabledKinds: new Set(),
   search: "",
   animationFrame: null,
@@ -1460,6 +1485,13 @@ const canvas = document.querySelector("#graphCanvas");
 const ctx = canvas.getContext("2d");
 const minimapCanvas = document.querySelector("#graphMinimap");
 const minimapCtx = minimapCanvas.getContext("2d");
+const flowCanvas = document.querySelector("#flowCanvas");
+const flowCtx = flowCanvas.getContext("2d");
+const flowMinimapCanvas = document.querySelector("#flowMinimap");
+const flowMinimapCtx = flowMinimapCanvas.getContext("2d");
+const flowHud = document.querySelector("#flowHud");
+const graphStage = document.querySelector(".graph-stage");
+const stageViewButtons = document.querySelectorAll("[data-stage-view]");
 const scanButton = document.querySelector("#scanButton");
 const scanCancelButton = document.querySelector("#scanCancelButton");
 const projectSelect = document.querySelector("#projectSelect");
@@ -1745,9 +1777,21 @@ edgePrevButton.addEventListener("click", () => shiftEdgePage(-1));
 edgeNextButton.addEventListener("click", () => shiftEdgePage(1));
 pageCopyButton.addEventListener("click", () => copyGraphPageLink(pageCopyButton));
 pageClearButton.addEventListener("click", () => clearGraphPageFilters());
-zoomOutButton.addEventListener("click", () => zoomAtCanvasCenter(0.82));
-zoomInButton.addEventListener("click", () => zoomAtCanvasCenter(1.18));
-fitGraphButton.addEventListener("click", () => fitVisibleGraph());
+zoomOutButton.addEventListener("click", () => {
+  if (state.stageView === "flow") flowZoomAtCenter(0.82);
+  else zoomAtCanvasCenter(0.82);
+});
+zoomInButton.addEventListener("click", () => {
+  if (state.stageView === "flow") flowZoomAtCenter(1.18);
+  else zoomAtCanvasCenter(1.18);
+});
+fitGraphButton.addEventListener("click", () => {
+  if (state.stageView === "flow") fitFlowView();
+  else fitVisibleGraph();
+});
+stageViewButtons.forEach((button) => {
+  button.addEventListener("click", () => setStageView(button.dataset.stageView));
+});
 resetLayoutButton.addEventListener("click", () => resetGraphLayout());
 toggleLayoutButton.addEventListener("click", () => toggleLayout());
 labelModeButtons.forEach((button) => {
@@ -1781,7 +1825,17 @@ minimapCanvas.addEventListener("pointermove", onMinimapPointerMove);
 minimapCanvas.addEventListener("pointerup", onMinimapPointerUp);
 minimapCanvas.addEventListener("pointerleave", onMinimapPointerUp);
 minimapCanvas.addEventListener("keydown", onCanvasKeyDown);
+flowCanvas.addEventListener("pointerdown", onFlowPointerDown);
+flowCanvas.addEventListener("pointermove", onFlowPointerMove);
+flowCanvas.addEventListener("pointerup", onFlowPointerUp);
+flowCanvas.addEventListener("pointerleave", onFlowPointerUp);
+flowCanvas.addEventListener("keydown", onFlowKeyDown);
+flowCanvas.addEventListener("wheel", onFlowWheel, { passive: false });
+flowMinimapCanvas.addEventListener("pointerdown", onFlowMinimapPointerDown);
+flowMinimapCanvas.addEventListener("pointermove", onFlowMinimapPointerMove);
+flowMinimapCanvas.addEventListener("keydown", onFlowKeyDown);
 window.addEventListener("resize", resizeCanvas);
+window.addEventListener("resize", resizeFlowCanvas);
 
 syncApiTokenCookie();
 applyLocale();
@@ -4623,6 +4677,11 @@ function attachEntryFlowActions(container, report) {
 function attachEntryWorkflowActions(container, report) {
   attachWorkflowNavigation(container);
   attachEdgeExplainActions(container);
+  attachFlowViewActions(
+    container,
+    (index) => report.workflows?.[index],
+    (workflow) => workflow.start?.label || "",
+  );
   container.querySelectorAll("[data-entry-workflow]").forEach((button) => {
     button.addEventListener("click", () => {
       const workflow = report.workflows?.[Number(button.dataset.entryWorkflow)];
@@ -6854,6 +6913,11 @@ function renderWorkflowQueryReport(report) {
 
 function attachWorkflowQueryActions(container, report) {
   attachWorkflowNavigation(container);
+  attachFlowViewActions(
+    container,
+    (index) => report.workflows?.[index],
+    (workflow) => workflow.start?.label || "",
+  );
   container.querySelectorAll("[data-query-workflow]").forEach((button) => {
     button.addEventListener("click", () => {
       const workflow = report.workflows?.[Number(button.dataset.queryWorkflow)];
@@ -9519,6 +9583,11 @@ async function loadWorkflow(node) {
     target.innerHTML = renderWorkflow(body);
     attachWorkflowNavigation(target);
     attachEdgeExplainActions(target);
+    attachFlowViewActions(
+      target,
+      () => body,
+      () => node.label,
+    );
   } catch (error) {
     if (requestId !== state.workflowRequest) return;
     target.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
@@ -9786,6 +9855,7 @@ function renderWorkflow(report) {
       <span>${escapeHtml(t("workflow.transitionCount", { count: formatNumber(transitions.length) }))}</span>
       <span>${escapeHtml(t("trace.depth", { depth: formatNumber(report.max_depth || 0) }))}</span>
       ${renderWorkflowFilterSummary(report.filters)}
+      <button type="button" class="flow-open" data-flow-view>${escapeHtml(t("flow.openView"))}</button>
     </div>
     <div class="workflow-diagram" aria-label="${escapeHtml(t("selection.flow"))}">
       <ol class="workflow-blocks">${blockRows}</ol>
@@ -10408,6 +10478,460 @@ function resizeCanvas() {
     state.pan = { x: canvas.width / 2, y: canvas.height / 2 };
   }
   draw();
+}
+
+const FLOW_BLOCK_WIDTH = 224;
+const FLOW_BLOCK_HEIGHT = 58;
+const FLOW_COLUMN_GAP = 120;
+const FLOW_ROW_GAP = 26;
+const flowKindColors = {
+  start: "#5cc8a7",
+  call: "#7aa2f7",
+  branch: "#f2c14e",
+  loop: "#e0af68",
+  async: "#bb9af7",
+  return: "#9ece6a",
+  error: "#e06c75",
+  config_read: "#73daca",
+  environment_read: "#73daca",
+  dependency: "#c0caf5",
+  import: "#8a93b5",
+  reference: "#a9b1d6",
+  external_boundary: "#ff9e64",
+  unknown: "#8b949e",
+};
+
+function flowKindColor(kind) {
+  return flowKindColors[kind] || flowKindColors.unknown;
+}
+
+function setStageView(view) {
+  const next = view === "flow" ? "flow" : "graph";
+  state.stageView = next;
+  if (graphStage) graphStage.dataset.view = next;
+  const flowActive = next === "flow";
+  flowCanvas.hidden = !flowActive;
+  flowMinimapCanvas.hidden = !flowActive;
+  flowHud.hidden = !flowActive;
+  stageViewButtons.forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.stageView === next));
+  });
+  if (flowActive) {
+    resizeFlowCanvas();
+    if (!state.flow.report) renderFlowHud();
+  }
+}
+
+function openFlowView(report, title) {
+  if (!report || !Array.isArray(report.blocks) || report.blocks.length === 0) return;
+  state.flow.report = report;
+  state.flow.title = title || report.start?.label || "";
+  state.flow.selectedBlockId = null;
+  state.flow.hoveredBlockId = null;
+  layoutFlow();
+  setStageView("flow");
+  fitFlowView();
+  flowCanvas.focus({ preventScroll: true });
+}
+
+function flowBlocks() {
+  return Array.isArray(state.flow.report?.blocks) ? state.flow.report.blocks : [];
+}
+
+function flowTransitions() {
+  return Array.isArray(state.flow.report?.transitions) ? state.flow.report.transitions : [];
+}
+
+function layoutFlow() {
+  const positions = new Map();
+  const columns = new Map();
+  flowBlocks().forEach((block) => {
+    const depth = Number(block.depth || 0);
+    if (!columns.has(depth)) columns.set(depth, []);
+    columns.get(depth).push(block);
+  });
+  const depths = [...columns.keys()].sort((left, right) => left - right);
+  const maxRows = Math.max(1, ...depths.map((depth) => columns.get(depth).length));
+  const totalHeight = maxRows * (FLOW_BLOCK_HEIGHT + FLOW_ROW_GAP);
+  depths.forEach((depth, columnIndex) => {
+    const blocks = columns.get(depth);
+    const columnHeight = blocks.length * (FLOW_BLOCK_HEIGHT + FLOW_ROW_GAP);
+    const startY = (totalHeight - columnHeight) / 2;
+    blocks.forEach((block, rowIndex) => {
+      positions.set(block.id, {
+        x: columnIndex * (FLOW_BLOCK_WIDTH + FLOW_COLUMN_GAP),
+        y: startY + rowIndex * (FLOW_BLOCK_HEIGHT + FLOW_ROW_GAP),
+      });
+    });
+  });
+  state.flow.positions = positions;
+}
+
+function resizeFlowCanvas() {
+  if (flowCanvas.hidden) return;
+  const rect = flowCanvas.getBoundingClientRect();
+  flowCanvas.width = Math.max(1, Math.floor(rect.width));
+  flowCanvas.height = Math.max(1, Math.floor(rect.height));
+  const minimapRect = flowMinimapCanvas.getBoundingClientRect();
+  flowMinimapCanvas.width = Math.max(1, Math.floor(minimapRect.width));
+  flowMinimapCanvas.height = Math.max(1, Math.floor(minimapRect.height));
+  drawFlow();
+}
+
+function flowScreenToWorld(x, y) {
+  return {
+    x: (x - state.flow.pan.x) / state.flow.zoom,
+    y: (y - state.flow.pan.y) / state.flow.zoom,
+  };
+}
+
+function flowBounds() {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  state.flow.positions.forEach((position) => {
+    minX = Math.min(minX, position.x);
+    minY = Math.min(minY, position.y);
+    maxX = Math.max(maxX, position.x + FLOW_BLOCK_WIDTH);
+    maxY = Math.max(maxY, position.y + FLOW_BLOCK_HEIGHT);
+  });
+  if (!Number.isFinite(minX)) return null;
+  return { minX, minY, maxX, maxY };
+}
+
+function fitFlowView() {
+  const bounds = flowBounds();
+  if (!bounds) return;
+  const width = Math.max(1, bounds.maxX - bounds.minX);
+  const height = Math.max(1, bounds.maxY - bounds.minY);
+  const padding = 64;
+  const zoomX = (flowCanvas.width - padding * 2) / width;
+  const zoomY = (flowCanvas.height - padding * 2) / height;
+  state.flow.zoom = Math.max(0.18, Math.min(1.6, Math.min(zoomX, zoomY)));
+  state.flow.pan = {
+    x: flowCanvas.width / 2 - ((bounds.minX + bounds.maxX) / 2) * state.flow.zoom,
+    y: flowCanvas.height / 2 - ((bounds.minY + bounds.maxY) / 2) * state.flow.zoom,
+  };
+  drawFlow();
+}
+
+function flowZoomAt(screenX, screenY, scale) {
+  const before = flowScreenToWorld(screenX, screenY);
+  state.flow.zoom = Math.max(0.18, Math.min(3, state.flow.zoom * scale));
+  const after = flowScreenToWorld(screenX, screenY);
+  state.flow.pan.x += (after.x - before.x) * state.flow.zoom;
+  state.flow.pan.y += (after.y - before.y) * state.flow.zoom;
+  drawFlow();
+}
+
+function flowZoomAtCenter(scale) {
+  flowZoomAt(flowCanvas.width / 2, flowCanvas.height / 2, scale);
+}
+
+function flowBlockAt(world) {
+  const blocks = flowBlocks();
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    const position = state.flow.positions.get(block.id);
+    if (!position) continue;
+    if (
+      world.x >= position.x &&
+      world.x <= position.x + FLOW_BLOCK_WIDTH &&
+      world.y >= position.y &&
+      world.y <= position.y + FLOW_BLOCK_HEIGHT
+    ) {
+      return block;
+    }
+  }
+  return null;
+}
+
+function drawFlow() {
+  if (flowCanvas.hidden) return;
+  flowCtx.clearRect(0, 0, flowCanvas.width, flowCanvas.height);
+  const report = state.flow.report;
+  renderFlowHud();
+  if (!report) return;
+
+  flowCtx.save();
+  flowCtx.translate(state.flow.pan.x, state.flow.pan.y);
+  flowCtx.scale(state.flow.zoom, state.flow.zoom);
+
+  flowTransitions().forEach((transition) => {
+    const source = state.flow.positions.get(transition.source);
+    const target = state.flow.positions.get(transition.target);
+    if (!source || !target) return;
+    const active =
+      state.flow.selectedBlockId === transition.source ||
+      state.flow.selectedBlockId === transition.target ||
+      state.flow.hoveredBlockId === transition.source ||
+      state.flow.hoveredBlockId === transition.target;
+    const risky = Array.isArray(transition.risk_refs) && transition.risk_refs.length > 0;
+    const from = { x: source.x + FLOW_BLOCK_WIDTH, y: source.y + FLOW_BLOCK_HEIGHT / 2 };
+    const to = { x: target.x, y: target.y + FLOW_BLOCK_HEIGHT / 2 };
+    const forward = to.x >= from.x;
+    const bend = forward ? Math.max(36, (to.x - from.x) / 2) : 72;
+    flowCtx.beginPath();
+    flowCtx.moveTo(from.x, from.y);
+    if (forward) {
+      flowCtx.bezierCurveTo(from.x + bend, from.y, to.x - bend, to.y, to.x, to.y);
+    } else {
+      const lift = Math.min(from.y, to.y) - FLOW_BLOCK_HEIGHT;
+      flowCtx.bezierCurveTo(from.x + bend, lift, to.x - bend, lift, to.x, to.y);
+    }
+    flowCtx.strokeStyle = risky
+      ? "rgba(224, 108, 117, 0.85)"
+      : active
+        ? "rgba(92, 200, 167, 0.9)"
+        : "rgba(169, 177, 214, 0.42)";
+    flowCtx.lineWidth = active ? 2.2 : 1.3;
+    flowCtx.stroke();
+    flowCtx.beginPath();
+    flowCtx.moveTo(to.x, to.y);
+    flowCtx.lineTo(to.x - 7, to.y - 4);
+    flowCtx.lineTo(to.x - 7, to.y + 4);
+    flowCtx.closePath();
+    flowCtx.fillStyle = flowCtx.strokeStyle;
+    flowCtx.fill();
+  });
+
+  flowBlocks().forEach((block) => {
+    const position = state.flow.positions.get(block.id);
+    if (!position) return;
+    const selected = state.flow.selectedBlockId === block.id;
+    const hovered = state.flow.hoveredBlockId === block.id;
+    const accent = flowKindColor(block.kind || "unknown");
+    flowCtx.beginPath();
+    flowCtx.roundRect(position.x, position.y, FLOW_BLOCK_WIDTH, FLOW_BLOCK_HEIGHT, 9);
+    flowCtx.fillStyle = selected ? "rgba(38, 44, 52, 0.98)" : "rgba(24, 27, 32, 0.96)";
+    flowCtx.fill();
+    flowCtx.strokeStyle = selected
+      ? "#5cc8a7"
+      : hovered
+        ? "rgba(92, 200, 167, 0.6)"
+        : "rgba(255, 255, 255, 0.14)";
+    flowCtx.lineWidth = selected ? 2 : 1.2;
+    flowCtx.stroke();
+    flowCtx.fillStyle = accent;
+    flowCtx.fillRect(position.x, position.y + 6, 3.5, FLOW_BLOCK_HEIGHT - 12);
+
+    flowCtx.fillStyle = accent;
+    flowCtx.font = "600 10px 'JetBrains Mono', ui-monospace, monospace";
+    flowCtx.textBaseline = "alphabetic";
+    flowCtx.fillText(
+      formatKind(block.kind || "unknown").toUpperCase(),
+      position.x + 14,
+      position.y + 20,
+      FLOW_BLOCK_WIDTH - 28,
+    );
+    flowCtx.fillStyle = "#edf1f2";
+    flowCtx.font = "12.5px 'JetBrains Mono', ui-monospace, monospace";
+    const label = String(block.node?.label || block.id || "");
+    const shortLabel = label.length > 30 ? `${label.slice(0, 29)}…` : label;
+    flowCtx.fillText(shortLabel, position.x + 14, position.y + 40, FLOW_BLOCK_WIDTH - 28);
+
+    const risks = Array.isArray(block.risk_refs) ? block.risk_refs : [];
+    if (risks.length > 0) {
+      const severity = risks.some((risk) => risk.severity === "error")
+        ? "error"
+        : risks.some((risk) => risk.severity === "warning")
+          ? "warning"
+          : "info";
+      flowCtx.beginPath();
+      flowCtx.arc(position.x + FLOW_BLOCK_WIDTH - 12, position.y + 12, 4.2, 0, Math.PI * 2);
+      flowCtx.fillStyle = riskColor(severity);
+      flowCtx.fill();
+    }
+  });
+
+  flowCtx.restore();
+  drawFlowMinimap();
+}
+
+function flowMinimapTransform() {
+  const bounds = flowBounds();
+  if (!bounds) return null;
+  const width = Math.max(1, bounds.maxX - bounds.minX);
+  const height = Math.max(1, bounds.maxY - bounds.minY);
+  const padding = 10;
+  const scale = Math.min(
+    (flowMinimapCanvas.width - padding * 2) / width,
+    (flowMinimapCanvas.height - padding * 2) / height,
+  );
+  return {
+    bounds,
+    scale,
+    offsetX: (flowMinimapCanvas.width - width * scale) / 2 - bounds.minX * scale,
+    offsetY: (flowMinimapCanvas.height - height * scale) / 2 - bounds.minY * scale,
+  };
+}
+
+function drawFlowMinimap() {
+  if (flowMinimapCanvas.hidden) return;
+  flowMinimapCtx.clearRect(0, 0, flowMinimapCanvas.width, flowMinimapCanvas.height);
+  flowMinimapCtx.fillStyle = "rgba(16, 18, 20, 0.82)";
+  flowMinimapCtx.fillRect(0, 0, flowMinimapCanvas.width, flowMinimapCanvas.height);
+  const transform = flowMinimapTransform();
+  if (!transform) return;
+
+  flowBlocks().forEach((block) => {
+    const position = state.flow.positions.get(block.id);
+    if (!position) return;
+    flowMinimapCtx.fillStyle =
+      state.flow.selectedBlockId === block.id ? "#ffffff" : flowKindColor(block.kind || "unknown");
+    flowMinimapCtx.fillRect(
+      position.x * transform.scale + transform.offsetX,
+      position.y * transform.scale + transform.offsetY,
+      Math.max(2, FLOW_BLOCK_WIDTH * transform.scale),
+      Math.max(1.5, FLOW_BLOCK_HEIGHT * transform.scale),
+    );
+  });
+
+  const viewMinX = (0 - state.flow.pan.x) / state.flow.zoom;
+  const viewMinY = (0 - state.flow.pan.y) / state.flow.zoom;
+  const viewWidth = flowCanvas.width / state.flow.zoom;
+  const viewHeight = flowCanvas.height / state.flow.zoom;
+  flowMinimapCtx.strokeStyle = "rgba(92, 200, 167, 0.85)";
+  flowMinimapCtx.lineWidth = 1;
+  flowMinimapCtx.strokeRect(
+    viewMinX * transform.scale + transform.offsetX,
+    viewMinY * transform.scale + transform.offsetY,
+    viewWidth * transform.scale,
+    viewHeight * transform.scale,
+  );
+}
+
+function renderFlowHud() {
+  if (!flowHud) return;
+  if (!state.flow.report) {
+    flowHud.textContent = t("flow.empty");
+    return;
+  }
+  const blocks = flowBlocks().length;
+  const transitions = flowTransitions().length;
+  const zoom = Math.round(state.flow.zoom * 100);
+  const title = state.flow.title ? `${state.flow.title} · ` : "";
+  flowHud.textContent = `${title}${t("workflow.blockCount", { count: formatNumber(blocks) })} · ${t(
+    "workflow.transitionCount",
+    { count: formatNumber(transitions) },
+  )} · ${zoom}%`;
+}
+
+function selectFlowBlock(block) {
+  state.flow.selectedBlockId = block ? block.id : null;
+  drawFlow();
+  const nodeId = block?.node?.id;
+  if (nodeId != null) selectNodeById(nodeId);
+}
+
+function onFlowPointerDown(event) {
+  flowCanvas.setPointerCapture(event.pointerId);
+  state.flow.lastPointer = { x: event.offsetX, y: event.offsetY };
+  const hit = flowBlockAt(flowScreenToWorld(event.offsetX, event.offsetY));
+  if (hit) selectFlowBlock(hit);
+}
+
+function onFlowPointerMove(event) {
+  const hit = flowBlockAt(flowScreenToWorld(event.offsetX, event.offsetY));
+  const nextHoveredId = hit ? hit.id : null;
+  if (state.flow.hoveredBlockId !== nextHoveredId) {
+    state.flow.hoveredBlockId = nextHoveredId;
+    drawFlow();
+  }
+  flowCanvas.style.cursor = hit ? "pointer" : event.buttons === 1 ? "grabbing" : "grab";
+  if (!state.flow.lastPointer || event.buttons !== 1) return;
+  state.flow.pan.x += event.offsetX - state.flow.lastPointer.x;
+  state.flow.pan.y += event.offsetY - state.flow.lastPointer.y;
+  state.flow.lastPointer = { x: event.offsetX, y: event.offsetY };
+  drawFlow();
+}
+
+function onFlowPointerUp() {
+  state.flow.lastPointer = null;
+}
+
+function onFlowWheel(event) {
+  event.preventDefault();
+  flowZoomAt(event.offsetX, event.offsetY, event.deltaY > 0 ? 0.9 : 1.1);
+}
+
+function onFlowKeyDown(event) {
+  const panStep = event.shiftKey ? 120 : 48;
+  switch (event.key) {
+    case "ArrowLeft":
+      event.preventDefault();
+      state.flow.pan.x += panStep;
+      drawFlow();
+      break;
+    case "ArrowRight":
+      event.preventDefault();
+      state.flow.pan.x -= panStep;
+      drawFlow();
+      break;
+    case "ArrowUp":
+      event.preventDefault();
+      state.flow.pan.y += panStep;
+      drawFlow();
+      break;
+    case "ArrowDown":
+      event.preventDefault();
+      state.flow.pan.y -= panStep;
+      drawFlow();
+      break;
+    case "+":
+    case "=":
+      event.preventDefault();
+      flowZoomAtCenter(1.12);
+      break;
+    case "-":
+    case "_":
+      event.preventDefault();
+      flowZoomAtCenter(0.88);
+      break;
+    case "Home":
+      event.preventDefault();
+      fitFlowView();
+      break;
+    default:
+      break;
+  }
+}
+
+function recenterFlowFromMinimap(event) {
+  const transform = flowMinimapTransform();
+  if (!transform) return;
+  const world = {
+    x: (event.offsetX - transform.offsetX) / transform.scale,
+    y: (event.offsetY - transform.offsetY) / transform.scale,
+  };
+  state.flow.pan.x = flowCanvas.width / 2 - world.x * state.flow.zoom;
+  state.flow.pan.y = flowCanvas.height / 2 - world.y * state.flow.zoom;
+  drawFlow();
+}
+
+function onFlowMinimapPointerDown(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  flowMinimapCanvas.setPointerCapture(event.pointerId);
+  recenterFlowFromMinimap(event);
+}
+
+function onFlowMinimapPointerMove(event) {
+  if (event.buttons !== 1) return;
+  event.preventDefault();
+  event.stopPropagation();
+  recenterFlowFromMinimap(event);
+}
+
+function attachFlowViewActions(container, resolveReport, titleFor) {
+  container.querySelectorAll("[data-flow-view]").forEach((button, index) => {
+    button.addEventListener("click", () => {
+      const report = resolveReport(index);
+      if (!report) return;
+      openFlowView(report, titleFor ? titleFor(report, index) : "");
+    });
+  });
 }
 
 function nodeRadius(node) {

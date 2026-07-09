@@ -583,12 +583,32 @@
 
       <section class="graph-stage" aria-label="Code graph" data-i18n-aria-label="aria.graphStage">
         <div class="graph-controls" aria-label="Graph viewport controls" data-i18n-aria-label="aria.graphControls">
+          <div class="graph-control-group stage-view-modes" role="group" aria-label="Stage views" data-i18n-aria-label="aria.stageViews">
+            <button
+              id="stageViewGraphButton"
+              type="button"
+              data-stage-view="graph"
+              aria-pressed="true"
+              data-i18n="button.viewGraph"
+            >
+              Graph
+            </button>
+            <button
+              id="stageViewFlowButton"
+              type="button"
+              data-stage-view="flow"
+              aria-pressed="false"
+              data-i18n="button.viewFlow"
+            >
+              Flow
+            </button>
+          </div>
           <div class="graph-control-group">
             <button id="zoomOutButton" type="button" aria-label="Zoom out" data-i18n-aria-label="aria.zoomOut">-</button>
             <button id="zoomInButton" type="button" aria-label="Zoom in" data-i18n-aria-label="aria.zoomIn">+</button>
             <button id="fitGraphButton" type="button" aria-label="Fit visible graph" data-i18n="button.fit" data-i18n-aria-label="aria.fitGraph">Fit</button>
           </div>
-          <div class="graph-control-group">
+          <div class="graph-control-group graph-layout-controls">
             <button id="resetLayoutButton" type="button" aria-label="Restart graph layout" data-i18n="button.reset" data-i18n-aria-label="aria.restartLayout">Reset</button>
             <button id="toggleLayoutButton" type="button" aria-label="Pause graph layout" data-i18n-aria-label="aria.pauseLayout">Pause</button>
           </div>
@@ -602,7 +622,26 @@
         </div>
         <canvas id="graphCanvas" tabindex="0" role="application" aria-label="Interactive code graph" data-i18n-aria-label="aria.graphCanvas"></canvas>
         <canvas id="graphMinimap" class="graph-minimap" tabindex="0" role="application" aria-label="Graph minimap" data-i18n-aria-label="aria.graphMinimap"></canvas>
+        <canvas
+          id="flowCanvas"
+          class="flow-canvas"
+          tabindex="0"
+          role="application"
+          aria-label="Workflow flow view"
+          data-i18n-aria-label="aria.flowCanvas"
+          hidden
+        ></canvas>
+        <canvas
+          id="flowMinimap"
+          class="graph-minimap flow-minimap"
+          tabindex="0"
+          role="application"
+          aria-label="Flow minimap"
+          data-i18n-aria-label="aria.flowMinimap"
+          hidden
+        ></canvas>
         <div id="graphHud" class="graph-hud" aria-live="polite"></div>
+        <div id="flowHud" class="graph-hud flow-hud" aria-live="polite" hidden></div>
         <div class="legend" id="legend"></div>
       </section>
     </main>
