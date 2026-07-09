@@ -1,5 +1,8 @@
 # Roadmap
 
+The near-term execution order for the remaining items is tracked in
+[`docs/ROADMAP_NEXT.md`](docs/ROADMAP_NEXT.md).
+
 ## Phase 0: Bootstrap
 
 Status: mostly complete.
