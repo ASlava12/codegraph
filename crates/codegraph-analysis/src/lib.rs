@@ -8709,6 +8709,15 @@ fn validate_document_terms(spec: &QuerySpec) -> Result<(), QueryError> {
                 | "document_kind"
                 | "doc_kind"
                 | "type"
+                | "owner"
+                | "doc_owner"
+                | "status"
+                | "doc_status"
+                | "tag"
+                | "tags"
+                | "doc_tags"
+                | "title"
+                | "doc_title"
                 | "heading"
                 | "anchor"
                 | "path"
@@ -9421,6 +9430,10 @@ fn document_query_matches(
         }
         "language" | "item_kind" => metadata_matches(node, key, expected),
         "document_kind" | "doc_kind" | "type" => metadata_matches(node, "document_kind", expected),
+        "owner" | "doc_owner" => metadata_matches(node, "doc_owner", expected),
+        "status" | "doc_status" => metadata_matches(node, "doc_status", expected),
+        "tag" | "tags" | "doc_tags" => metadata_matches(node, "doc_tags", expected),
+        "title" | "doc_title" => metadata_matches(node, "doc_title", expected),
         "heading" => metadata_matches(node, "heading", expected),
         "anchor" => metadata_matches(node, "anchor", expected),
         "kind" | "node_kind" => text_matches(&kind_name(&node.kind), expected),
@@ -18232,6 +18245,10 @@ mod tests {
                 ("item_kind".to_string(), "document".to_string()),
                 ("document_kind".to_string(), "adr".to_string()),
                 ("source".to_string(), "markdown".to_string()),
+                ("doc_title".to_string(), "Runtime Flow".to_string()),
+                ("doc_owner".to_string(), "platform-team".to_string()),
+                ("doc_status".to_string(), "approved".to_string()),
+                ("doc_tags".to_string(), "runtime, startup".to_string()),
             ]),
         );
         let section = graph.add_node_with_metadata(
@@ -18341,6 +18358,14 @@ mod tests {
         let by_alias = query_graph(&graph, "adr heading:Runtime edge_limit:20").unwrap();
         assert!(by_alias.nodes.iter().any(|node| node.id == section));
         assert!(by_alias.edges.iter().any(|edge| edge.target == function));
+
+        let by_owner = query_graph(&graph, "docs owner:platform-team").unwrap();
+        assert!(by_owner.nodes.iter().any(|node| node.id == doc));
+        assert!(!by_owner.nodes.iter().any(|node| node.id == other_doc));
+        let by_status = query_graph(&graph, "docs status:approved").unwrap();
+        assert!(by_status.nodes.iter().any(|node| node.id == doc));
+        let by_tag = query_graph(&graph, "docs tag:runtime").unwrap();
+        assert!(by_tag.nodes.iter().any(|node| node.id == doc));
 
         let error = query_graph(&graph, "docs unsupported:value")
             .expect_err("invalid docs term should fail");

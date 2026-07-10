@@ -488,7 +488,7 @@ Repository knowledge ingestion:
 
 - [x] Add first Markdown/ADR/RFC extraction so design docs and decisions become graph nodes with section, local path, and symbol references.
 - [x] Add docs-to-code query slices and node-card actions for Markdown/ADR/RFC document graph exploration.
-- [ ] Add richer Markdown citations, backlinks, front matter, ownership metadata, and dedicated UI overlays for docs-to-code exploration.
+- [x] Add richer Markdown citations, backlinks, front matter, ownership metadata, and dedicated UI overlays for docs-to-code exploration.
 - [x] Promote source comments such as `NOTE`, `WHY`, `TODO`, `FIXME`, and security/risk markers into linked rationale nodes.
 - [x] Add first deterministic SQL schema extraction for tables, views, columns, foreign keys, and indexes.
 - [x] Add SQL/schema query slices and SQL node-card graph actions for code-to-query-to-table exploration.

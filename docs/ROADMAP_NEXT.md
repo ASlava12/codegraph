@@ -109,7 +109,7 @@ Goal: extend deterministic extraction where it is still shallow.
 - [x] Add deeper SQL query extraction: JOIN relationship semantics, migration ordering, and broader schema consistency insights.
 - [x] Link application code to SQL/schema nodes through migrations, ORM metadata, and database config.
 - [x] Index MCP configuration files (`.mcp.json`, `mcp.json`, `mcp_servers.json`, assistant desktop configs) as tool/server dependency facts.
-- [ ] Add richer Markdown citations, backlinks, front matter, ownership metadata, and docs-to-code UI overlays.
+- [x] Add richer Markdown citations, backlinks, front matter, ownership metadata, and docs-to-code UI overlays.
 
 Exit criteria:
 

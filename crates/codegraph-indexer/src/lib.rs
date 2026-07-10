@@ -260,6 +260,8 @@ struct PendingDocumentPathRef {
     relation: &'static str,
     line: u32,
     text: Option<String>,
+    /// `#L42` / `#L42-L50` citation anchor from the link fragment.
+    line_ref: Option<String>,
 }
 
 struct PendingDocumentSymbolRef {
@@ -981,6 +983,7 @@ fn scan_project_with_scope(
     resolve_pending_github_actions_local_actions(&mut context);
     resolve_pending_document_path_refs(&mut context);
     resolve_pending_document_symbol_refs(&mut context);
+    annotate_document_backlinks(&mut context);
     resolve_pending_sql_foreign_keys(&mut context);
     resolve_pending_sql_query_table_refs(&mut context);
     resolve_pending_native_channel_handlers(&mut context);
@@ -1537,9 +1540,32 @@ fn index_markdown_document(
         doc_kind.clone(),
     );
 
+    // YAML front matter: title, ownership, status, tags become document
+    // metadata so cards and queries can filter docs by owner.
+    let (front_matter, front_matter_end) = markdown_front_matter(source);
+    for (key, metadata_key) in [
+        ("title", "doc_title"),
+        ("status", "doc_status"),
+        ("tags", "doc_tags"),
+        ("date", "doc_date"),
+    ] {
+        if let Some(value) = front_matter.get(key) {
+            add_file_metadata(&mut context.graph, file_id, metadata_key, value);
+        }
+    }
+    for owner_key in ["owner", "owners", "author", "authors", "maintainer"] {
+        if let Some(value) = front_matter.get(owner_key) {
+            add_file_metadata(&mut context.graph, file_id, "doc_owner", value);
+            break;
+        }
+    }
+
     let mut current_section = None;
     for (index, line) in source.lines().enumerate() {
         let line_number = index as u32 + 1;
+        if line_number <= front_matter_end {
+            continue;
+        }
         if let Some((level, heading)) = markdown_heading(line) {
             let mut metadata = BTreeMap::new();
             metadata.insert("item_kind".to_string(), "document_section".to_string());
@@ -1570,6 +1596,7 @@ fn index_markdown_document(
         let source_id = current_section.unwrap_or(file_id);
         for link in markdown_links(line) {
             if let Some(candidates) = markdown_path_candidates(label, &link.target) {
+                let line_ref = markdown_line_anchor(&link.target);
                 context
                     .pending_document_path_refs
                     .push(PendingDocumentPathRef {
@@ -1579,6 +1606,24 @@ fn index_markdown_document(
                         relation: "markdown_link",
                         line: line_number,
                         text: Some(link.text),
+                        line_ref,
+                    });
+            }
+        }
+
+        for wikilink in markdown_wikilinks(line) {
+            let candidates = markdown_wikilink_candidates(label, &wikilink.target);
+            if !candidates.is_empty() {
+                context
+                    .pending_document_path_refs
+                    .push(PendingDocumentPathRef {
+                        source: source_id,
+                        target: wikilink.target,
+                        candidates,
+                        relation: "markdown_wikilink",
+                        line: line_number,
+                        text: (!wikilink.text.is_empty()).then_some(wikilink.text),
+                        line_ref: None,
                     });
             }
         }
@@ -1594,6 +1639,7 @@ fn index_markdown_document(
                         relation: "markdown_code_path",
                         line: line_number,
                         text: None,
+                        line_ref: None,
                     });
             } else if is_document_symbol_reference(&code) {
                 context
@@ -1613,6 +1659,89 @@ fn index_markdown_document(
 struct MarkdownLink {
     text: String,
     target: String,
+}
+
+/// Simple YAML front matter: `key: value` pairs between leading `---`
+/// fences. Returns the fields and the 1-based line number of the closing
+/// fence (0 when absent).
+fn markdown_front_matter(source: &str) -> (BTreeMap<String, String>, u32) {
+    let mut lines = source.lines().enumerate();
+    match lines.next() {
+        Some((_, first)) if first.trim() == "---" => {}
+        _ => return (BTreeMap::new(), 0),
+    }
+    let mut fields = BTreeMap::new();
+    for (index, line) in lines {
+        if line.trim() == "---" {
+            return (fields, index as u32 + 1);
+        }
+        if let Some((key, value)) = line.split_once(':') {
+            let key = key.trim().to_ascii_lowercase();
+            let value = value.trim().trim_matches(['"', '\'']).to_string();
+            if !key.is_empty() && !value.is_empty() && !key.contains(' ') {
+                fields.insert(key, value);
+            }
+        }
+    }
+    // No closing fence: not front matter.
+    (BTreeMap::new(), 0)
+}
+
+/// `#L42` or `#L42-L50` fragments on markdown link targets.
+fn markdown_line_anchor(target: &str) -> Option<String> {
+    let (_, fragment) = target.split_once('#')?;
+    let rest = fragment.strip_prefix('L')?;
+    let valid = rest
+        .split("-L")
+        .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()));
+    (valid && !rest.is_empty()).then(|| fragment.to_string())
+}
+
+/// Obsidian-style `[[target]]` / `[[target|text]]` wikilinks.
+fn markdown_wikilinks(line: &str) -> Vec<MarkdownLink> {
+    let mut links = Vec::new();
+    let mut cursor = 0;
+    while let Some(start) = line[cursor..].find("[[") {
+        let start = cursor + start + 2;
+        let Some(end) = line[start..].find("]]") else {
+            break;
+        };
+        let inner = &line[start..start + end];
+        let (target, text) = inner
+            .split_once('|')
+            .map(|(target, text)| (target.trim(), text.trim()))
+            .unwrap_or((inner.trim(), ""));
+        if !target.is_empty() && !target.contains("://") {
+            links.push(MarkdownLink {
+                text: text.to_string(),
+                target: target.to_string(),
+            });
+        }
+        cursor = start + end + 2;
+    }
+    links
+}
+
+/// Wikilink targets resolve like Obsidian: same directory first, then the
+/// scan root, with `.md` appended when missing.
+fn markdown_wikilink_candidates(document_label: &str, target: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let with_extension = if target.to_ascii_lowercase().ends_with(".md") {
+        target.to_string()
+    } else {
+        format!("{target}.md")
+    };
+    for base in [&with_extension, &target.to_string()] {
+        let relative = join_path(path_dir(document_label).as_deref(), base);
+        if !relative.is_empty() && !candidates.contains(&relative) {
+            candidates.push(relative);
+        }
+        let root_relative = normalize_path(base);
+        if !root_relative.is_empty() && !candidates.contains(&root_relative) {
+            candidates.push(root_relative);
+        }
+    }
+    candidates
 }
 
 fn markdown_heading(line: &str) -> Option<(u8, String)> {
@@ -11964,6 +12093,9 @@ fn resolve_pending_document_path_refs(context: &mut IndexContext) {
         if let Some(text) = pending.text {
             metadata.insert("text".to_string(), text);
         }
+        if let Some(line_ref) = pending.line_ref {
+            metadata.insert("line_ref".to_string(), line_ref);
+        }
         add_edge_once_with_metadata(
             &mut context.graph,
             pending.source,
@@ -11971,6 +12103,29 @@ fn resolve_pending_document_path_refs(context: &mut IndexContext) {
             EdgeKind::References,
             Confidence::Exact,
             metadata,
+        );
+    }
+}
+
+/// Count incoming documentation references per node so heavily cited code
+/// and documents surface their backlink counts.
+fn annotate_document_backlinks(context: &mut IndexContext) {
+    let mut backlinks: BTreeMap<NodeId, usize> = BTreeMap::new();
+    for edge in &context.graph.edges {
+        if edge
+            .metadata
+            .get("relation")
+            .is_some_and(|relation| relation.starts_with("markdown_"))
+        {
+            *backlinks.entry(edge.target).or_insert(0) += 1;
+        }
+    }
+    for (node_id, count) in backlinks {
+        add_node_metadata(
+            &mut context.graph,
+            node_id,
+            "doc_backlinks",
+            count.to_string(),
         );
     }
 }
@@ -13489,6 +13644,111 @@ mod tests {
 
         let coverage = scan_coverage(&root, &IndexOptions::default()).unwrap();
         assert_eq!(coverage.languages.get("markdown"), Some(&1));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_indexes_markdown_front_matter_wikilinks_and_backlinks() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() {}\nfn helper() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("docs").join("runtime.md"),
+            "---\ntitle: Runtime Guide\nowner: platform-team\nstatus: approved\ntags: runtime, startup\n---\n\n# Runtime\n\nStartup lives in [main](../src/main.rs#L1-L2).\nSee also [[architecture|the architecture notes]].\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("docs").join("architecture.md"),
+            "# Architecture\n\nEntry point: [main.rs](../src/main.rs).\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let runtime_doc = node_id(&graph, NodeKind::File, "docs/runtime.md");
+        let architecture_doc = node_id(&graph, NodeKind::File, "docs/architecture.md");
+        let main_file = node_id(&graph, NodeKind::File, "src/main.rs");
+
+        let doc_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == runtime_doc)
+            .expect("missing runtime doc node");
+        assert_eq!(
+            doc_node.metadata.get("doc_title").map(String::as_str),
+            Some("Runtime Guide")
+        );
+        assert_eq!(
+            doc_node.metadata.get("doc_owner").map(String::as_str),
+            Some("platform-team")
+        );
+        assert_eq!(
+            doc_node.metadata.get("doc_status").map(String::as_str),
+            Some("approved")
+        );
+        assert_eq!(
+            doc_node.metadata.get("doc_tags").map(String::as_str),
+            Some("runtime, startup")
+        );
+        // Front matter keys must not leak as document sections.
+        assert!(
+            !graph
+                .nodes
+                .iter()
+                .any(|node| node.label.contains("title: Runtime Guide"))
+        );
+
+        assert!(graph.edges.iter().any(|edge| {
+            edge.target == main_file
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "markdown_link")
+                && edge
+                    .metadata
+                    .get("line_ref")
+                    .is_some_and(|value| value == "L1-L2")
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.target == architecture_doc
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|value| value == "markdown_wikilink")
+                && edge
+                    .metadata
+                    .get("text")
+                    .is_some_and(|value| value == "the architecture notes")
+        }));
+
+        let main_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == main_file)
+            .expect("missing main file node");
+        assert_eq!(
+            main_node.metadata.get("doc_backlinks").map(String::as_str),
+            Some("2")
+        );
+        let architecture_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == architecture_doc)
+            .expect("missing architecture doc node");
+        assert_eq!(
+            architecture_node
+                .metadata
+                .get("doc_backlinks")
+                .map(String::as_str),
+            Some("1")
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
