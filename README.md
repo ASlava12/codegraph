@@ -152,6 +152,7 @@ Implemented now:
 - Journey reports rank up to `--paths` alternative routes by edge confidence and length, report per-path `confidence_score` and `lowest_confidence`, and attach structured per-hop explanations (confidence note, relation, provenance source) for why each transition exists.
 - Web Journey panel builds ranked entrypoint-to-target chains from `/api/journey`: step-numbered blocks with localized kind badges, fragile/risk chips, per-hop provenance notes, node/dependency card actions, graph focus per path, and JSON export for agent handoff.
 - Journey steps expand in place into nested sub-flows (bounded workflow slices from the step node) with breadcrumb context back to the parent journey, collapse actions, and the same block/edge card and Flow-view actions as regular workflows.
+- MCP stdio server (`codegraph mcp`) exposes query_graph, get_node_card, get_neighbors, shortest_path, workflow, insights, impact, and report tools over newline-delimited JSON-RPC so external assistants use the graph as persistent repository memory.
 - Refactor context bundles (CLI `refactor-context`, API `/api/refactor-context`) combine impact, component dependencies, optional ranked journey, related risks, and a target source preview into one `codegraph.refactor_context.v1` JSON for one-shot agent handoff.
 - Coupling/seam reports (CLI `seams`, API `/api/seams`) rank cross-area boundaries by deterministic friction score both ways: safest thin seams for extraction and most tangled boundaries needing work, with edge-kind/confidence breakdowns and sample edge evidence.
 - Blast-radius reports (CLI `impact`, API `/api/impact`) list transitive dependents with distances, test flags, and risk counts, extract affected entrypoints/routes/tests, and compute a deterministic risk-weighted impact score for refactor planning.
@@ -651,6 +652,27 @@ cargo run -p codegraph-cli -- incremental-update . --cache-dir /tmp/codegraph-ca
 ```
 
 The output is JSON using the shared graph schema from `codegraph-core`.
+
+Serve the graph to coding assistants over MCP (stdio):
+
+```bash
+cargo run -p codegraph-cli -- mcp .
+```
+
+Register it in an assistant's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "codegraph",
+      "args": ["mcp", "."]
+    }
+  }
+}
+```
+
+The MCP server speaks newline-delimited JSON-RPC on stdin/stdout, scans the project once at startup (using the shared persistent cache), and exposes `query_graph`, `get_node_card`, `get_neighbors`, `shortest_path` (ranked journeys with fragile hops), `workflow`, `insights`, `impact`, and `report` tools with JSON Schema input contracts — so assistants can query the repository graph instead of reading raw files.
 
 Run the web application:
 

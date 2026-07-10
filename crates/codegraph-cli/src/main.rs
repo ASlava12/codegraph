@@ -1,3 +1,5 @@
+mod mcp;
+
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codegraph_analysis::{
@@ -199,6 +201,24 @@ enum Command {
         /// Maximum ranked alternative paths to return.
         #[arg(long, default_value_t = 3)]
         paths: usize,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Serve CodeGraph analysis tools to assistants over the MCP stdio transport.
+    Mcp {
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
 
         /// Include hidden files and directories.
         #[arg(long)]
@@ -1588,6 +1608,21 @@ fn main() -> Result<()> {
                 },
             )?;
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::Mcp {
+            path,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph = scan_with_options(
+                path.clone(),
+                include_hidden,
+                include_ignored,
+                max_file_size,
+                &cache,
+            )?;
+            mcp::McpServer::new(graph, path).run()?;
         }
         Command::RefactorContext {
             target,

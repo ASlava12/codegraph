@@ -508,7 +508,7 @@ Agent memory and automation:
 - [ ] Add reflection reports that aggregate saved investigation outcomes into repository lessons with provenance and stale-source warnings.
 - [ ] Add assistant installation commands for Codex and generic agent-skill instructions, generating project-scoped guidance to query CodeGraph before broad file reads.
 - [ ] Add optional local hooks that nudge agents toward CodeGraph query/path/explain before grep-heavy or raw-file-heavy workflows.
-- [ ] Add MCP stdio server mode for graph query/path/explain/report/card access from external assistants.
+- [x] Add MCP stdio server mode for graph query/path/explain/report/card access from external assistants.
 - [ ] Add optional authenticated HTTP MCP transport for shared team graph access.
 
 Update and team workflows:
