@@ -662,76 +662,51 @@ async function loadProjectOverview() {
   reportParams.set("insight_limit", "6");
   reportParams.set("fail_on", "warning");
 
-  try {
-    const [
-      scanOptionsResponse,
-      lspResponse,
-      semanticReadinessResponse,
-      semanticPlanResponse,
-      reportResponse,
-    ] = await Promise.all([
-      apiFetch(`/api/scan-options?${params.toString()}`),
-      apiFetch("/api/lsp"),
-      apiFetch(`/api/semantic-readiness?${params.toString()}`),
-      apiFetch(`/api/semantic-plan?${semanticParams.toString()}`),
-      apiFetch(`/api/report?${reportParams.toString()}`),
+  // Load each overview section independently: a single slow or failing endpoint
+  // (e.g. the heavier /api/report) must not blank the whole overview or leave it
+  // stuck in an error state. Failures are logged and that section stays empty.
+  const fetchOverviewJson = async (url, label) => {
+    try {
+      const response = await apiFetch(url);
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(apiErrorMessage(body, response, `${label} failed`));
+      }
+      return body;
+    } catch (error) {
+      console.error(`overview: ${label}`, error);
+      return null;
+    }
+  };
+
+  const [scanOptions, lsp, semanticReadiness, semanticPlan, reportResponseBody] =
+    await Promise.all([
+      fetchOverviewJson(`/api/scan-options?${params.toString()}`, "scan options"),
+      fetchOverviewJson("/api/lsp", "lsp status"),
+      fetchOverviewJson(`/api/semantic-readiness?${params.toString()}`, "semantic readiness"),
+      fetchOverviewJson(`/api/semantic-plan?${semanticParams.toString()}`, "semantic plan"),
+      fetchOverviewJson(`/api/report?${reportParams.toString()}`, "report"),
     ]);
-    const scanOptions = await scanOptionsResponse.json();
-    const lsp = await lspResponse.json();
-    const semanticReadiness = await semanticReadinessResponse.json();
-    const semanticPlan = await semanticPlanResponse.json();
-    const reportResponseBody = await reportResponse.json();
-    if (requestId !== state.overviewRequest) return;
-    if (!scanOptionsResponse.ok) {
-      throw new Error(apiErrorMessage(scanOptions, scanOptionsResponse, "scan options failed"));
-    }
-    if (!lspResponse.ok) {
-      throw new Error(apiErrorMessage(lsp, lspResponse, "lsp status failed"));
-    }
-    if (!semanticReadinessResponse.ok) {
-      throw new Error(apiErrorMessage(semanticReadiness, semanticReadinessResponse, "semantic readiness failed"));
-    }
-    if (!semanticPlanResponse.ok) {
-      throw new Error(apiErrorMessage(semanticPlan, semanticPlanResponse, "semantic plan failed"));
-    }
-    if (!reportResponse.ok) {
-      throw new Error(apiErrorMessage(reportResponseBody, reportResponse, "report failed"));
-    }
+  if (requestId !== state.overviewRequest) return;
+
+  if (scanOptions) state.scanOptions = scanOptions;
+  if (lsp) state.lsp = lsp;
+  if (semanticReadiness) state.semanticReadiness = semanticReadiness;
+  if (semanticPlan) state.semanticPlan = semanticPlan;
+  if (reportResponseBody) {
     const report = reportResponseBody.report || {};
     state.summary = report.summary || null;
-    state.scanOptions = scanOptions;
     state.coverage = reportResponseBody.coverage || null;
-    state.lsp = lsp;
-    state.semanticReadiness = semanticReadiness;
-    state.semanticPlan = semanticPlan;
     state.report = report;
     state.architecture = report.architecture || null;
     state.languageDependencies = report.language_dependencies || null;
     state.communities = report.communities || null;
     state.hotspots = report.hotspots || null;
     state.entrypoints = Array.isArray(report.entrypoints) ? report.entrypoints : [];
-    renderOverview();
-  } catch (error) {
-    if (requestId !== state.overviewRequest) return;
-    overviewTotals.textContent = "error";
-    renderCapabilities(state.capabilities);
-    languageList.innerHTML = "";
-    confidenceList.innerHTML = "";
-    relationList.innerHTML = "";
-    edgeSourceList.innerHTML = "";
-    scanPolicyList.innerHTML = "";
-    coverageList.innerHTML = "";
+  } else {
     state.report = null;
-    riskSummaryList.innerHTML = "";
-    lspList.innerHTML = "";
-    semanticWorkList.innerHTML = "";
-    architectureList.innerHTML = "";
-    languageDependencyList.innerHTML = "";
-    communityList.innerHTML = "";
-    hotspotList.innerHTML = "";
-    annotationList.innerHTML = "";
-    entrypointList.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
   }
+  renderOverview();
 }
 
 async function runSemanticEnrich() {

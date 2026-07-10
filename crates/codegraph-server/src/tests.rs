@@ -1222,7 +1222,9 @@ fn embedded_web_overview_uses_report_snapshot() {
     assert!(index.contains("riskSummaryList"));
     assert!(index.contains("surprisingLinkList"));
     assert!(index.contains("reportMarkdown"));
-    assert!(app.contains("apiFetch(`/api/report?${reportParams.toString()}`)"));
+    assert!(
+        app.contains("fetchOverviewJson(`/api/report?${reportParams.toString()}`, \"report\")")
+    );
     assert!(app.contains("reportFormat: \"markdown\""));
     assert!(app.contains("\"export.reportMarkdown\""));
     assert!(app.contains("renderSurprisingLinks"));

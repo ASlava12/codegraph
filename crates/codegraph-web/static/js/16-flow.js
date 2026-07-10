@@ -570,6 +570,12 @@ function formatKind(value) {
   return translate(`kind.${raw}`, raw.replaceAll("_", " "));
 }
 
+function formatNumber(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "0";
+  return new Intl.NumberFormat(state.locale).format(number);
+}
+
 function formatCompactNumber(value) {
   const number = Number(value || 0);
   if (!Number.isFinite(number)) return "0";
