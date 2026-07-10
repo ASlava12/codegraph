@@ -11042,6 +11042,20 @@ fn insight_search_matches(insight: &Insight, expected: &str) -> bool {
 }
 
 fn add_unresolved_call_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    // On syntactic-only scans an unresolved call is the expected default and
+    // reads as info; once semantic enrichment has run, a target that still
+    // cannot be resolved is a real warning.
+    let semantically_enriched = graph
+        .edges
+        .iter()
+        .any(|edge| edge.confidence == Confidence::Semantic);
+    let severity = if semantically_enriched {
+        InsightSeverity::Warning
+    } else {
+        InsightSeverity::Info
+    };
+
+    let mut by_label: BTreeMap<&str, Vec<NodeId>> = BTreeMap::new();
     for node in &graph.nodes {
         if node
             .metadata
@@ -11052,17 +11066,33 @@ fn add_unresolved_call_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) 
                 .get("resolution")
                 .is_some_and(|value| value == "unresolved")
         {
-            insights.push(Insight {
-                kind: "unresolved_call".to_string(),
-                severity: InsightSeverity::Warning,
-                message: format!(
-                    "Call target `{}` could not be resolved syntactically",
-                    node.label
-                ),
-                nodes: vec![node.id],
-                edges: incoming_edge_indexes(graph, node.id, EdgeKind::Calls),
-            });
+            by_label
+                .entry(node.label.as_str())
+                .or_default()
+                .push(node.id);
         }
+    }
+
+    for (label, node_ids) in by_label {
+        let edges: Vec<usize> = node_ids
+            .iter()
+            .flat_map(|node_id| incoming_edge_indexes(graph, *node_id, EdgeKind::Calls))
+            .collect();
+        let message = if node_ids.len() > 1 {
+            format!(
+                "Call target `{label}` could not be resolved syntactically ({} placeholder nodes)",
+                node_ids.len()
+            )
+        } else {
+            format!("Call target `{label}` could not be resolved syntactically")
+        };
+        insights.push(Insight {
+            kind: "unresolved_call".to_string(),
+            severity,
+            message,
+            nodes: node_ids,
+            edges,
+        });
     }
 }
 
@@ -15317,15 +15347,13 @@ mod tests {
         assert!(report.quality_gate.report.insights.len() <= REPORT_QUALITY_GATE_SAMPLE_LIMIT);
         assert_eq!(report.risk_summary.total, report.quality_gate.report.total);
         assert_eq!(report.risk_summary.errors, 1);
-        assert_eq!(report.risk_summary.warnings, 1);
-        assert!(report.risk_summary.infos >= 1);
-        assert_eq!(
-            report.risk_summary.score,
-            100 + 10 + report.risk_summary.infos
-        );
+        // The unresolved call reads as info on this syntactic-only fixture.
+        assert_eq!(report.risk_summary.warnings, 0);
+        assert!(report.risk_summary.infos >= 2);
+        assert_eq!(report.risk_summary.score, 100 + report.risk_summary.infos);
         assert_eq!(report.risk_summary.grade, "high");
         assert!(!report.quality_gate.passed);
-        assert_eq!(report.quality_gate.failing_insights, 2);
+        assert_eq!(report.quality_gate.failing_insights, 1);
         assert!(
             report
                 .risk_summary
@@ -20063,6 +20091,72 @@ mod tests {
         assert!(report.insights.iter().any(|insight| {
             insight.kind == "orphan_function" && insight.nodes.contains(&orphan)
         }));
+    }
+
+    #[test]
+    fn unresolved_call_insights_calibrate_severity_and_group_by_label() {
+        let mut graph = CodeGraph::new("repo");
+        let caller = graph.add_node(NodeKind::Function, "main");
+        let placeholder_metadata = BTreeMap::from([
+            ("item_kind".to_string(), "call".to_string()),
+            ("resolution".to_string(), "unresolved".to_string()),
+        ]);
+        let rust_helper = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "helper",
+            None,
+            placeholder_metadata.clone(),
+        );
+        let js_helper = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "helper",
+            None,
+            placeholder_metadata.clone(),
+        );
+        let builtin = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "format",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "call".to_string()),
+                ("resolution".to_string(), "builtin".to_string()),
+            ]),
+        );
+        graph.add_edge(caller, rust_helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(caller, js_helper, EdgeKind::Calls, Confidence::Heuristic);
+        graph.add_edge(caller, builtin, EdgeKind::Calls, Confidence::Heuristic);
+
+        let report = insights(&graph);
+        let unresolved: Vec<_> = report
+            .insights
+            .iter()
+            .filter(|insight| insight.kind == "unresolved_call")
+            .collect();
+        assert_eq!(
+            unresolved.len(),
+            1,
+            "same-label placeholders share one finding, builtins are excluded"
+        );
+        assert_eq!(unresolved[0].severity, InsightSeverity::Info);
+        assert!(unresolved[0].nodes.contains(&rust_helper));
+        assert!(unresolved[0].nodes.contains(&js_helper));
+        assert_eq!(unresolved[0].edges.len(), 2);
+
+        // Semantic enrichment present: still-unresolved calls become warnings.
+        let resolved_target = graph.add_node(NodeKind::Function, "load_config");
+        graph.add_edge(
+            caller,
+            resolved_target,
+            EdgeKind::Calls,
+            Confidence::Semantic,
+        );
+        let enriched = insights(&graph);
+        let enriched_unresolved = enriched
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_call")
+            .expect("unresolved call finding");
+        assert_eq!(enriched_unresolved.severity, InsightSeverity::Warning);
     }
 
     #[test]

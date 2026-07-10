@@ -362,7 +362,7 @@ mod tests {
         .unwrap();
         fs::write(
             root.join("src").join("util.rs"),
-            "pub fn helper() {\n    missing_helper();\n}\n",
+            "// FIXME: helper still calls a missing function\npub fn helper() {\n    missing_helper();\n}\n",
         )
         .unwrap();
         fs::write(

@@ -189,7 +189,7 @@ Goal: answer practical code investigation questions.
 - [x] Back web insights with server analysis during paged graph exploration.
 - [x] Add CLI, server-side, and web filters for insight severity, kind, and search.
 - [x] Add insight severity and kind breakdowns for triage.
-- [ ] Calibrate `unresolved_call` insight severity for syntactic-only scans and deduplicate findings by call label (audit F3: 26.9k warnings grade this repository critical).
+- [x] Calibrate `unresolved_call` insight severity for syntactic-only scans and deduplicate findings by call label (audit F3: 26.9k warnings grade this repository critical).
 - [ ] Give branch/loop/async/return/error-flow facts a dedicated node kind or surface `item_kind` in kind facets instead of `unknown` (audit F4).
 - [x] Make web insight severity breakdown chips clickable triage filters.
 - [x] Add web insight JSON export for filtered findings and triage handoff.
