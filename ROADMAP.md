@@ -501,9 +501,7 @@ Repository knowledge ingestion:
 - [x] Add deeper SQL query extraction, JOIN relationship semantics, migration ordering, and broader schema consistency insights.
 - [x] Link application code to SQL/schema nodes through common SQL query strings.
 - [x] Link application code to SQL/schema nodes through migrations, ORM metadata, database config, and deeper query semantics.
-- [ ] Add document ingestion for Markdown, plain text, PDFs, Office files, and generated Markdown sidecars, with size limits and provenance.
-- [ ] Add optional local or configured-model semantic extraction for non-code documents while keeping code-only scans fully offline.
-- [ ] Add media ingestion hooks for transcripts from audio/video sidecars, with explicit opt-in for transcription backends.
+- [ ] Add document ingestion for plain-text files and generated Markdown sidecars, with size limits and provenance (re-scoped 2026-07-10: PDF/Office binary parsing dropped, see `docs/ROADMAP_TRIAGE.md`).
 - [x] Index MCP configuration files such as `.mcp.json`, `mcp.json`, `mcp_servers.json`, and assistant desktop configs as tool/server dependency facts.
 - [ ] Canonicalize broader package manifests into shared package hub nodes across ecosystems where package identity is stable.
 
@@ -512,7 +510,7 @@ Agent memory and automation:
 - [x] Add saved query/result memory with outcomes such as useful, dead-end, and corrected, linked back to graph nodes and invalidated by source changes.
 - [x] Add reflection reports that aggregate saved investigation outcomes into repository lessons with provenance and stale-source warnings.
 - [x] Add assistant installation commands for Codex and generic agent-skill instructions, generating project-scoped guidance to query CodeGraph before broad file reads.
-- [ ] Add optional local hooks that nudge agents toward CodeGraph query/path/explain before grep-heavy or raw-file-heavy workflows.
+- [ ] Extend `install-agent` with optional assistant hook configuration snippets that nudge agents toward CodeGraph query/path/explain before grep-heavy workflows (re-scoped 2026-07-10: standalone hook runtime dropped, see `docs/ROADMAP_TRIAGE.md`).
 - [x] Add MCP stdio server mode for graph query/path/explain/report/card access from external assistants.
 - [ ] Add MCP tools for `refactor_context`, `ask`, `source_search`, and investigation memory save/list/reflect so agent sessions do not shell out to the CLI (audit F7).
 - [x] Add optional authenticated HTTP MCP transport for shared team graph access.
@@ -532,9 +530,14 @@ Exports and dashboards:
 - [x] Add PR impact dashboard using graph communities, changed files, CI/review state, conflicts, and risky shared subsystems.
 - [ ] Expose the PR impact dashboard through the API and web UI, not only the CLI (audit F6).
 - [x] Add query logging with privacy controls, response logging opt-in, and local JSONL audit output.
-- [ ] Add explicit security model for external ingestion: URL validation, redirect blocking, size/time limits, label sanitization, and graph path constraints.
 - [x] Add benchmark harness for token/context savings and graph-query recall on real mixed corpora.
 - [ ] Exclude code patterns inside string literals and test fixtures from benchmark recall oracles (audit F12: fixture strings report false env-read misses).
+
+Dropped in the 2026-07-10 Phase 9 sweep (reasons in `docs/ROADMAP_TRIAGE.md`):
+
+- ~~Optional local or configured-model semantic extraction for non-code documents~~ — model-backed extraction is nondeterministic and contradicts the deterministic, provenance-first scanner contract.
+- ~~Media ingestion hooks for transcripts from audio/video sidecars~~ — transcript sidecar files are already covered by re-scoped document ingestion; a media pipeline adds surface without new graph facts.
+- ~~Explicit security model for external ingestion~~ — no external URL/network ingestion surface exists; all ingestion reads local files. Must be revisited as part of any future network ingestion feature.
 
 Exit criteria:
 
@@ -597,7 +600,7 @@ existing features genuinely convenient to use instead of merely present.
 Audit and completion:
 
 - [x] Audit every checked roadmap item end-to-end across CLI, API, and web; file each found gap as a new unchecked item in its phase (see `docs/FEATURE_AUDIT.md`).
-- [ ] Sweep all phases for remaining unchecked items and finish, re-scope, or explicitly drop each one with a recorded reason.
+- [x] Sweep all phases for remaining unchecked items and finish, re-scope, or explicitly drop each one with a recorded reason (dispositions in `docs/ROADMAP_TRIAGE.md`: 3 dropped, 2 re-scoped, 27 kept and scheduled).
 - [ ] Verify CLI/API/web feature parity: every analysis available in one surface is reachable from the other two or documented as intentionally surface-specific.
 - [ ] Dogfood CodeGraph on itself: run reports, insights, unreachable/journey queries against this repository and fix what the output makes hard to understand.
 

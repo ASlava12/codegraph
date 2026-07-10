@@ -123,7 +123,26 @@ explicitly close what is incomplete, and make existing features convenient
 rather than merely present.
 
 - [x] Audit checked roadmap items end-to-end across CLI, API, and web; file every gap found as a new unchecked item in its phase (13 findings recorded in `FEATURE_AUDIT.md`).
-- [ ] Sweep all phases for remaining unchecked items and finish, re-scope, or drop each with a recorded reason.
+- [x] Sweep all phases for remaining unchecked items and finish, re-scope, or drop each with a recorded reason (dispositions in `ROADMAP_TRIAGE.md`).
+
+Audit follow-ups (concrete completion work from `FEATURE_AUDIT.md`, one commit each):
+
+- [ ] Bound the report `quality_gate` payload to counts, severity breakdowns, and a capped finding sample (F1).
+- [ ] Deduplicate unresolved-call placeholder nodes by label and classify language builtins separately from external dependencies (F2).
+- [ ] Calibrate `unresolved_call` insight severity for syntactic-only scans and deduplicate findings by call label (F3).
+- [ ] Give control-flow facts a dedicated node kind or surface `item_kind` in kind facets instead of `unknown` (F4).
+- [ ] Route environment/config questions in `ask` to the config trace rule (F13).
+- [ ] Add MCP tools for `refactor_context`, `ask`, `source_search`, and memory save/list/reflect (F7).
+- [ ] Expose the PR impact dashboard through the API and web UI (F6).
+- [ ] Add web views or node-card actions for impact, seams, component dependencies/contracts, and refactor-context download (F5).
+- [ ] Reuse cached report/insight results and bound journey search so refactor-context returns in seconds on a warm cache (F11).
+- [ ] Accept `n42`-style node ids everywhere node ids are accepted (F8).
+- [ ] Unify API root/file parameter naming and return structured JSON errors for query-string deserialization failures (F9).
+- [ ] Add compact/summary output modes to `incremental-update` and `incremental-merge-preview` (F10).
+- [ ] Exclude string-literal/fixture code patterns from benchmark recall oracles (F12).
+
+Usability polish:
+
 - [ ] Verify CLI/API/web feature parity and close or document intentional surface-specific gaps.
 - [ ] Dogfood CodeGraph on itself and fix what its own reports make hard to understand.
 - [ ] Unify CLI ergonomics: consistent flags, defaults, `--help` examples, actionable errors.
@@ -150,6 +169,22 @@ Exit criteria:
 
 - No single source file dominates a crate; modules map to feature areas.
 - Clippy is clean on stable and enforced in CI.
+
+## Milestone 9: Remaining Parity Features
+
+Goal: the ROADMAP Phase 7 tail that survived the Phase 9 sweep — lower
+priority than audit follow-ups and internal quality.
+
+- [ ] Add SVG export target.
+- [ ] Canonicalize broader package manifests into shared package hub nodes across ecosystems where package identity is stable.
+- [ ] Add document ingestion for plain-text files and generated Markdown sidecars, with size limits and provenance.
+- [ ] Extend `install-agent` with optional assistant hook configuration snippets nudging agents toward CodeGraph before grep-heavy workflows.
+
+Exit criteria:
+
+- Graph exports cover SVG alongside existing formats.
+- Package identity is shared across ecosystems where it is stable.
+- Plain-text knowledge files participate in the graph with provenance.
 
 ## Working Agreement
 
