@@ -623,7 +623,7 @@ button.cancel-action:hover:not(:disabled) {
 
 .semantic-work-filters {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   align-items: end;
 }
@@ -970,7 +970,15 @@ button.cancel-action:hover:not(:disabled) {
 .graph-export,
 .path-query,
 .config-trace,
-.error-trace {
+.error-trace,
+.pr-impact,
+.refactoring {
+  display: grid;
+  gap: 8px;
+}
+
+.pr-impact-fields,
+.refactoring-fields {
   display: grid;
   gap: 8px;
 }
@@ -2681,10 +2689,6 @@ button.cancel-action:hover:not(:disabled) {
 
   .graph-stage {
     order: 1;
-  }
-
-  .semantic-work-filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .job-columns {
