@@ -217,7 +217,7 @@ Goal: answer practical code investigation questions.
 - [x] Add hotspot query slices for focused high-degree dependency context.
 - [x] Add query result facets for agent and web triage summaries.
 - [x] Add agent-facing natural-language query mode that maps English/Russian questions to bounded graph slices without vector storage.
-- [ ] Route environment/config questions in `ask` to the config trace rule for SCREAMING_SNAKE tokens with read/set verbs (audit F13: env questions misroute to `route_or_endpoint`).
+- [x] Route environment/config questions in `ask` to the config trace rule for SCREAMING_SNAKE tokens with read/set verbs (audit F13: env questions misroute to `route_or_endpoint`).
 - [x] Add reverse dependent traces for impact analysis.
 - [x] Add web entrypoint trace JSON downloads for startup-flow handoff.
 - [x] Add web config/error trace JSON downloads for configuration and exception-flow handoff.

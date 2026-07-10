@@ -5676,6 +5676,36 @@ fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, QueryError> {
             "path_between_anchors".to_string(),
             "medium".to_string(),
         )
+    } else if let Some(env_term) = candidates
+        .iter()
+        .find(|candidate| screaming_snake_token(candidate))
+        .filter(|_| {
+            natural_query_mentions_any(
+                &lower,
+                &[
+                    "read",
+                    "set",
+                    "write",
+                    "written",
+                    "assign",
+                    "загруж",
+                    "чита",
+                    "запис",
+                    "установ",
+                    "задан",
+                ],
+            )
+        })
+    {
+        // An ALL_CAPS token plus a read/set verb is a config/environment
+        // question even without the words "config" or "env" — and identifier
+        // substrings like API inside CODEGRAPH_API_TOKEN must not pull the
+        // question into the route rule.
+        (
+            format!("configs target:{} depth:6", quote_query_value(env_term)),
+            "config_or_environment".to_string(),
+            "high".to_string(),
+        )
     } else if natural_query_mentions_any(
         &lower,
         &[
@@ -6016,6 +6046,16 @@ fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, QueryError> {
 fn natural_query_fallback_query(term: Option<&str>) -> String {
     term.map(|term| format!("nodes search:{} limit:50", quote_query_value(term)))
         .unwrap_or_else(|| "nodes limit:50".to_string())
+}
+
+/// SCREAMING_SNAKE identifiers such as DATABASE_URL or PORT: uppercase
+/// letters and digits, at least three characters, starting with a letter.
+fn screaming_snake_token(token: &str) -> bool {
+    token.len() >= 3
+        && token.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+        && token
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
 fn natural_query_mentions_any(haystack: &str, needles: &[&str]) -> bool {
@@ -19340,6 +19380,47 @@ mod tests {
                 .iter()
                 .any(|node| node.id == database_url)
         );
+    }
+
+    #[test]
+    fn natural_query_routes_env_tokens_with_read_verbs_to_config_rule() {
+        let mut graph = CodeGraph::new("repo");
+        let server = graph.add_node(NodeKind::Function, "run_server");
+        let token = graph.add_node(NodeKind::Environment, "CODEGRAPH_API_TOKEN");
+        graph.add_edge(
+            server,
+            token,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+
+        // "api" inside the identifier must not pull this into the route rule.
+        let report = natural_query(
+            &graph,
+            NaturalQueryRequest {
+                question: "Where is CODEGRAPH_API_TOKEN read?".to_string(),
+                compact: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(report.rule, "config_or_environment");
+        assert_eq!(
+            report.generated_query,
+            "configs target:CODEGRAPH_API_TOKEN depth:6"
+        );
+        assert_eq!(report.confidence, "high");
+        assert!(report.result.nodes.iter().any(|node| node.id == token));
+
+        // Genuine route questions still reach the route rule.
+        let route_report = natural_query(
+            &graph,
+            NaturalQueryRequest {
+                question: "Which handler serves the /users endpoint?".to_string(),
+                compact: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(route_report.rule, "route_or_endpoint");
     }
 
     #[test]

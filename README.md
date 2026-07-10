@@ -171,7 +171,7 @@ Implemented now:
 - Web error trace reports can be downloaded as JSON with target, depth, source nodes, and exception-flow paths.
 - Agent-friendly summary, entrypoint, and trace commands/endpoints.
 - Agent-friendly graph query command and API for focused node, edge, call, dependency, trace, diagnostic, insight/risk, and unreachable-code slices.
-- Agent-facing natural-language `ask` command and API map English/Russian investigation questions to deterministic bounded graph queries with generated query, rule, confidence, alternatives, and optional compact results.
+- Agent-facing natural-language `ask` command and API map English/Russian investigation questions to deterministic bounded graph queries with generated query, rule, confidence, alternatives, and optional compact results. Questions naming a SCREAMING_SNAKE identifier with a read/set verb (`Where is CODEGRAPH_API_TOKEN read?`) route straight to the config/environment trace rule, so identifier substrings like `API` cannot pull them into the route rule.
 - SQL/schema graph query slices for tables, columns, indexes, views, app SQL query cards, code-to-query references, schema references, and missing-table triage.
 - Agent-friendly annotation graph queries for focused user-owned metadata slices from `.codegraph/annotations.toml`.
 - Focused query responses include returned counts and facets for node kinds, edge kinds, languages, item kinds, and confidence.

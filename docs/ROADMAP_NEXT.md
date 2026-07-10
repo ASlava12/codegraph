@@ -131,7 +131,7 @@ Audit follow-ups (concrete completion work from `FEATURE_AUDIT.md`, one commit e
 - [x] Deduplicate unresolved-call placeholder nodes by label and classify language builtins separately from external dependencies (F2).
 - [x] Calibrate `unresolved_call` insight severity for syntactic-only scans and deduplicate findings by call label (F3).
 - [x] Give control-flow facts a dedicated node kind or surface `item_kind` in kind facets instead of `unknown` (F4).
-- [ ] Route environment/config questions in `ask` to the config trace rule (F13).
+- [x] Route environment/config questions in `ask` to the config trace rule (F13).
 - [ ] Add MCP tools for `refactor_context`, `ask`, `source_search`, and memory save/list/reflect (F7).
 - [ ] Expose the PR impact dashboard through the API and web UI (F6).
 - [ ] Add web views or node-card actions for impact, seams, component dependencies/contracts, and refactor-context download (F5).
