@@ -73,7 +73,11 @@ This crate is shared by the CLI and server so humans, UI features, and agents re
 
 ### Parser
 
-`codegraph-parser` extracts syntax-level code facts with Tree-sitter.
+`codegraph-parser` extracts syntax-level code facts with Tree-sitter. The
+crate is organized by feature area: `language` (adapters, detection, and
+grammar bindings), `model` (parsed facts and errors), `extract` (tree walking
+and classification), `effects` (environment/config/error detection), and
+`text` (syntax-node text utilities).
 
 Responsibilities:
 
