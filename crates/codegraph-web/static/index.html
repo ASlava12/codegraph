@@ -499,6 +499,36 @@
           <div id="prImpactResult" class="query-result"></div>
         </section>
 
+        <section class="refactoring" aria-label="Refactoring reports" data-i18n-aria-label="aria.refactoring">
+          <header>
+            <h2 data-i18n="section.refactoring">Refactoring</h2>
+            <span id="refactorStatus">idle</span>
+          </header>
+          <div class="refactoring-fields">
+            <label class="field">
+              <span data-i18n="refactor.target">Target (label or node id)</span>
+              <input id="refactorTargetInput" type="text" placeholder="load_config / n42" />
+            </label>
+            <button id="refactorUseSelectionButton" type="button" data-i18n="refactor.useSelection">Use selection</button>
+          </div>
+          <button id="refactorImpactButton" type="button" data-i18n="button.refactorImpact">Impact</button>
+          <button id="refactorDepsButton" type="button" data-i18n="button.refactorDeps">Dependencies</button>
+          <button id="refactorSeamsButton" type="button" data-i18n="button.refactorSeams">Seams</button>
+          <button id="refactorContextButton" type="button" data-i18n="button.refactorContext">Refactor Context JSON</button>
+          <div class="refactoring-fields">
+            <label class="field compact">
+              <span data-i18n="refactor.sourceArea">Source area</span>
+              <input id="refactorSourceAreaInput" type="text" placeholder="crates" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="refactor.targetArea">Target area</span>
+              <input id="refactorTargetAreaInput" type="text" placeholder="docs" />
+            </label>
+            <button id="refactorContractButton" type="button" data-i18n="button.refactorContract">Contract</button>
+          </div>
+          <div id="refactorResult" class="query-result"></div>
+        </section>
+
         <section class="graph-export" aria-label="Graph export" data-i18n-aria-label="aria.graphExport">
           <header>
             <h2 data-i18n="section.export">Export</h2>

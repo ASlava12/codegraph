@@ -182,6 +182,34 @@ const I18N = {
     "prImpact.riskScore": "Risk score",
     "prImpact.communities": "Touched communities",
     "prImpact.risks": "Risks in changed scope",
+    "section.refactoring": "Refactoring",
+    "aria.refactoring": "Refactoring reports",
+    "refactor.target": "Target (label or node id)",
+    "refactor.useSelection": "Use selection",
+    "refactor.sourceArea": "Source area",
+    "refactor.targetArea": "Target area",
+    "button.refactorImpact": "Impact",
+    "button.refactorDeps": "Dependencies",
+    "button.refactorSeams": "Seams",
+    "button.refactorContext": "Refactor Context JSON",
+    "button.refactorContract": "Contract",
+    "refactor.needTarget": "Enter a target label or node id first.",
+    "refactor.needAreas": "Enter source and target areas first.",
+    "refactor.loading": "Loading report...",
+    "refactor.dependents": "Dependents",
+    "refactor.entrypoints": "Entrypoints",
+    "refactor.tests": "Tests",
+    "refactor.routes": "Routes",
+    "refactor.score": "Impact score",
+    "refactor.incoming": "Incoming",
+    "refactor.outgoing": "Outgoing",
+    "refactor.byArea": "By area",
+    "refactor.byPackage": "By package",
+    "refactor.safest": "Safest seams to extract",
+    "refactor.mostNeeded": "Most tangled boundaries",
+    "refactor.friction": "friction",
+    "refactor.edges": "edges",
+    "refactor.contractEdges": "Contract edges",
     "button.cacheChunks": "Cache Chunks",
     "button.planIncremental": "Plan Incremental",
     "button.scanIncremental": "Scan Changed",
@@ -867,6 +895,34 @@ const I18N = {
     "prImpact.riskScore": "Оценка риска",
     "prImpact.communities": "Затронутые области",
     "prImpact.risks": "Риски в зоне изменений",
+    "section.refactoring": "Рефакторинг",
+    "aria.refactoring": "Отчёты для рефакторинга",
+    "refactor.target": "Цель (метка или id узла)",
+    "refactor.useSelection": "Из выделения",
+    "refactor.sourceArea": "Область-источник",
+    "refactor.targetArea": "Область-цель",
+    "button.refactorImpact": "Влияние",
+    "button.refactorDeps": "Зависимости",
+    "button.refactorSeams": "Швы",
+    "button.refactorContext": "Контекст рефакторинга JSON",
+    "button.refactorContract": "Контракт",
+    "refactor.needTarget": "Сначала укажите метку или id узла.",
+    "refactor.needAreas": "Сначала укажите области источника и цели.",
+    "refactor.loading": "Загружаю отчёт...",
+    "refactor.dependents": "Зависимые",
+    "refactor.entrypoints": "Точки входа",
+    "refactor.tests": "Тесты",
+    "refactor.routes": "Маршруты",
+    "refactor.score": "Оценка влияния",
+    "refactor.incoming": "Входящие",
+    "refactor.outgoing": "Исходящие",
+    "refactor.byArea": "По областям",
+    "refactor.byPackage": "По пакетам",
+    "refactor.safest": "Самые безопасные швы",
+    "refactor.mostNeeded": "Самые запутанные границы",
+    "refactor.friction": "трение",
+    "refactor.edges": "рёбер",
+    "refactor.contractEdges": "Рёбра контракта",
     "button.cacheChunks": "Фрагменты кеша",
     "button.planIncremental": "План инкремента",
     "button.scanIncremental": "Скан изменений",
@@ -1483,6 +1539,7 @@ const state = {
   cacheDiffRequest: 0,
   prImpactRequest: 0,
   prImpactReport: null,
+  refactorRequest: 0,
   cacheChunksRequest: 0,
   incrementalPlanRequest: 0,
   incrementalScanRequest: 0,
@@ -1708,6 +1765,17 @@ const prImpactFilesInput = document.querySelector("#prImpactFilesInput");
 const prImpactButton = document.querySelector("#prImpactButton");
 const prImpactDownloadButton = document.querySelector("#prImpactDownloadButton");
 const prImpactResult = document.querySelector("#prImpactResult");
+const refactorStatus = document.querySelector("#refactorStatus");
+const refactorTargetInput = document.querySelector("#refactorTargetInput");
+const refactorUseSelectionButton = document.querySelector("#refactorUseSelectionButton");
+const refactorImpactButton = document.querySelector("#refactorImpactButton");
+const refactorDepsButton = document.querySelector("#refactorDepsButton");
+const refactorSeamsButton = document.querySelector("#refactorSeamsButton");
+const refactorContextButton = document.querySelector("#refactorContextButton");
+const refactorSourceAreaInput = document.querySelector("#refactorSourceAreaInput");
+const refactorTargetAreaInput = document.querySelector("#refactorTargetAreaInput");
+const refactorContractButton = document.querySelector("#refactorContractButton");
+const refactorResult = document.querySelector("#refactorResult");
 const exportFormatInput = document.querySelector("#exportFormatInput");
 const exportButton = document.querySelector("#exportButton");
 const exportSliceButton = document.querySelector("#exportSliceButton");
@@ -1810,6 +1878,17 @@ for (const input of [sourceSearchInput, sourcePathFilterInput]) {
 }
 cacheDiffButton.addEventListener("click", () => loadCacheDiff());
 prImpactButton.addEventListener("click", () => loadPrImpact());
+refactorUseSelectionButton.addEventListener("click", () => {
+  const node = state.lastSelectionCard?.selection?.node;
+  if (node) {
+    refactorTargetInput.value = node.label || `n${node.id}`;
+  }
+});
+refactorImpactButton.addEventListener("click", () => runRefactorReport("impact"));
+refactorDepsButton.addEventListener("click", () => runRefactorReport("dependencies"));
+refactorSeamsButton.addEventListener("click", () => runRefactorReport("seams"));
+refactorContextButton.addEventListener("click", () => runRefactorReport("context"));
+refactorContractButton.addEventListener("click", () => runRefactorReport("contract"));
 prImpactDownloadButton.addEventListener("click", () => {
   if (!state.prImpactReport) return;
   const blob = new Blob([JSON.stringify(state.prImpactReport, null, 2)], {
@@ -5515,6 +5594,145 @@ function exportLastSourceSearchResult() {
       </div>
     `,
   );
+}
+
+async function runRefactorReport(kind) {
+  const target = refactorTargetInput.value.trim();
+  const sourceArea = refactorSourceAreaInput.value.trim();
+  const targetArea = refactorTargetAreaInput.value.trim();
+  if ((kind === "impact" || kind === "dependencies" || kind === "context") && !target) {
+    refactorResult.innerHTML = `<p class="empty">${escapeHtml(t("refactor.needTarget"))}</p>`;
+    return;
+  }
+  if (kind === "contract" && (!sourceArea || !targetArea)) {
+    refactorResult.innerHTML = `<p class="empty">${escapeHtml(t("refactor.needAreas"))}</p>`;
+    return;
+  }
+
+  state.refactorRequest += 1;
+  const requestId = state.refactorRequest;
+  refactorStatus.textContent = t("status.loading");
+  refactorResult.innerHTML = `<p class="empty">${escapeHtml(t("refactor.loading"))}</p>`;
+
+  const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
+  let endpoint = "";
+  if (kind === "impact") {
+    endpoint = "/api/impact";
+    params.set("target", target);
+  } else if (kind === "dependencies") {
+    endpoint = "/api/component-dependencies";
+    params.set("target", target);
+  } else if (kind === "seams") {
+    endpoint = "/api/seams";
+  } else if (kind === "context") {
+    endpoint = "/api/refactor-context";
+    params.set("target", target);
+  } else {
+    endpoint = "/api/component-contract";
+    params.set("source", sourceArea);
+    params.set("target", targetArea);
+  }
+
+  try {
+    const response = await apiFetch(`${endpoint}?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.refactorRequest) return;
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(body, response, "refactor report failed"));
+    }
+    refactorStatus.textContent = formatKind(kind);
+    if (kind === "context") {
+      const blob = new Blob([JSON.stringify(body, null, 2)], { type: "application/json" });
+      downloadBlob(blob, `${safeFilePart(target)}-refactor-context.json`);
+      refactorResult.innerHTML = `<p>${escapeHtml(t("refactor.score"))}: ${Number(body.impact?.impact_score || 0)} · ${escapeHtml(t("refactor.dependents"))}: ${Number(body.impact?.total_dependents || 0)}</p>`;
+    } else if (kind === "impact") {
+      refactorResult.innerHTML = renderRefactorImpact(body);
+    } else if (kind === "dependencies") {
+      refactorResult.innerHTML = renderRefactorDependencies(body);
+    } else if (kind === "seams") {
+      refactorResult.innerHTML = renderRefactorSeams(body);
+    } else {
+      refactorResult.innerHTML = renderRefactorContract(body);
+    }
+  } catch (error) {
+    if (requestId !== state.refactorRequest) return;
+    refactorStatus.textContent = "error";
+    refactorResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderRefactorImpact(report) {
+  const summary = [
+    `${escapeHtml(t("refactor.dependents"))}: ${Number(report.total_dependents || 0)}`,
+    `${escapeHtml(t("refactor.entrypoints"))}: ${Array.isArray(report.affected_entrypoints) ? report.affected_entrypoints.length : 0}`,
+    `${escapeHtml(t("refactor.tests"))}: ${Number(report.affected_tests || 0)}`,
+    `${escapeHtml(t("refactor.routes"))}: ${Number(report.affected_routes || 0)}`,
+    `${escapeHtml(t("refactor.score"))}: ${Number(report.impact_score || 0)}`,
+  ];
+  const parts = [
+    `<p><code>${escapeHtml(report.target?.label || "")}</code>${report.area ? ` · ${escapeHtml(report.area)}` : ""}</p>`,
+    `<p>${summary.join(" · ")}</p>`,
+  ];
+  const dependents = Array.isArray(report.dependents) ? report.dependents.slice(0, 8) : [];
+  if (dependents.length) {
+    const rows = dependents
+      .map((entry) => `<li><code>${escapeHtml(entry.node?.label || "")}</code></li>`)
+      .join("");
+    parts.push(`<ul class="compact-list">${rows}</ul>`);
+  }
+  return parts.join("");
+}
+
+function renderRefactorDependencies(report) {
+  const parts = [
+    `<p><code>${escapeHtml(report.target?.label || "")}</code> · ${escapeHtml(t("refactor.incoming"))}: ${Number(report.total_incoming || 0)} · ${escapeHtml(t("refactor.outgoing"))}: ${Number(report.total_outgoing || 0)}</p>`,
+  ];
+  const group = (title, groups) => {
+    const rows = (Array.isArray(groups) ? groups.slice(0, 6) : [])
+      .map(
+        (entry) =>
+          `<li><code>${escapeHtml(entry.key || "")}</code> — ${Number(entry.incoming || 0)} / ${Number(entry.outgoing || 0)}</li>`,
+      )
+      .join("");
+    if (rows) parts.push(`<p>${escapeHtml(title)}:</p><ul class="compact-list">${rows}</ul>`);
+  };
+  group(t("refactor.byArea"), report.areas);
+  group(t("refactor.byPackage"), report.packages);
+  return parts.join("");
+}
+
+function renderRefactorSeams(report) {
+  const seamRows = (candidates) =>
+    (Array.isArray(candidates) ? candidates.slice(0, 6) : [])
+      .map(
+        (seam) =>
+          `<li><code>${escapeHtml(seam.source_area || "")}</code> → <code>${escapeHtml(seam.target_area || "")}</code> — ${Number(seam.edge_count || 0)} ${escapeHtml(t("refactor.edges"))}, ${escapeHtml(t("refactor.friction"))} ${Number(seam.friction_score || 0)}</li>`,
+      )
+      .join("");
+  const parts = [];
+  const safest = seamRows(report.safest);
+  if (safest) parts.push(`<p>${escapeHtml(t("refactor.safest"))}:</p><ul class="compact-list">${safest}</ul>`);
+  const needed = seamRows(report.most_needed);
+  if (needed) parts.push(`<p>${escapeHtml(t("refactor.mostNeeded"))}:</p><ul class="compact-list">${needed}</ul>`);
+  return parts.join("") || `<p class="empty">${escapeHtml(t("empty.noInsights"))}</p>`;
+}
+
+function renderRefactorContract(report) {
+  const kinds = Object.entries(report.edge_kinds || {})
+    .map(([kind, count]) => `${escapeHtml(kind)}: ${Number(count)}`)
+    .join(" · ");
+  const rows = (Array.isArray(report.edges) ? report.edges.slice(0, 8) : [])
+    .map(
+      (edge) =>
+        `<li><code>${escapeHtml(edge.source_label || "")}</code> → <code>${escapeHtml(edge.target_label || "")}</code> (${escapeHtml(edge.edge?.kind || "")})</li>`,
+    )
+    .join("");
+  const parts = [
+    `<p><code>${escapeHtml(report.source_area || "")}</code> → <code>${escapeHtml(report.target_area || "")}</code> · ${escapeHtml(t("refactor.contractEdges"))}: ${Number(report.total_edges || 0)}</p>`,
+  ];
+  if (kinds) parts.push(`<p>${kinds}</p>`);
+  if (rows) parts.push(`<ul class="compact-list">${rows}</ul>`);
+  return parts.join("");
 }
 
 async function loadPrImpact() {

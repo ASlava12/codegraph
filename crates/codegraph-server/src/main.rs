@@ -9235,6 +9235,19 @@ fn helper() {}
         assert!(app.contains("\"empty.noSurprisingLinks\""));
         assert!(app.contains("state.report?.quality_gate"));
         assert!(app.contains("\"risk.gate\""));
+        // Refactoring panel: impact, dependencies, seams, contract, and the
+        // refactor-context download must be reachable from the web UI.
+        assert!(index.contains("refactorImpactButton"));
+        assert!(index.contains("refactorSeamsButton"));
+        assert!(index.contains("refactorContractButton"));
+        assert!(index.contains("prImpactButton"));
+        assert!(app.contains("/api/impact"));
+        assert!(app.contains("/api/component-dependencies"));
+        assert!(app.contains("/api/component-contract"));
+        assert!(app.contains("/api/seams"));
+        assert!(app.contains("/api/refactor-context"));
+        assert!(app.contains("/api/pr-impact"));
+        assert!(app.contains("refactor-context.json"));
         assert!(index.contains("insightExportButton"));
         assert!(index.contains("checkExportButton"));
         assert!(app.contains("exportCurrentInsights"));
