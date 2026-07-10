@@ -8,12 +8,13 @@ use codegraph_analysis::{
     DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceRequest, EntrypointWorkflowRequest,
     ErrorTraceRequest, ExplainEdgeRequest, ImpactRequest, InsightFilter, InsightSeverity,
     JourneyRequest, NaturalQueryRequest, ProjectReport, ProjectReportLimits,
-    ProjectReportMarkdownOptions, SeamRequest, SourceSearchRequest, TraceRequest, TraceStart,
-    WorkflowFilters, WorkflowQueryRequest, WorkflowRequest, architecture_map, check_insights,
-    communities, compact_query_result, component_contract, component_dependencies, entrypoints,
-    explain_edge, filter_insight_report, hotspots, impact, insights, journey,
-    language_dependencies, natural_query, project_report, project_report_markdown, query_graph,
-    seams, search_source, summarize, surprising_links, trace, trace_config, trace_dependents,
+    ProjectReportMarkdownOptions, RefactorContextRequest, SeamRequest, SourceSearchRequest,
+    TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryRequest, WorkflowRequest,
+    architecture_map, check_insights, communities, compact_query_result, component_contract,
+    component_dependencies, entrypoints, explain_edge, filter_insight_report, hotspots, impact,
+    insights, journey, language_dependencies, natural_query, project_report,
+    project_report_markdown, query_graph, read_source_preview, refactor_context, seams,
+    search_source, summarize, surprising_links, trace, trace_config, trace_dependents,
     trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_mermaid,
     workflow_query,
 };
@@ -198,6 +199,51 @@ enum Command {
         /// Maximum ranked alternative paths to return.
         #[arg(long, default_value_t = 3)]
         paths: usize,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Emit a one-shot refactor context bundle: impact, dependencies, optional journey, risks, and source.
+    RefactorContext {
+        /// Refactor target label or node id, for example: load_config or n42.
+        target: String,
+
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Optional journey start label or node id, for example an entrypoint.
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Maximum traversal depth for impact and journey.
+        #[arg(long, default_value_t = 8)]
+        depth: usize,
+
+        /// Maximum ranked journey paths.
+        #[arg(long, default_value_t = 3)]
+        paths: usize,
+
+        /// Maximum listed dependents.
+        #[arg(long, default_value_t = 100)]
+        dependent_limit: usize,
+
+        /// Maximum bundled risks.
+        #[arg(long, default_value_t = 50)]
+        risk_limit: usize,
+
+        /// Source preview context lines around the target span.
+        #[arg(long, default_value_t = 6)]
+        source_context: u32,
 
         /// Include hidden files and directories.
         #[arg(long)]
@@ -1542,6 +1588,49 @@ fn main() -> Result<()> {
                 },
             )?;
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::RefactorContext {
+            target,
+            path,
+            from,
+            depth,
+            paths,
+            dependent_limit,
+            risk_limit,
+            source_context,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph = scan_with_options(
+                path.clone(),
+                include_hidden,
+                include_ignored,
+                max_file_size,
+                &cache,
+            )?;
+            let mut bundle = refactor_context(
+                &graph,
+                RefactorContextRequest {
+                    target,
+                    from,
+                    max_depth: depth,
+                    path_limit: paths,
+                    dependent_limit,
+                    risk_limit,
+                },
+            )?;
+            if let Some(span) = bundle.target.span.clone() {
+                bundle.target_source = read_source_preview(
+                    &path,
+                    Path::new(&span.path),
+                    span.start_line,
+                    span.end_line,
+                    source_context,
+                )
+                .ok();
+            }
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
         }
         Command::Seams {
             path,

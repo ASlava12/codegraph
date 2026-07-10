@@ -22,15 +22,17 @@ use codegraph_analysis::{
     MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_FILE_SUMMARY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
     MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, MAX_REPORT_NODE_SUMMARY_LIMIT,
     NaturalQueryReport, NaturalQueryRequest, NodeCard, NodeContext, ProjectReport,
-    ProjectReportLimits, ProjectReportMarkdownOptions, SeamReport, SeamRequest, SourcePreview,
-    SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters,
-    WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map,
-    check_insights, communities, compact_query_result, component_contract, component_dependencies,
-    entrypoints, explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph,
-    hotspots, impact, insights, journey, language_dependencies, natural_query, node_card,
-    node_context, project_report, project_report_markdown, query_graph, read_source_preview, seams,
-    search_source, slice_graph, summarize, surprising_links, trace, trace_config, trace_dependents,
-    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_query,
+    ProjectReportLimits, ProjectReportMarkdownOptions, RefactorContextBundle,
+    RefactorContextRequest, SeamReport, SeamRequest, SourcePreview, SourceSearchRequest,
+    SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryReport,
+    WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map, check_insights,
+    communities, compact_query_result, component_contract, component_dependencies, entrypoints,
+    explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots,
+    impact, insights, journey, language_dependencies, natural_query, node_card, node_context,
+    project_report, project_report_markdown, query_graph, read_source_preview, refactor_context,
+    seams, search_source, slice_graph, summarize, surprising_links, trace, trace_config,
+    trace_dependents, trace_entrypoints, trace_errors, workflow, workflow_entrypoints,
+    workflow_query,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -450,6 +452,18 @@ struct GraphQuery {
     path: Option<PathBuf>,
     q: String,
     compact: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RefactorContextQuery {
+    path: Option<PathBuf>,
+    target: String,
+    from: Option<String>,
+    depth: Option<usize>,
+    paths: Option<usize>,
+    dependent_limit: Option<usize>,
+    risk_limit: Option<usize>,
+    source_context: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1117,6 +1131,7 @@ async fn main() -> Result<()> {
         .route("/api/component-contract", get(component_contract_api))
         .route("/api/impact", get(impact_api))
         .route("/api/seams", get(seams_api))
+        .route("/api/refactor-context", get(refactor_context_api))
         .route("/api/dependents", get(dependents_api))
         .route("/api/trace-config", get(trace_config_api))
         .route("/api/trace-errors", get(trace_errors_api))
@@ -2943,6 +2958,37 @@ async fn workflow_api(
             compact: query.compact.unwrap_or(false),
         },
     )))
+}
+
+async fn refactor_context_api(
+    State(state): State<AppState>,
+    Query(query): Query<RefactorContextQuery>,
+) -> Result<Json<RefactorContextBundle>, ApiError> {
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let mut bundle = refactor_context(
+        &graph,
+        RefactorContextRequest {
+            target: query.target,
+            from: normalize_query_string(query.from),
+            max_depth: query.depth.unwrap_or(8).clamp(1, 32),
+            path_limit: query.paths.unwrap_or(3).clamp(1, 10),
+            dependent_limit: query.dependent_limit.unwrap_or(100).clamp(1, 1_000),
+            risk_limit: query.risk_limit.unwrap_or(50).clamp(1, 200),
+        },
+    )
+    .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    if let Some(span) = bundle.target.span.clone() {
+        let source_root = resolve_scan_root(&state, query.path.as_deref())?;
+        bundle.target_source = read_source_preview(
+            &source_root,
+            std::path::Path::new(&span.path),
+            span.start_line,
+            span.end_line,
+            query.source_context.unwrap_or(6).min(50),
+        )
+        .ok();
+    }
+    Ok(Json(bundle))
 }
 
 async fn seams_api(
@@ -5557,6 +5603,69 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 )
                 .with_response_fields(seam_response_fields()),
                 api_get(
+                    "/api/refactor-context",
+                    "Emit a one-shot refactor context bundle: blast-radius impact, component dependencies, optional entrypoint journey, related risks, and a target source preview.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "target",
+                            true,
+                            "string",
+                            None,
+                            "Refactor target label or node id such as load_config or n42.",
+                        ),
+                        query_param(
+                            "from",
+                            false,
+                            "string",
+                            None,
+                            "Optional journey start label or node id such as an entrypoint.",
+                        ),
+                        query_param(
+                            "depth",
+                            false,
+                            "usize",
+                            Some("8"),
+                            "Maximum traversal depth for impact and journey.",
+                        )
+                        .with_range(1, 32),
+                        query_param(
+                            "paths",
+                            false,
+                            "usize",
+                            Some("3"),
+                            "Maximum ranked journey paths when from is provided.",
+                        )
+                        .with_range(1, 10),
+                        query_param(
+                            "dependent_limit",
+                            false,
+                            "usize",
+                            Some("100"),
+                            "Maximum listed impact dependents.",
+                        )
+                        .with_range(1, 1_000),
+                        query_param(
+                            "risk_limit",
+                            false,
+                            "usize",
+                            Some("50"),
+                            "Maximum bundled risks touching the target or its dependents.",
+                        )
+                        .with_range(1, 200),
+                        query_param(
+                            "source_context",
+                            false,
+                            "u32",
+                            Some("6"),
+                            "Source preview context lines around the target span.",
+                        )
+                        .with_range(0, 50),
+                    ],
+                    "RefactorContextBundle",
+                )
+                .with_response_fields(refactor_context_response_fields()),
+                api_get(
                     "/api/dependents",
                     "Trace incoming dependents that can reach a node.",
                     vec![
@@ -7001,6 +7110,66 @@ fn workflow_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "bool",
             "Whether traversal depth or block limits omitted additional steps.",
+        ),
+    ]
+}
+
+fn refactor_context_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field(
+            "schema",
+            true,
+            "string",
+            "Bundle schema id, currently codegraph.refactor_context.v1.",
+        ),
+        response_field("target", true, "Node", "Resolved refactor target node."),
+        response_field(
+            "area",
+            false,
+            "string",
+            "Architecture area containing the target node.",
+        ),
+        response_field(
+            "impact",
+            true,
+            "ImpactReport",
+            "Blast-radius report for the target.",
+        ),
+        response_field(
+            "dependencies",
+            true,
+            "ComponentDependencyReport",
+            "Component dependency groups for the target.",
+        ),
+        response_field(
+            "journey",
+            false,
+            "JourneyReport",
+            "Ranked entrypoint-to-target journey when from is provided.",
+        ),
+        response_field(
+            "total_risks",
+            true,
+            "usize",
+            "Total insights touching the target or its dependents.",
+        ),
+        response_field(
+            "risks",
+            true,
+            "Insight[]",
+            "Bundled risks capped by risk_limit.",
+        ),
+        response_field(
+            "risks_truncated",
+            true,
+            "bool",
+            "Whether more risks exist than risk_limit.",
+        ),
+        response_field(
+            "target_source",
+            false,
+            "SourcePreview",
+            "Source preview around the target span when available.",
         ),
     ]
 }
@@ -10166,6 +10335,30 @@ fn helper() {}
                 .response_fields
                 .iter()
                 .any(|field| field.name == "most_needed" && field.value_type == "SeamCandidate[]")
+        );
+        let refactor_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/refactor-context")
+            .expect("schema should list refactor-context endpoint");
+        assert!(
+            refactor_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name == "target" && parameter.required)
+        );
+        assert!(
+            refactor_endpoint
+                .response_fields
+                .iter()
+                .any(|field| field.name == "impact" && field.value_type == "ImpactReport")
+        );
+        assert!(
+            refactor_endpoint
+                .response_fields
+                .iter()
+                .any(|field| field.name == "journey" && field.value_type == "JourneyReport")
         );
         let config_trace_endpoint = schema
             .groups

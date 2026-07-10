@@ -45,7 +45,7 @@ Flow view and block-to-card actions.
 - [x] Add a web journey view: pick start and target, read the step-numbered chain with expandable branches, and jump between journey, graph, and cards.
 - [x] Add blast-radius reports for a selected node (CLI `impact`, API `/api/impact`): dependents, affected entrypoints/routes/tests, and a risk-weighted impact score.
 - [x] Add coupling/seam reports that suggest boundaries where extraction is safest and where it is most needed.
-- [ ] Add a machine-readable refactor context bundle combining journey, dependencies, risks, and source spans for one-shot agent handoff.
+- [x] Add a machine-readable refactor context bundle combining journey, dependencies, risks, and source spans for one-shot agent handoff.
 
 Exit criteria:
 

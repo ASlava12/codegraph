@@ -152,6 +152,7 @@ Implemented now:
 - Journey reports rank up to `--paths` alternative routes by edge confidence and length, report per-path `confidence_score` and `lowest_confidence`, and attach structured per-hop explanations (confidence note, relation, provenance source) for why each transition exists.
 - Web Journey panel builds ranked entrypoint-to-target chains from `/api/journey`: step-numbered blocks with localized kind badges, fragile/risk chips, per-hop provenance notes, node/dependency card actions, graph focus per path, and JSON export for agent handoff.
 - Journey steps expand in place into nested sub-flows (bounded workflow slices from the step node) with breadcrumb context back to the parent journey, collapse actions, and the same block/edge card and Flow-view actions as regular workflows.
+- Refactor context bundles (CLI `refactor-context`, API `/api/refactor-context`) combine impact, component dependencies, optional ranked journey, related risks, and a target source preview into one `codegraph.refactor_context.v1` JSON for one-shot agent handoff.
 - Coupling/seam reports (CLI `seams`, API `/api/seams`) rank cross-area boundaries by deterministic friction score both ways: safest thin seams for extraction and most tangled boundaries needing work, with edge-kind/confidence breakdowns and sample edge evidence.
 - Blast-radius reports (CLI `impact`, API `/api/impact`) list transitive dependents with distances, test flags, and risk counts, extract affected entrypoints/routes/tests, and compute a deterministic risk-weighted impact score for refactor planning.
 - Component dependency reports (CLI `component-dependencies`, API `/api/component-dependencies`) group a node's incoming/outgoing dependencies by architecture area, package, and language; component contract views (CLI `component-contract`, API `/api/component-contract`) list the exact cross-area edges with confidence and risk counts.
@@ -563,6 +564,15 @@ cargo run -p codegraph-cli -- component-contract --source web --target crates .
 ```
 
 `component-dependencies` groups a node's incoming/outgoing edges by architecture area, canonical package, and language with confidence counts and sample edge indexes; `component-contract` lists the exact directed dependency edges between two architecture areas with edge kinds, confidence counts, and related risk counts for boundary reviews.
+
+Hand an agent everything it needs to plan a refactor in one request:
+
+```bash
+cargo run -p codegraph-cli -- refactor-context load_config . --from "cargo bin:codegraph-server"
+curl 'http://127.0.0.1:3765/api/refactor-context?path=.&target=load_config&from=main&depth=8'
+```
+
+The `codegraph.refactor_context.v1` bundle combines the blast-radius impact report, component dependency groups, an optional ranked entrypoint-to-target journey with fragile flags, all risks touching the target or its dependents, and a source preview around the target span — one JSON payload with node ids, edge indexes, and source spans an agent can act on without raw repository reads.
 
 Rank cross-area boundaries by coupling friction before choosing where to cut:
 

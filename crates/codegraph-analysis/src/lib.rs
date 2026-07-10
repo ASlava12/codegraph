@@ -458,6 +458,34 @@ pub struct ComponentContractReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefactorContextRequest {
+    pub target: String,
+    #[serde(default)]
+    pub from: Option<String>,
+    pub max_depth: usize,
+    pub path_limit: usize,
+    pub dependent_limit: usize,
+    pub risk_limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefactorContextBundle {
+    pub schema: String,
+    pub target: Node,
+    #[serde(default)]
+    pub area: Option<String>,
+    pub impact: ImpactReport,
+    pub dependencies: ComponentDependencyReport,
+    #[serde(default)]
+    pub journey: Option<JourneyReport>,
+    pub total_risks: usize,
+    pub risks: Vec<Insight>,
+    pub risks_truncated: bool,
+    #[serde(default)]
+    pub target_source: Option<SourcePreview>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SeamRequest {
     pub limit: usize,
     pub edge_limit: usize,
@@ -4039,6 +4067,79 @@ fn component_resolve_area(
                 .join(", ")
         ))),
     }
+}
+
+pub const REFACTOR_CONTEXT_SCHEMA: &str = "codegraph.refactor_context.v1";
+
+pub fn refactor_context(
+    graph: &CodeGraph,
+    request: RefactorContextRequest,
+) -> Result<RefactorContextBundle, QueryError> {
+    let max_depth = request.max_depth.clamp(1, 32);
+    let risk_limit = request.risk_limit.clamp(1, 200);
+    let impact_report = impact(
+        graph,
+        ImpactRequest {
+            target: request.target.clone(),
+            max_depth,
+            limit: request.dependent_limit,
+        },
+    )?;
+    let dependencies = component_dependencies(
+        graph,
+        ComponentDependencyRequest {
+            target: request.target.clone(),
+            group_limit: 25,
+            edge_limit: 10,
+        },
+    )?;
+    let journey_report = match &request.from {
+        Some(from) if !from.trim().is_empty() => Some(journey(
+            graph,
+            JourneyRequest {
+                from: from.clone(),
+                to: request.target.clone(),
+                max_depth,
+                path_limit: request.path_limit,
+            },
+        )?),
+        _ => None,
+    };
+
+    let mut relevant: BTreeSet<NodeId> = impact_report
+        .dependents
+        .iter()
+        .map(|dependent| dependent.node.id)
+        .collect();
+    relevant.insert(impact_report.target.id);
+    let insight_report = insights(graph);
+    let matching = insight_report
+        .insights
+        .iter()
+        .filter(|insight| {
+            insight
+                .nodes
+                .iter()
+                .any(|node_id| relevant.contains(node_id))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let total_risks = matching.len();
+    let risks_truncated = total_risks > risk_limit;
+    let risks = matching.into_iter().take(risk_limit).collect::<Vec<_>>();
+
+    Ok(RefactorContextBundle {
+        schema: REFACTOR_CONTEXT_SCHEMA.to_string(),
+        target: impact_report.target.clone(),
+        area: impact_report.area.clone(),
+        impact: impact_report,
+        dependencies,
+        journey: journey_report,
+        total_risks,
+        risks,
+        risks_truncated,
+        target_source: None,
+    })
 }
 
 pub fn seams(graph: &CodeGraph, request: SeamRequest) -> SeamReport {
@@ -16574,6 +16675,98 @@ mod tests {
                 target: "ghost".to_string(),
                 group_limit: 25,
                 edge_limit: 10,
+            },
+        );
+        assert!(missing.is_err());
+    }
+
+    #[test]
+    fn refactor_context_bundles_impact_dependencies_journey_and_risks() {
+        let mut graph = CodeGraph::new("repo");
+        let src_file = graph.add_node(NodeKind::File, "crates/app/src/lib.rs");
+        let entrypoint = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "cargo bin:app",
+            None,
+            BTreeMap::from([("entrypoint_kind".to_string(), "binary".to_string())]),
+        );
+        let main = graph.add_node(NodeKind::Function, "main");
+        let target = graph.add_node(NodeKind::Function, "load_config");
+        graph.add_edge(graph.root, src_file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(
+            graph.root,
+            entrypoint,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        graph.add_edge(src_file, main, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(src_file, target, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(
+            entrypoint,
+            main,
+            EdgeKind::References,
+            Confidence::Syntactic,
+        );
+        graph.add_edge(main, target, EdgeKind::Calls, Confidence::Heuristic);
+
+        let bundle = refactor_context(
+            &graph,
+            RefactorContextRequest {
+                target: "load_config".to_string(),
+                from: Some("cargo bin:app".to_string()),
+                max_depth: 8,
+                path_limit: 2,
+                dependent_limit: 50,
+                risk_limit: 25,
+            },
+        )
+        .expect("refactor context bundle");
+
+        assert_eq!(bundle.schema, REFACTOR_CONTEXT_SCHEMA);
+        assert_eq!(bundle.target.label, "load_config");
+        assert!(bundle.impact.total_dependents >= 2);
+        assert_eq!(bundle.dependencies.target.label, "load_config");
+        let journey_report = bundle.journey.as_ref().expect("journey included");
+        assert_eq!(journey_report.total_paths, 1);
+        assert!(
+            bundle
+                .risks
+                .iter()
+                .all(|insight| insight
+                    .nodes
+                    .iter()
+                    .any(|node_id| *node_id == bundle.target.id
+                        || bundle
+                            .impact
+                            .dependents
+                            .iter()
+                            .any(|dependent| dependent.node.id == *node_id)))
+        );
+        assert!(bundle.target_source.is_none());
+
+        let without_journey = refactor_context(
+            &graph,
+            RefactorContextRequest {
+                target: "load_config".to_string(),
+                from: None,
+                max_depth: 8,
+                path_limit: 2,
+                dependent_limit: 50,
+                risk_limit: 25,
+            },
+        )
+        .expect("bundle without journey");
+        assert!(without_journey.journey.is_none());
+
+        let missing = refactor_context(
+            &graph,
+            RefactorContextRequest {
+                target: "ghost".to_string(),
+                from: None,
+                max_depth: 8,
+                path_limit: 2,
+                dependent_limit: 50,
+                risk_limit: 25,
             },
         );
         assert!(missing.is_err());
