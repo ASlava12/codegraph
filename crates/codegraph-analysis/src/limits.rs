@@ -129,6 +129,34 @@ pub struct ProjectReportLimits {
     pub fail_on: InsightSeverity,
 }
 
+impl ProjectReportLimits {
+    /// Clamp every limit into its published `[1, MAX_*]` capability range so
+    /// CLI flags and API parameters obey the same bounds.
+    pub fn clamped(self) -> Self {
+        Self {
+            architecture_group_limit: self
+                .architecture_group_limit
+                .clamp(1, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT),
+            architecture_edge_limit: self
+                .architecture_edge_limit
+                .clamp(1, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT),
+            language_link_limit: self
+                .language_link_limit
+                .clamp(1, MAX_REPORT_LANGUAGE_LINK_LIMIT),
+            hotspot_limit: self.hotspot_limit.clamp(1, MAX_REPORT_HOTSPOT_LIMIT),
+            community_limit: self.community_limit.clamp(1, MAX_REPORT_COMMUNITY_LIMIT),
+            insight_limit: self.insight_limit.clamp(1, MAX_REPORT_INSIGHT_LIMIT),
+            file_summary_limit: self
+                .file_summary_limit
+                .clamp(1, MAX_REPORT_FILE_SUMMARY_LIMIT),
+            node_summary_limit: self
+                .node_summary_limit
+                .clamp(1, MAX_REPORT_NODE_SUMMARY_LIMIT),
+            fail_on: self.fail_on,
+        }
+    }
+}
+
 impl Default for ProjectReportLimits {
     fn default() -> Self {
         Self {
@@ -216,6 +244,24 @@ pub enum InsightSeverity {
     Info,
     Warning,
     Error,
+}
+
+/// Shared severity parsing for CLI flags, API query parameters, and stored
+/// metadata, so every surface accepts the same spellings and reports the
+/// same error.
+impl std::str::FromStr for InsightSeverity {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "info" => Ok(Self::Info),
+            "warning" | "warn" => Ok(Self::Warning),
+            "error" => Ok(Self::Error),
+            other => Err(format!(
+                "invalid severity `{other}`; expected info, warning, or error"
+            )),
+        }
+    }
 }
 
 impl Default for InsightFilter {

@@ -2706,13 +2706,13 @@ fn main() -> Result<()> {
                     start: TraceStart::Label(label),
                     max_depth: depth,
                     block_limit,
-                    filters: WorkflowFilters {
+                    filters: WorkflowFilters::from_parts(
                         edge_kind,
                         confidence,
                         language,
                         risk_severity,
                         block_kind,
-                    },
+                    ),
                     compact,
                 },
             );
@@ -2766,13 +2766,13 @@ fn main() -> Result<()> {
                     max_depth: depth,
                     block_limit,
                     limit,
-                    filters: WorkflowFilters {
+                    filters: WorkflowFilters::from_parts(
                         edge_kind,
                         confidence,
                         language,
                         risk_severity,
                         block_kind,
-                    },
+                    ),
                     compact,
                 },
             );
@@ -2834,13 +2834,13 @@ fn main() -> Result<()> {
                     max_depth: depth,
                     block_limit,
                     limit,
-                    filters: WorkflowFilters {
+                    filters: WorkflowFilters::from_parts(
                         edge_kind,
                         confidence,
                         language,
                         risk_severity,
                         block_kind,
-                    },
+                    ),
                     compact,
                 },
             )?;
@@ -3129,6 +3129,8 @@ fn build_project_report_snapshot(
     })
 }
 
+/// CLI report limits obey the same published `[1, MAX_*]` bounds as the API
+/// (`ProjectReportLimits::clamped`), so both surfaces stay in contract.
 fn report_limits_from_args(args: &ReportArgs) -> ProjectReportLimits {
     ProjectReportLimits {
         architecture_group_limit: args.architecture_group_limit,
@@ -3141,6 +3143,7 @@ fn report_limits_from_args(args: &ReportArgs) -> ProjectReportLimits {
         node_summary_limit: args.node_summary_limit,
         fail_on: InsightSeverity::from(args.fail_on),
     }
+    .clamped()
 }
 
 fn benchmark_scans(args: BenchmarkArgs, max_file_size: Option<u64>) -> Result<BenchmarkReport> {

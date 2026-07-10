@@ -6,16 +6,7 @@ use anyhow::{Context, Result};
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use codegraph_analysis::{
-    DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT, DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT,
-    DEFAULT_REPORT_COMMUNITY_LIMIT, DEFAULT_REPORT_FILE_SUMMARY_LIMIT,
-    DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
-    DEFAULT_REPORT_NODE_SUMMARY_LIMIT, InsightFilter, InsightSeverity,
-    MAX_REPORT_ARCHITECTURE_EDGE_LIMIT, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
-    MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_FILE_SUMMARY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
-    MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, MAX_REPORT_NODE_SUMMARY_LIMIT,
-    ProjectReportLimits, WorkflowFilters,
-};
+use codegraph_analysis::{InsightFilter, InsightSeverity, ProjectReportLimits, WorkflowFilters};
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, configured_index_options};
 use codegraph_storage::scan_project_cached;
@@ -141,13 +132,7 @@ pub(crate) fn workflow_filters_from_query(
     risk_severity: Option<String>,
     block_kind: Option<String>,
 ) -> WorkflowFilters {
-    WorkflowFilters {
-        edge_kind: normalize_query_string(edge_kind),
-        confidence: normalize_query_string(confidence),
-        language: normalize_query_string(language),
-        risk_severity: normalize_query_string(risk_severity),
-        block_kind: normalize_query_string(block_kind),
-    }
+    WorkflowFilters::from_parts(edge_kind, confidence, language, risk_severity, block_kind)
 }
 
 pub(crate) fn parse_optional_job_status(
@@ -213,55 +198,36 @@ pub(crate) fn insight_filter_from_query(query: InsightQuery) -> Result<InsightFi
 pub(crate) fn project_report_limits_from_query(
     query: &ProjectReportQuery,
 ) -> Result<ProjectReportLimits, ApiError> {
+    let defaults = ProjectReportLimits::default();
     Ok(ProjectReportLimits {
         architecture_group_limit: query
             .architecture_group_limit
-            .unwrap_or(DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT)
-            .clamp(1, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT),
+            .unwrap_or(defaults.architecture_group_limit),
         architecture_edge_limit: query
             .architecture_edge_limit
-            .unwrap_or(DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT)
-            .clamp(1, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT),
+            .unwrap_or(defaults.architecture_edge_limit),
         language_link_limit: query
             .language_link_limit
-            .unwrap_or(DEFAULT_REPORT_LANGUAGE_LINK_LIMIT)
-            .clamp(1, MAX_REPORT_LANGUAGE_LINK_LIMIT),
-        hotspot_limit: query
-            .hotspot_limit
-            .unwrap_or(DEFAULT_REPORT_HOTSPOT_LIMIT)
-            .clamp(1, MAX_REPORT_HOTSPOT_LIMIT),
-        community_limit: query
-            .community_limit
-            .unwrap_or(DEFAULT_REPORT_COMMUNITY_LIMIT)
-            .clamp(1, MAX_REPORT_COMMUNITY_LIMIT),
-        insight_limit: query
-            .insight_limit
-            .unwrap_or(DEFAULT_REPORT_INSIGHT_LIMIT)
-            .clamp(1, MAX_REPORT_INSIGHT_LIMIT),
+            .unwrap_or(defaults.language_link_limit),
+        hotspot_limit: query.hotspot_limit.unwrap_or(defaults.hotspot_limit),
+        community_limit: query.community_limit.unwrap_or(defaults.community_limit),
+        insight_limit: query.insight_limit.unwrap_or(defaults.insight_limit),
         file_summary_limit: query
             .file_summary_limit
-            .unwrap_or(DEFAULT_REPORT_FILE_SUMMARY_LIMIT)
-            .clamp(1, MAX_REPORT_FILE_SUMMARY_LIMIT),
+            .unwrap_or(defaults.file_summary_limit),
         node_summary_limit: query
             .node_summary_limit
-            .unwrap_or(DEFAULT_REPORT_NODE_SUMMARY_LIMIT)
-            .clamp(1, MAX_REPORT_NODE_SUMMARY_LIMIT),
+            .unwrap_or(defaults.node_summary_limit),
         fail_on: normalize_query_string(query.fail_on.clone())
             .map(|value| parse_insight_severity(&value))
             .transpose()?
-            .unwrap_or(InsightSeverity::Error),
-    })
+            .unwrap_or(defaults.fail_on),
+    }
+    .clamped())
 }
 
 pub(crate) fn parse_insight_severity(value: &str) -> Result<InsightSeverity, ApiError> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "info" => Ok(InsightSeverity::Info),
-        "warning" | "warn" => Ok(InsightSeverity::Warning),
-        "error" => Ok(InsightSeverity::Error),
-        other => Err(ApiError::bad_request(format!(
-            "invalid severity `{other}`; expected info, warning, or error"
-        ))),
-    }
+    value.parse().map_err(ApiError::bad_request)
 }
 
 /// Node ids arrive as bare numerics (`42`) or n-prefixed (`n42`) — the form

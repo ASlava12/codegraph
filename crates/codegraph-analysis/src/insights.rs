@@ -2900,11 +2900,9 @@ pub(crate) fn add_custom_rule_violation_insights(graph: &CodeGraph, insights: &m
 }
 
 pub(crate) fn insight_severity_from_str(value: &str) -> InsightSeverity {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "error" => InsightSeverity::Error,
-        "info" => InsightSeverity::Info,
-        _ => InsightSeverity::Warning,
-    }
+    // Metadata-sourced severities stay lenient: unknown values read as
+    // warnings instead of failing the whole report.
+    value.parse().unwrap_or(InsightSeverity::Warning)
 }
 
 pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {

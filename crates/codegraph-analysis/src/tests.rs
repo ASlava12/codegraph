@@ -3,6 +3,71 @@ use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSp
 use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
+fn insight_severity_parses_shared_spellings() {
+    assert_eq!("info".parse::<InsightSeverity>(), Ok(InsightSeverity::Info));
+    assert_eq!(
+        " Warning ".parse::<InsightSeverity>(),
+        Ok(InsightSeverity::Warning)
+    );
+    assert_eq!(
+        "warn".parse::<InsightSeverity>(),
+        Ok(InsightSeverity::Warning)
+    );
+    assert_eq!(
+        "ERROR".parse::<InsightSeverity>(),
+        Ok(InsightSeverity::Error)
+    );
+    assert!(
+        "fatal"
+            .parse::<InsightSeverity>()
+            .unwrap_err()
+            .contains("expected info, warning, or error")
+    );
+}
+
+#[test]
+fn report_limits_clamp_to_published_bounds() {
+    let clamped = ProjectReportLimits {
+        architecture_group_limit: 0,
+        architecture_edge_limit: usize::MAX,
+        language_link_limit: 0,
+        hotspot_limit: usize::MAX,
+        community_limit: 0,
+        insight_limit: usize::MAX,
+        file_summary_limit: 0,
+        node_summary_limit: usize::MAX,
+        fail_on: InsightSeverity::Warning,
+    }
+    .clamped();
+    assert_eq!(clamped.architecture_group_limit, 1);
+    assert_eq!(
+        clamped.architecture_edge_limit,
+        MAX_REPORT_ARCHITECTURE_EDGE_LIMIT
+    );
+    assert_eq!(clamped.language_link_limit, 1);
+    assert_eq!(clamped.hotspot_limit, MAX_REPORT_HOTSPOT_LIMIT);
+    assert_eq!(clamped.insight_limit, MAX_REPORT_INSIGHT_LIMIT);
+    assert_eq!(clamped.node_summary_limit, MAX_REPORT_NODE_SUMMARY_LIMIT);
+    assert_eq!(clamped.fail_on, InsightSeverity::Warning);
+}
+
+#[test]
+fn workflow_filters_normalize_user_supplied_parts() {
+    let filters = WorkflowFilters::from_parts(
+        Some(" calls ".to_string()),
+        Some(String::new()),
+        None,
+        Some("  ".to_string()),
+        Some("branch".to_string()),
+    );
+    assert_eq!(filters.edge_kind.as_deref(), Some("calls"));
+    assert_eq!(filters.confidence, None);
+    assert_eq!(filters.language, None);
+    assert_eq!(filters.risk_severity, None);
+    assert_eq!(filters.block_kind.as_deref(), Some("branch"));
+}
+
+#[test]
 fn summary_counts_graph_facts() {
     let mut graph = CodeGraph::new("repo");
     let main = graph.add_node(NodeKind::Function, "main");

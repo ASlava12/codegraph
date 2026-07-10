@@ -628,7 +628,7 @@ behavior remains guarded by the existing test suite.
 
 - [x] Split the monolithic crate files (`codegraph-analysis/src/lib.rs`, `codegraph-indexer/src/lib.rs`, `codegraph-parser/src/lib.rs`, `codegraph-server/src/main.rs`, `codegraph-web/static/app.js`) into focused modules with clear ownership (completed 2026-07-10 across five commits: parser → 5 modules, indexer → 15, server → 9, app.js → 16 ordered modules concatenated by the server build script, analysis → 15; public surfaces unchanged, each split landed behind green workspace tests and live smokes).
 - [x] Fix all clippy warnings on the current stable toolchain and keep `-D warnings` green in CI without allow-listing (31 warnings fixed 2026-07-10; the existing CI clippy job is green again with zero `#[allow(clippy::...)]` attributes).
-- [ ] Extract shared report, filter, paging, and request-struct helpers to remove duplication between CLI, API, and web contracts.
+- [x] Extract shared report, filter, paging, and request-struct helpers to remove duplication between CLI, API, and web contracts (`InsightSeverity: FromStr`, `WorkflowFilters::from_parts`, and `ProjectReportLimits::clamped` in `codegraph-analysis`; CLI flags now get the same normalization and published bounds as API parameters).
 - [ ] Reduce long parameter lists by grouping them into request/options structs across analysis and server entry functions.
 - [ ] Add module-level documentation and tighten crate public APIs to intended surfaces.
 - [ ] Land refactors only behind green workspace tests, adding regression fixtures first where coverage is missing.

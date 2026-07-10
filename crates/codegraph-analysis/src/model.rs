@@ -227,6 +227,32 @@ pub struct WorkflowFilters {
     pub block_kind: Option<String>,
 }
 
+impl WorkflowFilters {
+    /// Build filters from raw user-supplied parts, trimming whitespace and
+    /// dropping empty values, so CLI flags and API query parameters
+    /// normalize identically.
+    pub fn from_parts(
+        edge_kind: Option<String>,
+        confidence: Option<String>,
+        language: Option<String>,
+        risk_severity: Option<String>,
+        block_kind: Option<String>,
+    ) -> Self {
+        fn normalize(value: Option<String>) -> Option<String> {
+            value
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        }
+        Self {
+            edge_kind: normalize(edge_kind),
+            confidence: normalize(confidence),
+            language: normalize(language),
+            risk_severity: normalize(risk_severity),
+            block_kind: normalize(block_kind),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowReport {
     pub start: Node,
