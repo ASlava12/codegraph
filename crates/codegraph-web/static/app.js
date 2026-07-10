@@ -7301,8 +7301,8 @@ async function openSourceSearchMatch(match) {
   `;
   const preview = selectionBody.querySelector("#sourceMatchPreview code");
   const params = new URLSearchParams({
-    root: pathInput.value.trim() || ".",
-    path: match.path,
+    path: pathInput.value.trim() || ".",
+    file: match.path,
     start_line: String(match.line),
     end_line: String(match.line),
     context: "5",
@@ -10713,8 +10713,8 @@ async function loadSourcePreview(node, requestId) {
   if (!preview || !node.span) return;
 
   const params = new URLSearchParams({
-    root: pathInput.value.trim() || ".",
-    path: node.span.path,
+    path: pathInput.value.trim() || ".",
+    file: node.span.path,
     start_line: String(node.span.start_line),
     end_line: String(node.span.end_line),
     context: "5",

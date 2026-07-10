@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use async_stream::stream;
-use axum::extract::{DefaultBodyLimit, Path as AxumPath, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Path as AxumPath, Request, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -354,8 +354,12 @@ struct CacheDiffQuery {
 
 #[derive(Debug, Deserialize)]
 struct SourceQuery {
+    /// Project root, matching every other endpoint's `path` parameter.
+    path: Option<PathBuf>,
+    /// Source file inside the root (canonical form).
+    file: Option<PathBuf>,
+    /// Legacy alias: project root when `file` is absent and `path` is the file.
     root: Option<PathBuf>,
-    path: PathBuf,
     start_line: Option<u32>,
     end_line: Option<u32>,
     context: Option<u32>,
@@ -1659,7 +1663,7 @@ async fn start_scan_job(
 
 async fn list_scan_jobs(
     State(state): State<AppState>,
-    Query(query): Query<JobListQuery>,
+    ApiQuery(query): ApiQuery<JobListQuery>,
 ) -> Result<Json<ScanJobListResponse>, ApiError> {
     let status = parse_optional_job_status(query.status.as_deref())?;
     let limit = job_list_limit(query.limit);
@@ -2003,7 +2007,7 @@ async fn lsp_api() -> Json<LspDiscoveryReport> {
 
 async fn semantic_readiness_api(
     State(state): State<AppState>,
-    Query(query): Query<ScanQuery>,
+    ApiQuery(query): ApiQuery<ScanQuery>,
 ) -> Result<Json<SemanticReadinessReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let summary = summarize(&graph);
@@ -2012,7 +2016,7 @@ async fn semantic_readiness_api(
 
 async fn semantic_plan_api(
     State(state): State<AppState>,
-    Query(query): Query<SemanticPlanQuery>,
+    ApiQuery(query): ApiQuery<SemanticPlanQuery>,
 ) -> Result<Json<SemanticEnrichmentPlan>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(semantic_enrichment_plan_with_filter(
@@ -2030,7 +2034,7 @@ async fn semantic_plan_api(
 
 async fn semantic_batch_api(
     State(state): State<AppState>,
-    Query(query): Query<SemanticPlanQuery>,
+    ApiQuery(query): ApiQuery<SemanticPlanQuery>,
 ) -> Result<Json<codegraph_lsp::SemanticExecutionBatch>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let graph = scan_graph(&state, Some(root.as_path())).await?;
@@ -2246,7 +2250,7 @@ async fn start_semantic_job(
 
 async fn list_semantic_jobs(
     State(state): State<AppState>,
-    Query(query): Query<JobListQuery>,
+    ApiQuery(query): ApiQuery<JobListQuery>,
 ) -> Result<Json<SemanticJobListResponse>, ApiError> {
     let status = parse_optional_job_status(query.status.as_deref())?;
     let limit = job_list_limit(query.limit);
@@ -2371,7 +2375,7 @@ async fn projects_api(State(state): State<AppState>) -> Json<Vec<ProjectResponse
 
 async fn scan_options_api(
     State(state): State<AppState>,
-    Query(query): Query<ScanOptionsQuery>,
+    ApiQuery(query): ApiQuery<ScanOptionsQuery>,
 ) -> Result<Json<ScanOptionsResponse>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let options = scan_options(&state, &root)?;
@@ -2391,7 +2395,7 @@ async fn scan_options_api(
 
 async fn scan(
     State(state): State<AppState>,
-    Query(query): Query<ScanQuery>,
+    ApiQuery(query): ApiQuery<ScanQuery>,
 ) -> Result<Json<ScanResponse>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let options = scan_options(&state, &root)?;
@@ -2412,7 +2416,7 @@ async fn scan(
 
 async fn cache_diff_api(
     State(state): State<AppState>,
-    Query(query): Query<CacheDiffQuery>,
+    ApiQuery(query): ApiQuery<CacheDiffQuery>,
 ) -> Result<Json<codegraph_storage::CacheDiffReport>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let Some(cache) = state.cache.clone() else {
@@ -2434,7 +2438,7 @@ async fn cache_diff_api(
 
 async fn cache_chunks_api(
     State(state): State<AppState>,
-    Query(query): Query<CacheDiffQuery>,
+    ApiQuery(query): ApiQuery<CacheDiffQuery>,
 ) -> Result<Json<codegraph_storage::CacheChunkReport>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let Some(cache) = state.cache.clone() else {
@@ -2456,7 +2460,7 @@ async fn cache_chunks_api(
 
 async fn incremental_plan_api(
     State(state): State<AppState>,
-    Query(query): Query<CacheDiffQuery>,
+    ApiQuery(query): ApiQuery<CacheDiffQuery>,
 ) -> Result<Json<codegraph_storage::IncrementalScanPlan>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let Some(cache) = state.cache.clone() else {
@@ -2478,7 +2482,7 @@ async fn incremental_plan_api(
 
 async fn incremental_scan_api(
     State(state): State<AppState>,
-    Query(query): Query<CacheDiffQuery>,
+    ApiQuery(query): ApiQuery<CacheDiffQuery>,
 ) -> Result<Json<codegraph_storage::IncrementalScan>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let Some(cache) = state.cache.clone() else {
@@ -2500,7 +2504,7 @@ async fn incremental_scan_api(
 
 async fn incremental_merge_preview_api(
     State(state): State<AppState>,
-    Query(query): Query<CacheDiffQuery>,
+    ApiQuery(query): ApiQuery<CacheDiffQuery>,
 ) -> Result<Json<codegraph_storage::IncrementalMergePreview>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let Some(cache) = state.cache.clone() else {
@@ -2524,7 +2528,7 @@ async fn incremental_merge_preview_api(
 
 async fn incremental_update_api(
     State(state): State<AppState>,
-    Query(query): Query<CacheDiffQuery>,
+    ApiQuery(query): ApiQuery<CacheDiffQuery>,
 ) -> Result<Json<codegraph_storage::IncrementalUpdate>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let Some(cache) = state.cache.clone() else {
@@ -2549,7 +2553,7 @@ async fn incremental_update_api(
 
 async fn export_api(
     State(state): State<AppState>,
-    Query(query): Query<ExportQuery>,
+    ApiQuery(query): ApiQuery<ExportQuery>,
 ) -> Result<Response, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let node_count = graph.nodes.len();
@@ -2596,7 +2600,7 @@ async fn export_api(
 
 async fn graph_api(
     State(state): State<AppState>,
-    Query(query): Query<GraphSliceQuery>,
+    ApiQuery(query): ApiQuery<GraphSliceQuery>,
 ) -> Result<Json<GraphSlice>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(slice_graph(
@@ -2621,7 +2625,7 @@ async fn graph_api(
 
 async fn node_context_api(
     State(state): State<AppState>,
-    Query(query): Query<NodeContextQuery>,
+    ApiQuery(query): ApiQuery<NodeContextQuery>,
 ) -> Result<Json<NodeContext>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let context = node_context(
@@ -2635,7 +2639,7 @@ async fn node_context_api(
 
 async fn node_card_api(
     State(state): State<AppState>,
-    Query(query): Query<NodeCardQuery>,
+    ApiQuery(query): ApiQuery<NodeCardQuery>,
 ) -> Result<Json<NodeCard>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let options = scan_options(&state, &root)?;
@@ -2671,7 +2675,7 @@ async fn node_card_api(
 
 async fn focus_api(
     State(state): State<AppState>,
-    Query(query): Query<FocusQuery>,
+    ApiQuery(query): ApiQuery<FocusQuery>,
 ) -> Result<Json<codegraph_analysis::QueryResult>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let node_ids = parse_node_ids(query.node_ids.as_deref())?;
@@ -2693,7 +2697,7 @@ async fn focus_api(
 
 async fn report_api(
     State(state): State<AppState>,
-    Query(query): Query<ProjectReportQuery>,
+    ApiQuery(query): ApiQuery<ProjectReportQuery>,
 ) -> Result<Response, ApiError> {
     let limits = project_report_limits_from_query(&query)?;
     let format = query.format.unwrap_or(ProjectReportFormat::Json);
@@ -2746,7 +2750,7 @@ async fn report_api(
 
 async fn summary(
     State(state): State<AppState>,
-    Query(query): Query<ScanQuery>,
+    ApiQuery(query): ApiQuery<ScanQuery>,
 ) -> Result<Json<codegraph_analysis::GraphSummary>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(summarize(&graph)))
@@ -2754,7 +2758,7 @@ async fn summary(
 
 async fn coverage_api(
     State(state): State<AppState>,
-    Query(query): Query<ScanQuery>,
+    ApiQuery(query): ApiQuery<ScanQuery>,
 ) -> Result<Json<codegraph_indexer::ScanCoverageReport>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let options = scan_options(&state, &root)?;
@@ -2767,7 +2771,7 @@ async fn coverage_api(
 
 async fn architecture_api(
     State(state): State<AppState>,
-    Query(query): Query<ArchitectureQuery>,
+    ApiQuery(query): ApiQuery<ArchitectureQuery>,
 ) -> Result<Json<codegraph_analysis::ArchitectureMap>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(architecture_map(
@@ -2779,7 +2783,7 @@ async fn architecture_api(
 
 async fn language_dependencies_api(
     State(state): State<AppState>,
-    Query(query): Query<LanguageDependencyQuery>,
+    ApiQuery(query): ApiQuery<LanguageDependencyQuery>,
 ) -> Result<Json<codegraph_analysis::LanguageDependencyReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(language_dependencies(
@@ -2790,7 +2794,7 @@ async fn language_dependencies_api(
 
 async fn surprising_links_api(
     State(state): State<AppState>,
-    Query(query): Query<SurprisingLinkQuery>,
+    ApiQuery(query): ApiQuery<SurprisingLinkQuery>,
 ) -> Result<Json<codegraph_analysis::SurprisingLinkReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(surprising_links(&graph, query.limit.unwrap_or(50))))
@@ -2798,7 +2802,7 @@ async fn surprising_links_api(
 
 async fn hotspots_api(
     State(state): State<AppState>,
-    Query(query): Query<HotspotQuery>,
+    ApiQuery(query): ApiQuery<HotspotQuery>,
 ) -> Result<Json<codegraph_analysis::HotspotReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(hotspots(&graph, query.limit.unwrap_or(25))))
@@ -2806,7 +2810,7 @@ async fn hotspots_api(
 
 async fn communities_api(
     State(state): State<AppState>,
-    Query(query): Query<CommunityQuery>,
+    ApiQuery(query): ApiQuery<CommunityQuery>,
 ) -> Result<Json<codegraph_analysis::CommunityReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(communities(
@@ -2817,7 +2821,7 @@ async fn communities_api(
 
 async fn entrypoints_api(
     State(state): State<AppState>,
-    Query(query): Query<ScanQuery>,
+    ApiQuery(query): ApiQuery<ScanQuery>,
 ) -> Result<Json<Vec<codegraph_core::Node>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(entrypoints(&graph)))
@@ -2825,7 +2829,7 @@ async fn entrypoints_api(
 
 async fn entrypoint_traces_api(
     State(state): State<AppState>,
-    Query(query): Query<EntrypointTraceQuery>,
+    ApiQuery(query): ApiQuery<EntrypointTraceQuery>,
 ) -> Result<Json<EntrypointTraceReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(trace_entrypoints(
@@ -2840,7 +2844,7 @@ async fn entrypoint_traces_api(
 
 async fn entrypoint_workflows_api(
     State(state): State<AppState>,
-    Query(query): Query<EntrypointWorkflowQuery>,
+    ApiQuery(query): ApiQuery<EntrypointWorkflowQuery>,
 ) -> Result<Json<EntrypointWorkflowReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(workflow_entrypoints(
@@ -2865,7 +2869,7 @@ async fn entrypoint_workflows_api(
 
 async fn insights_api(
     State(state): State<AppState>,
-    Query(query): Query<InsightQuery>,
+    ApiQuery(query): ApiQuery<InsightQuery>,
 ) -> Result<Json<InsightReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let report = insights(&graph);
@@ -2877,7 +2881,7 @@ async fn insights_api(
 
 async fn check_api(
     State(state): State<AppState>,
-    Query(query): Query<CheckQuery>,
+    ApiQuery(query): ApiQuery<CheckQuery>,
 ) -> Result<Json<CheckReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let fail_on = normalize_query_string(query.fail_on)
@@ -2898,7 +2902,7 @@ async fn check_api(
 
 async fn query_api(
     State(state): State<AppState>,
-    Query(query): Query<GraphQuery>,
+    ApiQuery(query): ApiQuery<GraphQuery>,
 ) -> Result<Json<codegraph_analysis::QueryResult>, ApiError> {
     if query.q.len() > MAX_GRAPH_QUERY_LENGTH {
         return Err(ApiError::bad_request(format!(
@@ -2918,7 +2922,7 @@ async fn query_api(
 
 async fn ask_api(
     State(state): State<AppState>,
-    Query(query): Query<NaturalGraphQuery>,
+    ApiQuery(query): ApiQuery<NaturalGraphQuery>,
 ) -> Result<Json<NaturalQueryReport>, ApiError> {
     if query.q.len() > MAX_GRAPH_QUERY_LENGTH {
         return Err(ApiError::bad_request(format!(
@@ -2939,7 +2943,7 @@ async fn ask_api(
 
 async fn explain_edge_api(
     State(state): State<AppState>,
-    Query(query): Query<ExplainEdgeQuery>,
+    ApiQuery(query): ApiQuery<ExplainEdgeQuery>,
 ) -> Result<Json<Option<codegraph_analysis::EdgeExplanation>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let result = explain_edge(
@@ -2957,7 +2961,7 @@ async fn explain_edge_api(
 
 async fn trace_api(
     State(state): State<AppState>,
-    Query(query): Query<TraceQuery>,
+    ApiQuery(query): ApiQuery<TraceQuery>,
 ) -> Result<Json<Option<codegraph_analysis::TraceResult>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let start = match (query.node_id, query.label) {
@@ -2980,7 +2984,7 @@ async fn trace_api(
 
 async fn workflow_api(
     State(state): State<AppState>,
-    Query(query): Query<WorkflowQuery>,
+    ApiQuery(query): ApiQuery<WorkflowQuery>,
 ) -> Result<Json<Option<WorkflowReport>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let start = match (query.node_id, query.label) {
@@ -3012,7 +3016,7 @@ async fn workflow_api(
 
 async fn refactor_context_api(
     State(state): State<AppState>,
-    Query(query): Query<RefactorContextQuery>,
+    ApiQuery(query): ApiQuery<RefactorContextQuery>,
 ) -> Result<Json<RefactorContextBundle>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let mut bundle = refactor_context(
@@ -3043,7 +3047,7 @@ async fn refactor_context_api(
 
 async fn seams_api(
     State(state): State<AppState>,
-    Query(query): Query<SeamQuery>,
+    ApiQuery(query): ApiQuery<SeamQuery>,
 ) -> Result<Json<SeamReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     Ok(Json(seams(
@@ -3057,7 +3061,7 @@ async fn seams_api(
 
 async fn pr_impact_api(
     State(state): State<AppState>,
-    Query(query): Query<PrImpactQuery>,
+    ApiQuery(query): ApiQuery<PrImpactQuery>,
 ) -> Result<Json<pr_impact::PrImpactReport>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let graph = scan_graph(&state, query.path.as_deref()).await?;
@@ -3104,7 +3108,7 @@ async fn pr_impact_api(
 
 async fn impact_api(
     State(state): State<AppState>,
-    Query(query): Query<ImpactQuery>,
+    ApiQuery(query): ApiQuery<ImpactQuery>,
 ) -> Result<Json<ImpactReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let report = impact(
@@ -3121,7 +3125,7 @@ async fn impact_api(
 
 async fn component_dependencies_api(
     State(state): State<AppState>,
-    Query(query): Query<ComponentDependencyQuery>,
+    ApiQuery(query): ApiQuery<ComponentDependencyQuery>,
 ) -> Result<Json<ComponentDependencyReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let report = component_dependencies(
@@ -3138,7 +3142,7 @@ async fn component_dependencies_api(
 
 async fn component_contract_api(
     State(state): State<AppState>,
-    Query(query): Query<ComponentContractQuery>,
+    ApiQuery(query): ApiQuery<ComponentContractQuery>,
 ) -> Result<Json<ComponentContractReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let report = component_contract(
@@ -3155,7 +3159,7 @@ async fn component_contract_api(
 
 async fn journey_api(
     State(state): State<AppState>,
-    Query(query): Query<JourneyQuery>,
+    ApiQuery(query): ApiQuery<JourneyQuery>,
 ) -> Result<Json<JourneyReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let report = journey(
@@ -3176,7 +3180,7 @@ async fn journey_api(
 /// return 202 with no body; batch arrays are rejected per request.
 async fn mcp_api(
     State(state): State<AppState>,
-    Query(query): Query<McpQuery>,
+    ApiQuery(query): ApiQuery<McpQuery>,
     body: String,
 ) -> Result<Response, ApiError> {
     let message: serde_json::Value = match serde_json::from_str(&body) {
@@ -3227,7 +3231,7 @@ async fn mcp_api(
 
 async fn workflow_query_api(
     State(state): State<AppState>,
-    Query(query): Query<WorkflowQuerySliceQuery>,
+    ApiQuery(query): ApiQuery<WorkflowQuerySliceQuery>,
 ) -> Result<Json<WorkflowQueryReport>, ApiError> {
     if query.q.len() > MAX_GRAPH_QUERY_LENGTH {
         return Err(ApiError::bad_request(format!(
@@ -3258,7 +3262,7 @@ async fn workflow_query_api(
 
 async fn dependents_api(
     State(state): State<AppState>,
-    Query(query): Query<TraceQuery>,
+    ApiQuery(query): ApiQuery<TraceQuery>,
 ) -> Result<Json<Option<codegraph_analysis::TraceResult>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let start = match (query.node_id, query.label) {
@@ -3281,7 +3285,7 @@ async fn dependents_api(
 
 async fn trace_config_api(
     State(state): State<AppState>,
-    Query(query): Query<ConfigTraceQuery>,
+    ApiQuery(query): ApiQuery<ConfigTraceQuery>,
 ) -> Result<Json<ConfigTraceResult>, ApiError> {
     let target = query.target.trim().to_string();
     if target.is_empty() {
@@ -3300,7 +3304,7 @@ async fn trace_config_api(
 
 async fn trace_errors_api(
     State(state): State<AppState>,
-    Query(query): Query<ErrorTraceQuery>,
+    ApiQuery(query): ApiQuery<ErrorTraceQuery>,
 ) -> Result<Json<ErrorTraceResult>, ApiError> {
     let target = query.target.trim().to_string();
     if target.is_empty() {
@@ -3319,12 +3323,27 @@ async fn trace_errors_api(
 
 async fn source(
     State(state): State<AppState>,
-    Query(query): Query<SourceQuery>,
+    ApiQuery(query): ApiQuery<SourceQuery>,
 ) -> Result<Json<SourcePreview>, ApiError> {
-    let source_root = resolve_scan_root(&state, query.root.as_deref())?;
-    let path = resolve_path(&state, &source_root, &query.path)?;
+    // Canonical form: `path` = project root, `file` = source file. The
+    // pre-unification form (`root` = project root, `path` = file) stays
+    // accepted for older clients (audit F9).
+    let (root_param, file_param) = match (&query.file, &query.root, &query.path) {
+        (Some(file), _, _) => (
+            query.path.clone().or_else(|| query.root.clone()),
+            file.clone(),
+        ),
+        (None, Some(_), Some(file)) => (query.root.clone(), file.clone()),
+        _ => {
+            return Err(ApiError::bad_request(
+                "source requires a `file` parameter (source file inside the `path` project root)",
+            ));
+        }
+    };
+    let source_root = resolve_scan_root(&state, root_param.as_deref())?;
+    let path = resolve_path(&state, &source_root, &file_param)?;
     if !path.is_file() {
-        return Err(ApiError::bad_request("path is not a file"));
+        return Err(ApiError::bad_request("file is not a file"));
     }
 
     let requested_start = query.start_line.unwrap_or(1).max(1);
@@ -3349,7 +3368,7 @@ async fn source(
 
 async fn source_search_api(
     State(state): State<AppState>,
-    Query(query): Query<SourceSearchQuery>,
+    ApiQuery(query): ApiQuery<SourceSearchQuery>,
 ) -> Result<Json<SourceSearchResult>, ApiError> {
     let search_text = query.q.trim().to_string();
     if search_text.is_empty() {
@@ -3637,21 +3656,6 @@ fn parse_edge_indexes(value: Option<&str>) -> Result<Vec<usize>, ApiError> {
     parse_usize_list(value, "edge_indexes")
 }
 
-fn parse_u64_list(value: Option<&str>, name: &str) -> Result<Vec<u64>, ApiError> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            part.parse::<u64>()
-                .map_err(|_| ApiError::bad_request(format!("invalid {name} value `{part}`")))
-        })
-        .collect()
-}
-
 fn parse_usize_list(value: Option<&str>, name: &str) -> Result<Vec<usize>, ApiError> {
     let Some(value) = value else {
         return Ok(Vec::new());
@@ -3675,6 +3679,32 @@ async fn not_found() -> impl IntoResponse {
             request_id: current_request_id(),
         }),
     )
+}
+
+/// Query extractor returning the structured JSON error contract (with
+/// `request_id`) instead of axum's plain-text rejection when query-string
+/// deserialization fails (audit F9).
+struct ApiQuery<T>(T);
+
+impl<S, T> axum::extract::FromRequestParts<S> for ApiQuery<T>
+where
+    T: serde::de::DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        match axum::extract::Query::<T>::from_request_parts(parts, state).await {
+            Ok(query) => Ok(ApiQuery(query.0)),
+            Err(rejection) => Err(ApiError::bad_request(format!(
+                "invalid query parameters: {}",
+                rejection.body_text()
+            ))),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -6018,10 +6048,23 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
             endpoints: vec![
                 api_get(
                     "/api/source",
-                    "Read a source snippet by project root, path, and line span.",
+                    "Read a source snippet by project root, source file, and line span.",
                     vec![
-                        query_param("root", false, "path", Some("."), "Project root."),
-                        query_param("path", true, "path", None, "Source path inside root."),
+                        path_param(),
+                        query_param(
+                            "file",
+                            true,
+                            "path",
+                            None,
+                            "Source file inside the project root.",
+                        ),
+                        query_param(
+                            "root",
+                            false,
+                            "path",
+                            None,
+                            "Legacy alias for the project root; with it, `path` may hold the source file instead of `file`.",
+                        ),
                         query_param("start_line", false, "u32", None, "First line."),
                         query_param("end_line", false, "u32", None, "Last line."),
                         query_param("context", false, "u32", None, "Context lines around span.")
@@ -8748,7 +8791,7 @@ mod tests {
             compact: None,
         };
 
-        let error = query_api(State(state), Query(query))
+        let error = query_api(State(state), ApiQuery(query))
             .await
             .expect_err("oversized query should fail");
 
@@ -8777,7 +8820,7 @@ fn helper() {
 
         let Json(report) = workflow_api(
             State(state),
-            Query(WorkflowQuery {
+            ApiQuery(WorkflowQuery {
                 path: Some(root.clone()),
                 label: Some("main".to_string()),
                 node_id: None,
@@ -8841,7 +8884,7 @@ fn ready() -> bool {
 
         let Json(report) = journey_api(
             State(state.clone()),
-            Query(JourneyQuery {
+            ApiQuery(JourneyQuery {
                 path: Some(root.clone()),
                 from: "main".to_string(),
                 to: "load_config".to_string(),
@@ -8870,7 +8913,7 @@ fn ready() -> bool {
 
         let error = journey_api(
             State(state),
-            Query(JourneyQuery {
+            ApiQuery(JourneyQuery {
                 path: Some(root.clone()),
                 from: "ghost".to_string(),
                 to: "load_config".to_string(),
@@ -8882,6 +8925,107 @@ fn ready() -> bool {
         .expect_err("unknown journey start should fail");
         assert_eq!(error.status, StatusCode::BAD_REQUEST);
         assert!(error.message.contains("journey start"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn api_query_rejections_use_the_json_error_contract() {
+        let request = axum::http::Request::builder()
+            .uri("/api/node-card?node_id=42&edge_limit=not-a-number")
+            .body(())
+            .unwrap();
+        let (mut parts, _) = request.into_parts();
+        let result =
+            <ApiQuery<NodeCardQuery> as axum::extract::FromRequestParts<()>>::from_request_parts(
+                &mut parts,
+                &(),
+            )
+            .await;
+        let error = match result {
+            Ok(_) => panic!("bad query must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert!(
+            error.message.contains("invalid query parameters"),
+            "structured message expected: {}",
+            error.message
+        );
+        // ApiError renders through the JSON error contract with a request id.
+        let response = error.into_response();
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
+    }
+
+    #[tokio::test]
+    async fn source_api_accepts_canonical_and_legacy_forms() {
+        let root = temp_server_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        let state = test_state(root.clone(), vec![], true);
+
+        let canonical = source(
+            State(state.clone()),
+            ApiQuery(SourceQuery {
+                path: Some(root.clone()),
+                file: Some(PathBuf::from("src/main.rs")),
+                root: None,
+                start_line: Some(1),
+                end_line: Some(1),
+                context: Some(0),
+            }),
+        )
+        .await
+        .expect("canonical path+file form works");
+        assert!(
+            canonical
+                .0
+                .lines
+                .iter()
+                .any(|line| line.text.contains("fn main"))
+        );
+
+        let legacy = source(
+            State(state.clone()),
+            ApiQuery(SourceQuery {
+                path: Some(PathBuf::from("src/main.rs")),
+                file: None,
+                root: Some(root.clone()),
+                start_line: Some(1),
+                end_line: Some(1),
+                context: Some(0),
+            }),
+        )
+        .await
+        .expect("legacy root+path form still works");
+        assert!(
+            legacy
+                .0
+                .lines
+                .iter()
+                .any(|line| line.text.contains("fn main"))
+        );
+
+        let error = source(
+            State(state.clone()),
+            ApiQuery(SourceQuery {
+                path: Some(root.clone()),
+                file: None,
+                root: None,
+                start_line: None,
+                end_line: None,
+                context: None,
+            }),
+        )
+        .await
+        .expect_err("missing file parameter rejected");
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert!(error.message.contains("`file`"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -8906,7 +9050,7 @@ fn ready() -> bool {
 
         let card = node_card_api(
             State(state.clone()),
-            Query(NodeCardQuery {
+            ApiQuery(NodeCardQuery {
                 path: Some(root.clone()),
                 node_id: format!("n{}", helper_id.0),
                 edge_limit: None,
@@ -8920,7 +9064,7 @@ fn ready() -> bool {
 
         let context = node_context_api(
             State(state.clone()),
-            Query(NodeContextQuery {
+            ApiQuery(NodeContextQuery {
                 path: Some(root.clone()),
                 node_id: helper_id.0.to_string(),
                 edge_limit: None,
@@ -8932,7 +9076,7 @@ fn ready() -> bool {
 
         let error = node_card_api(
             State(state.clone()),
-            Query(NodeCardQuery {
+            ApiQuery(NodeCardQuery {
                 path: Some(root.clone()),
                 node_id: "nope".to_string(),
                 edge_limit: None,
@@ -8965,7 +9109,7 @@ fn ready() -> bool {
 
         let response = pr_impact_api(
             State(state.clone()),
-            Query(PrImpactQuery {
+            ApiQuery(PrImpactQuery {
                 path: Some(root.clone()),
                 base: None,
                 files: Some("src/util.rs, docs/none.md".to_string()),
@@ -9017,7 +9161,7 @@ fn helper() {}
 
         let response = mcp_api(
             State(state.clone()),
-            Query(McpQuery {
+            ApiQuery(McpQuery {
                 path: Some(root.clone()),
             }),
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string(),
@@ -9034,7 +9178,7 @@ fn helper() {}
 
         let response = mcp_api(
             State(state.clone()),
-            Query(McpQuery {
+            ApiQuery(McpQuery {
                 path: Some(root.clone()),
             }),
             r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"query_graph","arguments":{"query":"nodes kind:function label:main"}}}"#
@@ -9054,7 +9198,7 @@ fn helper() {}
 
         let response = mcp_api(
             State(state.clone()),
-            Query(McpQuery {
+            ApiQuery(McpQuery {
                 path: Some(root.clone()),
             }),
             r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_string(),
@@ -9069,7 +9213,7 @@ fn helper() {}
 
         let response = mcp_api(
             State(state.clone()),
-            Query(McpQuery {
+            ApiQuery(McpQuery {
                 path: Some(root.clone()),
             }),
             "[]".to_string(),
@@ -9081,7 +9225,7 @@ fn helper() {}
 
         let response = mcp_api(
             State(state),
-            Query(McpQuery {
+            ApiQuery(McpQuery {
                 path: Some(root.clone()),
             }),
             "{not json".to_string(),
@@ -9124,7 +9268,7 @@ fn helper() {}
 
         let Json(report) = entrypoint_workflows_api(
             State(state),
-            Query(EntrypointWorkflowQuery {
+            ApiQuery(EntrypointWorkflowQuery {
                 path: Some(root.clone()),
                 search: Some("api".to_string()),
                 entrypoint_kind: None,
@@ -9169,10 +9313,12 @@ fn helper() {}
             compact: None,
         };
         let state = test_state(root.clone(), vec![], true);
-        let Json(binary_report) =
-            entrypoint_workflows_api(State(state.clone()), Query(entrypoint_kind_query("binary")))
-                .await
-                .expect("binary entrypoint workflow response");
+        let Json(binary_report) = entrypoint_workflows_api(
+            State(state.clone()),
+            ApiQuery(entrypoint_kind_query("binary")),
+        )
+        .await
+        .expect("binary entrypoint workflow response");
         assert_eq!(binary_report.entrypoint_kind.as_deref(), Some("binary"));
         assert_eq!(binary_report.total_entrypoints, 2);
         assert!(binary_report.workflows.iter().all(|workflow| {
@@ -9184,7 +9330,7 @@ fn helper() {}
                 == Some("binary")
         }));
         let Json(route_report) =
-            entrypoint_workflows_api(State(state), Query(entrypoint_kind_query("route")))
+            entrypoint_workflows_api(State(state), ApiQuery(entrypoint_kind_query("route")))
                 .await
                 .expect("route entrypoint workflow response");
         assert_eq!(route_report.total_entrypoints, 0);
@@ -9210,7 +9356,7 @@ fn helper() {}
 
         let Json(report) = workflow_query_api(
             State(state),
-            Query(WorkflowQuerySliceQuery {
+            ApiQuery(WorkflowQuerySliceQuery {
                 path: Some(root.clone()),
                 q: "nodes kind:function search:main".to_string(),
                 depth: Some(2),
@@ -9259,7 +9405,7 @@ fn helper() {}
             context: None,
         };
 
-        let error = source_search_api(State(state), Query(query))
+        let error = source_search_api(State(state), ApiQuery(query))
             .await
             .expect_err("oversized source-search query should fail");
 
