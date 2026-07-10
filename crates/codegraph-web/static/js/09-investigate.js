@@ -659,6 +659,7 @@ function renderJourneyReport(report) {
           </div>
           <div class="query-actions">
             <button type="button" data-journey-focus="${index}">${escapeHtml(t("journey.focusPath"))}</button>
+            <button type="button" data-journey-flow="${index}">${escapeHtml(t("flow.openView"))}</button>
           </div>
           <ol class="workflow-blocks">${steps}</ol>
         </section>
@@ -673,6 +674,18 @@ function attachJourneyActions(container, report) {
   attachEdgeExplainActions(container);
   container.querySelectorAll("[data-journey-expand]").forEach((button) => {
     button.addEventListener("click", () => expandJourneyStep(button, report));
+  });
+  container.querySelectorAll("[data-journey-flow]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const path = report.paths?.[Number(button.dataset.journeyFlow)];
+      if (!path) return;
+      const flowReport = journeyPathToFlowReport(report, path);
+      if (!flowReport.blocks.length) return;
+      openFlowView(
+        flowReport,
+        `${report.from?.label || ""} → ${report.to?.label || ""}`,
+      );
+    });
   });
   container.querySelectorAll("[data-journey-focus]").forEach((button) => {
     button.addEventListener("click", () => {

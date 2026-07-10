@@ -188,6 +188,31 @@ function refineFlowReport(report) {
   };
 }
 
+// Convert one ranked journey path (entry -> target) into a flow report so it
+// renders in the Flow canvas as a linear, numbered left-to-right chain instead
+// of the sidebar list.
+function journeyPathToFlowReport(report, path) {
+  const steps = Array.isArray(path?.steps) ? path.steps : [];
+  const blocks = [];
+  const transitions = [];
+  const seen = new Set();
+  steps.forEach((step, index) => {
+    const block = step.block;
+    if (block && !seen.has(block.id)) {
+      seen.add(block.id);
+      blocks.push({ ...block, depth: index });
+    }
+    if (step.transition) transitions.push(step.transition);
+  });
+  return {
+    start: report.from,
+    blocks,
+    transitions,
+    total_blocks: blocks.length,
+    total_transitions: transitions.length,
+  };
+}
+
 function drawFlow() {
   if (flowCanvas.hidden) return;
   flowCtx.clearRect(0, 0, flowCanvas.width, flowCanvas.height);
