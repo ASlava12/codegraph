@@ -10898,7 +10898,9 @@ fn increment_facet(facets: &mut BTreeMap<String, usize>, key: String) {
     *facets.entry(key).or_insert(0) += 1;
 }
 
-fn parse_node_id(value: &str) -> Result<NodeId, QueryError> {
+/// Parse a node id in either bare numeric (`42`) or n-prefixed (`n42`)
+/// form — the format printed by query results and web deep links.
+pub fn parse_node_id(value: &str) -> Result<NodeId, QueryError> {
     let value = value.trim().trim_start_matches('n');
     value
         .parse::<u64>()

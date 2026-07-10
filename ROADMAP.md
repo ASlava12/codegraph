@@ -607,7 +607,7 @@ Audit and completion:
 Usability polish:
 
 - [ ] Unify CLI ergonomics: consistent flag names, sensible defaults, `--help` examples per command, and actionable error messages.
-- [ ] Accept `n42`-style node ids everywhere node ids are accepted, including `node-card --node-id`, `/api/node-card`, and `/api/node-context` (audit F8).
+- [x] Accept `n42`-style node ids everywhere node ids are accepted, including `node-card --node-id`, `/api/node-card`, and `/api/node-context` (audit F8).
 - [ ] Unify API parameter naming for project root vs file path and return the structured JSON error contract for query-string deserialization failures (audit F9).
 - [ ] Add compact/summary output modes to `incremental-update` and `incremental-merge-preview` instead of printing the full graph JSON (audit F10).
 - [ ] Improve web discoverability: panel onboarding hints, empty states that explain the next action, and sane default filters for large graphs.

@@ -1386,8 +1386,8 @@ struct NodeCardArgs {
     #[command(flatten)]
     scan: ScanArgs,
 
-    /// Numeric graph node id to inspect.
-    #[arg(long)]
+    /// Graph node id to inspect, numeric or n-prefixed (42 or n42).
+    #[arg(long, value_parser = parse_cli_node_id)]
     node_id: u64,
 
     /// Maximum neighboring edges to include.
@@ -2956,6 +2956,14 @@ fn log_cli_query(
     if let Err(error) = query_log::log_query(root, &settings, event) {
         eprintln!("warning: failed to write query log: {error:#}");
     }
+}
+
+/// Node ids are printed as `n42` in query results and web deep links;
+/// accept both that form and the bare numeric id (audit F8).
+fn parse_cli_node_id(value: &str) -> Result<u64, String> {
+    codegraph_analysis::parse_node_id(value)
+        .map(|id| id.0)
+        .map_err(|error| error.to_string())
 }
 
 fn project_fingerprint_hash(

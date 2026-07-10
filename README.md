@@ -108,6 +108,7 @@ Implemented now:
 - Node cards include risk summaries by severity and insight kind alongside capped related risk lists.
 - Enriched selected-node cards with summary metadata, source snippets, neighboring dependencies, trace actions, and related risks.
 - Graph, query, focus, and node-card edges include stable `metadata.edge_index` values for exact dependency explanation and UI edge selection.
+- Node ids are accepted in both bare numeric (`42`) and n-prefixed (`n42`) form everywhere they appear as parameters — `node-card --node-id`, `/api/node-card`, `/api/node-context`, trace/workflow/dependents `node_id`, focus `node_ids` lists, and the MCP `get_node_card` tool — matching the format printed by query results and web deep links.
 - Web canvas edges can be selected directly to open dependency cards with source, target, confidence, metadata, and provenance explanation actions.
 - Web canvas edges highlight on hover so dependency paths are easier to inspect before opening a card.
 - Edge explanations include related risk summaries and capped edge-scoped findings for dependency-level triage.

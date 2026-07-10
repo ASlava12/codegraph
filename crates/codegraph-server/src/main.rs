@@ -375,7 +375,7 @@ struct SourceSearchQuery {
 struct TraceQuery {
     path: Option<PathBuf>,
     label: Option<String>,
-    node_id: Option<u64>,
+    node_id: Option<String>,
     depth: Option<usize>,
 }
 
@@ -383,7 +383,7 @@ struct TraceQuery {
 struct WorkflowQuery {
     path: Option<PathBuf>,
     label: Option<String>,
-    node_id: Option<u64>,
+    node_id: Option<String>,
     depth: Option<usize>,
     block_limit: Option<usize>,
     edge_kind: Option<String>,
@@ -600,14 +600,14 @@ struct GraphSliceQuery {
 #[derive(Debug, Deserialize)]
 struct NodeContextQuery {
     path: Option<PathBuf>,
-    node_id: u64,
+    node_id: String,
     edge_limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
 struct NodeCardQuery {
     path: Option<PathBuf>,
-    node_id: u64,
+    node_id: String,
     edge_limit: Option<usize>,
     source_context: Option<u32>,
     insight_limit: Option<usize>,
@@ -2626,7 +2626,7 @@ async fn node_context_api(
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let context = node_context(
         &graph,
-        codegraph_core::NodeId(query.node_id),
+        parse_node_id_param(&query.node_id)?,
         query.edge_limit.unwrap_or(DEFAULT_NODE_CONTEXT_EDGE_LIMIT),
     )
     .ok_or_else(|| ApiError::not_found("node not found"))?;
@@ -2648,7 +2648,7 @@ async fn node_card_api(
     let insight_limit = query
         .insight_limit
         .unwrap_or(DEFAULT_NODE_CARD_INSIGHT_LIMIT);
-    let node_id = codegraph_core::NodeId(query.node_id);
+    let node_id = parse_node_id_param(&query.node_id)?;
     let card = tokio::task::spawn_blocking(move || {
         let output = scan_project_cached(root.clone(), &options, cache.as_ref())
             .map_err(|error| error.to_string())?;
@@ -2961,7 +2961,7 @@ async fn trace_api(
 ) -> Result<Json<Option<codegraph_analysis::TraceResult>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let start = match (query.node_id, query.label) {
-        (Some(id), _) => TraceStart::NodeId(codegraph_core::NodeId(id)),
+        (Some(id), _) => TraceStart::NodeId(parse_node_id_param(&id)?),
         (None, Some(label)) => TraceStart::Label(label),
         (None, None) => {
             return Err(ApiError::bad_request(
@@ -2984,7 +2984,7 @@ async fn workflow_api(
 ) -> Result<Json<Option<WorkflowReport>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let start = match (query.node_id, query.label) {
-        (Some(id), _) => TraceStart::NodeId(codegraph_core::NodeId(id)),
+        (Some(id), _) => TraceStart::NodeId(parse_node_id_param(&id)?),
         (None, Some(label)) => TraceStart::Label(label),
         (None, None) => {
             return Err(ApiError::bad_request(
@@ -3262,7 +3262,7 @@ async fn dependents_api(
 ) -> Result<Json<Option<codegraph_analysis::TraceResult>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let start = match (query.node_id, query.label) {
-        (Some(id), _) => TraceStart::NodeId(codegraph_core::NodeId(id)),
+        (Some(id), _) => TraceStart::NodeId(parse_node_id_param(&id)?),
         (None, Some(label)) => TraceStart::Label(label),
         (None, None) => {
             return Err(ApiError::bad_request(
@@ -3611,9 +3611,26 @@ fn parse_insight_severity(value: &str) -> Result<InsightSeverity, ApiError> {
     }
 }
 
+/// Node ids arrive as bare numerics (`42`) or n-prefixed (`n42`) — the form
+/// printed by query results and web deep links (audit F8).
+fn parse_node_id_param(value: &str) -> Result<codegraph_core::NodeId, ApiError> {
+    codegraph_analysis::parse_node_id(value).map_err(|_| {
+        ApiError::bad_request(format!(
+            "invalid node_id `{value}`; use a numeric id or the n-prefixed form such as n42"
+        ))
+    })
+}
+
 fn parse_node_ids(value: Option<&str>) -> Result<Vec<codegraph_core::NodeId>, ApiError> {
-    parse_u64_list(value, "node_ids")
-        .map(|ids| ids.into_iter().map(codegraph_core::NodeId).collect())
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(parse_node_id_param)
+        .collect()
 }
 
 fn parse_edge_indexes(value: Option<&str>) -> Result<Vec<usize>, ApiError> {
@@ -5036,7 +5053,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Read selected node context with neighboring edges. Returned edges include metadata.edge_index for exact edge explanation and UI selection.",
                     vec![
                         path_param(),
-                        query_param("node_id", true, "u64", None, "Node numeric id."),
+                        query_param("node_id", true, "string", None, "Node id, numeric or n-prefixed (42 or n42)."),
                         query_param(
                             "edge_limit",
                             false,
@@ -5055,7 +5072,7 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Read selected node investigation card with neighboring edges, dependency summary facets, file-level summaries, source preview, related risks including file-scoped contained-node risks, risk summaries, exact edge indexes, and suggested focused graph query actions.",
                     vec![
                         path_param(),
-                        query_param("node_id", true, "u64", None, "Node numeric id."),
+                        query_param("node_id", true, "string", None, "Node id, numeric or n-prefixed (42 or n42)."),
                         query_param(
                             "edge_limit",
                             false,
@@ -8865,6 +8882,68 @@ fn ready() -> bool {
         .expect_err("unknown journey start should fail");
         assert_eq!(error.status, StatusCode::BAD_REQUEST);
         assert!(error.message.contains("journey start"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn node_card_api_accepts_n_prefixed_ids() {
+        let root = temp_server_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() {\n    helper();\n}\npub fn helper() {}\n",
+        )
+        .unwrap();
+        let state = test_state(root.clone(), vec![], true);
+
+        let graph = scan_graph(&state, Some(&root)).await.expect("graph");
+        let helper_id = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "helper")
+            .expect("helper node")
+            .id;
+
+        let card = node_card_api(
+            State(state.clone()),
+            Query(NodeCardQuery {
+                path: Some(root.clone()),
+                node_id: format!("n{}", helper_id.0),
+                edge_limit: None,
+                source_context: None,
+                insight_limit: None,
+            }),
+        )
+        .await
+        .expect("n-prefixed node id resolves");
+        assert_eq!(card.0.context.node.id, helper_id);
+
+        let context = node_context_api(
+            State(state.clone()),
+            Query(NodeContextQuery {
+                path: Some(root.clone()),
+                node_id: helper_id.0.to_string(),
+                edge_limit: None,
+            }),
+        )
+        .await
+        .expect("bare numeric id still resolves");
+        assert_eq!(context.0.node.id, helper_id);
+
+        let error = node_card_api(
+            State(state.clone()),
+            Query(NodeCardQuery {
+                path: Some(root.clone()),
+                node_id: "nope".to_string(),
+                edge_limit: None,
+                source_context: None,
+                insight_limit: None,
+            }),
+        )
+        .await
+        .expect_err("invalid id rejected");
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert!(error.message.contains("n42"));
         fs::remove_dir_all(root).unwrap();
     }
 

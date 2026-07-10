@@ -163,10 +163,15 @@ impl McpEngine<'_> {
     }
 
     fn tool_node_card(&self, args: &Value) -> Result<Value, String> {
-        let node_id = args
-            .get("node_id")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| "get_node_card requires a numeric `node_id`".to_string())?;
+        let node_id = match args.get("node_id") {
+            Some(Value::Number(number)) => number.as_u64(),
+            Some(Value::String(value)) => crate::parse_node_id(value).ok().map(|id| id.0),
+            _ => None,
+        }
+        .ok_or_else(|| {
+            "get_node_card requires a `node_id` (integer or n-prefixed string such as n42)"
+                .to_string()
+        })?;
         let card = node_card(
             self.graph,
             self.root,
@@ -478,7 +483,7 @@ pub fn mcp_tool_definitions() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "node_id": {"type": "integer", "description": "Graph node id."},
+                    "node_id": {"type": ["integer", "string"], "description": "Graph node id, numeric or n-prefixed (42 or n42)."},
                     "edge_limit": {"type": "integer", "description": "Maximum neighbor edges (default 80)."},
                     "source_context": {"type": "integer", "description": "Source preview context lines (default 5)."},
                     "insight_limit": {"type": "integer", "description": "Maximum related risks (default 8)."}
@@ -763,6 +768,20 @@ mod tests {
 
         let bundle = call(&engine, "refactor_context", json!({"target": "helper"}));
         assert!(bundle.get("impact").is_some());
+
+        // Node ids are accepted in both integer and n-prefixed string form.
+        let helper_id = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "helper")
+            .expect("helper node")
+            .id;
+        let by_string = call(
+            &engine,
+            "get_node_card",
+            json!({"node_id": format!("n{}", helper_id.0)}),
+        );
+        assert_eq!(by_string["context"]["node"]["id"], helper_id.0);
 
         let search = call(&engine, "source_search", json!({"query": "helper"}));
         assert_eq!(search["total_matches"], 1);
