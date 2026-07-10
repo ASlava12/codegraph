@@ -21,7 +21,7 @@ use codegraph_analysis::{
     KNOWN_INSIGHT_KINDS, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
     MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_FILE_SUMMARY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
     MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, MAX_REPORT_NODE_SUMMARY_LIMIT,
-    NaturalQueryReport, NaturalQueryRequest, NodeCard, NodeContext, ProjectReport,
+    McpEngine, NaturalQueryReport, NaturalQueryRequest, NodeCard, NodeContext, ProjectReport,
     ProjectReportLimits, ProjectReportMarkdownOptions, RefactorContextBundle,
     RefactorContextRequest, SeamReport, SeamRequest, SourcePreview, SourceSearchRequest,
     SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryReport,
@@ -504,6 +504,11 @@ struct JourneyQuery {
     to: String,
     depth: Option<usize>,
     paths: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct McpQuery {
+    path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1124,6 +1129,7 @@ async fn main() -> Result<()> {
         .route("/api/workflow", get(workflow_api))
         .route("/api/workflow-query", get(workflow_query_api))
         .route("/api/journey", get(journey_api))
+        .route("/api/mcp", post(mcp_api))
         .route(
             "/api/component-dependencies",
             get(component_dependencies_api),
@@ -3072,6 +3078,47 @@ async fn journey_api(
     )
     .map_err(|error| ApiError::bad_request(error.to_string()))?;
     Ok(Json(report))
+}
+
+/// HTTP MCP transport: one JSON-RPC 2.0 message per POST body, protected by
+/// the same optional bearer token as every other `/api/` route. Notifications
+/// return 202 with no body; batch arrays are rejected per request.
+async fn mcp_api(
+    State(state): State<AppState>,
+    Query(query): Query<McpQuery>,
+    body: String,
+) -> Result<Response, ApiError> {
+    let message: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(Json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": serde_json::Value::Null,
+                "error": {"code": -32700, "message": format!("parse error: {error}")},
+            }))
+            .into_response());
+        }
+    };
+    if message.is_array() {
+        return Ok(Json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": serde_json::Value::Null,
+            "error": {"code": -32600, "message": "batch requests are not supported; send one JSON-RPC message per request"},
+        }))
+        .into_response());
+    }
+
+    let root = resolve_scan_root(&state, query.path.as_deref())?;
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let engine = McpEngine {
+        graph: &graph,
+        root: Some(&root),
+    };
+    let (response, _audit) = engine.handle_message(&message);
+    Ok(match response {
+        Some(value) => Json(value).into_response(),
+        None => StatusCode::ACCEPTED.into_response(),
+    })
 }
 
 async fn workflow_query_api(
@@ -5482,6 +5529,65 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "JourneyReport",
                 )
                 .with_response_fields(journey_response_fields()),
+                api_post(
+                    "/api/mcp",
+                    "HTTP MCP transport: handle one MCP JSON-RPC 2.0 message (initialize, ping, tools/list, tools/call) against the scanned graph; protected by the same optional bearer token as every /api/ route. Notifications return 202 with no body.",
+                    vec![path_param()],
+                    Some("McpJsonRpcMessage"),
+                    "McpJsonRpcResponse",
+                    false,
+                )
+                .with_body_fields(vec![
+                    body_field(
+                        "jsonrpc",
+                        true,
+                        "string",
+                        Some("2.0"),
+                        "JSON-RPC protocol version; must be `2.0`.",
+                    ),
+                    body_field(
+                        "id",
+                        false,
+                        "number|string",
+                        None,
+                        "Request id. Messages without an id are notifications and receive 202 with no body.",
+                    ),
+                    body_field(
+                        "method",
+                        true,
+                        "string",
+                        None,
+                        "MCP method: initialize, ping, tools/list, or tools/call.",
+                    ),
+                    body_field(
+                        "params",
+                        false,
+                        "object",
+                        None,
+                        "Method parameters; for tools/call: `name` plus tool `arguments` matching the tools/list input schemas.",
+                    ),
+                ])
+                .with_response_fields(vec![
+                    response_field(
+                        "jsonrpc",
+                        true,
+                        "string",
+                        "JSON-RPC protocol version, always `2.0`.",
+                    ),
+                    response_field("id", true, "number|string|null", "Echoed request id."),
+                    response_field(
+                        "result",
+                        false,
+                        "object",
+                        "Successful method result; tool payloads arrive as MCP text content with `isError`.",
+                    ),
+                    response_field(
+                        "error",
+                        false,
+                        "object",
+                        "JSON-RPC error with `code` and `message` for parse errors, unsupported methods, and batch requests.",
+                    ),
+                ]),
                 api_get(
                     "/api/component-dependencies",
                     "Group a node's incoming/outgoing dependencies by architecture area, package, and language.",
@@ -8609,6 +8715,104 @@ fn ready() -> bool {
         fs::remove_dir_all(root).unwrap();
     }
 
+    async fn mcp_response_json(response: Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        serde_json::from_slice(&bytes).expect("json body")
+    }
+
+    #[tokio::test]
+    async fn mcp_api_serves_graph_tools_over_http() {
+        let root = temp_server_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            r#"fn main() {
+    helper();
+}
+
+fn helper() {}
+"#,
+        )
+        .unwrap();
+        let state = test_state(root.clone(), vec![], true);
+
+        let response = mcp_api(
+            State(state.clone()),
+            Query(McpQuery {
+                path: Some(root.clone()),
+            }),
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string(),
+        )
+        .await
+        .expect("tools/list response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let value = mcp_response_json(response).await;
+        assert_eq!(value["jsonrpc"], "2.0");
+        assert_eq!(value["result"]["tools"].as_array().expect("tools").len(), 8);
+
+        let response = mcp_api(
+            State(state.clone()),
+            Query(McpQuery {
+                path: Some(root.clone()),
+            }),
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"query_graph","arguments":{"query":"nodes kind:function label:main"}}}"#
+                .to_string(),
+        )
+        .await
+        .expect("tools/call response");
+        let value = mcp_response_json(response).await;
+        assert_eq!(value["result"]["isError"], false);
+        let payload: serde_json::Value = serde_json::from_str(
+            value["result"]["content"][0]["text"]
+                .as_str()
+                .expect("text payload"),
+        )
+        .expect("payload json");
+        assert_eq!(payload["total_nodes"], 1);
+
+        let response = mcp_api(
+            State(state.clone()),
+            Query(McpQuery {
+                path: Some(root.clone()),
+            }),
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_string(),
+        )
+        .await
+        .expect("notification response");
+        assert_eq!(
+            response.status(),
+            StatusCode::ACCEPTED,
+            "notifications return 202 with no body"
+        );
+
+        let response = mcp_api(
+            State(state.clone()),
+            Query(McpQuery {
+                path: Some(root.clone()),
+            }),
+            "[]".to_string(),
+        )
+        .await
+        .expect("batch response");
+        let value = mcp_response_json(response).await;
+        assert_eq!(value["error"]["code"], -32600);
+
+        let response = mcp_api(
+            State(state),
+            Query(McpQuery {
+                path: Some(root.clone()),
+            }),
+            "{not json".to_string(),
+        )
+        .await
+        .expect("parse error response");
+        let value = mcp_response_json(response).await;
+        assert_eq!(value["error"]["code"], -32700);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[tokio::test]
     async fn entrypoint_workflows_api_returns_filtered_reports() {
         let root = temp_server_root();
@@ -10266,6 +10470,26 @@ fn helper() {}
                 .response_fields
                 .iter()
                 .any(|field| field.name == "paths" && field.value_type == "JourneyPath[]")
+        );
+        let mcp_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/mcp")
+            .expect("schema should list HTTP MCP endpoint");
+        assert_eq!(mcp_endpoint.method, "POST");
+        assert_eq!(mcp_endpoint.body, Some("McpJsonRpcMessage"));
+        assert!(
+            mcp_endpoint
+                .body_fields
+                .iter()
+                .any(|field| field.name == "method" && field.required)
+        );
+        assert!(
+            mcp_endpoint
+                .response_fields
+                .iter()
+                .any(|field| field.name == "result" && !field.required)
         );
         let component_endpoint = schema
             .groups

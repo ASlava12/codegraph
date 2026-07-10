@@ -63,7 +63,7 @@ repository memory rather than a fresh index.
 - [x] Add saved query/result memory with outcomes (`useful`, `dead_end`, `corrected`) linked to graph node ids and invalidated by cache fingerprints.
 - [x] Add reflection reports that aggregate saved investigation outcomes into repository lessons with provenance and stale-source warnings.
 - [x] Add query logging with privacy controls and local JSONL audit output.
-- [ ] Add optional authenticated HTTP MCP transport reusing the existing bearer-token protection.
+- [x] Add optional authenticated HTTP MCP transport reusing the existing bearer-token protection.
 
 Exit criteria:
 

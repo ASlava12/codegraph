@@ -156,6 +156,7 @@ Implemented now:
 - Saved investigation memory (`codegraph memory-save` / `memory-list`) records query outcomes with lessons and linked node ids in `.codegraph/memory.jsonl`, and flags records as stale when the project fingerprint changes.
 - Agent installation (`codegraph install-agent`) writes idempotent `.mcp.json` server entries and marker-delimited CLAUDE.md/AGENTS.md guidance blocks so assistants query the graph before raw file reads.
 - MCP stdio server (`codegraph mcp`) exposes query_graph, get_node_card, get_neighbors, shortest_path, workflow, insights, impact, and report tools over newline-delimited JSON-RPC so external assistants use the graph as persistent repository memory.
+- HTTP MCP transport (`POST /api/mcp`) serves the same MCP tools from `codegraph-server` through the shared engine, authenticated by the existing optional API bearer token for shared team graph access.
 - Opt-in query audit logging (`[query_log]` in `.codegraph/config.toml`, `codegraph query-log`) appends CLI query/ask/journey and MCP tool calls to local `.codegraph/query-log.jsonl` with sensitive-value redaction and response previews only behind a second opt-in.
 - Refactor context bundles (CLI `refactor-context`, API `/api/refactor-context`) combine impact, component dependencies, optional ranked journey, related risks, and a target source preview into one `codegraph.refactor_context.v1` JSON for one-shot agent handoff.
 - Coupling/seam reports (CLI `seams`, API `/api/seams`) rank cross-area boundaries by deterministic friction score both ways: safest thin seams for extraction and most tangled boundaries needing work, with edge-kind/confidence breakdowns and sample edge evidence.
@@ -702,6 +703,17 @@ Register it in an assistant's `.mcp.json`:
 ```
 
 The MCP server speaks newline-delimited JSON-RPC on stdin/stdout, scans the project once at startup (using the shared persistent cache), and exposes `query_graph`, `get_node_card`, `get_neighbors`, `shortest_path` (ranked journeys with fragile hops), `workflow`, `insights`, `impact`, and `report` tools with JSON Schema input contracts — so assistants can query the repository graph instead of reading raw files.
+
+Serve the same MCP tools over HTTP for shared team graph access:
+
+```bash
+cargo run -p codegraph-server -- --root . --api-token team-secret
+curl -s -X POST http://127.0.0.1:3765/api/mcp \
+  -H 'authorization: Bearer team-secret' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"impact","arguments":{"target":"main"}}}'
+```
+
+`POST /api/mcp` handles one MCP JSON-RPC message per request (`initialize`, `ping`, `tools/list`, `tools/call`) through the same engine as the stdio transport, so both surfaces answer identically. It sits under the server's existing optional bearer-token protection — configure the token once and every MCP call is authenticated like the rest of the API. Notifications return `202` with no body; batch arrays are rejected with a JSON-RPC error. Register it in assistants that support HTTP MCP servers with the URL plus an `Authorization: Bearer <token>` header; HTTP calls are covered by the server's access logs.
 
 Keep a local audit trail of how the graph is interrogated:
 

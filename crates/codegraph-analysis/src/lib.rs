@@ -1,3 +1,7 @@
+pub mod mcp;
+
+pub use mcp::{MCP_PROTOCOL_VERSION, McpEngine, McpToolAudit, mcp_tool_definitions};
+
 use codegraph_core::{CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
