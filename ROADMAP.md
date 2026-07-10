@@ -156,7 +156,7 @@ Goal: answer practical code investigation questions.
 - [x] Recognize common JS/TS, Go, Python, PHP, C/C++, Bash, Dart, and Flutter test/generated file conventions in dependency-scope insights.
 - [x] Recognize Dart and Flutter package scopes, dev dependencies, generated files, test conventions, and package import consistency issues.
 - [x] Recognize Flutter asset metadata and missing asset declaration consistency issues.
-- [ ] Match Dart/Flutter platform-channel declarations to native Android/iOS handler implementations.
+- [x] Match Dart/Flutter platform-channel declarations to native Android/iOS handler implementations.
 - [x] Detect duplicate framework route method/path declarations.
 - [x] Detect framework routes whose named handler cannot be resolved.
 - [x] Improve Rust/Axum route entrypoint labels for multiline routes and string literal false positives.

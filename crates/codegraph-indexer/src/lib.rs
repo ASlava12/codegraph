@@ -116,6 +116,18 @@ struct IndexContext {
     sql_columns: BTreeMap<String, NodeId>,
     pending_sql_foreign_keys: Vec<PendingSqlForeignKey>,
     pending_sql_query_table_refs: Vec<PendingSqlQueryTableRef>,
+    pending_native_channel_handlers: Vec<PendingNativeChannelHandler>,
+}
+
+/// A Flutter platform-channel registration found in native Android/iOS
+/// source, waiting to be matched against Dart channel declarations.
+struct PendingNativeChannelHandler {
+    file: NodeId,
+    label: String,
+    name: String,
+    channel_kind: String,
+    platform: &'static str,
+    line: u32,
 }
 
 struct PendingCall {
@@ -829,6 +841,7 @@ fn scan_project_with_scope(
         sql_columns: BTreeMap::new(),
         pending_sql_foreign_keys: Vec::new(),
         pending_sql_query_table_refs: Vec::new(),
+        pending_native_channel_handlers: Vec::new(),
     };
 
     for entry in WalkDir::new(root)
@@ -892,6 +905,7 @@ fn scan_project_with_scope(
     resolve_pending_document_symbol_refs(&mut context);
     resolve_pending_sql_foreign_keys(&mut context);
     resolve_pending_sql_query_table_refs(&mut context);
+    resolve_pending_native_channel_handlers(&mut context);
     apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
 
@@ -1146,6 +1160,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
         if language == Some(Language::Dart) {
             index_dart_platform_channels(context, file_id, label, source);
         }
+        index_native_platform_channels(context, file_id, label, source);
         if let Some(language) = language {
             index_commonjs_require_imports(context, file_id, label, language, source);
         }
@@ -3256,6 +3271,116 @@ fn index_dart_platform_channels(
             Confidence::Syntactic,
             edge_metadata,
         );
+    }
+}
+
+/// Platform for a native Flutter host source file, by extension.
+fn native_platform_for_path(label: &str) -> Option<&'static str> {
+    let extension = label.rsplit('.').next()?;
+    match extension {
+        "kt" | "kts" | "java" => Some("android"),
+        "swift" | "m" | "mm" => Some("ios"),
+        _ => None,
+    }
+}
+
+/// Collect Flutter channel registrations from native Android/iOS sources
+/// (Kotlin/Java/Swift/Objective-C are not parsed languages, so this is a
+/// deterministic line scan for the channel constructors).
+fn index_native_platform_channels(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+) {
+    let Some(platform) = native_platform_for_path(label) else {
+        return;
+    };
+    for (index, line) in source.lines().enumerate() {
+        // Flutter-prefixed constructors first: `MethodChannel(` is a
+        // substring of `FlutterMethodChannel(`, and one line registers at
+        // most one channel.
+        for (constructor, channel_kind) in [
+            ("FlutterMethodChannel(", "method"),
+            ("FlutterEventChannel(", "event"),
+            ("FlutterBasicMessageChannel(", "basic_message"),
+            ("MethodChannel(", "method"),
+            ("EventChannel(", "event"),
+            ("BasicMessageChannel(", "basic_message"),
+        ] {
+            if let Some(name) = first_quoted_value_after(line, constructor) {
+                context
+                    .pending_native_channel_handlers
+                    .push(PendingNativeChannelHandler {
+                        file: file_id,
+                        label: label.to_string(),
+                        name,
+                        channel_kind: channel_kind.to_string(),
+                        platform,
+                        line: index as u32 + 1,
+                    });
+                break;
+            }
+        }
+    }
+}
+
+/// Match native channel registrations to Dart channel declarations by
+/// channel name and kind: link the native handler file to the channel node
+/// and record the handler path on the channel for insight checks.
+fn resolve_pending_native_channel_handlers(context: &mut IndexContext) {
+    if context.pending_native_channel_handlers.is_empty() {
+        return;
+    }
+    let mut channels: BTreeMap<(String, String), Vec<NodeId>> = BTreeMap::new();
+    for node in &context.graph.nodes {
+        if node.metadata.get("item_kind").map(String::as_str) == Some("platform_channel")
+            && node.metadata.get("source").map(String::as_str) == Some("dart")
+            && let (Some(name), Some(kind)) = (
+                node.metadata.get("channel_name"),
+                node.metadata.get("channel_kind"),
+            )
+        {
+            channels
+                .entry((name.clone(), kind.clone()))
+                .or_default()
+                .push(node.id);
+        }
+    }
+    let pending = std::mem::take(&mut context.pending_native_channel_handlers);
+    for handler in pending {
+        let Some(channel_ids) = channels.get(&(handler.name.clone(), handler.channel_kind.clone()))
+        else {
+            continue;
+        };
+        for channel_id in channel_ids {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("source".to_string(), "native".to_string());
+            metadata.insert(
+                "relation".to_string(),
+                "platform_channel_handler".to_string(),
+            );
+            metadata.insert("platform".to_string(), handler.platform.to_string());
+            metadata.insert("line".to_string(), handler.line.to_string());
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                handler.file,
+                *channel_id,
+                EdgeKind::References,
+                Confidence::Heuristic,
+                metadata,
+            );
+            let key = format!("native_handler_{}", handler.platform);
+            if let Some(node) = context
+                .graph
+                .nodes
+                .iter_mut()
+                .find(|node| node.id == *channel_id)
+                && !node.metadata.contains_key(&key)
+            {
+                node.metadata.insert(key, handler.label.clone());
+            }
+        }
     }
 }
 
@@ -13121,6 +13246,91 @@ CREATE TABLE users (
         );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_matches_platform_channels_to_native_handlers() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("lib")).unwrap();
+        fs::create_dir_all(root.join("android/app/src/main/kotlin/com/example")).unwrap();
+        fs::create_dir_all(root.join("ios/Runner")).unwrap();
+        fs::write(root.join("pubspec.yaml"), "name: demo\n").unwrap();
+        fs::write(
+            root.join("lib").join("main.dart"),
+            "const channel = MethodChannel('com.example/native');\nconst events = EventChannel('com.example/events');\nconst lonely = MethodChannel('com.example/unhandled');\nvoid main() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("android/app/src/main/kotlin/com/example/MainActivity.kt"),
+            "class MainActivity : FlutterActivity() {\n  override fun configureFlutterEngine(engine: FlutterEngine) {\n    MethodChannel(engine.dartExecutor.binaryMessenger, \"com.example/native\").setMethodCallHandler { call, result -> }\n    EventChannel(engine.dartExecutor.binaryMessenger, \"com.example/events\").setStreamHandler(null)\n  }\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("ios/Runner").join("AppDelegate.swift"),
+            "let channel = FlutterMethodChannel(name: \"com.example/native\", binaryMessenger: controller.binaryMessenger)\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+
+        let method_channel = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "flutter method channel:com.example/native")
+            .expect("method channel node");
+        assert_eq!(
+            method_channel
+                .metadata
+                .get("native_handler_android")
+                .map(String::as_str),
+            Some("android/app/src/main/kotlin/com/example/MainActivity.kt")
+        );
+        assert_eq!(
+            method_channel
+                .metadata
+                .get("native_handler_ios")
+                .map(String::as_str),
+            Some("ios/Runner/AppDelegate.swift")
+        );
+
+        let event_channel = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "flutter event channel:com.example/events")
+            .expect("event channel node");
+        assert!(
+            event_channel
+                .metadata
+                .contains_key("native_handler_android")
+        );
+        assert!(!event_channel.metadata.contains_key("native_handler_ios"));
+
+        let kotlin_file = node_id(
+            &graph,
+            NodeKind::File,
+            "android/app/src/main/kotlin/com/example/MainActivity.kt",
+        );
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == kotlin_file
+                && edge.target == method_channel.id
+                && edge.kind == EdgeKind::References
+                && edge.metadata.get("relation").map(String::as_str)
+                    == Some("platform_channel_handler")
+                && edge.metadata.get("platform").map(String::as_str) == Some("android")
+        }));
+
+        let lonely = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "flutter method channel:com.example/unhandled")
+            .expect("unhandled channel node");
+        assert!(
+            !lonely
+                .metadata
+                .keys()
+                .any(|key| key.starts_with("native_handler_")),
+            "unmatched channel must stay unmarked"
+        );
     }
 
     #[test]

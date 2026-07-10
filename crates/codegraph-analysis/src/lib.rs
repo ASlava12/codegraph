@@ -1238,6 +1238,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "skipped_large_file",
     "syntax_error",
     "test_only_runtime_dependency",
+    "unmatched_platform_channel",
     "undeclared_flutter_asset",
     "undeclared_external_import",
     "unreachable_config_read",
@@ -2633,6 +2634,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_conflicting_config_default_insights(graph, &mut insights);
     add_mixed_config_requirement_insights(graph, &mut insights);
     add_undeclared_flutter_asset_insights(graph, &mut insights);
+    add_unmatched_platform_channel_insights(graph, &mut insights);
     add_rationale_risk_comment_insights(graph, &mut insights);
     add_sensitive_ci_environment_literal_insights(graph, &mut insights);
     add_sensitive_config_default_insights(graph, &mut insights);
@@ -12668,6 +12670,56 @@ fn add_sensitive_config_default_insights(graph: &CodeGraph, insights: &mut Vec<I
     }
 }
 
+/// Warn about Dart platform channels with no matching native handler — but
+/// only when the repository actually contains native host sources, so pure
+/// Dart packages and plugin consumers stay quiet.
+fn add_unmatched_platform_channel_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let has_native_sources = graph.nodes.iter().any(|node| {
+        node.kind == NodeKind::File
+            && node.label.rsplit('.').next().is_some_and(|extension| {
+                matches!(extension, "kt" | "kts" | "java" | "swift" | "m" | "mm")
+            })
+    });
+    if !has_native_sources {
+        return;
+    }
+    let mut reported = BTreeSet::new();
+    for node in &graph.nodes {
+        if node.metadata.get("item_kind").map(String::as_str) != Some("platform_channel")
+            || node.metadata.get("source").map(String::as_str) != Some("dart")
+        {
+            continue;
+        }
+        if node
+            .metadata
+            .keys()
+            .any(|key| key.starts_with("native_handler_"))
+        {
+            continue;
+        }
+        let Some(name) = node.metadata.get("channel_name") else {
+            continue;
+        };
+        let kind = node
+            .metadata
+            .get("channel_kind")
+            .map(String::as_str)
+            .unwrap_or("method");
+        if !reported.insert((name.clone(), kind.to_string())) {
+            continue;
+        }
+        insights.push(Insight {
+            kind: "unmatched_platform_channel".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!(
+                "Flutter {kind} channel `{name}` has no matching native Android/iOS handler registration"
+            ),
+            nodes: vec![node.id],
+            edges: Vec::new(),
+        });
+    }
+}
+
 fn add_undeclared_flutter_asset_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let declared_assets = flutter_declared_assets(graph);
     if declared_assets.is_empty() {
@@ -16063,6 +16115,58 @@ mod tests {
             "every node exported once"
         );
         assert_eq!(graphml.matches("<edge source=").count(), graph.edges.len());
+    }
+
+    #[test]
+    fn unmatched_platform_channels_warn_only_with_native_sources() {
+        let mut graph = CodeGraph::new("repo");
+        let channel = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "flutter method channel:com.example/native",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "platform_channel".to_string()),
+                ("source".to_string(), "dart".to_string()),
+                ("channel_kind".to_string(), "method".to_string()),
+                ("channel_name".to_string(), "com.example/native".to_string()),
+            ]),
+        );
+        graph.add_edge(graph.root, channel, EdgeKind::Contains, Confidence::Exact);
+
+        // Pure Dart package: no native sources, no warning.
+        let quiet = insights(&graph);
+        assert!(
+            !quiet
+                .insights
+                .iter()
+                .any(|insight| insight.kind == "unmatched_platform_channel")
+        );
+
+        // A native host file exists but registers nothing: warn.
+        graph.add_node(NodeKind::File, "android/app/MainActivity.kt");
+        let report = insights(&graph);
+        let warning = report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unmatched_platform_channel")
+            .expect("unmatched channel warning");
+        assert_eq!(warning.severity, InsightSeverity::Warning);
+        assert!(warning.message.contains("com.example/native"));
+
+        // A matched channel stays quiet.
+        if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == channel) {
+            node.metadata.insert(
+                "native_handler_android".to_string(),
+                "android/app/MainActivity.kt".to_string(),
+            );
+        }
+        let matched = insights(&graph);
+        assert!(
+            !matched
+                .insights
+                .iter()
+                .any(|insight| insight.kind == "unmatched_platform_channel")
+        );
     }
 
     #[test]
