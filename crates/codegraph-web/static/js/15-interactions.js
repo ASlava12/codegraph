@@ -440,19 +440,35 @@ function setStageView(view) {
 // back to the first project entrypoint. If neither exists, keep the hint.
 async function ensureFlowReportForStage() {
   if (state.flow.report) return;
+
+  state.flowAutoRequest = (state.flowAutoRequest || 0) + 1;
+  const requestId = state.flowAutoRequest;
+  if (flowHud) flowHud.textContent = t("flow.building");
+
   let node = null;
   if (state.selectedId != null) {
     node = state.graph.nodes.find((candidate) => candidate.id === state.selectedId) || null;
   }
   if (!node) node = (state.entrypoints || [])[0] || null;
+  // state.entrypoints comes from the overview report, which can still be
+  // loading (several seconds on large repositories). Fall back to the already
+  // loaded graph page so opening Flow right after a scan does not race it and
+  // land on a blank canvas: prefer an entrypoint, then a function/type, then
+  // any node — /api/workflow accepts any node id.
   if (!node) {
-    renderFlowHud();
+    const nodes = (state.graph && state.graph.nodes) || [];
+    node =
+      nodes.find((candidate) => candidate.kind === "entrypoint") ||
+      nodes.find((candidate) => candidate.kind === "function") ||
+      nodes.find((candidate) => candidate.kind === "type") ||
+      nodes[0] ||
+      null;
+  }
+  if (!node) {
+    if (flowHud) flowHud.textContent = t("flow.noWorkflow");
     return;
   }
 
-  state.flowAutoRequest = (state.flowAutoRequest || 0) + 1;
-  const requestId = state.flowAutoRequest;
-  if (flowHud) flowHud.textContent = t("flow.building");
   const depthInput = document.querySelector("#traceDepthInput");
   const depth = clampNumber(Number(depthInput?.value || 4), 1, 8);
   const params = new URLSearchParams({
