@@ -5057,6 +5057,90 @@ fn scan_project_adds_shebang_script_entrypoints() {
 }
 
 #[test]
+fn plain_text_documents_join_the_graph_with_provenance() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("docs")).unwrap();
+    fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    fs::write(
+        root.join("NOTES.txt"),
+        "Operational notes.\nThe entrypoint lives in src/main.rs and the design in docs/design.md.\n",
+    )
+    .unwrap();
+    fs::write(root.join("docs").join("design.md"), "# Design\n").unwrap();
+    fs::write(
+        root.join("docs").join("report.pdf.md"),
+        "# Generated transcript\nSee src/main.rs.\n",
+    )
+    .unwrap();
+    // Manifest-convention txt files must stay manifests, not documents.
+    fs::write(root.join("requirements.txt"), "fastapi==0.100\n").unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+
+    let notes = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "NOTES.txt")
+        .expect("NOTES.txt file node");
+    assert_eq!(
+        notes.metadata.get("item_kind").map(String::as_str),
+        Some("document")
+    );
+    assert_eq!(
+        notes.metadata.get("document_kind").map(String::as_str),
+        Some("plain_text")
+    );
+    assert_eq!(
+        notes.metadata.get("line_count").map(String::as_str),
+        Some("2")
+    );
+
+    let main_file = node_id(&graph, NodeKind::File, "src/main.rs");
+    let design = node_id(&graph, NodeKind::File, "docs/design.md");
+    for target in [main_file, design] {
+        assert!(
+            graph.edges.iter().any(|edge| {
+                edge.source == notes.id
+                    && edge.target == target
+                    && edge.metadata.get("relation").map(String::as_str) == Some("document_path")
+            }),
+            "NOTES.txt should reference scanned file {target}"
+        );
+    }
+
+    let sidecar = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "docs/report.pdf.md")
+        .expect("sidecar file node");
+    assert_eq!(
+        sidecar.metadata.get("generated").map(String::as_str),
+        Some("true")
+    );
+    assert_eq!(
+        sidecar.metadata.get("sidecar_of").map(String::as_str),
+        Some("docs/report.pdf")
+    );
+
+    let requirements = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "requirements.txt")
+        .expect("requirements file node");
+    assert_ne!(
+        requirements
+            .metadata
+            .get("document_kind")
+            .map(String::as_str),
+        Some("plain_text"),
+        "manifest txt files must not become documents"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn source_imports_link_to_manifest_package_hubs() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();

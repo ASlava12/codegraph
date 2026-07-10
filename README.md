@@ -40,6 +40,7 @@ Implemented now:
 - Source rationale comments such as `WHY`, `NOTE`, `TODO`, `FIXME`, `HACK`, `BUG`, `XXX`, and `SECURITY` are indexed as linked graph facts with source spans for human and agent review.
 - Common branch, loop, async/concurrency, and return/exit constructs are indexed as source-spanned graph facts for workflow diagrams and node-card investigation, and workflow blocks classify them as branch, loop, async, and return steps. These facts carry the dedicated `control_flow` node kind, so kind facets, summaries, and web filters show them by name instead of `unknown`.
 - Markdown, ADR, and RFC documents are indexed as repository knowledge facts with section nodes plus local file/directory and symbol references from Markdown links and inline code.
+- Plain-text knowledge files (`.txt`, `.text`) join the graph as `plain_text` documents with line-count provenance and path-shaped mentions resolved to scanned files (capped at 100 references per file; the scan file-size budget bounds how much text is read); manifest-convention files such as `requirements.txt` stay manifests. Generated Markdown sidecars like `report.pdf.md` carry `generated` and `sidecar_of` metadata pointing back to the binary document they transcribe.
 - Rich Markdown citations: YAML front matter (`title`, `owner`, `status`, `tags`, `date`) becomes document metadata queryable via `docs owner:… status:… tag:…`, `[[wikilinks]]` resolve to sibling and root documents, `#L42`/`#L42-L50` link anchors are kept as `line_ref` citation metadata on reference edges, and every cited node gets a `doc_backlinks` count; the web query panel ships a `Docs → code` preset for the docs-to-code overlay.
 - SQL schema files are indexed as repository knowledge facts for tables, views, columns, indexes, and foreign-key references with exact source spans.
 - SQL query strings in application code are indexed as query cards and linked back to schema table nodes for common `SELECT`, `JOIN`, `INSERT`, `UPDATE`, and `DELETE` references. Only statement-shaped literals count (first token is an SQL keyword; `UPDATE` needs a `SET`, `WITH` needs a `SELECT`), so UI prose such as "Build a workflow from a selected node" no longer produces phantom table references, and queries extracted from inline `#[cfg(test)]` modules or test-convention files carry `test_context` metadata and read as `info` findings, mirroring the benchmark-oracle test exclusions.
@@ -1103,6 +1104,7 @@ At the current stage, supported source languages are detected by extension:
 - PHP: `php`, `phtml`
 - Bash/shell: `sh`, `bash`, `zsh`, `ksh`, `Makefile`
 - Markdown/ADR/RFC repository docs: `md`, `markdown`, `mdown`, `mkdn`
+- Plain-text knowledge files: `txt`, `text` (excluding manifest conventions)
 - SQL schema/migration files: `sql`
 
 Planned repository-knowledge features inspired by Graphify-style workflows:

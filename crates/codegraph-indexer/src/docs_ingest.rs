@@ -29,6 +29,12 @@ pub(crate) fn index_markdown_document(
         "document_kind",
         doc_kind.clone(),
     );
+    // Generated Markdown sidecars (`report.pdf.md`, `slides.pptx.md`) carry
+    // provenance back to the binary document they were generated from.
+    if let Some(sidecar_source) = markdown_sidecar_source(label) {
+        add_file_metadata(&mut context.graph, file_id, "generated", "true");
+        add_file_metadata(&mut context.graph, file_id, "sidecar_of", &sidecar_source);
+    }
 
     // YAML front matter: title, ownership, status, tags become document
     // metadata so cards and queries can filter docs by owner.
@@ -439,6 +445,107 @@ pub(crate) fn is_document_symbol_reference(value: &str) -> bool {
         })
 }
 
+/// Maximum path references extracted from one plain-text document, so a
+/// large notes file cannot flood the graph with reference facts.
+pub(crate) const PLAIN_TEXT_REFERENCE_LIMIT: usize = 100;
+
+pub(crate) fn is_plain_text_document(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    if !(lower.ends_with(".txt") || lower.ends_with(".text")) {
+        return false;
+    }
+    // Manifest-convention .txt files are package manifests, not documents.
+    !matches!(
+        lower.as_str(),
+        "requirements.txt" | "conanfile.txt" | "cmakelists.txt"
+    )
+}
+
+/// `report.pdf.md` -> `report.pdf`: a generated Markdown sidecar for a
+/// binary document.
+pub(crate) fn markdown_sidecar_source(label: &str) -> Option<String> {
+    let stem = label
+        .strip_suffix(".md")
+        .or_else(|| label.strip_suffix(".markdown"))?;
+    let inner_extension = stem.rsplit('.').next()?.to_ascii_lowercase();
+    matches!(
+        inner_extension.as_str(),
+        "pdf" | "doc" | "docx" | "ppt" | "pptx" | "xls" | "xlsx" | "odt" | "odp" | "rtf"
+    )
+    .then(|| stem.to_string())
+}
+
+/// Index a plain-text knowledge file as a document node with provenance:
+/// the file becomes a `document` fact and local path mentions become
+/// pending document references resolved against scanned files, capped at
+/// [`PLAIN_TEXT_REFERENCE_LIMIT`] per file (the scan file-size budget
+/// already bounds how much text is read).
+pub(crate) fn index_plain_text_document(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if !is_plain_text_document(path) {
+        return;
+    }
+
+    add_file_metadata(&mut context.graph, file_id, "item_kind", "document");
+    add_file_metadata(&mut context.graph, file_id, "source", "plain_text");
+    add_file_metadata(
+        &mut context.graph,
+        file_id,
+        "document_kind",
+        document_kind(path, label),
+    );
+    add_file_metadata(
+        &mut context.graph,
+        file_id,
+        "line_count",
+        source.lines().count().to_string(),
+    );
+
+    let mut references = 0usize;
+    for (index, line) in source.lines().enumerate() {
+        if references >= PLAIN_TEXT_REFERENCE_LIMIT {
+            break;
+        }
+        let line_number = index as u32 + 1;
+        for token in line.split([' ', '\t', '(', ')', '<', '>', ',', ';']) {
+            let token = token.trim_matches(|c: char| {
+                matches!(c, '"' | '\'' | '`' | ':' | '.' | '!' | '?' | '[' | ']')
+            });
+            // Only path-shaped tokens: a separator plus a known source
+            // extension, checked by the shared document-reference rules.
+            if !token.contains('/') {
+                continue;
+            }
+            let Some(candidates) = markdown_path_candidates(label, token) else {
+                continue;
+            };
+            context
+                .pending_document_path_refs
+                .push(PendingDocumentPathRef {
+                    source: file_id,
+                    target: token.to_string(),
+                    candidates,
+                    relation: "document_path",
+                    line: line_number,
+                    text: Some(line.trim().chars().take(160).collect()),
+                    line_ref: None,
+                });
+            references += 1;
+            if references >= PLAIN_TEXT_REFERENCE_LIMIT {
+                break;
+            }
+        }
+    }
+}
+
 pub(crate) fn is_markdown_document(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
@@ -469,6 +576,8 @@ pub(crate) fn document_kind(path: &Path, label: &str) -> String {
         || file_name.starts_with("rfc_")
     {
         "rfc".to_string()
+    } else if file_name.ends_with(".txt") || file_name.ends_with(".text") {
+        "plain_text".to_string()
     } else {
         "markdown".to_string()
     }

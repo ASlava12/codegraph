@@ -502,7 +502,7 @@ Repository knowledge ingestion:
 - [x] Add deeper SQL query extraction, JOIN relationship semantics, migration ordering, and broader schema consistency insights.
 - [x] Link application code to SQL/schema nodes through common SQL query strings.
 - [x] Link application code to SQL/schema nodes through migrations, ORM metadata, database config, and deeper query semantics.
-- [ ] Add document ingestion for plain-text files and generated Markdown sidecars, with size limits and provenance (re-scoped 2026-07-10: PDF/Office binary parsing dropped, see `docs/ROADMAP_TRIAGE.md`).
+- [x] Add document ingestion for plain-text files and generated Markdown sidecars, with size limits and provenance (re-scoped 2026-07-10: PDF/Office binary parsing dropped, see `docs/ROADMAP_TRIAGE.md`; landed as `plain_text` document facts with line-count provenance, capped path-reference resolution against scanned files, and `generated`/`sidecar_of` metadata on Markdown sidecars of binary documents).
 - [x] Index MCP configuration files such as `.mcp.json`, `mcp.json`, `mcp_servers.json`, and assistant desktop configs as tool/server dependency facts.
 - [x] Canonicalize broader package manifests into shared package hub nodes across ecosystems where package identity is stable (manifests and lockfiles already shared per-ecosystem hubs; source imports now join them via heuristic `package_import` edges for Rust, npm, Python, PHP, Dart, and Go module prefixes, with hub `package_id` metadata on matched import facts).
 

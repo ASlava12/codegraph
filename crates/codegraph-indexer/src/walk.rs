@@ -182,6 +182,9 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
     if is_markdown_document(path) {
         return true;
     }
+    if is_plain_text_document(path) {
+        return true;
+    }
     if is_sql_file(path) {
         return true;
     }
