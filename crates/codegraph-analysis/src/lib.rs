@@ -1576,6 +1576,102 @@ fn xml_escape(text: &str) -> String {
     escaped
 }
 
+/// Escape a string for a single-quoted Cypher literal.
+fn cypher_escape(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
+/// PascalCase node label from snake_case kind names.
+fn cypher_label(kind_name: &str) -> String {
+    kind_name
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
+fn cypher_statements(graph: &CodeGraph, if_not_exists: bool) -> Vec<String> {
+    let mut statements = Vec::with_capacity(graph.nodes.len() + graph.edges.len() + 1);
+    statements.push(if if_not_exists {
+        "CREATE INDEX codegraph_node_id IF NOT EXISTS FOR (n:CodeNode) ON (n.id)".to_string()
+    } else {
+        "CREATE INDEX FOR (n:CodeNode) ON (n.id)".to_string()
+    });
+
+    for node in &graph.nodes {
+        let mut properties = vec![
+            format!("id: {}", node.id.0),
+            format!("kind: '{}'", cypher_escape(&kind_name(&node.kind))),
+            format!("label: '{}'", cypher_escape(&node.label)),
+        ];
+        if let Some(span) = &node.span {
+            properties.push(format!("path: '{}'", cypher_escape(&span.path)));
+            properties.push(format!("line: {}", span.start_line));
+        } else if let Some(path) = node.metadata.get("path") {
+            properties.push(format!("path: '{}'", cypher_escape(path)));
+        }
+        if let Some(language) = node.metadata.get("language") {
+            properties.push(format!("language: '{}'", cypher_escape(language)));
+        }
+        statements.push(format!(
+            "CREATE (:CodeNode:{} {{{}}})",
+            cypher_label(&kind_name(&node.kind)),
+            properties.join(", ")
+        ));
+    }
+
+    for edge in &graph.edges {
+        let mut properties = vec![format!(
+            "confidence: '{}'",
+            cypher_escape(&confidence_name(edge.confidence))
+        )];
+        if let Some(relation) = edge.metadata.get("relation") {
+            properties.push(format!("relation: '{}'", cypher_escape(relation)));
+        }
+        if let Some(source) = edge.metadata.get("source") {
+            properties.push(format!("source: '{}'", cypher_escape(source)));
+        }
+        statements.push(format!(
+            "MATCH (a:CodeNode {{id: {}}}), (b:CodeNode {{id: {}}}) CREATE (a)-[:{} {{{}}}]->(b)",
+            edge.source.0,
+            edge.target.0,
+            edge_kind_name(&edge.kind).to_uppercase(),
+            properties.join(", ")
+        ));
+    }
+    statements
+}
+
+/// Export the graph as a Neo4j Cypher script: pipe into `cypher-shell` to
+/// load nodes (labelled `CodeNode` plus their kind) and typed relationships
+/// with confidence/provenance properties.
+pub fn export_cypher(graph: &CodeGraph) -> String {
+    let mut output = String::from("// CodeGraph export for Neo4j: cypher-shell -f graph.cypher\n");
+    for statement in cypher_statements(graph, true) {
+        output.push_str(&statement);
+        output.push_str(";\n");
+    }
+    output
+}
+
+/// Export the graph as a FalkorDB load script: each Cypher statement wrapped
+/// in `GRAPH.QUERY` so the file pipes straight into `redis-cli`.
+pub fn export_falkordb(graph: &CodeGraph, graph_key: &str) -> String {
+    let key = graph_key.replace(char::is_whitespace, "-");
+    let mut output = String::from("# CodeGraph export for FalkorDB: redis-cli < graph.falkordb\n");
+    for statement in cypher_statements(graph, false) {
+        let escaped = statement.replace('\\', "\\\\").replace('"', "\\\"");
+        output.push_str(&format!("GRAPH.QUERY {key} \"{escaped}\"\n"));
+    }
+    output
+}
+
 pub const DEFAULT_MERMAID_NODE_LIMIT: usize = 300;
 pub const DEFAULT_MERMAID_EDGE_LIMIT: usize = 600;
 
@@ -15961,6 +16057,77 @@ mod tests {
             "every node exported once"
         );
         assert_eq!(graphml.matches("<edge source=").count(), graph.edges.len());
+    }
+
+    #[test]
+    fn exports_cypher_and_falkordb_scripts_with_escaping() {
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/it's \"main\".rs",
+            Some(SourceSpan {
+                path: "src/main.rs".to_string(),
+                start_line: 1,
+                start_column: 0,
+                end_line: 1,
+                end_column: 0,
+            }),
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let main = graph.add_node(NodeKind::Function, "main");
+        graph.add_edge(graph.root, file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge_with_metadata(
+            file,
+            main,
+            EdgeKind::Calls,
+            Confidence::Heuristic,
+            BTreeMap::from([("source".to_string(), "parser".to_string())]),
+        );
+
+        let cypher = export_cypher(&graph);
+        assert!(cypher.starts_with("// CodeGraph export for Neo4j"));
+        assert!(
+            cypher.contains(
+                "CREATE INDEX codegraph_node_id IF NOT EXISTS FOR (n:CodeNode) ON (n.id);"
+            )
+        );
+        assert_eq!(
+            cypher.matches("CREATE (:CodeNode:").count(),
+            graph.nodes.len()
+        );
+        assert!(cypher.contains(":CodeNode:Function {id:"));
+        assert!(
+            cypher.contains("label: 'src/it\\'s \"main\".rs'"),
+            "single quotes must be escaped: {cypher}"
+        );
+        assert!(
+            cypher
+                .contains("CREATE (a)-[:CALLS {confidence: 'heuristic', source: 'parser'}]->(b);")
+        );
+        assert!(cypher.contains("MATCH (a:CodeNode {id: "));
+        assert_eq!(
+            cypher.matches("MATCH (a:CodeNode").count(),
+            graph.edges.len()
+        );
+
+        let falkordb = export_falkordb(&graph, "codegraph demo");
+        assert!(falkordb.starts_with("# CodeGraph export for FalkorDB"));
+        assert!(
+            falkordb.contains("GRAPH.QUERY codegraph-demo \""),
+            "graph key whitespace must be sanitized"
+        );
+        assert!(
+            falkordb.contains("CREATE INDEX FOR (n:CodeNode) ON (n.id)"),
+            "falkordb index syntax must not use IF NOT EXISTS"
+        );
+        assert!(
+            falkordb.contains("label: 'src/it\\\\'s \\\"main\\\".rs'"),
+            "double quotes must be redis-escaped: {falkordb}"
+        );
+        assert_eq!(
+            falkordb.matches("GRAPH.QUERY codegraph-demo").count(),
+            graph.nodes.len() + graph.edges.len() + 1
+        );
     }
 
     #[test]

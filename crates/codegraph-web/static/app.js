@@ -5933,6 +5933,10 @@ function exportFormatMetadata(format) {
       return { format: "graphml", extension: "graphml", label: "GraphML", endpoint: "/api/export" };
     case "mermaid_html":
       return { format: "mermaid_html", extension: "html", label: "Mermaid HTML", endpoint: "/api/export" };
+    case "cypher":
+      return { format: "cypher", extension: "cypher", label: "Neo4j Cypher", endpoint: "/api/export" };
+    case "falkordb":
+      return { format: "falkordb", extension: "falkordb", label: "FalkorDB", endpoint: "/api/export" };
     case "report":
       return { format: "report", extension: "report.json", label: t("export.report"), endpoint: "/api/report" };
     case "reportMarkdown":

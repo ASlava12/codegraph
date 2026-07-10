@@ -27,12 +27,13 @@ use codegraph_analysis::{
     SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters,
     WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map,
     check_insights, communities, compact_query_result, component_contract, component_dependencies,
-    entrypoints, explain_edge, export_dot, export_graph_mermaid_html, export_graphml,
-    export_ndjson, filter_insight_report, focus_subgraph, hotspots, impact, insights, journey,
-    language_dependencies, natural_query, node_card, node_context, project_report,
-    project_report_markdown, query_graph, read_source_preview, refactor_context, seams,
-    search_source, slice_graph, summarize, surprising_links, trace, trace_config, trace_dependents,
-    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_query,
+    entrypoints, explain_edge, export_cypher, export_dot, export_falkordb,
+    export_graph_mermaid_html, export_graphml, export_ndjson, filter_insight_report,
+    focus_subgraph, hotspots, impact, insights, journey, language_dependencies, natural_query,
+    node_card, node_context, project_report, project_report_markdown, query_graph,
+    read_source_preview, refactor_context, seams, search_source, slice_graph, summarize,
+    surprising_links, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    workflow, workflow_entrypoints, workflow_query,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -624,6 +625,8 @@ enum ExportFormat {
     Ndjson,
     Graphml,
     MermaidHtml,
+    Cypher,
+    Falkordb,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1888,7 +1891,15 @@ async fn capabilities_api(
         root: state.root.display().to_string(),
         projects: project_responses(&state),
         languages: language_responses(),
-        export_formats: vec!["json", "dot", "ndjson", "graphml", "mermaid_html"],
+        export_formats: vec![
+            "json",
+            "dot",
+            "ndjson",
+            "graphml",
+            "mermaid_html",
+            "cypher",
+            "falkordb",
+        ],
         features: capability_features(state.cache.is_some(), state.access_log_enabled),
         endpoints: capability_endpoints(),
         scan: ScanCapabilityResponse {
@@ -2552,6 +2563,11 @@ async fn export_api(
                 DEFAULT_MERMAID_NODE_LIMIT,
                 DEFAULT_MERMAID_EDGE_LIMIT,
             ),
+        ),
+        ExportFormat::Cypher => ("text/plain; charset=utf-8", export_cypher(&graph)),
+        ExportFormat::Falkordb => (
+            "text/plain; charset=utf-8",
+            export_falkordb(&graph, "codegraph"),
         ),
     };
     let body_bytes = body.len();
@@ -3898,7 +3914,15 @@ fn api_schema_response() -> ApiSchemaResponse {
         enum_values: BTreeMap::from([
             (
                 "export_format",
-                vec!["json", "dot", "ndjson", "graphml", "mermaid_html"],
+                vec![
+                    "json",
+                    "dot",
+                    "ndjson",
+                    "graphml",
+                    "mermaid_html",
+                    "cypher",
+                    "falkordb",
+                ],
             ),
             ("report_format", vec!["json", "markdown"]),
             (
@@ -9532,9 +9556,23 @@ fn helper() {}
 
         assert_eq!(schema.api_version, 1);
         assert_eq!(schema.server_version, SERVER_VERSION);
-        assert!(schema.enum_values.get("export_format").is_some_and(
-            |formats| formats == &vec!["json", "dot", "ndjson", "graphml", "mermaid_html"]
-        ));
+        assert!(
+            schema
+                .enum_values
+                .get("export_format")
+                .is_some_and(|formats| {
+                    formats
+                        == &vec![
+                            "json",
+                            "dot",
+                            "ndjson",
+                            "graphml",
+                            "mermaid_html",
+                            "cypher",
+                            "falkordb",
+                        ]
+                })
+        );
         assert!(
             schema
                 .enum_values

@@ -91,7 +91,7 @@ Goal: make graph knowledge portable into external tools.
 - [x] Add GraphML export.
 - [x] Add Mermaid/callflow HTML export for full graphs and workflow sets.
 - [x] Add Obsidian vault / Markdown wiki export for communities, entrypoints, hotspots, config flows, and risky insights.
-- [ ] Add Neo4j Cypher and FalkorDB export targets.
+- [x] Add Neo4j Cypher and FalkorDB export targets.
 - [ ] Add a PR impact dashboard from changed files, graph communities, CI/review state, and shared hotspots.
 - [ ] Add a benchmark harness for token/context savings and graph-query recall on real mixed corpora.
 

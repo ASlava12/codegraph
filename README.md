@@ -224,11 +224,11 @@ Implemented now:
 - Web graph page filters, node/edge offsets, and page limits can be copied as shareable deep-links for reproducible large-repository slices.
 - Web graph page filters and offsets can be cleared in one action after opening focused or shared large-repository slices.
 - Web canvas search, kind, risk, and query-focus filters show active-filter status in the HUD and can be cleared in one action.
-- Web export panel for downloading full graph snapshots as JSON, DOT, NDJSON, GraphML, or Mermaid HTML.
+- Web export panel for downloading full graph snapshots as JSON, DOT, NDJSON, GraphML, Mermaid HTML, Neo4j Cypher, or FalkorDB.
 - Web export panel can download the currently visible canvas slice with graph-page, filter, viewport, and layout metadata for compact handoff.
 - Full graph exports publish response headers for node count, edge count, and serialized byte size.
 - Web project selector backed by an explicit server-side allowlist for opening local repositories.
-- DOT/Graphviz, NDJSON, GraphML, and Mermaid HTML export formats for visualization, streaming agent use, external graph tools (yEd, Gephi, Cytoscape), and shareable callflow pages.
+- DOT/Graphviz, NDJSON, GraphML, Mermaid HTML, Neo4j Cypher, and FalkorDB export formats for visualization, streaming agent use, external graph tools (yEd, Gephi, Cytoscape), shareable callflow pages, and graph databases.
 - Persistent server-side graph cache with project fingerprint invalidation.
 - Persistent CLI graph cache using the same project fingerprinting and cache records as the server.
 - Persistent per-file parser fact cache reused during graph-cache misses.
@@ -343,6 +343,8 @@ cargo run -p codegraph-cli -- scan . --format ndjson
 cargo run -p codegraph-cli -- scan . --format graphml
 cargo run -p codegraph-cli -- scan . --format mermaid-html > graph.html
 cargo run -p codegraph-cli -- workflow-entrypoints --entrypoint-kind route --format html > callflows.html
+cargo run -p codegraph-cli -- scan . --format cypher > graph.cypher      # cypher-shell -f graph.cypher
+cargo run -p codegraph-cli -- scan . --format falkordb > graph.falkordb  # redis-cli < graph.falkordb
 ```
 
 Summarize a project:
@@ -933,6 +935,7 @@ curl 'http://127.0.0.1:3765/api/export?path=.&format=dot'
 curl 'http://127.0.0.1:3765/api/export?path=.&format=ndjson'
 curl 'http://127.0.0.1:3765/api/export?path=.&format=graphml'
 curl 'http://127.0.0.1:3765/api/export?path=.&format=mermaid_html'
+curl 'http://127.0.0.1:3765/api/export?path=.&format=cypher'
 ```
 
 The web Export panel can also download `Report JSON`, which uses `/api/report`
@@ -1064,7 +1067,7 @@ Planned Dart/Flutter depth:
 
 Planned repository-knowledge features inspired by Graphify-style workflows:
 
-- Deeper document ingestion beyond Markdown, deeper SQL query analysis, migration ordering, ORM/database-config linking, optional non-code document ingestion, PR impact dashboards, a token-savings benchmark harness, and exports for SVG, Neo4j, and FalkorDB.
+- Deeper document ingestion beyond Markdown, deeper SQL query analysis, migration ordering, ORM/database-config linking, optional non-code document ingestion, PR impact dashboards, a token-savings benchmark harness, and SVG export.
 - The detailed Graphify parity map is tracked in [`docs/GRAPHIFY_PARITY.md`](docs/GRAPHIFY_PARITY.md), including already covered capabilities, gaps, priorities, and compatibility principles.
 
 Supported package manifests:

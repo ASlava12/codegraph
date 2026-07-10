@@ -521,7 +521,8 @@ Update and team workflows:
 
 Exports and dashboards:
 
-- [ ] Add GraphML, SVG, Mermaid/callflow HTML, Obsidian vault, Markdown wiki, Neo4j Cypher, and FalkorDB export targets.
+- [x] Add GraphML, Mermaid/callflow HTML, Obsidian vault / Markdown wiki, Neo4j Cypher, and FalkorDB export targets.
+- [ ] Add SVG export target.
 - [ ] Add PR impact dashboard using graph communities, changed files, CI/review state, conflicts, and risky shared subsystems.
 - [x] Add query logging with privacy controls, response logging opt-in, and local JSONL audit output.
 - [ ] Add explicit security model for external ingestion: URL validation, redirect blocking, size/time limits, label sanitization, and graph path constraints.
