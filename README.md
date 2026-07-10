@@ -36,6 +36,7 @@ Implemented now:
 - Rust/Axum route entrypoints handle multiline `.route(...)` calls and ignore string literal route markers.
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved.
+- Unresolved call targets share one placeholder node per language and label (every call site keeps its own `calls` edge), and language builtins/std macros (`Some`, `format!`, `println!`, `len`, `console.log`, `make`, …) are classified as `resolution: builtin` instead of counting as external dependencies or unresolved-call findings.
 - Source rationale comments such as `WHY`, `NOTE`, `TODO`, `FIXME`, `HACK`, `BUG`, `XXX`, and `SECURITY` are indexed as linked graph facts with source spans for human and agent review.
 - Common branch, loop, async/concurrency, and return/exit constructs are indexed as source-spanned graph facts for workflow diagrams and node-card investigation, and workflow blocks classify them as branch, loop, async, and return steps.
 - Markdown, ADR, and RFC documents are indexed as repository knowledge facts with section nodes plus local file/directory and symbol references from Markdown links and inline code.

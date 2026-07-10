@@ -34,7 +34,7 @@ Goal: extract language-independent structure from source files.
 - [x] Support Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, Dart, PHP, and Bash at syntax level.
 - [x] Add Dart syntax support for `.dart` files with files, libraries, imports/exports/parts, classes, mixins, extensions, functions, methods, constructors, and approximate call sites.
 - [x] Extract approximate call sites.
-- [ ] Deduplicate unresolved-call placeholder nodes by label and classify language builtins/std macros separately from external dependencies (audit F2: 27k per-call-site `external_dependency` nodes on this repository).
+- [x] Deduplicate unresolved-call placeholder nodes by label and classify language builtins/std macros separately from external dependencies (audit F2: 27k per-call-site `external_dependency` nodes on this repository).
 - [x] Resolve local import/include file dependencies where syntax-level paths are explicit.
 - [x] Resolve Dart relative imports, package imports from `pubspec.yaml`, and `part`/`part of` relationships.
 - [x] Resolve Dart generated-file conventions and `.dart_tool/package_config.json` package maps.

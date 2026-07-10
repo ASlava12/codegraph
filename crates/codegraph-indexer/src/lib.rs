@@ -94,6 +94,8 @@ struct IndexContext {
     file_nodes: BTreeMap<String, NodeId>,
     directory_nodes: BTreeMap<String, NodeId>,
     external_dependencies: BTreeMap<String, NodeId>,
+    /// One placeholder node per (language, label) for unresolved call targets.
+    unresolved_call_placeholders: BTreeMap<(String, String), NodeId>,
     cargo_workspace_dependencies: BTreeMap<String, Option<String>>,
     go_modules: Vec<GoModuleRoot>,
     dart_packages: Vec<DartPackageRoot>,
@@ -879,6 +881,7 @@ fn scan_project_with_scope(
         file_nodes: BTreeMap::new(),
         directory_nodes: BTreeMap::new(),
         external_dependencies: BTreeMap::new(),
+        unresolved_call_placeholders: BTreeMap::new(),
         cargo_workspace_dependencies,
         go_modules,
         dart_packages,
@@ -11726,23 +11729,291 @@ fn manifest_entrypoint(
     }
 }
 
+/// Language builtins and std macros that read as call sites but are not
+/// external dependencies: constructors of core enums, print/assert/format
+/// macro families, and std namespaces.
+fn builtin_call_target(language: &str, label: &str) -> bool {
+    let base = label.trim_end_matches('!');
+    match language {
+        "rust" => {
+            matches!(
+                base,
+                "Some"
+                    | "None"
+                    | "Ok"
+                    | "Err"
+                    | "Box::new"
+                    | "String::from"
+                    | "String::new"
+                    | "Vec::new"
+                    | "Default::default"
+                    | "drop"
+                    | "format"
+                    | "format_args"
+                    | "print"
+                    | "println"
+                    | "eprint"
+                    | "eprintln"
+                    | "write"
+                    | "writeln"
+                    | "panic"
+                    | "assert"
+                    | "assert_eq"
+                    | "assert_ne"
+                    | "debug_assert"
+                    | "debug_assert_eq"
+                    | "debug_assert_ne"
+                    | "vec"
+                    | "matches"
+                    | "todo"
+                    | "unimplemented"
+                    | "unreachable"
+                    | "dbg"
+                    | "include_str"
+                    | "include_bytes"
+                    | "concat"
+                    | "stringify"
+                    | "env"
+                    | "option_env"
+            ) || base.starts_with("std::")
+        }
+        "python" => matches!(
+            base,
+            "print"
+                | "len"
+                | "range"
+                | "str"
+                | "int"
+                | "float"
+                | "bool"
+                | "list"
+                | "dict"
+                | "set"
+                | "tuple"
+                | "enumerate"
+                | "zip"
+                | "map"
+                | "filter"
+                | "sorted"
+                | "reversed"
+                | "isinstance"
+                | "issubclass"
+                | "super"
+                | "open"
+                | "type"
+                | "getattr"
+                | "setattr"
+                | "hasattr"
+                | "repr"
+                | "min"
+                | "max"
+                | "sum"
+                | "abs"
+                | "round"
+                | "any"
+                | "all"
+                | "next"
+                | "iter"
+                | "format"
+                | "id"
+                | "vars"
+                | "hash"
+                | "callable"
+        ),
+        "javascript" | "typescript" | "tsx" => {
+            matches!(
+                base,
+                "parseInt"
+                    | "parseFloat"
+                    | "isNaN"
+                    | "isFinite"
+                    | "String"
+                    | "Number"
+                    | "Boolean"
+                    | "Array"
+                    | "Symbol"
+                    | "BigInt"
+                    | "Error"
+                    | "TypeError"
+                    | "RangeError"
+                    | "Promise"
+                    | "Date"
+                    | "Map"
+                    | "Set"
+                    | "WeakMap"
+                    | "WeakSet"
+                    | "Proxy"
+                    | "Reflect"
+                    | "setTimeout"
+                    | "setInterval"
+                    | "clearTimeout"
+                    | "clearInterval"
+                    | "queueMicrotask"
+                    | "structuredClone"
+                    | "encodeURIComponent"
+                    | "decodeURIComponent"
+                    | "encodeURI"
+                    | "decodeURI"
+                    | "fetch"
+                    | "alert"
+                    | "confirm"
+            ) || [
+                "console.", "Math.", "JSON.", "Object.", "Array.", "Number.", "String.",
+                "Promise.", "Reflect.", "Date.", "Symbol.",
+            ]
+            .iter()
+            .any(|prefix| base.starts_with(prefix))
+        }
+        "go" => matches!(
+            base,
+            "make"
+                | "len"
+                | "cap"
+                | "append"
+                | "new"
+                | "copy"
+                | "delete"
+                | "panic"
+                | "recover"
+                | "print"
+                | "println"
+                | "close"
+                | "complex"
+                | "real"
+                | "imag"
+                | "min"
+                | "max"
+                | "clear"
+        ),
+        "c" | "cpp" => {
+            matches!(
+                base,
+                "printf"
+                    | "fprintf"
+                    | "sprintf"
+                    | "snprintf"
+                    | "scanf"
+                    | "sscanf"
+                    | "puts"
+                    | "putchar"
+                    | "getchar"
+                    | "malloc"
+                    | "calloc"
+                    | "realloc"
+                    | "free"
+                    | "memcpy"
+                    | "memmove"
+                    | "memset"
+                    | "memcmp"
+                    | "strlen"
+                    | "strcmp"
+                    | "strncmp"
+                    | "strcpy"
+                    | "strncpy"
+                    | "strcat"
+                    | "strstr"
+                    | "strchr"
+                    | "sizeof"
+                    | "assert"
+                    | "exit"
+                    | "abort"
+                    | "atoi"
+                    | "atof"
+                    | "fopen"
+                    | "fclose"
+                    | "fread"
+                    | "fwrite"
+                    | "fgets"
+                    | "fputs"
+            ) || base.starts_with("std::")
+        }
+        "php" => matches!(
+            base,
+            "print"
+                | "printf"
+                | "sprintf"
+                | "echo"
+                | "strlen"
+                | "count"
+                | "isset"
+                | "empty"
+                | "unset"
+                | "array"
+                | "implode"
+                | "explode"
+                | "in_array"
+                | "array_map"
+                | "array_filter"
+                | "array_merge"
+                | "array_keys"
+                | "array_values"
+                | "json_encode"
+                | "json_decode"
+                | "intval"
+                | "floatval"
+                | "strval"
+                | "is_array"
+                | "is_string"
+                | "is_null"
+                | "is_numeric"
+        ),
+        "bash" => matches!(
+            base,
+            "echo"
+                | "printf"
+                | "cd"
+                | "exit"
+                | "export"
+                | "source"
+                | "test"
+                | "read"
+                | "local"
+                | "set"
+                | "unset"
+                | "shift"
+                | "eval"
+                | "exec"
+                | "trap"
+                | "return"
+                | "wait"
+                | "kill"
+                | "true"
+                | "false"
+        ),
+        "dart" => matches!(base, "print" | "identical" | "assert"),
+        _ => false,
+    }
+}
+
 fn resolve_pending_calls(context: &mut IndexContext) {
     let pending_calls = std::mem::take(&mut context.pending_calls);
 
     for call in pending_calls {
         let targets = resolve_function_targets(&context.function_symbols, &call.label);
         if targets.is_empty() {
-            let mut metadata = BTreeMap::new();
-            metadata.insert("language".to_string(), call.language);
-            metadata.insert("parser".to_string(), "tree-sitter".to_string());
-            metadata.insert("item_kind".to_string(), "call".to_string());
-            metadata.insert("resolution".to_string(), "unresolved".to_string());
-            let call_id = context.graph.add_node_with_metadata(
-                NodeKind::ExternalDependency,
-                call.label,
-                Some(call.span),
-                metadata,
-            );
+            let key = (call.language.clone(), call.label.clone());
+            let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
+                *id
+            } else {
+                let resolution = if builtin_call_target(&call.language, &call.label) {
+                    "builtin"
+                } else {
+                    "unresolved"
+                };
+                let mut metadata = BTreeMap::new();
+                metadata.insert("language".to_string(), call.language);
+                metadata.insert("parser".to_string(), "tree-sitter".to_string());
+                metadata.insert("item_kind".to_string(), "call".to_string());
+                metadata.insert("resolution".to_string(), resolution.to_string());
+                let id = context.graph.add_node_with_metadata(
+                    NodeKind::ExternalDependency,
+                    call.label,
+                    Some(call.span),
+                    metadata,
+                );
+                context.unresolved_call_placeholders.insert(key, id);
+                id
+            };
             add_edge_once(
                 &mut context.graph,
                 call.caller,
@@ -13551,6 +13822,73 @@ mod tests {
                 .edges
                 .iter()
                 .any(|edge| edge.kind == EdgeKind::Entrypoint)
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_project_deduplicates_unresolved_call_placeholders() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() {\n    custom_helper(1);\n    let text = format!(\"x\");\n    let value = Some(text);\n    drop(value);\n}\nfn other() {\n    custom_helper(2);\n    let more = format!(\"y\");\n    drop(more);\n}\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+
+        let placeholders = |label: &str| -> Vec<_> {
+            graph
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.label == label
+                        && node
+                            .metadata
+                            .get("item_kind")
+                            .is_some_and(|value| value == "call")
+                })
+                .collect()
+        };
+
+        let helper_nodes = placeholders("custom_helper");
+        assert_eq!(
+            helper_nodes.len(),
+            1,
+            "two call sites must share one placeholder node"
+        );
+        assert_eq!(
+            helper_nodes[0]
+                .metadata
+                .get("resolution")
+                .map(String::as_str),
+            Some("unresolved")
+        );
+        let helper_id = helper_nodes[0].id;
+        let callers: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.target == helper_id && edge.kind == EdgeKind::Calls)
+            .map(|edge| edge.source)
+            .collect();
+        assert_eq!(callers.len(), 2, "each caller keeps its own call edge");
+
+        let format_nodes = placeholders("format");
+        assert_eq!(format_nodes.len(), 1);
+        assert_eq!(
+            format_nodes[0]
+                .metadata
+                .get("resolution")
+                .map(String::as_str),
+            Some("builtin")
+        );
+        let some_nodes = placeholders("Some");
+        assert_eq!(some_nodes.len(), 1);
+        assert_eq!(
+            some_nodes[0].metadata.get("resolution").map(String::as_str),
+            Some("builtin")
         );
 
         fs::remove_dir_all(root).unwrap();
