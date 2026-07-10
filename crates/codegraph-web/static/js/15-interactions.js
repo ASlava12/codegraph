@@ -475,7 +475,7 @@ async function ensureFlowReportForStage() {
     path: pathInput.value.trim() || ".",
     node_id: String(node.id),
     depth: String(depth),
-    block_limit: "120",
+    block_limit: "250",
     compact: "true",
   });
   appendWorkflowFilterParams(params, readWorkflowFilters("workflow"));
@@ -499,7 +499,7 @@ async function ensureFlowReportForStage() {
 
 function openFlowView(report, title) {
   if (!report || !Array.isArray(report.blocks) || report.blocks.length === 0) return;
-  state.flow.report = report;
+  state.flow.report = refineFlowReport(report);
   state.flow.title = title || report.start?.label || "";
   state.flow.selectedBlockId = null;
   state.flow.hoveredBlockId = null;

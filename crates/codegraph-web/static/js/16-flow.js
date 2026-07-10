@@ -124,6 +124,70 @@ function selectFlowTransition(transition) {
   selectEdgeByKey(selectionKey);
 }
 
+// Collapse a workflow into a readable shape: leaf blocks that share the same
+// parent and kind (e.g. the dozens of branch/error/import leaves that hang off
+// a CLI `main`) fold into one representative block carrying the group count, so
+// a 200-block fan reads as a handful of grouped steps instead of a wall.
+function refineFlowReport(report) {
+  if (!report || !Array.isArray(report.blocks)) return report;
+  const blocks = report.blocks;
+  const transitions = Array.isArray(report.transitions) ? report.transitions : [];
+  const GROUP_MIN = 3;
+
+  const outgoing = new Map();
+  transitions.forEach((t) => outgoing.set(t.source, (outgoing.get(t.source) || 0) + 1));
+  const parentOf = new Map();
+  transitions.forEach((t) => {
+    if (!parentOf.has(t.target)) parentOf.set(t.target, t.source);
+  });
+  const isLeaf = (id) => !(outgoing.get(id) > 0);
+
+  const groupsByKey = new Map();
+  blocks.forEach((block) => {
+    if (!isLeaf(block.id)) return;
+    const parent = parentOf.get(block.id);
+    if (parent == null) return;
+    const key = `${parent}::${block.kind}`;
+    if (!groupsByKey.has(key)) groupsByKey.set(key, []);
+    groupsByKey.get(key).push(block);
+  });
+
+  const collapsed = new Map(); // member id -> representative id
+  const groupCounts = new Map(); // representative id -> member count
+  const groupMembers = new Map(); // representative id -> [node ids]
+  groupsByKey.forEach((members) => {
+    if (members.length < GROUP_MIN) return;
+    const rep = members[0];
+    groupCounts.set(rep.id, members.length);
+    groupMembers.set(
+      rep.id,
+      members.map((m) => m.node?.id).filter((id) => id != null),
+    );
+    members.slice(1).forEach((m) => collapsed.set(m.id, rep.id));
+  });
+
+  if (collapsed.size === 0) return report;
+
+  const refinedBlocks = blocks
+    .filter((block) => !collapsed.has(block.id))
+    .map((block) =>
+      groupCounts.has(block.id)
+        ? { ...block, groupCount: groupCounts.get(block.id), groupMembers: groupMembers.get(block.id) }
+        : block,
+    );
+  const refinedTransitions = transitions.filter(
+    (t) => !collapsed.has(t.source) && !collapsed.has(t.target),
+  );
+
+  return {
+    ...report,
+    blocks: refinedBlocks,
+    transitions: refinedTransitions,
+    grouped: true,
+    raw_total_blocks: report.raw_total_blocks ?? blocks.length,
+  };
+}
+
 function drawFlow() {
   if (flowCanvas.hidden) return;
   flowCtx.clearRect(0, 0, flowCanvas.width, flowCanvas.height);
@@ -174,6 +238,19 @@ function drawFlow() {
     const selected = state.flow.selectedBlockId === block.id;
     const hovered = state.flow.hoveredBlockId === block.id;
     const accent = flowKindColor(block.kind || "unknown");
+    const groupCount = Number(block.groupCount || 0);
+    // Stacked shadow cards behind a grouped block signal that it folds many.
+    if (groupCount > 1) {
+      for (let layer = 2; layer >= 1; layer -= 1) {
+        flowCtx.beginPath();
+        flowCtx.roundRect(position.x + layer * 4, position.y + layer * 4, FLOW_BLOCK_WIDTH, FLOW_BLOCK_HEIGHT, 9);
+        flowCtx.fillStyle = "rgba(24, 27, 32, 0.72)";
+        flowCtx.fill();
+        flowCtx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+        flowCtx.lineWidth = 1;
+        flowCtx.stroke();
+      }
+    }
     flowCtx.beginPath();
     flowCtx.roundRect(position.x, position.y, FLOW_BLOCK_WIDTH, FLOW_BLOCK_HEIGHT, 9);
     flowCtx.fillStyle = selected ? "rgba(38, 44, 52, 0.98)" : "rgba(24, 27, 32, 0.96)";
@@ -191,15 +268,19 @@ function drawFlow() {
     flowCtx.fillStyle = accent;
     flowCtx.font = "600 10px 'JetBrains Mono', ui-monospace, monospace";
     flowCtx.textBaseline = "alphabetic";
+    const kindText = formatKind(block.kind || "unknown").toUpperCase();
     flowCtx.fillText(
-      formatKind(block.kind || "unknown").toUpperCase(),
+      groupCount > 1 ? `${kindText}  ×${groupCount}` : kindText,
       position.x + 14,
       position.y + 20,
       FLOW_BLOCK_WIDTH - 28,
     );
     flowCtx.fillStyle = "#edf1f2";
     flowCtx.font = "12.5px 'JetBrains Mono', ui-monospace, monospace";
-    const label = String(block.node?.label || block.id || "");
+    const label =
+      groupCount > 1
+        ? t("flow.groupLabel", { count: groupCount, kind: formatKind(block.kind || "unknown") })
+        : String(block.node?.label || block.id || "");
     const shortLabel = label.length > 30 ? `${label.slice(0, 29)}…` : label;
     flowCtx.fillText(shortLabel, position.x + 14, position.y + 40, FLOW_BLOCK_WIDTH - 28);
 
