@@ -138,7 +138,7 @@ Audit follow-ups (concrete completion work from `FEATURE_AUDIT.md`, one commit e
 - [x] Reuse cached report/insight results and bound journey search so refactor-context returns in seconds on a warm cache (F11).
 - [x] Accept `n42`-style node ids everywhere node ids are accepted (F8).
 - [x] Unify API root/file parameter naming and return structured JSON errors for query-string deserialization failures (F9).
-- [ ] Add compact/summary output modes to `incremental-update` and `incremental-merge-preview` (F10).
+- [x] Add compact/summary output modes to `incremental-update` and `incremental-merge-preview` (F10).
 - [ ] Exclude string-literal/fixture code patterns from benchmark recall oracles (F12).
 
 Usability polish:

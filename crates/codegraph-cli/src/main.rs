@@ -160,10 +160,10 @@ enum Command {
     IncrementalScan(CacheDiffArgs),
 
     /// Preview a graph assembled from cached unchanged files plus changed-file rescans.
-    IncrementalMergePreview(CacheDiffArgs),
+    IncrementalMergePreview(IncrementalOutputArgs),
 
     /// Update the persistent graph cache when the incremental result is complete.
-    IncrementalUpdate(CacheDiffArgs),
+    IncrementalUpdate(IncrementalOutputArgs),
 
     /// Register a repository in the global graph registry.
     RegistryAdd {
@@ -1338,6 +1338,16 @@ struct CacheDiffArgs {
 }
 
 #[derive(Debug, Args)]
+struct IncrementalOutputArgs {
+    #[command(flatten)]
+    cache: CacheDiffArgs,
+
+    /// Include the full merged graph JSON instead of the compact summary.
+    #[arg(long)]
+    full_graph: bool,
+}
+
+#[derive(Debug, Args)]
 struct InsightArgs {
     #[command(flatten)]
     scan: ScanArgs,
@@ -1828,22 +1838,46 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&scan)?);
         }
         Command::IncrementalMergePreview(args) => {
+            let cache_args = args.cache;
             let options = configured_index_options(
-                &args.path,
-                &scan_overrides(args.include_hidden, args.include_ignored, max_file_size),
+                &cache_args.path,
+                &scan_overrides(
+                    cache_args.include_hidden,
+                    cache_args.include_ignored,
+                    max_file_size,
+                ),
             )?;
-            let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
-            let preview = cache.incremental_merge_preview(&args.path, &options, args.limit)?;
-            println!("{}", serde_json::to_string_pretty(&preview)?);
+            let cache = GraphCache::new(cache_args.cache_dir.unwrap_or_else(default_cache_dir));
+            let preview =
+                cache.incremental_merge_preview(&cache_args.path, &options, cache_args.limit)?;
+            if args.full_graph {
+                println!("{}", serde_json::to_string_pretty(&preview)?);
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&merge_preview_compact(&preview))?
+                );
+            }
         }
         Command::IncrementalUpdate(args) => {
+            let cache_args = args.cache;
             let options = configured_index_options(
-                &args.path,
-                &scan_overrides(args.include_hidden, args.include_ignored, max_file_size),
+                &cache_args.path,
+                &scan_overrides(
+                    cache_args.include_hidden,
+                    cache_args.include_ignored,
+                    max_file_size,
+                ),
             )?;
-            let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
-            let update = cache.incremental_update(&args.path, &options, args.limit)?;
-            println!("{}", serde_json::to_string_pretty(&update)?);
+            let cache = GraphCache::new(cache_args.cache_dir.unwrap_or_else(default_cache_dir));
+            let update = cache.incremental_update(&cache_args.path, &options, cache_args.limit)?;
+            if args.full_graph {
+                println!("{}", serde_json::to_string_pretty(&update)?);
+            } else {
+                let mut compact = merge_preview_compact(&update.preview);
+                compact["cache"] = serde_json::to_value(&update.cache)?;
+                println!("{}", serde_json::to_string_pretty(&compact)?);
+            }
         }
         Command::RegistryAdd {
             path,
@@ -2958,6 +2992,23 @@ fn log_cli_query(
     }
 }
 
+/// Compact incremental output: plan and merge stats stay, the merged graph
+/// collapses to node/edge counts so hooks, logs, and agent pipelines are not
+/// flooded with tens of megabytes of graph JSON (audit F10).
+fn merge_preview_compact(
+    preview: &codegraph_storage::IncrementalMergePreview,
+) -> serde_json::Value {
+    serde_json::json!({
+        "plan": preview.plan,
+        "merge": preview.merge,
+        "graph_summary": {
+            "nodes": preview.graph.nodes.len(),
+            "edges": preview.graph.edges.len(),
+        },
+        "note": "compact output; pass --full-graph to include the merged graph JSON",
+    })
+}
+
 /// Node ids are printed as `n42` in query results and web deep links;
 /// accept both that form and the bare numeric id (audit F8).
 fn parse_cli_node_id(value: &str) -> Result<u64, String> {
@@ -3118,4 +3169,82 @@ fn unix_seconds() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codegraph_core::{CodeGraph, NodeKind};
+    use codegraph_storage::{
+        CacheRecordStatus, IncrementalMergePreview, IncrementalMergeReport, IncrementalPlanAction,
+        IncrementalScanPlan,
+    };
+
+    #[test]
+    fn merge_preview_compact_keeps_plan_and_merge_but_summarizes_the_graph() {
+        let mut graph = CodeGraph::new("repo");
+        graph.add_node(NodeKind::Function, "main");
+        let preview = IncrementalMergePreview {
+            plan: IncrementalScanPlan {
+                cache_dir: "/tmp/cache".to_string(),
+                cache_record: CacheRecordStatus::Present,
+                action: IncrementalPlanAction::Noop,
+                reason: "cached fingerprint matches current files".to_string(),
+                previous_hash: Some("abc".to_string()),
+                current_hash: "abc".to_string(),
+                previous_files: Some(2),
+                current_files: 2,
+                changed_files: 0,
+                rescan_files: 0,
+                removed_files: 0,
+                reusable_files: 2,
+                changed_current_bytes: 0,
+                reusable_bytes: 10,
+                reuse_file_ratio_basis_points: 10_000,
+                reuse_byte_ratio_basis_points: 10_000,
+                scan_paths: Vec::new(),
+                removed_paths: Vec::new(),
+                reusable_paths: vec!["src/main.rs".to_string()],
+                impacted_nodes: 0,
+                impacted_edges: 0,
+                impacted_node_ids: Vec::new(),
+                impacted_edge_indexes: Vec::new(),
+                limit: 100,
+                truncated: false,
+            },
+            merge: IncrementalMergeReport {
+                complete_graph: true,
+                reused_nodes: 2,
+                reused_edges: 1,
+                removed_cached_nodes: 0,
+                removed_cached_edges: 0,
+                chunk_removed_nodes: 0,
+                chunk_removed_edges: 0,
+                incoming_cross_file_edges: 0,
+                graph_surface_added: 0,
+                graph_surface_removed: 0,
+                removed_paths_blocking: 0,
+                completeness_blockers: Vec::new(),
+                replaced_paths: 0,
+                scanned_nodes: 0,
+                scanned_edges: 0,
+                merged_nodes: 2,
+                merged_edges: 1,
+                warning: None,
+            },
+            graph,
+        };
+
+        let compact = merge_preview_compact(&preview);
+        assert_eq!(compact["graph_summary"]["nodes"], 2);
+        assert_eq!(compact["graph_summary"]["edges"], 0);
+        assert_eq!(compact["plan"]["action"], "noop");
+        assert_eq!(compact["merge"]["merged_nodes"], 2);
+        assert!(compact.get("graph").is_none(), "full graph must be omitted");
+        assert!(
+            compact["note"]
+                .as_str()
+                .is_some_and(|note| note.contains("--full-graph"))
+        );
+    }
 }

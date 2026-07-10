@@ -677,9 +677,15 @@ cargo run -p codegraph-cli -- incremental-plan . --cache-dir /tmp/codegraph-cach
 cargo run -p codegraph-cli -- incremental-scan . --cache-dir /tmp/codegraph-cache
 cargo run -p codegraph-cli -- incremental-merge-preview . --cache-dir /tmp/codegraph-cache
 cargo run -p codegraph-cli -- incremental-update . --cache-dir /tmp/codegraph-cache
+cargo run -p codegraph-cli -- incremental-update . --full-graph   # embed the merged graph JSON
 ```
 
 The output is JSON using the shared graph schema from `codegraph-core`.
+`incremental-merge-preview` and `incremental-update` print a compact summary
+by default — plan, merge stats, node/edge counts, and the cache result —
+because the full merged graph runs to tens of megabytes on real
+repositories; pass `--full-graph` to embed it (the API endpoints keep
+returning the full graph for the web canvas).
 
 Keep the graph fresh automatically while editing:
 
