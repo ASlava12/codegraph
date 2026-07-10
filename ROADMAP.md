@@ -613,7 +613,7 @@ Usability polish:
 - [x] Add compact/summary output modes to `incremental-update` and `incremental-merge-preview` instead of printing the full graph JSON (audit F10).
 - [x] Improve web discoverability: panel onboarding hints, empty states that explain the next action, and sane default filters for large graphs.
 - [x] Add task-oriented documentation guides (investigate a bug, trace a config value, plan a refactor) instead of feature-list documentation only (`docs/GUIDES.md`, commands live-verified).
-- [ ] Make agent-facing outputs self-describing: stable field docs, examples in the API schema, and copy-paste-ready CLI snippets in responses where useful.
+- [x] Make agent-facing outputs self-describing: stable field docs, examples in the API schema, and copy-paste-ready CLI snippets in responses where useful (schema ids + suggested commands on impact/journey/ask reports; `example` requests on graph/analysis/source endpoints in `/api/schema`).
 
 Exit criteria:
 

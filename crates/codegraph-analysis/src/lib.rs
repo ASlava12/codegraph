@@ -543,6 +543,8 @@ pub struct ImpactEntrypoint {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImpactReport {
+    #[serde(default)]
+    pub schema: String,
     pub target: Node,
     #[serde(default)]
     pub area: Option<String>,
@@ -557,16 +559,22 @@ pub struct ImpactReport {
     pub impact_score: usize,
     pub dependents: Vec<ImpactDependent>,
     pub truncated: bool,
+    #[serde(default)]
+    pub suggested_commands: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JourneyReport {
+    #[serde(default)]
+    pub schema: String,
     pub from: Node,
     pub to: Node,
     pub max_depth: usize,
     pub total_paths: usize,
     pub paths: Vec<JourneyPath>,
     pub truncated: bool,
+    #[serde(default)]
+    pub suggested_commands: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -720,8 +728,12 @@ pub struct NaturalQueryRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NaturalQueryReport {
+    #[serde(default)]
+    pub schema: String,
     pub question: String,
     pub generated_query: String,
+    #[serde(default)]
+    pub cli_snippet: String,
     pub rule: String,
     pub confidence: String,
     pub result: QueryResult,
@@ -4007,6 +4019,8 @@ pub fn workflow_query(
     })
 }
 
+pub const JOURNEY_SCHEMA: &str = "codegraph.journey.v1";
+
 pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyReport, QueryError> {
     let max_depth = request.max_depth.clamp(1, 32);
     let from = request.from.trim();
@@ -4123,13 +4137,24 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
         path.rank = index + 1;
     }
 
+    let suggested_commands = vec![
+        format!("codegraph impact {} .", target_node.id),
+        format!(
+            "codegraph refactor-context {} . --from {}",
+            target_node.id, start_node.id
+        ),
+        format!("codegraph node-card . --node-id {}", target_node.id),
+    ];
+
     Ok(JourneyReport {
+        schema: JOURNEY_SCHEMA.to_string(),
         from: start_node,
         to: target_node,
         max_depth,
         total_paths: paths.len(),
         truncated: truncated && paths.is_empty(),
         paths,
+        suggested_commands,
     })
 }
 
@@ -4566,6 +4591,8 @@ pub fn seams(graph: &CodeGraph, request: SeamRequest) -> SeamReport {
     }
 }
 
+pub const IMPACT_SCHEMA: &str = "codegraph.impact.v1";
+
 pub fn impact(graph: &CodeGraph, request: ImpactRequest) -> Result<ImpactReport, QueryError> {
     let insight_report = insights(graph);
     impact_with_insights(graph, request, &insight_report)
@@ -4705,7 +4732,10 @@ pub fn impact_with_insights(
         + severity_counts.get("warning").copied().unwrap_or(0) * 2
         + severity_counts.get("info").copied().unwrap_or(0);
 
+    let suggested_commands = impact_suggested_commands(target_id, &affected_entrypoints);
+
     Ok(ImpactReport {
+        schema: IMPACT_SCHEMA.to_string(),
         area: node_areas.get(&target_id).cloned(),
         target: target_node,
         max_depth,
@@ -4719,7 +4749,31 @@ pub fn impact_with_insights(
         impact_score,
         dependents,
         truncated: truncated || listed_truncated,
+        suggested_commands,
     })
+}
+
+/// Copy-paste-ready CLI follow-ups for an impact report: inspect the target,
+/// then read or bundle the path from the nearest affected entrypoint.
+fn impact_suggested_commands(
+    target_id: NodeId,
+    affected_entrypoints: &[ImpactEntrypoint],
+) -> Vec<String> {
+    let mut commands = vec![format!("codegraph node-card . --node-id {target_id}")];
+    match affected_entrypoints.first() {
+        Some(entrypoint) => {
+            commands.push(format!(
+                "codegraph journey --from {} --to {target_id} .",
+                entrypoint.node.id
+            ));
+            commands.push(format!(
+                "codegraph refactor-context {target_id} . --from {}",
+                entrypoint.node.id
+            ));
+        }
+        None => commands.push(format!("codegraph refactor-context {target_id} .")),
+    }
+    commands
 }
 
 fn journey_shortest_path(
@@ -5607,6 +5661,8 @@ pub fn compact_query_result(result: QueryResult) -> QueryResult {
     }
 }
 
+pub const NATURAL_QUERY_SCHEMA: &str = "codegraph.ask.v1";
+
 pub fn natural_query(
     graph: &CodeGraph,
     request: NaturalQueryRequest,
@@ -5634,6 +5690,8 @@ pub fn natural_query(
     alternatives.sort();
     alternatives.dedup();
     Ok(NaturalQueryReport {
+        schema: NATURAL_QUERY_SCHEMA.to_string(),
+        cli_snippet: format!("codegraph query '{}' .", plan.generated_query),
         question: request.question,
         generated_query: plan.generated_query,
         rule: plan.rule,
@@ -17348,6 +17406,15 @@ mod tests {
                 .iter()
                 .any(|step| step.block.node.id == unrelated)
         );
+        assert_eq!(report.schema, JOURNEY_SCHEMA);
+        assert_eq!(
+            report.suggested_commands,
+            vec![
+                format!("codegraph impact {load_config} ."),
+                format!("codegraph refactor-context {load_config} . --from {entrypoint}"),
+                format!("codegraph node-card . --node-id {load_config}"),
+            ]
+        );
     }
 
     #[test]
@@ -17760,6 +17827,15 @@ mod tests {
         );
         assert!(report.impact_score >= report.total_dependents + 5 + 1);
         assert_eq!(report.dependents[0].distance, 1);
+        assert_eq!(report.schema, IMPACT_SCHEMA);
+        assert_eq!(
+            report.suggested_commands,
+            vec![
+                format!("codegraph node-card . --node-id {target}"),
+                format!("codegraph journey --from {entrypoint} --to {target} ."),
+                format!("codegraph refactor-context {target} . --from {entrypoint}"),
+            ]
+        );
 
         let missing = impact(
             &graph,
@@ -19489,6 +19565,11 @@ mod tests {
         assert_eq!(
             report.generated_query,
             "configs target:DATABASE_URL depth:6"
+        );
+        assert_eq!(report.schema, NATURAL_QUERY_SCHEMA);
+        assert_eq!(
+            report.cli_snippet,
+            "codegraph query 'configs target:DATABASE_URL depth:6' ."
         );
         assert_eq!(report.rule, "config_or_environment");
         assert_eq!(report.confidence, "high");

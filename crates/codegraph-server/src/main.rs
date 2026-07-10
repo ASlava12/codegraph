@@ -833,11 +833,18 @@ struct ApiEndpointSpec {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     response_headers: Vec<ApiHeaderSpec>,
     streaming: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    example: Option<&'static str>,
 }
 
 impl ApiEndpointSpec {
     fn with_body_fields(mut self, body_fields: Vec<ApiParameterSpec>) -> Self {
         self.body_fields = body_fields;
+        self
+    }
+
+    fn with_example(mut self, example: &'static str) -> Self {
+        self.example = Some(example);
         self
     }
 
@@ -5070,14 +5077,16 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "CodeGraph | DOT | NDJSON",
                 )
-                .with_response_headers(export_response_headers()),
+                .with_response_headers(export_response_headers())
+                .with_example("/api/export?path=.&format=dot"),
                 api_get(
                     "/api/graph",
                     "Read a server-side paged and filtered graph slice. Returned edges include metadata.edge_index for exact edge explanation and UI selection.",
                     graph_slice_params(),
                     "GraphSlice",
                 )
-                .with_response_fields(graph_slice_response_fields()),
+                .with_response_fields(graph_slice_response_fields())
+                .with_example("/api/graph?path=.&node_limit=250&kind=function&search=scan"),
                 api_get(
                     "/api/node-context",
                     "Read selected node context with neighboring edges. Returned edges include metadata.edge_index for exact edge explanation and UI selection.",
@@ -5096,7 +5105,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "NodeContext",
                 )
-                .with_response_fields(node_context_response_fields()),
+                .with_response_fields(node_context_response_fields())
+                .with_example("/api/node-context?path=.&node_id=n42&edge_limit=40"),
                 api_get(
                     "/api/node-card",
                     "Read selected node investigation card with neighboring edges, dependency summary facets, file-level summaries, source preview, related risks including file-scoped contained-node risks, risk summaries, exact edge indexes, and suggested focused graph query actions.",
@@ -5133,7 +5143,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "NodeCard",
                 )
-                .with_response_fields(node_card_response_fields()),
+                .with_response_fields(node_card_response_fields())
+                .with_example("/api/node-card?path=.&node_id=n42&source_context=8"),
                 api_get(
                     "/api/focus",
                     "Build a focused subgraph from node ids and edge indexes. Returned edges include metadata.edge_index for exact edge explanation and UI selection.",
@@ -5166,13 +5177,15 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "QueryResult",
                 )
-                .with_response_fields(query_result_response_fields()),
+                .with_response_fields(query_result_response_fields())
+                .with_example("/api/focus?path=.&node_ids=42,43&edge_limit=100"),
                 api_get(
                     "/api/summary",
                     "Summarize graph node/edge facts and facets.",
                     vec![path_param()],
                     "GraphSummary",
-                ),
+                )
+                .with_example("/api/summary?path=."),
                 api_get(
                     "/api/query",
                     "Run a focused graph query expression such as nodes, edges, calls, neighbors, path, dependents, symbols, files, docs, sql, entrypoints, routes, packages, configs, errors, cycles, hotspots, unreachable, diagnostics, annotations, or insights. QueryResult includes returned counts, edge metadata.edge_index values, and facets for node kinds, edge kinds, languages, item kinds, and confidence.",
@@ -5197,7 +5210,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "QueryResult",
                 )
-                .with_response_fields(query_result_response_fields()),
+                .with_response_fields(query_result_response_fields())
+                .with_example("/api/query?path=.&q=neighbors label:main direction:out depth:2 edge_kind:calls"),
                 api_get(
                     "/api/ask",
                     "Map a natural-language investigation question to a deterministic bounded graph query, run it, and return the generated query, rule, confidence, alternatives, and QueryResult.",
@@ -5222,7 +5236,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "NaturalQueryReport",
                 )
-                .with_response_fields(natural_query_response_fields()),
+                .with_response_fields(natural_query_response_fields())
+                .with_example("/api/ask?path=.&q=Where is DATABASE_URL read?"),
                 api_get(
                     "/api/explain-edge",
                     "Explain why an edge exists with confidence, provenance evidence, and related edge-scoped risk findings.",
@@ -5247,7 +5262,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "EdgeExplanation?",
                 )
-                .with_response_fields(edge_explanation_response_fields()),
+                .with_response_fields(edge_explanation_response_fields())
+                .with_example("/api/explain-edge?path=.&edge_index=12430"),
             ],
         },
         ApiSchemaGroup {
@@ -5259,7 +5275,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     report_params(),
                     "ProjectReportResponse",
                 )
-                .with_response_fields(project_report_response_fields()),
+                .with_response_fields(project_report_response_fields())
+                .with_example("/api/report?path=.&format=json"),
                 api_get(
                     "/api/architecture",
                     "Group files and cross-area dependencies by top-level project area.",
@@ -5280,7 +5297,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "ArchitectureMap",
                 )
-                .with_response_fields(architecture_map_response_fields()),
+                .with_response_fields(architecture_map_response_fields())
+                .with_example("/api/architecture?path=."),
                 api_get(
                     "/api/language-dependencies",
                     "Summarize mixed-language dependency links.",
@@ -5298,7 +5316,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "LanguageDependencyReport",
                 )
-                .with_response_fields(language_dependency_response_fields()),
+                .with_response_fields(language_dependency_response_fields())
+                .with_example("/api/language-dependencies?path=.&limit=20"),
                 api_get(
                     "/api/surprising-links",
                     "Rank cross-area, cross-language, low-confidence, and boundary dependency links with exact edge evidence.",
@@ -5316,7 +5335,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "SurprisingLinkReport",
                 )
-                .with_response_fields(surprising_link_response_fields()),
+                .with_response_fields(surprising_link_response_fields())
+                .with_example("/api/surprising-links?path=.&limit=10"),
                 api_get(
                     "/api/hotspots",
                     "List high-degree files, functions, entrypoints, and config nodes.",
@@ -5328,7 +5348,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "HotspotReport",
                 )
-                .with_response_fields(hotspot_response_fields()),
+                .with_response_fields(hotspot_response_fields())
+                .with_example("/api/hotspots?path=.&limit=10"),
                 api_get(
                     "/api/communities",
                     "List deterministic graph communities/subsystems with sample nodes and edge indexes.",
@@ -5340,13 +5361,15 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "CommunityReport",
                 )
-                .with_response_fields(community_response_fields()),
+                .with_response_fields(community_response_fields())
+                .with_example("/api/communities?path=.&limit=10"),
                 api_get(
                     "/api/entrypoints",
                     "List detected entrypoint candidate nodes.",
                     vec![path_param()],
                     "Node[]",
-                ),
+                )
+                .with_example("/api/entrypoints?path=."),
                 api_get(
                     "/api/entrypoint-traces",
                     "Trace outgoing dependency flows from entrypoints.",
@@ -5372,7 +5395,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "EntrypointTraceReport",
                 )
-                .with_response_fields(entrypoint_trace_response_fields()),
+                .with_response_fields(entrypoint_trace_response_fields())
+                .with_example("/api/entrypoint-traces?path=.&search=server&depth=3"),
                 api_get(
                     "/api/entrypoint-workflows",
                     "Convert detected entrypoints into block-style workflow reports.",
@@ -5461,21 +5485,24 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "EntrypointWorkflowReport",
                 )
-                .with_response_fields(entrypoint_workflow_response_fields()),
+                .with_response_fields(entrypoint_workflow_response_fields())
+                .with_example("/api/entrypoint-workflows?path=.&entrypoint_kind=route&depth=4"),
                 api_get(
                     "/api/insights",
                     "List investigation insights with severity, kind, and search filters.",
                     insight_params(),
                     "InsightReport",
                 )
-                .with_response_fields(insight_report_response_fields()),
+                .with_response_fields(insight_report_response_fields())
+                .with_example("/api/insights?path=.&severity=warning&limit=20"),
                 api_get(
                     "/api/check",
                     "Run a quality gate over insights.",
                     check_params(),
                     "CheckReport",
                 )
-                .with_response_fields(check_report_response_fields()),
+                .with_response_fields(check_report_response_fields())
+                .with_example("/api/check?path=.&fail_on=error"),
                 api_get(
                     "/api/trace",
                     "Trace outgoing dependencies from a node id or label.",
@@ -5494,7 +5521,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "TraceResult?",
                 )
-                .with_response_fields(trace_result_response_fields()),
+                .with_response_fields(trace_result_response_fields())
+                .with_example("/api/trace?path=.&label=main&depth=2"),
                 api_get(
                     "/api/workflow",
                     "Convert an outgoing trace from a node id or label into block-style workflow steps.",
@@ -5569,7 +5597,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "WorkflowReport?",
                 )
-                .with_response_fields(workflow_response_fields()),
+                .with_response_fields(workflow_response_fields())
+                .with_example("/api/workflow?path=.&label=main&depth=4"),
                 api_get(
                     "/api/workflow-query",
                     "Convert graph query result nodes into block-style workflow reports.",
@@ -5652,7 +5681,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "WorkflowQueryReport",
                 )
-                .with_response_fields(workflow_query_response_fields()),
+                .with_response_fields(workflow_query_response_fields())
+                .with_example("/api/workflow-query?path=.&q=entrypoints language:rust&depth=4"),
                 api_get(
                     "/api/journey",
                     "Expand the shortest entrypoint-to-target path into a step-numbered execution journey built from workflow blocks.",
@@ -5691,7 +5721,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "JourneyReport",
                 )
-                .with_response_fields(journey_response_fields()),
+                .with_response_fields(journey_response_fields())
+                .with_example("/api/journey?path=.&from=main&to=load_config&depth=8&paths=3"),
                 api_post(
                     "/api/mcp",
                     "HTTP MCP transport: handle one MCP JSON-RPC 2.0 message (initialize, ping, tools/list, tools/call) against the scanned graph; protected by the same optional bearer token as every /api/ route. Notifications return 202 with no body.",
@@ -5750,7 +5781,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         "object",
                         "JSON-RPC error with `code` and `message` for parse errors, unsupported methods, and batch requests.",
                     ),
-                ]),
+                ])
+                .with_example("POST /api/mcp {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"),
                 api_get(
                     "/api/component-dependencies",
                     "Group a node's incoming/outgoing dependencies by architecture area, package, and language.",
@@ -5782,7 +5814,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "ComponentDependencyReport",
                 )
-                .with_response_fields(component_dependency_response_fields()),
+                .with_response_fields(component_dependency_response_fields())
+                .with_example("/api/component-dependencies?path=.&target=load_config"),
                 api_get(
                     "/api/component-contract",
                     "List the exact dependency edges between two architecture areas with confidence and related risks.",
@@ -5813,7 +5846,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "ComponentContractReport",
                 )
-                .with_response_fields(component_contract_response_fields()),
+                .with_response_fields(component_contract_response_fields())
+                .with_example("/api/component-contract?path=.&source=docs&target=crates"),
                 api_get(
                     "/api/impact",
                     "Report the blast radius of changing a node: dependents, affected entrypoints/routes/tests, and a risk-weighted impact score.",
@@ -5845,7 +5879,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "ImpactReport",
                 )
-                .with_response_fields(impact_response_fields()),
+                .with_response_fields(impact_response_fields())
+                .with_example("/api/impact?path=.&target=load_config&depth=6"),
                 api_get(
                     "/api/seams",
                     "Rank cross-area boundaries by coupling friction: safest seams to extract and most tangled boundaries needing work.",
@@ -5870,7 +5905,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "SeamReport",
                 )
-                .with_response_fields(seam_response_fields()),
+                .with_response_fields(seam_response_fields())
+                .with_example("/api/seams?path=.&limit=25"),
                 api_get(
                     "/api/pr-impact",
                     "PR impact dashboard: map changed files onto graph communities, hotspots, blast radius, and risky findings, with optional CI/review context.",
@@ -5906,7 +5942,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         ),
                     ],
                     "PrImpactReport",
-                ),
+                )
+                .with_example("/api/pr-impact?path=.&base=origin/main&ci_state=passing"),
                 api_get(
                     "/api/refactor-context",
                     "Emit a one-shot refactor context bundle: blast-radius impact, component dependencies, optional entrypoint journey, related risks, and a target source preview.",
@@ -5969,7 +6006,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "RefactorContextBundle",
                 )
-                .with_response_fields(refactor_context_response_fields()),
+                .with_response_fields(refactor_context_response_fields())
+                .with_example("/api/refactor-context?path=.&target=load_config&from=main&depth=8"),
                 api_get(
                     "/api/dependents",
                     "Trace incoming dependents that can reach a node.",
@@ -5988,7 +6026,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "TraceResult?",
                 )
-                .with_response_fields(trace_result_response_fields()),
+                .with_response_fields(trace_result_response_fields())
+                .with_example("/api/dependents?path=.&label=load_config&depth=3"),
                 api_get(
                     "/api/trace-config",
                     "Trace config/environment readers and paths from entrypoints.",
@@ -6014,7 +6053,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "ConfigTraceResult",
                 )
-                .with_response_fields(config_trace_response_fields()),
+                .with_response_fields(config_trace_response_fields())
+                .with_example("/api/trace-config?path=.&target=DATABASE_URL&depth=6"),
                 api_get(
                     "/api/trace-errors",
                     "Trace potential error/exception paths back to sources and entrypoints.",
@@ -6040,7 +6080,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "ErrorTraceResult",
                 )
-                .with_response_fields(error_trace_response_fields()),
+                .with_response_fields(error_trace_response_fields())
+                .with_example("/api/trace-errors?path=.&target=failed to load&depth=6"),
             ],
         },
         ApiSchemaGroup {
@@ -6073,7 +6114,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "SourceResponse",
                 )
-                .with_response_fields(source_preview_response_fields()),
+                .with_response_fields(source_preview_response_fields())
+                .with_example("/api/source?path=.&file=src/main.rs&start_line=10&end_line=40"),
                 api_get(
                     "/api/source-search",
                     "Search source text with compact context snippets.",
@@ -6111,7 +6153,8 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     ],
                     "SourceSearchResult",
                 )
-                .with_response_fields(source_search_response_fields()),
+                .with_response_fields(source_search_response_fields())
+                .with_example("/api/source-search?path=.&q=failed to read&limit=10"),
             ],
         },
     ]
@@ -6563,7 +6606,7 @@ fn api_schema_response_fields() -> Vec<ApiParameterSpec> {
             "groups",
             true,
             "ApiSchemaGroup[]",
-            "Machine-readable endpoint groups.",
+            "Machine-readable endpoint groups; investigation endpoints carry a copy-paste-ready `example` request.",
         ),
         response_field(
             "enum_values",
@@ -6952,6 +6995,12 @@ fn query_result_response_fields() -> Vec<ApiParameterSpec> {
 fn natural_query_response_fields() -> Vec<ApiParameterSpec> {
     vec![
         response_field(
+            "schema",
+            true,
+            "string",
+            "Report schema id, currently codegraph.ask.v1.",
+        ),
+        response_field(
             "question",
             true,
             "string",
@@ -6962,6 +7011,12 @@ fn natural_query_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "string",
             "Deterministic graph query generated from the question.",
+        ),
+        response_field(
+            "cli_snippet",
+            true,
+            "string",
+            "Copy-paste-ready CLI equivalent of the generated query, for example `codegraph query 'configs target:DATABASE_URL depth:6' .`.",
         ),
         response_field(
             "rule",
@@ -7523,6 +7578,18 @@ fn seam_response_fields() -> Vec<ApiParameterSpec> {
 
 fn impact_response_fields() -> Vec<ApiParameterSpec> {
     vec![
+        response_field(
+            "schema",
+            true,
+            "string",
+            "Report schema id, currently codegraph.impact.v1.",
+        ),
+        response_field(
+            "suggested_commands",
+            true,
+            "string[]",
+            "Copy-paste-ready CLI follow-ups: inspect the target node card, then read or bundle the path from the nearest affected entrypoint.",
+        ),
         response_field("target", true, "Node", "Resolved impact target node."),
         response_field(
             "area",
@@ -7690,6 +7757,18 @@ fn component_contract_response_fields() -> Vec<ApiParameterSpec> {
 
 fn journey_response_fields() -> Vec<ApiParameterSpec> {
     vec![
+        response_field(
+            "schema",
+            true,
+            "string",
+            "Report schema id, currently codegraph.journey.v1.",
+        ),
+        response_field(
+            "suggested_commands",
+            true,
+            "string[]",
+            "Copy-paste-ready CLI follow-ups: impact, refactor-context, and node-card commands for the journey target.",
+        ),
         response_field("from", true, "Node", "Resolved journey start node."),
         response_field("to", true, "Node", "Resolved journey target node."),
         response_field(
@@ -8020,6 +8099,7 @@ fn api_endpoint(
         response_fields: Vec::new(),
         response_headers: Vec::new(),
         streaming,
+        example: None,
     }
 }
 
@@ -11136,6 +11216,50 @@ fn helper() {}
                 field.name == "matches" && field.value_type == "SourceSearchMatch[]"
             })
         );
+    }
+
+    #[test]
+    fn api_schema_investigation_endpoints_publish_examples() {
+        let schema = api_schema_response();
+        for group in schema
+            .groups
+            .iter()
+            .filter(|group| matches!(group.group, "graph" | "analysis" | "source"))
+        {
+            for endpoint in &group.endpoints {
+                let example = endpoint
+                    .example
+                    .unwrap_or_else(|| panic!("{} should publish an example", endpoint.path));
+                assert!(
+                    example.contains(endpoint.path),
+                    "{} example should be a copy-paste request for the same path",
+                    endpoint.path
+                );
+            }
+        }
+        let ask_endpoint = schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == "/api/ask")
+            .expect("schema should list ask endpoint");
+        assert!(ask_endpoint.response_fields.iter().any(|field| {
+            field.name == "cli_snippet" && field.value_type == "string" && field.required
+        }));
+        for path in ["/api/impact", "/api/journey"] {
+            let endpoint = schema
+                .groups
+                .iter()
+                .flat_map(|group| group.endpoints.iter())
+                .find(|endpoint| endpoint.path == path)
+                .expect("schema should list endpoint");
+            assert!(endpoint.response_fields.iter().any(|field| {
+                field.name == "schema" && field.value_type == "string" && field.required
+            }));
+            assert!(endpoint.response_fields.iter().any(|field| {
+                field.name == "suggested_commands" && field.value_type == "string[]"
+            }));
+        }
     }
 
     #[test]

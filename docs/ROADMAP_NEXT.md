@@ -148,7 +148,7 @@ Usability polish:
 - [x] Unify CLI ergonomics: consistent flags, defaults, `--help` examples, actionable errors.
 - [x] Improve web discoverability: onboarding hints, explanatory empty states, sane default filters for large graphs.
 - [x] Add task-oriented guides (investigate a bug, trace a config value, plan a refactor) — `GUIDES.md`, every command live-verified against this repository.
-- [ ] Make agent-facing outputs self-describing with schema examples and copy-paste-ready snippets.
+- [x] Make agent-facing outputs self-describing with schema examples and copy-paste-ready snippets (schema ids + `suggested_commands`/`cli_snippet` on impact/journey/ask; `example` requests on every graph/analysis/source endpoint in `/api/schema`).
 
 Exit criteria:
 
