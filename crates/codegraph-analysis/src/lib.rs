@@ -11399,10 +11399,23 @@ fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: &mut Vec<In
             .and_then(|index| graph.edges.get(*index))
             .and_then(|edge| node_label(graph, edge.source))
             .unwrap_or("unknown");
+        // Imports inside inline test modules or test-convention files are
+        // fixture wiring, not production dead links, mirroring the
+        // benchmark-oracle test exclusions (Phase 9 dogfooding).
+        let severity = if node
+            .metadata
+            .get("test_context")
+            .is_some_and(|value| value == "true")
+            || is_test_like_source_path(source)
+        {
+            InsightSeverity::Info
+        } else {
+            InsightSeverity::Warning
+        };
 
         insights.push(Insight {
             kind: "unresolved_local_import".to_string(),
-            severity: InsightSeverity::Warning,
+            severity,
             message: format!(
                 "`{source}` imports local target `{target}` but no matching file was found"
             ),
@@ -11503,10 +11516,26 @@ fn add_unresolved_sql_table_reference_insights(graph: &CodeGraph, insights: &mut
             .and_then(|index| graph.edges.get(*index))
             .and_then(|edge| node_label(graph, edge.source))
             .unwrap_or("unknown source");
+        // SQL strings in inline test modules or test-convention files are
+        // fixtures, not production queries against the indexed schema,
+        // mirroring the benchmark-oracle test exclusions (Phase 9 dogfooding).
+        let severity = if node
+            .metadata
+            .get("test_context")
+            .is_some_and(|value| value == "true")
+            || node
+                .span
+                .as_ref()
+                .is_some_and(|span| is_test_like_source_path(&span.path))
+        {
+            InsightSeverity::Info
+        } else {
+            InsightSeverity::Warning
+        };
 
         insights.push(Insight {
             kind: "unresolved_sql_table_reference".to_string(),
-            severity: InsightSeverity::Warning,
+            severity,
             message: format!(
                 "`{source}` has {operation} SQL query `{}` referencing table(s) `{tables}` without a matching indexed schema table",
                 node.label
@@ -20637,6 +20666,94 @@ mod tests {
         assert_eq!(
             report.by_kind.get("unresolved_sql_table_reference"),
             Some(&1)
+        );
+    }
+
+    #[test]
+    fn fixture_driven_unresolved_findings_read_as_info() {
+        let mut graph = CodeGraph::new("repo");
+
+        // SQL string extracted from an inline `#[cfg(test)]` module.
+        let test_fn = graph.add_node(NodeKind::Function, "roundtrip_test");
+        let inline_query = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "sql query:src/lib.rs:900",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "app_sql_query".to_string()),
+                ("operation".to_string(), "select".to_string()),
+                ("unresolved_tables".to_string(), "missing".to_string()),
+                ("test_context".to_string(), "true".to_string()),
+            ]),
+        );
+        graph.add_edge(
+            test_fn,
+            inline_query,
+            EdgeKind::References,
+            Confidence::Heuristic,
+        );
+
+        // SQL string extracted from a test-convention file path.
+        let fixture_fn = graph.add_node(NodeKind::Function, "seed_db");
+        let fixture_query = graph.add_node_with_metadata(
+            NodeKind::Config,
+            "sql query:tests/seed.py:3",
+            Some(codegraph_core::SourceSpan {
+                path: "tests/seed.py".to_string(),
+                start_line: 3,
+                start_column: 1,
+                end_line: 3,
+                end_column: 40,
+            }),
+            BTreeMap::from([
+                ("item_kind".to_string(), "app_sql_query".to_string()),
+                ("operation".to_string(), "select".to_string()),
+                ("unresolved_tables".to_string(), "missing".to_string()),
+            ]),
+        );
+        graph.add_edge(
+            fixture_fn,
+            fixture_query,
+            EdgeKind::References,
+            Confidence::Heuristic,
+        );
+
+        // Unresolved local import declared by a test-convention file.
+        let test_file = graph.add_node(NodeKind::File, "src/app_test.py");
+        let fixture_import = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            "from helpers import seed",
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "import".to_string()),
+                ("import_scope".to_string(), "local".to_string()),
+                ("import_target".to_string(), "helpers".to_string()),
+                ("resolution".to_string(), "unresolved".to_string()),
+            ]),
+        );
+        graph.add_edge(
+            test_file,
+            fixture_import,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+
+        let report = insights(&graph);
+        let severities = |kind: &str| {
+            report
+                .insights
+                .iter()
+                .filter(|insight| insight.kind == kind)
+                .map(|insight| insight.severity)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            severities("unresolved_sql_table_reference"),
+            vec![InsightSeverity::Info, InsightSeverity::Info]
+        );
+        assert_eq!(
+            severities("unresolved_local_import"),
+            vec![InsightSeverity::Info]
         );
     }
 

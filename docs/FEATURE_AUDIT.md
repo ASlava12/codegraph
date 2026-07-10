@@ -171,6 +171,19 @@ grade critical → high. 88 of the remaining 104 warnings come from test
 fixtures (embedded SQL strings, fixture imports); dampening those is
 filed as a new Phase 3 item.
 
+Resolution (2026-07-10): closer inspection showed 87 of the 88 were
+extractor false positives, not fixture facts needing dampening. The SQL
+literal matcher treated any string containing `from <word>` as a SELECT
+("Build a workflow from a selected node" produced table `a`; format
+strings and raw-string test fixtures produced the rest), and the Rust
+local-import resolver treated `use super::*;` and `use crate::SomeType`
+item imports as unresolved module files. Both extractors were fixed at
+the root (statement-shaped SQL gate; glob/uppercase `use` segments are
+not file imports), and the promised dampening also landed: SQL facts
+from inline `#[cfg(test)]` modules carry `test_context` metadata, and
+both insight kinds read as `info` for test-convention paths. Warnings
+104 → 16, score 1,040 → 160, grade high → low.
+
 ## Non-findings worth recording
 
 - All 53 audited CLI commands and all 60 API endpoints completed

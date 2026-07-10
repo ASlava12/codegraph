@@ -1267,6 +1267,9 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
                 }
 
                 let mut local_functions = BTreeMap::new();
+                let test_cutoff = source_text
+                    .as_deref()
+                    .and_then(|source| rust_test_module_cutoff(language, source));
                 for item in parsed.items.iter().filter(|item| is_symbol_item(item.kind)) {
                     let node_kind = match item.kind {
                         ParsedItemKind::Function | ParsedItemKind::Entrypoint => NodeKind::Function,
@@ -1320,6 +1323,9 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
                         item_metadata
                             .insert("import_target".to_string(), local_import.target.clone());
                         item_metadata.insert("resolution".to_string(), "pending".to_string());
+                        if test_cutoff.is_some_and(|cutoff| item.span.start_line >= cutoff) {
+                            item_metadata.insert("test_context".to_string(), "true".to_string());
+                        }
                     }
 
                     let item_id = context.graph.add_node_with_metadata(
@@ -2234,11 +2240,13 @@ fn index_inline_sql_queries(
         })
         .collect::<Vec<_>>();
 
+    let test_cutoff = rust_test_module_cutoff(language, source);
     for literal in source_sql_literals(source) {
         let table_refs = sql_query_table_refs(&literal.value);
         if table_refs.is_empty() {
             continue;
         }
+        let test_context = test_cutoff.is_some_and(|cutoff| literal.line >= cutoff);
 
         let operation = table_refs
             .iter()
@@ -2265,6 +2273,9 @@ fn index_inline_sql_queries(
         metadata.insert("item_kind".to_string(), "app_sql_query".to_string());
         metadata.insert("source".to_string(), "source_sql_literal".to_string());
         metadata.insert("line".to_string(), literal.line.to_string());
+        if test_context {
+            metadata.insert("test_context".to_string(), "true".to_string());
+        }
         metadata.insert("operation".to_string(), operation);
         metadata.insert("tables".to_string(), tables);
         metadata.insert(
@@ -2490,6 +2501,18 @@ fn index_sql_create_index(
     }
 }
 
+/// Line of the first `#[cfg(test)]` marker in a Rust source. Facts extracted
+/// at or below it come from inline test modules, mirroring the
+/// benchmark-oracle exclusion for test code.
+fn rust_test_module_cutoff(language: Language, source: &str) -> Option<u32> {
+    if language != Language::Rust {
+        return None;
+    }
+    source
+        .find("#[cfg(test)]")
+        .map(|offset| byte_line_number(source, offset))
+}
+
 fn source_sql_literals(source: &str) -> Vec<SourceSqlLiteral> {
     let mut literals = Vec::new();
     let mut cursor = 0;
@@ -2586,8 +2609,35 @@ fn raw_string_literal_at(source: &str, cursor: usize) -> Option<(String, usize)>
     ))
 }
 
+/// A string literal only counts as an SQL statement when its first token is a
+/// statement keyword. Without this gate, prose such as "Build a workflow from
+/// a selected node" matches the bare `from <word>` pattern and produces
+/// phantom table references (Phase 9 dogfooding).
+fn sql_statement_shaped(tokens: &[String]) -> bool {
+    let Some(first) = tokens.first() else {
+        return false;
+    };
+    match first.to_ascii_lowercase().as_str() {
+        "select" | "insert" | "delete" | "replace" => true,
+        // Real UPDATE statements carry a SET clause; "Update Cache" does not.
+        "update" => tokens
+            .iter()
+            .skip(1)
+            .any(|token| token.eq_ignore_ascii_case("set")),
+        // Real CTEs contain a SELECT; "With flour from the mill" does not.
+        "with" => tokens
+            .iter()
+            .skip(1)
+            .any(|token| token.eq_ignore_ascii_case("select")),
+        _ => false,
+    }
+}
+
 fn sql_query_table_refs(query: &str) -> Vec<SqlQueryTableRef> {
     let tokens = sql_query_tokens(query);
+    if !sql_statement_shaped(&tokens) {
+        return Vec::new();
+    }
     let mut refs = Vec::new();
     let mut seen = BTreeSet::new();
 
@@ -11483,6 +11533,17 @@ fn rust_local_import_target(source_label: &str, import_label: &str) -> Option<Lo
     if module.is_empty() || matches!(module, "self" | "super" | "crate") {
         return None;
     }
+    // Glob imports (`use super::*;`) and leading-uppercase segments
+    // (`use crate::ImpactRequest`) name items inside an already-loaded
+    // module, not module files that could resolve on disk.
+    if module == "*"
+        || module
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_uppercase())
+    {
+        return None;
+    }
     let module_path = join_path(base.as_deref(), module);
     Some(LocalImportTarget {
         target: module.to_string(),
@@ -14204,6 +14265,88 @@ CREATE VIEW active_users AS SELECT id, email FROM users;
 
         let coverage = scan_coverage(&root, &IndexOptions::default()).unwrap();
         assert_eq!(coverage.languages.get("sql"), Some(&1));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sql_query_table_refs_require_statement_shaped_literals() {
+        assert!(
+            sql_query_table_refs(
+                "Build a workflow from a selected node, Entry Flows, or a query, then open it here."
+            )
+            .is_empty()
+        );
+        assert!(sql_query_table_refs("Update Cache").is_empty());
+        assert!(
+            sql_query_table_refs("`x` imports `serde` from production-like code, but the package")
+                .is_empty()
+        );
+        assert!(sql_query_table_refs("With flour from the mill").is_empty());
+
+        assert_eq!(sql_query_table_refs("SELECT id FROM users").len(), 1);
+        assert_eq!(
+            sql_query_table_refs("UPDATE users SET email = ? WHERE id = ?").len(),
+            1
+        );
+        assert_eq!(
+            sql_query_table_refs("WITH active AS (SELECT id FROM users) SELECT * FROM active")
+                .len(),
+            2
+        );
+        let delete_refs = sql_query_table_refs("DELETE FROM audit_log");
+        assert!(
+            delete_refs
+                .iter()
+                .any(|reference| reference.operation == "delete" && reference.table == "audit_log")
+        );
+        assert_eq!(
+            sql_query_table_refs("INSERT INTO users (email) VALUES (?)").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn rust_use_globs_and_item_imports_are_not_local_file_imports() {
+        assert!(rust_local_import_target("crates/x/src/lib.rs", "use super::*;").is_none());
+        assert!(
+            rust_local_import_target(
+                "crates/x/src/mcp.rs",
+                "use crate::{ImpactRequest, QueryError};"
+            )
+            .is_none()
+        );
+        let module = rust_local_import_target("crates/x/src/main.rs", "use crate::mcp;")
+            .expect("module import should stay resolvable");
+        assert_eq!(module.target, "mcp");
+        assert!(
+            module
+                .candidates
+                .iter()
+                .any(|candidate| candidate.ends_with("src/mcp.rs"))
+        );
+    }
+
+    #[test]
+    fn rust_inline_test_sql_fixtures_are_marked_test_context() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("lib.rs"),
+            "pub fn run() {}\n\n#[cfg(test)]\nmod tests {\n    const QUERY: &str = \"SELECT id FROM missing_table\";\n}\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+        let query = graph
+            .nodes
+            .iter()
+            .find(|node| node.label.starts_with("sql query:src/lib.rs:"))
+            .expect("inline test SQL literal should still be indexed");
+        assert_eq!(
+            query.metadata.get("test_context").map(String::as_str),
+            Some("true")
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

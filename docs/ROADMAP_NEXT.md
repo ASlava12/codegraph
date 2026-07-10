@@ -149,6 +149,7 @@ Usability polish:
 - [x] Improve web discoverability: onboarding hints, explanatory empty states, sane default filters for large graphs.
 - [x] Add task-oriented guides (investigate a bug, trace a config value, plan a refactor) — `GUIDES.md`, every command live-verified against this repository.
 - [x] Make agent-facing outputs self-describing with schema examples and copy-paste-ready snippets (schema ids + `suggested_commands`/`cli_snippet` on impact/journey/ask; `example` requests on every graph/analysis/source endpoint in `/api/schema`).
+- [x] Dampen fixture-driven warnings for test-convention facts (dogfood follow-up filed in ROADMAP Phase 3): fixed the SQL literal matcher (statement-shaped gate) and Rust `use` import resolution at the root, added `test_context` dampening for real fixtures; warnings on this repository 104 → 16, grade high → low.
 
 Exit criteria:
 

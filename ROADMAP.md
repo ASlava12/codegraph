@@ -191,7 +191,7 @@ Goal: answer practical code investigation questions.
 - [x] Add insight severity and kind breakdowns for triage.
 - [x] Calibrate `unresolved_call` insight severity for syntactic-only scans and deduplicate findings by call label (audit F3: 26.9k warnings grade this repository critical).
 - [x] Give branch/loop/async/return/error-flow facts a dedicated node kind or surface `item_kind` in kind facets instead of `unknown` (audit F4).
-- [ ] Dampen fixture-driven warnings (SQL table references, unresolved local imports) for facts extracted from test-convention files, mirroring the benchmark-oracle exclusions (Phase 9 dogfooding: 88 of 104 remaining warnings on this repository come from test fixtures).
+- [x] Dampen fixture-driven warnings (SQL table references, unresolved local imports) for facts extracted from test-convention files, mirroring the benchmark-oracle exclusions (Phase 9 dogfooding: 88 of 104 remaining warnings on this repository come from test fixtures; resolved 2026-07-10 — 87 were extractor false positives fixed at the root, plus `test_context` dampening for real fixtures; warnings 104 → 16, grade high → low).
 - [x] Make web insight severity breakdown chips clickable triage filters.
 - [x] Add web insight JSON export for filtered findings and triage handoff.
 - [x] Add CI/agent check command, API, and web quality gate for insight severity thresholds.
