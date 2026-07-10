@@ -128,7 +128,7 @@ The CLI check command emits machine-readable insight reports and exits non-zero 
 
 The web UI renders the current graph slice on a canvas with explicit viewport controls for zooming, fitting, resetting, and pausing force layout simulation.
 
-`codegraph-server` exposes the graph over HTTP and serves the embedded browser UI from `codegraph-web`.
+`codegraph-server` exposes the graph over HTTP and serves the embedded browser UI from `codegraph-web`. The binary is organized by feature area: `limits` (runtime constants and embedded assets), `contracts` (request/response structs and app state), `middleware` (auth, headers, logging, static assets), `jobs` (async scan/semantic job lifecycle), `system_handlers`, `semantic_handlers`, `analysis_handlers`, `params` (request parsing and the API error contract), and `schema` (the machine-readable `/api/schema` contract); `main.rs` keeps router wiring and shutdown.
 
 Responsibilities:
 

@@ -626,7 +626,7 @@ Exit criteria:
 Goal: pay down structural debt so the codebase stays fast to change while
 behavior remains guarded by the existing test suite.
 
-- [ ] Split the monolithic crate files (`codegraph-analysis/src/lib.rs`, `codegraph-server/src/main.rs`, `codegraph-web/static/app.js`) into focused modules with clear ownership (done: `codegraph-parser` → 5 modules; `codegraph-indexer` → 15 feature modules, public APIs unchanged; remaining files land one crate per commit).
+- [ ] Split the monolithic crate files (`codegraph-analysis/src/lib.rs`, `codegraph-web/static/app.js`) into focused modules with clear ownership (done: `codegraph-parser` → 5 modules; `codegraph-indexer` → 15 modules; `codegraph-server` → 9 modules, public surfaces unchanged; remaining files land one crate per commit).
 - [x] Fix all clippy warnings on the current stable toolchain and keep `-D warnings` green in CI without allow-listing (31 warnings fixed 2026-07-10; the existing CI clippy job is green again with zero `#[allow(clippy::...)]` attributes).
 - [ ] Extract shared report, filter, paging, and request-struct helpers to remove duplication between CLI, API, and web contracts.
 - [ ] Reduce long parameter lists by grouping them into request/options structs across analysis and server entry functions.
