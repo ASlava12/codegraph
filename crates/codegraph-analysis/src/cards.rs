@@ -50,11 +50,14 @@ pub fn node_context(graph: &CodeGraph, node_id: NodeId, edge_limit: usize) -> Op
 pub fn node_card(
     graph: &CodeGraph,
     root: Option<&Path>,
-    node_id: NodeId,
-    edge_limit: usize,
-    source_context: u32,
-    insight_limit: usize,
+    request: NodeCardRequest,
 ) -> io::Result<Option<NodeCard>> {
+    let NodeCardRequest {
+        node_id,
+        edge_limit,
+        source_context,
+        insight_limit,
+    } = request;
     let Some(context) = node_context(graph, node_id, edge_limit) else {
         return Ok(None);
     };

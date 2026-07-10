@@ -754,9 +754,18 @@ fn node_card_includes_context_source_and_related_insights() {
     );
     graph.add_edge(function, error, EdgeKind::MayError, Confidence::Heuristic);
 
-    let card = node_card(&graph, Some(&root), function, 10, 1, 10)
-        .unwrap()
-        .expect("expected node card");
+    let card = node_card(
+        &graph,
+        Some(&root),
+        NodeCardRequest {
+            node_id: function,
+            edge_limit: 10,
+            source_context: 1,
+            insight_limit: 10,
+        },
+    )
+    .unwrap()
+    .expect("expected node card");
 
     assert_eq!(card.context.node.id, function);
     assert_eq!(card.context.edges.len(), 4);
@@ -838,9 +847,18 @@ fn node_card_includes_context_source_and_related_insights() {
                 )
     }));
 
-    let file_card = node_card(&graph, Some(&root), file, 10, 1, 10)
-        .unwrap()
-        .expect("expected file node card");
+    let file_card = node_card(
+        &graph,
+        Some(&root),
+        NodeCardRequest {
+            node_id: file,
+            edge_limit: 10,
+            source_context: 1,
+            insight_limit: 10,
+        },
+    )
+    .unwrap()
+    .expect("expected file node card");
     assert_eq!(file_card.context.node.id, file);
     assert_eq!(file_card.total_insights, 3);
     assert_eq!(
@@ -945,33 +963,69 @@ fn node_card_suggests_focused_graph_actions() {
         ]),
     );
 
-    let dependency_card = node_card(&graph, None, dependency, 10, 1, 10)
-        .unwrap()
-        .expect("expected dependency card");
+    let dependency_card = node_card(
+        &graph,
+        None,
+        NodeCardRequest {
+            node_id: dependency,
+            edge_limit: 10,
+            source_context: 1,
+            insight_limit: 10,
+        },
+    )
+    .unwrap()
+    .expect("expected dependency card");
     assert!(dependency_card.actions.iter().any(|action| {
         action.kind == "package_graph"
             && action.query == format!("packages node_id:{} edge_limit:300", dependency.0)
     }));
 
-    let config_card = node_card(&graph, None, config, 10, 1, 10)
-        .unwrap()
-        .expect("expected config card");
+    let config_card = node_card(
+        &graph,
+        None,
+        NodeCardRequest {
+            node_id: config,
+            edge_limit: 10,
+            source_context: 1,
+            insight_limit: 10,
+        },
+    )
+    .unwrap()
+    .expect("expected config card");
     assert!(config_card.actions.iter().any(|action| {
         action.kind == "config_graph"
             && action.query == format!("configs node_id:{} depth:6", config.0)
     }));
 
-    let error_card = node_card(&graph, None, error, 10, 1, 10)
-        .unwrap()
-        .expect("expected error card");
+    let error_card = node_card(
+        &graph,
+        None,
+        NodeCardRequest {
+            node_id: error,
+            edge_limit: 10,
+            source_context: 1,
+            insight_limit: 10,
+        },
+    )
+    .unwrap()
+    .expect("expected error card");
     assert!(error_card.actions.iter().any(|action| {
         action.kind == "error_graph"
             && action.query == format!("errors node_id:{} depth:6", error.0)
     }));
 
-    let document_card = node_card(&graph, None, document, 10, 1, 10)
-        .unwrap()
-        .expect("expected document card");
+    let document_card = node_card(
+        &graph,
+        None,
+        NodeCardRequest {
+            node_id: document,
+            edge_limit: 10,
+            source_context: 1,
+            insight_limit: 10,
+        },
+    )
+    .unwrap()
+    .expect("expected document card");
     assert!(document_card.actions.iter().any(|action| {
         action.kind == "document_graph"
             && action.query == format!("docs node_id:{} edge_limit:300", document.0)
@@ -3423,9 +3477,18 @@ fn query_sql_returns_schema_and_source_query_context() {
         query_graph(&graph, "sql unsupported:value").expect_err("invalid sql term should fail");
     assert!(error.to_string().contains("unsupported sql query term"));
 
-    let card = node_card(&graph, None, query, 10, 1, 10)
-        .expect("SQL query card should not error")
-        .expect("expected SQL query card");
+    let card = node_card(
+        &graph,
+        None,
+        NodeCardRequest {
+            node_id: query,
+            edge_limit: 10,
+            source_context: 1,
+            insight_limit: 10,
+        },
+    )
+    .expect("SQL query card should not error")
+    .expect("expected SQL query card");
     assert!(card.actions.iter().any(|action| {
         action.kind == "sql_graph"
             && action.query == format!("sql node_id:{} edge_limit:300", query.0)
@@ -8633,9 +8696,18 @@ fn insights_report_semantic_diagnostics() {
     assert_eq!(report.by_severity.get("error"), Some(&1));
     assert_eq!(report.by_kind.get("semantic_diagnostic"), Some(&1));
 
-    let card = node_card(&graph, None, file, 10, 1, 10)
-        .unwrap()
-        .expect("expected file card");
+    let card = node_card(
+        &graph,
+        None,
+        NodeCardRequest {
+            node_id: file,
+            edge_limit: 10,
+            source_context: 1,
+            insight_limit: 10,
+        },
+    )
+    .unwrap()
+    .expect("expected file card");
     assert!(
         card.insights
             .iter()

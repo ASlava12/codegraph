@@ -8,10 +8,10 @@
 
 use crate::{
     ImpactRequest, InsightFilter, InsightSeverity, JourneyRequest, NaturalQueryRequest,
-    ProjectReportLimits, RefactorContextRequest, SourceSearchRequest, TraceStart, WorkflowFilters,
-    WorkflowRequest, compact_query_result, filter_insight_report, impact, insights, journey,
-    memory, natural_query, node_card, project_report, query_graph, refactor_context, search_source,
-    workflow,
+    NodeCardRequest, ProjectReportLimits, RefactorContextRequest, SourceSearchRequest, TraceStart,
+    WorkflowFilters, WorkflowRequest, compact_query_result, filter_insight_report, impact,
+    insights, journey, memory, natural_query, node_card, project_report, query_graph,
+    refactor_context, search_source, workflow,
 };
 use codegraph_core::{CodeGraph, NodeId};
 use serde_json::{Value, json};
@@ -175,10 +175,12 @@ impl McpEngine<'_> {
         let card = node_card(
             self.graph,
             self.root,
-            NodeId(node_id),
-            usize_arg(args, "edge_limit", 80),
-            u32_arg(args, "source_context", 5),
-            usize_arg(args, "insight_limit", 8),
+            NodeCardRequest {
+                node_id: NodeId(node_id),
+                edge_limit: usize_arg(args, "edge_limit", 80),
+                source_context: u32_arg(args, "source_context", 5),
+                insight_limit: usize_arg(args, "insight_limit", 8),
+            },
         )
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("node {node_id} was not found"))?;
@@ -377,14 +379,17 @@ impl McpEngine<'_> {
             .unwrap_or_default();
         let record = memory::save_memory(
             root,
-            required_str(args, "query")?.to_string(),
-            outcome,
-            args.get("note")
-                .and_then(Value::as_str)
-                .map(ToString::to_string),
-            node_ids,
-            fingerprint.to_string(),
-            recorded_at_unix,
+            memory::MemorySaveRequest {
+                query: required_str(args, "query")?.to_string(),
+                outcome,
+                note: args
+                    .get("note")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                node_ids,
+                fingerprint: fingerprint.to_string(),
+                recorded_at_unix,
+            },
         )
         .map_err(|error| error.to_string())?;
         serde_json::to_value(record).map_err(|error| error.to_string())

@@ -15,12 +15,12 @@ use codegraph_analysis::{
     EntrypointTraceRequest, EntrypointWorkflowReport, EntrypointWorkflowRequest, ErrorTraceRequest,
     ErrorTraceResult, ExplainEdgeRequest, FocusRequest, GraphSlice, GraphSliceRequest,
     ImpactReport, ImpactRequest, InsightFilter, InsightReport, InsightSeverity, JourneyReport,
-    JourneyRequest, McpEngine, NaturalQueryReport, NaturalQueryRequest, NodeCard, NodeContext,
-    ProjectReportMarkdownOptions, RefactorContextBundle, RefactorContextRequest, SeamReport,
-    SeamRequest, SourcePreview, SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart,
-    WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map,
-    check_insights, communities, compact_query_result, component_contract, component_dependencies,
-    entrypoints, explain_edge, export_cypher, export_dot, export_falkordb,
+    JourneyRequest, McpEngine, NaturalQueryReport, NaturalQueryRequest, NodeCard, NodeCardRequest,
+    NodeContext, ProjectReportMarkdownOptions, RefactorContextBundle, RefactorContextRequest,
+    SeamReport, SeamRequest, SourcePreview, SourceSearchRequest, SourceSearchResult, TraceRequest,
+    TraceStart, WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport, WorkflowRequest,
+    architecture_map, check_insights, communities, compact_query_result, component_contract,
+    component_dependencies, entrypoints, explain_edge, export_cypher, export_dot, export_falkordb,
     export_graph_mermaid_html, export_graphml, export_ndjson, filter_insight_report,
     focus_subgraph, hotspots, impact, insights, journey, language_dependencies, natural_query,
     node_card, node_context, project_report, project_report_markdown, query_graph,
@@ -324,10 +324,12 @@ pub(crate) async fn node_card_api(
         node_card(
             &output.graph,
             Some(&root),
-            node_id,
-            edge_limit,
-            source_context,
-            insight_limit,
+            NodeCardRequest {
+                node_id,
+                edge_limit,
+                source_context,
+                insight_limit,
+            },
         )
         .map_err(|error| error.to_string())
     })

@@ -19,7 +19,7 @@ use codegraph_analysis::{
     DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
     DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceRequest, EntrypointWorkflowRequest,
     ErrorTraceRequest, ExplainEdgeRequest, ImpactRequest, InsightFilter, InsightSeverity,
-    JourneyRequest, NaturalQueryRequest, ProjectReport, ProjectReportLimits,
+    JourneyRequest, NaturalQueryRequest, NodeCardRequest, ProjectReport, ProjectReportLimits,
     ProjectReportMarkdownOptions, RefactorContextRequest, SeamRequest, SourceSearchRequest,
     TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryRequest, WorkflowRequest,
     architecture_map, check_insights, communities, compact_query_result, component_contract,
@@ -2323,12 +2323,14 @@ fn main() -> Result<()> {
                 .unwrap_or_default();
             let record = memory::save_memory(
                 &path,
-                query,
-                outcome,
-                note,
-                node_ids,
-                fingerprint,
-                recorded_at_unix,
+                memory::MemorySaveRequest {
+                    query,
+                    outcome,
+                    note,
+                    node_ids,
+                    fingerprint,
+                    recorded_at_unix,
+                },
             )?;
             println!("{}", serde_json::to_string_pretty(&record)?);
         }
@@ -2570,10 +2572,12 @@ fn main() -> Result<()> {
             let card = node_card(
                 &graph,
                 Some(&args.scan.path),
-                NodeId(args.node_id),
-                args.edge_limit,
-                args.source_context,
-                args.insight_limit,
+                NodeCardRequest {
+                    node_id: NodeId(args.node_id),
+                    edge_limit: args.edge_limit,
+                    source_context: args.source_context,
+                    insight_limit: args.insight_limit,
+                },
             )?
             .ok_or_else(|| anyhow::anyhow!("node {} not found", args.node_id))?;
             println!("{}", serde_json::to_string_pretty(&card)?);

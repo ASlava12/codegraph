@@ -77,15 +77,27 @@ pub fn memory_path(root: &Path) -> PathBuf {
     root.join(".codegraph").join(MEMORY_FILE)
 }
 
-pub fn save_memory(
-    root: &Path,
-    query: String,
-    outcome: MemoryOutcome,
-    note: Option<String>,
-    node_ids: Vec<u64>,
-    fingerprint: String,
-    recorded_at_unix: u64,
-) -> Result<MemoryRecord> {
+/// One saved investigation outcome, shared by the CLI `memory-save`
+/// command and the MCP `memory_save` tool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemorySaveRequest {
+    pub query: String,
+    pub outcome: MemoryOutcome,
+    pub note: Option<String>,
+    pub node_ids: Vec<u64>,
+    pub fingerprint: String,
+    pub recorded_at_unix: u64,
+}
+
+pub fn save_memory(root: &Path, request: MemorySaveRequest) -> Result<MemoryRecord> {
+    let MemorySaveRequest {
+        query,
+        outcome,
+        note,
+        node_ids,
+        fingerprint,
+        recorded_at_unix,
+    } = request;
     let (existing, _) = load_records(root)?;
     let record = MemoryRecord {
         id: format!("mem-{}", existing.len() + 1),
@@ -316,23 +328,27 @@ mod tests {
         let root = temp_root();
         let first = save_memory(
             &root,
-            "configs target:DATABASE_URL".to_string(),
-            MemoryOutcome::Useful,
-            Some("readers live in server config module".to_string()),
-            vec![12, 40],
-            "fp-old".to_string(),
-            1_000,
+            MemorySaveRequest {
+                query: "configs target:DATABASE_URL".to_string(),
+                outcome: MemoryOutcome::Useful,
+                note: Some("readers live in server config module".to_string()),
+                node_ids: vec![12, 40],
+                fingerprint: "fp-old".to_string(),
+                recorded_at_unix: 1_000,
+            },
         )
         .expect("save first");
         assert_eq!(first.id, "mem-1");
         let second = save_memory(
             &root,
-            "calls(function:legacy_worker)".to_string(),
-            MemoryOutcome::DeadEnd,
-            None,
-            vec![],
-            "fp-current".to_string(),
-            2_000,
+            MemorySaveRequest {
+                query: "calls(function:legacy_worker)".to_string(),
+                outcome: MemoryOutcome::DeadEnd,
+                note: None,
+                node_ids: vec![],
+                fingerprint: "fp-current".to_string(),
+                recorded_at_unix: 2_000,
+            },
         )
         .expect("save second");
         assert_eq!(second.id, "mem-2");
@@ -363,22 +379,26 @@ mod tests {
         let root = temp_root();
         save_memory(
             &root,
-            "q1".to_string(),
-            MemoryOutcome::Useful,
-            None,
-            vec![],
-            "fp".to_string(),
-            1,
+            MemorySaveRequest {
+                query: "q1".to_string(),
+                outcome: MemoryOutcome::Useful,
+                note: None,
+                node_ids: vec![],
+                fingerprint: "fp".to_string(),
+                recorded_at_unix: 1,
+            },
         )
         .unwrap();
         save_memory(
             &root,
-            "q2".to_string(),
-            MemoryOutcome::Corrected,
-            Some("actual reader is load_config".to_string()),
-            vec![7],
-            "fp-stale".to_string(),
-            2,
+            MemorySaveRequest {
+                query: "q2".to_string(),
+                outcome: MemoryOutcome::Corrected,
+                note: Some("actual reader is load_config".to_string()),
+                node_ids: vec![7],
+                fingerprint: "fp-stale".to_string(),
+                recorded_at_unix: 2,
+            },
         )
         .unwrap();
 
@@ -397,32 +417,38 @@ mod tests {
         let root = temp_root();
         save_memory(
             &root,
-            "configs target:DATABASE_URL".to_string(),
-            MemoryOutcome::Useful,
-            Some("reader lives in load_config".to_string()),
-            vec![7],
-            "fp-current".to_string(),
-            10,
+            MemorySaveRequest {
+                query: "configs target:DATABASE_URL".to_string(),
+                outcome: MemoryOutcome::Useful,
+                note: Some("reader lives in load_config".to_string()),
+                node_ids: vec![7],
+                fingerprint: "fp-current".to_string(),
+                recorded_at_unix: 10,
+            },
         )
         .unwrap();
         save_memory(
             &root,
-            "calls(function:legacy_worker)".to_string(),
-            MemoryOutcome::DeadEnd,
-            Some("legacy_worker is unreachable".to_string()),
-            vec![],
-            "fp-old".to_string(),
-            20,
+            MemorySaveRequest {
+                query: "calls(function:legacy_worker)".to_string(),
+                outcome: MemoryOutcome::DeadEnd,
+                note: Some("legacy_worker is unreachable".to_string()),
+                node_ids: vec![],
+                fingerprint: "fp-old".to_string(),
+                recorded_at_unix: 20,
+            },
         )
         .unwrap();
         save_memory(
             &root,
-            "configs target:API_KEY".to_string(),
-            MemoryOutcome::Corrected,
-            Some("actual reader is auth module, not server".to_string()),
-            vec![7, 999],
-            "fp-current".to_string(),
-            30,
+            MemorySaveRequest {
+                query: "configs target:API_KEY".to_string(),
+                outcome: MemoryOutcome::Corrected,
+                note: Some("actual reader is auth module, not server".to_string()),
+                node_ids: vec![7, 999],
+                fingerprint: "fp-current".to_string(),
+                recorded_at_unix: 30,
+            },
         )
         .unwrap();
 
@@ -467,12 +493,14 @@ mod tests {
         let root = temp_root();
         save_memory(
             &root,
-            "q1".to_string(),
-            MemoryOutcome::Useful,
-            None,
-            vec![],
-            "fp".to_string(),
-            1,
+            MemorySaveRequest {
+                query: "q1".to_string(),
+                outcome: MemoryOutcome::Useful,
+                note: None,
+                node_ids: vec![],
+                fingerprint: "fp".to_string(),
+                recorded_at_unix: 1,
+            },
         )
         .unwrap();
         let path = memory_path(&root);

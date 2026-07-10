@@ -218,6 +218,16 @@ pub struct WorkflowRequest {
     pub compact: bool,
 }
 
+/// Node investigation card options, shared by the CLI `node-card`
+/// command, `/api/node-card`, and the MCP `get_node_card` tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeCardRequest {
+    pub node_id: NodeId,
+    pub edge_limit: usize,
+    pub source_context: u32,
+    pub insight_limit: usize,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowFilters {
     pub edge_kind: Option<String>,
