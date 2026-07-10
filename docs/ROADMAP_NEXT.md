@@ -93,7 +93,7 @@ Goal: make graph knowledge portable into external tools.
 - [x] Add Obsidian vault / Markdown wiki export for communities, entrypoints, hotspots, config flows, and risky insights.
 - [x] Add Neo4j Cypher and FalkorDB export targets.
 - [x] Add a PR impact dashboard from changed files, graph communities, CI/review state, and shared hotspots.
-- [ ] Add a benchmark harness for token/context savings and graph-query recall on real mixed corpora.
+- [x] Add a benchmark harness for token/context savings and graph-query recall on real mixed corpora.
 
 Exit criteria:
 

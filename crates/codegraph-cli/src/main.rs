@@ -1,3 +1,4 @@
+mod bench_context;
 mod hooks;
 mod install;
 mod mcp;
@@ -238,6 +239,28 @@ enum Command {
         /// Registry file override; defaults to <cache-dir>/registry.json.
         #[arg(long)]
         registry_path: Option<PathBuf>,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Benchmark token/context savings and graph-query recall against text-scan oracles.
+    BenchContext {
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Maximum sampled symbols/config keys per savings task.
+        #[arg(long, default_value_t = 20)]
+        samples: usize,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
 
         #[command(flatten)]
         cache: CacheArgs,
@@ -1930,6 +1953,23 @@ fn main() -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&merged)?);
                 }
             }
+        }
+        Command::BenchContext {
+            path,
+            samples,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph = scan_with_options(
+                path.clone(),
+                include_hidden,
+                include_ignored,
+                max_file_size,
+                &cache,
+            )?;
+            let report = bench_context::run_benchmark(&graph, &path, samples)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::PrImpact {
             path,

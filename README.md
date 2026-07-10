@@ -245,6 +245,7 @@ Implemented now:
 - Graph merge (`codegraph merge`) combines exported graph artifacts and registered projects into one deterministic byte-stable graph with `merge_sources` provenance on every merged node/edge and an explicit metadata-conflict report.
 - Obsidian/Markdown wiki export (`codegraph export-wiki`) writes an interlinked vault of communities, entrypoints, hotspots, config flows, and risky findings that opens in Obsidian without conversion.
 - PR impact dashboard (`codegraph pr-impact`) maps changed files from git onto touched communities, shared hotspots, reverse-dependent blast radius, and changed-code risks with a deterministic risk score for merge gates.
+- Benchmark harness (`codegraph bench-context`) quantifies token/context savings of bounded graph slices versus raw reading and measures extraction recall against independent text-scan oracles.
 - API schema enum values document cache status, reuse strategy, incremental actions, and merge blocker kinds for agent-safe incremental workflows.
 - Web incremental cache diagnostics show localized completeness blockers and safe-update reasons.
 - Scan coverage reports in CLI, API, and web overview for indexed files, policy skips, large-file skips, and non-indexed files.
@@ -732,6 +733,14 @@ cargo run -p codegraph-cli -- pr-impact . --file src/util.rs --file src/main.rs
 
 `pr-impact` takes the changed-file list from `git diff --name-only <base>` (default `HEAD`, so working-tree changes; `--file` overrides skip git entirely) and maps it onto the graph as a `codegraph.pr_impact.v1` dashboard: which communities the change lands in, which shared hotspots it contains or feeds (`contains_changes` / `depends_on_changes`), the blast radius of reverse dependents with affected entrypoint/test/route counts and sample entrypoints, warning/error findings anchored in the changed code, and a deterministic risk score. `--ci-state` and `--review-state` strings are recorded verbatim so CI pipelines can stamp their context into the artifact.
 
+Measure what the graph is worth on a real corpus:
+
+```bash
+cargo run -p codegraph-cli -- bench-context . --samples 20
+```
+
+`bench-context` produces a `codegraph.benchmark.v1` report with two families of numbers. Token/context savings compare the bytes (and estimated tokens at bytes/4) an agent would otherwise read — the whole corpus for a project overview, every file mentioning a name for grep-style symbol and config lookups — against the bytes of the bounded graph slice answering the same question, as per-task and total basis-point savings. Graph-query recall is measured against oracles built independently of the parser pipeline by plain text scanning (function definition headers, environment-variable read patterns), so extraction gaps surface as recall below 100% with sample misses listed for follow-up. Sampling is sorted and deterministic: the same corpus produces the same report.
+
 Save investigation outcomes as repository memory and reuse them between sessions:
 
 ```bash
@@ -1077,7 +1086,7 @@ Planned Dart/Flutter depth:
 
 Planned repository-knowledge features inspired by Graphify-style workflows:
 
-- Deeper document ingestion beyond Markdown, deeper SQL query analysis, migration ordering, ORM/database-config linking, optional non-code document ingestion, a token-savings benchmark harness, and SVG export.
+- Deeper document ingestion beyond Markdown, deeper SQL query analysis, migration ordering, ORM/database-config linking, optional non-code document ingestion, and SVG export.
 - The detailed Graphify parity map is tracked in [`docs/GRAPHIFY_PARITY.md`](docs/GRAPHIFY_PARITY.md), including already covered capabilities, gaps, priorities, and compatibility principles.
 
 Supported package manifests:
