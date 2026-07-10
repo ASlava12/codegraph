@@ -392,7 +392,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add optional API bearer-token protection with web UI token handling.
 - [x] Add project report snapshots across CLI, API, and web export.
 - [x] Add full-project risk summary and limit-independent quality gate evaluation to report snapshots.
-- [ ] Bound the `quality_gate` payload in report snapshots to counts, severity breakdowns, and a capped finding sample while keeping evaluation limit-independent (audit F1: 6.1 MB of uncapped insights make the report larger than the codebase).
+- [x] Bound the `quality_gate` payload in report snapshots to counts, severity breakdowns, and a capped finding sample while keeping evaluation limit-independent (audit F1: 6.1 MB of uncapped insights make the report larger than the codebase).
 - [x] Surface project report risk summary in the web overview with severity and kind quick filters.
 - [x] Surface project report quality gate status in the web overview risk summary.
 - [x] Let the web overview quality gate chip run the matching quality check.

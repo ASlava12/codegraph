@@ -1302,6 +1302,9 @@ pub struct ProjectRiskKindSummary {
     pub count: usize,
 }
 
+/// Maximum insight sample embedded in the report `quality_gate` payload.
+/// Gate evaluation stays limit-independent; only the embedded list is capped.
+pub const REPORT_QUALITY_GATE_SAMPLE_LIMIT: usize = 25;
 pub const DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT: usize = 50;
 pub const MAX_REPORT_ARCHITECTURE_GROUP_LIMIT: usize = 500;
 pub const DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT: usize = 200;
@@ -2719,11 +2722,25 @@ pub fn check_insights(report: InsightReport, fail_on: InsightSeverity) -> CheckR
     }
 }
 
+/// Cap the insight list embedded in a gate report to a failing-first sample.
+/// Totals, breakdowns, and the pass/fail verdict stay limit-independent.
+pub fn bounded_quality_gate(mut check: CheckReport, sample_limit: usize) -> CheckReport {
+    check
+        .report
+        .insights
+        .sort_by(|a, b| b.severity.cmp(&a.severity));
+    check.report.insights.truncate(sample_limit.max(1));
+    check
+}
+
 pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> ProjectReport {
     let limits = normalize_project_report_limits(limits);
     let full_insight_report = insights(graph);
     let risk_summary = project_risk_summary(&full_insight_report);
-    let quality_gate = check_insights(full_insight_report.clone(), limits.fail_on);
+    let quality_gate = bounded_quality_gate(
+        check_insights(full_insight_report.clone(), limits.fail_on),
+        REPORT_QUALITY_GATE_SAMPLE_LIMIT,
+    );
     let file_summaries =
         compact_file_summaries(graph, &full_insight_report, limits.file_summary_limit);
     let node_summaries =
@@ -15297,6 +15314,7 @@ mod tests {
                 .any(|summary| summary.roles.iter().any(|role| role == "entrypoint"))
         );
         assert_eq!(report.insights.total, report.quality_gate.report.total);
+        assert!(report.quality_gate.report.insights.len() <= REPORT_QUALITY_GATE_SAMPLE_LIMIT);
         assert_eq!(report.risk_summary.total, report.quality_gate.report.total);
         assert_eq!(report.risk_summary.errors, 1);
         assert_eq!(report.risk_summary.warnings, 1);
@@ -23380,6 +23398,57 @@ mod tests {
         let clean_check = check_insights(clean_report, InsightSeverity::Warning);
         assert!(clean_check.passed);
         assert_eq!(clean_check.failing_insights, 0);
+    }
+
+    #[test]
+    fn bounded_quality_gate_caps_sample_and_keeps_totals() {
+        let severities = [
+            InsightSeverity::Info,
+            InsightSeverity::Warning,
+            InsightSeverity::Error,
+        ];
+        let insights: Vec<Insight> = (0..30)
+            .map(|index| Insight {
+                kind: format!("kind_{index}"),
+                severity: severities[index % 3],
+                message: format!("finding {index}"),
+                nodes: Vec::new(),
+                edges: Vec::new(),
+            })
+            .collect();
+        let report = InsightReport {
+            total: 30,
+            by_severity: BTreeMap::from([
+                ("error".to_string(), 10),
+                ("warning".to_string(), 10),
+                ("info".to_string(), 10),
+            ]),
+            by_kind: BTreeMap::new(),
+            insights,
+        };
+
+        let gate = bounded_quality_gate(check_insights(report, InsightSeverity::Warning), 25);
+
+        assert!(!gate.passed);
+        assert_eq!(gate.failing_insights, 20);
+        assert_eq!(gate.report.total, 30);
+        assert_eq!(gate.report.by_severity.get("info"), Some(&10));
+        assert_eq!(gate.report.insights.len(), 25);
+        assert!(
+            gate.report.insights[..10]
+                .iter()
+                .all(|insight| insight.severity == InsightSeverity::Error)
+        );
+        assert!(
+            gate.report.insights[10..20]
+                .iter()
+                .all(|insight| insight.severity == InsightSeverity::Warning)
+        );
+        assert!(
+            gate.report.insights[20..]
+                .iter()
+                .all(|insight| insight.severity == InsightSeverity::Info)
+        );
     }
 
     #[test]

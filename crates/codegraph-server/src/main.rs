@@ -23,11 +23,11 @@ use codegraph_analysis::{
     MAX_REPORT_HOTSPOT_LIMIT, MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT,
     MAX_REPORT_NODE_SUMMARY_LIMIT, McpEngine, NaturalQueryReport, NaturalQueryRequest, NodeCard,
     NodeContext, ProjectReport, ProjectReportLimits, ProjectReportMarkdownOptions,
-    RefactorContextBundle, RefactorContextRequest, SeamReport, SeamRequest, SourcePreview,
-    SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters,
-    WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map,
-    check_insights, communities, compact_query_result, component_contract, component_dependencies,
-    entrypoints, explain_edge, export_cypher, export_dot, export_falkordb,
+    REPORT_QUALITY_GATE_SAMPLE_LIMIT, RefactorContextBundle, RefactorContextRequest, SeamReport,
+    SeamRequest, SourcePreview, SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart,
+    WorkflowFilters, WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport, WorkflowRequest,
+    architecture_map, check_insights, communities, compact_query_result, component_contract,
+    component_dependencies, entrypoints, explain_edge, export_cypher, export_dot, export_falkordb,
     export_graph_mermaid_html, export_graphml, export_ndjson, filter_insight_report,
     focus_subgraph, hotspots, impact, insights, journey, language_dependencies, natural_query,
     node_card, node_context, project_report, project_report_markdown, query_graph,
@@ -934,6 +934,7 @@ struct RuntimeLimitsResponse {
     max_report_community_limit: usize,
     default_report_insight_limit: usize,
     max_report_insight_limit: usize,
+    report_quality_gate_sample_limit: usize,
     default_report_file_summary_limit: usize,
     max_report_file_summary_limit: usize,
     default_report_node_summary_limit: usize,
@@ -1953,6 +1954,7 @@ async fn capabilities_api(
             max_report_community_limit: MAX_REPORT_COMMUNITY_LIMIT,
             default_report_insight_limit: DEFAULT_REPORT_INSIGHT_LIMIT,
             max_report_insight_limit: MAX_REPORT_INSIGHT_LIMIT,
+            report_quality_gate_sample_limit: REPORT_QUALITY_GATE_SAMPLE_LIMIT,
             default_report_file_summary_limit: DEFAULT_REPORT_FILE_SUMMARY_LIMIT,
             max_report_file_summary_limit: MAX_REPORT_FILE_SUMMARY_LIMIT,
             default_report_node_summary_limit: DEFAULT_REPORT_NODE_SUMMARY_LIMIT,
@@ -8541,6 +8543,7 @@ mod tests {
         assert_eq!(response.limits.max_report_community_limit, 500);
         assert_eq!(response.limits.default_report_insight_limit, 50);
         assert_eq!(response.limits.max_report_insight_limit, 500);
+        assert_eq!(response.limits.report_quality_gate_sample_limit, 25);
         assert_eq!(response.limits.default_report_file_summary_limit, 25);
         assert_eq!(response.limits.max_report_file_summary_limit, 500);
         assert_eq!(response.limits.default_report_node_summary_limit, 25);

@@ -399,7 +399,7 @@ cargo run -p codegraph-cli -- report . --fail-on warning --insight-limit 100
 cargo run -p codegraph-cli -- report . --format markdown --output CODEGRAPH_REPORT.md
 ```
 
-The JSON report includes a `risk_summary` with total findings, severity counts, a weighted score, a grade, and the top insight kinds. The quality gate is calculated from the full insight set even when the returned insight list is capped with `--insight-limit`. The Markdown report is a Graphify-style handoff artifact for humans and agents, with summary, compact node/file summaries, key concepts, communities, surprising links, architecture links, risks, evidence ids, suggested questions, and confidence wording that maps CodeGraph evidence to extracted/resolved/inferred/ambiguous labels.
+The JSON report includes a `risk_summary` with total findings, severity counts, a weighted score, a grade, and the top insight kinds. The quality gate is calculated from the full insight set even when the returned insight list is capped with `--insight-limit`; the gate payload itself carries limit-independent totals and severity/kind breakdowns plus a failing-first sample of at most 25 findings, so report JSON stays compact on noisy repositories (the limit is published as `report_quality_gate_sample_limit` in `/api/capabilities`). The Markdown report is a Graphify-style handoff artifact for humans and agents, with summary, compact node/file summaries, key concepts, communities, surprising links, architecture links, risks, evidence ids, suggested questions, and confidence wording that maps CodeGraph evidence to extracted/resolved/inferred/ambiguous labels.
 
 Explain scan coverage before or after a full graph scan:
 
