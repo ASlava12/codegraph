@@ -34,6 +34,7 @@ Goal: extract language-independent structure from source files.
 - [x] Support Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, Dart, PHP, and Bash at syntax level.
 - [x] Add Dart syntax support for `.dart` files with files, libraries, imports/exports/parts, classes, mixins, extensions, functions, methods, constructors, and approximate call sites.
 - [x] Extract approximate call sites.
+- [ ] Deduplicate unresolved-call placeholder nodes by label and classify language builtins/std macros separately from external dependencies (audit F2: 27k per-call-site `external_dependency` nodes on this repository).
 - [x] Resolve local import/include file dependencies where syntax-level paths are explicit.
 - [x] Resolve Dart relative imports, package imports from `pubspec.yaml`, and `part`/`part of` relationships.
 - [x] Resolve Dart generated-file conventions and `.dart_tool/package_config.json` package maps.
@@ -188,6 +189,8 @@ Goal: answer practical code investigation questions.
 - [x] Back web insights with server analysis during paged graph exploration.
 - [x] Add CLI, server-side, and web filters for insight severity, kind, and search.
 - [x] Add insight severity and kind breakdowns for triage.
+- [ ] Calibrate `unresolved_call` insight severity for syntactic-only scans and deduplicate findings by call label (audit F3: 26.9k warnings grade this repository critical).
+- [ ] Give branch/loop/async/return/error-flow facts a dedicated node kind or surface `item_kind` in kind facets instead of `unknown` (audit F4).
 - [x] Make web insight severity breakdown chips clickable triage filters.
 - [x] Add web insight JSON export for filtered findings and triage handoff.
 - [x] Add CI/agent check command, API, and web quality gate for insight severity thresholds.
@@ -214,6 +217,7 @@ Goal: answer practical code investigation questions.
 - [x] Add hotspot query slices for focused high-degree dependency context.
 - [x] Add query result facets for agent and web triage summaries.
 - [x] Add agent-facing natural-language query mode that maps English/Russian questions to bounded graph slices without vector storage.
+- [ ] Route environment/config questions in `ask` to the config trace rule for SCREAMING_SNAKE tokens with read/set verbs (audit F13: env questions misroute to `route_or_endpoint`).
 - [x] Add reverse dependent traces for impact analysis.
 - [x] Add web entrypoint trace JSON downloads for startup-flow handoff.
 - [x] Add web config/error trace JSON downloads for configuration and exception-flow handoff.
@@ -388,6 +392,7 @@ Goal: make the graph explorable interactively in a modern web UI.
 - [x] Add optional API bearer-token protection with web UI token handling.
 - [x] Add project report snapshots across CLI, API, and web export.
 - [x] Add full-project risk summary and limit-independent quality gate evaluation to report snapshots.
+- [ ] Bound the `quality_gate` payload in report snapshots to counts, severity breakdowns, and a capped finding sample while keeping evaluation limit-independent (audit F1: 6.1 MB of uncapped insights make the report larger than the codebase).
 - [x] Surface project report risk summary in the web overview with severity and kind quick filters.
 - [x] Surface project report quality gate status in the web overview risk summary.
 - [x] Let the web overview quality gate chip run the matching quality check.
@@ -509,6 +514,7 @@ Agent memory and automation:
 - [x] Add assistant installation commands for Codex and generic agent-skill instructions, generating project-scoped guidance to query CodeGraph before broad file reads.
 - [ ] Add optional local hooks that nudge agents toward CodeGraph query/path/explain before grep-heavy or raw-file-heavy workflows.
 - [x] Add MCP stdio server mode for graph query/path/explain/report/card access from external assistants.
+- [ ] Add MCP tools for `refactor_context`, `ask`, `source_search`, and investigation memory save/list/reflect so agent sessions do not shell out to the CLI (audit F7).
 - [x] Add optional authenticated HTTP MCP transport for shared team graph access.
 
 Update and team workflows:
@@ -524,9 +530,11 @@ Exports and dashboards:
 - [x] Add GraphML, Mermaid/callflow HTML, Obsidian vault / Markdown wiki, Neo4j Cypher, and FalkorDB export targets.
 - [ ] Add SVG export target.
 - [x] Add PR impact dashboard using graph communities, changed files, CI/review state, conflicts, and risky shared subsystems.
+- [ ] Expose the PR impact dashboard through the API and web UI, not only the CLI (audit F6).
 - [x] Add query logging with privacy controls, response logging opt-in, and local JSONL audit output.
 - [ ] Add explicit security model for external ingestion: URL validation, redirect blocking, size/time limits, label sanitization, and graph path constraints.
 - [x] Add benchmark harness for token/context savings and graph-query recall on real mixed corpora.
+- [ ] Exclude code patterns inside string literals and test fixtures from benchmark recall oracles (audit F12: fixture strings report false env-read misses).
 
 Exit criteria:
 
@@ -571,6 +579,8 @@ Refactoring reports:
 - [x] Add blast-radius reports for a selected node: dependents, affected entrypoints/routes/tests, and a risk-weighted impact score (CLI `impact`, API `/api/impact`).
 - [x] Add coupling/seam reports that suggest boundaries where extraction or splitting is safest and where it is most needed.
 - [x] Add a machine-readable refactor context bundle combining journey, dependencies, risks, and source spans for one-shot agent handoff.
+- [ ] Add web views or node-card actions for impact, seams, component dependencies/contracts, and refactor-context download (audit F5: refactoring reports are CLI/API-only).
+- [ ] Reuse cached report/insight results and bound journey search in refactor-context so warm-cache requests return in seconds, not minutes (audit F11).
 
 Exit criteria:
 
@@ -586,7 +596,7 @@ existing features genuinely convenient to use instead of merely present.
 
 Audit and completion:
 
-- [ ] Audit every checked roadmap item end-to-end across CLI, API, and web; file each found gap as a new unchecked item in its phase.
+- [x] Audit every checked roadmap item end-to-end across CLI, API, and web; file each found gap as a new unchecked item in its phase (see `docs/FEATURE_AUDIT.md`).
 - [ ] Sweep all phases for remaining unchecked items and finish, re-scope, or explicitly drop each one with a recorded reason.
 - [ ] Verify CLI/API/web feature parity: every analysis available in one surface is reachable from the other two or documented as intentionally surface-specific.
 - [ ] Dogfood CodeGraph on itself: run reports, insights, unreachable/journey queries against this repository and fix what the output makes hard to understand.
@@ -594,6 +604,9 @@ Audit and completion:
 Usability polish:
 
 - [ ] Unify CLI ergonomics: consistent flag names, sensible defaults, `--help` examples per command, and actionable error messages.
+- [ ] Accept `n42`-style node ids everywhere node ids are accepted, including `node-card --node-id`, `/api/node-card`, and `/api/node-context` (audit F8).
+- [ ] Unify API parameter naming for project root vs file path and return the structured JSON error contract for query-string deserialization failures (audit F9).
+- [ ] Add compact/summary output modes to `incremental-update` and `incremental-merge-preview` instead of printing the full graph JSON (audit F10).
 - [ ] Improve web discoverability: panel onboarding hints, empty states that explain the next action, and sane default filters for large graphs.
 - [ ] Add task-oriented documentation guides (investigate a bug, trace a config value, plan a refactor) instead of feature-list documentation only.
 - [ ] Make agent-facing outputs self-describing: stable field docs, examples in the API schema, and copy-paste-ready CLI snippets in responses where useful.

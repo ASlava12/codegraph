@@ -1091,6 +1091,7 @@ Planned repository-knowledge features inspired by Graphify-style workflows:
 
 - Deeper document ingestion beyond Markdown, deeper SQL query analysis, migration ordering, ORM/database-config linking, optional non-code document ingestion, and SVG export.
 - The detailed Graphify parity map is tracked in [`docs/GRAPHIFY_PARITY.md`](docs/GRAPHIFY_PARITY.md), including already covered capabilities, gaps, priorities, and compatibility principles.
+- The Phase 9 end-to-end feature audit (all CLI commands, API endpoints, web panels, and MCP tools exercised against this repository) is recorded in [`docs/FEATURE_AUDIT.md`](docs/FEATURE_AUDIT.md) with 13 filed findings.
 
 Supported package manifests:
 

@@ -122,7 +122,7 @@ Goal: ROADMAP Phase 9 — walk through every shipped feature, finish or
 explicitly close what is incomplete, and make existing features convenient
 rather than merely present.
 
-- [ ] Audit checked roadmap items end-to-end across CLI, API, and web; file every gap found as a new unchecked item in its phase.
+- [x] Audit checked roadmap items end-to-end across CLI, API, and web; file every gap found as a new unchecked item in its phase (13 findings recorded in `FEATURE_AUDIT.md`).
 - [ ] Sweep all phases for remaining unchecked items and finish, re-scope, or drop each with a recorded reason.
 - [ ] Verify CLI/API/web feature parity and close or document intentional surface-specific gaps.
 - [ ] Dogfood CodeGraph on itself and fix what its own reports make hard to understand.
