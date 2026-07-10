@@ -62,7 +62,7 @@ repository memory rather than a fresh index.
 - [x] Add an `install-agent` command that generates project-scoped guidance files (AGENTS.md/CLAUDE.md snippets, `.mcp.json` entries) nudging agents to query CodeGraph first.
 - [x] Add saved query/result memory with outcomes (`useful`, `dead_end`, `corrected`) linked to graph node ids and invalidated by cache fingerprints.
 - [x] Add reflection reports that aggregate saved investigation outcomes into repository lessons with provenance and stale-source warnings.
-- [ ] Add query logging with privacy controls and local JSONL audit output.
+- [x] Add query logging with privacy controls and local JSONL audit output.
 - [ ] Add optional authenticated HTTP MCP transport reusing the existing bearer-token protection.
 
 Exit criteria:

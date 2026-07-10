@@ -1,6 +1,7 @@
 mod install;
 mod mcp;
 mod memory;
+mod query_log;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -49,6 +50,11 @@ struct Cli {
     /// Maximum bytes to read from any single file during scans.
     #[arg(long, global = true)]
     max_file_size: Option<u64>,
+
+    /// Log query/ask/journey commands to .codegraph/query-log.jsonl for this run,
+    /// even when [query_log] is not enabled in .codegraph/config.toml.
+    #[arg(long, global = true)]
+    log_queries: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -318,6 +324,21 @@ enum Command {
 
         #[command(flatten)]
         cache: CacheArgs,
+    },
+
+    /// List local query audit records from .codegraph/query-log.jsonl.
+    QueryLog {
+        /// Project root containing the query log.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Only include records with this action, for example: query, ask, journey, mcp:query_graph.
+        #[arg(long)]
+        action: Option<String>,
+
+        /// Maximum number of most recent records to include.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
     },
 
     /// Emit a one-shot refactor context bundle: impact, dependencies, optional journey, risks, and source.
@@ -1269,6 +1290,7 @@ struct LanguageInfo {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let max_file_size = cli.max_file_size;
+    let log_queries = cli.log_queries;
 
     match cli.command {
         Command::Languages => {
@@ -1664,15 +1686,48 @@ fn main() -> Result<()> {
             compact,
             cache,
         } => {
-            let graph =
-                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
-            let result = query_graph(&graph, &expression)?;
-            let result = if compact {
-                compact_query_result(result)
-            } else {
-                result
-            };
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            let graph = scan_with_options(
+                path.clone(),
+                include_hidden,
+                include_ignored,
+                max_file_size,
+                &cache,
+            )?;
+            let started = Instant::now();
+            let result = query_graph(&graph, &expression);
+            let duration_ms = started.elapsed().as_millis() as u64;
+            match result {
+                Ok(result) => {
+                    let result = if compact {
+                        compact_query_result(result)
+                    } else {
+                        result
+                    };
+                    let output = serde_json::to_string_pretty(&result)?;
+                    log_cli_query(
+                        &path,
+                        log_queries,
+                        "query",
+                        &expression,
+                        "ok",
+                        duration_ms,
+                        Some(&output),
+                    );
+                    println!("{output}");
+                }
+                Err(error) => {
+                    log_cli_query(
+                        &path,
+                        log_queries,
+                        "query",
+                        &expression,
+                        "error",
+                        duration_ms,
+                        None,
+                    );
+                    return Err(error.into());
+                }
+            }
         }
         Command::Journey {
             from,
@@ -1684,9 +1739,16 @@ fn main() -> Result<()> {
             include_ignored,
             cache,
         } => {
-            let graph =
-                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
-            let report = journey(
+            let graph = scan_with_options(
+                path.clone(),
+                include_hidden,
+                include_ignored,
+                max_file_size,
+                &cache,
+            )?;
+            let query_text = format!("--from {from} --to {to}");
+            let started = Instant::now();
+            let result = journey(
                 &graph,
                 JourneyRequest {
                     from,
@@ -1694,8 +1756,35 @@ fn main() -> Result<()> {
                     max_depth: depth,
                     path_limit: paths,
                 },
-            )?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
+            );
+            let duration_ms = started.elapsed().as_millis() as u64;
+            match result {
+                Ok(report) => {
+                    let output = serde_json::to_string_pretty(&report)?;
+                    log_cli_query(
+                        &path,
+                        log_queries,
+                        "journey",
+                        &query_text,
+                        "ok",
+                        duration_ms,
+                        Some(&output),
+                    );
+                    println!("{output}");
+                }
+                Err(error) => {
+                    log_cli_query(
+                        &path,
+                        log_queries,
+                        "journey",
+                        &query_text,
+                        "error",
+                        duration_ms,
+                        None,
+                    );
+                    return Err(error.into());
+                }
+            }
         }
         Command::InstallAgent {
             path,
@@ -1780,6 +1869,14 @@ fn main() -> Result<()> {
                 &cache,
             )?;
             mcp::McpServer::new(graph, path).run()?;
+        }
+        Command::QueryLog {
+            path,
+            action,
+            limit,
+        } => {
+            let report = query_log::list_query_log(&path, action.as_deref(), limit)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::RefactorContext {
             target,
@@ -1908,10 +2005,44 @@ fn main() -> Result<()> {
             compact,
             cache,
         } => {
-            let graph =
-                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
-            let report = natural_query(&graph, NaturalQueryRequest { question, compact })?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
+            let graph = scan_with_options(
+                path.clone(),
+                include_hidden,
+                include_ignored,
+                max_file_size,
+                &cache,
+            )?;
+            let query_text = question.clone();
+            let started = Instant::now();
+            let result = natural_query(&graph, NaturalQueryRequest { question, compact });
+            let duration_ms = started.elapsed().as_millis() as u64;
+            match result {
+                Ok(report) => {
+                    let output = serde_json::to_string_pretty(&report)?;
+                    log_cli_query(
+                        &path,
+                        log_queries,
+                        "ask",
+                        &query_text,
+                        "ok",
+                        duration_ms,
+                        Some(&output),
+                    );
+                    println!("{output}");
+                }
+                Err(error) => {
+                    log_cli_query(
+                        &path,
+                        log_queries,
+                        "ask",
+                        &query_text,
+                        "error",
+                        duration_ms,
+                        None,
+                    );
+                    return Err(error.into());
+                }
+            }
         }
         Command::NodeCard(args) => {
             let graph = scan_with_options(
@@ -2293,6 +2424,43 @@ fn language_report() -> Vec<LanguageInfo> {
 
 fn canonical_workspace_root(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Best-effort local query audit: never fails the command, only warns.
+fn log_cli_query(
+    root: &Path,
+    force_enabled: bool,
+    action: &str,
+    query: &str,
+    outcome: &str,
+    duration_ms: u64,
+    response: Option<&str>,
+) {
+    let mut settings = match query_log::load_settings(root) {
+        Ok(settings) => settings,
+        Err(error) => {
+            eprintln!("warning: failed to load query log settings: {error:#}");
+            return;
+        }
+    };
+    if force_enabled {
+        settings.enabled = true;
+    }
+    if !settings.enabled {
+        return;
+    }
+    let event = query_log::QueryLogEvent {
+        surface: "cli",
+        action,
+        query,
+        outcome,
+        duration_ms,
+        response,
+        recorded_at_unix: query_log::unix_now(),
+    };
+    if let Err(error) = query_log::log_query(root, &settings, event) {
+        eprintln!("warning: failed to write query log: {error:#}");
+    }
 }
 
 fn project_fingerprint_hash(

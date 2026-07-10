@@ -156,6 +156,7 @@ Implemented now:
 - Saved investigation memory (`codegraph memory-save` / `memory-list`) records query outcomes with lessons and linked node ids in `.codegraph/memory.jsonl`, and flags records as stale when the project fingerprint changes.
 - Agent installation (`codegraph install-agent`) writes idempotent `.mcp.json` server entries and marker-delimited CLAUDE.md/AGENTS.md guidance blocks so assistants query the graph before raw file reads.
 - MCP stdio server (`codegraph mcp`) exposes query_graph, get_node_card, get_neighbors, shortest_path, workflow, insights, impact, and report tools over newline-delimited JSON-RPC so external assistants use the graph as persistent repository memory.
+- Opt-in query audit logging (`[query_log]` in `.codegraph/config.toml`, `codegraph query-log`) appends CLI query/ask/journey and MCP tool calls to local `.codegraph/query-log.jsonl` with sensitive-value redaction and response previews only behind a second opt-in.
 - Refactor context bundles (CLI `refactor-context`, API `/api/refactor-context`) combine impact, component dependencies, optional ranked journey, related risks, and a target source preview into one `codegraph.refactor_context.v1` JSON for one-shot agent handoff.
 - Coupling/seam reports (CLI `seams`, API `/api/seams`) rank cross-area boundaries by deterministic friction score both ways: safest thin seams for extraction and most tangled boundaries needing work, with edge-kind/confidence breakdowns and sample edge evidence.
 - Blast-radius reports (CLI `impact`, API `/api/impact`) list transitive dependents with distances, test flags, and risk counts, extract affected entrypoints/routes/tests, and compute a deterministic risk-weighted impact score for refactor planning.
@@ -701,6 +702,24 @@ Register it in an assistant's `.mcp.json`:
 ```
 
 The MCP server speaks newline-delimited JSON-RPC on stdin/stdout, scans the project once at startup (using the shared persistent cache), and exposes `query_graph`, `get_node_card`, `get_neighbors`, `shortest_path` (ranked journeys with fragile hops), `workflow`, `insights`, `impact`, and `report` tools with JSON Schema input contracts — so assistants can query the repository graph instead of reading raw files.
+
+Keep a local audit trail of how the graph is interrogated:
+
+```toml
+# .codegraph/config.toml
+[query_log]
+enabled = true          # audit logging is off until the repository opts in
+log_responses = false   # response previews are a separate opt-in
+redact = ["acme-internal"]  # extra literal terms to mask
+```
+
+```bash
+cargo run -p codegraph-cli -- query 'nodes kind:function label:main' .
+cargo run -p codegraph-cli -- ask "Where is DATABASE_URL read?" . --log-queries
+cargo run -p codegraph-cli -- query-log . --action ask --limit 20
+```
+
+With `[query_log]` enabled (or `--log-queries` forced for one run), CLI `query`/`ask`/`journey` commands and MCP tool calls append `codegraph.query_log.v1` records to repository-owned `.codegraph/query-log.jsonl`: surface (`cli`/`mcp`), action, query text, outcome, and duration. Privacy defaults are conservative — logging is disabled until opted in, responses are never stored unless `log_responses = true` (and are then redacted plus truncated to a bounded preview), sensitive `key=value`/`key:value` assignments such as tokens and passwords are masked before writing, and configured `redact` terms are stripped everywhere. Nothing leaves the repository; `query-log` lists the most recent records with per-action counts for review.
 
 Run the web application:
 

@@ -21,11 +21,17 @@ pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 pub struct McpServer {
     graph: CodeGraph,
     root: PathBuf,
+    log_settings: crate::query_log::QueryLogSettings,
 }
 
 impl McpServer {
     pub fn new(graph: CodeGraph, root: PathBuf) -> Self {
-        Self { graph, root }
+        let log_settings = crate::query_log::load_settings(&root).unwrap_or_default();
+        Self {
+            graph,
+            root,
+            log_settings,
+        }
     }
 
     pub fn run(&self) -> Result<()> {
@@ -105,6 +111,7 @@ impl McpServer {
             .ok_or_else(|| "tools/call requires a `name`".to_string())?;
         let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
+        let started = std::time::Instant::now();
         let payload = match name {
             "query_graph" => self.tool_query_graph(&args),
             "get_node_card" => self.tool_node_card(&args),
@@ -116,6 +123,7 @@ impl McpServer {
             "report" => self.tool_report(&args),
             _ => Err(format!("unknown tool `{name}`")),
         };
+        self.log_tool_call(name, &args, &payload, started.elapsed().as_millis() as u64);
 
         match payload {
             Ok(value) => Ok(json!({
@@ -126,6 +134,37 @@ impl McpServer {
                 "content": [{"type": "text", "text": message}],
                 "isError": true,
             })),
+        }
+    }
+
+    /// Best-effort local query audit: never fails the tool call, only warns.
+    fn log_tool_call(
+        &self,
+        name: &str,
+        args: &Value,
+        payload: &Result<Value, String>,
+        duration_ms: u64,
+    ) {
+        if !self.log_settings.enabled {
+            return;
+        }
+        let action = format!("mcp:{name}");
+        let query = args.to_string();
+        let (outcome, response) = match payload {
+            Ok(value) => ("ok", Some(value.to_string())),
+            Err(_) => ("error", None),
+        };
+        let event = crate::query_log::QueryLogEvent {
+            surface: "mcp",
+            action: &action,
+            query: &query,
+            outcome,
+            duration_ms,
+            response: response.as_deref(),
+            recorded_at_unix: crate::query_log::unix_now(),
+        };
+        if let Err(error) = crate::query_log::log_query(&self.root, &self.log_settings, event) {
+            eprintln!("warning: failed to write query log: {error:#}");
         }
     }
 
@@ -506,6 +545,51 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_neighbors","arguments":{"target":"main","direction":"out"}}}"#,
         ));
         assert_eq!(neighbors["result"]["isError"], false);
+    }
+
+    #[test]
+    fn tool_calls_are_audited_when_query_log_is_enabled() {
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .subsec_nanos();
+        let root =
+            std::env::temp_dir().join(format!("codegraph-mcp-log-{}-{nanos}", std::process::id()));
+        fs::create_dir_all(root.join(".codegraph")).expect("config dir");
+        fs::write(
+            root.join(".codegraph").join("config.toml"),
+            "[query_log]\nenabled = true\n",
+        )
+        .expect("config write");
+
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main");
+        graph.add_edge(graph.root, main, EdgeKind::Contains, Confidence::Exact);
+        let server = McpServer::new(graph, root.clone());
+
+        parse(server.handle_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"query_graph","arguments":{"query":"nodes kind:function"}}}"#,
+        ));
+        parse(server.handle_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ghost","arguments":{}}}"#,
+        ));
+
+        let report = crate::query_log::list_query_log(&root, None, 50).expect("query log report");
+        assert_eq!(report.total, 2);
+        assert_eq!(report.records[0].surface, "mcp");
+        assert_eq!(report.records[0].action, "mcp:query_graph");
+        assert!(report.records[0].query.contains("nodes kind:function"));
+        assert_eq!(report.records[0].outcome, "ok");
+        assert!(
+            report.records[0].response_preview.is_none(),
+            "responses stay out of the audit log unless opted in"
+        );
+        assert_eq!(report.records[1].action, "mcp:ghost");
+        assert_eq!(report.records[1].outcome, "error");
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]
