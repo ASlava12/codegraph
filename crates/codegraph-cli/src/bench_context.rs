@@ -111,13 +111,68 @@ fn load_corpus(graph: &CodeGraph, root: &Path) -> Vec<CorpusFile> {
     files
 }
 
+/// Test-convention paths whose contents are fixtures, not application code
+/// the graph is expected to model (audit F12).
+fn is_test_fixture_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    let file_name = normalized.rsplit('/').next().unwrap_or(&normalized);
+    normalized.contains("/tests/")
+        || normalized.contains("/test/")
+        || normalized.contains("/fixtures/")
+        || normalized.contains("/__tests__/")
+        || file_name.starts_with("test_")
+        || file_name.contains("_test.")
+        || file_name.contains(".test.")
+        || file_name.contains(".spec.")
+}
+
+/// Oracle-visible portion of a source file: test-fixture files are skipped
+/// entirely, and Rust files are truncated at the inline `#[cfg(test)]`
+/// module so fixture strings inside unit tests stop counting as expected
+/// oracle facts (audit F12).
+fn oracle_text(file: &CorpusFile) -> Option<&str> {
+    if is_test_fixture_path(&file.path) {
+        return None;
+    }
+    let text = file.text.as_deref()?;
+    if file.path.ends_with(".rs") {
+        if let Some(index) = text.find("#[cfg(test)]") {
+            return Some(&text[..index]);
+        }
+    }
+    Some(text)
+}
+
+/// A match at `column` sits inside a string literal when an odd number of
+/// unescaped quotes precede it on the line (audit F12: fixture code embedded
+/// in string literals must not count as expected oracle facts).
+fn inside_string_literal(line: &str, column: usize) -> bool {
+    let mut quotes = 0usize;
+    let mut escaped = false;
+    for (index, ch) in line.char_indices() {
+        if index >= column {
+            break;
+        }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' | '\'' => quotes += 1,
+            _ => {}
+        }
+    }
+    quotes % 2 == 1
+}
+
 /// Oracle 1: function definition names from plain header scanning,
 /// independent of the Tree-sitter pipeline.
 fn oracle_function_names(files: &[CorpusFile]) -> BTreeSet<String> {
     const HEADS: &[&str] = &["fn ", "def ", "func ", "function "];
     let mut names = BTreeSet::new();
     for file in files {
-        let Some(text) = &file.text else {
+        let Some(text) = oracle_text(file) else {
             continue;
         };
         for line in text.lines() {
@@ -157,13 +212,26 @@ fn oracle_env_keys(files: &[CorpusFile]) -> BTreeSet<String> {
     ];
     let mut keys = BTreeSet::new();
     for file in files {
-        let Some(text) = &file.text else {
+        let Some(text) = oracle_text(file) else {
             continue;
         };
         for pattern in PATTERNS {
             let mut cursor = 0;
             while let Some(found) = text[cursor..].find(pattern) {
-                let start = cursor + found + pattern.len();
+                let match_start = cursor + found;
+                let start = match_start + pattern.len();
+                let line_start = text[..match_start]
+                    .rfind('\n')
+                    .map(|index| index + 1)
+                    .unwrap_or(0);
+                let line_end = text[line_start..]
+                    .find('\n')
+                    .map(|index| line_start + index)
+                    .unwrap_or(text.len());
+                if inside_string_literal(&text[line_start..line_end], match_start - line_start) {
+                    cursor = start;
+                    continue;
+                }
                 let key: String = text[start..]
                     .chars()
                     .take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_')
@@ -508,5 +576,61 @@ mod tests {
         let keys = oracle_env_keys(&files);
         assert!(keys.contains("MY_KEY"));
         assert!(keys.contains("NODE_ENV"));
+    }
+
+    #[test]
+    fn oracles_skip_string_literals_and_test_fixtures() {
+        let files = vec![
+            CorpusFile {
+                path: "src/lib.rs".to_string(),
+                bytes: 10,
+                text: Some(
+                    concat!(
+                        "fn real_reader() {\n",
+                        "    let _ = env::var(\"REAL_KEY\");\n",
+                        "    let fixture = \"let _ = env::var(\\\"FAKE_KEY\\\");\";\n",
+                        "}\n",
+                        "#[cfg(test)]\n",
+                        "mod tests {\n",
+                        "    fn test_only_helper() {}\n",
+                        "    const T: &str = \"env::var(\";\n",
+                        "    // env::var(\"TEST_ONLY_KEY\") lives below cfg(test)\n",
+                        "}\n",
+                    )
+                    .to_string(),
+                ),
+            },
+            CorpusFile {
+                path: "tests/integration_test.rs".to_string(),
+                bytes: 10,
+                text: Some("fn fixture_fn() {}\nlet _ = env::var(\"FIXTURE_KEY\");\n".to_string()),
+            },
+        ];
+
+        let keys = oracle_env_keys(&files);
+        assert!(keys.contains("REAL_KEY"), "real reads still count");
+        assert!(
+            !keys.contains("FAKE_KEY"),
+            "string-literal fixtures are excluded: {keys:?}"
+        );
+        assert!(
+            !keys.contains("TEST_ONLY_KEY"),
+            "cfg(test) regions are excluded: {keys:?}"
+        );
+        assert!(
+            !keys.contains("FIXTURE_KEY"),
+            "test-path files are excluded: {keys:?}"
+        );
+
+        let names = oracle_function_names(&files);
+        assert!(names.contains("real_reader"));
+        assert!(
+            !names.contains("test_only_helper"),
+            "cfg(test) functions are excluded: {names:?}"
+        );
+        assert!(
+            !names.contains("fixture_fn"),
+            "test-path functions are excluded: {names:?}"
+        );
     }
 }

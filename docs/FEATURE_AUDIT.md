@@ -132,6 +132,12 @@ fixtures. On this repository it reports 40% env recall (missing
 `DATABASE_URL`, `NODE_ENV`, `PORT`) even though extraction is correct —
 those keys exist only inside fixture strings that no code reads.
 
+Resolved 2026-07-10: recall oracles skip test-convention file paths,
+truncate Rust files at the inline `#[cfg(test)]` module, and drop matches
+sitting inside string literals (unescaped-quote parity on the match line).
+Env recall on this repository moved from 40% to 100% and mean recall from
+69.6% to 99.8%.
+
 ### F13. `ask` misroutes environment-variable questions (filed: Phase 3)
 
 "Where is CODEGRAPH_API_TOKEN read?" — the documented question shape —

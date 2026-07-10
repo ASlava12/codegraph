@@ -531,7 +531,7 @@ Exports and dashboards:
 - [x] Expose the PR impact dashboard through the API and web UI, not only the CLI (audit F6).
 - [x] Add query logging with privacy controls, response logging opt-in, and local JSONL audit output.
 - [x] Add benchmark harness for token/context savings and graph-query recall on real mixed corpora.
-- [ ] Exclude code patterns inside string literals and test fixtures from benchmark recall oracles (audit F12: fixture strings report false env-read misses).
+- [x] Exclude code patterns inside string literals and test fixtures from benchmark recall oracles (audit F12: fixture strings report false env-read misses).
 
 Dropped in the 2026-07-10 Phase 9 sweep (reasons in `docs/ROADMAP_TRIAGE.md`):
 
