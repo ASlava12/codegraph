@@ -631,7 +631,7 @@ behavior remains guarded by the existing test suite.
 - [x] Extract shared report, filter, paging, and request-struct helpers to remove duplication between CLI, API, and web contracts (`InsightSeverity: FromStr`, `WorkflowFilters::from_parts`, and `ProjectReportLimits::clamped` in `codegraph-analysis`; CLI flags now get the same normalization and published bounds as API parameters).
 - [x] Reduce long parameter lists by grouping them into request/options structs across analysis and server entry functions (every public analysis entry now takes a request struct: `NodeCardRequest` and `MemorySaveRequest` grouped the last two six/seven-parameter entries — `node_card` and `save_memory` — across CLI, API, and MCP callers; remaining multi-parameter functions are crate-private local helpers under the clippy bound).
 - [x] Add module-level documentation and tighten crate public APIs to intended surfaces (all 69 workspace source files carry `//!` module docs; internal helpers demoted to `pub(crate)` and dead LSP plan overloads removed, while nested report types, schema-id constants, MCP tool definitions, and the language adapter interface intentionally stay public as library/agent contracts).
-- [ ] Land refactors only behind green workspace tests, adding regression fixtures first where coverage is missing.
+- [x] Land refactors only behind green workspace tests, adding regression fixtures first where coverage is missing (practiced across all nine Phase 10 commits with the self-scan warning baseline as the behavioral gate; the app.js bundle module-order invariant — the last refactor artifact without a guard — now has a dedicated regression test, and the fixtures-first rule is codified in `CONTRIBUTING.md`).
 
 Exit criteria:
 

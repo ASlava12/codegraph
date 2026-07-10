@@ -1450,6 +1450,59 @@ fn embedded_web_overview_uses_report_snapshot() {
 }
 
 #[test]
+fn embedded_app_js_bundle_preserves_module_order() {
+    // The web UI relies on top-level statement order (dictionaries and DOM
+    // wiring before init, function declarations hoisted below): the build
+    // script concatenates static/js modules in lexicographic order, and this
+    // guard fails if a module is renamed, dropped, or re-ordered.
+    let js_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../codegraph-web/static/js");
+    let mut names: Vec<String> = std::fs::read_dir(&js_dir)
+        .expect("web js module directory")
+        .map(|entry| {
+            entry
+                .expect("dir entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name.ends_with(".js"))
+        .collect();
+    names.sort();
+    assert!(names.len() >= 16, "expected the split app.js modules");
+
+    let mut cursor = 0;
+    for name in &names {
+        let banner = format!("// {}", name.trim_end_matches(".js"));
+        let position = APP_JS[cursor..]
+            .find(&banner)
+            .unwrap_or_else(|| panic!("bundle should contain {name} at or after byte {cursor}"));
+        cursor += position + banner.len();
+    }
+
+    // Statement-order anchors the UI depends on: constants and state before
+    // DOM wiring, wiring before the init call, Flow view helpers last.
+    let anchors = [
+        "const I18N = {",
+        "const state = {",
+        "const canvas = document.querySelector",
+        "async function init()",
+        "function fitFlowView(",
+    ];
+    let mut last = 0;
+    for anchor in anchors {
+        let position = APP_JS
+            .find(anchor)
+            .unwrap_or_else(|| panic!("bundle should contain anchor {anchor}"));
+        assert!(
+            position >= last,
+            "anchor {anchor} appears out of order in the concatenated bundle"
+        );
+        last = position;
+    }
+}
+
+#[test]
 fn embedded_web_assets_keep_shareable_investigation_links() {
     let index = include_str!("../../codegraph-web/static/index.html");
     let app = APP_JS;
