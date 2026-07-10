@@ -28,6 +28,7 @@ pub(crate) struct IndexContext {
     pub(crate) pending_calls: Vec<PendingCall>,
     pub(crate) pending_local_imports: Vec<PendingLocalImport>,
     pub(crate) pending_entrypoint_targets: Vec<PendingEntrypointTarget>,
+    pub(crate) pending_route_handlers: Vec<PendingRouteHandler>,
     pub(crate) pending_compose_config_targets: Vec<PendingComposeConfigTarget>,
     pub(crate) pending_compose_volume_targets: Vec<PendingComposeVolumeTarget>,
     pub(crate) kubernetes_configs: BTreeMap<KubernetesConfigKey, NodeId>,
@@ -125,6 +126,11 @@ pub(crate) struct PendingLocalImport {
     pub(crate) target: String,
     pub(crate) candidates: Vec<String>,
     pub(crate) mark_unresolved: bool,
+}
+
+pub(crate) struct PendingRouteHandler {
+    pub(crate) entrypoint: NodeId,
+    pub(crate) handler: String,
 }
 
 pub(crate) struct PendingEntrypointTarget {

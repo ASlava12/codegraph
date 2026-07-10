@@ -160,7 +160,7 @@ Exit criteria:
 
 Goal: ROADMAP Phase 10 — pay down structural debt behind green tests.
 
-- [ ] Split monolithic files into focused modules: `codegraph-analysis/src/lib.rs` (done: `codegraph-parser` → 5 modules; `codegraph-indexer` → 15 modules; `codegraph-server` → 9 modules; `app.js` → 16 ordered modules in `static/js/` concatenated back into one browser script by the server build script — public surfaces unchanged, one crate per commit).
+- [x] Split monolithic files into focused modules (five commits: `codegraph-parser` → 5 modules; `codegraph-indexer` → 15; `codegraph-server` → 9; `app.js` → 16 ordered modules concatenated by the server build script; `codegraph-analysis` → 15 — model/source_search/limits/exports/overview/insights/report/flows/refactoring/traces/query/ask/slices/cards/support — public surfaces unchanged; the analysis split also surfaced and fixed cross-module route handler resolution through the global function registry).
 - [x] Fix all clippy warnings on current stable and keep `-D warnings` green in CI without allow-listing (31 warnings fixed; CI clippy job green with zero allow attributes; GitHub Actions step indexers now take a bundled scope struct instead of eight parameters).
 - [ ] Extract shared report/filter/paging helpers and request structs to remove CLI/API/web duplication and long parameter lists.
 - [ ] Add module-level docs and tighten crate public APIs to intended surfaces.

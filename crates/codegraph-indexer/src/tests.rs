@@ -5054,6 +5054,38 @@ fn scan_project_adds_shebang_script_entrypoints() {
 }
 
 #[test]
+fn cross_module_route_handlers_resolve_through_function_registry() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("main.rs"),
+        "use axum::{routing::get, Router};\nmod handlers;\nfn app() -> Router {\n    Router::new().route(\"/status\", get(status_handler))\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("handlers.rs"),
+        "pub async fn status_handler() {}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let entrypoint = node_id(&graph, NodeKind::Entrypoint, "route GET /status");
+    let handler = function_id_in_file(&graph, "status_handler", "src/handlers.rs");
+    assert!(
+        has_entrypoint_reference(
+            &graph,
+            entrypoint,
+            handler,
+            "entrypoint_function",
+            Confidence::Heuristic,
+        ),
+        "route handler in another module should resolve through the global function registry"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scan_project_adds_framework_route_entrypoints() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

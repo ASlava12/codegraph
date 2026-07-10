@@ -132,18 +132,25 @@ pub(crate) fn index_framework_routes(
             None,
         );
 
-        if let Some(handler) = route.handler.as_deref()
-            && let Some(handler_id) = resolve_local_function(local_functions, handler)
-        {
-            add_entrypoint_reference(
-                &mut context.graph,
-                entrypoint_id,
-                handler_id,
-                "entrypoint_function",
-                "framework_route_handler",
-                Confidence::Syntactic,
-                Some(handler),
-            );
+        if let Some(handler) = route.handler.as_deref() {
+            if let Some(handler_id) = resolve_local_function(local_functions, handler) {
+                add_entrypoint_reference(
+                    &mut context.graph,
+                    entrypoint_id,
+                    handler_id,
+                    "entrypoint_function",
+                    "framework_route_handler",
+                    Confidence::Syntactic,
+                    Some(handler),
+                );
+            } else {
+                // The handler may live in another module of the same crate;
+                // retry against the global function registry after the scan.
+                context.pending_route_handlers.push(PendingRouteHandler {
+                    entrypoint: entrypoint_id,
+                    handler: handler.to_string(),
+                });
+            }
         }
     }
 }

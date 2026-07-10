@@ -33,7 +33,13 @@ The first implementation stores whole-graph JSON cache records keyed by root pat
 
 ### Analysis
 
-`codegraph-analysis` turns a full graph into focused artifacts:
+`codegraph-analysis` turns a full graph into focused artifacts. The crate is
+organized by feature area: `model` (public contracts), `query` (the query
+language), `ask` (natural-language planning), `insights`, `report`, `overview`,
+`flows` (traces and workflows), `refactoring` (journeys, impact, seams,
+contracts, refactor-context), `traces`, `slices`, `cards`, `exports`,
+`source_search`, `limits`, `support`, plus the `mcp`, `memory`, and
+`pr_impact` agent modules. It produces:
 
 - summary counts
 - architecture maps that group files and dependency edges by top-level project area

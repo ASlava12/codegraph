@@ -469,6 +469,26 @@ pub(crate) fn resolve_pending_entrypoint_targets(context: &mut IndexContext) {
     }
 }
 
+/// Resolve route handlers that were not found in the declaring file against
+/// the global function registry, so routes wired in one module and handled in
+/// another (a common split-module layout) still link to their handlers.
+pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
+    let pending = std::mem::take(&mut context.pending_route_handlers);
+    for reference in pending {
+        for handler_id in resolve_function_targets(&context.function_symbols, &reference.handler) {
+            add_entrypoint_reference(
+                &mut context.graph,
+                reference.entrypoint,
+                handler_id,
+                "entrypoint_function",
+                "framework_route_handler",
+                Confidence::Heuristic,
+                Some(&reference.handler),
+            );
+        }
+    }
+}
+
 pub(crate) fn resolve_pending_compose_config_targets(context: &mut IndexContext) {
     let pending_targets = std::mem::take(&mut context.pending_compose_config_targets);
 
