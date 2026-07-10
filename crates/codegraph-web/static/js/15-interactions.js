@@ -427,7 +427,53 @@ function setStageView(view) {
   });
   if (flowActive) {
     resizeFlowCanvas();
-    if (!state.flow.report) renderFlowHud();
+    if (!state.flow.report) ensureFlowReportForStage();
+  }
+}
+
+// Auto-build a workflow when the user opens the Flow view with nothing loaded,
+// so the stage is not a blank canvas. Prefer the selected node; otherwise fall
+// back to the first project entrypoint. If neither exists, keep the hint.
+async function ensureFlowReportForStage() {
+  if (state.flow.report) return;
+  let node = null;
+  if (state.selectedId != null) {
+    node = state.graph.nodes.find((candidate) => candidate.id === state.selectedId) || null;
+  }
+  if (!node) node = (state.entrypoints || [])[0] || null;
+  if (!node) {
+    renderFlowHud();
+    return;
+  }
+
+  state.flowAutoRequest = (state.flowAutoRequest || 0) + 1;
+  const requestId = state.flowAutoRequest;
+  if (flowHud) flowHud.textContent = t("flow.building");
+  const depthInput = document.querySelector("#traceDepthInput");
+  const depth = clampNumber(Number(depthInput?.value || 4), 1, 8);
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    node_id: String(node.id),
+    depth: String(depth),
+    block_limit: "120",
+    compact: "true",
+  });
+  appendWorkflowFilterParams(params, readWorkflowFilters("workflow"));
+
+  try {
+    const response = await apiFetch(`/api/workflow?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.flowAutoRequest || state.stageView !== "flow") return;
+    if (!response.ok || !Array.isArray(body.blocks) || body.blocks.length === 0) {
+      if (flowHud) flowHud.textContent = t("flow.noWorkflow");
+      return;
+    }
+    openFlowView(body, node.label);
+  } catch (error) {
+    console.error("flow: auto-build failed", error);
+    if (requestId === state.flowAutoRequest && flowHud) {
+      flowHud.textContent = t("flow.noWorkflow");
+    }
   }
 }
 
