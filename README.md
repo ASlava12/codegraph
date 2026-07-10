@@ -239,6 +239,7 @@ Implemented now:
 - Incremental scan planning reports in CLI, API, and web UI with rescan, removed, reusable path sets, and cached impacted graph node/edge ids.
 - Changed-scope incremental scan graphs in CLI, API, and web UI for inspecting only files that need rescanning.
 - Incremental merge previews that use the persistent impact index to replace cached file scopes with changed-file rescans for fast review before a full scan.
+- Watch mode (`codegraph watch`) polls the project fingerprint and refreshes the graph cache automatically on changes, streaming NDJSON refresh events and falling back to a storing full rescan when a partial merge is not surface-stable.
 - API schema enum values document cache status, reuse strategy, incremental actions, and merge blocker kinds for agent-safe incremental workflows.
 - Web incremental cache diagnostics show localized completeness blockers and safe-update reasons.
 - Scan coverage reports in CLI, API, and web overview for indexed files, policy skips, large-file skips, and non-indexed files.
@@ -657,6 +658,15 @@ cargo run -p codegraph-cli -- incremental-update . --cache-dir /tmp/codegraph-ca
 ```
 
 The output is JSON using the shared graph schema from `codegraph-core`.
+
+Keep the graph fresh automatically while editing:
+
+```bash
+cargo run -p codegraph-cli -- watch . --interval-ms 2000
+cargo run -p codegraph-cli -- watch . --max-refreshes 1   # one refresh, then exit
+```
+
+`watch` polls the project fingerprint (the same content hash the cache uses) and runs the safe incremental update whenever it changes, streaming NDJSON events to stdout: a `watching` line on start, then one `refreshed` line per change with the plan action, changed/rescanned/removed file counts and paths, graph size, and refresh duration. Updates that are not surface-stable (for example a new file adding top-level nodes) automatically fall back to a storing full rescan (`fallback_full_scan: true`), so the cache always converges to the current tree. A warm cache that already matches the tree syncs silently, scan errors become `error` events without stopping the watcher, and polling keeps the watcher editor-agnostic with no extra dependencies.
 
 Save investigation outcomes as repository memory and reuse them between sessions:
 

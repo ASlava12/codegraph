@@ -2,6 +2,7 @@ mod install;
 mod mcp;
 mod memory;
 mod query_log;
+mod watch;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -153,6 +154,20 @@ enum Command {
 
     /// Update the persistent graph cache when the incremental result is complete.
     IncrementalUpdate(CacheDiffArgs),
+
+    /// Watch the project and refresh the graph cache automatically on changes, emitting NDJSON events.
+    Watch {
+        #[command(flatten)]
+        args: CacheDiffArgs,
+
+        /// Poll interval in milliseconds between project fingerprint checks.
+        #[arg(long, default_value_t = 2000)]
+        interval_ms: u64,
+
+        /// Exit after this many refresh events; 0 keeps watching until interrupted.
+        #[arg(long, default_value_t = 0)]
+        max_refreshes: usize,
+    },
 
     /// Emit entrypoint candidate nodes as JSON.
     Entrypoints(ScanArgs),
@@ -1624,6 +1639,27 @@ fn main() -> Result<()> {
             let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
             let update = cache.incremental_update(&args.path, &options, args.limit)?;
             println!("{}", serde_json::to_string_pretty(&update)?);
+        }
+        Command::Watch {
+            args,
+            interval_ms,
+            max_refreshes,
+        } => {
+            let options = configured_index_options(
+                &args.path,
+                &scan_overrides(args.include_hidden, args.include_ignored, max_file_size),
+            )?;
+            let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
+            watch::run_watch(
+                &cache,
+                &args.path,
+                &options,
+                &watch::WatchOptions {
+                    interval_ms: interval_ms.max(100),
+                    max_refreshes: (max_refreshes > 0).then_some(max_refreshes),
+                    limit: args.limit,
+                },
+            )?;
         }
         Command::Entrypoints(args) => {
             let graph = scan_with_options(
