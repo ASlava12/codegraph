@@ -16,15 +16,17 @@ use std::path::PathBuf;
 pub struct McpServer {
     graph: CodeGraph,
     root: PathBuf,
+    fingerprint: Option<String>,
     log_settings: crate::query_log::QueryLogSettings,
 }
 
 impl McpServer {
-    pub fn new(graph: CodeGraph, root: PathBuf) -> Self {
+    pub fn new(graph: CodeGraph, root: PathBuf, fingerprint: Option<String>) -> Self {
         let log_settings = crate::query_log::load_settings(&root).unwrap_or_default();
         Self {
             graph,
             root,
+            fingerprint,
             log_settings,
         }
     }
@@ -51,6 +53,7 @@ impl McpServer {
         let engine = McpEngine {
             graph: &self.graph,
             root: Some(&self.root),
+            fingerprint: self.fingerprint.as_deref(),
         };
         let (response, audit) = engine.handle_line(line);
         if let Some(audit) = audit {
@@ -94,7 +97,7 @@ mod tests {
         graph.add_edge(graph.root, main, EdgeKind::Contains, Confidence::Exact);
         graph.add_edge(graph.root, helper, EdgeKind::Contains, Confidence::Exact);
         graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
-        McpServer::new(graph, PathBuf::from("."))
+        McpServer::new(graph, PathBuf::from("."), Some("fp-test".to_string()))
     }
 
     fn parse(response: Option<String>) -> Value {
@@ -193,7 +196,7 @@ mod tests {
         let mut graph = CodeGraph::new("repo");
         let main = graph.add_node(NodeKind::Function, "main");
         graph.add_edge(graph.root, main, EdgeKind::Contains, Confidence::Exact);
-        let server = McpServer::new(graph, root.clone());
+        let server = McpServer::new(graph, root.clone(), Some("fp-test".to_string()));
 
         parse(server.handle_line(
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"query_graph","arguments":{"query":"nodes kind:function"}}}"#,

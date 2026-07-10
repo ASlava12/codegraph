@@ -2,7 +2,7 @@ mod bench_context;
 mod hooks;
 mod install;
 mod mcp;
-mod memory;
+use codegraph_analysis::memory;
 mod merge;
 mod pr_impact;
 mod query_log;
@@ -461,8 +461,8 @@ enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Investigation outcome.
-        #[arg(long, value_enum)]
+        /// Investigation outcome: useful, dead_end, or corrected.
+        #[arg(long, value_parser = clap::builder::ValueParser::new(str::parse::<memory::MemoryOutcome>))]
         outcome: memory::MemoryOutcome,
 
         /// Free-text lesson or correction.
@@ -488,8 +488,8 @@ enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Filter records by outcome.
-        #[arg(long, value_enum)]
+        /// Filter records by outcome: useful, dead_end, or corrected.
+        #[arg(long, value_parser = clap::builder::ValueParser::new(str::parse::<memory::MemoryOutcome>))]
         outcome: Option<memory::MemoryOutcome>,
 
         /// Return only records whose source fingerprint no longer matches.
@@ -2316,7 +2316,10 @@ fn main() -> Result<()> {
                 max_file_size,
                 &cache,
             )?;
-            mcp::McpServer::new(graph, path).run()?;
+            let fingerprint =
+                project_fingerprint_hash(&path, include_hidden, include_ignored, max_file_size)
+                    .ok();
+            mcp::McpServer::new(graph, path, fingerprint).run()?;
         }
         Command::QueryLog {
             path,

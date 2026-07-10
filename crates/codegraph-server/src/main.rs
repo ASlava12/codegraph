@@ -3142,9 +3142,22 @@ async fn mcp_api(
 
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let fingerprint = {
+        let options = scan_options(&state, &root)?;
+        let fingerprint_root = root.clone();
+        tokio::task::spawn_blocking(move || {
+            GraphCache::fingerprint_project(&fingerprint_root, &options)
+                .ok()
+                .map(|fingerprint| fingerprint.hash)
+        })
+        .await
+        .ok()
+        .flatten()
+    };
     let engine = McpEngine {
         graph: &graph,
         root: Some(&root),
+        fingerprint: fingerprint.as_deref(),
     };
     let (response, _audit) = engine.handle_message(&message);
     Ok(match response {
@@ -8795,7 +8808,10 @@ fn helper() {}
         assert_eq!(response.status(), StatusCode::OK);
         let value = mcp_response_json(response).await;
         assert_eq!(value["jsonrpc"], "2.0");
-        assert_eq!(value["result"]["tools"].as_array().expect("tools").len(), 8);
+        assert_eq!(
+            value["result"]["tools"].as_array().expect("tools").len(),
+            14
+        );
 
         let response = mcp_api(
             State(state.clone()),

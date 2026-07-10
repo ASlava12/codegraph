@@ -7,7 +7,9 @@
 //! current fingerprint and mark records from a changed source tree as stale
 //! instead of silently trusting outdated conclusions.
 
-use anyhow::{Context, Result};
+use crate::QueryError;
+
+type Result<T> = std::result::Result<T, QueryError>;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::OpenOptions;
@@ -16,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 pub const MEMORY_FILE: &str = "memory.jsonl";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryOutcome {
     /// The query answered the investigation question.
@@ -56,6 +58,21 @@ pub struct MemoryListReport {
     pub records: Vec<MemoryListEntry>,
 }
 
+impl std::str::FromStr for MemoryOutcome {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+            "useful" => Ok(Self::Useful),
+            "dead_end" => Ok(Self::DeadEnd),
+            "corrected" => Ok(Self::Corrected),
+            other => Err(format!(
+                "unknown outcome `{other}`; expected useful, dead_end, or corrected"
+            )),
+        }
+    }
+}
+
 pub fn memory_path(root: &Path) -> PathBuf {
     root.join(".codegraph").join(MEMORY_FILE)
 }
@@ -82,17 +99,20 @@ pub fn save_memory(
 
     let path = memory_path(root);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            QueryError::new(format!("failed to create {}: {error}", parent.display()))
+        })?;
     }
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
-        .with_context(|| format!("failed to open {}", path.display()))?;
-    let line = serde_json::to_string(&record)?;
-    file.write_all(line.as_bytes())?;
-    file.write_all(b"\n")?;
+        .map_err(|error| QueryError::new(format!("failed to open {}: {error}", path.display())))?;
+    let line = serde_json::to_string(&record)
+        .map_err(|error| QueryError::new(format!("failed to encode memory record: {error}")))?;
+    file.write_all(line.as_bytes())
+        .and_then(|()| file.write_all(b"\n"))
+        .map_err(|error| QueryError::new(format!("failed to write {}: {error}", path.display())))?;
     Ok(record)
 }
 
@@ -101,8 +121,8 @@ pub fn load_records(root: &Path) -> Result<(Vec<MemoryRecord>, usize)> {
     if !path.exists() {
         return Ok((Vec::new(), 0));
     }
-    let raw =
-        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let raw = fs::read_to_string(&path)
+        .map_err(|error| QueryError::new(format!("failed to read {}: {error}", path.display())))?;
     let mut records = Vec::new();
     let mut malformed = 0usize;
     for line in raw.lines() {

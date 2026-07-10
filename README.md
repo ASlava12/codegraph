@@ -157,7 +157,7 @@ Implemented now:
 - Reflection reports (`codegraph memory-reflect`) aggregate saved outcomes into per-node repository lessons with resolved labels, dead-end and correction lists, outcome counts, and stale-source warnings.
 - Saved investigation memory (`codegraph memory-save` / `memory-list`) records query outcomes with lessons and linked node ids in `.codegraph/memory.jsonl`, and flags records as stale when the project fingerprint changes.
 - Agent installation (`codegraph install-agent`) writes idempotent `.mcp.json` server entries and marker-delimited CLAUDE.md/AGENTS.md guidance blocks so assistants query the graph before raw file reads.
-- MCP stdio server (`codegraph mcp`) exposes query_graph, get_node_card, get_neighbors, shortest_path, workflow, insights, impact, and report tools over newline-delimited JSON-RPC so external assistants use the graph as persistent repository memory.
+- MCP stdio server (`codegraph mcp`) exposes query_graph, get_node_card, get_neighbors, shortest_path, workflow, insights, impact, report, refactor_context, ask, source_search, and memory_save/memory_list/memory_reflect tools over newline-delimited JSON-RPC so external assistants use the graph — and repository memory — without shelling out to the CLI.
 - HTTP MCP transport (`POST /api/mcp`) serves the same MCP tools from `codegraph-server` through the shared engine, authenticated by the existing optional API bearer token for shared team graph access.
 - Opt-in query audit logging (`[query_log]` in `.codegraph/config.toml`, `codegraph query-log`) appends CLI query/ask/journey and MCP tool calls to local `.codegraph/query-log.jsonl` with sensitive-value redaction and response previews only behind a second opt-in.
 - Refactor context bundles (CLI `refactor-context`, API `/api/refactor-context`) combine impact, component dependencies, optional ranked journey, related risks, and a target source preview into one `codegraph.refactor_context.v1` JSON for one-shot agent handoff.
@@ -793,7 +793,7 @@ Register it in an assistant's `.mcp.json`:
 }
 ```
 
-The MCP server speaks newline-delimited JSON-RPC on stdin/stdout, scans the project once at startup (using the shared persistent cache), and exposes `query_graph`, `get_node_card`, `get_neighbors`, `shortest_path` (ranked journeys with fragile hops), `workflow`, `insights`, `impact`, and `report` tools with JSON Schema input contracts — so assistants can query the repository graph instead of reading raw files.
+The MCP server speaks newline-delimited JSON-RPC on stdin/stdout, scans the project once at startup (using the shared persistent cache), and exposes `query_graph`, `get_node_card`, `get_neighbors`, `shortest_path` (ranked journeys with fragile hops), `workflow`, `insights`, `impact`, `report`, `refactor_context` (one-shot refactor bundle), `ask` (natural-language questions), `source_search`, and `memory_save`/`memory_list`/`memory_reflect` (fingerprint-stamped investigation memory in `.codegraph/memory.jsonl`) tools with JSON Schema input contracts — so assistants can query the repository graph, request refactor context, and persist lessons between sessions instead of reading raw files. The same 14 tools are served over the authenticated HTTP transport at `POST /api/mcp`.
 
 Serve the same MCP tools over HTTP for shared team graph access:
 
