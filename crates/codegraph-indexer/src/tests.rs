@@ -5057,6 +5057,71 @@ fn scan_project_adds_shebang_script_entrypoints() {
 }
 
 #[test]
+fn source_imports_link_to_manifest_package_hubs() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde_json = \"1\"\n",
+    )
+    .unwrap();
+    fs::write(root.join("src").join("lib.rs"), "use serde_json::Value;\n").unwrap();
+    fs::write(
+        root.join("package.json"),
+        "{\"name\":\"demo\",\"dependencies\":{\"express\":\"^4\"}}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("app.js"),
+        "import express from 'express';\n",
+    )
+    .unwrap();
+    fs::write(root.join("requirements.txt"), "FastAPI==0.100\n").unwrap();
+    fs::write(root.join("src").join("main.py"), "import fastapi\n").unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+
+    for (package_id, import_needle) in [
+        ("cargo:serde_json", "use serde_json"),
+        ("npm:express", "import express"),
+        ("python:fastapi", "import fastapi"),
+    ] {
+        let hub = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata.get("package_id").map(String::as_str) == Some(package_id)
+                    && node.metadata.get("item_kind").map(String::as_str) == Some("dependency")
+            })
+            .unwrap_or_else(|| panic!("missing package hub {package_id}"));
+        let import = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label.contains(import_needle)
+                    && node.metadata.get("item_kind").map(String::as_str) == Some("import")
+            })
+            .unwrap_or_else(|| panic!("missing import fact for {import_needle}"));
+        assert_eq!(
+            import.metadata.get("package_id").map(String::as_str),
+            Some(package_id),
+            "import {import_needle} should carry the hub package id"
+        );
+        assert!(
+            graph.edges.iter().any(|edge| {
+                edge.source == import.id
+                    && edge.target == hub.id
+                    && edge.kind == EdgeKind::DependsOn
+                    && edge.metadata.get("relation").map(String::as_str) == Some("package_import")
+            }),
+            "import {import_needle} should link to hub {package_id}"
+        );
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn cross_module_route_handlers_resolve_through_function_registry() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();

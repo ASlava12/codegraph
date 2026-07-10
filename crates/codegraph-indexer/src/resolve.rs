@@ -472,6 +472,95 @@ pub(crate) fn resolve_pending_entrypoint_targets(context: &mut IndexContext) {
 /// Resolve route handlers that were not found in the declaring file against
 /// the global function registry, so routes wired in one module and handled in
 /// another (a common split-module layout) still link to their handlers.
+/// Link source import facts to manifest package hub nodes wherever the
+/// package identity is stable (Rust use paths, npm/dart module specifiers,
+/// Python module roots, PHP vendor namespaces, and Go module prefixes), so
+/// manifests, lockfiles, and code imports share one canonical package node.
+pub(crate) fn link_imports_to_package_hubs(context: &mut IndexContext) {
+    let mut hubs: BTreeMap<String, NodeId> = BTreeMap::new();
+    for node in &context.graph.nodes {
+        if node
+            .metadata
+            .get("item_kind")
+            .is_some_and(|kind| kind == "dependency")
+            && let Some(id) = node.metadata.get("package_id")
+        {
+            hubs.entry(id.clone()).or_insert(node.id);
+        }
+    }
+    if hubs.is_empty() {
+        return;
+    }
+    let go_hubs: Vec<(String, NodeId)> = hubs
+        .iter()
+        .filter(|(id, _)| id.starts_with("go:"))
+        .map(|(id, node)| (id.clone(), *node))
+        .collect();
+
+    let mut links: Vec<(NodeId, NodeId, String)> = Vec::new();
+    for node in &context.graph.nodes {
+        if node
+            .metadata
+            .get("item_kind")
+            .is_none_or(|kind| kind != "import")
+            || node
+                .metadata
+                .get("import_scope")
+                .is_some_and(|scope| scope == "local")
+            || node.metadata.contains_key("package_id")
+        {
+            continue;
+        }
+        let Some(language) = node.metadata.get("language") else {
+            continue;
+        };
+        let mut matched = None;
+        for candidate in import_package_id_candidates(language, &node.label) {
+            if let Some(hub) = hubs.get(&candidate) {
+                matched = Some((*hub, candidate));
+                break;
+            }
+        }
+        if matched.is_none()
+            && language == "go"
+            && let Some(path) = first_quoted_value(&node.label)
+        {
+            // The import path may extend past the module root; take the
+            // longest declared module prefix.
+            let mut best: Option<(&str, NodeId)> = None;
+            for (id, hub) in &go_hubs {
+                let module = &id["go:".len()..];
+                if (path == *module || path.starts_with(&format!("{module}/")))
+                    && best.is_none_or(|(current, _)| module.len() > current.len())
+                {
+                    best = Some((module, *hub));
+                }
+            }
+            matched = best.map(|(module, hub)| (hub, format!("go:{module}")));
+        }
+        if let Some((hub, id)) = matched
+            && hub != node.id
+        {
+            links.push((node.id, hub, id));
+        }
+    }
+
+    for (import_node, hub, id) in links {
+        add_node_metadata(&mut context.graph, import_node, "package_id", &id);
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            import_node,
+            hub,
+            EdgeKind::DependsOn,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("relation".to_string(), "package_import".to_string()),
+                ("source".to_string(), "import_resolution".to_string()),
+            ]),
+        );
+    }
+}
+
 pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
     let pending = std::mem::take(&mut context.pending_route_handlers);
     for reference in pending {

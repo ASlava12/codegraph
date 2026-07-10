@@ -504,7 +504,7 @@ Repository knowledge ingestion:
 - [x] Link application code to SQL/schema nodes through migrations, ORM metadata, database config, and deeper query semantics.
 - [ ] Add document ingestion for plain-text files and generated Markdown sidecars, with size limits and provenance (re-scoped 2026-07-10: PDF/Office binary parsing dropped, see `docs/ROADMAP_TRIAGE.md`).
 - [x] Index MCP configuration files such as `.mcp.json`, `mcp.json`, `mcp_servers.json`, and assistant desktop configs as tool/server dependency facts.
-- [ ] Canonicalize broader package manifests into shared package hub nodes across ecosystems where package identity is stable.
+- [x] Canonicalize broader package manifests into shared package hub nodes across ecosystems where package identity is stable (manifests and lockfiles already shared per-ecosystem hubs; source imports now join them via heuristic `package_import` edges for Rust, npm, Python, PHP, Dart, and Go module prefixes, with hub `package_id` metadata on matched import facts).
 
 Agent memory and automation:
 

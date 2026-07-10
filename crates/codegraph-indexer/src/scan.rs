@@ -150,6 +150,7 @@ pub(crate) fn scan_project_with_scope(
     resolve_pending_local_imports(&mut context);
     resolve_pending_entrypoint_targets(&mut context);
     resolve_pending_route_handlers(&mut context);
+    link_imports_to_package_hubs(&mut context);
     resolve_pending_compose_config_targets(&mut context);
     resolve_pending_compose_volume_targets(&mut context);
     resolve_pending_kubernetes_config_refs(&mut context);

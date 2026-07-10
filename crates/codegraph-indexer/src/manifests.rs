@@ -2559,6 +2559,113 @@ pub(crate) fn package_name_and_version_from_requirement(
     }
 }
 
+/// Candidate package hub ids for a source import label, used to link code
+/// imports to manifest package hubs where package identity is stable.
+/// Go imports are matched by hub-prefix in the resolution pass instead.
+pub(crate) fn import_package_id_candidates(language: &str, label: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    match language {
+        "rust" => {
+            let Some(rest) = label.trim().strip_prefix("use ") else {
+                return candidates;
+            };
+            let Some(segment) = rest
+                .split([':', ';', '{', ' ', '\n', '\t'])
+                .find(|part| !part.is_empty())
+            else {
+                return candidates;
+            };
+            if matches!(
+                segment,
+                "std" | "core" | "alloc" | "crate" | "self" | "super"
+            ) {
+                return candidates;
+            }
+            let lower = segment.to_ascii_lowercase();
+            candidates.push(package_id("cargo", &lower));
+            let dashed = lower.replace('_', "-");
+            if dashed != lower {
+                candidates.push(package_id("cargo", &dashed));
+            }
+        }
+        "javascript" | "typescript" | "tsx" => {
+            let Some(module) = first_quoted_value(label) else {
+                return candidates;
+            };
+            if module.starts_with('.') || module.starts_with('/') || module.starts_with("node:") {
+                return candidates;
+            }
+            let mut segments = module.split('/');
+            let package = if module.starts_with('@') {
+                match (segments.next(), segments.next()) {
+                    (Some(scope), Some(name)) => format!("{scope}/{name}"),
+                    _ => return candidates,
+                }
+            } else {
+                match segments.next() {
+                    Some(name) if !name.is_empty() => name.to_string(),
+                    _ => return candidates,
+                }
+            };
+            candidates.push(package_id("npm", &package.to_ascii_lowercase()));
+        }
+        "python" => {
+            let value = label.trim();
+            let module = if let Some(rest) = value.strip_prefix("from ") {
+                rest.split_whitespace().next()
+            } else if let Some(rest) = value.strip_prefix("import ") {
+                rest.split([',', ' ', '.']).find(|part| !part.is_empty())
+            } else {
+                None
+            };
+            let Some(module) = module else {
+                return candidates;
+            };
+            if module.starts_with('.') {
+                return candidates;
+            }
+            let root = module.split('.').next().unwrap_or(module);
+            candidates.push(package_id(
+                "python",
+                &canonical_package_name("python", root),
+            ));
+        }
+        "php" => {
+            let Some(rest) = label.trim().strip_prefix("use ") else {
+                return candidates;
+            };
+            let parts: Vec<&str> = rest
+                .trim_end_matches(';')
+                .split('\\')
+                .filter(|part| !part.is_empty())
+                .collect();
+            if parts.len() >= 2 {
+                candidates.push(package_id(
+                    "composer",
+                    &format!(
+                        "{}/{}",
+                        parts[0].to_ascii_lowercase(),
+                        parts[1].to_ascii_lowercase()
+                    ),
+                ));
+            }
+        }
+        "dart" => {
+            let Some(uri) = first_quoted_value(label) else {
+                return candidates;
+            };
+            if let Some(rest) = uri.strip_prefix("package:")
+                && let Some(name) = rest.split('/').next()
+                && !name.is_empty()
+            {
+                candidates.push(package_id("dart", &name.to_ascii_lowercase()));
+            }
+        }
+        _ => {}
+    }
+    candidates
+}
+
 pub(crate) fn package_id(ecosystem: &str, package_name: &str) -> String {
     format!("{ecosystem}:{package_name}")
 }

@@ -1124,7 +1124,13 @@ Supported package manifests:
 - C/C++ package managers: `vcpkg.json`, `conanfile.txt`, `CMakeLists.txt` `find_package(...)`
 
 Manifest dependencies are normalized into canonical package nodes with a stable
-`package_id` metadata value such as `cargo:serde` or `python:fastapi`. Individual
+`package_id` metadata value such as `cargo:serde` or `python:fastapi`. Source
+imports link to the same hubs wherever package identity is stable — Rust `use`
+roots, npm/Dart module specifiers, Python module roots, PHP vendor namespaces,
+and Go module prefixes — through heuristic `depends_on` edges with
+`relation: package_import`, and the matched import facts carry the hub's
+`package_id`, so manifests, lockfiles, and code imports share one canonical
+package node per ecosystem. Individual
 manifest files connect to those package nodes with `depends_on` edges; the edge
 metadata records whether the declaration is runtime, dev, optional, peer,
 build, or test dependency data when the manifest format exposes that
