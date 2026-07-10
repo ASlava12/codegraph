@@ -227,6 +227,110 @@ fn project_report_combines_summary_quality_and_limited_views() {
 }
 
 #[test]
+fn facet_names_match_serde_source_of_truth() {
+    use codegraph_core::Confidence;
+    // The direct-match name helpers replaced per-call serde serialization for
+    // speed; they must stay byte-identical to the serde `rename_all` names, so
+    // a new or renamed variant fails here until both are updated together.
+    for kind in [
+        NodeKind::Repository,
+        NodeKind::Directory,
+        NodeKind::File,
+        NodeKind::Module,
+        NodeKind::Function,
+        NodeKind::Entrypoint,
+        NodeKind::Type,
+        NodeKind::Config,
+        NodeKind::Environment,
+        NodeKind::ExternalDependency,
+        NodeKind::ControlFlow,
+        NodeKind::Unknown,
+    ] {
+        assert_eq!(
+            kind_name(&kind),
+            serde_json_name(&kind).unwrap(),
+            "node kind {kind:?}"
+        );
+    }
+    for kind in [
+        EdgeKind::Contains,
+        EdgeKind::Imports,
+        EdgeKind::Calls,
+        EdgeKind::Defines,
+        EdgeKind::References,
+        EdgeKind::ReadsConfig,
+        EdgeKind::ReadsEnvironment,
+        EdgeKind::MayError,
+        EdgeKind::Entrypoint,
+        EdgeKind::DependsOn,
+    ] {
+        assert_eq!(
+            edge_kind_name(&kind),
+            serde_json_name(&kind).unwrap(),
+            "edge kind {kind:?}"
+        );
+    }
+    for confidence in [
+        Confidence::Exact,
+        Confidence::Semantic,
+        Confidence::Syntactic,
+        Confidence::Heuristic,
+        Confidence::Unknown,
+    ] {
+        assert_eq!(
+            confidence_name(confidence),
+            serde_json_name(&confidence).unwrap(),
+            "confidence {confidence:?}"
+        );
+    }
+}
+
+#[test]
+fn summaries_from_adjacency_indexes_match_full_scans() {
+    // Guards the report's adjacency-index fast paths: they must produce exactly
+    // what the per-node full-graph scans produced, including a self-loop counted
+    // once as one incoming and one outgoing edge.
+    let mut graph = CodeGraph::new("repo");
+    let file = graph.add_node(NodeKind::File, "src/lib.rs");
+    let a = graph.add_node(NodeKind::Function, "a");
+    let b = graph.add_node(NodeKind::Function, "b");
+    let config = graph.add_node(NodeKind::Config, "PORT");
+    graph.add_edge(file, a, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(file, b, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(a, a, EdgeKind::Calls, Confidence::Heuristic); // self-loop
+    graph.add_edge(a, b, EdgeKind::Calls, Confidence::Heuristic);
+    graph.add_edge(b, a, EdgeKind::Calls, Confidence::Heuristic);
+    graph.add_edge(a, config, EdgeKind::ReadsConfig, Confidence::Heuristic);
+
+    let dep_a = node_dependency_summary(&graph, a);
+    assert_eq!(dep_a.outgoing, 3, "a->a, a->b, a->config");
+    assert_eq!(dep_a.incoming, 3, "file->a (Contains), a->a, b->a");
+
+    let nodes_by_id = nodes_by_id_index(&graph);
+    let incident = incident_edge_index(&graph);
+    let no_edges: Vec<&codegraph_core::Edge> = Vec::new();
+    let indexed =
+        node_dependency_summary_indexed(&nodes_by_id, incident.get(&a).unwrap_or(&no_edges), a);
+    assert_eq!(
+        indexed, dep_a,
+        "indexed dependency summary matches full scan"
+    );
+
+    let file_node = graph.nodes.iter().find(|n| n.id == file).unwrap().clone();
+    let outgoing = outgoing_edge_index(&graph);
+    let summary = file_node_summary_indexed(&nodes_by_id, &outgoing, &file_node).unwrap();
+    assert_eq!(summary.code_symbols, 2);
+    assert_eq!(summary.calls, 3, "a->a, a->b, b->a");
+    assert_eq!(summary.config_reads, 1, "a->config");
+    assert_eq!(summary.trace_edges, 4, "3 calls + 1 config read");
+    assert_eq!(
+        file_node_summary(&graph, &file_node),
+        Some(summary),
+        "indexed file summary matches full scan"
+    );
+}
+
+#[test]
 fn project_report_markdown_includes_evidence_and_suggested_questions() {
     let mut graph = CodeGraph::new("repo");
     let file = graph.add_node(NodeKind::File, "src/main.rs");

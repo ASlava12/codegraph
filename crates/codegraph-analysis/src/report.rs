@@ -1,8 +1,8 @@
 //! The bounded project report snapshot: risk summary, quality gate,
 //! topology, compact file/node summaries, and Markdown rendering.
 
-use codegraph_core::{CodeGraph, EdgeKind, Node, NodeKind};
-use std::collections::BTreeMap;
+use codegraph_core::{CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 #[allow(unused_imports)]
@@ -748,17 +748,42 @@ pub(crate) fn compact_file_summaries(
     limit: usize,
 ) -> ProjectCompactFileSummaryReport {
     let path_index = node_path_index(graph);
+    let nodes_by_id = nodes_by_id_index(graph);
+    let outgoing_edges = outgoing_edge_index(graph);
     let mut files: Vec<ProjectCompactFileSummary> = graph
         .nodes
         .iter()
         .filter(|node| node.kind == NodeKind::File)
         .filter_map(|node| {
-            let summary = file_node_summary(graph, node)?;
+            let summary = file_node_summary_indexed(&nodes_by_id, &outgoing_edges, node)?;
+            // Precompute the file's normalized path once; the insight loop below
+            // otherwise re-normalizes this same label for every insight/node
+            // (114 files x 14k insights on this repository).
+            let expected = normalize_path_prefix(&node.label);
+            let expected_slash = format!("{expected}/");
             let related_insights: Vec<Insight> = insight_report
                 .insights
                 .iter()
                 .filter(|insight| {
-                    node_card_insight_matches(graph, node, Some(&path_index), insight)
+                    if insight.nodes.contains(&node.id) {
+                        return true;
+                    }
+                    if expected.is_empty() {
+                        return insight
+                            .nodes
+                            .iter()
+                            .any(|node_id| nodes_by_id.contains_key(node_id));
+                    }
+                    insight.nodes.iter().any(|node_id| {
+                        nodes_by_id.get(node_id).is_some_and(|candidate| {
+                            node_path_matches_prepared(
+                                candidate,
+                                &path_index,
+                                &expected,
+                                &expected_slash,
+                            )
+                        })
+                    })
                 })
                 .cloned()
                 .collect();
@@ -818,23 +843,48 @@ pub(crate) fn compact_file_summary_score(
         + summary.imports
 }
 
+/// Invert the insight list into a `NodeId -> referencing insights` map so
+/// per-node compact summaries look up only their own findings. Without this the
+/// summary loop rescans every insight for every candidate node — O(nodes ×
+/// insights), which stalls for tens of seconds on repositories with thousands
+/// of insights. Insight order is preserved and each insight appears once per
+/// node even if it lists that node id more than once.
+pub(crate) fn insights_by_referenced_node(
+    insight_report: &InsightReport,
+) -> BTreeMap<NodeId, Vec<Insight>> {
+    let mut index: BTreeMap<NodeId, Vec<Insight>> = BTreeMap::new();
+    for insight in &insight_report.insights {
+        let mut seen: BTreeSet<NodeId> = BTreeSet::new();
+        for node_id in &insight.nodes {
+            if seen.insert(*node_id) {
+                index.entry(*node_id).or_default().push(insight.clone());
+            }
+        }
+    }
+    index
+}
+
 pub(crate) fn compact_node_summaries(
     graph: &CodeGraph,
     insight_report: &InsightReport,
     limit: usize,
 ) -> ProjectCompactNodeSummaryReport {
+    let nodes_by_id = nodes_by_id_index(graph);
+    let incident_edges = incident_edge_index(graph);
+    let insights_by_node = insights_by_referenced_node(insight_report);
+    let no_edges: Vec<&Edge> = Vec::new();
     let mut nodes: Vec<ProjectCompactNodeSummary> = graph
         .nodes
         .iter()
         .filter(|node| compact_node_summary_candidate(&node.kind))
         .filter_map(|node| {
-            let dependency_summary = node_dependency_summary(graph, node.id);
-            let related_insights: Vec<Insight> = insight_report
-                .insights
-                .iter()
-                .filter(|insight| node_card_insight_matches(graph, node, None, insight))
-                .cloned()
-                .collect();
+            let dependency_summary = node_dependency_summary_indexed(
+                &nodes_by_id,
+                incident_edges.get(&node.id).unwrap_or(&no_edges),
+                node.id,
+            );
+            let related_insights: Vec<Insight> =
+                insights_by_node.get(&node.id).cloned().unwrap_or_default();
             let insight_summary = node_insight_summary(&related_insights);
             let roles = compact_node_summary_roles(node, &dependency_summary, &insight_summary);
             if roles.is_empty()

@@ -476,7 +476,28 @@ pub(crate) fn node_label(graph: &CodeGraph, id: NodeId) -> Option<&str> {
 }
 
 pub(crate) fn kind_name(kind: &codegraph_core::NodeKind) -> String {
-    serde_json_name(kind).unwrap_or_else(|| format!("{kind:?}").to_ascii_lowercase())
+    node_kind_name(kind).to_string()
+}
+
+/// Direct snake_case name for a node kind. Mirrors the `#[serde(rename_all =
+/// "snake_case")]` names on `NodeKind` without a per-call serde round-trip,
+/// which dominates report generation when called once per graph edge.
+pub(crate) fn node_kind_name(kind: &codegraph_core::NodeKind) -> &'static str {
+    use codegraph_core::NodeKind::*;
+    match kind {
+        Repository => "repository",
+        Directory => "directory",
+        File => "file",
+        Module => "module",
+        Function => "function",
+        Entrypoint => "entrypoint",
+        Type => "type",
+        Config => "config",
+        Environment => "environment",
+        ExternalDependency => "external_dependency",
+        ControlFlow => "control_flow",
+        Unknown => "unknown",
+    }
 }
 
 /// Stable community id for a repository-relative file path, matching the
@@ -572,11 +593,33 @@ pub(crate) fn node_language(nodes_by_id: &BTreeMap<NodeId, &Node>, id: NodeId) -
 }
 
 pub(crate) fn edge_kind_name(kind: &EdgeKind) -> String {
-    serde_json_name(kind).unwrap_or_else(|| format!("{kind:?}").to_ascii_lowercase())
+    // Fully-qualified variants (no `use EdgeKind::*`) so the import detector does
+    // not read the bare glob as an undeclared external crate named `edgekind`.
+    match kind {
+        EdgeKind::Contains => "contains",
+        EdgeKind::Imports => "imports",
+        EdgeKind::Calls => "calls",
+        EdgeKind::Defines => "defines",
+        EdgeKind::References => "references",
+        EdgeKind::ReadsConfig => "reads_config",
+        EdgeKind::ReadsEnvironment => "reads_environment",
+        EdgeKind::MayError => "may_error",
+        EdgeKind::Entrypoint => "entrypoint",
+        EdgeKind::DependsOn => "depends_on",
+    }
+    .to_string()
 }
 
 pub(crate) fn confidence_name(confidence: codegraph_core::Confidence) -> String {
-    serde_json_name(&confidence).unwrap_or_else(|| format!("{confidence:?}").to_ascii_lowercase())
+    use codegraph_core::Confidence::*;
+    match confidence {
+        Exact => "exact",
+        Semantic => "semantic",
+        Syntactic => "syntactic",
+        Heuristic => "heuristic",
+        Unknown => "unknown",
+    }
+    .to_string()
 }
 
 pub(crate) fn severity_name(severity: InsightSeverity) -> &'static str {

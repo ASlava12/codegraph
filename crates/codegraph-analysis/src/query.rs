@@ -3426,14 +3426,28 @@ pub(crate) fn node_path_matches(
     if expected.is_empty() {
         return true;
     }
+    let expected_slash = format!("{expected}/");
+    node_path_matches_prepared(node, path_index, &expected, &expected_slash)
+}
+
+/// `node_path_matches` with the normalized, non-empty prefix precomputed. Hot
+/// callers that test many nodes against the same file path (e.g. compact file
+/// summaries) normalize once and reuse it here instead of re-normalizing and
+/// re-allocating `"{expected}/"` on every call.
+pub(crate) fn node_path_matches_prepared(
+    node: &Node,
+    path_index: &BTreeMap<NodeId, String>,
+    expected: &str,
+    expected_slash: &str,
+) -> bool {
     path_index
         .get(&node.id)
-        .is_some_and(|path| path == &expected || path.starts_with(&format!("{expected}/")))
+        .is_some_and(|path| path == expected || path.starts_with(expected_slash))
         || node
             .span
             .as_ref()
             .map(|span| normalize_graph_path(&span.path))
-            .is_some_and(|path| path == expected || path.starts_with(&format!("{expected}/")))
+            .is_some_and(|path| path == expected || path.starts_with(expected_slash))
 }
 
 pub(crate) fn normalize_path_prefix(value: &str) -> String {

@@ -1,6 +1,6 @@
 //! Node context and investigation cards with source previews.
 
-use codegraph_core::{CodeGraph, EdgeKind, Node, NodeId, NodeKind};
+use codegraph_core::{CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
@@ -99,15 +99,18 @@ pub(crate) fn node_insight_summary(insights: &[Insight]) -> NodeInsightSummary {
 
 pub(crate) fn node_card_related_insights(graph: &CodeGraph, node: &Node) -> Vec<Insight> {
     let path_index = (node.kind == NodeKind::File).then(|| node_path_index(graph));
+    let nodes_by_id = nodes_by_id_index(graph);
     insights(graph)
         .insights
         .into_iter()
-        .filter(|insight| node_card_insight_matches(graph, node, path_index.as_ref(), insight))
+        .filter(|insight| {
+            node_card_insight_matches(&nodes_by_id, node, path_index.as_ref(), insight)
+        })
         .collect()
 }
 
 pub(crate) fn node_card_insight_matches(
-    graph: &CodeGraph,
+    nodes_by_id: &BTreeMap<NodeId, &Node>,
     node: &Node,
     path_index: Option<&BTreeMap<NodeId, String>>,
     insight: &Insight,
@@ -123,25 +126,62 @@ pub(crate) fn node_card_insight_matches(
         return false;
     };
     insight.nodes.iter().any(|node_id| {
-        graph
-            .nodes
-            .iter()
-            .find(|candidate| candidate.id == *node_id)
+        nodes_by_id
+            .get(node_id)
             .is_some_and(|candidate| node_path_matches(candidate, path_index, &node.label))
     })
 }
 
+/// Build the `NodeId -> &Node` lookup that the indexed report helpers reuse
+/// across every file/node instead of rescanning `graph.nodes` per call.
+pub(crate) fn nodes_by_id_index(graph: &CodeGraph) -> BTreeMap<NodeId, &Node> {
+    graph.nodes.iter().map(|node| (node.id, node)).collect()
+}
+
+/// Group edges by their source node so file summaries can look up a node's
+/// outgoing edges directly instead of rescanning `graph.edges` per file.
+pub(crate) fn outgoing_edge_index(graph: &CodeGraph) -> BTreeMap<NodeId, Vec<&Edge>> {
+    let mut index: BTreeMap<NodeId, Vec<&Edge>> = BTreeMap::new();
+    for edge in &graph.edges {
+        index.entry(edge.source).or_default().push(edge);
+    }
+    index
+}
+
+/// Group edges by both endpoints so dependency summaries can look up a node's
+/// incident edges directly instead of rescanning `graph.edges` per node. A
+/// self-loop is stored once so it is not double-counted.
+pub(crate) fn incident_edge_index(graph: &CodeGraph) -> BTreeMap<NodeId, Vec<&Edge>> {
+    let mut index: BTreeMap<NodeId, Vec<&Edge>> = BTreeMap::new();
+    for edge in &graph.edges {
+        index.entry(edge.source).or_default().push(edge);
+        if edge.target != edge.source {
+            index.entry(edge.target).or_default().push(edge);
+        }
+    }
+    index
+}
+
 pub(crate) fn file_node_summary(graph: &CodeGraph, node: &Node) -> Option<FileNodeSummary> {
+    let nodes_by_id = nodes_by_id_index(graph);
+    let outgoing = outgoing_edge_index(graph);
+    file_node_summary_indexed(&nodes_by_id, &outgoing, node)
+}
+
+pub(crate) fn file_node_summary_indexed(
+    nodes_by_id: &BTreeMap<NodeId, &Node>,
+    outgoing_edges: &BTreeMap<NodeId, Vec<&Edge>>,
+    node: &Node,
+) -> Option<FileNodeSummary> {
     if node.kind != NodeKind::File {
         return None;
     }
 
-    let nodes_by_id: BTreeMap<NodeId, &Node> =
-        graph.nodes.iter().map(|node| (node.id, node)).collect();
     let mut summary = FileNodeSummary::default();
     let mut contained_code_ids = BTreeSet::new();
+    let no_edges: Vec<&Edge> = Vec::new();
 
-    for edge in graph.edges.iter().filter(|edge| edge.source == node.id) {
+    for edge in outgoing_edges.get(&node.id).unwrap_or(&no_edges) {
         match edge.kind {
             EdgeKind::Contains => {
                 summary.contained_nodes += 1;
@@ -166,41 +206,42 @@ pub(crate) fn file_node_summary(graph: &CodeGraph, node: &Node) -> Option<FileNo
         }
     }
 
-    for edge in graph
-        .edges
-        .iter()
-        .filter(|edge| contained_code_ids.contains(&edge.source) && is_trace_edge(&edge.kind))
-    {
-        summary.trace_edges += 1;
-        increment_facet(&mut summary.trace_edge_kinds, edge_kind_name(&edge.kind));
-        increment_facet(
-            &mut summary.trace_confidences,
-            confidence_name(edge.confidence),
-        );
-        if let Some(target) = nodes_by_id.get(&edge.target) {
-            increment_facet(&mut summary.trace_target_kinds, kind_name(&target.kind));
-        }
-
-        match edge.kind {
-            EdgeKind::Calls => {
-                summary.calls += 1;
-                if nodes_by_id.get(&edge.target).is_some_and(|target| {
-                    target
-                        .metadata
-                        .get("unresolved")
-                        .is_some_and(|value| value == "true")
-                        || target
-                            .metadata
-                            .get("resolution")
-                            .is_some_and(|value| value == "unresolved")
-                }) {
-                    summary.unresolved_calls += 1;
-                }
+    for code_id in &contained_code_ids {
+        for edge in outgoing_edges.get(code_id).unwrap_or(&no_edges) {
+            if !is_trace_edge(&edge.kind) {
+                continue;
             }
-            EdgeKind::ReadsConfig => summary.config_reads += 1,
-            EdgeKind::ReadsEnvironment => summary.environment_reads += 1,
-            EdgeKind::MayError => summary.error_facts += 1,
-            _ => {}
+            summary.trace_edges += 1;
+            increment_facet(&mut summary.trace_edge_kinds, edge_kind_name(&edge.kind));
+            increment_facet(
+                &mut summary.trace_confidences,
+                confidence_name(edge.confidence),
+            );
+            if let Some(target) = nodes_by_id.get(&edge.target) {
+                increment_facet(&mut summary.trace_target_kinds, kind_name(&target.kind));
+            }
+
+            match edge.kind {
+                EdgeKind::Calls => {
+                    summary.calls += 1;
+                    if nodes_by_id.get(&edge.target).is_some_and(|target| {
+                        target
+                            .metadata
+                            .get("unresolved")
+                            .is_some_and(|value| value == "true")
+                            || target
+                                .metadata
+                                .get("resolution")
+                                .is_some_and(|value| value == "unresolved")
+                    }) {
+                        summary.unresolved_calls += 1;
+                    }
+                }
+                EdgeKind::ReadsConfig => summary.config_reads += 1,
+                EdgeKind::ReadsEnvironment => summary.environment_reads += 1,
+                EdgeKind::MayError => summary.error_facts += 1,
+                _ => {}
+            }
         }
     }
 
@@ -208,15 +249,23 @@ pub(crate) fn file_node_summary(graph: &CodeGraph, node: &Node) -> Option<FileNo
 }
 
 pub(crate) fn node_dependency_summary(graph: &CodeGraph, node_id: NodeId) -> NodeDependencySummary {
-    let nodes_by_id: BTreeMap<NodeId, &Node> =
-        graph.nodes.iter().map(|node| (node.id, node)).collect();
-    let mut summary = NodeDependencySummary::default();
-
-    for edge in graph
+    let nodes_by_id = nodes_by_id_index(graph);
+    let incident: Vec<&Edge> = graph
         .edges
         .iter()
         .filter(|edge| edge.source == node_id || edge.target == node_id)
-    {
+        .collect();
+    node_dependency_summary_indexed(&nodes_by_id, &incident, node_id)
+}
+
+pub(crate) fn node_dependency_summary_indexed(
+    nodes_by_id: &BTreeMap<NodeId, &Node>,
+    incident_edges: &[&Edge],
+    node_id: NodeId,
+) -> NodeDependencySummary {
+    let mut summary = NodeDependencySummary::default();
+
+    for edge in incident_edges {
         let edge_kind = edge_kind_name(&edge.kind);
         increment_facet(&mut summary.edge_kinds, edge_kind.clone());
         increment_facet(&mut summary.confidences, confidence_name(edge.confidence));
@@ -242,7 +291,7 @@ pub(crate) fn node_dependency_summary(graph: &CodeGraph, node_id: NodeId) -> Nod
             increment_facet(&mut summary.neighbor_kinds, kind_name(&neighbor.kind));
             increment_facet(
                 &mut summary.neighbor_languages,
-                node_language(&nodes_by_id, neighbor_id),
+                node_language(nodes_by_id, neighbor_id),
             );
         }
     }
