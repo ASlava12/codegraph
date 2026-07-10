@@ -6,6 +6,7 @@ mod merge;
 mod query_log;
 mod registry;
 mod watch;
+mod wiki;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -235,6 +236,28 @@ enum Command {
         /// Registry file override; defaults to <cache-dir>/registry.json.
         #[arg(long)]
         registry_path: Option<PathBuf>,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Export an Obsidian-compatible Markdown wiki: communities, entrypoints, hotspots, config flows, and risks.
+    ExportWiki {
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Output directory for the vault (created if missing, pages overwritten).
+        #[arg(long, default_value = "codegraph-wiki")]
+        output: PathBuf,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
 
         #[command(flatten)]
         cache: CacheArgs,
@@ -1869,6 +1892,31 @@ fn main() -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&merged)?);
                 }
             }
+        }
+        Command::ExportWiki {
+            path,
+            output,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph = scan_with_options(
+                path.clone(),
+                include_hidden,
+                include_ignored,
+                max_file_size,
+                &cache,
+            )?;
+            let label = path
+                .canonicalize()
+                .ok()
+                .and_then(|root| {
+                    root.file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                })
+                .unwrap_or_else(|| "CodeGraph".to_string());
+            let report = wiki::export_wiki(&graph, &output, &label)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::InstallHooks { path } => {
             let report = hooks::install_hooks(&path)?;

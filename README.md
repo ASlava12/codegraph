@@ -243,6 +243,7 @@ Implemented now:
 - Git hooks (`codegraph install-hooks`) refresh the graph cache after every commit and checkout through idempotent marker-delimited hook blocks, with optional export regeneration configured under `[hooks]` in `.codegraph/config.toml`.
 - Global graph registry (`codegraph registry-add`/`registry-list`/`registry-remove`/`registry-query`) runs one query or path expression across several registered local repositories with per-project results and inline per-repository errors.
 - Graph merge (`codegraph merge`) combines exported graph artifacts and registered projects into one deterministic byte-stable graph with `merge_sources` provenance on every merged node/edge and an explicit metadata-conflict report.
+- Obsidian/Markdown wiki export (`codegraph export-wiki`) writes an interlinked vault of communities, entrypoints, hotspots, config flows, and risky findings that opens in Obsidian without conversion.
 - API schema enum values document cache status, reuse strategy, incremental actions, and merge blocker kinds for agent-safe incremental workflows.
 - Web incremental cache diagnostics show localized completeness blockers and safe-update reasons.
 - Scan coverage reports in CLI, API, and web overview for indexed files, policy skips, large-file skips, and non-indexed files.
@@ -711,6 +712,14 @@ cargo run -p codegraph-cli -- merge incident.json --project backend --output mer
 
 `merge` accepts exported graph JSON files and/or `--project` names from the registry (project, docs, incident, and external-system graphs alike). Nodes merge only when kind, label, and source path all match; every merged node and edge records its contributors in `merge_sources` metadata, non-conflicting metadata is unioned, and duplicate edges collapse to the highest-confidence contributor. The strategy is conflict-safe for committed artifacts: inputs are processed in sorted-by-name order and ids are reassigned deterministically, so the same inputs always produce byte-identical output — re-merging in CI or by a teammate never churns a committed file. Metadata disagreements keep the first source's value and are enumerated in the merge report (`codegraph.merge.v1`) instead of being dropped silently. With `--output` the merged graph goes to the file and the report to stdout; without it the merged graph itself prints to stdout.
 
+Export a Markdown wiki that opens directly as an Obsidian vault:
+
+```bash
+cargo run -p codegraph-cli -- export-wiki . --output codegraph-wiki
+```
+
+`export-wiki` writes interlinked notes — `Home`, `Communities`, `Entrypoints`, `Hotspots`, `Config Flows`, and `Risks` — cross-referenced with `[[wikilinks]]` so the folder opens in Obsidian or renders in any Markdown wiki without conversion. Content derives deterministically from the existing graph reports (communities, entrypoints, hotspots, config/environment reads with their readers, and warning/error findings grouped by kind), each section states its truncation explicitly, and regeneration overwrites the same files byte-stably so the vault can live in version control.
+
 Save investigation outcomes as repository memory and reuse them between sessions:
 
 ```bash
@@ -1055,7 +1064,7 @@ Planned Dart/Flutter depth:
 
 Planned repository-knowledge features inspired by Graphify-style workflows:
 
-- Deeper document ingestion beyond Markdown, deeper SQL query analysis, migration ordering, ORM/database-config linking, optional non-code document ingestion, PR impact dashboards, a token-savings benchmark harness, and exports for SVG, Obsidian/Markdown wiki, Neo4j, and FalkorDB.
+- Deeper document ingestion beyond Markdown, deeper SQL query analysis, migration ordering, ORM/database-config linking, optional non-code document ingestion, PR impact dashboards, a token-savings benchmark harness, and exports for SVG, Neo4j, and FalkorDB.
 - The detailed Graphify parity map is tracked in [`docs/GRAPHIFY_PARITY.md`](docs/GRAPHIFY_PARITY.md), including already covered capabilities, gaps, priorities, and compatibility principles.
 
 Supported package manifests:
