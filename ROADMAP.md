@@ -102,7 +102,7 @@ Goal: improve precision where language tooling exists.
 - [x] Add TypeScript/JavaScript enrichment through tsserver-compatible tooling.
 - [x] Add Go enrichment through `gopls`.
 - [x] Discover Dart analysis server LSP support for semantic readiness and execution batch planning.
-- [ ] Validate Dart semantic enrichment patches from the Dart analysis server or an LSP-compatible Dart language server.
+- [x] Validate Dart semantic enrichment patches from the Dart analysis server or an LSP-compatible Dart language server.
 - [x] Mark facts by confidence:
   - [x] `exact`
   - [x] `semantic`
@@ -432,7 +432,7 @@ Goal: handle real repositories efficiently.
 - [x] Publish cache and incremental workflow enum values in the API schema for agents.
 - [x] Cache parser facts.
 - [x] Cache LSP facts.
-- [ ] Cache Dart parser and semantic facts with invalidation for `pubspec.yaml`, `.dart_tool/package_config.json`, and generated Dart files.
+- [x] Cache Dart parser and semantic facts with invalidation for `pubspec.yaml`, `.dart_tool/package_config.json`, and generated Dart files.
 - [x] Add first large graph filtering and paging endpoint.
 - [x] Support first UI-driven large graph paging.
 - [x] Add first CLI scan benchmarks.

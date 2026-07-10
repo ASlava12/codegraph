@@ -285,6 +285,7 @@ Implemented now:
 - Dart/Flutter `pubspec.yaml` dependencies participate in undeclared, unused, dev-only-in-production, and test-only runtime dependency insights.
 - Flutter `pubspec.yaml` assets are indexed, Dart asset reads are linked as config facts, missing asset declarations produce warnings, and Dart platform channels are surfaced as external boundary nodes.
 - Dart `package:` imports resolve through `pubspec.yaml` and `.dart_tool/package_config.json` package maps (workspace-relative `rootUri` only, with escape and absolute-URI guards), so path dependencies and monorepo packages link to their scanned files; generated files (`.g.dart`, `.freezed.dart`, protobuf, mocks, `.gen.dart`) carry `generated` metadata with a `generated_from` link to the source that produces them.
+- Dart analysis server semantic patches are validated end-to-end (definitions upgrade heuristic call edges to semantic confidence, diagnostics attach to Dart nodes), and the graph cache fingerprint tracks hidden `.dart_tool/package_config.json` files so regenerating a package map invalidates cached graphs alongside `pubspec.yaml` and generated-file edits.
 - Dependency consistency insights for runtime dependencies that are imported only from test-like source files.
 - Focused package graph queries that connect manifest declarations, import sites, and source files for mixed-language dependency investigation.
 - Focused file graph queries that connect source files to contained symbols, imports, config/environment reads, potential errors, and nearby dependency edges.
@@ -1083,7 +1084,7 @@ At the current stage, supported source languages are detected by extension:
 
 Planned Dart/Flutter depth:
 
-- Platform-channel-to-native handler matching and deeper Dart analysis server semantic validation.
+- Platform-channel-to-native handler matching.
 
 Planned repository-knowledge features inspired by Graphify-style workflows:
 

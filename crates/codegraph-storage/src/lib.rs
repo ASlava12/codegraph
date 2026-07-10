@@ -305,6 +305,7 @@ impl GraphCache {
         let mut bytes = 0;
         let mut latest_modified_unix_nanos = 0;
         let mut entries = Vec::new();
+        let mut pubspec_dirs: Vec<std::path::PathBuf> = Vec::new();
 
         for entry in WalkDir::new(root)
             .sort_by_file_name()
@@ -340,6 +341,12 @@ impl GraphCache {
                 .replace('\\', "/");
             let modified = modified_unix_nanos(&metadata).unwrap_or(0);
 
+            if path.file_name().and_then(|name| name.to_str()) == Some("pubspec.yaml")
+                && let Some(parent) = path.parent()
+            {
+                pubspec_dirs.push(parent.to_path_buf());
+            }
+
             files += 1;
             bytes += metadata.len();
             latest_modified_unix_nanos = latest_modified_unix_nanos.max(modified);
@@ -351,6 +358,43 @@ impl GraphCache {
                 bytes: metadata.len(),
                 modified_unix_nanos: modified,
             });
+        }
+
+        // Dart package maps live in hidden `.dart_tool` directories that the
+        // walk skips by default, yet they change import resolution. Probe
+        // them explicitly so regenerating a package map invalidates the
+        // cached graph.
+        if !options.include_hidden {
+            let mut probe_dirs = vec![root.to_path_buf()];
+            probe_dirs.append(&mut pubspec_dirs);
+            probe_dirs.sort();
+            probe_dirs.dedup();
+            for dir in probe_dirs {
+                let config = dir.join(".dart_tool").join("package_config.json");
+                let Ok(metadata) = config.metadata() else {
+                    continue;
+                };
+                if !metadata.is_file() {
+                    continue;
+                }
+                let relative_path = config
+                    .strip_prefix(root)
+                    .unwrap_or(&config)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let modified = modified_unix_nanos(&metadata).unwrap_or(0);
+                files += 1;
+                bytes += metadata.len();
+                latest_modified_unix_nanos = latest_modified_unix_nanos.max(modified);
+                hasher.write_str(&relative_path);
+                hasher.write_u64(metadata.len());
+                hasher.write_u128(modified);
+                entries.push(FingerprintEntry {
+                    path: relative_path,
+                    bytes: metadata.len(),
+                    modified_unix_nanos: modified,
+                });
+            }
         }
 
         Ok(ProjectFingerprint {
@@ -1793,6 +1837,72 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn fingerprint_tracks_hidden_dart_package_config() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("app").join("lib")).unwrap();
+        fs::create_dir_all(root.join("app").join(".dart_tool")).unwrap();
+        fs::write(root.join("app").join("pubspec.yaml"), "name: app\n").unwrap();
+        fs::write(
+            root.join("app").join("lib").join("main.dart"),
+            "void main() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("app")
+                .join(".dart_tool")
+                .join("package_config.json"),
+            r#"{"configVersion":2,"packages":[]}"#,
+        )
+        .unwrap();
+        let options = IndexOptions::default();
+
+        let before = GraphCache::fingerprint_project(&root, &options).unwrap();
+        assert!(
+            before
+                .entries
+                .iter()
+                .any(|entry| entry.path == "app/.dart_tool/package_config.json"),
+            "hidden package map must participate in the fingerprint"
+        );
+        assert_eq!(
+            before
+                .entries
+                .iter()
+                .filter(|entry| entry.path == "app/.dart_tool/package_config.json")
+                .count(),
+            1
+        );
+
+        // Regenerating the package map (content change) must change the hash
+        // even though the file is hidden from the normal walk.
+        fs::write(
+            root.join("app").join(".dart_tool").join("package_config.json"),
+            r#"{"configVersion":2,"packages":[{"name":"shared","rootUri":"../../packages/shared","packageUri":"lib/"}]}"#,
+        )
+        .unwrap();
+        let after = GraphCache::fingerprint_project(&root, &options).unwrap();
+        assert_ne!(before.hash, after.hash);
+
+        // With hidden files included, the walk itself sees the map: no
+        // double-count from the explicit probe.
+        let hidden_options = IndexOptions {
+            include_hidden: true,
+            ..IndexOptions::default()
+        };
+        let hidden = GraphCache::fingerprint_project(&root, &hidden_options).unwrap();
+        assert_eq!(
+            hidden
+                .entries
+                .iter()
+                .filter(|entry| entry.path == "app/.dart_tool/package_config.json")
+                .count(),
+            1,
+            "package map must be fingerprinted exactly once with include_hidden"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn cache_round_trips_matching_fingerprint() {

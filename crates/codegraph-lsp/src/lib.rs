@@ -3558,6 +3558,140 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dart_analysis_server_semantic_patches_validate_end_to_end() {
+        // A Dart graph with a heuristic call edge, as the scanner produces it.
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "lib/main.dart",
+            None,
+            BTreeMap::from([("language".to_string(), "dart".to_string())]),
+        );
+        let caller = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "caller",
+            Some(SourceSpan {
+                path: "lib/main.dart".to_string(),
+                start_line: 2,
+                start_column: 1,
+                end_line: 4,
+                end_column: 1,
+            }),
+            BTreeMap::from([("language".to_string(), "dart".to_string())]),
+        );
+        let helper = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "helper",
+            Some(SourceSpan {
+                path: "lib/main.dart".to_string(),
+                start_line: 9,
+                start_column: 1,
+                end_line: 12,
+                end_column: 1,
+            }),
+            BTreeMap::from([("language".to_string(), "dart".to_string())]),
+        );
+        graph.add_edge(file, caller, EdgeKind::Defines, Confidence::Syntactic);
+        graph.add_edge(caller, helper, EdgeKind::Calls, Confidence::Heuristic);
+
+        // Discovery advertises the real dart-analysis-server contract.
+        let discovery = LspDiscoveryReport {
+            total_servers: 1,
+            available_servers: 1,
+            servers: vec![LspServerStatus {
+                id: "dart-analysis-server",
+                languages: &["dart"],
+                command: "dart",
+                args: &["language-server", "--protocol=lsp"],
+                capabilities: &["definitions", "diagnostics"],
+                installed: true,
+                path: Some("/sdk/bin/dart".to_string()),
+            }],
+        };
+        let batch = semantic_execution_batch_with_discovery(
+            Path::new("/workspace/repo"),
+            &graph,
+            &discovery,
+            DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+            SemanticWorkItemFilter {
+                language: Some("dart".to_string()),
+                status: Some("ready".to_string()),
+                capability: None,
+            },
+        );
+        let definition = definition_request(&batch);
+        let diagnostic = batch.server_batches[0]
+            .requests
+            .iter()
+            .find(|request| request.method == "textDocument/diagnostic")
+            .expect("diagnostic request for dart file");
+
+        // Dart analysis server responses: a definition Location and a full
+        // document diagnostic report, both against dart file URIs.
+        let patch = semantic_graph_patch_from_responses(
+            Path::new("/workspace/repo"),
+            &graph,
+            &batch,
+            &[
+                SemanticLspResponse {
+                    request_id: definition.id.clone(),
+                    method: definition.method.to_string(),
+                    result: json!({
+                        "uri": "file:///workspace/repo/lib/main.dart",
+                        "range": {
+                            "start": { "line": 9, "character": 4 },
+                            "end": { "line": 9, "character": 10 }
+                        }
+                    }),
+                    error: None,
+                },
+                SemanticLspResponse {
+                    request_id: diagnostic.id.clone(),
+                    method: diagnostic.method.to_string(),
+                    result: json!({
+                        "kind": "full",
+                        "items": [
+                            {
+                                "range": {
+                                    "start": { "line": 2, "character": 2 },
+                                    "end": { "line": 2, "character": 8 }
+                                },
+                                "severity": 2,
+                                "code": "unused_element",
+                                "source": "dart",
+                                "message": "The declaration isn't referenced."
+                            }
+                        ]
+                    }),
+                    error: None,
+                },
+            ],
+        );
+
+        assert_eq!(patch.responses, 2);
+        assert_eq!(patch.matched_responses, 2);
+        assert!(patch.response_errors.is_empty());
+        assert_eq!(patch.semantic_edges.len(), 1);
+        assert_eq!(patch.semantic_edges[0].source, caller);
+        assert_eq!(patch.semantic_edges[0].target, helper);
+        assert_eq!(patch.semantic_edges[0].confidence, Confidence::Semantic);
+        assert_eq!(patch.semantic_edges[0].path, "lib/main.dart");
+        assert_eq!(patch.diagnostics.len(), 1);
+        assert_eq!(patch.diagnostics[0].source.as_deref(), Some("dart"));
+        assert_eq!(patch.diagnostics[0].code.as_deref(), Some("unused_element"));
+
+        // Applying the patch upgrades the heuristic call to semantic and
+        // records the dart diagnostic in the enriched graph.
+        let result = apply_semantic_graph_patch(&graph, &patch);
+        assert_eq!(result.report.semantic_edges, 1);
+        assert_eq!(result.report.replaced_edges, 1);
+        assert_eq!(result.report.diagnostic_nodes, 1);
+        assert_eq!(result.graph.edges[1].source, caller);
+        assert_eq!(result.graph.edges[1].target, helper);
+        assert_eq!(result.graph.edges[1].confidence, Confidence::Semantic);
+    }
+
     fn semantic_patch_graph() -> (CodeGraph, NodeId, NodeId) {
         let mut graph = CodeGraph::new("repo");
         let file = graph.add_node_with_metadata(
