@@ -1,3 +1,4 @@
+mod hooks;
 mod install;
 mod mcp;
 mod memory;
@@ -154,6 +155,39 @@ enum Command {
 
     /// Update the persistent graph cache when the incremental result is complete.
     IncrementalUpdate(CacheDiffArgs),
+
+    /// Install git post-commit/post-checkout hooks that refresh the graph cache automatically.
+    InstallHooks {
+        /// Repository root containing .git.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+
+    /// Run the git-hook action: incremental refresh plus optional exports (used by installed hooks).
+    HookRun {
+        /// Hook kind recorded in the result, for example post-commit or post-checkout.
+        kind: String,
+
+        /// Project root to refresh.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        /// Maximum changed files listed per refresh plan.
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+
+        /// Directory for persistent graph cache records.
+        #[arg(long)]
+        cache_dir: Option<PathBuf>,
+    },
 
     /// Watch the project and refresh the graph cache automatically on changes, emitting NDJSON events.
     Watch {
@@ -1639,6 +1673,27 @@ fn main() -> Result<()> {
             let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
             let update = cache.incremental_update(&args.path, &options, args.limit)?;
             println!("{}", serde_json::to_string_pretty(&update)?);
+        }
+        Command::InstallHooks { path } => {
+            let report = hooks::install_hooks(&path)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::HookRun {
+            kind,
+            path,
+            include_hidden,
+            include_ignored,
+            limit,
+            cache_dir,
+        } => {
+            let options = configured_index_options(
+                &path,
+                &scan_overrides(include_hidden, include_ignored, max_file_size),
+            )?;
+            let cache = GraphCache::new(cache_dir.unwrap_or_else(default_cache_dir));
+            let report =
+                hooks::hook_run(&cache, &path, &options, &kind, limit, query_log::unix_now())?;
+            println!("{}", serde_json::to_string(&report)?);
         }
         Command::Watch {
             args,

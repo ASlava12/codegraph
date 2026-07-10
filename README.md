@@ -240,6 +240,7 @@ Implemented now:
 - Changed-scope incremental scan graphs in CLI, API, and web UI for inspecting only files that need rescanning.
 - Incremental merge previews that use the persistent impact index to replace cached file scopes with changed-file rescans for fast review before a full scan.
 - Watch mode (`codegraph watch`) polls the project fingerprint and refreshes the graph cache automatically on changes, streaming NDJSON refresh events and falling back to a storing full rescan when a partial merge is not surface-stable.
+- Git hooks (`codegraph install-hooks`) refresh the graph cache after every commit and checkout through idempotent marker-delimited hook blocks, with optional export regeneration configured under `[hooks]` in `.codegraph/config.toml`.
 - API schema enum values document cache status, reuse strategy, incremental actions, and merge blocker kinds for agent-safe incremental workflows.
 - Web incremental cache diagnostics show localized completeness blockers and safe-update reasons.
 - Scan coverage reports in CLI, API, and web overview for indexed files, policy skips, large-file skips, and non-indexed files.
@@ -667,6 +668,21 @@ cargo run -p codegraph-cli -- watch . --max-refreshes 1   # one refresh, then ex
 ```
 
 `watch` polls the project fingerprint (the same content hash the cache uses) and runs the safe incremental update whenever it changes, streaming NDJSON events to stdout: a `watching` line on start, then one `refreshed` line per change with the plan action, changed/rescanned/removed file counts and paths, graph size, and refresh duration. Updates that are not surface-stable (for example a new file adding top-level nodes) automatically fall back to a storing full rescan (`fallback_full_scan: true`), so the cache always converges to the current tree. A warm cache that already matches the tree syncs silently, scan errors become `error` events without stopping the watcher, and polling keeps the watcher editor-agnostic with no extra dependencies.
+
+Refresh the graph automatically after commits and checkouts instead:
+
+```bash
+cargo run -p codegraph-cli -- install-hooks .
+```
+
+```toml
+# .codegraph/config.toml — optional export regeneration on every hook run
+[hooks]
+exports = ["dot", "json"]          # json, dot, ndjson
+export_dir = ".codegraph/exports"  # default
+```
+
+`install-hooks` writes marker-delimited blocks into `.git/hooks/post-commit` and `.git/hooks/post-checkout` (following `gitdir:` redirects for linked worktrees). Existing hook scripts are preserved — the codegraph block is appended or replaced in place, and reruns are idempotent. Each hook runs `codegraph hook-run <kind> .`, which performs the same safe incremental refresh as watch mode (with the full-rescan fallback) and regenerates any exports configured under `[hooks]`, appending one JSON result line per run to `.codegraph/hooks.log` so commits stay quiet. The hooks are no-ops when the `codegraph` binary is not on `PATH`.
 
 Save investigation outcomes as repository memory and reuse them between sessions:
 

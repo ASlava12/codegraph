@@ -75,7 +75,7 @@ Exit criteria:
 Goal: keep graphs fresh automatically and usable across repositories.
 
 - [x] Add watch mode for automatic local graph refresh while editing, reusing the incremental scan machinery.
-- [ ] Add git hooks for post-commit/post-checkout incremental refresh and optional export regeneration.
+- [x] Add git hooks for post-commit/post-checkout incremental refresh and optional export regeneration.
 - [ ] Add a global graph registry for multiple local repositories with cross-project path and query support.
 - [ ] Add graph merge commands with source provenance and a conflict-safe strategy for committed graph artifacts.
 
