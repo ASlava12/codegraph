@@ -493,7 +493,7 @@ Repository knowledge ingestion:
 - [x] Add first deterministic SQL schema extraction for tables, views, columns, foreign keys, and indexes.
 - [x] Add SQL/schema query slices and SQL node-card graph actions for code-to-query-to-table exploration.
 - [x] Add first SQL schema consistency insight for query strings that reference missing indexed tables.
-- [ ] Add deeper SQL query extraction, JOIN relationship semantics, migration ordering, and broader schema consistency insights.
+- [x] Add deeper SQL query extraction, JOIN relationship semantics, migration ordering, and broader schema consistency insights.
 - [x] Link application code to SQL/schema nodes through common SQL query strings.
 - [ ] Link application code to SQL/schema nodes through migrations, ORM metadata, database config, and deeper query semantics.
 - [ ] Add document ingestion for Markdown, plain text, PDFs, Office files, and generated Markdown sidecars, with size limits and provenance.

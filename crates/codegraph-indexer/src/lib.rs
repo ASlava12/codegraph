@@ -117,6 +117,35 @@ struct IndexContext {
     pending_sql_foreign_keys: Vec<PendingSqlForeignKey>,
     pending_sql_query_table_refs: Vec<PendingSqlQueryTableRef>,
     pending_native_channel_handlers: Vec<PendingNativeChannelHandler>,
+    pending_sql_joins: Vec<PendingSqlJoin>,
+    pending_sql_alter_refs: Vec<PendingSqlAlterRef>,
+    sql_migrations: Vec<SqlMigrationFile>,
+}
+
+/// A JOIN between two tables found in a SQL statement, waiting for both
+/// table nodes to exist.
+struct PendingSqlJoin {
+    left: String,
+    right: String,
+    condition: Option<String>,
+    line: u32,
+}
+
+/// An ALTER/DROP TABLE statement waiting to be matched to an indexed table.
+struct PendingSqlAlterRef {
+    file: NodeId,
+    table: String,
+    operation: &'static str,
+    line: u32,
+}
+
+/// A migration file with its ordering key, for migration_order edges.
+struct SqlMigrationFile {
+    file: NodeId,
+    label: String,
+    dir: String,
+    sequence: u128,
+    sequence_text: String,
 }
 
 /// A Flutter platform-channel registration found in native Android/iOS
@@ -842,6 +871,9 @@ fn scan_project_with_scope(
         pending_sql_foreign_keys: Vec::new(),
         pending_sql_query_table_refs: Vec::new(),
         pending_native_channel_handlers: Vec::new(),
+        pending_sql_joins: Vec::new(),
+        pending_sql_alter_refs: Vec::new(),
+        sql_migrations: Vec::new(),
     };
 
     for entry in WalkDir::new(root)
@@ -906,6 +938,9 @@ fn scan_project_with_scope(
     resolve_pending_sql_foreign_keys(&mut context);
     resolve_pending_sql_query_table_refs(&mut context);
     resolve_pending_native_channel_handlers(&mut context);
+    resolve_pending_sql_joins(&mut context);
+    resolve_pending_sql_alter_refs(&mut context);
+    resolve_sql_migration_order(&mut context);
     apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
 
@@ -1798,8 +1833,144 @@ fn index_sql_schema(
             || normalized.starts_with("create unique index if not exists")
         {
             index_sql_create_index(context, file_id, label, source, &statement);
+        } else if normalized.starts_with("alter table") {
+            index_sql_alter_ref(context, file_id, &statement, "alter");
+        } else if normalized.starts_with("drop table") {
+            index_sql_alter_ref(context, file_id, &statement, "drop");
+        }
+        for join in sql_join_pairs(&statement.sql) {
+            context.pending_sql_joins.push(PendingSqlJoin {
+                left: join.0,
+                right: join.1,
+                condition: join.2,
+                line: statement.line,
+            });
         }
     }
+
+    if let Some((dir, sequence, sequence_text)) = sql_migration_sequence(label) {
+        context.sql_migrations.push(SqlMigrationFile {
+            file: file_id,
+            label: label.to_string(),
+            dir,
+            sequence,
+            sequence_text,
+        });
+    }
+}
+
+/// Record an ALTER/DROP TABLE target for schema-consistency resolution.
+fn index_sql_alter_ref(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    statement: &SqlStatement,
+    operation: &'static str,
+) {
+    let tokens = sql_query_tokens(&statement.sql);
+    // ALTER TABLE [ONLY] name / DROP TABLE [IF EXISTS] name
+    let mut index = 2;
+    while let Some(token) = tokens.get(index) {
+        let lower = token.to_ascii_lowercase();
+        if matches!(lower.as_str(), "if" | "exists" | "only") {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+    if let Some(table) = next_sql_table_token(&tokens, index) {
+        context.pending_sql_alter_refs.push(PendingSqlAlterRef {
+            file: file_id,
+            table,
+            operation,
+            line: statement.line,
+        });
+    }
+}
+
+/// JOIN pairs `(from_table, joined_table, on_condition)` in one statement.
+/// Every JOIN is paired with the statement's FROM anchor table — an
+/// approximation that keeps chained joins readable without alias tracking.
+fn sql_join_pairs(sql: &str) -> Vec<(String, String, Option<String>)> {
+    const CONDITION_TERMINATORS: &[&str] = &[
+        "join", "left", "right", "inner", "outer", "cross", "full", "where", "group", "order",
+        "limit", "union", "having", ";",
+    ];
+    let tokens = sql_query_tokens(sql);
+    let mut from_table: Option<String> = None;
+    let mut pairs = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        let lower = tokens[index].to_ascii_lowercase();
+        if lower == "from" && from_table.is_none() {
+            from_table = next_sql_table_token(&tokens, index + 1);
+        } else if lower == "join"
+            && let Some(left) = from_table.clone()
+            && let Some(right) = next_sql_table_token(&tokens, index + 1)
+        {
+            // Skip ahead to an optional ON clause and capture its condition.
+            let mut cursor = index + 1;
+            let mut condition = None;
+            while let Some(token) = tokens.get(cursor) {
+                let token_lower = token.to_ascii_lowercase();
+                if CONDITION_TERMINATORS.contains(&token_lower.as_str()) {
+                    break;
+                }
+                if token_lower == "on" {
+                    let mut parts = Vec::new();
+                    let mut condition_cursor = cursor + 1;
+                    while let Some(part) = tokens.get(condition_cursor) {
+                        if CONDITION_TERMINATORS.contains(&part.to_ascii_lowercase().as_str())
+                            || parts.len() >= 12
+                        {
+                            break;
+                        }
+                        parts.push(part.clone());
+                        condition_cursor += 1;
+                    }
+                    if !parts.is_empty() {
+                        condition = Some(parts.join(" "));
+                    }
+                    break;
+                }
+                cursor += 1;
+            }
+            if !sql_identifier_key(&left).eq(&sql_identifier_key(&right)) {
+                pairs.push((left, right, condition));
+            }
+        }
+        index += 1;
+    }
+    pairs
+}
+
+/// Migration ordering key for a SQL file: numeric prefix (`001_init.sql`,
+/// `20240101_users.sql`) or Flyway `V<digits>__name.sql`, inside any
+/// directory (grouping happens per directory).
+fn sql_migration_sequence(label: &str) -> Option<(String, u128, String)> {
+    let (dir, file_name) = match label.rsplit_once('/') {
+        Some((dir, file_name)) => (dir.to_string(), file_name),
+        None => (String::new(), label),
+    };
+    let digits: String = if let Some(rest) = file_name.strip_prefix(['V', 'v']) {
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        if digits.is_empty() || !rest[digits.len()..].starts_with("__") {
+            return None;
+        }
+        digits
+    } else {
+        let digits: String = file_name.chars().take_while(char::is_ascii_digit).collect();
+        if digits.is_empty()
+            || !matches!(
+                file_name[digits.len()..].chars().next(),
+                Some('_') | Some('-') | Some('.')
+            )
+        {
+            return None;
+        }
+        digits
+    };
+    let sequence = digits.parse::<u128>().ok()?;
+    Some((dir, sequence, digits))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11684,6 +11855,134 @@ fn resolve_pending_sql_query_table_refs(context: &mut IndexContext) {
     }
 }
 
+/// Link joined tables with `sql_join` edges once both sides are indexed.
+fn resolve_pending_sql_joins(context: &mut IndexContext) {
+    let pending = std::mem::take(&mut context.pending_sql_joins);
+    for join in pending {
+        let left_key = sql_identifier_key(&join.left);
+        let right_key = sql_identifier_key(&join.right);
+        let (Some(left_id), Some(right_id)) = (
+            context.sql_tables.get(&left_key).copied(),
+            context.sql_tables.get(&right_key).copied(),
+        ) else {
+            continue;
+        };
+        let mut metadata = BTreeMap::from([
+            ("relation".to_string(), "sql_join".to_string()),
+            ("source".to_string(), "sql".to_string()),
+            ("line".to_string(), join.line.to_string()),
+        ]);
+        if let Some(condition) = join.condition {
+            metadata.insert("condition".to_string(), condition);
+        }
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            left_id,
+            right_id,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            metadata,
+        );
+    }
+}
+
+/// Link ALTER/DROP TABLE statements to their tables; unknown targets are
+/// recorded on the file node for schema-consistency insights.
+fn resolve_pending_sql_alter_refs(context: &mut IndexContext) {
+    let pending = std::mem::take(&mut context.pending_sql_alter_refs);
+    let mut unresolved: BTreeMap<NodeId, BTreeSet<String>> = BTreeMap::new();
+    for reference in pending {
+        let table_key = sql_identifier_key(&reference.table);
+        match context.sql_tables.get(&table_key).copied() {
+            Some(table_id) => {
+                add_edge_once_with_metadata(
+                    &mut context.graph,
+                    reference.file,
+                    table_id,
+                    EdgeKind::References,
+                    Confidence::Syntactic,
+                    BTreeMap::from([
+                        ("relation".to_string(), "sql_schema_change".to_string()),
+                        ("operation".to_string(), reference.operation.to_string()),
+                        ("source".to_string(), "sql".to_string()),
+                        ("line".to_string(), reference.line.to_string()),
+                    ]),
+                );
+            }
+            None => {
+                unresolved
+                    .entry(reference.file)
+                    .or_default()
+                    .insert(format!("{}:{}", reference.operation, reference.table));
+            }
+        }
+    }
+    for (file_id, tables) in unresolved {
+        add_node_metadata(
+            &mut context.graph,
+            file_id,
+            "unresolved_sql_alter_tables",
+            tables.into_iter().collect::<Vec<_>>().join(","),
+        );
+    }
+}
+
+/// Chain migration files in sequence order per directory and flag duplicate
+/// sequence numbers for insight checks.
+fn resolve_sql_migration_order(context: &mut IndexContext) {
+    let mut migrations = std::mem::take(&mut context.sql_migrations);
+    if migrations.is_empty() {
+        return;
+    }
+    migrations.sort_by(|a, b| {
+        a.dir
+            .cmp(&b.dir)
+            .then(a.sequence.cmp(&b.sequence))
+            .then(a.label.cmp(&b.label))
+    });
+    for migration in &migrations {
+        add_node_metadata(
+            &mut context.graph,
+            migration.file,
+            "migration_sequence",
+            &migration.sequence_text,
+        );
+    }
+    for pair in migrations.windows(2) {
+        if pair[0].dir != pair[1].dir {
+            continue;
+        }
+        if pair[0].sequence == pair[1].sequence {
+            add_node_metadata(
+                &mut context.graph,
+                pair[0].file,
+                "duplicate_migration_sequence",
+                &pair[1].label,
+            );
+            add_node_metadata(
+                &mut context.graph,
+                pair[1].file,
+                "duplicate_migration_sequence",
+                &pair[0].label,
+            );
+            continue;
+        }
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pair[0].file,
+            pair[1].file,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("relation".to_string(), "migration_order".to_string()),
+                ("source".to_string(), "sql".to_string()),
+                ("from_sequence".to_string(), pair[0].sequence_text.clone()),
+                ("to_sequence".to_string(), pair[1].sequence_text.clone()),
+            ]),
+        );
+    }
+}
+
 fn github_actions_local_action_target(context: &IndexContext, target: &str) -> Option<NodeId> {
     let candidates = [
         target.to_string(),
@@ -13246,6 +13545,104 @@ CREATE TABLE users (
         );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_extracts_sql_joins_migration_order_and_schema_changes() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("migrations")).unwrap();
+        fs::write(
+            root.join("migrations").join("001_init.sql"),
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);\nCREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id));\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("migrations").join("002_report_view.sql"),
+            "CREATE VIEW user_orders AS SELECT u.name, o.id FROM users u JOIN orders o ON o.user_id = u.id;\nALTER TABLE users ADD COLUMN email TEXT;\nDROP TABLE IF EXISTS legacy_events;\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("migrations").join("002_duplicate.sql"),
+            "ALTER TABLE orders ADD COLUMN total INTEGER;\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+
+        // JOIN semantics: users joined to orders with the ON condition.
+        let users = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata.get("item_kind").map(String::as_str) == Some("sql_table")
+                    && node.label.contains("users")
+            })
+            .expect("users table node");
+        let orders = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata.get("item_kind").map(String::as_str) == Some("sql_table")
+                    && node.label.contains("orders")
+            })
+            .expect("orders table node");
+        let join_edge = graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.source == users.id
+                    && edge.target == orders.id
+                    && edge.metadata.get("relation").map(String::as_str) == Some("sql_join")
+            })
+            .expect("sql_join edge");
+        assert!(
+            join_edge
+                .metadata
+                .get("condition")
+                .is_some_and(|condition| condition.contains("user_id")),
+            "join condition must be captured: {:?}",
+            join_edge.metadata
+        );
+
+        // Migration ordering: 001 -> 002 chain and sequence metadata.
+        let first = node_id(&graph, NodeKind::File, "migrations/001_init.sql");
+        let migration_files: Vec<_> = graph
+            .nodes
+            .iter()
+            .filter(|node| node.metadata.contains_key("migration_sequence"))
+            .collect();
+        assert_eq!(migration_files.len(), 3);
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == first
+                && edge.metadata.get("relation").map(String::as_str) == Some("migration_order")
+                && edge.metadata.get("from_sequence").map(String::as_str) == Some("001")
+        }));
+
+        // Duplicate sequence flagged on both 002 files.
+        let duplicates: Vec<_> = graph
+            .nodes
+            .iter()
+            .filter(|node| node.metadata.contains_key("duplicate_migration_sequence"))
+            .collect();
+        assert_eq!(duplicates.len(), 2, "both 002 files must be flagged");
+
+        // ALTER on known table links; DROP on unknown table is recorded.
+        let second = node_id(&graph, NodeKind::File, "migrations/002_report_view.sql");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == second
+                && edge.target == users.id
+                && edge.metadata.get("relation").map(String::as_str) == Some("sql_schema_change")
+                && edge.metadata.get("operation").map(String::as_str) == Some("alter")
+        }));
+        let second_node = graph.nodes.iter().find(|node| node.id == second).unwrap();
+        assert!(
+            second_node
+                .metadata
+                .get("unresolved_sql_alter_tables")
+                .is_some_and(|tables| tables.contains("drop:legacy_events")),
+            "unknown DROP target must be recorded: {:?}",
+            second_node.metadata
+        );
     }
 
     #[test]

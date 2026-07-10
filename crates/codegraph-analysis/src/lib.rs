@@ -1224,6 +1224,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "duplicate_entrypoint_label",
     "duplicate_framework_route",
     "duplicate_function_label",
+    "duplicate_migration_sequence",
     "entrypoint_dead_end",
     "mixed_dependency_scope",
     "mixed_config_requirement",
@@ -1261,6 +1262,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unresolved_kubernetes_service_selector",
     "unresolved_local_import",
     "unresolved_makefile_command_path",
+    "unresolved_sql_alter_target",
     "unresolved_sql_table_reference",
     "unused_declared_dependency",
 ];
@@ -2606,6 +2608,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_ambiguous_call_resolution_insights(graph, &mut insights);
     add_unresolved_local_import_insights(graph, &mut insights);
     add_unresolved_sql_table_reference_insights(graph, &mut insights);
+    add_sql_schema_consistency_insights(graph, &mut insights);
     add_cross_language_heuristic_edge_insights(graph, &mut insights);
     add_duplicate_function_insights(graph, &mut insights);
     add_duplicate_compose_published_port_insights(graph, &mut insights);
@@ -11129,6 +11132,42 @@ fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: &mut Vec<In
                 .collect(),
             edges,
         });
+    }
+}
+
+/// Broader schema-consistency findings from indexer-recorded metadata:
+/// ALTER/DROP statements whose table was never defined in the indexed
+/// schema, and migration files sharing one sequence number.
+fn add_sql_schema_consistency_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    for node in &graph.nodes {
+        if let Some(tables) = node.metadata.get("unresolved_sql_alter_tables") {
+            for entry in tables.split(',').filter(|entry| !entry.is_empty()) {
+                let (operation, table) = entry.split_once(':').unwrap_or(("alter", entry));
+                insights.push(Insight {
+                    kind: "unresolved_sql_alter_target".to_string(),
+                    severity: InsightSeverity::Warning,
+                    message: format!(
+                        "`{}` runs {} TABLE on `{table}`, which is not defined in the indexed schema",
+                        node.label,
+                        operation.to_uppercase()
+                    ),
+                    nodes: vec![node.id],
+                    edges: Vec::new(),
+                });
+            }
+        }
+        if let Some(other) = node.metadata.get("duplicate_migration_sequence") {
+            insights.push(Insight {
+                kind: "duplicate_migration_sequence".to_string(),
+                severity: InsightSeverity::Warning,
+                message: format!(
+                    "Migration `{}` shares its sequence number with `{other}`; apply order is ambiguous",
+                    node.label
+                ),
+                nodes: vec![node.id],
+                edges: Vec::new(),
+            });
+        }
     }
 }
 
