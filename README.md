@@ -242,6 +242,7 @@ Implemented now:
 - Watch mode (`codegraph watch`) polls the project fingerprint and refreshes the graph cache automatically on changes, streaming NDJSON refresh events and falling back to a storing full rescan when a partial merge is not surface-stable.
 - Git hooks (`codegraph install-hooks`) refresh the graph cache after every commit and checkout through idempotent marker-delimited hook blocks, with optional export regeneration configured under `[hooks]` in `.codegraph/config.toml`.
 - Global graph registry (`codegraph registry-add`/`registry-list`/`registry-remove`/`registry-query`) runs one query or path expression across several registered local repositories with per-project results and inline per-repository errors.
+- Graph merge (`codegraph merge`) combines exported graph artifacts and registered projects into one deterministic byte-stable graph with `merge_sources` provenance on every merged node/edge and an explicit metadata-conflict report.
 - API schema enum values document cache status, reuse strategy, incremental actions, and merge blocker kinds for agent-safe incremental workflows.
 - Web incremental cache diagnostics show localized completeness blockers and safe-update reasons.
 - Scan coverage reports in CLI, API, and web overview for indexed files, policy skips, large-file skips, and non-indexed files.
@@ -697,6 +698,15 @@ cargo run -p codegraph-cli -- registry-remove frontend
 ```
 
 The registry is a machine-managed JSON file (default `<cache-dir>/registry.json`, override with `--registry-path`) mapping short project names to canonical repository roots. `registry-query` runs one query expression — any slice the query language supports, including `path from:.. to:..` — against every registered repository (or the `--project` subset) through the shared persistent cache, and returns per-project results with `succeeded`/`failed` counters. A repository that fails to scan reports its error inline instead of failing the whole run, unknown `--project` names fail loudly with the list of known projects, and re-adding the same root under the same name is a no-op.
+
+Combine several graph artifacts into one typed graph:
+
+```bash
+cargo run -p codegraph-cli -- merge code.json docs.json --output merged.json
+cargo run -p codegraph-cli -- merge incident.json --project backend --output merged.json
+```
+
+`merge` accepts exported graph JSON files and/or `--project` names from the registry (project, docs, incident, and external-system graphs alike). Nodes merge only when kind, label, and source path all match; every merged node and edge records its contributors in `merge_sources` metadata, non-conflicting metadata is unioned, and duplicate edges collapse to the highest-confidence contributor. The strategy is conflict-safe for committed artifacts: inputs are processed in sorted-by-name order and ids are reassigned deterministically, so the same inputs always produce byte-identical output — re-merging in CI or by a teammate never churns a committed file. Metadata disagreements keep the first source's value and are enumerated in the merge report (`codegraph.merge.v1`) instead of being dropped silently. With `--output` the merged graph goes to the file and the report to stdout; without it the merged graph itself prints to stdout.
 
 Save investigation outcomes as repository memory and reuse them between sessions:
 

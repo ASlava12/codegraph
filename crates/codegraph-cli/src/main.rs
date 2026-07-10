@@ -2,6 +2,7 @@ mod hooks;
 mod install;
 mod mcp;
 mod memory;
+mod merge;
 mod query_log;
 mod registry;
 mod watch;
@@ -201,6 +202,32 @@ enum Command {
         /// Collapse repeated low-signal nodes in each query result.
         #[arg(long)]
         compact: bool,
+
+        /// Registry file override; defaults to <cache-dir>/registry.json.
+        #[arg(long)]
+        registry_path: Option<PathBuf>,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// Merge graph JSON artifacts and/or registered projects into one graph with source provenance.
+    Merge {
+        /// Graph JSON files to merge (as produced by scan/export).
+        inputs: Vec<PathBuf>,
+
+        /// Also merge registered projects by name, scanned through the cache (repeatable).
+        #[arg(long = "project")]
+        projects: Vec<String>,
+
+        /// Write the merged graph JSON here and print the merge report to stdout;
+        /// without --output the merged graph itself goes to stdout.
+        #[arg(long)]
+        output: Option<PathBuf>,
+
+        /// Root label for the merged graph.
+        #[arg(long, default_value = "merged")]
+        label: String,
 
         /// Registry file override; defaults to <cache-dir>/registry.json.
         #[arg(long)]
@@ -1769,6 +1796,73 @@ fn main() -> Result<()> {
                 compact,
             )?;
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::Merge {
+            inputs,
+            projects,
+            output,
+            label,
+            registry_path,
+            cache,
+        } => {
+            let graph_cache = (!cache.no_cache).then(|| {
+                GraphCache::new(cache.cache_dir.clone().unwrap_or_else(default_cache_dir))
+            });
+            let mut taken = Vec::new();
+            let mut merge_inputs = Vec::new();
+            for path in &inputs {
+                let graph = merge::load_graph_file(path)?;
+                let name = merge::unique_input_name(path, &mut taken);
+                merge_inputs.push(merge::MergeInput {
+                    name,
+                    origin: path.display().to_string(),
+                    graph,
+                });
+            }
+            if !projects.is_empty() {
+                let registry_path = registry_path.unwrap_or_else(registry::default_registry_path);
+                let registry = registry::load(&registry_path)?;
+                for name in &projects {
+                    let project = registry
+                        .projects
+                        .iter()
+                        .find(|project| &project.name == name)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "project `{name}` is not registered in {}",
+                                registry_path.display()
+                            )
+                        })?;
+                    if taken.contains(name) {
+                        return Err(anyhow::anyhow!(
+                            "input name `{name}` is used by both a file and a project; rename one"
+                        ));
+                    }
+                    let root = PathBuf::from(&project.root);
+                    let options =
+                        configured_index_options(&root, &IndexOptionOverrides::default())?;
+                    let scanned = scan_project_cached(&root, &options, graph_cache.as_ref())?;
+                    taken.push(name.clone());
+                    merge_inputs.push(merge::MergeInput {
+                        name: name.clone(),
+                        origin: project.root.clone(),
+                        graph: scanned.graph,
+                    });
+                }
+            }
+            let (merged, report) = merge::merge_graphs(merge_inputs, &label)?;
+            match output {
+                Some(path) => {
+                    fs::write(
+                        &path,
+                        format!("{}\n", serde_json::to_string_pretty(&merged)?),
+                    )?;
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                }
+                None => {
+                    println!("{}", serde_json::to_string_pretty(&merged)?);
+                }
+            }
         }
         Command::InstallHooks { path } => {
             let report = hooks::install_hooks(&path)?;
