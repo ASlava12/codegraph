@@ -495,7 +495,7 @@ Repository knowledge ingestion:
 - [x] Add first SQL schema consistency insight for query strings that reference missing indexed tables.
 - [x] Add deeper SQL query extraction, JOIN relationship semantics, migration ordering, and broader schema consistency insights.
 - [x] Link application code to SQL/schema nodes through common SQL query strings.
-- [ ] Link application code to SQL/schema nodes through migrations, ORM metadata, database config, and deeper query semantics.
+- [x] Link application code to SQL/schema nodes through migrations, ORM metadata, database config, and deeper query semantics.
 - [ ] Add document ingestion for Markdown, plain text, PDFs, Office files, and generated Markdown sidecars, with size limits and provenance.
 - [ ] Add optional local or configured-model semantic extraction for non-code documents while keeping code-only scans fully offline.
 - [ ] Add media ingestion hooks for transcripts from audio/video sidecars, with explicit opt-in for transcription backends.

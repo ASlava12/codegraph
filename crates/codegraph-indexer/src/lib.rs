@@ -120,6 +120,27 @@ struct IndexContext {
     pending_sql_joins: Vec<PendingSqlJoin>,
     pending_sql_alter_refs: Vec<PendingSqlAlterRef>,
     sql_migrations: Vec<SqlMigrationFile>,
+    pending_orm_table_refs: Vec<PendingOrmTableRef>,
+    pending_migration_dir_refs: Vec<PendingMigrationDirRef>,
+    sql_migration_dirs: BTreeMap<String, Vec<NodeId>>,
+}
+
+/// An ORM table mapping found in application code, waiting for the table
+/// node to exist.
+struct PendingOrmTableRef {
+    file: NodeId,
+    table: String,
+    pattern: &'static str,
+    line: u32,
+}
+
+/// A migrations-directory reference from code or database config, waiting to
+/// be matched against scanned migration files.
+struct PendingMigrationDirRef {
+    file: NodeId,
+    dir: String,
+    source_kind: &'static str,
+    line: u32,
 }
 
 /// A JOIN between two tables found in a SQL statement, waiting for both
@@ -874,6 +895,9 @@ fn scan_project_with_scope(
         pending_sql_joins: Vec::new(),
         pending_sql_alter_refs: Vec::new(),
         sql_migrations: Vec::new(),
+        pending_orm_table_refs: Vec::new(),
+        pending_migration_dir_refs: Vec::new(),
+        sql_migration_dirs: BTreeMap::new(),
     };
 
     for entry in WalkDir::new(root)
@@ -941,6 +965,8 @@ fn scan_project_with_scope(
     resolve_pending_sql_joins(&mut context);
     resolve_pending_sql_alter_refs(&mut context);
     resolve_sql_migration_order(&mut context);
+    resolve_pending_orm_table_refs(&mut context);
+    resolve_pending_migration_dir_refs(&mut context);
     apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
 
@@ -1196,6 +1222,8 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
             index_dart_platform_channels(context, file_id, label, source);
         }
         index_native_platform_channels(context, file_id, label, source);
+        index_orm_table_refs(context, file_id, label, source);
+        index_migration_dir_refs(context, file_id, label, source);
         if let Some(language) = language {
             index_commonjs_require_imports(context, file_id, label, language, source);
         }
@@ -2983,6 +3011,120 @@ fn truncate_metadata_value(value: &str, max_chars: usize) -> String {
     let mut truncated = value.chars().take(max_chars).collect::<String>();
     truncated.push_str("...");
     truncated
+}
+
+/// ORM table mappings in application code: each pattern names the table a
+/// class/struct persists to across common frameworks.
+fn index_orm_table_refs(context: &mut IndexContext, file_id: NodeId, label: &str, source: &str) {
+    if is_sql_file(Path::new(label)) {
+        return;
+    }
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let table_and_pattern = orm_table_in_line(line);
+        if let Some((table, pattern)) = table_and_pattern {
+            context.pending_orm_table_refs.push(PendingOrmTableRef {
+                file: file_id,
+                table,
+                pattern,
+                line: line_number,
+            });
+        }
+    }
+}
+
+fn orm_table_in_line(line: &str) -> Option<(String, &'static str)> {
+    let checks: [(&str, &'static str); 9] = [
+        ("__tablename__", "sqlalchemy_tablename"),
+        ("db_table", "django_db_table"),
+        ("@Entity(", "typeorm_entity"),
+        ("tableName:", "sequelize_table_name"),
+        ("@@map(", "prisma_map"),
+        ("$table", "laravel_table"),
+        ("diesel(table_name", "diesel_table_name"),
+        ("ORM\\Table(name", "doctrine_table"),
+        ("gorm:\"table:", "gorm_table_tag"),
+    ];
+    for (needle, pattern) in checks {
+        let Some(position) = line.find(needle) else {
+            continue;
+        };
+        // `$table` must be an assignment, not a local usage.
+        if pattern == "laravel_table" && !line[position..].contains('=') {
+            continue;
+        }
+        let rest = &line[position + needle.len()..];
+        let table = if pattern == "gorm_table_tag" {
+            rest.chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect::<String>()
+        } else {
+            first_quoted_value(rest)?
+        };
+        if !table.is_empty()
+            && table
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+        {
+            return Some((table, pattern));
+        }
+    }
+    // Go GORM convention: func (X) TableName() string { return "users" }
+    if line.contains("TableName()")
+        && line.contains("func ")
+        && let Some(table) = first_quoted_value(line)
+    {
+        return Some((table, "gorm_table_name"));
+    }
+    None
+}
+
+/// Migrations-directory references: migration runner macros/calls in code
+/// plus migration locations in database config files.
+fn index_migration_dir_refs(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+) {
+    let file_name = label.rsplit('/').next().unwrap_or(label);
+    let is_db_config = matches!(
+        file_name,
+        "alembic.ini" | "flyway.conf" | "phinx.php" | "knexfile.js" | "knexfile.ts"
+    );
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let reference = if line.contains("migrate!(") {
+            // sqlx::migrate!("./migrations") — default path when empty.
+            Some(
+                first_quoted_value_after(line, "migrate!(")
+                    .unwrap_or_else(|| "migrations".to_string()),
+            )
+        } else if is_db_config && line.trim_start().starts_with("script_location") {
+            line.split_once('=')
+                .map(|(_, value)| value.trim().to_string())
+        } else if is_db_config && line.contains("flyway.locations") {
+            line.split_once('=')
+                .map(|(_, value)| value.trim().trim_start_matches("filesystem:").to_string())
+        } else if is_db_config && (line.contains("directory:") || line.contains("'directory'")) {
+            first_quoted_value(line)
+        } else {
+            None
+        };
+        if let Some(dir) = reference {
+            let normalized = normalize_path(dir.trim_start_matches("./"));
+            if !normalized.is_empty() {
+                context
+                    .pending_migration_dir_refs
+                    .push(PendingMigrationDirRef {
+                        file: file_id,
+                        dir: normalized,
+                        source_kind: if is_db_config { "db_config" } else { "code" },
+                        line: line_number,
+                    });
+            }
+        }
+    }
 }
 
 fn is_sql_file(path: &Path) -> bool {
@@ -11941,6 +12083,13 @@ fn resolve_sql_migration_order(context: &mut IndexContext) {
             .then(a.label.cmp(&b.label))
     });
     for migration in &migrations {
+        context
+            .sql_migration_dirs
+            .entry(migration.dir.clone())
+            .or_default()
+            .push(migration.file);
+    }
+    for migration in &migrations {
         add_node_metadata(
             &mut context.graph,
             migration.file,
@@ -11980,6 +12129,67 @@ fn resolve_sql_migration_order(context: &mut IndexContext) {
                 ("to_sequence".to_string(), pair[1].sequence_text.clone()),
             ]),
         );
+    }
+}
+
+/// Link ORM table mappings to their indexed tables.
+fn resolve_pending_orm_table_refs(context: &mut IndexContext) {
+    let pending = std::mem::take(&mut context.pending_orm_table_refs);
+    for reference in pending {
+        let table_key = sql_identifier_key(&reference.table);
+        let Some(table_id) = context.sql_tables.get(&table_key).copied() else {
+            continue;
+        };
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            reference.file,
+            table_id,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("relation".to_string(), "orm_table_mapping".to_string()),
+                ("source".to_string(), "orm_metadata".to_string()),
+                ("pattern".to_string(), reference.pattern.to_string()),
+                ("table".to_string(), reference.table),
+                ("line".to_string(), reference.line.to_string()),
+            ]),
+        );
+    }
+}
+
+/// Link migration runner/config references to the migration files inside the
+/// referenced directory (matched exactly or as a path suffix), capped per
+/// reference so one runner line does not fan out unboundedly.
+fn resolve_pending_migration_dir_refs(context: &mut IndexContext) {
+    const MIGRATION_LINK_LIMIT: usize = 20;
+    let pending = std::mem::take(&mut context.pending_migration_dir_refs);
+    for reference in pending {
+        let mut targets: Vec<NodeId> = Vec::new();
+        for (dir, files) in &context.sql_migration_dirs {
+            let matches = dir == &reference.dir
+                || dir.ends_with(&format!("/{}", reference.dir))
+                || reference.dir.ends_with(&format!("/{dir}"));
+            if matches {
+                targets.extend(files.iter().copied());
+            }
+        }
+        targets.sort();
+        targets.dedup();
+        for target in targets.into_iter().take(MIGRATION_LINK_LIMIT) {
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                reference.file,
+                target,
+                EdgeKind::References,
+                Confidence::Heuristic,
+                BTreeMap::from([
+                    ("relation".to_string(), "runs_migrations".to_string()),
+                    ("source".to_string(), reference.source_kind.to_string()),
+                    ("directory".to_string(), reference.dir.clone()),
+                    ("line".to_string(), reference.line.to_string()),
+                ]),
+            );
+        }
     }
 }
 
@@ -13545,6 +13755,106 @@ CREATE TABLE users (
         );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_links_code_to_sql_through_orm_and_migrations() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("migrations")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("migrations").join("001_init.sql"),
+            "CREATE TABLE users (id INTEGER PRIMARY KEY);\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("migrations").join("002_orders.sql"),
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY);\n",
+        )
+        .unwrap();
+        // ORM mappings across frameworks.
+        fs::write(
+            root.join("src").join("models.py"),
+            "class User(Base):\n    __tablename__ = \"users\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("user.entity.ts"),
+            "@Entity(\"users\")\nexport class User {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("User.php"),
+            "<?php\nclass User extends Model {\n    protected $table = 'users';\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("user.go"),
+            "package main\n\nfunc (User) TableName() string { return \"users\" }\n",
+        )
+        .unwrap();
+        // Migration runner in code plus database config.
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() {\n    let migrator = sqlx::migrate!(\"./migrations\");\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("alembic.ini"),
+            "[alembic]\nscript_location = migrations\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+
+        let users_table = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata.get("item_kind").map(String::as_str) == Some("sql_table")
+                    && node.label.contains("users")
+            })
+            .expect("users table node");
+
+        // Every ORM mapping links its file to the users table.
+        for (file, pattern) in [
+            ("src/models.py", "sqlalchemy_tablename"),
+            ("src/user.entity.ts", "typeorm_entity"),
+            ("src/User.php", "laravel_table"),
+            ("src/user.go", "gorm_table_name"),
+        ] {
+            let file_id = node_id(&graph, NodeKind::File, file);
+            assert!(
+                graph.edges.iter().any(|edge| {
+                    edge.source == file_id
+                        && edge.target == users_table.id
+                        && edge.metadata.get("relation").map(String::as_str)
+                            == Some("orm_table_mapping")
+                        && edge.metadata.get("pattern").map(String::as_str) == Some(pattern)
+                }),
+                "missing orm_table_mapping for {file} ({pattern})"
+            );
+        }
+
+        // Migration runner and db config link to both migration files.
+        for (file, source_kind) in [("src/main.rs", "code"), ("alembic.ini", "db_config")] {
+            let file_id = node_id(&graph, NodeKind::File, file);
+            let linked: Vec<_> = graph
+                .edges
+                .iter()
+                .filter(|edge| {
+                    edge.source == file_id
+                        && edge.metadata.get("relation").map(String::as_str)
+                            == Some("runs_migrations")
+                        && edge.metadata.get("source").map(String::as_str) == Some(source_kind)
+                })
+                .collect();
+            assert_eq!(
+                linked.len(),
+                2,
+                "{file} must link both migrations: {linked:?}"
+            );
+        }
     }
 
     #[test]

@@ -107,7 +107,7 @@ Goal: extend deterministic extraction where it is still shallow.
 - [x] Validate Dart semantic enrichment patches from the Dart analysis server, with parser/semantic cache invalidation for `pubspec.yaml` and generated files.
 - [x] Match Dart/Flutter platform-channel declarations to native Android/iOS handler implementations.
 - [x] Add deeper SQL query extraction: JOIN relationship semantics, migration ordering, and broader schema consistency insights.
-- [ ] Link application code to SQL/schema nodes through migrations, ORM metadata, and database config.
+- [x] Link application code to SQL/schema nodes through migrations, ORM metadata, and database config.
 - [ ] Index MCP configuration files (`.mcp.json`, `mcp.json`, `mcp_servers.json`, assistant desktop configs) as tool/server dependency facts.
 - [ ] Add richer Markdown citations, backlinks, front matter, ownership metadata, and docs-to-code UI overlays.
 
