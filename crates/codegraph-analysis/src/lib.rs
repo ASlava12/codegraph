@@ -4017,21 +4017,21 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
         ));
     }
     let start = resolve_node_reference(graph, from)
-        .ok_or_else(|| QueryError::new(format!("journey start `{from}` did not match a node")))?;
+        .ok_or_else(|| node_not_found_error(graph, "journey start", from))?;
     let target = resolve_node_reference(graph, to)
-        .ok_or_else(|| QueryError::new(format!("journey target `{to}` did not match a node")))?;
+        .ok_or_else(|| node_not_found_error(graph, "journey target", to))?;
     let start_node = graph
         .nodes
         .iter()
         .find(|node| node.id == start)
         .cloned()
-        .ok_or_else(|| QueryError::new(format!("journey start `{from}` did not match a node")))?;
+        .ok_or_else(|| node_not_found_error(graph, "journey start", from))?;
     let target_node = graph
         .nodes
         .iter()
         .find(|node| node.id == target)
         .cloned()
-        .ok_or_else(|| QueryError::new(format!("journey target `{to}` did not match a node")))?;
+        .ok_or_else(|| node_not_found_error(graph, "journey target", to))?;
     let insight_report = insights(graph);
     let path_limit = if request.path_limit == 0 {
         3
@@ -4145,17 +4145,14 @@ pub fn component_dependencies(
             "component dependencies require a `target` label or node id",
         ));
     }
-    let target_id = resolve_node_reference(graph, target).ok_or_else(|| {
-        QueryError::new(format!("component target `{target}` did not match a node"))
-    })?;
+    let target_id = resolve_node_reference(graph, target)
+        .ok_or_else(|| node_not_found_error(graph, "component target", target))?;
     let target_node = graph
         .nodes
         .iter()
         .find(|node| node.id == target_id)
         .cloned()
-        .ok_or_else(|| {
-            QueryError::new(format!("component target `{target}` did not match a node"))
-        })?;
+        .ok_or_else(|| node_not_found_error(graph, "component target", target))?;
     let nodes_by_id: BTreeMap<NodeId, &Node> =
         graph.nodes.iter().map(|node| (node.id, node)).collect();
     let areas = node_architecture_areas(graph, &nodes_by_id);
@@ -4590,13 +4587,13 @@ pub fn impact_with_insights(
         ));
     }
     let target_id = resolve_node_reference(graph, target)
-        .ok_or_else(|| QueryError::new(format!("impact target `{target}` did not match a node")))?;
+        .ok_or_else(|| node_not_found_error(graph, "impact target", target))?;
     let target_node = graph
         .nodes
         .iter()
         .find(|node| node.id == target_id)
         .cloned()
-        .ok_or_else(|| QueryError::new(format!("impact target `{target}` did not match a node")))?;
+        .ok_or_else(|| node_not_found_error(graph, "impact target", target))?;
     let nodes_by_id: BTreeMap<NodeId, &Node> =
         graph.nodes.iter().map(|node| (node.id, node)).collect();
     let node_areas = node_architecture_areas(graph, &nodes_by_id);
@@ -10532,6 +10529,74 @@ fn endpoint_nodes(graph: &CodeGraph, edges: &[Edge]) -> Vec<Node> {
         .filter(|node| ids.contains(&node.id))
         .cloned()
         .collect()
+}
+
+/// Bounded Levenshtein distance with early exit above `max`.
+fn edit_distance_within(left: &str, right: &str, max: usize) -> Option<usize> {
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    if left.len().abs_diff(right.len()) > max {
+        return None;
+    }
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    for (row, left_char) in left.iter().enumerate() {
+        let mut current = vec![row + 1];
+        let mut row_min = row + 1;
+        for (column, right_char) in right.iter().enumerate() {
+            let cost = usize::from(left_char != right_char);
+            let value = (previous[column] + cost)
+                .min(previous[column + 1] + 1)
+                .min(current[column] + 1);
+            row_min = row_min.min(value);
+            current.push(value);
+        }
+        if row_min > max {
+            return None;
+        }
+        previous = current;
+    }
+    (previous[right.len()] <= max).then_some(previous[right.len()])
+}
+
+/// Actionable node-not-found error: appends up to three near-matches
+/// (bounded edit distance or meaningful substring overlap) so a mistyped
+/// label points at real candidates.
+fn node_not_found_error(graph: &CodeGraph, role: &str, value: &str) -> QueryError {
+    let needle = value.trim().to_ascii_lowercase();
+    let mut ranked: Vec<(usize, &str)> = Vec::new();
+    if needle.len() >= 3 {
+        for node in &graph.nodes {
+            let label = node.label.as_str();
+            if ranked.iter().any(|(_, seen)| *seen == label) {
+                continue;
+            }
+            let lower = label.to_ascii_lowercase();
+            let substring = (needle.len() >= 4 && lower.contains(&needle))
+                || (lower.len() >= 4 && needle.contains(&lower));
+            let distance = edit_distance_within(&lower, &needle, 2);
+            if let Some(distance) = distance {
+                ranked.push((distance, label));
+            } else if substring {
+                ranked.push((3, label));
+            }
+        }
+    }
+    ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.len().cmp(&b.1.len())));
+    let suggestions: Vec<&str> = ranked.iter().take(3).map(|(_, label)| *label).collect();
+    if suggestions.is_empty() {
+        QueryError::new(format!(
+            "{role} `{value}` did not match a node; try a label from `entrypoints`/`query 'nodes search:…'` or an id such as n42"
+        ))
+    } else {
+        QueryError::new(format!(
+            "{role} `{value}` did not match a node; did you mean {}?",
+            suggestions
+                .iter()
+                .map(|label| format!("`{label}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
 }
 
 fn resolve_node_reference(graph: &CodeGraph, value: &str) -> Option<NodeId> {
@@ -20240,6 +20305,30 @@ mod tests {
         assert!(report.insights.iter().any(|insight| {
             insight.kind == "orphan_function" && insight.nodes.contains(&orphan)
         }));
+    }
+
+    #[test]
+    fn node_not_found_errors_suggest_near_matches() {
+        let mut graph = CodeGraph::new("repo");
+        graph.add_node(NodeKind::Function, "scan_project");
+        graph.add_node(NodeKind::Function, "load_config");
+        graph.add_node(NodeKind::Function, "t");
+
+        let typo = node_not_found_error(&graph, "impact target", "scan_projct");
+        assert!(
+            typo.to_string().contains("`scan_project`"),
+            "close labels are suggested: {typo}"
+        );
+        assert!(
+            !typo.to_string().contains("`t`"),
+            "trivial short labels are not suggested: {typo}"
+        );
+
+        let nothing = node_not_found_error(&graph, "impact target", "zzzzqqqq");
+        assert!(
+            nothing.to_string().contains("entrypoints"),
+            "no-match errors point at discovery commands: {nothing}"
+        );
     }
 
     #[test]

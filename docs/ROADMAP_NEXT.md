@@ -145,7 +145,7 @@ Usability polish:
 
 - [x] Verify CLI/API/web feature parity and close or document intentional surface-specific gaps (`SURFACE_PARITY.md`).
 - [x] Dogfood CodeGraph on itself and fix what its own reports make hard to understand (risk score/grade recalibrated; noisy kinds downgraded; session in `FEATURE_AUDIT.md`).
-- [ ] Unify CLI ergonomics: consistent flags, defaults, `--help` examples, actionable errors.
+- [x] Unify CLI ergonomics: consistent flags, defaults, `--help` examples, actionable errors.
 - [ ] Improve web discoverability: onboarding hints, explanatory empty states, sane default filters for large graphs.
 - [ ] Add task-oriented guides (investigate a bug, trace a config value, plan a refactor).
 - [ ] Make agent-facing outputs self-describing with schema examples and copy-paste-ready snippets.

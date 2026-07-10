@@ -98,6 +98,9 @@ enum Command {
     SemanticApply(SemanticPatchArgs),
 
     /// Scan a project and emit the initial graph as JSON.
+    #[command(
+        after_help = "Examples:\n  codegraph scan .\n  codegraph scan . --format dot > graph.dot\n  codegraph scan ../other-repo --include-hidden"
+    )]
     Scan {
         /// Project root to scan.
         #[arg(default_value = ".")]
@@ -267,6 +270,9 @@ enum Command {
     },
 
     /// PR impact dashboard: map changed files onto communities, hotspots, blast radius, and risks.
+    #[command(
+        after_help = "Examples:\n  codegraph pr-impact . --base origin/main --ci-state passing\n  codegraph pr-impact . --file src/util.rs --file src/main.rs"
+    )]
     PrImpact {
         /// Project root to scan.
         #[arg(default_value = ".")]
@@ -379,6 +385,9 @@ enum Command {
     Check(CheckArgs),
 
     /// Query focused graph slices as JSON.
+    #[command(
+        after_help = "Examples:\n  codegraph query 'nodes kind:function label:main' .\n  codegraph query 'path from:main to:load_config depth:6' .\n  codegraph query 'docs owner:platform-team' .\n  codegraph query 'edges confidence:heuristic limit:20' ."
+    )]
     Query {
         /// Query expression, for example: nodes kind:function label:main or path from:main to:init.
         expression: String,
@@ -404,6 +413,9 @@ enum Command {
     },
 
     /// Emit a step-numbered execution journey between two graph labels or node ids.
+    #[command(
+        after_help = "Examples:\n  codegraph journey --from main --to load_config .\n  codegraph journey --from 'cargo bin:api' --to n42 . --depth 8 --paths 5"
+    )]
     Journey {
         /// Journey start label or node id, for example: main or n12.
         #[arg(long)]
@@ -453,6 +465,9 @@ enum Command {
     },
 
     /// Save an investigation outcome to repository memory (.codegraph/memory.jsonl).
+    #[command(
+        after_help = "Examples:\n  codegraph memory-save 'configs target:DATABASE_URL' . --outcome useful --note 'reader lives in server config'\n  codegraph memory-save 'calls(function:legacy)' . --outcome dead_end"
+    )]
     MemorySave {
         /// The query, ask question, or journey expression that was investigated.
         query: String,
@@ -524,6 +539,9 @@ enum Command {
     },
 
     /// Serve CodeGraph analysis tools to assistants over the MCP stdio transport.
+    #[command(
+        after_help = "Examples:\n  codegraph mcp .\n  # .mcp.json entry:\n  #   {\"mcpServers\": {\"codegraph\": {\"command\": \"codegraph\", \"args\": [\"mcp\", \".\"]}}}"
+    )]
     Mcp {
         /// Project root to scan.
         #[arg(default_value = ".")]
@@ -557,6 +575,9 @@ enum Command {
     },
 
     /// Emit a one-shot refactor context bundle: impact, dependencies, optional journey, risks, and source.
+    #[command(
+        after_help = "Examples:\n  codegraph refactor-context load_config .\n  codegraph refactor-context scan_project . --from main --depth 6"
+    )]
     RefactorContext {
         /// Refactor target label or node id, for example: load_config or n42.
         target: String,
@@ -628,6 +649,9 @@ enum Command {
     },
 
     /// Report the blast radius of changing a node: dependents, entrypoints, tests, and impact score.
+    #[command(
+        after_help = "Examples:\n  codegraph impact load_config .\n  codegraph impact n42 . --depth 8 --limit 200"
+    )]
     Impact {
         /// Impact target label or node id, for example: load_config or n42.
         target: String,
@@ -718,6 +742,9 @@ enum Command {
     },
 
     /// Map a natural-language investigation question to a bounded graph query and run it.
+    #[command(
+        after_help = "Examples:\n  codegraph ask \"Where is DATABASE_URL read?\" .\n  codegraph ask \"Who calls load_config?\" .\n  codegraph ask \"Какие точки входа есть в проекте?\" ."
+    )]
     Ask {
         /// Question, for example: "Where is DATABASE_URL read?".
         question: String,
@@ -1047,6 +1074,9 @@ enum Command {
     },
 
     /// Trace config files and environment variables back to readers and entrypoints.
+    #[command(
+        after_help = "Examples:\n  codegraph trace-config DATABASE_URL .\n  codegraph trace-config config/settings.toml . --depth 8"
+    )]
     TraceConfig {
         /// Config file or environment variable label to trace.
         target: String,
