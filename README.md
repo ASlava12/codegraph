@@ -315,6 +315,11 @@ Planned next:
 
 ## Usage
 
+Task-oriented walkthroughs — investigate a bug, trace a config value, and
+plan a refactor step by step with verified commands — live in
+[`docs/GUIDES.md`](docs/GUIDES.md). The sections below are the
+feature-by-feature reference.
+
 Run the initial scanner:
 
 ```bash
@@ -1102,6 +1107,7 @@ At the current stage, supported source languages are detected by extension:
 Planned repository-knowledge features inspired by Graphify-style workflows:
 
 - Deeper document ingestion beyond Markdown, deeper SQL query analysis, migration ordering, ORM/database-config linking, optional non-code document ingestion, and SVG export.
+- Task-oriented investigation guides (investigate a bug, trace a config value, plan a refactor) with live-verified commands are in [`docs/GUIDES.md`](docs/GUIDES.md).
 - The detailed Graphify parity map is tracked in [`docs/GRAPHIFY_PARITY.md`](docs/GRAPHIFY_PARITY.md), including already covered capabilities, gaps, priorities, and compatibility principles.
 - The Phase 9 end-to-end feature audit (all CLI commands, API endpoints, web panels, and MCP tools exercised against this repository) is recorded in [`docs/FEATURE_AUDIT.md`](docs/FEATURE_AUDIT.md) with 13 filed findings.
 - The Phase 9 roadmap sweep disposition of every remaining unchecked item (3 dropped, 2 re-scoped, 27 kept and scheduled) is recorded in [`docs/ROADMAP_TRIAGE.md`](docs/ROADMAP_TRIAGE.md).

@@ -147,7 +147,7 @@ Usability polish:
 - [x] Dogfood CodeGraph on itself and fix what its own reports make hard to understand (risk score/grade recalibrated; noisy kinds downgraded; session in `FEATURE_AUDIT.md`).
 - [x] Unify CLI ergonomics: consistent flags, defaults, `--help` examples, actionable errors.
 - [x] Improve web discoverability: onboarding hints, explanatory empty states, sane default filters for large graphs.
-- [ ] Add task-oriented guides (investigate a bug, trace a config value, plan a refactor).
+- [x] Add task-oriented guides (investigate a bug, trace a config value, plan a refactor) — `GUIDES.md`, every command live-verified against this repository.
 - [ ] Make agent-facing outputs self-describing with schema examples and copy-paste-ready snippets.
 
 Exit criteria:
