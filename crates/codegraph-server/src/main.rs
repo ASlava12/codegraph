@@ -27,12 +27,12 @@ use codegraph_analysis::{
     SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryReport,
     WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map, check_insights,
     communities, compact_query_result, component_contract, component_dependencies, entrypoints,
-    explain_edge, export_dot, export_ndjson, filter_insight_report, focus_subgraph, hotspots,
-    impact, insights, journey, language_dependencies, natural_query, node_card, node_context,
-    project_report, project_report_markdown, query_graph, read_source_preview, refactor_context,
-    seams, search_source, slice_graph, summarize, surprising_links, trace, trace_config,
-    trace_dependents, trace_entrypoints, trace_errors, workflow, workflow_entrypoints,
-    workflow_query,
+    explain_edge, export_dot, export_graphml, export_ndjson, filter_insight_report, focus_subgraph,
+    hotspots, impact, insights, journey, language_dependencies, natural_query, node_card,
+    node_context, project_report, project_report_markdown, query_graph, read_source_preview,
+    refactor_context, seams, search_source, slice_graph, summarize, surprising_links, trace,
+    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
+    workflow_entrypoints, workflow_query,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -622,6 +622,7 @@ enum ExportFormat {
     Json,
     Dot,
     Ndjson,
+    Graphml,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1886,7 +1887,7 @@ async fn capabilities_api(
         root: state.root.display().to_string(),
         projects: project_responses(&state),
         languages: language_responses(),
-        export_formats: vec!["json", "dot", "ndjson"],
+        export_formats: vec!["json", "dot", "ndjson", "graphml"],
         features: capability_features(state.cache.is_some(), state.access_log_enabled),
         endpoints: capability_endpoints(),
         scan: ScanCapabilityResponse {
@@ -2538,6 +2539,10 @@ async fn export_api(
         ExportFormat::Ndjson => (
             "application/x-ndjson; charset=utf-8",
             export_ndjson(&graph).map_err(|error| ApiError::internal(error.to_string()))?,
+        ),
+        ExportFormat::Graphml => (
+            "application/graphml+xml; charset=utf-8",
+            export_graphml(&graph),
         ),
     };
     let body_bytes = body.len();
@@ -3882,7 +3887,7 @@ fn api_schema_response() -> ApiSchemaResponse {
         common_response_headers: api_schema_common_response_headers(),
         groups: api_schema_groups(),
         enum_values: BTreeMap::from([
-            ("export_format", vec!["json", "dot", "ndjson"]),
+            ("export_format", vec!["json", "dot", "ndjson", "graphml"]),
             ("report_format", vec!["json", "markdown"]),
             (
                 "graph_node_kind",
@@ -9515,7 +9520,12 @@ fn helper() {}
 
         assert_eq!(schema.api_version, 1);
         assert_eq!(schema.server_version, SERVER_VERSION);
-        assert!(schema.enum_values.contains_key("export_format"));
+        assert!(
+            schema
+                .enum_values
+                .get("export_format")
+                .is_some_and(|formats| formats == &vec!["json", "dot", "ndjson", "graphml"])
+        );
         assert!(
             schema
                 .enum_values

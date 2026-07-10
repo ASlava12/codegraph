@@ -5929,6 +5929,8 @@ function exportFormatMetadata(format) {
       return { format: "dot", extension: "dot", label: "DOT", endpoint: "/api/export" };
     case "ndjson":
       return { format: "ndjson", extension: "ndjson", label: "NDJSON", endpoint: "/api/export" };
+    case "graphml":
+      return { format: "graphml", extension: "graphml", label: "GraphML", endpoint: "/api/export" };
     case "report":
       return { format: "report", extension: "report.json", label: t("export.report"), endpoint: "/api/report" };
     case "reportMarkdown":

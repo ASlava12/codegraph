@@ -27,7 +27,7 @@ use codegraph_analysis::{
     trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_mermaid,
     workflow_query,
 };
-use codegraph_analysis::{export_dot, export_ndjson, node_card};
+use codegraph_analysis::{export_dot, export_graphml, export_ndjson, node_card};
 use codegraph_core::NodeId;
 use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
@@ -1357,6 +1357,7 @@ enum OutputFormat {
     Json,
     Dot,
     Ndjson,
+    Graphml,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -2684,6 +2685,7 @@ fn print_graph(graph: &codegraph_core::CodeGraph, format: OutputFormat) -> Resul
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(graph)?),
         OutputFormat::Dot => print!("{}", export_dot(graph)),
         OutputFormat::Ndjson => print!("{}", export_ndjson(graph)?),
+        OutputFormat::Graphml => print!("{}", export_graphml(graph)),
     }
     Ok(())
 }

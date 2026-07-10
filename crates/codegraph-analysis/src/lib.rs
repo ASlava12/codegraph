@@ -1481,6 +1481,101 @@ pub fn export_ndjson(graph: &CodeGraph) -> Result<String, serde_json::Error> {
     Ok(format!("{}\n", lines.join("\n")))
 }
 
+/// Export the graph as GraphML for external graph tools (yEd, Gephi,
+/// Cytoscape). Nodes carry kind/label/path/language attributes and edges
+/// carry kind/confidence plus relation/source provenance where present.
+pub fn export_graphml(graph: &CodeGraph) -> String {
+    let mut output = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <graphml xmlns=\"http://graphml.graphdrawing.org/xmlns\">\n\
+         \x20 <key id=\"node_kind\" for=\"node\" attr.name=\"kind\" attr.type=\"string\"/>\n\
+         \x20 <key id=\"node_label\" for=\"node\" attr.name=\"label\" attr.type=\"string\"/>\n\
+         \x20 <key id=\"node_path\" for=\"node\" attr.name=\"path\" attr.type=\"string\"/>\n\
+         \x20 <key id=\"node_language\" for=\"node\" attr.name=\"language\" attr.type=\"string\"/>\n\
+         \x20 <key id=\"edge_kind\" for=\"edge\" attr.name=\"kind\" attr.type=\"string\"/>\n\
+         \x20 <key id=\"edge_confidence\" for=\"edge\" attr.name=\"confidence\" attr.type=\"string\"/>\n\
+         \x20 <key id=\"edge_relation\" for=\"edge\" attr.name=\"relation\" attr.type=\"string\"/>\n\
+         \x20 <key id=\"edge_source\" for=\"edge\" attr.name=\"source\" attr.type=\"string\"/>\n\
+         \x20 <graph id=\"codegraph\" edgedefault=\"directed\">\n",
+    );
+
+    for node in &graph.nodes {
+        output.push_str(&format!("    <node id=\"{}\">\n", node.id));
+        output.push_str(&format!(
+            "      <data key=\"node_kind\">{}</data>\n",
+            xml_escape(&kind_name(&node.kind))
+        ));
+        output.push_str(&format!(
+            "      <data key=\"node_label\">{}</data>\n",
+            xml_escape(&node.label)
+        ));
+        let path = node
+            .span
+            .as_ref()
+            .map(|span| span.path.as_str())
+            .or_else(|| node.metadata.get("path").map(String::as_str));
+        if let Some(path) = path {
+            output.push_str(&format!(
+                "      <data key=\"node_path\">{}</data>\n",
+                xml_escape(path)
+            ));
+        }
+        if let Some(language) = node.metadata.get("language") {
+            output.push_str(&format!(
+                "      <data key=\"node_language\">{}</data>\n",
+                xml_escape(language)
+            ));
+        }
+        output.push_str("    </node>\n");
+    }
+
+    for edge in &graph.edges {
+        output.push_str(&format!(
+            "    <edge source=\"{}\" target=\"{}\">\n",
+            edge.source, edge.target
+        ));
+        output.push_str(&format!(
+            "      <data key=\"edge_kind\">{}</data>\n",
+            xml_escape(&edge_kind_name(&edge.kind))
+        ));
+        output.push_str(&format!(
+            "      <data key=\"edge_confidence\">{}</data>\n",
+            xml_escape(&confidence_name(edge.confidence))
+        ));
+        if let Some(relation) = edge.metadata.get("relation") {
+            output.push_str(&format!(
+                "      <data key=\"edge_relation\">{}</data>\n",
+                xml_escape(relation)
+            ));
+        }
+        if let Some(source) = edge.metadata.get("source") {
+            output.push_str(&format!(
+                "      <data key=\"edge_source\">{}</data>\n",
+                xml_escape(source)
+            ));
+        }
+        output.push_str("    </edge>\n");
+    }
+
+    output.push_str("  </graph>\n</graphml>\n");
+    output
+}
+
+fn xml_escape(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
 pub fn summarize(graph: &CodeGraph) -> GraphSummary {
     let mut node_kinds = BTreeMap::new();
     let mut edge_kinds = BTreeMap::new();
@@ -15711,6 +15806,59 @@ mod tests {
         assert_eq!(records[0]["record_type"], "graph");
         assert_eq!(records[1]["record_type"], "node");
         assert_eq!(records[3]["record_type"], "edge");
+    }
+
+    #[test]
+    fn exports_graphml_with_attributes_and_escaping() {
+        let mut graph = CodeGraph::new("repo");
+        let file = graph.add_node_with_metadata(
+            NodeKind::File,
+            "src/<main> & \"other\".rs",
+            Some(SourceSpan {
+                path: "src/main.rs".to_string(),
+                start_line: 1,
+                start_column: 0,
+                end_line: 1,
+                end_column: 0,
+            }),
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let main = graph.add_node(NodeKind::Function, "main");
+        graph.add_edge(graph.root, file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge_with_metadata(
+            file,
+            main,
+            EdgeKind::Contains,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("relation".to_string(), "declares".to_string()),
+                ("source".to_string(), "parser".to_string()),
+            ]),
+        );
+
+        let graphml = export_graphml(&graph);
+        assert!(graphml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+        assert!(graphml.contains("<graphml xmlns=\"http://graphml.graphdrawing.org/xmlns\">"));
+        assert!(graphml.contains("<graph id=\"codegraph\" edgedefault=\"directed\">"));
+        assert!(
+            graphml.contains("src/&lt;main&gt; &amp; &quot;other&quot;.rs"),
+            "labels must be XML-escaped"
+        );
+        assert!(!graphml.contains("<main>"), "raw markup must not leak");
+        assert!(graphml.contains("<data key=\"node_path\">src/main.rs</data>"));
+        assert!(graphml.contains("<data key=\"node_language\">rust</data>"));
+        assert!(graphml.contains("<data key=\"edge_confidence\">exact</data>"));
+        assert!(graphml.contains("<data key=\"edge_relation\">declares</data>"));
+        assert!(graphml.contains("<data key=\"edge_source\">parser</data>"));
+        assert!(graphml.contains(&format!("<node id=\"{}\">", file)));
+        assert!(graphml.contains(&format!("<edge source=\"{file}\" target=\"{main}\">")));
+        assert!(graphml.ends_with("</graphml>\n"));
+        assert_eq!(
+            graphml.matches("<node id=").count(),
+            graph.nodes.len(),
+            "every node exported once"
+        );
+        assert_eq!(graphml.matches("<edge source=").count(), graph.edges.len());
     }
 
     #[test]
