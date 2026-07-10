@@ -601,7 +601,7 @@ Audit and completion:
 
 - [x] Audit every checked roadmap item end-to-end across CLI, API, and web; file each found gap as a new unchecked item in its phase (see `docs/FEATURE_AUDIT.md`).
 - [x] Sweep all phases for remaining unchecked items and finish, re-scope, or explicitly drop each one with a recorded reason (dispositions in `docs/ROADMAP_TRIAGE.md`: 3 dropped, 2 re-scoped, 27 kept and scheduled).
-- [ ] Verify CLI/API/web feature parity: every analysis available in one surface is reachable from the other two or documented as intentionally surface-specific.
+- [x] Verify CLI/API/web feature parity: every analysis available in one surface is reachable from the other two or documented as intentionally surface-specific (matrix and intentional gaps in `docs/SURFACE_PARITY.md`).
 - [ ] Dogfood CodeGraph on itself: run reports, insights, unreachable/journey queries against this repository and fix what the output makes hard to understand.
 
 Usability polish:

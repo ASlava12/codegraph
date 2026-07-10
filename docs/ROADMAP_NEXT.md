@@ -143,7 +143,7 @@ Audit follow-ups (concrete completion work from `FEATURE_AUDIT.md`, one commit e
 
 Usability polish:
 
-- [ ] Verify CLI/API/web feature parity and close or document intentional surface-specific gaps.
+- [x] Verify CLI/API/web feature parity and close or document intentional surface-specific gaps (`SURFACE_PARITY.md`).
 - [ ] Dogfood CodeGraph on itself and fix what its own reports make hard to understand.
 - [ ] Unify CLI ergonomics: consistent flags, defaults, `--help` examples, actionable errors.
 - [ ] Improve web discoverability: onboarding hints, explanatory empty states, sane default filters for large graphs.
