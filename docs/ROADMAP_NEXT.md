@@ -103,7 +103,7 @@ Exit criteria:
 
 Goal: extend deterministic extraction where it is still shallow.
 
-- [ ] Resolve Dart `.dart_tool/package_config.json` package maps and generated-file conventions.
+- [x] Resolve Dart `.dart_tool/package_config.json` package maps and generated-file conventions.
 - [ ] Validate Dart semantic enrichment patches from the Dart analysis server, with parser/semantic cache invalidation for `pubspec.yaml` and generated files.
 - [ ] Match Dart/Flutter platform-channel declarations to native Android/iOS handler implementations.
 - [ ] Add deeper SQL query extraction: JOIN relationship semantics, migration ordering, and broader schema consistency insights.

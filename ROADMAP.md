@@ -36,7 +36,7 @@ Goal: extract language-independent structure from source files.
 - [x] Extract approximate call sites.
 - [x] Resolve local import/include file dependencies where syntax-level paths are explicit.
 - [x] Resolve Dart relative imports, package imports from `pubspec.yaml`, and `part`/`part of` relationships.
-- [ ] Resolve Dart generated-file conventions and `.dart_tool/package_config.json` package maps.
+- [x] Resolve Dart generated-file conventions and `.dart_tool/package_config.json` package maps.
 - [x] Resolve Python project-local absolute imports when they match scanned files.
 - [x] Resolve Go module-local imports from `go.mod` module paths when package files are scanned.
 - [x] Resolve quoted C/C++ includes through CMake include directories when header files are scanned.

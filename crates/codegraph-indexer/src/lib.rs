@@ -463,6 +463,8 @@ struct GoModuleRoot {
 struct DartPackageRoot {
     name: String,
     dir: Option<String>,
+    /// Package-URI directory inside the package root (usually `lib`).
+    lib_dir: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1098,6 +1100,19 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
     } else if is_sql_file(path) {
         metadata.insert("language".to_string(), "sql".to_string());
         metadata.insert("item_kind".to_string(), "sql_schema".to_string());
+    }
+
+    if language.is_some_and(|language| language == Language::Dart)
+        && let Some(generated_from) = dart_generated_source_name(label)
+    {
+        metadata.insert("generated".to_string(), "true".to_string());
+        let sibling_exists = path
+            .parent()
+            .map(|parent| parent.join(generated_from.rsplit('/').next().unwrap_or(&generated_from)))
+            .is_some_and(|sibling| sibling.is_file());
+        if sibling_exists {
+            metadata.insert("generated_from".to_string(), generated_from);
+        }
     }
 
     let parse_result = source_bytes.as_ref().and_then(|source| {
@@ -10073,10 +10088,100 @@ fn dart_package_roots(
             .map(|relative| relative.to_string_lossy().replace('\\', "/"))
             .map(|relative| normalize_path(&relative))
             .filter(|relative| !relative.is_empty());
-        packages.push(DartPackageRoot { name, dir });
+        packages.push(DartPackageRoot {
+            name,
+            dir,
+            lib_dir: "lib".to_string(),
+        });
+    }
+    let mut probe_dirs: Vec<Option<String>> =
+        packages.iter().map(|package| package.dir.clone()).collect();
+    probe_dirs.push(None);
+    probe_dirs.sort();
+    probe_dirs.dedup();
+    for extra in dart_package_config_roots(root, &probe_dirs) {
+        if !packages.iter().any(|package| package.name == extra.name) {
+            packages.push(extra);
+        }
     }
     packages.sort_by(|left, right| right.name.len().cmp(&left.name.len()));
     packages
+}
+
+/// Packages from `.dart_tool/package_config.json` next to each pubspec (and
+/// the scan root). This resolves `package:` imports for path dependencies
+/// and workspace monorepos that a single `pubspec.yaml` cannot describe.
+/// Only workspace-relative `rootUri` values are used; absolute URIs point at
+/// the pub cache outside the scanned tree.
+fn dart_package_config_roots(root: &Path, base_dirs: &[Option<String>]) -> Vec<DartPackageRoot> {
+    let mut packages = Vec::new();
+    for base in base_dirs {
+        let config_dir = match base {
+            Some(dir) => format!("{dir}/.dart_tool"),
+            None => ".dart_tool".to_string(),
+        };
+        let config_path = root.join(&config_dir).join("package_config.json");
+        let Ok(raw) = fs::read_to_string(&config_path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        let Some(entries) = value.get("packages").and_then(|value| value.as_array()) else {
+            continue;
+        };
+        for entry in entries {
+            let Some(name) = entry.get("name").and_then(|value| value.as_str()) else {
+                continue;
+            };
+            let Some(root_uri) = entry.get("rootUri").and_then(|value| value.as_str()) else {
+                continue;
+            };
+            let package_uri = entry
+                .get("packageUri")
+                .and_then(|value| value.as_str())
+                .unwrap_or("lib/");
+            let Some(dir) = resolve_dart_root_uri(&config_dir, root_uri) else {
+                continue;
+            };
+            let lib_dir = package_uri.trim_matches('/');
+            packages.push(DartPackageRoot {
+                name: name.to_string(),
+                dir,
+                lib_dir: if lib_dir.is_empty() {
+                    "lib".to_string()
+                } else {
+                    lib_dir.to_string()
+                },
+            });
+        }
+    }
+    packages
+}
+
+/// Resolve a package_config `rootUri` against the `.dart_tool` directory it
+/// lives in. Returns the scan-root-relative directory, or `None` when the
+/// URI is absolute or escapes the scanned workspace.
+fn resolve_dart_root_uri(config_dir: &str, root_uri: &str) -> Option<Option<String>> {
+    let uri = root_uri.strip_prefix("file://").unwrap_or(root_uri);
+    if uri.starts_with('/') || uri.contains("://") {
+        return None;
+    }
+    let combined = format!("{config_dir}/{uri}").replace('\\', "/");
+    let mut parts: Vec<&str> = Vec::new();
+    for part in combined.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if parts.pop().is_none() {
+                    return None;
+                }
+            }
+            value => parts.push(value),
+        }
+    }
+    let dir = parts.join("/");
+    Some(if dir.is_empty() { None } else { Some(dir) })
 }
 
 fn c_include_dirs(
@@ -10779,7 +10884,10 @@ fn dart_package_uri_target(
         return None;
     }
     let package_root = dart_packages.iter().find(|root| root.name == package)?;
-    let target = join_path(package_root.dir.as_deref(), &format!("lib/{path}"));
+    let target = join_path(
+        package_root.dir.as_deref(),
+        &format!("{}/{path}", package_root.lib_dir),
+    );
     Some(LocalImportTarget {
         target: uri.to_string(),
         candidates: vec![target],
@@ -10788,6 +10896,32 @@ fn dart_package_uri_target(
 
 fn dart_import_uri(import_label: &str) -> Option<String> {
     first_quoted_value(import_label)
+}
+
+/// For a generated Dart file (build_runner and protoc conventions), the
+/// scan-root-relative path of the source file that generates it.
+fn dart_generated_source_name(label: &str) -> Option<String> {
+    const GENERATED_SUFFIXES: &[&str] = &[
+        ".g.dart",
+        ".freezed.dart",
+        ".gr.dart",
+        ".pb.dart",
+        ".pbenum.dart",
+        ".pbjson.dart",
+        ".pbserver.dart",
+        ".mocks.dart",
+        ".config.dart",
+        ".gen.dart",
+    ];
+    for suffix in GENERATED_SUFFIXES {
+        if let Some(base) = label.strip_suffix(suffix) {
+            let file_base = base.rsplit('/').next().unwrap_or(base);
+            if !file_base.is_empty() {
+                return Some(format!("{base}.dart"));
+            }
+        }
+    }
+    None
 }
 
 fn directory_candidate(path: &str) -> String {
@@ -12987,6 +13121,127 @@ CREATE TABLE users (
         );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_resolves_dart_package_config_and_generated_files() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("app").join("lib")).unwrap();
+        fs::create_dir_all(root.join("app").join(".dart_tool")).unwrap();
+        fs::create_dir_all(root.join("packages").join("shared").join("lib")).unwrap();
+        fs::write(root.join("app").join("pubspec.yaml"), "name: app\n").unwrap();
+        fs::write(
+            root.join("app").join(".dart_tool").join("package_config.json"),
+            r#"{"configVersion":2,"packages":[
+                {"name":"shared","rootUri":"../../packages/shared","packageUri":"lib/"},
+                {"name":"outside","rootUri":"../../../elsewhere","packageUri":"lib/"},
+                {"name":"cached","rootUri":"file:///pub-cache/hosted/pub.dev/cached-1.0.0","packageUri":"lib/"}
+            ]}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("app").join("lib").join("main.dart"),
+            "import 'package:shared/util.dart';\nimport 'package:outside/thing.dart';\npart 'main.g.dart';\nvoid main() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("app").join("lib").join("main.g.dart"),
+            "part of 'main.dart';\nvoid generatedHelper() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("app").join("lib").join("orphan.freezed.dart"),
+            "void orphanGenerated() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("packages")
+                .join("shared")
+                .join("lib")
+                .join("util.dart"),
+            "void util() {}\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+
+        // package: import resolved through package_config.json (shared has
+        // no pubspec.yaml in the workspace, so only the config can map it).
+        let util_file = node_id(&graph, NodeKind::File, "packages/shared/lib/util.dart");
+        let import = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "import 'package:shared/util.dart';")
+            .expect("package_config import node");
+        assert_eq!(
+            import.metadata.get("resolution").map(String::as_str),
+            Some("resolved")
+        );
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == import.id
+                && edge.target == util_file
+                && edge.kind == EdgeKind::References
+        }));
+
+        // Escaping and absolute rootUris never resolve into the workspace.
+        let outside = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "import 'package:outside/thing.dart';")
+            .expect("outside import node");
+        assert_ne!(
+            outside.metadata.get("resolution").map(String::as_str),
+            Some("resolved"),
+            "rootUri escaping the scan root must stay unresolved"
+        );
+
+        // Generated-file conventions: tagged, and linked to the source that
+        // generates them when it exists next to them.
+        let generated = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::File && node.label == "app/lib/main.g.dart")
+            .expect("generated file node");
+        assert_eq!(
+            generated.metadata.get("generated").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            generated.metadata.get("generated_from").map(String::as_str),
+            Some("app/lib/main.dart")
+        );
+        let orphan = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::File && node.label == "app/lib/orphan.freezed.dart")
+            .expect("orphan generated file node");
+        assert_eq!(
+            orphan.metadata.get("generated").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            orphan.metadata.get("generated_from"),
+            None,
+            "no source sibling means no generated_from link"
+        );
+    }
+
+    #[test]
+    fn dart_root_uri_resolution_guards_workspace_escapes() {
+        assert_eq!(
+            resolve_dart_root_uri("app/.dart_tool", "../../packages/shared"),
+            Some(Some("packages/shared".to_string()))
+        );
+        assert_eq!(resolve_dart_root_uri(".dart_tool", ".."), Some(None));
+        assert_eq!(resolve_dart_root_uri("app/.dart_tool", "../../.."), None);
+        assert_eq!(
+            resolve_dart_root_uri(".dart_tool", "file:///abs/path"),
+            None
+        );
+        assert_eq!(
+            resolve_dart_root_uri(".dart_tool", "https://example.com/pkg"),
+            None
+        );
     }
 
     #[test]
