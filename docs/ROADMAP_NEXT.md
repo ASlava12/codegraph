@@ -89,7 +89,7 @@ Exit criteria:
 Goal: make graph knowledge portable into external tools.
 
 - [x] Add GraphML export.
-- [ ] Add Mermaid/callflow HTML export for full graphs and workflow sets.
+- [x] Add Mermaid/callflow HTML export for full graphs and workflow sets.
 - [ ] Add Obsidian vault / Markdown wiki export for communities, entrypoints, hotspots, config flows, and risky insights.
 - [ ] Add Neo4j Cypher and FalkorDB export targets.
 - [ ] Add a PR impact dashboard from changed files, graph communities, CI/review state, and shared hotspots.

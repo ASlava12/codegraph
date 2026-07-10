@@ -1576,6 +1576,108 @@ fn xml_escape(text: &str) -> String {
     escaped
 }
 
+pub const DEFAULT_MERMAID_NODE_LIMIT: usize = 300;
+pub const DEFAULT_MERMAID_EDGE_LIMIT: usize = 600;
+
+/// Render the graph as a bounded Mermaid flowchart. Mermaid rendering
+/// degrades on very large diagrams, so nodes and edges are capped and the
+/// truncation is stated in a `%%` comment instead of failing silently.
+pub fn graph_mermaid(graph: &CodeGraph, node_limit: usize, edge_limit: usize) -> String {
+    let node_limit = node_limit.max(1);
+    let edge_limit = edge_limit.max(1);
+    let mut lines = vec!["flowchart LR".to_string()];
+    let included: BTreeSet<NodeId> = graph
+        .nodes
+        .iter()
+        .take(node_limit)
+        .map(|node| node.id)
+        .collect();
+    for node in graph.nodes.iter().take(node_limit) {
+        lines.push(format!(
+            "  {}[\"{}\"]",
+            node.id,
+            mermaid_escape(&format!("{} ({})", node.label, kind_name(&node.kind)))
+        ));
+    }
+    let mut rendered_edges = 0usize;
+    for edge in &graph.edges {
+        if rendered_edges >= edge_limit {
+            break;
+        }
+        if !included.contains(&edge.source) || !included.contains(&edge.target) {
+            continue;
+        }
+        lines.push(format!(
+            "  {} -->|{}| {}",
+            edge.source,
+            mermaid_escape(&format!(
+                "{}/{}",
+                edge_kind_name(&edge.kind),
+                confidence_name(edge.confidence)
+            )),
+            edge.target
+        ));
+        rendered_edges += 1;
+    }
+    if graph.nodes.len() > node_limit || graph.edges.len() > rendered_edges {
+        lines.push(format!(
+            "  %% truncated: showing {} of {} nodes and {} of {} edges",
+            included.len(),
+            graph.nodes.len(),
+            rendered_edges,
+            graph.edges.len()
+        ));
+    }
+    lines.join("\n")
+}
+
+#[derive(Debug, Clone)]
+pub struct MermaidSection {
+    pub title: String,
+    pub mermaid: String,
+}
+
+/// Wrap Mermaid diagrams in a self-describing HTML page. Rendering uses the
+/// Mermaid CDN when online; each section also carries its raw Mermaid source
+/// in a `<details>` block so the artifact stays useful offline.
+pub fn export_mermaid_html(title: &str, sections: &[MermaidSection]) -> String {
+    let mut body = String::new();
+    for section in sections {
+        body.push_str(&format!(
+            "  <section>\n    <h2>{}</h2>\n    <pre class=\"mermaid\">\n{}\n    </pre>\n    <details>\n      <summary>Mermaid source</summary>\n      <pre class=\"mermaid-source\">{}</pre>\n    </details>\n  </section>\n",
+            xml_escape(&section.title),
+            xml_escape(&section.mermaid),
+            xml_escape(&section.mermaid)
+        ));
+    }
+    format!(
+        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{title}</title>\n<style>\nbody {{ font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; margin: 2rem; color: #1a202c; }}\nsection {{ margin-bottom: 2.5rem; }}\npre.mermaid {{ background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; overflow-x: auto; }}\npre.mermaid-source {{ background: #edf2f7; border-radius: 6px; padding: 0.75rem; overflow-x: auto; font-size: 0.85rem; }}\n.note {{ color: #4a5568; font-size: 0.9rem; }}\n</style>\n</head>\n<body>\n<h1>{title}</h1>\n<p class=\"note\">Diagrams render via the Mermaid CDN when online; the raw Mermaid source under each diagram works offline and in wikis.</p>\n{body}<script type=\"module\">\nimport mermaid from \"https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs\";\nmermaid.initialize({{ startOnLoad: true, securityLevel: \"strict\" }});\n</script>\n</body>\n</html>\n",
+        title = xml_escape(title),
+        body = body
+    )
+}
+
+/// Export the full graph as one Mermaid flowchart wrapped in HTML.
+pub fn export_graph_mermaid_html(
+    graph: &CodeGraph,
+    node_limit: usize,
+    edge_limit: usize,
+) -> String {
+    let root_label = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == graph.root)
+        .map(|node| node.label.as_str())
+        .unwrap_or("graph");
+    export_mermaid_html(
+        &format!("CodeGraph: {root_label}"),
+        &[MermaidSection {
+            title: "Graph".to_string(),
+            mermaid: graph_mermaid(graph, node_limit, edge_limit),
+        }],
+    )
+}
+
 pub fn summarize(graph: &CodeGraph) -> GraphSummary {
     let mut node_kinds = BTreeMap::new();
     let mut edge_kinds = BTreeMap::new();
@@ -15859,6 +15961,62 @@ mod tests {
             "every node exported once"
         );
         assert_eq!(graphml.matches("<edge source=").count(), graph.edges.len());
+    }
+
+    #[test]
+    fn exports_bounded_mermaid_flowchart_and_html_wrapper() {
+        let mut graph = CodeGraph::new("repo");
+        let main = graph.add_node(NodeKind::Function, "main <script>");
+        let helper = graph.add_node(NodeKind::Function, "helper");
+        graph.add_edge(graph.root, main, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+
+        let mermaid = graph_mermaid(&graph, 100, 100);
+        assert!(mermaid.starts_with("flowchart LR"));
+        assert!(mermaid.contains("calls/heuristic"));
+        assert!(
+            !mermaid.contains("%% truncated"),
+            "small graphs are complete"
+        );
+
+        let truncated = graph_mermaid(&graph, 2, 1);
+        assert!(truncated.contains("%% truncated: showing 2 of 3 nodes and 1 of 2 edges"));
+        assert_eq!(
+            truncated.matches("-->").count(),
+            1,
+            "edge budget is enforced"
+        );
+
+        let html = export_graph_mermaid_html(&graph, 100, 100);
+        assert!(html.starts_with("<!DOCTYPE html>"));
+        assert!(html.contains("<title>CodeGraph: repo</title>"));
+        assert!(html.contains("<pre class=\"mermaid\">"));
+        assert!(html.contains("Mermaid source"));
+        assert!(html.contains("cdn.jsdelivr.net/npm/mermaid"));
+        assert!(
+            html.contains("main &lt;script&gt;"),
+            "labels are HTML-escaped"
+        );
+        assert!(
+            !html.contains("main <script>"),
+            "raw markup must not leak into the page"
+        );
+
+        let sections = export_mermaid_html(
+            "Callflows",
+            &[
+                MermaidSection {
+                    title: "main".to_string(),
+                    mermaid: "flowchart TD\n  a --> b".to_string(),
+                },
+                MermaidSection {
+                    title: "worker".to_string(),
+                    mermaid: "flowchart TD\n  c --> d".to_string(),
+                },
+            ],
+        );
+        assert_eq!(sections.matches("<section>").count(), 2);
+        assert_eq!(sections.matches("<pre class=\"mermaid\">").count(), 2);
     }
 
     #[test]

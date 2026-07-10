@@ -27,7 +27,10 @@ use codegraph_analysis::{
     trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_mermaid,
     workflow_query,
 };
-use codegraph_analysis::{export_dot, export_graphml, export_ndjson, node_card};
+use codegraph_analysis::{
+    DEFAULT_MERMAID_EDGE_LIMIT, DEFAULT_MERMAID_NODE_LIMIT, MermaidSection, export_dot,
+    export_graph_mermaid_html, export_graphml, export_mermaid_html, export_ndjson, node_card,
+};
 use codegraph_core::NodeId;
 use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
@@ -1358,12 +1361,14 @@ enum OutputFormat {
     Dot,
     Ndjson,
     Graphml,
+    MermaidHtml,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum WorkflowFormat {
     Json,
     Mermaid,
+    Html,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -2493,6 +2498,16 @@ fn main() -> Result<()> {
                 (WorkflowFormat::Mermaid, None) => {
                     println!("flowchart TD");
                 }
+                (WorkflowFormat::Html, report) => {
+                    let sections = report
+                        .iter()
+                        .map(|report| MermaidSection {
+                            title: report.start.label.clone(),
+                            mermaid: workflow_mermaid(report),
+                        })
+                        .collect::<Vec<_>>();
+                    print!("{}", export_mermaid_html("CodeGraph workflow", &sections));
+                }
             }
         }
         Command::WorkflowEntrypoints {
@@ -2552,6 +2567,17 @@ fn main() -> Result<()> {
                         .join("\n\n");
                     println!("{rendered}");
                 }
+                WorkflowFormat::Html => {
+                    let sections = report
+                        .workflows
+                        .iter()
+                        .map(|workflow| MermaidSection {
+                            title: workflow.start.label.clone(),
+                            mermaid: workflow_mermaid(workflow),
+                        })
+                        .collect::<Vec<_>>();
+                    print!("{}", export_mermaid_html("CodeGraph workflows", &sections));
+                }
             }
         }
         Command::WorkflowQuery {
@@ -2608,6 +2634,17 @@ fn main() -> Result<()> {
                         .collect::<Vec<_>>()
                         .join("\n\n");
                     println!("{rendered}");
+                }
+                WorkflowFormat::Html => {
+                    let sections = report
+                        .workflows
+                        .iter()
+                        .map(|workflow| MermaidSection {
+                            title: workflow.start.label.clone(),
+                            mermaid: workflow_mermaid(workflow),
+                        })
+                        .collect::<Vec<_>>();
+                    print!("{}", export_mermaid_html("CodeGraph workflows", &sections));
                 }
             }
         }
@@ -2686,6 +2723,14 @@ fn print_graph(graph: &codegraph_core::CodeGraph, format: OutputFormat) -> Resul
         OutputFormat::Dot => print!("{}", export_dot(graph)),
         OutputFormat::Ndjson => print!("{}", export_ndjson(graph)?),
         OutputFormat::Graphml => print!("{}", export_graphml(graph)),
+        OutputFormat::MermaidHtml => print!(
+            "{}",
+            export_graph_mermaid_html(
+                graph,
+                DEFAULT_MERMAID_NODE_LIMIT,
+                DEFAULT_MERMAID_EDGE_LIMIT
+            )
+        ),
     }
     Ok(())
 }

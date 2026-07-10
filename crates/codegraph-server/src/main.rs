@@ -10,29 +10,29 @@ use axum::{Json, Router};
 use clap::Parser;
 use codegraph_analysis::{
     CheckReport, ComponentContractReport, ComponentContractRequest, ComponentDependencyReport,
-    ComponentDependencyRequest, ConfigTraceRequest, ConfigTraceResult,
-    DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT, DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT,
-    DEFAULT_REPORT_COMMUNITY_LIMIT, DEFAULT_REPORT_FILE_SUMMARY_LIMIT,
-    DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT, DEFAULT_REPORT_LANGUAGE_LINK_LIMIT,
-    DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceReport, EntrypointTraceRequest,
-    EntrypointWorkflowReport, EntrypointWorkflowRequest, ErrorTraceRequest, ErrorTraceResult,
-    ExplainEdgeRequest, FocusRequest, GraphSlice, GraphSliceRequest, GraphSummary, ImpactReport,
-    ImpactRequest, InsightFilter, InsightReport, InsightSeverity, JourneyReport, JourneyRequest,
-    KNOWN_INSIGHT_KINDS, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT, MAX_REPORT_ARCHITECTURE_GROUP_LIMIT,
-    MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_FILE_SUMMARY_LIMIT, MAX_REPORT_HOTSPOT_LIMIT,
-    MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT, MAX_REPORT_NODE_SUMMARY_LIMIT,
-    McpEngine, NaturalQueryReport, NaturalQueryRequest, NodeCard, NodeContext, ProjectReport,
-    ProjectReportLimits, ProjectReportMarkdownOptions, RefactorContextBundle,
-    RefactorContextRequest, SeamReport, SeamRequest, SourcePreview, SourceSearchRequest,
-    SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryReport,
-    WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map, check_insights,
-    communities, compact_query_result, component_contract, component_dependencies, entrypoints,
-    explain_edge, export_dot, export_graphml, export_ndjson, filter_insight_report, focus_subgraph,
-    hotspots, impact, insights, journey, language_dependencies, natural_query, node_card,
-    node_context, project_report, project_report_markdown, query_graph, read_source_preview,
-    refactor_context, seams, search_source, slice_graph, summarize, surprising_links, trace,
-    trace_config, trace_dependents, trace_entrypoints, trace_errors, workflow,
-    workflow_entrypoints, workflow_query,
+    ComponentDependencyRequest, ConfigTraceRequest, ConfigTraceResult, DEFAULT_MERMAID_EDGE_LIMIT,
+    DEFAULT_MERMAID_NODE_LIMIT, DEFAULT_REPORT_ARCHITECTURE_EDGE_LIMIT,
+    DEFAULT_REPORT_ARCHITECTURE_GROUP_LIMIT, DEFAULT_REPORT_COMMUNITY_LIMIT,
+    DEFAULT_REPORT_FILE_SUMMARY_LIMIT, DEFAULT_REPORT_HOTSPOT_LIMIT, DEFAULT_REPORT_INSIGHT_LIMIT,
+    DEFAULT_REPORT_LANGUAGE_LINK_LIMIT, DEFAULT_REPORT_NODE_SUMMARY_LIMIT, EntrypointTraceReport,
+    EntrypointTraceRequest, EntrypointWorkflowReport, EntrypointWorkflowRequest, ErrorTraceRequest,
+    ErrorTraceResult, ExplainEdgeRequest, FocusRequest, GraphSlice, GraphSliceRequest,
+    GraphSummary, ImpactReport, ImpactRequest, InsightFilter, InsightReport, InsightSeverity,
+    JourneyReport, JourneyRequest, KNOWN_INSIGHT_KINDS, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT,
+    MAX_REPORT_ARCHITECTURE_GROUP_LIMIT, MAX_REPORT_COMMUNITY_LIMIT, MAX_REPORT_FILE_SUMMARY_LIMIT,
+    MAX_REPORT_HOTSPOT_LIMIT, MAX_REPORT_INSIGHT_LIMIT, MAX_REPORT_LANGUAGE_LINK_LIMIT,
+    MAX_REPORT_NODE_SUMMARY_LIMIT, McpEngine, NaturalQueryReport, NaturalQueryRequest, NodeCard,
+    NodeContext, ProjectReport, ProjectReportLimits, ProjectReportMarkdownOptions,
+    RefactorContextBundle, RefactorContextRequest, SeamReport, SeamRequest, SourcePreview,
+    SourceSearchRequest, SourceSearchResult, TraceRequest, TraceStart, WorkflowFilters,
+    WorkflowQueryReport, WorkflowQueryRequest, WorkflowReport, WorkflowRequest, architecture_map,
+    check_insights, communities, compact_query_result, component_contract, component_dependencies,
+    entrypoints, explain_edge, export_dot, export_graph_mermaid_html, export_graphml,
+    export_ndjson, filter_insight_report, focus_subgraph, hotspots, impact, insights, journey,
+    language_dependencies, natural_query, node_card, node_context, project_report,
+    project_report_markdown, query_graph, read_source_preview, refactor_context, seams,
+    search_source, slice_graph, summarize, surprising_links, trace, trace_config, trace_dependents,
+    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_query,
 };
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph};
 use codegraph_indexer::{
@@ -623,6 +623,7 @@ enum ExportFormat {
     Dot,
     Ndjson,
     Graphml,
+    MermaidHtml,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1887,7 +1888,7 @@ async fn capabilities_api(
         root: state.root.display().to_string(),
         projects: project_responses(&state),
         languages: language_responses(),
-        export_formats: vec!["json", "dot", "ndjson", "graphml"],
+        export_formats: vec!["json", "dot", "ndjson", "graphml", "mermaid_html"],
         features: capability_features(state.cache.is_some(), state.access_log_enabled),
         endpoints: capability_endpoints(),
         scan: ScanCapabilityResponse {
@@ -2543,6 +2544,14 @@ async fn export_api(
         ExportFormat::Graphml => (
             "application/graphml+xml; charset=utf-8",
             export_graphml(&graph),
+        ),
+        ExportFormat::MermaidHtml => (
+            "text/html; charset=utf-8",
+            export_graph_mermaid_html(
+                &graph,
+                DEFAULT_MERMAID_NODE_LIMIT,
+                DEFAULT_MERMAID_EDGE_LIMIT,
+            ),
         ),
     };
     let body_bytes = body.len();
@@ -3887,7 +3896,10 @@ fn api_schema_response() -> ApiSchemaResponse {
         common_response_headers: api_schema_common_response_headers(),
         groups: api_schema_groups(),
         enum_values: BTreeMap::from([
-            ("export_format", vec!["json", "dot", "ndjson", "graphml"]),
+            (
+                "export_format",
+                vec!["json", "dot", "ndjson", "graphml", "mermaid_html"],
+            ),
             ("report_format", vec!["json", "markdown"]),
             (
                 "graph_node_kind",
@@ -9520,12 +9532,9 @@ fn helper() {}
 
         assert_eq!(schema.api_version, 1);
         assert_eq!(schema.server_version, SERVER_VERSION);
-        assert!(
-            schema
-                .enum_values
-                .get("export_format")
-                .is_some_and(|formats| formats == &vec!["json", "dot", "ndjson", "graphml"])
-        );
+        assert!(schema.enum_values.get("export_format").is_some_and(
+            |formats| formats == &vec!["json", "dot", "ndjson", "graphml", "mermaid_html"]
+        ));
         assert!(
             schema
                 .enum_values

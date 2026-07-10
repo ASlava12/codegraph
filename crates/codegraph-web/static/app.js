@@ -5931,6 +5931,8 @@ function exportFormatMetadata(format) {
       return { format: "ndjson", extension: "ndjson", label: "NDJSON", endpoint: "/api/export" };
     case "graphml":
       return { format: "graphml", extension: "graphml", label: "GraphML", endpoint: "/api/export" };
+    case "mermaid_html":
+      return { format: "mermaid_html", extension: "html", label: "Mermaid HTML", endpoint: "/api/export" };
     case "report":
       return { format: "report", extension: "report.json", label: t("export.report"), endpoint: "/api/report" };
     case "reportMarkdown":
