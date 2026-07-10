@@ -59,7 +59,7 @@ Goal: let coding agents use CodeGraph before broad file reads, as persistent
 repository memory rather than a fresh index.
 
 - [x] Add MCP stdio server mode exposing `query_graph`, `get_node_card`, `get_neighbors`, `shortest_path`, `workflow`, `insights`, `impact`, and `report` tools over the existing analysis APIs.
-- [ ] Add an `install-agent` command that generates project-scoped guidance files (AGENTS.md/CLAUDE.md snippets, `.mcp.json` entries) nudging agents to query CodeGraph first.
+- [x] Add an `install-agent` command that generates project-scoped guidance files (AGENTS.md/CLAUDE.md snippets, `.mcp.json` entries) nudging agents to query CodeGraph first.
 - [ ] Add saved query/result memory with outcomes (`useful`, `dead_end`, `corrected`) linked to graph node ids and invalidated by cache fingerprints.
 - [ ] Add reflection reports that aggregate saved investigation outcomes into repository lessons with provenance and stale-source warnings.
 - [ ] Add query logging with privacy controls and local JSONL audit output.

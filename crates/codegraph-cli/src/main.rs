@@ -1,3 +1,4 @@
+mod install;
 mod mcp;
 
 use anyhow::Result;
@@ -212,6 +213,21 @@ enum Command {
 
         #[command(flatten)]
         cache: CacheArgs,
+    },
+
+    /// Install project-scoped agent guidance: .mcp.json entry plus CLAUDE.md/AGENTS.md snippets.
+    InstallAgent {
+        /// Project root to install into.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Target assistant platform.
+        #[arg(long, value_enum, default_value_t = install::AgentPlatform::All)]
+        platform: install::AgentPlatform,
+
+        /// Overwrite an existing conflicting codegraph entry in .mcp.json.
+        #[arg(long)]
+        force: bool,
     },
 
     /// Serve CodeGraph analysis tools to assistants over the MCP stdio transport.
@@ -1607,6 +1623,14 @@ fn main() -> Result<()> {
                     path_limit: paths,
                 },
             )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::InstallAgent {
+            path,
+            platform,
+            force,
+        } => {
+            let report = install::install_agent(&path, platform, force)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Mcp {

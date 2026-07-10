@@ -152,6 +152,7 @@ Implemented now:
 - Journey reports rank up to `--paths` alternative routes by edge confidence and length, report per-path `confidence_score` and `lowest_confidence`, and attach structured per-hop explanations (confidence note, relation, provenance source) for why each transition exists.
 - Web Journey panel builds ranked entrypoint-to-target chains from `/api/journey`: step-numbered blocks with localized kind badges, fragile/risk chips, per-hop provenance notes, node/dependency card actions, graph focus per path, and JSON export for agent handoff.
 - Journey steps expand in place into nested sub-flows (bounded workflow slices from the step node) with breadcrumb context back to the parent journey, collapse actions, and the same block/edge card and Flow-view actions as regular workflows.
+- Agent installation (`codegraph install-agent`) writes idempotent `.mcp.json` server entries and marker-delimited CLAUDE.md/AGENTS.md guidance blocks so assistants query the graph before raw file reads.
 - MCP stdio server (`codegraph mcp`) exposes query_graph, get_node_card, get_neighbors, shortest_path, workflow, insights, impact, and report tools over newline-delimited JSON-RPC so external assistants use the graph as persistent repository memory.
 - Refactor context bundles (CLI `refactor-context`, API `/api/refactor-context`) combine impact, component dependencies, optional ranked journey, related risks, and a target source preview into one `codegraph.refactor_context.v1` JSON for one-shot agent handoff.
 - Coupling/seam reports (CLI `seams`, API `/api/seams`) rank cross-area boundaries by deterministic friction score both ways: safest thin seams for extraction and most tangled boundaries needing work, with edge-kind/confidence breakdowns and sample edge evidence.
@@ -652,6 +653,14 @@ cargo run -p codegraph-cli -- incremental-update . --cache-dir /tmp/codegraph-ca
 ```
 
 The output is JSON using the shared graph schema from `codegraph-core`.
+
+Install agent guidance into a repository in one command:
+
+```bash
+cargo run -p codegraph-cli -- install-agent . --platform all
+```
+
+`install-agent` writes a `codegraph` server entry into `.mcp.json` (preserving other servers; conflicting entries need `--force`) and adds marker-delimited guidance blocks to `CLAUDE.md` and/or `AGENTS.md` (`--platform claude|codex|generic|all`) that nudge assistants to query the graph — `ask`, `query`, `journey`, `impact`, `refactor-context`, `report` — before broad file reads. Reruns are idempotent: marker blocks are replaced in place and user content around them is preserved; the JSON result lists created, updated, unchanged, and skipped files.
 
 Serve the graph to coding assistants over MCP (stdio):
 
