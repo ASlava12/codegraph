@@ -119,6 +119,11 @@ seconds. The CLI path is similarly heavy. The bundle recomputes expensive
 sections rather than reusing cached report/insight results, and its journey
 search is unbounded by default.
 
+Resolved 2026-07-10: insights are computed once per bundle and shared with
+the impact section, cycle detection no longer scans every edge per SCC
+singleton, and reachability/impact BFS use one-pass adjacency indexes.
+Warm requests dropped from 2m59s to under one second on this repository.
+
 ### F12. Benchmark recall oracle counts fixture strings as expected keys (filed: Phase 7)
 
 `bench-context`'s environment-read oracle greps raw text for patterns like

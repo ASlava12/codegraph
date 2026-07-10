@@ -4399,13 +4399,17 @@ pub fn refactor_context(
 ) -> Result<RefactorContextBundle, QueryError> {
     let max_depth = request.max_depth.clamp(1, 32);
     let risk_limit = request.risk_limit.clamp(1, 200);
-    let impact_report = impact(
+    // Insights are evaluated once per bundle and shared with the impact
+    // section instead of being recomputed per report (audit F11).
+    let insight_report = insights(graph);
+    let impact_report = impact_with_insights(
         graph,
         ImpactRequest {
             target: request.target.clone(),
             max_depth,
             limit: request.dependent_limit,
         },
+        &insight_report,
     )?;
     let dependencies = component_dependencies(
         graph,
@@ -4421,8 +4425,10 @@ pub fn refactor_context(
             JourneyRequest {
                 from: from.clone(),
                 to: request.target.clone(),
-                max_depth,
-                path_limit: request.path_limit,
+                // Journey exploration stays bounded even when callers ask
+                // for deep impact traversal (audit F11).
+                max_depth: max_depth.min(12),
+                path_limit: request.path_limit.clamp(1, 10),
             },
         )?),
         _ => None,
@@ -4434,7 +4440,6 @@ pub fn refactor_context(
         .map(|dependent| dependent.node.id)
         .collect();
     relevant.insert(impact_report.target.id);
-    let insight_report = insights(graph);
     let matching = insight_report
         .insights
         .iter()
@@ -4559,6 +4564,17 @@ pub fn seams(graph: &CodeGraph, request: SeamRequest) -> SeamReport {
 }
 
 pub fn impact(graph: &CodeGraph, request: ImpactRequest) -> Result<ImpactReport, QueryError> {
+    let insight_report = insights(graph);
+    impact_with_insights(graph, request, &insight_report)
+}
+
+/// [`impact`] over an already-computed insight report, so bundle callers such
+/// as [`refactor_context`] evaluate insights once per request (audit F11).
+pub fn impact_with_insights(
+    graph: &CodeGraph,
+    request: ImpactRequest,
+    insight_report: &InsightReport,
+) -> Result<ImpactReport, QueryError> {
     let max_depth = request.max_depth.clamp(1, 32);
     let limit = request.limit.clamp(1, 1_000);
     let target = request.target.trim();
@@ -4578,31 +4594,33 @@ pub fn impact(graph: &CodeGraph, request: ImpactRequest) -> Result<ImpactReport,
     let nodes_by_id: BTreeMap<NodeId, &Node> =
         graph.nodes.iter().map(|node| (node.id, node)).collect();
     let node_areas = node_architecture_areas(graph, &nodes_by_id);
-    let insight_report = insights(graph);
+
+    // Reverse adjacency built once keeps the dependents BFS O(V + E).
+    let mut incoming: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+    for edge in &graph.edges {
+        if is_trace_edge(&edge.kind) && edge.kind != EdgeKind::Contains {
+            incoming.entry(edge.target).or_default().push(edge.source);
+        }
+    }
 
     let mut visited = BTreeSet::from([target_id]);
     let mut queue = VecDeque::from([(target_id, 0usize)]);
     let mut reached: Vec<(NodeId, usize)> = Vec::new();
     let mut truncated = false;
     while let Some((node_id, depth)) = queue.pop_front() {
+        let sources = incoming.get(&node_id).map(Vec::as_slice).unwrap_or(&[]);
         if depth >= max_depth {
-            if trace_edges_from_indexed(graph, node_id, TraceDirection::Incoming)
-                .next()
-                .is_some()
-            {
+            if !sources.is_empty() {
                 truncated = true;
             }
             continue;
         }
-        for (_, edge) in trace_edges_from_indexed(graph, node_id, TraceDirection::Incoming) {
-            if edge.kind == EdgeKind::Contains {
+        for source in sources {
+            if !visited.insert(*source) {
                 continue;
             }
-            if !visited.insert(edge.source) {
-                continue;
-            }
-            reached.push((edge.source, depth + 1));
-            queue.push_back((edge.source, depth + 1));
+            reached.push((*source, depth + 1));
+            queue.push_back((*source, depth + 1));
         }
     }
 
@@ -11120,10 +11138,29 @@ fn add_unresolved_call_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) 
         }
     }
 
+    // One adjacency pass instead of an O(edges) scan per label (audit F11).
+    let placeholder_ids: BTreeSet<NodeId> = by_label.values().flatten().copied().collect();
+    let mut incoming_calls: BTreeMap<NodeId, Vec<usize>> = BTreeMap::new();
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind == EdgeKind::Calls && placeholder_ids.contains(&edge.target) {
+            incoming_calls
+                .entry(edge.target)
+                .or_default()
+                .push(edge_index);
+        }
+    }
+
     for (label, node_ids) in by_label {
         let edges: Vec<usize> = node_ids
             .iter()
-            .flat_map(|node_id| incoming_edge_indexes(graph, *node_id, EdgeKind::Calls))
+            .flat_map(|node_id| {
+                incoming_calls
+                    .get(node_id)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                    .iter()
+                    .copied()
+            })
             .collect();
         let message = if node_ids.len() > 1 {
             format!(
@@ -11596,22 +11633,17 @@ fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) 
 }
 
 fn add_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let labels: BTreeMap<NodeId, &str> = graph
+        .nodes
+        .iter()
+        .map(|node| (node.id, node.label.as_str()))
+        .collect();
     for (index, edge) in graph.edges.iter().enumerate() {
         if edge.kind != EdgeKind::MayError {
             continue;
         }
-        let source = graph
-            .nodes
-            .iter()
-            .find(|node| node.id == edge.source)
-            .map(|node| node.label.as_str())
-            .unwrap_or("unknown");
-        let target = graph
-            .nodes
-            .iter()
-            .find(|node| node.id == edge.target)
-            .map(|node| node.label.as_str())
-            .unwrap_or("unknown");
+        let source = labels.get(&edge.source).copied().unwrap_or("unknown");
+        let target = labels.get(&edge.target).copied().unwrap_or("unknown");
         insights.push(Insight {
             kind: "potential_error_flow".to_string(),
             severity: InsightSeverity::Warning,
@@ -13894,6 +13926,12 @@ fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Vec<Insight>)
             continue;
         }
         let component = reverse_component(node, &reverse, &mut assigned);
+        if component.len() < 2 {
+            continue;
+        }
+        // Collect edges only for real cycles: singleton components are the
+        // overwhelming majority, and a full edge scan per component made
+        // cycle detection quadratic (audit F11).
         let component_nodes: BTreeSet<_> = component.iter().copied().collect();
         let component_edges: Vec<_> = graph
             .edges
@@ -13910,10 +13948,6 @@ fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Vec<Insight>)
                 }
             })
             .collect();
-
-        if component.len() < 2 {
-            continue;
-        }
 
         let labels = component
             .iter()
@@ -14999,20 +15033,22 @@ fn entrypoint_reachable_nodes(graph: &CodeGraph) -> BTreeSet<NodeId> {
     let mut reachable = BTreeSet::new();
     let mut queue = VecDeque::new();
 
+    // One adjacency pass keeps the BFS O(V + E) instead of rescanning every
+    // edge per visited node (audit F11).
+    let mut outgoing: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
     for edge in &graph.edges {
         if edge.kind == EdgeKind::Entrypoint && reachable.insert(edge.target) {
             queue.push_back(edge.target);
         }
+        if is_trace_edge(&edge.kind) {
+            outgoing.entry(edge.source).or_default().push(edge.target);
+        }
     }
 
     while let Some(node) = queue.pop_front() {
-        for edge in graph
-            .edges
-            .iter()
-            .filter(|edge| edge.source == node && is_trace_edge(&edge.kind))
-        {
-            if reachable.insert(edge.target) {
-                queue.push_back(edge.target);
+        for target in outgoing.get(&node).map(Vec::as_slice).unwrap_or(&[]) {
+            if reachable.insert(*target) {
+                queue.push_back(*target);
             }
         }
     }

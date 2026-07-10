@@ -583,7 +583,7 @@ Refactoring reports:
 - [x] Add coupling/seam reports that suggest boundaries where extraction or splitting is safest and where it is most needed.
 - [x] Add a machine-readable refactor context bundle combining journey, dependencies, risks, and source spans for one-shot agent handoff.
 - [x] Add web views or node-card actions for impact, seams, component dependencies/contracts, and refactor-context download (audit F5: refactoring reports are CLI/API-only).
-- [ ] Reuse cached report/insight results and bound journey search in refactor-context so warm-cache requests return in seconds, not minutes (audit F11).
+- [x] Reuse cached report/insight results and bound journey search in refactor-context so warm-cache requests return in seconds, not minutes (audit F11).
 
 Exit criteria:
 
