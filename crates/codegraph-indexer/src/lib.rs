@@ -123,6 +123,14 @@ struct IndexContext {
     pending_orm_table_refs: Vec<PendingOrmTableRef>,
     pending_migration_dir_refs: Vec<PendingMigrationDirRef>,
     sql_migration_dirs: BTreeMap<String, Vec<NodeId>>,
+    pending_mcp_local_refs: Vec<PendingMcpLocalRef>,
+}
+
+/// A path-like MCP server command/argument waiting to be matched against
+/// scanned files.
+struct PendingMcpLocalRef {
+    server: NodeId,
+    candidate: String,
 }
 
 /// An ORM table mapping found in application code, waiting for the table
@@ -898,6 +906,7 @@ fn scan_project_with_scope(
         pending_orm_table_refs: Vec::new(),
         pending_migration_dir_refs: Vec::new(),
         sql_migration_dirs: BTreeMap::new(),
+        pending_mcp_local_refs: Vec::new(),
     };
 
     for entry in WalkDir::new(root)
@@ -949,6 +958,19 @@ fn scan_project_with_scope(
         }
     }
 
+    // `.mcp.json` is a dotfile the walk skips by default, yet it declares
+    // the repository's MCP tool servers. Probe the conventional root
+    // location explicitly.
+    if !options.include_hidden && !context.file_nodes.contains_key(".mcp.json") {
+        let hidden_mcp = root.join(".mcp.json");
+        let within_budget = hidden_mcp
+            .metadata()
+            .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= options.max_file_size);
+        if within_budget && scope.is_none_or(|scope| scope.includes_file(".mcp.json")) {
+            index_file(&mut context, &hidden_mcp, ".mcp.json", options);
+        }
+    }
+
     resolve_pending_calls(&mut context);
     resolve_pending_local_imports(&mut context);
     resolve_pending_entrypoint_targets(&mut context);
@@ -967,6 +989,7 @@ fn scan_project_with_scope(
     resolve_sql_migration_order(&mut context);
     resolve_pending_orm_table_refs(&mut context);
     resolve_pending_migration_dir_refs(&mut context);
+    resolve_pending_mcp_local_refs(&mut context);
     apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
 
@@ -1224,6 +1247,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
         index_native_platform_channels(context, file_id, label, source);
         index_orm_table_refs(context, file_id, label, source);
         index_migration_dir_refs(context, file_id, label, source);
+        index_mcp_config(context, file_id, label, source);
         if let Some(language) = language {
             index_commonjs_require_imports(context, file_id, label, language, source);
         }
@@ -3122,6 +3146,93 @@ fn index_migration_dir_refs(
                         source_kind: if is_db_config { "db_config" } else { "code" },
                         line: line_number,
                     });
+            }
+        }
+    }
+}
+
+/// MCP configuration files declare the assistant tool servers a repository
+/// uses. Each server becomes a dependency fact with transport, command, and
+/// args; path-like commands/args are matched to scanned files afterwards.
+fn index_mcp_config(context: &mut IndexContext, file_id: NodeId, label: &str, source: &str) {
+    let file_name = label.rsplit('/').next().unwrap_or(label);
+    if !matches!(
+        file_name,
+        ".mcp.json" | "mcp.json" | "mcp_servers.json" | "claude_desktop_config.json"
+    ) {
+        return;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return;
+    };
+    let servers = value
+        .get("mcpServers")
+        .or_else(|| value.get("servers"))
+        .and_then(|servers| servers.as_object());
+    let Some(servers) = servers else {
+        return;
+    };
+
+    add_file_metadata(&mut context.graph, file_id, "item_kind", "mcp_config");
+    for (name, spec) in servers {
+        let command = spec.get("command").and_then(|value| value.as_str());
+        let url = spec.get("url").and_then(|value| value.as_str());
+        let args: Vec<String> = spec
+            .get("args")
+            .and_then(|value| value.as_array())
+            .map(|args| {
+                args.iter()
+                    .filter_map(|arg| arg.as_str().map(ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut metadata = BTreeMap::from([
+            ("item_kind".to_string(), "mcp_server".to_string()),
+            ("server".to_string(), name.clone()),
+            ("source".to_string(), "mcp_config".to_string()),
+            (
+                "transport".to_string(),
+                if url.is_some() { "http" } else { "stdio" }.to_string(),
+            ),
+        ]);
+        if let Some(command) = command {
+            metadata.insert("command".to_string(), command.to_string());
+        }
+        if let Some(url) = url {
+            metadata.insert("url".to_string(), url.to_string());
+        }
+        if !args.is_empty() {
+            metadata.insert("args".to_string(), args.join(" "));
+        }
+        let server_id = context.graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            format!("mcp server:{name}"),
+            None,
+            metadata,
+        );
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            file_id,
+            server_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("relation".to_string(), "mcp_server".to_string()),
+                ("source".to_string(), "mcp_config".to_string()),
+            ]),
+        );
+
+        for candidate in command.into_iter().map(ToString::to_string).chain(args) {
+            let looks_like_path = candidate.contains('/')
+                || [".py", ".js", ".ts", ".sh", ".rb"]
+                    .iter()
+                    .any(|extension| candidate.ends_with(extension));
+            if looks_like_path && !candidate.contains("://") {
+                context.pending_mcp_local_refs.push(PendingMcpLocalRef {
+                    server: server_id,
+                    candidate: normalize_path(candidate.trim_start_matches("./")),
+                });
             }
         }
     }
@@ -12193,6 +12304,27 @@ fn resolve_pending_migration_dir_refs(context: &mut IndexContext) {
     }
 }
 
+/// Link MCP server commands/args to the scanned files they run.
+fn resolve_pending_mcp_local_refs(context: &mut IndexContext) {
+    let pending = std::mem::take(&mut context.pending_mcp_local_refs);
+    for reference in pending {
+        let Some(target) = context.file_nodes.get(&reference.candidate).copied() else {
+            continue;
+        };
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            reference.server,
+            target,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("relation".to_string(), "mcp_server_source".to_string()),
+                ("source".to_string(), "mcp_config".to_string()),
+            ]),
+        );
+    }
+}
+
 fn github_actions_local_action_target(context: &IndexContext, target: &str) -> Option<NodeId> {
     let candidates = [
         target.to_string(),
@@ -13755,6 +13887,101 @@ CREATE TABLE users (
         );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_indexes_mcp_configs_as_tool_server_facts() {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::create_dir_all(root.join("tools")).unwrap();
+        // Hidden root config: the conventional location.
+        fs::write(
+            root.join(".mcp.json"),
+            r#"{"mcpServers":{
+                "codegraph":{"command":"codegraph","args":["mcp","."]},
+                "local-tools":{"command":"python","args":["./scripts/server.py"]},
+                "team-graph":{"url":"https://graph.example.com/api/mcp"}
+            }}"#,
+        )
+        .unwrap();
+        // Visible config elsewhere in the tree.
+        fs::write(
+            root.join("tools").join("mcp_servers.json"),
+            r#"{"servers":{"linter":{"command":"npx","args":["lint-mcp"]}}}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("scripts").join("server.py"),
+            "def main():\n    pass\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+
+        // The hidden root config is indexed despite being a dotfile.
+        let config_file = node_id(&graph, NodeKind::File, ".mcp.json");
+        let config_node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == config_file)
+            .unwrap();
+        assert_eq!(
+            config_node.metadata.get("item_kind").map(String::as_str),
+            Some("mcp_config")
+        );
+
+        let stdio_server = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "mcp server:local-tools")
+            .expect("stdio server node");
+        assert_eq!(
+            stdio_server.metadata.get("transport").map(String::as_str),
+            Some("stdio")
+        );
+        assert_eq!(
+            stdio_server.metadata.get("command").map(String::as_str),
+            Some("python")
+        );
+        let http_server = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "mcp server:team-graph")
+            .expect("http server node");
+        assert_eq!(
+            http_server.metadata.get("transport").map(String::as_str),
+            Some("http")
+        );
+        assert!(
+            http_server
+                .metadata
+                .get("url")
+                .is_some_and(|url| url.contains("graph.example.com"))
+        );
+
+        // Config file links each declared server.
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == config_file
+                && edge.target == stdio_server.id
+                && edge.metadata.get("relation").map(String::as_str) == Some("mcp_server")
+        }));
+
+        // Path-like args link the server to its scanned source.
+        let script = node_id(&graph, NodeKind::File, "scripts/server.py");
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == stdio_server.id
+                && edge.target == script
+                && edge.metadata.get("relation").map(String::as_str) == Some("mcp_server_source")
+        }));
+
+        // Visible configs with a `servers` key are indexed too.
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| node.label == "mcp server:linter"),
+            "mcp_servers.json server must be indexed"
+        );
     }
 
     #[test]

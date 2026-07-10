@@ -360,17 +360,20 @@ impl GraphCache {
             });
         }
 
-        // Dart package maps live in hidden `.dart_tool` directories that the
-        // walk skips by default, yet they change import resolution. Probe
-        // them explicitly so regenerating a package map invalidates the
-        // cached graph.
+        // Dart package maps and root `.mcp.json` files are hidden from the
+        // default walk, yet they change import resolution and declared tool
+        // servers. Probe them explicitly so regenerating either invalidates
+        // the cached graph.
         if !options.include_hidden {
+            let mut probe_files = vec![root.join(".mcp.json")];
             let mut probe_dirs = vec![root.to_path_buf()];
             probe_dirs.append(&mut pubspec_dirs);
             probe_dirs.sort();
             probe_dirs.dedup();
             for dir in probe_dirs {
-                let config = dir.join(".dart_tool").join("package_config.json");
+                probe_files.push(dir.join(".dart_tool").join("package_config.json"));
+            }
+            for config in probe_files {
                 let Ok(metadata) = config.metadata() else {
                     continue;
                 };
@@ -1837,6 +1840,30 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn fingerprint_tracks_hidden_mcp_config() {
+        let root = temp_project_root();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+        fs::write(root.join(".mcp.json"), r#"{"mcpServers":{}}"#).unwrap();
+        let options = IndexOptions::default();
+
+        let before = GraphCache::fingerprint_project(&root, &options).unwrap();
+        assert!(
+            before.entries.iter().any(|entry| entry.path == ".mcp.json"),
+            "hidden .mcp.json must participate in the fingerprint"
+        );
+
+        fs::write(
+            root.join(".mcp.json"),
+            r#"{"mcpServers":{"codegraph":{"command":"codegraph","args":["mcp","."]}}}"#,
+        )
+        .unwrap();
+        let after = GraphCache::fingerprint_project(&root, &options).unwrap();
+        assert_ne!(before.hash, after.hash);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn fingerprint_tracks_hidden_dart_package_config() {

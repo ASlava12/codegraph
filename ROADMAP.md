@@ -499,7 +499,7 @@ Repository knowledge ingestion:
 - [ ] Add document ingestion for Markdown, plain text, PDFs, Office files, and generated Markdown sidecars, with size limits and provenance.
 - [ ] Add optional local or configured-model semantic extraction for non-code documents while keeping code-only scans fully offline.
 - [ ] Add media ingestion hooks for transcripts from audio/video sidecars, with explicit opt-in for transcription backends.
-- [ ] Index MCP configuration files such as `.mcp.json`, `mcp.json`, `mcp_servers.json`, and assistant desktop configs as tool/server dependency facts.
+- [x] Index MCP configuration files such as `.mcp.json`, `mcp.json`, `mcp_servers.json`, and assistant desktop configs as tool/server dependency facts.
 - [ ] Canonicalize broader package manifests into shared package hub nodes across ecosystems where package identity is stable.
 
 Agent memory and automation:
