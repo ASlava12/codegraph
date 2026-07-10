@@ -511,7 +511,7 @@ Agent memory and automation:
 - [x] Add saved query/result memory with outcomes such as useful, dead-end, and corrected, linked back to graph nodes and invalidated by source changes.
 - [x] Add reflection reports that aggregate saved investigation outcomes into repository lessons with provenance and stale-source warnings.
 - [x] Add assistant installation commands for Codex and generic agent-skill instructions, generating project-scoped guidance to query CodeGraph before broad file reads.
-- [ ] Extend `install-agent` with optional assistant hook configuration snippets that nudge agents toward CodeGraph query/path/explain before grep-heavy workflows (re-scoped 2026-07-10: standalone hook runtime dropped, see `docs/ROADMAP_TRIAGE.md`).
+- [x] Extend `install-agent` with optional assistant hook configuration snippets that nudge agents toward CodeGraph query/path/explain before grep-heavy workflows (re-scoped 2026-07-10: standalone hook runtime dropped, see `docs/ROADMAP_TRIAGE.md`; landed as `install-agent --hooks`, generating copy-paste snippets under `.codegraph/hooks/` — a Claude Code `PreToolUse` nudge and a portable pre-search shell hook — with no hook runtime of its own).
 - [x] Add MCP stdio server mode for graph query/path/explain/report/card access from external assistants.
 - [x] Add MCP tools for `refactor_context`, `ask`, `source_search`, and investigation memory save/list/reflect so agent sessions do not shell out to the CLI (audit F7).
 - [x] Add optional authenticated HTTP MCP transport for shared team graph access.

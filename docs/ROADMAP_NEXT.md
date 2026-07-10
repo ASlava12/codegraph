@@ -179,7 +179,7 @@ priority than audit follow-ups and internal quality.
 - [x] Add SVG export target (`export_svg`: deterministic circle layout of the highest-degree nodes with confidence-colored edges, kind legend, XML-escaped hover titles, and truncation comments; wired through `scan --format svg`, `/api/export?format=svg` with `image/svg+xml`, the schema `export_format` enum, and the web export panel).
 - [x] Canonicalize broader package manifests into shared package hub nodes across ecosystems where package identity is stable (source imports now link to the manifest hubs: Rust `use` roots, npm/Dart module specifiers, Python module roots, PHP vendor namespaces, and Go module prefixes gain `package_import` edges and hub `package_id` metadata; on this repository 24 serde imports converge on one `cargo:serde` hub).
 - [x] Add document ingestion for plain-text files and generated Markdown sidecars, with size limits and provenance (`.txt`/`.text` files become `plain_text` documents with line counts and path mentions resolved through the shared document-reference queue, capped at 100 references per file; `report.pdf.md`-style sidecars carry `generated`/`sidecar_of` provenance; manifest-convention txt files stay manifests).
-- [ ] Extend `install-agent` with optional assistant hook configuration snippets nudging agents toward CodeGraph before grep-heavy workflows.
+- [x] Extend `install-agent` with optional assistant hook configuration snippets nudging agents toward CodeGraph before grep-heavy workflows (`--hooks` writes `.codegraph/hooks/`: a ready-to-merge Claude Code `PreToolUse` nudge on Grep/Glob with a documented strict variant, a portable `pre-search-nudge.sh`, and a README; snippets only — no hook runtime, per the re-scope).
 
 Exit criteria:
 

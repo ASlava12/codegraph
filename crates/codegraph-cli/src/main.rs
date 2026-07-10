@@ -467,6 +467,12 @@ enum Command {
         /// Overwrite an existing conflicting codegraph entry in .mcp.json.
         #[arg(long)]
         force: bool,
+
+        /// Also write assistant hook configuration snippets under
+        /// .codegraph/hooks/ nudging agents toward CodeGraph before
+        /// grep-heavy workflows.
+        #[arg(long)]
+        hooks: bool,
     },
 
     /// Save an investigation outcome to repository memory (.codegraph/memory.jsonl).
@@ -2308,8 +2314,9 @@ fn main() -> Result<()> {
             path,
             platform,
             force,
+            hooks,
         } => {
-            let report = install::install_agent(&path, platform, force)?;
+            let report = install::install_agent(&path, platform, force, hooks)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::MemorySave {
