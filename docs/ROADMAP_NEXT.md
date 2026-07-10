@@ -176,7 +176,7 @@ Exit criteria:
 Goal: the ROADMAP Phase 7 tail that survived the Phase 9 sweep — lower
 priority than audit follow-ups and internal quality.
 
-- [ ] Add SVG export target.
+- [x] Add SVG export target (`export_svg`: deterministic circle layout of the highest-degree nodes with confidence-colored edges, kind legend, XML-escaped hover titles, and truncation comments; wired through `scan --format svg`, `/api/export?format=svg` with `image/svg+xml`, the schema `export_format` enum, and the web export panel).
 - [ ] Canonicalize broader package manifests into shared package hub nodes across ecosystems where package identity is stable.
 - [ ] Add document ingestion for plain-text files and generated Markdown sidecars, with size limits and provenance.
 - [ ] Extend `install-agent` with optional assistant hook configuration snippets nudging agents toward CodeGraph before grep-heavy workflows.

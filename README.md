@@ -231,11 +231,11 @@ Implemented now:
 - Web graph page filters, node/edge offsets, and page limits can be copied as shareable deep-links for reproducible large-repository slices.
 - Web graph page filters and offsets can be cleared in one action after opening focused or shared large-repository slices.
 - Web canvas search, kind, risk, and query-focus filters show active-filter status in the HUD and can be cleared in one action.
-- Web export panel for downloading full graph snapshots as JSON, DOT, NDJSON, GraphML, Mermaid HTML, Neo4j Cypher, or FalkorDB.
+- Web export panel for downloading full graph snapshots as JSON, DOT, NDJSON, GraphML, SVG, Mermaid HTML, Neo4j Cypher, or FalkorDB.
 - Web export panel can download the currently visible canvas slice with graph-page, filter, viewport, and layout metadata for compact handoff.
 - Full graph exports publish response headers for node count, edge count, and serialized byte size.
 - Web project selector backed by an explicit server-side allowlist for opening local repositories.
-- DOT/Graphviz, NDJSON, GraphML, Mermaid HTML, Neo4j Cypher, and FalkorDB export formats for visualization, streaming agent use, external graph tools (yEd, Gephi, Cytoscape), shareable callflow pages, and graph databases.
+- DOT/Graphviz, NDJSON, GraphML, SVG, Mermaid HTML, Neo4j Cypher, and FalkorDB export formats for visualization, streaming agent use, external graph tools (yEd, Gephi, Cytoscape), shareable callflow pages, and graph databases. The SVG export renders a self-contained, deterministic image (highest-degree nodes on a circle, confidence-colored edges, kind legend, hover titles) with published node/edge limits and a truncation comment for larger graphs.
 - Persistent server-side graph cache with project fingerprint invalidation.
 - Persistent CLI graph cache using the same project fingerprinting and cache records as the server.
 - Persistent per-file parser fact cache reused during graph-cache misses.

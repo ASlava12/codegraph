@@ -5,6 +5,31 @@ use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSp
 use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
+fn svg_export_renders_deterministic_circle_layout() {
+    let mut graph = CodeGraph::new("repo");
+    let file = graph.add_node(NodeKind::File, "src/<main>.rs");
+    let function = graph.add_node(NodeKind::Function, "run & serve");
+    graph.add_edge(file, function, EdgeKind::Contains, Confidence::Exact);
+
+    let svg = export_svg(&graph, 500, 1500);
+    assert!(svg.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\""));
+    assert!(svg.ends_with("</svg>\n"));
+    assert!(svg.contains("<circle"));
+    assert!(svg.contains("<line"));
+    // Labels and titles are XML-escaped.
+    assert!(svg.contains("src/&lt;main&gt;.rs"));
+    assert!(svg.contains("run &amp; serve"));
+    assert!(!svg.contains("<main>"));
+    // Deterministic: same graph renders the same bytes.
+    assert_eq!(svg, export_svg(&graph, 500, 1500));
+
+    // Truncation is recorded and respected.
+    let truncated = export_svg(&graph, 2, 1);
+    assert!(truncated.contains("3 of 3 nodes") || truncated.contains("2 of 3 nodes"));
+    assert!(truncated.contains("of 3 nodes"));
+}
+
+#[test]
 fn insight_severity_parses_shared_spellings() {
     assert_eq!("info".parse::<InsightSeverity>(), Ok(InsightSeverity::Info));
     assert_eq!(

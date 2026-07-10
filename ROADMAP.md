@@ -527,7 +527,7 @@ Update and team workflows:
 Exports and dashboards:
 
 - [x] Add GraphML, Mermaid/callflow HTML, Obsidian vault / Markdown wiki, Neo4j Cypher, and FalkorDB export targets.
-- [ ] Add SVG export target.
+- [x] Add SVG export target (deterministic self-contained SVG across CLI `scan --format svg`, `/api/export?format=svg`, the API schema enum, and the web export panel; degree-ranked node selection keeps truncated renders connected).
 - [x] Add PR impact dashboard using graph communities, changed files, CI/review state, conflicts, and risky shared subsystems.
 - [x] Expose the PR impact dashboard through the API and web UI, not only the CLI (audit F6).
 - [x] Add query logging with privacy controls, response logging opt-in, and local JSONL audit output.

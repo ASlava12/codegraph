@@ -1793,6 +1793,7 @@ fn api_schema_lists_agent_contracts() {
                         "dot",
                         "ndjson",
                         "graphml",
+                        "svg",
                         "mermaid_html",
                         "cypher",
                         "falkordb",

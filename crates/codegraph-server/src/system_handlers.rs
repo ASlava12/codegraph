@@ -163,6 +163,7 @@ pub(crate) async fn capabilities_api(
             "dot",
             "ndjson",
             "graphml",
+            "svg",
             "mermaid_html",
             "cypher",
             "falkordb",

@@ -59,6 +59,7 @@ pub(crate) fn api_schema_response() -> ApiSchemaResponse {
                     "dot",
                     "ndjson",
                     "graphml",
+                    "svg",
                     "mermaid_html",
                     "cypher",
                     "falkordb",

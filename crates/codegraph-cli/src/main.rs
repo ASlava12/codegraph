@@ -35,9 +35,10 @@ use codegraph_analysis::{
     workflow_query,
 };
 use codegraph_analysis::{
-    DEFAULT_MERMAID_EDGE_LIMIT, DEFAULT_MERMAID_NODE_LIMIT, MermaidSection, export_cypher,
-    export_dot, export_falkordb, export_graph_mermaid_html, export_graphml, export_mermaid_html,
-    export_ndjson, node_card,
+    DEFAULT_MERMAID_EDGE_LIMIT, DEFAULT_MERMAID_NODE_LIMIT, DEFAULT_SVG_EDGE_LIMIT,
+    DEFAULT_SVG_NODE_LIMIT, MermaidSection, export_cypher, export_dot, export_falkordb,
+    export_graph_mermaid_html, export_graphml, export_mermaid_html, export_ndjson, export_svg,
+    node_card,
 };
 use codegraph_core::NodeId;
 use codegraph_indexer::{
@@ -1490,6 +1491,7 @@ enum OutputFormat {
     MermaidHtml,
     Cypher,
     Falkordb,
+    Svg,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -2959,6 +2961,10 @@ fn print_graph(graph: &codegraph_core::CodeGraph, format: OutputFormat) -> Resul
         OutputFormat::Dot => print!("{}", export_dot(graph)),
         OutputFormat::Ndjson => print!("{}", export_ndjson(graph)?),
         OutputFormat::Graphml => print!("{}", export_graphml(graph)),
+        OutputFormat::Svg => print!(
+            "{}",
+            export_svg(graph, DEFAULT_SVG_NODE_LIMIT, DEFAULT_SVG_EDGE_LIMIT)
+        ),
         OutputFormat::MermaidHtml => print!(
             "{}",
             export_graph_mermaid_html(

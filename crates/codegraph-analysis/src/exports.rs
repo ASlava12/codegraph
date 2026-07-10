@@ -1,9 +1,9 @@
 //! Graph export targets: DOT, NDJSON, GraphML, Cypher, FalkorDB, and
 //! Mermaid/HTML.
 
-use codegraph_core::{CodeGraph, NodeId};
+use codegraph_core::{CodeGraph, Confidence, Edge, Node, NodeId, NodeKind};
 use serde_json::json;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[allow(unused_imports)]
 use crate::*;
@@ -249,6 +249,171 @@ pub fn export_falkordb(graph: &CodeGraph, graph_key: &str) -> String {
         output.push_str(&format!("GRAPH.QUERY {key} \"{escaped}\"\n"));
     }
     output
+}
+
+pub const DEFAULT_SVG_NODE_LIMIT: usize = 500;
+pub const DEFAULT_SVG_EDGE_LIMIT: usize = 1500;
+
+/// Render the graph as a self-contained SVG: nodes on a deterministic
+/// circle (sorted by kind, then label, then id, so equal graphs render
+/// byte-identical images), edges as confidence-colored chords, node
+/// `<title>` tooltips, and a kind legend. Large graphs truncate to the
+/// given limits and record the truncation in an SVG comment.
+pub fn export_svg(graph: &CodeGraph, node_limit: usize, edge_limit: usize) -> String {
+    let node_limit = node_limit.max(1);
+    let edge_limit = edge_limit.max(1);
+
+    // Pick the highest-degree nodes first so a truncated render keeps its
+    // edges (a kind/label slice of a large graph is mostly disconnected),
+    // then lay the selection out in kind/label order for stable grouping.
+    let mut degree: BTreeMap<NodeId, usize> = BTreeMap::new();
+    for edge in &graph.edges {
+        *degree.entry(edge.source).or_default() += 1;
+        *degree.entry(edge.target).or_default() += 1;
+    }
+    let mut nodes: Vec<&Node> = graph.nodes.iter().collect();
+    let total_nodes = nodes.len();
+    if nodes.len() > node_limit {
+        nodes.sort_by(|left, right| {
+            degree
+                .get(&right.id)
+                .unwrap_or(&0)
+                .cmp(degree.get(&left.id).unwrap_or(&0))
+                .then_with(|| left.id.0.cmp(&right.id.0))
+        });
+        nodes.truncate(node_limit);
+    }
+    nodes.sort_by(|left, right| {
+        kind_name(&left.kind)
+            .cmp(&kind_name(&right.kind))
+            .then_with(|| left.label.cmp(&right.label))
+            .then_with(|| left.id.0.cmp(&right.id.0))
+    });
+
+    let mut position_by_id = BTreeMap::new();
+    let count = nodes.len().max(1);
+    let radius = 240.0_f64.max(count as f64 * 14.0 / (2.0 * std::f64::consts::PI));
+    let padding = 80.0;
+    let center = radius + padding;
+    let size = center * 2.0;
+    for (index, node) in nodes.iter().enumerate() {
+        let angle = index as f64 / count as f64 * 2.0 * std::f64::consts::PI;
+        let x = center + radius * angle.cos();
+        let y = center + radius * angle.sin();
+        position_by_id.insert(node.id, (x, y));
+    }
+
+    let mut edges: Vec<&Edge> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            position_by_id.contains_key(&edge.source) && position_by_id.contains_key(&edge.target)
+        })
+        .collect();
+    let total_edges = edges.len();
+    edges.truncate(edge_limit);
+
+    let mut output = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {size:.0} {size:.0}\" \
+         width=\"{size:.0}\" height=\"{size:.0}\" font-family=\"Inter, sans-serif\">\n"
+    );
+    output.push_str(&format!(
+        "<!-- codegraph svg export: {} of {total_nodes} nodes, {} of {total_edges} edges -->\n",
+        nodes.len(),
+        edges.len()
+    ));
+    output.push_str(&format!(
+        "  <rect width=\"{size:.0}\" height=\"{size:.0}\" fill=\"#101418\"/>\n"
+    ));
+
+    for edge in &edges {
+        let (x1, y1) = position_by_id[&edge.source];
+        let (x2, y2) = position_by_id[&edge.target];
+        output.push_str(&format!(
+            "  <line x1=\"{x1:.1}\" y1=\"{y1:.1}\" x2=\"{x2:.1}\" y2=\"{y2:.1}\" \
+             stroke=\"{}\" stroke-width=\"0.7\" stroke-opacity=\"0.35\"/>\n",
+            svg_confidence_color(edge.confidence)
+        ));
+    }
+
+    let draw_labels = nodes.len() <= 80;
+    for node in &nodes {
+        let (x, y) = position_by_id[&node.id];
+        output.push_str(&format!(
+            "  <circle cx=\"{x:.1}\" cy=\"{y:.1}\" r=\"5\" fill=\"{}\"><title>{} ({})</title></circle>\n",
+            svg_kind_color(&node.kind),
+            xml_escape(&node.label),
+            xml_escape(&kind_name(&node.kind))
+        ));
+        if draw_labels {
+            output.push_str(&format!(
+                "  <text x=\"{:.1}\" y=\"{:.1}\" font-size=\"10\" fill=\"#c9d2da\">{}</text>\n",
+                x + 8.0,
+                y + 3.0,
+                xml_escape(truncate_svg_label(&node.label))
+            ));
+        }
+    }
+
+    let mut kinds: Vec<String> = nodes
+        .iter()
+        .map(|node| kind_name(&node.kind))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    kinds.sort();
+    for (index, kind) in kinds.iter().enumerate() {
+        let y = 20.0 + index as f64 * 16.0;
+        output.push_str(&format!(
+            "  <circle cx=\"16\" cy=\"{:.1}\" r=\"5\" fill=\"{}\"/>\n  <text x=\"26\" y=\"{:.1}\" font-size=\"11\" fill=\"#c9d2da\">{}</text>\n",
+            y,
+            svg_kind_color_by_name(kind),
+            y + 4.0,
+            xml_escape(kind)
+        ));
+    }
+
+    output.push_str("</svg>\n");
+    output
+}
+
+fn truncate_svg_label(label: &str) -> &str {
+    let mut end = label.len().min(40);
+    while !label.is_char_boundary(end) {
+        end -= 1;
+    }
+    &label[..end]
+}
+
+fn svg_kind_color(kind: &NodeKind) -> &'static str {
+    svg_kind_color_by_name(&kind_name(kind))
+}
+
+/// Mirrors the web canvas palette in `static/js/03-state.js`.
+fn svg_kind_color_by_name(kind: &str) -> &'static str {
+    match kind {
+        "repository" | "entrypoint" => "#5cc8a7",
+        "directory" => "#7f9cff",
+        "file" => "#67b7dc",
+        "module" => "#8ccf7e",
+        "function" => "#f2c14e",
+        "type" => "#df7e7e",
+        "external_dependency" => "#b88ee6",
+        "config" => "#e5b454",
+        "environment" => "#d8a657",
+        "control_flow" => "#9aa7d8",
+        _ => "#a5adb3",
+    }
+}
+
+fn svg_confidence_color(confidence: Confidence) -> &'static str {
+    match confidence {
+        Confidence::Exact => "#5cc8a7",
+        Confidence::Semantic => "#67b7dc",
+        Confidence::Syntactic => "#c9d2da",
+        Confidence::Heuristic => "#e5b454",
+        Confidence::Unknown => "#a5adb3",
+    }
 }
 
 pub const DEFAULT_MERMAID_NODE_LIMIT: usize = 300;

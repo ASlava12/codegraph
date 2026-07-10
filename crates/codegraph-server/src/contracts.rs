@@ -542,6 +542,7 @@ pub(crate) enum ExportFormat {
     MermaidHtml,
     Cypher,
     Falkordb,
+    Svg,
 }
 
 #[derive(Debug, Deserialize)]

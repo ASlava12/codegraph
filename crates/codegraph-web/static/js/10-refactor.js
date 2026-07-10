@@ -690,6 +690,8 @@ function exportFormatMetadata(format) {
       return { format: "ndjson", extension: "ndjson", label: "NDJSON", endpoint: "/api/export" };
     case "graphml":
       return { format: "graphml", extension: "graphml", label: "GraphML", endpoint: "/api/export" };
+    case "svg":
+      return { format: "svg", extension: "svg", label: "SVG", endpoint: "/api/export" };
     case "mermaid_html":
       return { format: "mermaid_html", extension: "html", label: "Mermaid HTML", endpoint: "/api/export" };
     case "cypher":
