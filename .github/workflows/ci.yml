@@ -43,7 +43,9 @@ jobs:
       - name: Check web JavaScript syntax
         run: |
           node --check crates/codegraph-web/static/label-policy.js
-          node --check crates/codegraph-web/static/app.js
+          for module in crates/codegraph-web/static/js/*.js; do
+            node --check "$module"
+          done
 
       - name: Run web JavaScript tests
         run: node --test crates/codegraph-web/static/label-policy.test.js

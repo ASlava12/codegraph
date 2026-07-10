@@ -1214,7 +1214,7 @@ fn capability_endpoints_include_discovery_and_agent_routes() {
 #[test]
 fn embedded_web_overview_uses_report_snapshot() {
     let index = include_str!("../../codegraph-web/static/index.html");
-    let app = include_str!("../../codegraph-web/static/app.js");
+    let app = APP_JS;
 
     assert!(index.contains("riskSummaryList"));
     assert!(index.contains("surprisingLinkList"));
@@ -1449,7 +1449,7 @@ fn embedded_web_overview_uses_report_snapshot() {
 #[test]
 fn embedded_web_assets_keep_shareable_investigation_links() {
     let index = include_str!("../../codegraph-web/static/index.html");
-    let app = include_str!("../../codegraph-web/static/app.js");
+    let app = APP_JS;
     let styles = include_str!("../../codegraph-web/static/styles.css");
 
     assert!(index.contains("queryCopyButton"));
@@ -1498,7 +1498,7 @@ fn embedded_web_assets_keep_shareable_investigation_links() {
 
 #[test]
 fn embedded_web_assets_include_workflow_panel() {
-    let app = include_str!("../../codegraph-web/static/app.js");
+    let app = APP_JS;
     let styles = include_str!("../../codegraph-web/static/styles.css");
 
     assert!(app.contains("workflowButton"));
@@ -1533,7 +1533,7 @@ fn embedded_web_assets_include_workflow_panel() {
 #[test]
 fn embedded_web_assets_localize_static_aria_labels() {
     let index = include_str!("../../codegraph-web/static/index.html");
-    let app = include_str!("../../codegraph-web/static/app.js");
+    let app = APP_JS;
 
     for key in [
         "aria.interfaceLanguage",
@@ -1572,7 +1572,7 @@ fn embedded_web_assets_localize_static_aria_labels() {
 #[test]
 fn embedded_web_assets_surface_graph_viewport_hud() {
     let index = include_str!("../../codegraph-web/static/index.html");
-    let app = include_str!("../../codegraph-web/static/app.js");
+    let app = APP_JS;
     let styles = include_str!("../../codegraph-web/static/styles.css");
 
     assert!(index.contains("graphHud"));
@@ -1613,7 +1613,7 @@ fn embedded_web_assets_surface_graph_viewport_hud() {
 #[test]
 fn embedded_web_assets_surface_flow_view() {
     let index = include_str!("../../codegraph-web/static/index.html");
-    let app = include_str!("../../codegraph-web/static/app.js");
+    let app = APP_JS;
     let styles = include_str!("../../codegraph-web/static/styles.css");
 
     assert!(index.contains("flowCanvas"));
@@ -1645,7 +1645,7 @@ fn embedded_web_assets_surface_flow_view() {
 #[test]
 fn embedded_web_assets_surface_journey_panel() {
     let index = include_str!("../../codegraph-web/static/index.html");
-    let app = include_str!("../../codegraph-web/static/app.js");
+    let app = APP_JS;
 
     assert!(index.contains("journeyFromInput"));
     assert!(index.contains("journeyToInput"));
@@ -1669,7 +1669,7 @@ fn embedded_web_assets_surface_journey_panel() {
 
 #[test]
 fn embedded_web_assets_highlight_hovered_graph_edges() {
-    let app = include_str!("../../codegraph-web/static/app.js");
+    let app = APP_JS;
 
     assert!(app.contains("hoveredEdgeKey"));
     assert!(app.contains("edgeEmphasis"));
@@ -1689,7 +1689,7 @@ fn embedded_web_assets_highlight_hovered_graph_edges() {
 
 #[test]
 fn embedded_web_assets_localize_source_match_cards() {
-    let app = include_str!("../../codegraph-web/static/app.js");
+    let app = APP_JS;
 
     assert!(app.contains("\"selection.sourceMatch\""));
     assert!(app.contains("\"selection.sourceLoading\""));
@@ -1702,7 +1702,7 @@ fn embedded_web_assets_localize_source_match_cards() {
 #[test]
 fn embedded_web_assets_support_keyboard_graph_navigation() {
     let index = include_str!("../../codegraph-web/static/index.html");
-    let app = include_str!("../../codegraph-web/static/app.js");
+    let app = APP_JS;
     let styles = include_str!("../../codegraph-web/static/styles.css");
 
     assert!(index.contains("id=\"graphCanvas\" tabindex=\"0\""));

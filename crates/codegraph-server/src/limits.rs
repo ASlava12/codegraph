@@ -47,7 +47,8 @@ pub(crate) const EXPORT_BYTES_HEADER: &str = "x-codegraph-export-bytes";
 pub(crate) const RESPONSE_TIME_HEADER: &str = "x-response-time-ms";
 pub(crate) const STATIC_ASSET_CACHE_CONTROL: &str = "no-cache";
 pub(crate) const DYNAMIC_CACHE_CONTROL: &str = "no-store";
-pub(crate) const APP_JS: &str = include_str!("../../codegraph-web/static/app.js");
+// Concatenated from crates/codegraph-web/static/js/*.js by build.rs.
+pub(crate) const APP_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
 pub(crate) const INDEX_HTML: &str = include_str!("../../codegraph-web/static/index.html");
 pub(crate) const LABEL_POLICY_JS: &str = include_str!("../../codegraph-web/static/label-policy.js");
 pub(crate) const STYLES_CSS: &str = include_str!("../../codegraph-web/static/styles.css");
