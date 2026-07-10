@@ -340,6 +340,27 @@ function drawFlow() {
   });
 
   flowCtx.restore();
+
+  // A workflow with no transitions is a leaf: the single block is the node
+  // itself with nothing downstream. Say so in screen space so it does not read
+  // as a broken, half-drawn flow.
+  if (report && flowTransitions().length === 0) {
+    flowCtx.save();
+    flowCtx.fillStyle = "rgba(237, 241, 242, 0.6)";
+    flowCtx.font = "13px 'JetBrains Mono', ui-monospace, monospace";
+    flowCtx.textAlign = "center";
+    flowCtx.textBaseline = "middle";
+    flowCtx.fillText(
+      t("flow.noOutgoing"),
+      flowCanvas.width / 2,
+      flowCanvas.height - 54,
+      flowCanvas.width - 40,
+    );
+    flowCtx.textAlign = "left";
+    flowCtx.textBaseline = "alphabetic";
+    flowCtx.restore();
+  }
+
   drawFlowMinimap();
 }
 
@@ -406,10 +427,11 @@ function renderFlowHud() {
   const transitions = flowTransitions().length;
   const zoom = Math.round(state.flow.zoom * 100);
   const title = state.flow.title ? `${state.flow.title} · ` : "";
+  const tail = transitions === 0 ? t("flow.noOutgoing") : t("flow.blockHint");
   flowHud.textContent = `${title}${t("workflow.blockCount", { count: formatNumber(blocks) })} · ${t(
     "workflow.transitionCount",
     { count: formatNumber(transitions) },
-  )} · ${zoom}% · ${t("flow.blockHint")}`;
+  )} · ${zoom}% · ${tail}`;
 }
 
 function selectFlowBlock(block) {
