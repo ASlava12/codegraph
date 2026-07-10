@@ -152,6 +152,7 @@ Implemented now:
 - Journey reports rank up to `--paths` alternative routes by edge confidence and length, report per-path `confidence_score` and `lowest_confidence`, and attach structured per-hop explanations (confidence note, relation, provenance source) for why each transition exists.
 - Web Journey panel builds ranked entrypoint-to-target chains from `/api/journey`: step-numbered blocks with localized kind badges, fragile/risk chips, per-hop provenance notes, node/dependency card actions, graph focus per path, and JSON export for agent handoff.
 - Journey steps expand in place into nested sub-flows (bounded workflow slices from the step node) with breadcrumb context back to the parent journey, collapse actions, and the same block/edge card and Flow-view actions as regular workflows.
+- Reflection reports (`codegraph memory-reflect`) aggregate saved outcomes into per-node repository lessons with resolved labels, dead-end and correction lists, outcome counts, and stale-source warnings.
 - Saved investigation memory (`codegraph memory-save` / `memory-list`) records query outcomes with lessons and linked node ids in `.codegraph/memory.jsonl`, and flags records as stale when the project fingerprint changes.
 - Agent installation (`codegraph install-agent`) writes idempotent `.mcp.json` server entries and marker-delimited CLAUDE.md/AGENTS.md guidance blocks so assistants query the graph before raw file reads.
 - MCP stdio server (`codegraph mcp`) exposes query_graph, get_node_card, get_neighbors, shortest_path, workflow, insights, impact, and report tools over newline-delimited JSON-RPC so external assistants use the graph as persistent repository memory.
@@ -661,6 +662,14 @@ Save investigation outcomes as repository memory and reuse them between sessions
 cargo run -p codegraph-cli -- memory-save 'configs target:DATABASE_URL' . --outcome useful --note 'reader is load_config' --node-id 42
 cargo run -p codegraph-cli -- memory-list . --only-stale
 ```
+
+Aggregate that memory into repository lessons:
+
+```bash
+cargo run -p codegraph-cli -- memory-reflect .
+```
+
+The `codegraph.reflection.v1` report groups records into per-node lessons (resolving node ids to current graph labels and flagging ids that no longer exist), separates dead-end queries to avoid repeating and corrections that override earlier conclusions, counts outcomes, and emits explicit stale-source warnings for every record whose fingerprint no longer matches the source tree.
 
 Memory records live in repository-owned `.codegraph/memory.jsonl` with outcome (`useful`, `dead-end`, `corrected`), a free-text lesson, linked graph node ids, and the project fingerprint hash at save time. Listings compare each record against the current fingerprint and mark records from a changed source tree as `stale`, so outdated conclusions are flagged instead of silently trusted.
 

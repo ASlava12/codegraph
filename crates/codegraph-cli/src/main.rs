@@ -284,6 +284,24 @@ enum Command {
         include_ignored: bool,
     },
 
+    /// Aggregate saved investigation memory into repository lessons with stale-source warnings.
+    MemoryReflect {
+        /// Project root the memory belongs to.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
     /// Serve CodeGraph analysis tools to assistants over the MCP stdio transport.
     Mcp {
         /// Project root to scan.
@@ -1723,6 +1741,29 @@ fn main() -> Result<()> {
             let fingerprint =
                 project_fingerprint_hash(&path, include_hidden, include_ignored, max_file_size)?;
             let report = memory::list_memory(&path, &fingerprint, outcome, only_stale)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::MemoryReflect {
+            path,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let fingerprint =
+                project_fingerprint_hash(&path, include_hidden, include_ignored, max_file_size)?;
+            let graph = scan_with_options(
+                path.clone(),
+                include_hidden,
+                include_ignored,
+                max_file_size,
+                &cache,
+            )?;
+            let node_labels = graph
+                .nodes
+                .iter()
+                .map(|node| (node.id.0, node.label.clone()))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let report = memory::reflect(&path, &fingerprint, &node_labels)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Mcp {

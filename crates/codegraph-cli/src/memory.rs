@@ -142,6 +142,133 @@ pub fn list_memory(
     })
 }
 
+pub const REFLECTION_SCHEMA: &str = "codegraph.reflection.v1";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LessonRecord {
+    pub id: String,
+    pub query: String,
+    pub outcome: MemoryOutcome,
+    #[serde(default)]
+    pub note: Option<String>,
+    pub recorded_at_unix: u64,
+    pub stale: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NodeLesson {
+    pub node_id: u64,
+    #[serde(default)]
+    pub label: Option<String>,
+    pub missing: bool,
+    pub records: Vec<LessonRecord>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReflectionReport {
+    pub schema: String,
+    pub current_fingerprint: String,
+    pub total_records: usize,
+    pub stale_records: usize,
+    pub malformed_lines: usize,
+    pub outcome_counts: std::collections::BTreeMap<String, usize>,
+    pub dead_ends: Vec<LessonRecord>,
+    pub corrections: Vec<LessonRecord>,
+    pub node_lessons: Vec<NodeLesson>,
+    pub general_lessons: Vec<LessonRecord>,
+    pub stale_warnings: Vec<String>,
+}
+
+fn outcome_name(outcome: MemoryOutcome) -> &'static str {
+    match outcome {
+        MemoryOutcome::Useful => "useful",
+        MemoryOutcome::DeadEnd => "dead_end",
+        MemoryOutcome::Corrected => "corrected",
+    }
+}
+
+pub fn reflect(
+    root: &Path,
+    current_fingerprint: &str,
+    node_labels: &std::collections::BTreeMap<u64, String>,
+) -> Result<ReflectionReport> {
+    let (records, malformed_lines) = load_records(root)?;
+    let mut outcome_counts = std::collections::BTreeMap::new();
+    let mut dead_ends = Vec::new();
+    let mut corrections = Vec::new();
+    let mut node_records: std::collections::BTreeMap<u64, Vec<LessonRecord>> =
+        std::collections::BTreeMap::new();
+    let mut general_lessons = Vec::new();
+    let mut stale_warnings = Vec::new();
+    let mut stale_records = 0usize;
+
+    for record in &records {
+        let stale = record.fingerprint != current_fingerprint;
+        if stale {
+            stale_records += 1;
+            stale_warnings.push(format!(
+                "{}: recorded against fingerprint {} but the source tree changed; re-verify before trusting `{}`",
+                record.id,
+                &record.fingerprint[..record.fingerprint.len().min(12)],
+                record.query
+            ));
+        }
+        *outcome_counts
+            .entry(outcome_name(record.outcome).to_string())
+            .or_insert(0) += 1;
+        let lesson = LessonRecord {
+            id: record.id.clone(),
+            query: record.query.clone(),
+            outcome: record.outcome,
+            note: record.note.clone(),
+            recorded_at_unix: record.recorded_at_unix,
+            stale,
+        };
+        match record.outcome {
+            MemoryOutcome::DeadEnd => dead_ends.push(lesson.clone()),
+            MemoryOutcome::Corrected => corrections.push(lesson.clone()),
+            MemoryOutcome::Useful => {}
+        }
+        if record.node_ids.is_empty() {
+            general_lessons.push(lesson);
+        } else {
+            for node_id in &record.node_ids {
+                node_records
+                    .entry(*node_id)
+                    .or_default()
+                    .push(lesson.clone());
+            }
+        }
+    }
+
+    let node_lessons = node_records
+        .into_iter()
+        .map(|(node_id, records)| {
+            let label = node_labels.get(&node_id).cloned();
+            NodeLesson {
+                node_id,
+                missing: label.is_none(),
+                label,
+                records,
+            }
+        })
+        .collect();
+
+    Ok(ReflectionReport {
+        schema: REFLECTION_SCHEMA.to_string(),
+        current_fingerprint: current_fingerprint.to_string(),
+        total_records: records.len(),
+        stale_records,
+        malformed_lines,
+        outcome_counts,
+        dead_ends,
+        corrections,
+        node_lessons,
+        general_lessons,
+        stale_warnings,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,6 +369,76 @@ mod tests {
         let only_stale = list_memory(&root, "fp", None, true).unwrap();
         assert_eq!(only_stale.total, 1);
         assert_eq!(only_stale.records[0].record.id, "mem-2");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn reflect_groups_lessons_with_provenance_and_stale_warnings() {
+        let root = temp_root();
+        save_memory(
+            &root,
+            "configs target:DATABASE_URL".to_string(),
+            MemoryOutcome::Useful,
+            Some("reader lives in load_config".to_string()),
+            vec![7],
+            "fp-current".to_string(),
+            10,
+        )
+        .unwrap();
+        save_memory(
+            &root,
+            "calls(function:legacy_worker)".to_string(),
+            MemoryOutcome::DeadEnd,
+            Some("legacy_worker is unreachable".to_string()),
+            vec![],
+            "fp-old".to_string(),
+            20,
+        )
+        .unwrap();
+        save_memory(
+            &root,
+            "configs target:API_KEY".to_string(),
+            MemoryOutcome::Corrected,
+            Some("actual reader is auth module, not server".to_string()),
+            vec![7, 999],
+            "fp-current".to_string(),
+            30,
+        )
+        .unwrap();
+
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert(7u64, "load_config".to_string());
+        let report = reflect(&root, "fp-current", &labels).expect("reflection report");
+
+        assert_eq!(report.schema, REFLECTION_SCHEMA);
+        assert_eq!(report.total_records, 3);
+        assert_eq!(report.stale_records, 1);
+        assert_eq!(report.outcome_counts.get("useful"), Some(&1));
+        assert_eq!(report.outcome_counts.get("dead_end"), Some(&1));
+        assert_eq!(report.outcome_counts.get("corrected"), Some(&1));
+        assert_eq!(report.dead_ends.len(), 1);
+        assert!(report.dead_ends[0].stale);
+        assert_eq!(report.corrections.len(), 1);
+        assert_eq!(report.stale_warnings.len(), 1);
+        assert!(report.stale_warnings[0].contains("mem-2"));
+        assert!(report.stale_warnings[0].contains("re-verify"));
+
+        let known = report
+            .node_lessons
+            .iter()
+            .find(|lesson| lesson.node_id == 7)
+            .expect("node lesson for 7");
+        assert_eq!(known.label.as_deref(), Some("load_config"));
+        assert!(!known.missing);
+        assert_eq!(known.records.len(), 2);
+        let missing = report
+            .node_lessons
+            .iter()
+            .find(|lesson| lesson.node_id == 999)
+            .expect("node lesson for 999");
+        assert!(missing.missing, "unknown node id should be flagged missing");
+        assert_eq!(report.general_lessons.len(), 1);
+        assert_eq!(report.general_lessons[0].id, "mem-2");
         fs::remove_dir_all(root).ok();
     }
 
