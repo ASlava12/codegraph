@@ -3,6 +3,7 @@ mod install;
 mod mcp;
 mod memory;
 mod merge;
+mod pr_impact;
 mod query_log;
 mod registry;
 mod watch;
@@ -237,6 +238,40 @@ enum Command {
         /// Registry file override; defaults to <cache-dir>/registry.json.
         #[arg(long)]
         registry_path: Option<PathBuf>,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
+
+    /// PR impact dashboard: map changed files onto communities, hotspots, blast radius, and risks.
+    PrImpact {
+        /// Project root to scan.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Git base ref to diff against for the changed-file list (default: working tree changes).
+        #[arg(long, default_value = "HEAD")]
+        base: String,
+
+        /// Explicit changed file overrides (repeatable); skips git entirely.
+        #[arg(long = "file")]
+        files: Vec<String>,
+
+        /// CI state string recorded verbatim in the report, for example: passing or pending.
+        #[arg(long)]
+        ci_state: Option<String>,
+
+        /// Review state string recorded verbatim in the report, for example: approved.
+        #[arg(long)]
+        review_state: Option<String>,
+
+        /// Include hidden files and directories.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories such as target and node_modules.
+        #[arg(long)]
+        include_ignored: bool,
 
         #[command(flatten)]
         cache: CacheArgs,
@@ -1896,6 +1931,41 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Command::PrImpact {
+            path,
+            base,
+            files,
+            ci_state,
+            review_state,
+            include_hidden,
+            include_ignored,
+            cache,
+        } => {
+            let graph = scan_with_options(
+                path.clone(),
+                include_hidden,
+                include_ignored,
+                max_file_size,
+                &cache,
+            )?;
+            let (changed, base_used) = if files.is_empty() {
+                (git_changed_files(&path, &base)?, Some(base))
+            } else {
+                (files, None)
+            };
+            let branch = git_current_branch(&path);
+            let report = pr_impact::pr_impact(
+                &graph,
+                &changed,
+                pr_impact::PrImpactContext {
+                    base: base_used,
+                    branch,
+                    ci_state,
+                    review_state,
+                },
+            );
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         Command::ExportWiki {
             path,
             output,
@@ -2805,6 +2875,42 @@ fn language_report() -> Vec<LanguageInfo> {
 
 fn canonical_workspace_root(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Changed files from `git diff --name-only <base>` in the project root.
+fn git_changed_files(root: &Path, base: &str) -> Result<Vec<String>> {
+    let output = std::process::Command::new("git")
+        .arg("diff")
+        .arg("--name-only")
+        .arg(base)
+        .current_dir(root)
+        .output()
+        .map_err(|error| anyhow::anyhow!("failed to run git diff: {error}"))?;
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "git diff --name-only {base} failed: {}; pass --file to list changes explicitly",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToString::to_string)
+        .collect())
+}
+
+fn git_current_branch(root: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!branch.is_empty()).then_some(branch)
 }
 
 /// Best-effort local query audit: never fails the command, only warns.

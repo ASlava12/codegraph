@@ -14939,6 +14939,12 @@ fn kind_name(kind: &codegraph_core::NodeKind) -> String {
     serde_json_name(kind).unwrap_or_else(|| format!("{kind:?}").to_ascii_lowercase())
 }
 
+/// Stable community id for a repository-relative file path, matching the
+/// ids used by [`communities`] (`area:<top-level-directory>`).
+pub fn community_id_for_path(path: &str) -> String {
+    format!("area:{}", architecture_group_for_path(path).0)
+}
+
 fn architecture_group_for_path(path: &str) -> (String, String) {
     let normalized = path.trim_matches('/').replace('\\', "/");
     let Some((first, _)) = normalized.split_once('/') else {
