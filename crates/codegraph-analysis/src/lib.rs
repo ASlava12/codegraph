@@ -15300,6 +15300,7 @@ fn is_test_like_source_path(path: &str) -> bool {
                 | "mocks"
         )
     }) || stem == "test"
+        || stem == "tests"
         || stem.starts_with("test_")
         || stem.ends_with("_test")
         || stem.ends_with("_tests")
@@ -23587,6 +23588,7 @@ mod tests {
     fn test_like_source_paths_cover_common_language_conventions() {
         for path in [
             "src/__tests__/app.spec.tsx",
+            "crates/codegraph-indexer/src/tests.rs",
             "web/components/Button.test.jsx",
             "internal/server/server_test.go",
             "tests/test_api.py",

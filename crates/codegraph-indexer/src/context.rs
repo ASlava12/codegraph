@@ -1,0 +1,527 @@
+//! Shared indexing state: the in-progress graph, pending cross-file
+//! resolution queues, and descriptor structs for manifest, CI, container,
+//! and Kubernetes facts collected during the walk.
+
+use std::collections::BTreeMap;
+
+use codegraph_core::{CodeGraph, Confidence, NodeId, SourceSpan};
+use codegraph_parser::{Language, ParsedFile};
+use serde::{Deserialize, Serialize};
+
+#[allow(unused_imports)]
+use crate::*;
+
+pub(crate) struct IndexContext {
+    pub(crate) graph: CodeGraph,
+    pub(crate) function_symbols: BTreeMap<String, Vec<NodeId>>,
+    pub(crate) file_nodes: BTreeMap<String, NodeId>,
+    pub(crate) directory_nodes: BTreeMap<String, NodeId>,
+    pub(crate) external_dependencies: BTreeMap<String, NodeId>,
+    /// One placeholder node per (language, label) for unresolved call targets.
+    pub(crate) unresolved_call_placeholders: BTreeMap<(String, String), NodeId>,
+    pub(crate) cargo_workspace_dependencies: BTreeMap<String, Option<String>>,
+    pub(crate) go_modules: Vec<GoModuleRoot>,
+    pub(crate) dart_packages: Vec<DartPackageRoot>,
+    pub(crate) c_include_dirs: Vec<String>,
+    pub(crate) custom_rules: CustomRules,
+    pub(crate) annotations: GraphAnnotations,
+    pub(crate) pending_calls: Vec<PendingCall>,
+    pub(crate) pending_local_imports: Vec<PendingLocalImport>,
+    pub(crate) pending_entrypoint_targets: Vec<PendingEntrypointTarget>,
+    pub(crate) pending_compose_config_targets: Vec<PendingComposeConfigTarget>,
+    pub(crate) pending_compose_volume_targets: Vec<PendingComposeVolumeTarget>,
+    pub(crate) kubernetes_configs: BTreeMap<KubernetesConfigKey, NodeId>,
+    pub(crate) kubernetes_services: BTreeMap<KubernetesServiceKey, NodeId>,
+    pub(crate) pending_kubernetes_config_refs: Vec<PendingKubernetesConfigRef>,
+    pub(crate) pending_kubernetes_service_refs: Vec<PendingKubernetesServiceRef>,
+    pub(crate) pending_github_actions_local_actions: Vec<PendingGithubActionsLocalAction>,
+    pub(crate) pending_document_path_refs: Vec<PendingDocumentPathRef>,
+    pub(crate) pending_document_symbol_refs: Vec<PendingDocumentSymbolRef>,
+    pub(crate) sql_tables: BTreeMap<String, NodeId>,
+    pub(crate) sql_columns: BTreeMap<String, NodeId>,
+    pub(crate) pending_sql_foreign_keys: Vec<PendingSqlForeignKey>,
+    pub(crate) pending_sql_query_table_refs: Vec<PendingSqlQueryTableRef>,
+    pub(crate) pending_native_channel_handlers: Vec<PendingNativeChannelHandler>,
+    pub(crate) pending_sql_joins: Vec<PendingSqlJoin>,
+    pub(crate) pending_sql_alter_refs: Vec<PendingSqlAlterRef>,
+    pub(crate) sql_migrations: Vec<SqlMigrationFile>,
+    pub(crate) pending_orm_table_refs: Vec<PendingOrmTableRef>,
+    pub(crate) pending_migration_dir_refs: Vec<PendingMigrationDirRef>,
+    pub(crate) sql_migration_dirs: BTreeMap<String, Vec<NodeId>>,
+    pub(crate) pending_mcp_local_refs: Vec<PendingMcpLocalRef>,
+}
+
+/// A path-like MCP server command/argument waiting to be matched against
+/// scanned files.
+pub(crate) struct PendingMcpLocalRef {
+    pub(crate) server: NodeId,
+    pub(crate) candidate: String,
+}
+
+/// An ORM table mapping found in application code, waiting for the table
+/// node to exist.
+pub(crate) struct PendingOrmTableRef {
+    pub(crate) file: NodeId,
+    pub(crate) table: String,
+    pub(crate) pattern: &'static str,
+    pub(crate) line: u32,
+}
+
+/// A migrations-directory reference from code or database config, waiting to
+/// be matched against scanned migration files.
+pub(crate) struct PendingMigrationDirRef {
+    pub(crate) file: NodeId,
+    pub(crate) dir: String,
+    pub(crate) source_kind: &'static str,
+    pub(crate) line: u32,
+}
+
+/// A JOIN between two tables found in a SQL statement, waiting for both
+/// table nodes to exist.
+pub(crate) struct PendingSqlJoin {
+    pub(crate) left: String,
+    pub(crate) right: String,
+    pub(crate) condition: Option<String>,
+    pub(crate) line: u32,
+}
+
+/// An ALTER/DROP TABLE statement waiting to be matched to an indexed table.
+pub(crate) struct PendingSqlAlterRef {
+    pub(crate) file: NodeId,
+    pub(crate) table: String,
+    pub(crate) operation: &'static str,
+    pub(crate) line: u32,
+}
+
+/// A migration file with its ordering key, for migration_order edges.
+pub(crate) struct SqlMigrationFile {
+    pub(crate) file: NodeId,
+    pub(crate) label: String,
+    pub(crate) dir: String,
+    pub(crate) sequence: u128,
+    pub(crate) sequence_text: String,
+}
+
+/// A Flutter platform-channel registration found in native Android/iOS
+/// source, waiting to be matched against Dart channel declarations.
+pub(crate) struct PendingNativeChannelHandler {
+    pub(crate) file: NodeId,
+    pub(crate) label: String,
+    pub(crate) name: String,
+    pub(crate) channel_kind: String,
+    pub(crate) platform: &'static str,
+    pub(crate) line: u32,
+}
+
+pub(crate) struct PendingCall {
+    pub(crate) caller: NodeId,
+    pub(crate) label: String,
+    pub(crate) span: SourceSpan,
+    pub(crate) language: String,
+}
+
+pub(crate) struct PendingLocalImport {
+    pub(crate) import_node: NodeId,
+    pub(crate) target: String,
+    pub(crate) candidates: Vec<String>,
+    pub(crate) mark_unresolved: bool,
+}
+
+pub(crate) struct PendingEntrypointTarget {
+    pub(crate) entrypoint: NodeId,
+    pub(crate) manifest_label: String,
+    pub(crate) target: String,
+    pub(crate) ecosystem: String,
+    pub(crate) entrypoint_kind: String,
+}
+
+pub(crate) struct PendingComposeConfigTarget {
+    pub(crate) config: NodeId,
+    pub(crate) manifest_label: String,
+    pub(crate) target: String,
+}
+
+pub(crate) struct PendingComposeVolumeTarget {
+    pub(crate) volume: NodeId,
+    pub(crate) manifest_label: String,
+    pub(crate) target: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct KubernetesConfigKey {
+    pub(crate) namespace: String,
+    pub(crate) config_kind: String,
+    pub(crate) name: String,
+}
+
+pub(crate) struct PendingKubernetesConfigRef {
+    pub(crate) config_ref: NodeId,
+    pub(crate) namespace: String,
+    pub(crate) config_kind: String,
+    pub(crate) name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct KubernetesServiceKey {
+    pub(crate) namespace: String,
+    pub(crate) name: String,
+}
+
+pub(crate) struct PendingKubernetesServiceRef {
+    pub(crate) service_ref: NodeId,
+    pub(crate) namespace: String,
+    pub(crate) name: String,
+}
+
+pub(crate) struct PendingGithubActionsLocalAction {
+    pub(crate) action: NodeId,
+    pub(crate) target: String,
+}
+
+pub(crate) struct PendingDocumentPathRef {
+    pub(crate) source: NodeId,
+    pub(crate) target: String,
+    pub(crate) candidates: Vec<String>,
+    pub(crate) relation: &'static str,
+    pub(crate) line: u32,
+    pub(crate) text: Option<String>,
+    /// `#L42` / `#L42-L50` citation anchor from the link fragment.
+    pub(crate) line_ref: Option<String>,
+}
+
+pub(crate) struct PendingDocumentSymbolRef {
+    pub(crate) source: NodeId,
+    pub(crate) symbol: String,
+    pub(crate) relation: &'static str,
+    pub(crate) line: u32,
+}
+
+pub(crate) struct PendingSqlForeignKey {
+    pub(crate) source: NodeId,
+    pub(crate) source_table: String,
+    pub(crate) source_column: Option<String>,
+    pub(crate) target_table: String,
+    pub(crate) target_column: Option<String>,
+    pub(crate) line: u32,
+}
+
+pub(crate) struct PendingSqlQueryTableRef {
+    pub(crate) query: NodeId,
+    pub(crate) table: String,
+    pub(crate) operation: String,
+    pub(crate) role: String,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MakefileTarget {
+    pub(crate) name: String,
+    pub(crate) command: Option<String>,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockerfileEntrypoint {
+    pub(crate) instruction: String,
+    pub(crate) command: String,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ComposeService {
+    pub(crate) name: String,
+    pub(crate) command: Option<String>,
+    pub(crate) command_kind: Option<String>,
+    pub(crate) build_context: Option<String>,
+    pub(crate) dockerfile: Option<String>,
+    pub(crate) depends_on: Vec<String>,
+    pub(crate) environment: Vec<ComposeEnvironment>,
+    pub(crate) env_files: Vec<ComposeEnvFile>,
+    pub(crate) ports: Vec<ComposePort>,
+    pub(crate) volumes: Vec<ComposeVolume>,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ComposeEnvironment {
+    pub(crate) name: String,
+    pub(crate) value_present: bool,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ComposeEnvFile {
+    pub(crate) path: String,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ComposePort {
+    pub(crate) published: Option<String>,
+    pub(crate) target: Option<String>,
+    pub(crate) protocol: String,
+    pub(crate) host_ip: Option<String>,
+    pub(crate) raw: Option<String>,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ComposeVolume {
+    pub(crate) source: Option<String>,
+    pub(crate) target: Option<String>,
+    pub(crate) kind: String,
+    pub(crate) read_only: bool,
+    pub(crate) raw: Option<String>,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FlutterAsset {
+    pub(crate) path: String,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DartPlatformChannel {
+    pub(crate) name: String,
+    pub(crate) channel_kind: String,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GithubActionsWorkflow {
+    pub(crate) name: String,
+    pub(crate) environment: Vec<CiEnvironment>,
+    pub(crate) jobs: Vec<GithubActionsJob>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GithubActionsJob {
+    pub(crate) id: String,
+    pub(crate) display_name: Option<String>,
+    pub(crate) runs_on: Option<String>,
+    pub(crate) needs: Vec<String>,
+    pub(crate) environment: Vec<CiEnvironment>,
+    pub(crate) steps: Vec<GithubActionsStep>,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GithubActionsStep {
+    pub(crate) name: Option<String>,
+    pub(crate) uses: Option<String>,
+    pub(crate) run: Option<String>,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GitlabCiJob {
+    pub(crate) name: String,
+    pub(crate) stage: Option<String>,
+    pub(crate) image: Option<String>,
+    pub(crate) extends: Vec<String>,
+    pub(crate) needs: Vec<String>,
+    pub(crate) dependencies: Vec<String>,
+    pub(crate) variables: Vec<CiEnvironment>,
+    pub(crate) scripts: Vec<GitlabCiScript>,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GitlabCiScript {
+    pub(crate) command: String,
+    pub(crate) script_kind: String,
+    pub(crate) ordinal: usize,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CiEnvironment {
+    pub(crate) name: String,
+    pub(crate) value_present: bool,
+    pub(crate) value_kind: String,
+    pub(crate) scope: String,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KubernetesDocument {
+    pub(crate) kind: String,
+    pub(crate) name: String,
+    pub(crate) namespace: String,
+    pub(crate) line: u32,
+    pub(crate) labels: BTreeMap<String, String>,
+    pub(crate) pod_labels: BTreeMap<String, String>,
+    pub(crate) selector_labels: BTreeMap<String, String>,
+    pub(crate) config_refs: Vec<KubernetesConfigRef>,
+    pub(crate) service_ports: Vec<KubernetesServicePort>,
+    pub(crate) ingress_backends: Vec<KubernetesIngressBackend>,
+    pub(crate) container_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KubernetesConfigRef {
+    pub(crate) config_kind: String,
+    pub(crate) ref_kind: String,
+    pub(crate) name: String,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KubernetesServicePort {
+    pub(crate) name: Option<String>,
+    pub(crate) port: Option<String>,
+    pub(crate) target_port: Option<String>,
+    pub(crate) protocol: String,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KubernetesIngressBackend {
+    pub(crate) service_name: String,
+    pub(crate) service_port: Option<String>,
+    pub(crate) host: Option<String>,
+    pub(crate) path: Option<String>,
+    pub(crate) path_type: Option<String>,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KubernetesLabelTarget {
+    Metadata,
+    PodTemplate,
+    Selector,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FileStamp {
+    pub(crate) len: u64,
+    pub(crate) modified_ns: Option<u128>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ParseCacheRecord {
+    pub(crate) cache_schema_version: u32,
+    pub(crate) language: Language,
+    pub(crate) stamp: FileStamp,
+    pub(crate) parsed: ParsedFile,
+}
+
+pub(crate) struct EntrypointTargetCandidate {
+    pub(crate) path: String,
+    pub(crate) symbol: Option<String>,
+    pub(crate) file_confidence: Confidence,
+    pub(crate) function_confidence: Confidence,
+    pub(crate) resolution: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManifestDependency {
+    pub(crate) name: String,
+    pub(crate) kind: String,
+    pub(crate) ecosystem: String,
+    pub(crate) version: Option<String>,
+    pub(crate) version_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManifestEntrypoint {
+    pub(crate) label: String,
+    pub(crate) kind: String,
+    pub(crate) ecosystem: String,
+    pub(crate) target: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FrameworkRoute {
+    pub(crate) framework: String,
+    pub(crate) method: String,
+    pub(crate) path: String,
+    pub(crate) handler: Option<String>,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct FrameworkConfig {
+    pub(crate) framework: String,
+    pub(crate) label: String,
+    pub(crate) config_kind: String,
+    pub(crate) value: Option<String>,
+    pub(crate) line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GoModuleRoot {
+    pub(crate) module: String,
+    pub(crate) dir: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DartPackageRoot {
+    pub(crate) name: String,
+    pub(crate) dir: Option<String>,
+    /// Package-URI directory inside the package root (usually `lib`).
+    pub(crate) lib_dir: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LocalImportTarget {
+    pub(crate) target: String,
+    pub(crate) candidates: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct CustomRules {
+    pub(crate) forbidden_dependencies: Vec<ForbiddenDependencyRule>,
+    pub(crate) forbidden_edges: Vec<ForbiddenEdgeRule>,
+    pub(crate) required_configs: Vec<RequiredConfigRule>,
+    pub(crate) parse_errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ForbiddenDependencyRule {
+    pub(crate) id: String,
+    pub(crate) package: String,
+    pub(crate) ecosystem: Option<String>,
+    pub(crate) severity: String,
+    pub(crate) message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequiredConfigRule {
+    pub(crate) id: String,
+    pub(crate) target: String,
+    pub(crate) severity: String,
+    pub(crate) message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ForbiddenEdgeRule {
+    pub(crate) id: String,
+    pub(crate) edge_kind: Option<String>,
+    pub(crate) source_kind: Option<String>,
+    pub(crate) source_label: Option<String>,
+    pub(crate) source_metadata: BTreeMap<String, String>,
+    pub(crate) target_kind: Option<String>,
+    pub(crate) target_label: Option<String>,
+    pub(crate) target_metadata: BTreeMap<String, String>,
+    pub(crate) severity: String,
+    pub(crate) message: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct GraphAnnotations {
+    pub(crate) node_annotations: Vec<NodeAnnotationRule>,
+    pub(crate) parse_errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NodeAnnotationRule {
+    pub(crate) id: String,
+    pub(crate) kind: Option<String>,
+    pub(crate) label: Option<String>,
+    pub(crate) language: Option<String>,
+    pub(crate) item_kind: Option<String>,
+    pub(crate) metadata: BTreeMap<String, String>,
+    pub(crate) set: BTreeMap<String, String>,
+}

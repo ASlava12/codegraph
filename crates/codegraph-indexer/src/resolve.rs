@@ -1,0 +1,1684 @@
+//! Post-scan resolution passes over pending queues: calls, imports,
+//! entrypoint targets, compose/Kubernetes/CI references, documents, SQL,
+//! and the function symbol registry.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind};
+
+#[allow(unused_imports)]
+use crate::*;
+
+/// Language builtins and std macros that read as call sites but are not
+/// external dependencies: constructors of core enums, print/assert/format
+/// macro families, and std namespaces.
+pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
+    let base = label.trim_end_matches('!');
+    match language {
+        "rust" => {
+            matches!(
+                base,
+                "Some"
+                    | "None"
+                    | "Ok"
+                    | "Err"
+                    | "Box::new"
+                    | "String::from"
+                    | "String::new"
+                    | "Vec::new"
+                    | "Default::default"
+                    | "drop"
+                    | "format"
+                    | "format_args"
+                    | "print"
+                    | "println"
+                    | "eprint"
+                    | "eprintln"
+                    | "write"
+                    | "writeln"
+                    | "panic"
+                    | "assert"
+                    | "assert_eq"
+                    | "assert_ne"
+                    | "debug_assert"
+                    | "debug_assert_eq"
+                    | "debug_assert_ne"
+                    | "vec"
+                    | "matches"
+                    | "todo"
+                    | "unimplemented"
+                    | "unreachable"
+                    | "dbg"
+                    | "include_str"
+                    | "include_bytes"
+                    | "concat"
+                    | "stringify"
+                    | "env"
+                    | "option_env"
+            ) || base.starts_with("std::")
+        }
+        "python" => matches!(
+            base,
+            "print"
+                | "len"
+                | "range"
+                | "str"
+                | "int"
+                | "float"
+                | "bool"
+                | "list"
+                | "dict"
+                | "set"
+                | "tuple"
+                | "enumerate"
+                | "zip"
+                | "map"
+                | "filter"
+                | "sorted"
+                | "reversed"
+                | "isinstance"
+                | "issubclass"
+                | "super"
+                | "open"
+                | "type"
+                | "getattr"
+                | "setattr"
+                | "hasattr"
+                | "repr"
+                | "min"
+                | "max"
+                | "sum"
+                | "abs"
+                | "round"
+                | "any"
+                | "all"
+                | "next"
+                | "iter"
+                | "format"
+                | "id"
+                | "vars"
+                | "hash"
+                | "callable"
+        ),
+        "javascript" | "typescript" | "tsx" => {
+            matches!(
+                base,
+                "parseInt"
+                    | "parseFloat"
+                    | "isNaN"
+                    | "isFinite"
+                    | "String"
+                    | "Number"
+                    | "Boolean"
+                    | "Array"
+                    | "Symbol"
+                    | "BigInt"
+                    | "Error"
+                    | "TypeError"
+                    | "RangeError"
+                    | "Promise"
+                    | "Date"
+                    | "Map"
+                    | "Set"
+                    | "WeakMap"
+                    | "WeakSet"
+                    | "Proxy"
+                    | "Reflect"
+                    | "setTimeout"
+                    | "setInterval"
+                    | "clearTimeout"
+                    | "clearInterval"
+                    | "queueMicrotask"
+                    | "structuredClone"
+                    | "encodeURIComponent"
+                    | "decodeURIComponent"
+                    | "encodeURI"
+                    | "decodeURI"
+                    | "fetch"
+                    | "alert"
+                    | "confirm"
+            ) || [
+                "console.", "Math.", "JSON.", "Object.", "Array.", "Number.", "String.",
+                "Promise.", "Reflect.", "Date.", "Symbol.",
+            ]
+            .iter()
+            .any(|prefix| base.starts_with(prefix))
+        }
+        "go" => matches!(
+            base,
+            "make"
+                | "len"
+                | "cap"
+                | "append"
+                | "new"
+                | "copy"
+                | "delete"
+                | "panic"
+                | "recover"
+                | "print"
+                | "println"
+                | "close"
+                | "complex"
+                | "real"
+                | "imag"
+                | "min"
+                | "max"
+                | "clear"
+        ),
+        "c" | "cpp" => {
+            matches!(
+                base,
+                "printf"
+                    | "fprintf"
+                    | "sprintf"
+                    | "snprintf"
+                    | "scanf"
+                    | "sscanf"
+                    | "puts"
+                    | "putchar"
+                    | "getchar"
+                    | "malloc"
+                    | "calloc"
+                    | "realloc"
+                    | "free"
+                    | "memcpy"
+                    | "memmove"
+                    | "memset"
+                    | "memcmp"
+                    | "strlen"
+                    | "strcmp"
+                    | "strncmp"
+                    | "strcpy"
+                    | "strncpy"
+                    | "strcat"
+                    | "strstr"
+                    | "strchr"
+                    | "sizeof"
+                    | "assert"
+                    | "exit"
+                    | "abort"
+                    | "atoi"
+                    | "atof"
+                    | "fopen"
+                    | "fclose"
+                    | "fread"
+                    | "fwrite"
+                    | "fgets"
+                    | "fputs"
+            ) || base.starts_with("std::")
+        }
+        "php" => matches!(
+            base,
+            "print"
+                | "printf"
+                | "sprintf"
+                | "echo"
+                | "strlen"
+                | "count"
+                | "isset"
+                | "empty"
+                | "unset"
+                | "array"
+                | "implode"
+                | "explode"
+                | "in_array"
+                | "array_map"
+                | "array_filter"
+                | "array_merge"
+                | "array_keys"
+                | "array_values"
+                | "json_encode"
+                | "json_decode"
+                | "intval"
+                | "floatval"
+                | "strval"
+                | "is_array"
+                | "is_string"
+                | "is_null"
+                | "is_numeric"
+        ),
+        "bash" => matches!(
+            base,
+            "echo"
+                | "printf"
+                | "cd"
+                | "exit"
+                | "export"
+                | "source"
+                | "test"
+                | "read"
+                | "local"
+                | "set"
+                | "unset"
+                | "shift"
+                | "eval"
+                | "exec"
+                | "trap"
+                | "return"
+                | "wait"
+                | "kill"
+                | "true"
+                | "false"
+        ),
+        "dart" => matches!(base, "print" | "identical" | "assert"),
+        _ => false,
+    }
+}
+
+pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
+    let pending_calls = std::mem::take(&mut context.pending_calls);
+
+    for call in pending_calls {
+        let targets = resolve_function_targets(&context.function_symbols, &call.label);
+        if targets.is_empty() {
+            let key = (call.language.clone(), call.label.clone());
+            let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
+                *id
+            } else {
+                let resolution = if builtin_call_target(&call.language, &call.label) {
+                    "builtin"
+                } else {
+                    "unresolved"
+                };
+                let mut metadata = BTreeMap::new();
+                metadata.insert("language".to_string(), call.language);
+                metadata.insert("parser".to_string(), "tree-sitter".to_string());
+                metadata.insert("item_kind".to_string(), "call".to_string());
+                metadata.insert("resolution".to_string(), resolution.to_string());
+                let id = context.graph.add_node_with_metadata(
+                    NodeKind::ExternalDependency,
+                    call.label,
+                    Some(call.span),
+                    metadata,
+                );
+                context.unresolved_call_placeholders.insert(key, id);
+                id
+            };
+            add_edge_once(
+                &mut context.graph,
+                call.caller,
+                call_id,
+                EdgeKind::Calls,
+                Confidence::Heuristic,
+            );
+            continue;
+        }
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("call_label".to_string(), call.label.clone());
+        metadata.insert(
+            "resolution".to_string(),
+            if targets.len() > 1 {
+                "ambiguous".to_string()
+            } else {
+                "resolved".to_string()
+            },
+        );
+        metadata.insert("language".to_string(), call.language);
+
+        for target in targets {
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                call.caller,
+                target,
+                EdgeKind::Calls,
+                Confidence::Heuristic,
+                metadata.clone(),
+            );
+        }
+    }
+}
+
+pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
+    let pending_imports = std::mem::take(&mut context.pending_local_imports);
+
+    for import in pending_imports {
+        let resolved = resolve_local_import_candidate(&context.file_nodes, &import.candidates);
+
+        if let Some((candidate, file_id)) = resolved {
+            add_node_metadata(
+                &mut context.graph,
+                import.import_node,
+                "import_scope",
+                "local",
+            );
+            add_node_metadata(
+                &mut context.graph,
+                import.import_node,
+                "import_target",
+                import.target.clone(),
+            );
+            add_node_metadata(
+                &mut context.graph,
+                import.import_node,
+                "resolution",
+                "resolved",
+            );
+            add_node_metadata(
+                &mut context.graph,
+                import.import_node,
+                "resolved_path",
+                candidate,
+            );
+            let mut metadata = BTreeMap::new();
+            metadata.insert("relation".to_string(), "local_import_file".to_string());
+            metadata.insert("source".to_string(), "syntax".to_string());
+            metadata.insert("resolution".to_string(), "local_import_file".to_string());
+            metadata.insert("target".to_string(), import.target);
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                import.import_node,
+                file_id,
+                EdgeKind::References,
+                Confidence::Syntactic,
+                metadata,
+            );
+        } else if import.mark_unresolved {
+            add_node_metadata(
+                &mut context.graph,
+                import.import_node,
+                "resolution",
+                "unresolved",
+            );
+            add_node_metadata(
+                &mut context.graph,
+                import.import_node,
+                "candidate_paths",
+                import.candidates.join(","),
+            );
+        }
+    }
+}
+
+pub(crate) fn resolve_local_import_candidate(
+    file_nodes: &BTreeMap<String, NodeId>,
+    candidates: &[String],
+) -> Option<(String, NodeId)> {
+    for candidate in candidates {
+        if let Some(file_id) = file_nodes.get(candidate).copied() {
+            return Some((candidate.clone(), file_id));
+        }
+        if let Some((path, file_id)) = resolve_directory_import_candidate(file_nodes, candidate) {
+            return Some((path, file_id));
+        }
+    }
+    None
+}
+
+pub(crate) fn resolve_directory_import_candidate(
+    file_nodes: &BTreeMap<String, NodeId>,
+    candidate: &str,
+) -> Option<(String, NodeId)> {
+    let prefix = candidate.strip_suffix('/')?;
+    let mut package_files = file_nodes.iter().filter(|(path, _)| {
+        is_go_file(path)
+            && if prefix.is_empty() {
+                !path.contains('/')
+            } else {
+                path.strip_prefix(prefix)
+                    .and_then(|rest| rest.strip_prefix('/'))
+                    .is_some_and(|rest| !rest.contains('/'))
+            }
+    });
+
+    package_files
+        .find(|(path, _)| !path.ends_with("_test.go"))
+        .or_else(|| package_files.next())
+        .map(|(path, file_id)| (path.clone(), *file_id))
+}
+
+pub(crate) fn is_go_file(path: &str) -> bool {
+    path.ends_with(".go")
+}
+
+pub(crate) fn resolve_pending_entrypoint_targets(context: &mut IndexContext) {
+    let pending_targets = std::mem::take(&mut context.pending_entrypoint_targets);
+
+    for pending in pending_targets {
+        for candidate in entrypoint_target_candidates(&pending) {
+            if let Some(file_id) = context.file_nodes.get(&candidate.path).copied() {
+                add_entrypoint_reference(
+                    &mut context.graph,
+                    pending.entrypoint,
+                    file_id,
+                    "entrypoint_file",
+                    candidate.resolution,
+                    candidate.file_confidence,
+                    None,
+                );
+            }
+
+            let Some(symbol) = candidate.symbol.as_deref() else {
+                continue;
+            };
+            let function_targets =
+                function_targets_in_file(&context.graph, &candidate.path, symbol);
+            for target in function_targets {
+                add_entrypoint_reference(
+                    &mut context.graph,
+                    pending.entrypoint,
+                    target,
+                    "entrypoint_function",
+                    candidate.resolution,
+                    candidate.function_confidence,
+                    Some(symbol),
+                );
+            }
+        }
+    }
+}
+
+pub(crate) fn resolve_pending_compose_config_targets(context: &mut IndexContext) {
+    let pending_targets = std::mem::take(&mut context.pending_compose_config_targets);
+
+    for pending in pending_targets {
+        let Some(path) = normalize_manifest_relative_path(&pending.manifest_label, &pending.target)
+        else {
+            continue;
+        };
+        let Some(file_id) = context.file_nodes.get(&path).copied() else {
+            continue;
+        };
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), "config_file".to_string());
+        metadata.insert(
+            "resolution".to_string(),
+            "compose_env_file_path".to_string(),
+        );
+        metadata.insert("source".to_string(), "compose".to_string());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.config,
+            file_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
+pub(crate) fn resolve_pending_compose_volume_targets(context: &mut IndexContext) {
+    let pending_targets = std::mem::take(&mut context.pending_compose_volume_targets);
+
+    for pending in pending_targets {
+        let Some(path) = compose_volume_local_source_path(&pending.manifest_label, &pending.target)
+        else {
+            continue;
+        };
+        let target_id = context
+            .file_nodes
+            .get(&path)
+            .copied()
+            .or_else(|| context.directory_nodes.get(&path).copied());
+        let Some(target_id) = target_id else {
+            continue;
+        };
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), "volume_source".to_string());
+        metadata.insert(
+            "resolution".to_string(),
+            "compose_volume_source_path".to_string(),
+        );
+        metadata.insert("source".to_string(), "compose".to_string());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.volume,
+            target_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
+pub(crate) fn resolve_pending_kubernetes_config_refs(context: &mut IndexContext) {
+    let pending_refs = std::mem::take(&mut context.pending_kubernetes_config_refs);
+
+    for pending in pending_refs {
+        let key = KubernetesConfigKey {
+            namespace: pending.namespace,
+            config_kind: pending.config_kind,
+            name: pending.name,
+        };
+        let Some(config_id) = context.kubernetes_configs.get(&key).copied() else {
+            continue;
+        };
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), "config_definition".to_string());
+        metadata.insert(
+            "resolution".to_string(),
+            "kubernetes_config_ref".to_string(),
+        );
+        metadata.insert("source".to_string(), "kubernetes".to_string());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.config_ref,
+            config_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
+pub(crate) fn resolve_pending_kubernetes_service_refs(context: &mut IndexContext) {
+    let pending_refs = std::mem::take(&mut context.pending_kubernetes_service_refs);
+
+    for pending in pending_refs {
+        let key = KubernetesServiceKey {
+            namespace: pending.namespace,
+            name: pending.name,
+        };
+        let Some(service_id) = context.kubernetes_services.get(&key).copied() else {
+            continue;
+        };
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), "service_definition".to_string());
+        metadata.insert(
+            "resolution".to_string(),
+            "kubernetes_service_ref".to_string(),
+        );
+        metadata.insert("source".to_string(), "kubernetes".to_string());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.service_ref,
+            service_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
+pub(crate) fn resolve_pending_github_actions_local_actions(context: &mut IndexContext) {
+    let pending_actions = std::mem::take(&mut context.pending_github_actions_local_actions);
+
+    for pending in pending_actions {
+        let Some(target_id) = github_actions_local_action_target(context, &pending.target) else {
+            continue;
+        };
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "relation".to_string(),
+            "github_actions_local_action".to_string(),
+        );
+        metadata.insert(
+            "resolution".to_string(),
+            "github_actions_local_action_path".to_string(),
+        );
+        metadata.insert("source".to_string(), "github-actions".to_string());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.action,
+            target_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
+pub(crate) fn resolve_pending_document_path_refs(context: &mut IndexContext) {
+    let pending_refs = std::mem::take(&mut context.pending_document_path_refs);
+
+    for pending in pending_refs {
+        let target = pending.candidates.iter().find_map(|candidate| {
+            context
+                .file_nodes
+                .get(candidate)
+                .copied()
+                .or_else(|| context.directory_nodes.get(candidate).copied())
+                .map(|id| (candidate.clone(), id))
+        });
+        let Some((resolved_path, target_id)) = target else {
+            continue;
+        };
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), pending.relation.to_string());
+        metadata.insert("resolution".to_string(), "document_path".to_string());
+        metadata.insert("source".to_string(), "markdown".to_string());
+        metadata.insert("target".to_string(), pending.target);
+        metadata.insert("resolved_path".to_string(), resolved_path);
+        metadata.insert("line".to_string(), pending.line.to_string());
+        if let Some(text) = pending.text {
+            metadata.insert("text".to_string(), text);
+        }
+        if let Some(line_ref) = pending.line_ref {
+            metadata.insert("line_ref".to_string(), line_ref);
+        }
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.source,
+            target_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
+/// Count incoming documentation references per node so heavily cited code
+/// and documents surface their backlink counts.
+pub(crate) fn annotate_document_backlinks(context: &mut IndexContext) {
+    let mut backlinks: BTreeMap<NodeId, usize> = BTreeMap::new();
+    for edge in &context.graph.edges {
+        if edge
+            .metadata
+            .get("relation")
+            .is_some_and(|relation| relation.starts_with("markdown_"))
+        {
+            *backlinks.entry(edge.target).or_insert(0) += 1;
+        }
+    }
+    for (node_id, count) in backlinks {
+        add_node_metadata(
+            &mut context.graph,
+            node_id,
+            "doc_backlinks",
+            count.to_string(),
+        );
+    }
+}
+
+pub(crate) fn resolve_pending_document_symbol_refs(context: &mut IndexContext) {
+    let pending_refs = std::mem::take(&mut context.pending_document_symbol_refs);
+
+    for pending in pending_refs {
+        let targets = resolve_function_targets(&context.function_symbols, &pending.symbol);
+        if targets.is_empty() {
+            continue;
+        }
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), pending.relation.to_string());
+        metadata.insert("resolution".to_string(), "document_symbol".to_string());
+        metadata.insert("source".to_string(), "markdown".to_string());
+        metadata.insert("symbol".to_string(), pending.symbol);
+        metadata.insert("line".to_string(), pending.line.to_string());
+
+        for target in targets {
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                pending.source,
+                target,
+                EdgeKind::References,
+                Confidence::Heuristic,
+                metadata.clone(),
+            );
+        }
+    }
+}
+
+pub(crate) fn resolve_pending_sql_foreign_keys(context: &mut IndexContext) {
+    let pending_refs = std::mem::take(&mut context.pending_sql_foreign_keys);
+
+    for pending in pending_refs {
+        let target_table_key = sql_identifier_key(&pending.target_table);
+        let target_id = pending
+            .target_column
+            .as_deref()
+            .and_then(|column| {
+                context
+                    .sql_columns
+                    .get(&sql_column_key(&target_table_key, column))
+                    .copied()
+            })
+            .or_else(|| context.sql_tables.get(&target_table_key).copied());
+        let Some(target_id) = target_id else {
+            continue;
+        };
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), "sql_foreign_key".to_string());
+        metadata.insert("source".to_string(), "sql".to_string());
+        metadata.insert("source_table".to_string(), pending.source_table);
+        metadata.insert("target_table".to_string(), pending.target_table);
+        metadata.insert("line".to_string(), pending.line.to_string());
+        if let Some(source_column) = pending.source_column {
+            metadata.insert("source_column".to_string(), source_column);
+        }
+        if let Some(target_column) = pending.target_column {
+            metadata.insert("target_column".to_string(), target_column);
+        }
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.source,
+            target_id,
+            EdgeKind::References,
+            Confidence::Exact,
+            metadata,
+        );
+    }
+}
+
+pub(crate) fn resolve_pending_sql_query_table_refs(context: &mut IndexContext) {
+    let pending_refs = std::mem::take(&mut context.pending_sql_query_table_refs);
+    let mut unresolved_tables: BTreeMap<NodeId, BTreeSet<String>> = BTreeMap::new();
+
+    for pending in pending_refs {
+        let table_key = sql_identifier_key(&pending.table);
+        let Some(table_id) = context.sql_tables.get(&table_key).copied() else {
+            unresolved_tables
+                .entry(pending.query)
+                .or_default()
+                .insert(pending.table);
+            continue;
+        };
+
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pending.query,
+            table_id,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                (
+                    "relation".to_string(),
+                    "app_sql_table_reference".to_string(),
+                ),
+                ("source".to_string(), "source_sql_literal".to_string()),
+                ("operation".to_string(), pending.operation),
+                ("role".to_string(), pending.role),
+                ("table".to_string(), pending.table),
+                ("line".to_string(), pending.line.to_string()),
+            ]),
+        );
+    }
+
+    for (query_id, tables) in unresolved_tables {
+        let has_resolved_table_ref = context.graph.edges.iter().any(|edge| {
+            edge.source == query_id
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "app_sql_table_reference")
+        });
+        add_node_metadata(
+            &mut context.graph,
+            query_id,
+            "resolution",
+            if has_resolved_table_ref {
+                "partial"
+            } else {
+                "unresolved"
+            },
+        );
+        add_node_metadata(
+            &mut context.graph,
+            query_id,
+            "unresolved_tables",
+            tables.into_iter().collect::<Vec<_>>().join(","),
+        );
+    }
+}
+
+/// Link joined tables with `sql_join` edges once both sides are indexed.
+pub(crate) fn resolve_pending_sql_joins(context: &mut IndexContext) {
+    let pending = std::mem::take(&mut context.pending_sql_joins);
+    for join in pending {
+        let left_key = sql_identifier_key(&join.left);
+        let right_key = sql_identifier_key(&join.right);
+        let (Some(left_id), Some(right_id)) = (
+            context.sql_tables.get(&left_key).copied(),
+            context.sql_tables.get(&right_key).copied(),
+        ) else {
+            continue;
+        };
+        let mut metadata = BTreeMap::from([
+            ("relation".to_string(), "sql_join".to_string()),
+            ("source".to_string(), "sql".to_string()),
+            ("line".to_string(), join.line.to_string()),
+        ]);
+        if let Some(condition) = join.condition {
+            metadata.insert("condition".to_string(), condition);
+        }
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            left_id,
+            right_id,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            metadata,
+        );
+    }
+}
+
+/// Link ALTER/DROP TABLE statements to their tables; unknown targets are
+/// recorded on the file node for schema-consistency insights.
+pub(crate) fn resolve_pending_sql_alter_refs(context: &mut IndexContext) {
+    let pending = std::mem::take(&mut context.pending_sql_alter_refs);
+    let mut unresolved: BTreeMap<NodeId, BTreeSet<String>> = BTreeMap::new();
+    for reference in pending {
+        let table_key = sql_identifier_key(&reference.table);
+        match context.sql_tables.get(&table_key).copied() {
+            Some(table_id) => {
+                add_edge_once_with_metadata(
+                    &mut context.graph,
+                    reference.file,
+                    table_id,
+                    EdgeKind::References,
+                    Confidence::Syntactic,
+                    BTreeMap::from([
+                        ("relation".to_string(), "sql_schema_change".to_string()),
+                        ("operation".to_string(), reference.operation.to_string()),
+                        ("source".to_string(), "sql".to_string()),
+                        ("line".to_string(), reference.line.to_string()),
+                    ]),
+                );
+            }
+            None => {
+                unresolved
+                    .entry(reference.file)
+                    .or_default()
+                    .insert(format!("{}:{}", reference.operation, reference.table));
+            }
+        }
+    }
+    for (file_id, tables) in unresolved {
+        add_node_metadata(
+            &mut context.graph,
+            file_id,
+            "unresolved_sql_alter_tables",
+            tables.into_iter().collect::<Vec<_>>().join(","),
+        );
+    }
+}
+
+/// Chain migration files in sequence order per directory and flag duplicate
+/// sequence numbers for insight checks.
+pub(crate) fn resolve_sql_migration_order(context: &mut IndexContext) {
+    let mut migrations = std::mem::take(&mut context.sql_migrations);
+    if migrations.is_empty() {
+        return;
+    }
+    migrations.sort_by(|a, b| {
+        a.dir
+            .cmp(&b.dir)
+            .then(a.sequence.cmp(&b.sequence))
+            .then(a.label.cmp(&b.label))
+    });
+    for migration in &migrations {
+        context
+            .sql_migration_dirs
+            .entry(migration.dir.clone())
+            .or_default()
+            .push(migration.file);
+    }
+    for migration in &migrations {
+        add_node_metadata(
+            &mut context.graph,
+            migration.file,
+            "migration_sequence",
+            &migration.sequence_text,
+        );
+    }
+    for pair in migrations.windows(2) {
+        if pair[0].dir != pair[1].dir {
+            continue;
+        }
+        if pair[0].sequence == pair[1].sequence {
+            add_node_metadata(
+                &mut context.graph,
+                pair[0].file,
+                "duplicate_migration_sequence",
+                &pair[1].label,
+            );
+            add_node_metadata(
+                &mut context.graph,
+                pair[1].file,
+                "duplicate_migration_sequence",
+                &pair[0].label,
+            );
+            continue;
+        }
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            pair[0].file,
+            pair[1].file,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("relation".to_string(), "migration_order".to_string()),
+                ("source".to_string(), "sql".to_string()),
+                ("from_sequence".to_string(), pair[0].sequence_text.clone()),
+                ("to_sequence".to_string(), pair[1].sequence_text.clone()),
+            ]),
+        );
+    }
+}
+
+/// Link ORM table mappings to their indexed tables.
+pub(crate) fn resolve_pending_orm_table_refs(context: &mut IndexContext) {
+    let pending = std::mem::take(&mut context.pending_orm_table_refs);
+    for reference in pending {
+        let table_key = sql_identifier_key(&reference.table);
+        let Some(table_id) = context.sql_tables.get(&table_key).copied() else {
+            continue;
+        };
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            reference.file,
+            table_id,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("relation".to_string(), "orm_table_mapping".to_string()),
+                ("source".to_string(), "orm_metadata".to_string()),
+                ("pattern".to_string(), reference.pattern.to_string()),
+                ("table".to_string(), reference.table),
+                ("line".to_string(), reference.line.to_string()),
+            ]),
+        );
+    }
+}
+
+/// Link migration runner/config references to the migration files inside the
+/// referenced directory (matched exactly or as a path suffix), capped per
+/// reference so one runner line does not fan out unboundedly.
+pub(crate) fn resolve_pending_migration_dir_refs(context: &mut IndexContext) {
+    const MIGRATION_LINK_LIMIT: usize = 20;
+    let pending = std::mem::take(&mut context.pending_migration_dir_refs);
+    for reference in pending {
+        let mut targets: Vec<NodeId> = Vec::new();
+        for (dir, files) in &context.sql_migration_dirs {
+            let matches = dir == &reference.dir
+                || dir.ends_with(&format!("/{}", reference.dir))
+                || reference.dir.ends_with(&format!("/{dir}"));
+            if matches {
+                targets.extend(files.iter().copied());
+            }
+        }
+        targets.sort();
+        targets.dedup();
+        for target in targets.into_iter().take(MIGRATION_LINK_LIMIT) {
+            add_edge_once_with_metadata(
+                &mut context.graph,
+                reference.file,
+                target,
+                EdgeKind::References,
+                Confidence::Heuristic,
+                BTreeMap::from([
+                    ("relation".to_string(), "runs_migrations".to_string()),
+                    ("source".to_string(), reference.source_kind.to_string()),
+                    ("directory".to_string(), reference.dir.clone()),
+                    ("line".to_string(), reference.line.to_string()),
+                ]),
+            );
+        }
+    }
+}
+
+/// Link MCP server commands/args to the scanned files they run.
+pub(crate) fn resolve_pending_mcp_local_refs(context: &mut IndexContext) {
+    let pending = std::mem::take(&mut context.pending_mcp_local_refs);
+    for reference in pending {
+        let Some(target) = context.file_nodes.get(&reference.candidate).copied() else {
+            continue;
+        };
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            reference.server,
+            target,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("relation".to_string(), "mcp_server_source".to_string()),
+                ("source".to_string(), "mcp_config".to_string()),
+            ]),
+        );
+    }
+}
+
+pub(crate) fn github_actions_local_action_target(
+    context: &IndexContext,
+    target: &str,
+) -> Option<NodeId> {
+    let candidates = [
+        target.to_string(),
+        format!("{target}/action.yml"),
+        format!("{target}/action.yaml"),
+        format!("{target}/Dockerfile"),
+    ];
+    for candidate in candidates {
+        if let Some(id) = context.directory_nodes.get(&candidate).copied() {
+            return Some(id);
+        }
+        if let Some(id) = context.file_nodes.get(&candidate).copied() {
+            return Some(id);
+        }
+    }
+    None
+}
+
+pub(crate) fn entrypoint_target_candidates(
+    pending: &PendingEntrypointTarget,
+) -> Vec<EntrypointTargetCandidate> {
+    match pending.ecosystem.as_str() {
+        "cargo" => manifest_path_candidate(
+            pending,
+            &pending.target,
+            Some("main".to_string()),
+            Confidence::Exact,
+            Confidence::Syntactic,
+            "manifest_path",
+        )
+        .into_iter()
+        .collect(),
+        "python" => python_entrypoint_candidates(pending),
+        "go" => manifest_path_candidate(
+            pending,
+            &pending.target,
+            Some("main".to_string()),
+            Confidence::Exact,
+            Confidence::Syntactic,
+            "manifest_path",
+        )
+        .into_iter()
+        .collect(),
+        "dart" | "flutter" => manifest_path_candidate(
+            pending,
+            &pending.target,
+            Some("main".to_string()),
+            Confidence::Exact,
+            Confidence::Syntactic,
+            "manifest_path",
+        )
+        .into_iter()
+        .collect(),
+        "cmake" => manifest_path_candidate(
+            pending,
+            &pending.target,
+            Some("main".to_string()),
+            Confidence::Exact,
+            Confidence::Syntactic,
+            "manifest_path",
+        )
+        .into_iter()
+        .collect(),
+        "npm" => command_path_candidate(pending)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "command_path",
+            })
+            .into_iter()
+            .collect(),
+        "composer" if pending.entrypoint_kind == "binary" => manifest_path_candidate(
+            pending,
+            &pending.target,
+            None,
+            Confidence::Exact,
+            Confidence::Exact,
+            "manifest_path",
+        )
+        .into_iter()
+        .collect(),
+        "composer" => command_path_candidate(pending)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "command_path",
+            })
+            .into_iter()
+            .collect(),
+        "make" => command_path_candidate(pending)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "make_command_path",
+            })
+            .into_iter()
+            .collect(),
+        "docker" => command_path_candidate(pending)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "docker_command_path",
+            })
+            .into_iter()
+            .collect(),
+        "compose" => command_path_candidate(pending)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "compose_command_path",
+            })
+            .into_iter()
+            .collect(),
+        "compose-dockerfile" => manifest_path_candidate(
+            pending,
+            &pending.target,
+            None,
+            Confidence::Exact,
+            Confidence::Exact,
+            "compose_dockerfile",
+        )
+        .into_iter()
+        .collect(),
+        "github-actions" => github_actions_run_command_path_candidate(&pending.target)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "github_actions_run_command_path",
+            })
+            .into_iter()
+            .collect(),
+        "gitlab-ci" => root_relative_command_path_candidate(&pending.target)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "gitlab_ci_script_command_path",
+            })
+            .into_iter()
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+pub(crate) fn manifest_path_candidate(
+    pending: &PendingEntrypointTarget,
+    target: &str,
+    symbol: Option<String>,
+    file_confidence: Confidence,
+    function_confidence: Confidence,
+    resolution: &'static str,
+) -> Option<EntrypointTargetCandidate> {
+    normalize_manifest_relative_path(&pending.manifest_label, target).map(|path| {
+        EntrypointTargetCandidate {
+            path,
+            symbol,
+            file_confidence,
+            function_confidence,
+            resolution,
+        }
+    })
+}
+
+pub(crate) fn python_entrypoint_candidates(
+    pending: &PendingEntrypointTarget,
+) -> Vec<EntrypointTargetCandidate> {
+    let Some((module, symbol)) = pending.target.split_once(':') else {
+        return Vec::new();
+    };
+    let module = module.trim();
+    let symbol = simple_symbol_name(symbol.trim());
+    if module.is_empty() || symbol.is_empty() {
+        return Vec::new();
+    }
+
+    let module_path = module.replace('.', "/");
+    [
+        format!("{module_path}.py"),
+        format!("{module_path}/__init__.py"),
+    ]
+    .into_iter()
+    .filter_map(|path| {
+        manifest_path_candidate(
+            pending,
+            &path,
+            Some(symbol.clone()),
+            Confidence::Heuristic,
+            Confidence::Heuristic,
+            "python_module",
+        )
+    })
+    .collect()
+}
+
+pub(crate) fn command_path_candidate(pending: &PendingEntrypointTarget) -> Option<String> {
+    normalized_command_path_candidate(&pending.manifest_label, &pending.target)
+}
+
+pub(crate) fn normalized_command_path_candidate(
+    manifest_label: &str,
+    command: &str,
+) -> Option<String> {
+    split_command_tokens(command)
+        .into_iter()
+        .filter(|token| is_command_path_candidate(token))
+        .find_map(|path| normalize_manifest_relative_path(manifest_label, &path))
+}
+
+pub(crate) fn github_actions_run_command_path_candidate(command: &str) -> Option<String> {
+    root_relative_command_path_candidate(command)
+}
+
+pub(crate) fn root_relative_command_path_candidate(command: &str) -> Option<String> {
+    split_command_tokens(command)
+        .into_iter()
+        .filter(|token| is_command_path_candidate(token))
+        .find_map(|path| normalize_relative_path(Path::new(&path)))
+}
+
+pub(crate) fn cmake_command_bodies(source: &str, command_name: &str) -> Vec<String> {
+    let source = strip_cmake_comments(source);
+    let lowered = source.to_ascii_lowercase();
+    let needle = command_name.to_ascii_lowercase();
+    let mut bodies = Vec::new();
+    let mut search_from = 0;
+
+    while let Some(offset) = lowered[search_from..].find(&needle) {
+        let start = search_from + offset;
+        let before = source[..start].chars().next_back();
+        let after_name = start + needle.len();
+        let after = source[after_name..].chars().next();
+        if before.is_some_and(is_cmake_ident_char) || after.is_some_and(is_cmake_ident_char) {
+            search_from = after_name;
+            continue;
+        }
+
+        let Some(open_offset) = source[after_name..].find('(') else {
+            break;
+        };
+        let open = after_name + open_offset;
+        if !source[after_name..open]
+            .chars()
+            .all(|character| character.is_whitespace())
+        {
+            search_from = after_name;
+            continue;
+        }
+
+        let Some((body, close)) = cmake_parenthesized_body(&source, open) else {
+            break;
+        };
+        bodies.push(body);
+        search_from = close + 1;
+    }
+
+    bodies
+}
+
+pub(crate) fn strip_cmake_comments(source: &str) -> String {
+    let mut stripped = String::with_capacity(source.len());
+    let mut quote = None;
+    let mut chars = source.chars().peekable();
+    while let Some(character) = chars.next() {
+        match quote {
+            Some(current_quote) if character == current_quote => {
+                quote = None;
+                stripped.push(character);
+            }
+            Some(_) => stripped.push(character),
+            None if character == '"' || character == '\'' => {
+                quote = Some(character);
+                stripped.push(character);
+            }
+            None if character == '#' => {
+                for next in chars.by_ref() {
+                    if next == '\n' {
+                        stripped.push('\n');
+                        break;
+                    }
+                }
+            }
+            None => stripped.push(character),
+        }
+    }
+    stripped
+}
+
+pub(crate) fn cmake_parenthesized_body(source: &str, open: usize) -> Option<(String, usize)> {
+    let mut depth = 0usize;
+    let mut quote = None;
+    let body_start = open + '('.len_utf8();
+
+    for (index, character) in source[open..].char_indices() {
+        let absolute = open + index;
+        match quote {
+            Some(current_quote) if character == current_quote => quote = None,
+            Some(_) => {}
+            None if character == '"' || character == '\'' => quote = Some(character),
+            None if character == '(' => depth += 1,
+            None if character == ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some((source[body_start..absolute].to_string(), absolute));
+                }
+            }
+            None => {}
+        }
+    }
+
+    None
+}
+
+pub(crate) fn cmake_command_args(body: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+
+    for character in body.chars() {
+        match quote {
+            Some(current_quote) if character == current_quote => quote = None,
+            Some(_) => current.push(character),
+            None if character == '"' || character == '\'' => quote = Some(character),
+            None if character.is_whitespace() || character == ';' => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            None => current.push(character),
+        }
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+
+    args
+}
+
+pub(crate) fn is_cmake_source_argument(value: &str) -> bool {
+    let value = value.trim();
+    !value.starts_with('$') && !value.starts_with('<') && has_known_source_extension(value)
+}
+
+pub(crate) fn is_cmake_ident_char(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '_'
+}
+
+pub(crate) fn split_command_tokens(command: &str) -> Vec<String> {
+    command
+        .split(|character: char| {
+            character.is_whitespace() || matches!(character, '"' | '\'' | '`' | ';' | '&' | '|')
+        })
+        .filter_map(clean_command_token)
+        .collect()
+}
+
+pub(crate) fn clean_command_token(token: &str) -> Option<String> {
+    let token = token
+        .trim()
+        .trim_matches(|character: char| matches!(character, '(' | ')' | '[' | ']' | '{' | '}'))
+        .trim_matches(|character: char| matches!(character, ',' | ':'));
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
+}
+
+pub(crate) fn is_command_path_candidate(token: &str) -> bool {
+    if token.starts_with('-')
+        || token.starts_with('$')
+        || token.contains("://")
+        || token.contains('=')
+        || token.contains('*')
+    {
+        return false;
+    }
+    token.contains('/') || has_known_source_extension(token)
+}
+
+pub(crate) fn has_known_source_extension(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension,
+                "rs" | "py"
+                    | "pyw"
+                    | "js"
+                    | "mjs"
+                    | "cjs"
+                    | "ts"
+                    | "mts"
+                    | "cts"
+                    | "tsx"
+                    | "go"
+                    | "c"
+                    | "h"
+                    | "cc"
+                    | "cpp"
+                    | "cxx"
+                    | "hpp"
+                    | "hh"
+                    | "hxx"
+                    | "php"
+                    | "phtml"
+                    | "sh"
+                    | "bash"
+                    | "zsh"
+                    | "ksh"
+            )
+        })
+}
+
+pub(crate) fn normalize_manifest_relative_path(
+    manifest_label: &str,
+    target: &str,
+) -> Option<String> {
+    let target = target.trim().trim_matches('"').trim_matches('\'');
+    if target.is_empty()
+        || target.starts_with('-')
+        || target.starts_with('$')
+        || target.contains("://")
+    {
+        return None;
+    }
+    let target_path = Path::new(target);
+    if target_path.is_absolute() {
+        return None;
+    }
+
+    let base = Path::new(manifest_label)
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    let joined = base.map_or_else(|| PathBuf::from(target), |base| base.join(target));
+    normalize_relative_path(&joined)
+}
+
+pub(crate) fn normalize_relative_path(path: &Path) -> Option<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => parts.push(part.to_string_lossy().to_string()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                parts.pop()?;
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => return None,
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
+}
+
+pub(crate) fn function_targets_in_file(graph: &CodeGraph, path: &str, symbol: &str) -> Vec<NodeId> {
+    graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == NodeKind::Function
+                && node.span.as_ref().is_some_and(|span| span.path == path)
+                && function_symbol_matches(&node.label, symbol)
+        })
+        .map(|node| node.id)
+        .collect()
+}
+
+pub(crate) fn function_symbol_matches(label: &str, symbol: &str) -> bool {
+    symbol_keys(label)
+        .into_iter()
+        .any(|key| key == symbol || simple_symbol_name(&key) == symbol)
+}
+
+pub(crate) fn add_entrypoint_reference(
+    graph: &mut CodeGraph,
+    source: NodeId,
+    target: NodeId,
+    relation: &str,
+    resolution: &str,
+    confidence: Confidence,
+    target_symbol: Option<&str>,
+) {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("relation".to_string(), relation.to_string());
+    let fact_source = if resolution.starts_with("shebang") {
+        "shebang"
+    } else if resolution.starts_with("framework") {
+        "framework"
+    } else if resolution.starts_with("make") {
+        "makefile"
+    } else if resolution.starts_with("docker") {
+        "dockerfile"
+    } else if resolution.starts_with("compose") {
+        "compose"
+    } else if resolution.starts_with("github_actions") {
+        "github-actions"
+    } else if resolution.starts_with("gitlab_ci") {
+        "gitlab-ci"
+    } else {
+        "manifest"
+    };
+    metadata.insert("source".to_string(), fact_source.to_string());
+    metadata.insert("resolution".to_string(), resolution.to_string());
+    if let Some(target_symbol) = target_symbol {
+        metadata.insert("target_symbol".to_string(), target_symbol.to_string());
+    }
+    add_edge_once_with_metadata(
+        graph,
+        source,
+        target,
+        EdgeKind::References,
+        confidence,
+        metadata,
+    );
+}
+
+pub(crate) fn register_function_symbol(
+    symbols: &mut BTreeMap<String, Vec<NodeId>>,
+    label: &str,
+    id: NodeId,
+) {
+    for key in symbol_keys(label) {
+        let values = symbols.entry(key).or_default();
+        if !values.contains(&id) {
+            values.push(id);
+        }
+    }
+}
+
+pub(crate) fn register_local_function(
+    symbols: &mut BTreeMap<String, NodeId>,
+    label: &str,
+    id: NodeId,
+) {
+    for key in symbol_keys(label) {
+        symbols.entry(key).or_insert(id);
+    }
+}
+
+pub(crate) fn resolve_local_function(
+    symbols: &BTreeMap<String, NodeId>,
+    label: &str,
+) -> Option<NodeId> {
+    symbol_keys(label)
+        .into_iter()
+        .find_map(|key| symbols.get(&key).copied())
+}
+
+pub(crate) fn resolve_function_targets(
+    symbols: &BTreeMap<String, Vec<NodeId>>,
+    label: &str,
+) -> Vec<NodeId> {
+    let mut targets = Vec::new();
+    for key in symbol_keys(label) {
+        if let Some(ids) = symbols.get(&key) {
+            for id in ids {
+                if !targets.contains(id) {
+                    targets.push(*id);
+                }
+            }
+        }
+    }
+    targets
+}
+
+pub(crate) fn symbol_keys(label: &str) -> Vec<String> {
+    let compact = label.trim().trim_end_matches('!').to_string();
+    let simple = simple_symbol_name(&compact);
+    if compact == simple {
+        vec![compact]
+    } else {
+        vec![compact, simple]
+    }
+}
+
+pub(crate) fn simple_symbol_name(label: &str) -> String {
+    label
+        .rsplit([':', '.', '\\', '>'])
+        .find(|part| !part.is_empty() && *part != "-")
+        .unwrap_or(label)
+        .trim()
+        .to_string()
+}
+
+pub(crate) fn add_edge_once(
+    graph: &mut CodeGraph,
+    source: NodeId,
+    target: NodeId,
+    kind: EdgeKind,
+    confidence: Confidence,
+) {
+    add_edge_once_with_metadata(graph, source, target, kind, confidence, BTreeMap::new());
+}
+
+pub(crate) fn add_edge_once_with_metadata(
+    graph: &mut CodeGraph,
+    source: NodeId,
+    target: NodeId,
+    kind: EdgeKind,
+    confidence: Confidence,
+    metadata: BTreeMap<String, String>,
+) {
+    if graph
+        .edges
+        .iter()
+        .any(|edge| edge.source == source && edge.target == target && edge.kind == kind)
+    {
+        return;
+    }
+    graph.add_edge_with_metadata(source, target, kind, confidence, metadata);
+}
+
+pub(crate) fn add_file_metadata(
+    graph: &mut CodeGraph,
+    file_id: codegraph_core::NodeId,
+    key: &str,
+    value: impl Into<String>,
+) {
+    add_node_metadata(graph, file_id, key, value);
+}
+
+pub(crate) fn add_node_metadata(
+    graph: &mut CodeGraph,
+    node_id: codegraph_core::NodeId,
+    key: &str,
+    value: impl Into<String>,
+) {
+    if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == node_id) {
+        node.metadata.insert(key.to_string(), value.into());
+    }
+}

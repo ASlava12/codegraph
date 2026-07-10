@@ -1,0 +1,2641 @@
+//! Package manifest extraction across ecosystems: dependencies,
+//! entrypoints, lockfiles, package identity, and manifest text parsing
+//! helpers.
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::Path;
+
+use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind};
+use codegraph_parser::Language;
+use globset::GlobSet;
+use walkdir::WalkDir;
+
+#[allow(unused_imports)]
+use crate::*;
+
+pub(crate) fn index_manifest_dependencies(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    source: &str,
+) {
+    let dependencies = manifest_dependencies(path, source, &context.cargo_workspace_dependencies);
+    for dependency in dependencies {
+        let package_name = canonical_package_name(&dependency.ecosystem, &dependency.name);
+        let package_id = package_id(&dependency.ecosystem, &package_name);
+        let dependency_id = if let Some(id) = context.external_dependencies.get(&package_id) {
+            *id
+        } else {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("item_kind".to_string(), "dependency".to_string());
+            metadata.insert("ecosystem".to_string(), dependency.ecosystem.clone());
+            metadata.insert("package_id".to_string(), package_id.clone());
+            metadata.insert("source".to_string(), "manifest".to_string());
+            if package_name != dependency.name {
+                metadata.insert("declared_name".to_string(), dependency.name.clone());
+            }
+            let id = context.graph.add_node_with_metadata(
+                NodeKind::ExternalDependency,
+                package_name,
+                None,
+                metadata,
+            );
+            context.external_dependencies.insert(package_id, id);
+            id
+        };
+
+        let mut edge_metadata = BTreeMap::new();
+        edge_metadata.insert("dependency_kind".to_string(), dependency.kind);
+        edge_metadata.insert("source".to_string(), "manifest".to_string());
+        if let Some(version) = dependency.version {
+            edge_metadata.insert("dependency_version".to_string(), version);
+            if let Some(version_kind) = dependency.version_kind {
+                edge_metadata.insert("dependency_version_kind".to_string(), version_kind);
+            }
+        }
+        add_manifest_dependency_edge_once(
+            &mut context.graph,
+            file_id,
+            dependency_id,
+            edge_metadata,
+        );
+    }
+}
+
+pub(crate) fn add_manifest_dependency_edge_once(
+    graph: &mut CodeGraph,
+    file_id: NodeId,
+    dependency_id: NodeId,
+    metadata: BTreeMap<String, String>,
+) {
+    if graph.edges.iter().any(|edge| {
+        edge.source == file_id
+            && edge.target == dependency_id
+            && edge.kind == EdgeKind::DependsOn
+            && edge.metadata.get("dependency_kind") == metadata.get("dependency_kind")
+            && edge.metadata.get("dependency_version") == metadata.get("dependency_version")
+    }) {
+        return;
+    }
+    graph.add_edge_with_metadata(
+        file_id,
+        dependency_id,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        metadata,
+    );
+}
+
+pub(crate) fn index_manifest_entrypoints(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    for entrypoint in manifest_entrypoints(path, source) {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "manifest_entrypoint".to_string());
+        metadata.insert("entrypoint_kind".to_string(), entrypoint.kind.clone());
+        metadata.insert("ecosystem".to_string(), entrypoint.ecosystem.clone());
+        metadata.insert("source".to_string(), "manifest".to_string());
+        if let Some(target) = entrypoint.target.as_deref() {
+            metadata.insert("target".to_string(), target.to_string());
+        }
+
+        let entrypoint_id = context.graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            entrypoint.label,
+            None,
+            metadata,
+        );
+        add_edge_once(
+            &mut context.graph,
+            file_id,
+            entrypoint_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+        );
+        let root_id = context.graph.root;
+        add_edge_once(
+            &mut context.graph,
+            root_id,
+            entrypoint_id,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        if let Some(target) = entrypoint.target {
+            context
+                .pending_entrypoint_targets
+                .push(PendingEntrypointTarget {
+                    entrypoint: entrypoint_id,
+                    manifest_label: label.to_string(),
+                    target,
+                    ecosystem: entrypoint.ecosystem,
+                    entrypoint_kind: entrypoint.kind,
+                });
+        }
+    }
+}
+
+pub(crate) fn index_pubspec_assets(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if path.file_name().and_then(|name| name.to_str()) != Some("pubspec.yaml") {
+        return;
+    }
+
+    for asset in pubspec_flutter_assets(source) {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "flutter_asset".to_string());
+        metadata.insert("source".to_string(), "pubspec".to_string());
+        metadata.insert("framework".to_string(), "flutter".to_string());
+        metadata.insert("config_kind".to_string(), "flutter_asset".to_string());
+        metadata.insert("asset_path".to_string(), asset.path.clone());
+        metadata.insert("target".to_string(), label.to_string());
+        metadata.insert("line".to_string(), asset.line.to_string());
+        let asset_id = context.graph.add_node_with_metadata(
+            NodeKind::Config,
+            format!("flutter asset:{}", asset.path),
+            Some(line_span(label, source, asset.line)),
+            metadata,
+        );
+        let mut edge_metadata = BTreeMap::new();
+        edge_metadata.insert("source".to_string(), "pubspec".to_string());
+        edge_metadata.insert("framework".to_string(), "flutter".to_string());
+        edge_metadata.insert("config_kind".to_string(), "flutter_asset".to_string());
+        add_edge_once_with_metadata(
+            &mut context.graph,
+            file_id,
+            asset_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+            edge_metadata,
+        );
+    }
+}
+
+pub(crate) fn cargo_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
+    let Ok(value) = toml::from_str::<toml::Value>(source) else {
+        return Vec::new();
+    };
+    let mut entrypoints = Vec::new();
+
+    if let Some(package_name) = value
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(|name| name.as_str())
+        && path
+            .parent()
+            .map(|parent| parent.join("src").join("main.rs").is_file())
+            .unwrap_or(false)
+    {
+        entrypoints.push(manifest_entrypoint(
+            format!("cargo bin:{package_name}"),
+            "binary",
+            "cargo",
+            Some("src/main.rs".to_string()),
+        ));
+    }
+
+    collect_cargo_target_entrypoints(&value, "bin", "binary", &mut entrypoints);
+    collect_cargo_target_entrypoints(&value, "example", "example", &mut entrypoints);
+    entrypoints
+}
+
+pub(crate) fn collect_cargo_target_entrypoints(
+    value: &toml::Value,
+    table_name: &str,
+    entrypoint_kind: &str,
+    entrypoints: &mut Vec<ManifestEntrypoint>,
+) {
+    let Some(targets) = value.get(table_name).and_then(|value| value.as_array()) else {
+        return;
+    };
+
+    for target in targets {
+        let Some(name) = target
+            .get("name")
+            .and_then(|name| name.as_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let target_path = target
+            .get("path")
+            .and_then(|path| path.as_str())
+            .map(str::to_string);
+        entrypoints.push(manifest_entrypoint(
+            format!("cargo {entrypoint_kind}:{name}"),
+            entrypoint_kind,
+            "cargo",
+            target_path,
+        ));
+    }
+}
+
+pub(crate) fn package_json_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let mut entrypoints = Vec::new();
+    let Some(scripts) = value.get("scripts").and_then(|value| value.as_object()) else {
+        return entrypoints;
+    };
+
+    for (name, command) in scripts {
+        entrypoints.push(manifest_entrypoint(
+            format!("npm script:{name}"),
+            "script",
+            "npm",
+            command.as_str().map(str::to_string),
+        ));
+    }
+    entrypoints
+}
+
+pub(crate) fn go_mod_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
+    let Some(module) = go_module_name(source) else {
+        return Vec::new();
+    };
+    let Some(root) = path.parent() else {
+        return Vec::new();
+    };
+
+    let mut entrypoints = Vec::new();
+    if root.join("main.go").is_file() {
+        entrypoints.push(manifest_entrypoint(
+            format!("go module:{module}"),
+            "module",
+            "go",
+            Some("main.go".to_string()),
+        ));
+    }
+
+    let cmd_dir = root.join("cmd");
+    if let Ok(commands) = fs::read_dir(&cmd_dir) {
+        for command in commands.flatten() {
+            let command_path = command.path();
+            if !command_path.join("main.go").is_file() {
+                continue;
+            }
+            let Some(name) = command_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            entrypoints.push(manifest_entrypoint(
+                format!("go command:{name}"),
+                "command",
+                "go",
+                Some(format!("cmd/{name}/main.go")),
+            ));
+        }
+    }
+
+    entrypoints
+}
+
+pub(crate) fn pubspec_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
+    let Some(package_name) = pubspec_package_name(source) else {
+        return Vec::new();
+    };
+    let Some(root) = path.parent() else {
+        return Vec::new();
+    };
+
+    let mut entrypoints = Vec::new();
+    if root.join("lib").join("main.dart").is_file() {
+        let ecosystem = if pubspec_uses_flutter(source) {
+            "flutter"
+        } else {
+            "dart"
+        };
+        let prefix = if ecosystem == "flutter" {
+            "flutter app"
+        } else {
+            "dart package"
+        };
+        entrypoints.push(manifest_entrypoint(
+            format!("{prefix}:{package_name}"),
+            "app",
+            ecosystem,
+            Some("lib/main.dart".to_string()),
+        ));
+    }
+
+    let bin_dir = root.join("bin");
+    if let Ok(commands) = fs::read_dir(&bin_dir) {
+        for command in commands.flatten() {
+            let command_path = command.path();
+            if command_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                != Some("dart")
+            {
+                continue;
+            }
+            let Some(name) = command_path.file_stem().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            entrypoints.push(manifest_entrypoint(
+                format!("dart bin:{name}"),
+                "binary",
+                "dart",
+                Some(format!("bin/{name}.dart")),
+            ));
+        }
+    }
+
+    let test_dir = root.join("test");
+    if let Ok(tests) = fs::read_dir(&test_dir) {
+        for test in tests.flatten() {
+            let test_path = test.path();
+            let Some(name) = test_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !name.ends_with("_test.dart") {
+                continue;
+            }
+            entrypoints.push(manifest_entrypoint(
+                format!("dart test:{name}"),
+                "test",
+                "dart",
+                Some(format!("test/{name}")),
+            ));
+        }
+    }
+
+    entrypoints
+}
+
+pub(crate) fn pyproject_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    let Ok(value) = toml::from_str::<toml::Value>(source) else {
+        return Vec::new();
+    };
+    let mut entrypoints = Vec::new();
+
+    if let Some(project) = value.get("project") {
+        collect_toml_entrypoint_keys(
+            project,
+            "scripts",
+            "console_script",
+            "python",
+            &mut entrypoints,
+        );
+        collect_toml_entrypoint_keys(
+            project,
+            "gui-scripts",
+            "gui_script",
+            "python",
+            &mut entrypoints,
+        );
+    }
+
+    if let Some(poetry) = value.get("tool").and_then(|value| value.get("poetry")) {
+        collect_toml_entrypoint_keys(
+            poetry,
+            "scripts",
+            "poetry_script",
+            "python",
+            &mut entrypoints,
+        );
+    }
+
+    entrypoints
+}
+
+pub(crate) fn setup_py_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    setup_py_console_scripts(source)
+        .into_iter()
+        .filter_map(|entrypoint| {
+            let (name, target) = python_console_script_name_and_target(&entrypoint)?;
+            Some(manifest_entrypoint(
+                format!("python console_script:{name}"),
+                "console_script",
+                "python",
+                Some(target),
+            ))
+        })
+        .collect()
+}
+
+pub(crate) fn setup_cfg_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    let sections = setup_cfg_sections(source);
+    setup_cfg_values(&sections, "options.entry_points", "console_scripts")
+        .into_iter()
+        .filter_map(|entrypoint| {
+            let (name, target) = python_console_script_name_and_target(&entrypoint)?;
+            Some(manifest_entrypoint(
+                format!("python console_script:{name}"),
+                "console_script",
+                "python",
+                Some(target),
+            ))
+        })
+        .collect()
+}
+
+pub(crate) fn composer_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let mut entrypoints = Vec::new();
+
+    if let Some(scripts) = value.get("scripts").and_then(|value| value.as_object()) {
+        for (name, command) in scripts {
+            let target = command.as_str().map(str::to_string).or_else(|| {
+                command.as_array().map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" && ")
+                })
+            });
+            entrypoints.push(manifest_entrypoint(
+                format!("composer script:{name}"),
+                "script",
+                "composer",
+                target,
+            ));
+        }
+    }
+
+    if let Some(bins) = value.get("bin").and_then(|value| value.as_array()) {
+        for bin in bins {
+            if let Some(path) = bin.as_str() {
+                entrypoints.push(manifest_entrypoint(
+                    format!("composer bin:{path}"),
+                    "binary",
+                    "composer",
+                    Some(path.to_string()),
+                ));
+            }
+        }
+    }
+
+    entrypoints
+}
+
+pub(crate) fn cmake_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    cmake_command_bodies(source, "add_executable")
+        .into_iter()
+        .filter_map(|body| {
+            let args = cmake_command_args(&body);
+            let name = args.first()?.trim();
+            if name.is_empty()
+                || args.iter().any(|arg| arg.eq_ignore_ascii_case("IMPORTED"))
+                || args
+                    .get(1)
+                    .is_some_and(|arg| arg.eq_ignore_ascii_case("ALIAS"))
+            {
+                return None;
+            }
+
+            let target = args
+                .iter()
+                .skip(1)
+                .find(|arg| is_cmake_source_argument(arg))
+                .cloned();
+            Some(manifest_entrypoint(
+                format!("cmake executable:{name}"),
+                "executable",
+                "cmake",
+                target,
+            ))
+        })
+        .collect()
+}
+
+pub(crate) fn cargo_dependencies(
+    source: &str,
+    cargo_workspace_dependencies: &BTreeMap<String, Option<String>>,
+) -> Vec<ManifestDependency> {
+    let Ok(value) = toml::from_str::<toml::Value>(source) else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+    collect_toml_table_keys(
+        &value,
+        "dependencies",
+        "runtime",
+        "cargo",
+        &mut dependencies,
+        Some(cargo_workspace_dependencies),
+    );
+    collect_toml_table_keys(
+        &value,
+        "dev-dependencies",
+        "dev",
+        "cargo",
+        &mut dependencies,
+        Some(cargo_workspace_dependencies),
+    );
+    collect_toml_table_keys(
+        &value,
+        "build-dependencies",
+        "build",
+        "cargo",
+        &mut dependencies,
+        Some(cargo_workspace_dependencies),
+    );
+
+    if let Some(targets) = value.get("target").and_then(|value| value.as_table()) {
+        for target in targets.values() {
+            collect_toml_table_keys(
+                target,
+                "dependencies",
+                "runtime",
+                "cargo",
+                &mut dependencies,
+                Some(cargo_workspace_dependencies),
+            );
+            collect_toml_table_keys(
+                target,
+                "dev-dependencies",
+                "dev",
+                "cargo",
+                &mut dependencies,
+                Some(cargo_workspace_dependencies),
+            );
+            collect_toml_table_keys(
+                target,
+                "build-dependencies",
+                "build",
+                "cargo",
+                &mut dependencies,
+                Some(cargo_workspace_dependencies),
+            );
+        }
+    }
+
+    dependencies
+}
+
+pub(crate) fn pyproject_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = toml::from_str::<toml::Value>(source) else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+
+    if let Some(project) = value.get("project") {
+        if let Some(values) = project
+            .get("dependencies")
+            .and_then(|value| value.as_array())
+        {
+            for value in values {
+                if let Some((name, version)) = value
+                    .as_str()
+                    .and_then(package_name_and_version_from_requirement)
+                {
+                    dependencies.push(manifest_dependency(name, "runtime", "python", version));
+                }
+            }
+        }
+        if let Some(optional) = project
+            .get("optional-dependencies")
+            .and_then(|value| value.as_table())
+        {
+            for values in optional.values() {
+                if let Some(values) = values.as_array() {
+                    for value in values {
+                        if let Some((name, version)) = value
+                            .as_str()
+                            .and_then(package_name_and_version_from_requirement)
+                        {
+                            dependencies
+                                .push(manifest_dependency(name, "optional", "python", version));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(poetry) = value.get("tool").and_then(|value| value.get("poetry")) {
+        collect_toml_table_keys(
+            poetry,
+            "dependencies",
+            "runtime",
+            "python",
+            &mut dependencies,
+            None,
+        );
+        collect_toml_table_keys(
+            poetry,
+            "dev-dependencies",
+            "dev",
+            "python",
+            &mut dependencies,
+            None,
+        );
+        collect_poetry_group_dependencies(poetry, &mut dependencies);
+    }
+
+    dependencies
+}
+
+pub(crate) fn collect_poetry_group_dependencies(
+    poetry: &toml::Value,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(groups) = poetry.get("group").and_then(|value| value.as_table()) else {
+        return;
+    };
+    for (group_name, group) in groups {
+        let dependency_kind = poetry_group_dependency_kind(group_name);
+        collect_toml_table_keys(
+            group,
+            "dependencies",
+            dependency_kind,
+            "python",
+            dependencies,
+            None,
+        );
+    }
+}
+
+pub(crate) fn poetry_group_dependency_kind(group_name: &str) -> &'static str {
+    match group_name.to_ascii_lowercase().as_str() {
+        "dev" | "develop" | "development" => "dev",
+        "test" | "tests" | "testing" => "test",
+        _ => "optional",
+    }
+}
+
+pub(crate) fn setup_py_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    collect_setup_py_requirement_key(source, "install_requires", "runtime", &mut dependencies);
+    collect_setup_py_requirement_key(source, "setup_requires", "build", &mut dependencies);
+    collect_setup_py_requirement_key(source, "tests_require", "test", &mut dependencies);
+
+    for requirement in setup_py_dict_list_string_values(source, "extras_require") {
+        if let Some((name, version)) = package_name_and_version_from_requirement(&requirement) {
+            dependencies.push(manifest_dependency(name, "optional", "python", version));
+        }
+    }
+
+    dependencies
+}
+
+pub(crate) fn collect_setup_py_requirement_key(
+    source: &str,
+    key: &str,
+    dependency_kind: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    for requirement in setup_py_sequence_string_values(source, key) {
+        if let Some((name, version)) = package_name_and_version_from_requirement(&requirement) {
+            dependencies.push(manifest_dependency(
+                name,
+                dependency_kind,
+                "python",
+                version,
+            ));
+        }
+    }
+}
+
+pub(crate) fn setup_cfg_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let sections = setup_cfg_sections(source);
+    let mut dependencies = Vec::new();
+    collect_setup_cfg_requirement_key(
+        &sections,
+        "options",
+        "install_requires",
+        "runtime",
+        &mut dependencies,
+    );
+    collect_setup_cfg_requirement_key(
+        &sections,
+        "options",
+        "setup_requires",
+        "build",
+        &mut dependencies,
+    );
+    collect_setup_cfg_requirement_key(
+        &sections,
+        "options",
+        "tests_require",
+        "test",
+        &mut dependencies,
+    );
+
+    if let Some(extras) = sections.get("options.extras_require") {
+        for requirements in extras.values() {
+            for requirement in requirements {
+                if let Some((name, version)) =
+                    package_name_and_version_from_requirement(requirement)
+                {
+                    dependencies.push(manifest_dependency(name, "optional", "python", version));
+                }
+            }
+        }
+    }
+
+    dependencies
+}
+
+pub(crate) fn pipfile_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = toml::from_str::<toml::Value>(source) else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+    collect_pipfile_table(&value, "packages", "runtime", &mut dependencies);
+    collect_pipfile_table(&value, "dev-packages", "dev", &mut dependencies);
+    dependencies
+}
+
+pub(crate) fn collect_pipfile_table(
+    value: &toml::Value,
+    table_name: &str,
+    dependency_kind: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(table) = value.get(table_name).and_then(|value| value.as_table()) else {
+        return;
+    };
+    for (name, value) in table {
+        dependencies.push(manifest_dependency(
+            name.clone(),
+            dependency_kind,
+            "python",
+            pipfile_dependency_version(value),
+        ));
+    }
+}
+
+pub(crate) fn collect_setup_cfg_requirement_key(
+    sections: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    section: &str,
+    key: &str,
+    dependency_kind: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    for requirement in setup_cfg_values(sections, section, key) {
+        if let Some((name, version)) = package_name_and_version_from_requirement(&requirement) {
+            dependencies.push(manifest_dependency(
+                name,
+                dependency_kind,
+                "python",
+                version,
+            ));
+        }
+    }
+}
+
+pub(crate) fn package_json_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+    collect_json_object_keys(&value, "dependencies", "runtime", "npm", &mut dependencies);
+    collect_json_object_keys(&value, "devDependencies", "dev", "npm", &mut dependencies);
+    collect_json_object_keys(&value, "peerDependencies", "peer", "npm", &mut dependencies);
+    collect_json_object_keys(
+        &value,
+        "optionalDependencies",
+        "optional",
+        "npm",
+        &mut dependencies,
+    );
+    dependencies
+}
+
+pub(crate) fn package_lock_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let Some(root_package) = value
+        .get("packages")
+        .and_then(|packages| packages.get(""))
+        .and_then(|package| package.as_object())
+    else {
+        return Vec::new();
+    };
+
+    let mut dependencies = Vec::new();
+    collect_package_lock_root_dependencies(
+        &value,
+        root_package,
+        "dependencies",
+        "runtime",
+        &mut dependencies,
+    );
+    collect_package_lock_root_dependencies(
+        &value,
+        root_package,
+        "devDependencies",
+        "dev",
+        &mut dependencies,
+    );
+    collect_package_lock_root_dependencies(
+        &value,
+        root_package,
+        "peerDependencies",
+        "peer",
+        &mut dependencies,
+    );
+    collect_package_lock_root_dependencies(
+        &value,
+        root_package,
+        "optionalDependencies",
+        "optional",
+        &mut dependencies,
+    );
+    dependencies
+}
+
+pub(crate) fn collect_package_lock_root_dependencies(
+    value: &serde_json::Value,
+    root_package: &serde_json::Map<String, serde_json::Value>,
+    object_name: &str,
+    dependency_kind: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(object) = root_package
+        .get(object_name)
+        .and_then(|value| value.as_object())
+    else {
+        return;
+    };
+    for (name, declared) in object {
+        let locked_version = package_lock_package_version(value, name);
+        let declared_version = declared
+            .as_str()
+            .map(str::trim)
+            .filter(|version| !version.is_empty())
+            .map(str::to_string);
+        let (version, version_kind) = if let Some(version) = locked_version {
+            (Some(version), Some("locked"))
+        } else {
+            (declared_version, Some("constraint"))
+        };
+        dependencies.push(manifest_dependency_with_version_kind(
+            name.clone(),
+            dependency_kind,
+            "npm",
+            version,
+            version_kind,
+        ));
+    }
+}
+
+pub(crate) fn package_lock_package_version(
+    value: &serde_json::Value,
+    name: &str,
+) -> Option<String> {
+    value
+        .get("packages")
+        .and_then(|packages| packages.get(format!("node_modules/{name}")))
+        .and_then(|package| package.get("version"))
+        .and_then(|version| version.as_str())
+        .map(str::trim)
+        .filter(|version| !version.is_empty())
+        .map(str::to_string)
+}
+
+#[derive(Debug)]
+pub(crate) struct PendingPnpmDependency {
+    name: String,
+    kind: String,
+    indent: usize,
+    specifier: Option<String>,
+    version: Option<String>,
+}
+
+pub(crate) fn pnpm_lock_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut in_importers = false;
+    let mut in_importer = false;
+    let mut active_section: Option<(&str, usize)> = None;
+    let mut pending: Option<PendingPnpmDependency> = None;
+
+    for raw_line in source.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = yaml_indent(raw_line);
+
+        if indent == 0 {
+            flush_pnpm_dependency(&mut pending, &mut dependencies);
+            in_importers = trimmed == "importers:";
+            in_importer = false;
+            active_section = None;
+            continue;
+        }
+
+        if !in_importers {
+            continue;
+        }
+
+        if indent == 2 {
+            flush_pnpm_dependency(&mut pending, &mut dependencies);
+            in_importer = yaml_key(trimmed).is_some();
+            active_section = None;
+            continue;
+        }
+
+        if !in_importer {
+            continue;
+        }
+
+        if indent == 4 {
+            flush_pnpm_dependency(&mut pending, &mut dependencies);
+            active_section = pnpm_dependency_section(trimmed).map(|kind| (kind, indent));
+            continue;
+        }
+
+        let Some((dependency_kind, section_indent)) = active_section else {
+            continue;
+        };
+        if indent <= section_indent {
+            flush_pnpm_dependency(&mut pending, &mut dependencies);
+            active_section = None;
+            continue;
+        }
+
+        if indent == section_indent + 2 {
+            flush_pnpm_dependency(&mut pending, &mut dependencies);
+            if let Some(name) = yaml_key(trimmed) {
+                pending = Some(PendingPnpmDependency {
+                    name,
+                    kind: dependency_kind.to_string(),
+                    indent,
+                    specifier: None,
+                    version: None,
+                });
+            }
+            continue;
+        }
+
+        let Some(dependency) = pending.as_mut() else {
+            continue;
+        };
+        if indent <= dependency.indent {
+            flush_pnpm_dependency(&mut pending, &mut dependencies);
+            continue;
+        }
+        if let Some(value) = yaml_key_value(trimmed, "specifier") {
+            dependency.specifier = Some(value);
+        } else if let Some(value) = yaml_key_value(trimmed, "version") {
+            dependency.version = Some(pnpm_clean_version(&value));
+        }
+    }
+
+    flush_pnpm_dependency(&mut pending, &mut dependencies);
+    dependencies
+}
+
+pub(crate) fn flush_pnpm_dependency(
+    pending: &mut Option<PendingPnpmDependency>,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(dependency) = pending.take() else {
+        return;
+    };
+    let (version, version_kind) = if let Some(version) = dependency.version {
+        (Some(version), Some("locked"))
+    } else {
+        (
+            dependency.specifier.filter(|value| !value.is_empty()),
+            Some("constraint"),
+        )
+    };
+    dependencies.push(manifest_dependency_with_version_kind(
+        dependency.name,
+        dependency.kind,
+        "npm",
+        version,
+        version_kind,
+    ));
+}
+
+pub(crate) fn pnpm_dependency_section(trimmed: &str) -> Option<&'static str> {
+    match yaml_key(trimmed)?.as_str() {
+        "dependencies" => Some("runtime"),
+        "devDependencies" => Some("dev"),
+        "peerDependencies" => Some("peer"),
+        "optionalDependencies" => Some("optional"),
+        _ => None,
+    }
+}
+
+pub(crate) fn yaml_indent(raw_line: &str) -> usize {
+    raw_line
+        .chars()
+        .take_while(|character| *character == ' ')
+        .count()
+}
+
+pub(crate) fn yaml_key(trimmed: &str) -> Option<String> {
+    let (key, _) = trimmed.split_once(':')?;
+    let key = yaml_clean_scalar(key);
+    (!key.is_empty()).then_some(key)
+}
+
+pub(crate) fn yaml_key_value(trimmed: &str, expected_key: &str) -> Option<String> {
+    let (key, value) = trimmed.split_once(':')?;
+    if yaml_clean_scalar(key) != expected_key {
+        return None;
+    }
+    let value = yaml_clean_scalar(value);
+    (!value.is_empty()).then_some(value)
+}
+
+pub(crate) fn yaml_key_pair(trimmed: &str) -> Option<(String, String)> {
+    let (key, value) = trimmed.split_once(':')?;
+    if value
+        .chars()
+        .next()
+        .is_none_or(|character| !character.is_whitespace())
+    {
+        return None;
+    }
+    let key = yaml_clean_scalar(key);
+    let value = yaml_clean_scalar(value);
+    (!key.is_empty() && !value.is_empty()).then_some((key, value))
+}
+
+pub(crate) fn yaml_list_scalar(trimmed: &str) -> Option<String> {
+    let value = trimmed.strip_prefix('-')?.trim();
+    if value.is_empty() || yaml_key_pair(value).is_some() {
+        None
+    } else {
+        Some(yaml_clean_scalar(value))
+    }
+}
+
+pub(crate) fn yaml_clean_scalar(value: &str) -> String {
+    value
+        .split(" #")
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string()
+}
+
+pub(crate) fn pnpm_clean_version(value: &str) -> String {
+    value.split('(').next().unwrap_or(value).trim().to_string()
+}
+
+pub(crate) fn composer_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+    collect_json_object_keys(&value, "require", "runtime", "composer", &mut dependencies);
+    collect_json_object_keys(&value, "require-dev", "dev", "composer", &mut dependencies);
+    dependencies.retain(|dependency| dependency.name != "php");
+    dependencies
+}
+
+pub(crate) fn composer_lock_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+    collect_composer_lock_packages(&value, "packages", "runtime", &mut dependencies);
+    collect_composer_lock_packages(&value, "packages-dev", "dev", &mut dependencies);
+    dependencies
+}
+
+pub(crate) fn collect_composer_lock_packages(
+    value: &serde_json::Value,
+    array_name: &str,
+    dependency_kind: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(packages) = value.get(array_name).and_then(|value| value.as_array()) else {
+        return;
+    };
+    for package in packages {
+        let Some(name) = package
+            .get("name")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let version = package
+            .get("version")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        dependencies.push(manifest_dependency_with_version_kind(
+            name.to_string(),
+            dependency_kind,
+            "composer",
+            version,
+            Some("locked"),
+        ));
+    }
+}
+
+pub(crate) fn vcpkg_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let override_versions = vcpkg_override_versions(&value);
+    let mut dependencies = Vec::new();
+    let Some(values) = value.get("dependencies").and_then(|value| value.as_array()) else {
+        return dependencies;
+    };
+
+    for value in values {
+        let name = value
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| {
+                value
+                    .as_object()
+                    .and_then(|object| object.get("name"))
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+            })
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty());
+        let Some(name) = name else {
+            continue;
+        };
+        let version = value
+            .as_object()
+            .and_then(vcpkg_dependency_version)
+            .or_else(|| override_versions.get(&name.to_ascii_lowercase()).cloned());
+        dependencies.push(manifest_dependency(name, "runtime", "vcpkg", version));
+    }
+
+    dependencies
+}
+
+pub(crate) fn vcpkg_override_versions(value: &serde_json::Value) -> BTreeMap<String, String> {
+    let mut versions = BTreeMap::new();
+    let Some(overrides) = value.get("overrides").and_then(|value| value.as_array()) else {
+        return versions;
+    };
+    for override_value in overrides {
+        let Some(object) = override_value.as_object() else {
+            continue;
+        };
+        let Some(name) = object
+            .get("name")
+            .and_then(|value| value.as_str())
+            .map(|name| name.trim().to_ascii_lowercase())
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        if let Some(version) = vcpkg_dependency_version(object) {
+            versions.insert(name, version);
+        }
+    }
+    versions
+}
+
+pub(crate) fn vcpkg_dependency_version(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    [
+        "version>=",
+        "version",
+        "version-string",
+        "version-date",
+        "version-semver",
+    ]
+    .into_iter()
+    .find_map(|key| {
+        object
+            .get(key)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                if key == "version>=" {
+                    format!(">={value}")
+                } else {
+                    value.to_string()
+                }
+            })
+    })
+}
+
+pub(crate) fn conanfile_txt_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut section: Option<String> = None;
+    for raw_line in source.lines() {
+        let line = raw_line
+            .split('#')
+            .next()
+            .unwrap_or("")
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
+            section = Some(name.trim().to_ascii_lowercase());
+            continue;
+        }
+        let Some(section_name) = section.as_deref() else {
+            continue;
+        };
+        let dependency_kind = match section_name {
+            "requires" => "runtime",
+            "tool_requires" | "build_requires" => "build",
+            "test_requires" => "test",
+            _ => continue,
+        };
+        let Some((name, version)) = conan_reference_name_and_version(line) else {
+            continue;
+        };
+        dependencies.push(manifest_dependency(name, dependency_kind, "conan", version));
+    }
+    dependencies
+}
+
+pub(crate) fn conan_reference_name_and_version(line: &str) -> Option<(String, Option<String>)> {
+    let reference = line
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim();
+    let (name, rest) = reference.split_once('/')?;
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let version = rest
+        .split('@')
+        .next()
+        .map(str::trim)
+        .filter(|version| !version.is_empty())
+        .map(str::to_string);
+    Some((name.to_string(), version))
+}
+
+pub(crate) fn cmake_dependencies(source: &str) -> Vec<ManifestDependency> {
+    cmake_command_bodies(source, "find_package")
+        .into_iter()
+        .filter_map(|body| {
+            let args = cmake_command_args(&body);
+            cmake_find_package_dependency(&args)
+        })
+        .collect()
+}
+
+pub(crate) fn cmake_find_package_dependency(args: &[String]) -> Option<ManifestDependency> {
+    let name = args
+        .first()
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .filter(|name| !name.starts_with('$'))?;
+    if is_cmake_find_package_option(name) {
+        return None;
+    }
+    let version = args
+        .iter()
+        .skip(1)
+        .find(|arg| is_cmake_version_argument(arg))
+        .cloned();
+    Some(manifest_dependency(
+        name.to_string(),
+        "runtime",
+        "cmake",
+        version,
+    ))
+}
+
+pub(crate) fn is_cmake_version_argument(value: &str) -> bool {
+    value
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_digit())
+}
+
+pub(crate) fn is_cmake_find_package_option(value: &str) -> bool {
+    matches!(
+        value.to_ascii_uppercase().as_str(),
+        "REQUIRED"
+            | "QUIET"
+            | "MODULE"
+            | "CONFIG"
+            | "NO_MODULE"
+            | "COMPONENTS"
+            | "OPTIONAL_COMPONENTS"
+            | "EXACT"
+    )
+}
+
+pub(crate) fn go_mod_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut in_require_block = false;
+    for raw_line in source.lines() {
+        let dependency_kind = if raw_line.contains("// indirect") {
+            "indirect"
+        } else {
+            "runtime"
+        };
+        let line = raw_line.split("//").next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line == "require (" {
+            in_require_block = true;
+            continue;
+        }
+        if in_require_block && line == ")" {
+            in_require_block = false;
+            continue;
+        }
+        let requirement = if in_require_block {
+            line
+        } else if let Some(rest) = line.strip_prefix("require ") {
+            rest.trim()
+        } else {
+            continue;
+        };
+        let mut parts = requirement.split_whitespace();
+        if let Some(name) = parts.next() {
+            let version = parts.next().map(str::to_string);
+            dependencies.push(manifest_dependency(
+                name.to_string(),
+                dependency_kind,
+                "go",
+                version,
+            ));
+        }
+    }
+    dependencies
+}
+
+pub(crate) fn pubspec_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut active_section: Option<(String, usize)> = None;
+
+    for raw_line in source.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = yaml_indent(raw_line);
+
+        if indent == 0 {
+            active_section = None;
+            if let Some(section) = yaml_key(trimmed).filter(|section| {
+                matches!(
+                    section.as_str(),
+                    "dependencies" | "dev_dependencies" | "dependency_overrides"
+                )
+            }) {
+                active_section = Some((section, indent));
+            }
+            continue;
+        }
+
+        let Some((section, section_indent)) = active_section.as_ref() else {
+            continue;
+        };
+        if indent <= *section_indent {
+            active_section = None;
+            continue;
+        }
+        if indent != section_indent + 2 {
+            continue;
+        }
+        let Some((name, value)) = yaml_key_pair(trimmed) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let kind = match section.as_str() {
+            "dependencies" => "runtime",
+            "dev_dependencies" => "dev",
+            "dependency_overrides" => "override",
+            _ => "runtime",
+        };
+        let version = (!value.is_empty()
+            && !matches!(
+                value.as_str(),
+                "{}" | "[]" | "null" | "~" | "sdk" | "path" | "git"
+            ))
+        .then_some(value);
+        dependencies.push(manifest_dependency(name, kind, "dart", version));
+    }
+
+    dependencies
+}
+
+pub(crate) fn pubspec_flutter_assets(source: &str) -> Vec<FlutterAsset> {
+    let mut assets = Vec::new();
+    let mut in_flutter: Option<usize> = None;
+    let mut in_assets: Option<usize> = None;
+
+    for (index, raw_line) in source.lines().enumerate() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = yaml_indent(raw_line);
+
+        if let Some(flutter_indent) = in_flutter
+            && indent <= flutter_indent
+            && yaml_key(trimmed).is_some()
+        {
+            in_flutter = None;
+            in_assets = None;
+        }
+        if let Some(assets_indent) = in_assets
+            && indent <= assets_indent
+            && yaml_key(trimmed).is_some()
+        {
+            in_assets = None;
+        }
+
+        if indent == 0 && yaml_key(trimmed).is_some_and(|key| key == "flutter") {
+            in_flutter = Some(indent);
+            in_assets = None;
+            continue;
+        }
+        if in_flutter.is_some() && yaml_key(trimmed).is_some_and(|key| key == "assets") {
+            in_assets = Some(indent);
+            continue;
+        }
+        if in_assets.is_some()
+            && let Some(asset) = yaml_list_scalar(trimmed)
+            && is_flutter_asset_path(&asset)
+        {
+            assets.push(FlutterAsset {
+                path: asset,
+                line: index as u32 + 1,
+            });
+        }
+    }
+
+    assets
+}
+
+pub(crate) fn is_flutter_asset_path(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('$')
+        && !value.contains("://")
+        && !Path::new(value).is_absolute()
+}
+
+pub(crate) fn go_module_name(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        let line = line.split("//").next().unwrap_or("").trim();
+        line.strip_prefix("module ")
+            .map(str::trim)
+            .filter(|module| !module.is_empty())
+            .map(str::to_string)
+    })
+}
+
+pub(crate) fn pubspec_package_name(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            return None;
+        }
+        yaml_key_value(trimmed, "name").filter(|name| pubspec_package_name_valid(name))
+    })
+}
+
+pub(crate) fn pubspec_package_name_valid(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+pub(crate) fn pubspec_uses_flutter(source: &str) -> bool {
+    source.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed == "flutter:" || trimmed.starts_with("sdk: flutter")
+    })
+}
+
+pub(crate) fn shebang_interpreter(source: &str) -> Option<(&'static str, &'static str)> {
+    let line = source.lines().next()?.trim();
+    let command = line.strip_prefix("#!")?.trim();
+    if command.is_empty() {
+        return None;
+    }
+
+    let mut parts = command.split_whitespace();
+    let executable = parts.next()?.rsplit('/').next().unwrap_or("");
+    let interpreter = if executable == "env" {
+        parts
+            .find(|part| !part.starts_with('-') && !part.contains('='))
+            .unwrap_or("")
+    } else {
+        executable
+    };
+    let interpreter = interpreter
+        .rsplit('/')
+        .next()
+        .unwrap_or(interpreter)
+        .split_once('.')
+        .map_or(interpreter, |(base, _)| base);
+
+    match interpreter {
+        "bash" => Some(("bash", "bash")),
+        "sh" => Some(("sh", "bash")),
+        "zsh" => Some(("zsh", "bash")),
+        "ksh" => Some(("ksh", "bash")),
+        "python" | "python2" | "python3" => Some(("python", "python")),
+        "node" | "nodejs" => Some(("node", "javascript")),
+        "php" => Some(("php", "php")),
+        _ => None,
+    }
+}
+
+pub(crate) fn shebang_language(source: &str) -> Option<Language> {
+    match shebang_interpreter(source)?.1 {
+        "bash" => Some(Language::Bash),
+        "python" => Some(Language::Python),
+        "javascript" => Some(Language::JavaScript),
+        "php" => Some(Language::Php),
+        _ => None,
+    }
+}
+
+pub(crate) fn requirements_dependencies(source: &str) -> Vec<ManifestDependency> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let line = line.split('#').next().unwrap_or("").trim();
+            if line.is_empty() || line.starts_with('-') {
+                return None;
+            }
+            package_name_and_version_from_requirement(line)
+                .map(|(name, version)| manifest_dependency(name, "runtime", "python", version))
+        })
+        .collect()
+}
+
+pub(crate) fn setup_py_sequence_string_values(source: &str, key: &str) -> Vec<String> {
+    let Some(value) = setup_py_keyword_value(source, key) else {
+        return Vec::new();
+    };
+    extract_python_quoted_strings(&value)
+}
+
+pub(crate) fn setup_py_dict_list_string_values(source: &str, key: &str) -> Vec<String> {
+    let Some(value) = setup_py_keyword_value(source, key) else {
+        return Vec::new();
+    };
+    python_dict_list_values(&value)
+        .into_iter()
+        .flat_map(|value| extract_python_quoted_strings(&value))
+        .collect()
+}
+
+pub(crate) fn setup_py_console_scripts(source: &str) -> Vec<String> {
+    let Some(value) = setup_py_keyword_value(source, "entry_points") else {
+        return Vec::new();
+    };
+    python_dict_list_values_for_key(&value, "console_scripts")
+        .into_iter()
+        .flat_map(|value| extract_python_quoted_strings(&value))
+        .collect()
+}
+
+pub(crate) fn setup_cfg_sections(source: &str) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
+    let mut sections: BTreeMap<String, BTreeMap<String, Vec<String>>> = BTreeMap::new();
+    let mut current_section: Option<String> = None;
+    let mut current_key: Option<String> = None;
+
+    for raw_line in source.lines() {
+        let is_continuation = raw_line.starts_with([' ', '\t']);
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+
+        if let Some(section) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
+            let section = section.trim().to_ascii_lowercase();
+            if section.is_empty() {
+                current_section = None;
+            } else {
+                sections.entry(section.clone()).or_default();
+                current_section = Some(section);
+            }
+            current_key = None;
+            continue;
+        }
+
+        let Some(section) = current_section.as_deref() else {
+            continue;
+        };
+
+        if is_continuation {
+            let Some(key) = current_key.as_deref() else {
+                continue;
+            };
+            let value = setup_cfg_clean_value(line);
+            if !value.is_empty() {
+                sections
+                    .entry(section.to_string())
+                    .or_default()
+                    .entry(key.to_string())
+                    .or_default()
+                    .push(value);
+            }
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=').or_else(|| line.split_once(':')) else {
+            current_key = None;
+            continue;
+        };
+        let key = key.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            current_key = None;
+            continue;
+        }
+        sections
+            .entry(section.to_string())
+            .or_default()
+            .entry(key.clone())
+            .or_default();
+        current_key = Some(key.clone());
+        let value = setup_cfg_clean_value(value);
+        if !value.is_empty() {
+            sections
+                .entry(section.to_string())
+                .or_default()
+                .entry(key)
+                .or_default()
+                .push(value);
+        }
+    }
+
+    sections
+}
+
+pub(crate) fn setup_cfg_values(
+    sections: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    section: &str,
+    key: &str,
+) -> Vec<String> {
+    sections
+        .get(&section.to_ascii_lowercase())
+        .and_then(|values| values.get(&key.to_ascii_lowercase()))
+        .cloned()
+        .unwrap_or_default()
+}
+
+pub(crate) fn setup_cfg_clean_value(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string()
+}
+
+pub(crate) fn setup_py_keyword_value(source: &str, key: &str) -> Option<String> {
+    let lower = source.to_ascii_lowercase();
+    let key_lower = key.to_ascii_lowercase();
+    let mut search_start = 0;
+    while let Some(offset) = lower[search_start..].find(&key_lower) {
+        let key_start = search_start + offset;
+        let key_end = key_start + key.len();
+        if !is_python_identifier_boundary(source, key_start, key_end) {
+            search_start = key_end;
+            continue;
+        }
+        let mut cursor = skip_ascii_whitespace(source, key_end);
+        if !source[cursor..].starts_with('=') {
+            search_start = key_end;
+            continue;
+        }
+        cursor = skip_ascii_whitespace(source, cursor + 1);
+        return python_value_literal_at(source, cursor);
+    }
+    None
+}
+
+pub(crate) fn is_python_identifier_boundary(source: &str, start: usize, end: usize) -> bool {
+    let before = source[..start].chars().next_back();
+    let after = source[end..].chars().next();
+    before.is_none_or(|character| !is_python_identifier_character(character))
+        && after.is_none_or(|character| !is_python_identifier_character(character))
+}
+
+pub(crate) fn is_python_identifier_character(character: char) -> bool {
+    character == '_' || character.is_ascii_alphanumeric()
+}
+
+pub(crate) fn python_value_literal_at(source: &str, start: usize) -> Option<String> {
+    let first = source[start..].chars().next()?;
+    if matches!(first, '[' | '(' | '{') {
+        return balanced_python_delimited_value(source, start);
+    }
+    if matches!(first, '"' | '\'') {
+        let quoted = extract_python_quoted_string_at(source, start)?;
+        return Some(quoted.raw);
+    }
+    let end = source[start..]
+        .find([',', '\n'])
+        .map(|offset| start + offset)
+        .unwrap_or(source.len());
+    Some(source[start..end].trim().to_string()).filter(|value| !value.is_empty())
+}
+
+pub(crate) fn balanced_python_delimited_value(source: &str, start: usize) -> Option<String> {
+    let open = source[start..].chars().next()?;
+    let close = match open {
+        '[' => ']',
+        '(' => ')',
+        '{' => '}',
+        _ => return None,
+    };
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (relative, character) in source[start..].char_indices() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if character == '\\' {
+                escaped = true;
+                continue;
+            }
+            if character == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        if matches!(character, '"' | '\'') {
+            quote = Some(character);
+            continue;
+        }
+        if character == open {
+            depth += 1;
+        } else if character == close {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                let end = start + relative + character.len_utf8();
+                return Some(source[start..end].to_string());
+            }
+        }
+    }
+    None
+}
+
+#[derive(Debug)]
+pub(crate) struct PythonQuotedString {
+    raw: String,
+    value: String,
+    end: usize,
+}
+
+pub(crate) fn extract_python_quoted_strings(source: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut cursor = 0;
+    while cursor < source.len() {
+        if let Some(relative) = source[cursor..].find(['"', '\'']) {
+            let start = cursor + relative;
+            if let Some(quoted) = extract_python_quoted_string_at(source, start) {
+                values.push(quoted.value);
+                cursor = quoted.end;
+                continue;
+            }
+            cursor = start + 1;
+        } else {
+            break;
+        }
+    }
+    values
+}
+
+pub(crate) fn extract_python_quoted_string_at(
+    source: &str,
+    start: usize,
+) -> Option<PythonQuotedString> {
+    let quote = source[start..].chars().next()?;
+    if !matches!(quote, '"' | '\'') {
+        return None;
+    }
+    let mut escaped = false;
+    let mut value = String::new();
+    for (relative, character) in source[start + quote.len_utf8()..].char_indices() {
+        if escaped {
+            value.push(character);
+            escaped = false;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+        if character == quote {
+            let end = start + quote.len_utf8() + relative + character.len_utf8();
+            return Some(PythonQuotedString {
+                raw: source[start..end].to_string(),
+                value,
+                end,
+            });
+        }
+        value.push(character);
+    }
+    None
+}
+
+pub(crate) fn python_dict_list_values(source: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut cursor = 0;
+    while cursor < source.len() {
+        let Some(relative) = source[cursor..].find(['[', '(']) else {
+            break;
+        };
+        let start = cursor + relative;
+        if let Some(value) = balanced_python_delimited_value(source, start) {
+            cursor = start + value.len();
+            values.push(value);
+        } else {
+            cursor = start + 1;
+        }
+    }
+    values
+}
+
+pub(crate) fn python_dict_list_values_for_key(source: &str, wanted_key: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut cursor = 0;
+    while cursor < source.len() {
+        let Some(relative) = source[cursor..].find(['"', '\'']) else {
+            break;
+        };
+        let key_start = cursor + relative;
+        let Some(key) = extract_python_quoted_string_at(source, key_start) else {
+            cursor = key_start + 1;
+            continue;
+        };
+        let mut after_key = skip_ascii_whitespace(source, key.end);
+        if !source[after_key..].starts_with(':') {
+            cursor = key.end;
+            continue;
+        }
+        after_key = skip_ascii_whitespace(source, after_key + 1);
+        if key.value == wanted_key
+            && let Some(value) = python_value_literal_at(source, after_key)
+        {
+            values.push(value);
+        }
+        cursor = after_key.saturating_add(1);
+    }
+    values
+}
+
+pub(crate) fn python_console_script_name_and_target(value: &str) -> Option<(String, String)> {
+    let (name, target) = value.split_once('=')?;
+    let name = name.trim();
+    let target = target.trim();
+    if name.is_empty() || target.is_empty() {
+        None
+    } else {
+        Some((name.to_string(), target.to_string()))
+    }
+}
+
+pub(crate) fn skip_ascii_whitespace(value: &str, mut cursor: usize) -> usize {
+    while cursor < value.len()
+        && value[cursor..]
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_whitespace())
+    {
+        cursor += value[cursor..].chars().next().unwrap().len_utf8();
+    }
+    cursor
+}
+
+pub(crate) fn collect_toml_table_keys(
+    value: &toml::Value,
+    table_name: &str,
+    dependency_kind: &str,
+    ecosystem: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+    cargo_workspace_dependencies: Option<&BTreeMap<String, Option<String>>>,
+) {
+    let Some(table) = value.get(table_name).and_then(|value| value.as_table()) else {
+        return;
+    };
+    for (name, value) in table {
+        let package_name = value
+            .as_table()
+            .and_then(|table| table.get("package"))
+            .and_then(|value| value.as_str())
+            .unwrap_or(name)
+            .to_string();
+        let version = dependency_version_from_toml_value(
+            name,
+            value,
+            ecosystem,
+            cargo_workspace_dependencies,
+        );
+        dependencies.push(manifest_dependency(
+            package_name,
+            dependency_kind,
+            ecosystem,
+            version,
+        ));
+    }
+}
+
+pub(crate) fn collect_toml_entrypoint_keys(
+    value: &toml::Value,
+    table_name: &str,
+    entrypoint_kind: &str,
+    ecosystem: &str,
+    entrypoints: &mut Vec<ManifestEntrypoint>,
+) {
+    let Some(table) = value.get(table_name).and_then(|value| value.as_table()) else {
+        return;
+    };
+    for (name, target) in table {
+        entrypoints.push(manifest_entrypoint(
+            format!("{ecosystem} {entrypoint_kind}:{name}"),
+            entrypoint_kind,
+            ecosystem,
+            target.as_str().map(str::to_string),
+        ));
+    }
+}
+
+pub(crate) fn collect_json_object_keys(
+    value: &serde_json::Value,
+    object_name: &str,
+    dependency_kind: &str,
+    ecosystem: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(object) = value.get(object_name).and_then(|value| value.as_object()) else {
+        return;
+    };
+    for (name, value) in object {
+        let version = value.as_str().map(str::to_string);
+        dependencies.push(manifest_dependency(
+            name.clone(),
+            dependency_kind,
+            ecosystem,
+            version,
+        ));
+    }
+}
+
+pub(crate) fn cargo_workspace_dependencies(root: &Path) -> BTreeMap<String, Option<String>> {
+    let Ok(source) = fs::read_to_string(root.join("Cargo.toml")) else {
+        return BTreeMap::new();
+    };
+    let Ok(value) = toml::from_str::<toml::Value>(&source) else {
+        return BTreeMap::new();
+    };
+    let Some(table) = value
+        .get("workspace")
+        .and_then(|workspace| workspace.get("dependencies"))
+        .and_then(|dependencies| dependencies.as_table())
+    else {
+        return BTreeMap::new();
+    };
+
+    table
+        .iter()
+        .map(|(name, value)| (name.clone(), direct_toml_dependency_version(value)))
+        .collect()
+}
+
+pub(crate) fn go_module_roots(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Vec<GoModuleRoot> {
+    let mut modules = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path == root || !entry.file_type().is_file() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) != Some("go.mod")
+            || !is_probably_source_file(path, options.max_file_size)
+        {
+            continue;
+        }
+
+        let Ok(source) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Some(module) = go_module_name(&source) else {
+            continue;
+        };
+        let dir = path
+            .parent()
+            .and_then(|parent| parent.strip_prefix(root).ok())
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map(|relative| normalize_path(&relative))
+            .filter(|relative| !relative.is_empty());
+        modules.push(GoModuleRoot { module, dir });
+    }
+    modules.sort_by(|left, right| {
+        right
+            .module
+            .len()
+            .cmp(&left.module.len())
+            .then_with(|| left.dir.cmp(&right.dir))
+    });
+    modules
+}
+
+pub(crate) fn dart_package_roots(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Vec<DartPackageRoot> {
+    let mut packages = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path == root || !entry.file_type().is_file() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) != Some("pubspec.yaml")
+            || !is_probably_source_file(path, options.max_file_size)
+        {
+            continue;
+        }
+
+        let Ok(source) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Some(name) = pubspec_package_name(&source) else {
+            continue;
+        };
+        let dir = path
+            .parent()
+            .and_then(|parent| parent.strip_prefix(root).ok())
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map(|relative| normalize_path(&relative))
+            .filter(|relative| !relative.is_empty());
+        packages.push(DartPackageRoot {
+            name,
+            dir,
+            lib_dir: "lib".to_string(),
+        });
+    }
+    let mut probe_dirs: Vec<Option<String>> =
+        packages.iter().map(|package| package.dir.clone()).collect();
+    probe_dirs.push(None);
+    probe_dirs.sort();
+    probe_dirs.dedup();
+    for extra in dart_package_config_roots(root, &probe_dirs) {
+        if !packages.iter().any(|package| package.name == extra.name) {
+            packages.push(extra);
+        }
+    }
+    packages.sort_by_key(|package| std::cmp::Reverse(package.name.len()));
+    packages
+}
+
+/// Packages from `.dart_tool/package_config.json` next to each pubspec (and
+/// the scan root). This resolves `package:` imports for path dependencies
+/// and workspace monorepos that a single `pubspec.yaml` cannot describe.
+/// Only workspace-relative `rootUri` values are used; absolute URIs point at
+/// the pub cache outside the scanned tree.
+pub(crate) fn dart_package_config_roots(
+    root: &Path,
+    base_dirs: &[Option<String>],
+) -> Vec<DartPackageRoot> {
+    let mut packages = Vec::new();
+    for base in base_dirs {
+        let config_dir = match base {
+            Some(dir) => format!("{dir}/.dart_tool"),
+            None => ".dart_tool".to_string(),
+        };
+        let config_path = root.join(&config_dir).join("package_config.json");
+        let Ok(raw) = fs::read_to_string(&config_path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        let Some(entries) = value.get("packages").and_then(|value| value.as_array()) else {
+            continue;
+        };
+        for entry in entries {
+            let Some(name) = entry.get("name").and_then(|value| value.as_str()) else {
+                continue;
+            };
+            let Some(root_uri) = entry.get("rootUri").and_then(|value| value.as_str()) else {
+                continue;
+            };
+            let package_uri = entry
+                .get("packageUri")
+                .and_then(|value| value.as_str())
+                .unwrap_or("lib/");
+            let Some(dir) = resolve_dart_root_uri(&config_dir, root_uri) else {
+                continue;
+            };
+            let lib_dir = package_uri.trim_matches('/');
+            packages.push(DartPackageRoot {
+                name: name.to_string(),
+                dir,
+                lib_dir: if lib_dir.is_empty() {
+                    "lib".to_string()
+                } else {
+                    lib_dir.to_string()
+                },
+            });
+        }
+    }
+    packages
+}
+
+/// Resolve a package_config `rootUri` against the `.dart_tool` directory it
+/// lives in. Returns the scan-root-relative directory, or `None` when the
+/// URI is absolute or escapes the scanned workspace.
+pub(crate) fn resolve_dart_root_uri(config_dir: &str, root_uri: &str) -> Option<Option<String>> {
+    let uri = root_uri.strip_prefix("file://").unwrap_or(root_uri);
+    if uri.starts_with('/') || uri.contains("://") {
+        return None;
+    }
+    let combined = format!("{config_dir}/{uri}").replace('\\', "/");
+    let mut parts: Vec<&str> = Vec::new();
+    for part in combined.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            value => parts.push(value),
+        }
+    }
+    let dir = parts.join("/");
+    Some(if dir.is_empty() { None } else { Some(dir) })
+}
+
+pub(crate) fn c_include_dirs(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Vec<String> {
+    let mut dirs = cmake_include_dirs(root, options, ignored_globs);
+    dirs.extend(compile_commands_include_dirs(root, options, ignored_globs));
+    dedup_preserving_order(&mut dirs);
+    dirs
+}
+
+pub(crate) fn cmake_include_dirs(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Vec<String> {
+    let mut dirs = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path == root || !entry.file_type().is_file() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) != Some("CMakeLists.txt")
+            || !is_probably_source_file(path, options.max_file_size)
+        {
+            continue;
+        }
+
+        let Ok(source) = fs::read_to_string(path) else {
+            continue;
+        };
+        let base = path
+            .parent()
+            .and_then(|parent| parent.strip_prefix(root).ok())
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map(|relative| normalize_path(&relative))
+            .filter(|relative| !relative.is_empty());
+        dirs.extend(cmake_include_dirs_from_source(base.as_deref(), &source));
+    }
+    dedup_preserving_order(&mut dirs);
+    dirs
+}
+
+pub(crate) fn compile_commands_include_dirs(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Vec<String> {
+    let mut dirs = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path == root || !entry.file_type().is_file() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) != Some("compile_commands.json")
+            || !is_probably_source_file(path, options.max_file_size)
+        {
+            continue;
+        }
+
+        let Ok(source) = fs::read_to_string(path) else {
+            continue;
+        };
+        let base = path
+            .parent()
+            .and_then(|parent| parent.strip_prefix(root).ok())
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map(|relative| normalize_path(&relative))
+            .filter(|relative| !relative.is_empty());
+        dirs.extend(compile_commands_include_dirs_from_source(
+            root,
+            base.as_deref(),
+            &source,
+        ));
+    }
+    dedup_preserving_order(&mut dirs);
+    dirs
+}
+
+pub(crate) fn compile_commands_include_dirs_from_source(
+    root: &Path,
+    base: Option<&str>,
+    source: &str,
+) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return Vec::new();
+    };
+    let Some(commands) = value.as_array() else {
+        return Vec::new();
+    };
+
+    let mut dirs = Vec::new();
+    for command in commands {
+        let command_base = compile_command_base(root, base, command);
+        if let Some(arguments) = command.get("arguments").and_then(|value| value.as_array()) {
+            let args = arguments
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect::<Vec<_>>();
+            dirs.extend(include_dirs_from_compiler_args(
+                command_base.as_deref(),
+                &args,
+            ));
+        } else if let Some(command_line) = command.get("command").and_then(|value| value.as_str()) {
+            let args = split_command_tokens(command_line);
+            dirs.extend(include_dirs_from_compiler_args(
+                command_base.as_deref(),
+                &args,
+            ));
+        }
+    }
+    dedup_preserving_order(&mut dirs);
+    dirs
+}
+
+pub(crate) fn compile_command_base(
+    root: &Path,
+    base: Option<&str>,
+    command: &serde_json::Value,
+) -> Option<String> {
+    command
+        .get("directory")
+        .and_then(|value| value.as_str())
+        .and_then(|directory| normalize_compile_command_directory(root, base, directory))
+        .or_else(|| base.map(str::to_string))
+}
+
+pub(crate) fn normalize_compile_command_directory(
+    root: &Path,
+    base: Option<&str>,
+    directory: &str,
+) -> Option<String> {
+    let value = directory.trim();
+    if value.is_empty() {
+        return base.map(str::to_string);
+    }
+    let path = Path::new(value);
+    if path.is_absolute() {
+        return path
+            .strip_prefix(root)
+            .ok()
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map(|relative| normalize_path(&relative))
+            .map(|relative| {
+                if relative.is_empty() {
+                    ".".to_string()
+                } else {
+                    relative
+                }
+            });
+    }
+    Some(join_path(base, value))
+}
+
+pub(crate) fn include_dirs_from_compiler_args(base: Option<&str>, args: &[String]) -> Vec<String> {
+    let mut dirs = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].trim();
+        let mut consumed_next = false;
+        let candidate = if let Some(rest) = arg.strip_prefix("-I") {
+            if rest.is_empty() {
+                consumed_next = true;
+                args.get(index + 1).map(String::as_str)
+            } else {
+                Some(rest)
+            }
+        } else if let Some(rest) = arg.strip_prefix("-isystem") {
+            if rest.is_empty() {
+                consumed_next = true;
+                args.get(index + 1).map(String::as_str)
+            } else {
+                Some(rest)
+            }
+        } else if let Some(rest) = arg.strip_prefix("-iquote") {
+            if rest.is_empty() {
+                consumed_next = true;
+                args.get(index + 1).map(String::as_str)
+            } else {
+                Some(rest)
+            }
+        } else if matches!(arg, "/I" | "-idirafter") {
+            consumed_next = true;
+            args.get(index + 1).map(String::as_str)
+        } else if arg.starts_with("/I") {
+            arg.strip_prefix("/I").filter(|rest| !rest.is_empty())
+        } else {
+            None
+        };
+
+        if let Some(candidate) = candidate.and_then(|value| compiler_include_dir_arg(base, value)) {
+            dirs.push(candidate);
+        }
+        index += if consumed_next { 2 } else { 1 };
+    }
+    dedup_preserving_order(&mut dirs);
+    dirs
+}
+
+pub(crate) fn compiler_include_dir_arg(base: Option<&str>, arg: &str) -> Option<String> {
+    let value = arg.trim().trim_matches(['"', '\'']);
+    if value.is_empty() || value.starts_with('$') || value.starts_with('<') {
+        return None;
+    }
+    if Path::new(value).is_absolute() {
+        return None;
+    }
+    let path = join_path(base, value);
+    if path.is_empty() { None } else { Some(path) }
+}
+
+pub(crate) fn cmake_include_dirs_from_source(base: Option<&str>, source: &str) -> Vec<String> {
+    let mut dirs = Vec::new();
+    for body in cmake_command_bodies(source, "include_directories") {
+        for arg in cmake_command_args(&body) {
+            if let Some(dir) = cmake_include_dir_arg(base, &arg) {
+                dirs.push(dir);
+            }
+        }
+    }
+    for body in cmake_command_bodies(source, "target_include_directories") {
+        for arg in cmake_command_args(&body).into_iter().skip(1) {
+            if is_cmake_include_scope_or_option(&arg) {
+                continue;
+            }
+            if let Some(dir) = cmake_include_dir_arg(base, &arg) {
+                dirs.push(dir);
+            }
+        }
+    }
+    dedup_preserving_order(&mut dirs);
+    dirs
+}
+
+pub(crate) fn cmake_include_dir_arg(base: Option<&str>, arg: &str) -> Option<String> {
+    let mut value = arg.trim().trim_matches(['"', '\'']).to_string();
+    if value.is_empty()
+        || value.starts_with('/')
+        || value.starts_with('$') && !value.starts_with("${")
+        || value.starts_with("$<")
+        || is_cmake_include_scope_or_option(&value)
+    {
+        return None;
+    }
+
+    let current_dir = base.unwrap_or(".");
+    let root_relative =
+        value.contains("${PROJECT_SOURCE_DIR}") || value.contains("${CMAKE_SOURCE_DIR}");
+    value = value
+        .replace("${CMAKE_CURRENT_SOURCE_DIR}", current_dir)
+        .replace("${CMAKE_CURRENT_LIST_DIR}", current_dir)
+        .replace("${PROJECT_SOURCE_DIR}", ".")
+        .replace("${CMAKE_SOURCE_DIR}", ".");
+    if value.contains('$') || value.starts_with('/') {
+        return None;
+    }
+
+    let path = if value == "." {
+        if root_relative {
+            ".".to_string()
+        } else {
+            current_dir.to_string()
+        }
+    } else if root_relative {
+        normalize_path(&value)
+    } else {
+        join_path(base, &value)
+    };
+    if path.is_empty() { None } else { Some(path) }
+}
+
+pub(crate) fn is_cmake_include_scope_or_option(value: &str) -> bool {
+    matches!(
+        value.to_ascii_uppercase().as_str(),
+        "PUBLIC" | "PRIVATE" | "INTERFACE" | "SYSTEM" | "BEFORE" | "AFTER"
+    )
+}
+
+pub(crate) fn dependency_version_from_toml_value(
+    name: &str,
+    value: &toml::Value,
+    ecosystem: &str,
+    cargo_workspace_dependencies: Option<&BTreeMap<String, Option<String>>>,
+) -> Option<String> {
+    if ecosystem == "cargo"
+        && value
+            .as_table()
+            .and_then(|table| table.get("workspace"))
+            .and_then(|value| value.as_bool())
+            .is_some_and(|enabled| enabled)
+    {
+        return cargo_workspace_dependencies
+            .and_then(|dependencies| dependencies.get(name))
+            .cloned()
+            .flatten();
+    }
+    direct_toml_dependency_version(value)
+}
+
+pub(crate) fn direct_toml_dependency_version(value: &toml::Value) -> Option<String> {
+    if let Some(version) = value.as_str() {
+        return Some(version.to_string());
+    }
+    let table = value.as_table()?;
+    table
+        .get("version")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
+pub(crate) fn pipfile_dependency_version(value: &toml::Value) -> Option<String> {
+    let version = direct_toml_dependency_version(value)?;
+    let version = version.trim();
+    if version.is_empty() || version == "*" {
+        None
+    } else {
+        Some(version.to_string())
+    }
+}
+
+pub(crate) fn package_name_and_version_from_requirement(
+    requirement: &str,
+) -> Option<(String, Option<String>)> {
+    let trimmed = requirement.trim();
+    let end = trimmed
+        .find(|character: char| {
+            matches!(
+                character,
+                '<' | '>' | '=' | '!' | '~' | '[' | ';' | ',' | ' '
+            )
+        })
+        .unwrap_or(trimmed.len());
+    let name = trimmed[..end].trim();
+    if name.is_empty() {
+        None
+    } else {
+        let version = trimmed[end..].trim();
+        Some((
+            name.to_string(),
+            (!version.is_empty()).then(|| version.to_string()),
+        ))
+    }
+}
+
+pub(crate) fn package_id(ecosystem: &str, package_name: &str) -> String {
+    format!("{ecosystem}:{package_name}")
+}
+
+pub(crate) fn canonical_package_name(ecosystem: &str, name: &str) -> String {
+    let trimmed = name.trim();
+    match ecosystem {
+        "python" => {
+            let mut normalized = String::new();
+            let mut previous_separator = false;
+            for character in trimmed.chars() {
+                if matches!(character, '-' | '_' | '.') {
+                    if !previous_separator {
+                        normalized.push('-');
+                    }
+                    previous_separator = true;
+                } else {
+                    normalized.extend(character.to_lowercase());
+                    previous_separator = false;
+                }
+            }
+            normalized
+        }
+        "cargo" | "npm" | "composer" | "vcpkg" | "conan" | "cmake" | "dart" => {
+            trimmed.to_ascii_lowercase()
+        }
+        "go" => trimmed.to_string(),
+        _ => trimmed.to_string(),
+    }
+}
+
+pub(crate) fn manifest_dependency(
+    name: impl Into<String>,
+    dependency_kind: impl Into<String>,
+    ecosystem: impl Into<String>,
+    version: Option<String>,
+) -> ManifestDependency {
+    manifest_dependency_with_version_kind(
+        name,
+        dependency_kind,
+        ecosystem,
+        version,
+        Some("constraint"),
+    )
+}
+
+pub(crate) fn manifest_dependency_with_version_kind(
+    name: impl Into<String>,
+    dependency_kind: impl Into<String>,
+    ecosystem: impl Into<String>,
+    version: Option<String>,
+    version_kind: Option<&str>,
+) -> ManifestDependency {
+    let version_kind = if version.is_some() {
+        version_kind.map(str::to_string)
+    } else {
+        None
+    };
+    ManifestDependency {
+        name: name.into(),
+        kind: dependency_kind.into(),
+        ecosystem: ecosystem.into(),
+        version,
+        version_kind,
+    }
+}
+
+pub(crate) fn manifest_entrypoint(
+    label: impl Into<String>,
+    entrypoint_kind: impl Into<String>,
+    ecosystem: impl Into<String>,
+    target: Option<String>,
+) -> ManifestEntrypoint {
+    ManifestEntrypoint {
+        label: label.into(),
+        kind: entrypoint_kind.into(),
+        ecosystem: ecosystem.into(),
+        target,
+    }
+}
