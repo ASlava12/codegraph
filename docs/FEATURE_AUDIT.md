@@ -147,6 +147,30 @@ maps to rule `route_or_endpoint` and generates
 config/environment rule should win for SCREAMING_SNAKE tokens combined
 with read/set verbs.
 
+## Dogfood session (2026-07-10)
+
+Reports, insights, unreachable slices, and journeys were run against this
+repository after the thirteen findings above were fixed. Journey output,
+node cards, and query slices read well; the remaining comprehension
+blocker was the risk summary, fixed in the same pass:
+
+- `potential_error_flow` (2,054) and `unreachable_error_flow` (1,250)
+  warned on every error construct — normal control flow in
+  Result-idiomatic code. Both now read as info.
+- `ambiguous_call_resolution` (1,074) and `cross_language_heuristic_edge`
+  (118) warned about expected heuristic-resolution behavior on
+  syntactic-only scans. Both now use the F3 calibration rule: info until
+  semantic enrichment has run.
+- The risk score folded info counts in, so any large repository graded
+  critical regardless of health. The score now weighs actionable findings
+  only (errors ×100, warnings ×10) and grade thresholds are sized for
+  that scale.
+
+Result on this repository: warnings 4,600 → 104, score 55,625 → 1,040,
+grade critical → high. 88 of the remaining 104 warnings come from test
+fixtures (embedded SQL strings, fixture imports); dampening those is
+filed as a new Phase 3 item.
+
 ## Non-findings worth recording
 
 - All 53 audited CLI commands and all 60 API endpoints completed

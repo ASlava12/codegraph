@@ -3384,7 +3384,10 @@ fn project_risk_summary(report: &InsightReport) -> ProjectRiskSummary {
     let errors = severity_count(report, InsightSeverity::Error);
     let warnings = severity_count(report, InsightSeverity::Warning);
     let infos = severity_count(report, InsightSeverity::Info);
-    let score = errors * 100 + warnings * 10 + infos;
+    // The score weighs actionable findings only: info counts scale with
+    // repository size, and folding them in graded every large healthy
+    // repository critical (Phase 9 dogfooding).
+    let score = errors * 100 + warnings * 10;
     let mut kind_severities: BTreeMap<String, InsightSeverity> = BTreeMap::new();
     for insight in &report.insights {
         kind_severities
@@ -3435,11 +3438,14 @@ fn severity_count(report: &InsightReport, severity: InsightSeverity) -> usize {
 }
 
 fn risk_grade(score: usize) -> &'static str {
+    // Thresholds sized for the actionable score (errors x100, warnings x10):
+    // critical means errors or a flood of warnings, not repository size
+    // (Phase 9 dogfooding).
     match score {
         0 => "clean",
-        1..=19 => "low",
-        20..=99 => "medium",
-        100..=499 => "high",
+        1..=199 => "low",
+        200..=999 => "medium",
+        1000..=4999 => "high",
         _ => "critical",
     }
 }
@@ -11108,19 +11114,27 @@ fn insight_search_matches(insight: &Insight, expected: &str) -> bool {
             .any(|edge_index| edge_index.to_string().contains(expected))
 }
 
-fn add_unresolved_call_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
-    // On syntactic-only scans an unresolved call is the expected default and
-    // reads as info; once semantic enrichment has run, a target that still
-    // cannot be resolved is a real warning.
+/// Heuristic-resolution findings read as info on syntactic-only scans and
+/// escalate to warnings once semantic (LSP) enrichment has run — the same
+/// calibration rule for unresolved calls, ambiguous calls, and heuristic
+/// cross-language edges (audit F3; Phase 9 dogfooding).
+fn heuristic_scan_severity(graph: &CodeGraph) -> InsightSeverity {
     let semantically_enriched = graph
         .edges
         .iter()
         .any(|edge| edge.confidence == Confidence::Semantic);
-    let severity = if semantically_enriched {
+    if semantically_enriched {
         InsightSeverity::Warning
     } else {
         InsightSeverity::Info
-    };
+    }
+}
+
+fn add_unresolved_call_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    // On syntactic-only scans an unresolved call is the expected default and
+    // reads as info; once semantic enrichment has run, a target that still
+    // cannot be resolved is a real warning.
+    let severity = heuristic_scan_severity(graph);
 
     let mut by_label: BTreeMap<&str, Vec<NodeId>> = BTreeMap::new();
     for node in &graph.nodes {
@@ -11223,7 +11237,7 @@ fn add_ambiguous_call_resolution_insights(graph: &CodeGraph, insights: &mut Vec<
 
         insights.push(Insight {
             kind: "ambiguous_call_resolution".to_string(),
-            severity: InsightSeverity::Warning,
+            severity: heuristic_scan_severity(graph),
             message: format!(
                 "`{caller}` calls `{call_label}` but it resolves to multiple targets: {target_labels}"
             ),
@@ -11410,7 +11424,7 @@ fn add_cross_language_heuristic_edge_insights(graph: &CodeGraph, insights: &mut 
             .unwrap_or("unknown");
         insights.push(Insight {
             kind: "cross_language_heuristic_edge".to_string(),
-            severity: InsightSeverity::Warning,
+            severity: heuristic_scan_severity(graph),
             message: format!(
                 "`{source}` ({source_language}) {} `{target}` ({target_language}) with {} confidence",
                 edge_kind_name(&edge.kind),
@@ -11647,8 +11661,10 @@ fn add_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
         let source = labels.get(&edge.source).copied().unwrap_or("unknown");
         let target = labels.get(&edge.target).copied().unwrap_or("unknown");
         insights.push(Insight {
+            // Error constructs are normal control flow in Result-idiomatic
+            // code; the fact is informational (Phase 9 dogfooding).
             kind: "potential_error_flow".to_string(),
-            severity: InsightSeverity::Warning,
+            severity: InsightSeverity::Info,
             message: format!("`{source}` may error via `{target}`"),
             nodes: vec![edge.source, edge.target],
             edges: vec![index],
@@ -12627,8 +12643,11 @@ fn add_unreachable_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Ins
         let source = node_label(graph, edge.source).unwrap_or("unknown");
         let target = node_label(graph, edge.target).unwrap_or("unknown");
         insights.push(Insight {
+            // Reachability is heuristic on syntactic scans and error
+            // constructs are ubiquitous; keep as informational context
+            // (Phase 9 dogfooding).
             kind: "unreachable_error_flow".to_string(),
-            severity: InsightSeverity::Warning,
+            severity: InsightSeverity::Info,
             message: format!(
                 "`{source}` may error via `{target}` but is not reachable from any entrypoint"
             ),
@@ -15436,8 +15455,9 @@ mod tests {
         // The unresolved call reads as info on this syntactic-only fixture.
         assert_eq!(report.risk_summary.warnings, 0);
         assert!(report.risk_summary.infos >= 2);
-        assert_eq!(report.risk_summary.score, 100 + report.risk_summary.infos);
-        assert_eq!(report.risk_summary.grade, "high");
+        // The score weighs actionable findings only; infos stay counts.
+        assert_eq!(report.risk_summary.score, 100);
+        assert_eq!(report.risk_summary.grade, "low");
         assert!(!report.quality_gate.passed);
         assert_eq!(report.quality_gate.failing_insights, 1);
         assert!(
@@ -15709,7 +15729,8 @@ mod tests {
             .find(|insight| insight.kind == "cross_language_heuristic_edge")
             .expect("expected cross-language heuristic insight");
 
-        assert_eq!(insight.severity, InsightSeverity::Warning);
+        // Syntactic-only fixture: heuristic findings read as info.
+        assert_eq!(insight.severity, InsightSeverity::Info);
         assert_eq!(insight.edges, vec![0]);
         assert!(insight.nodes.contains(&rust_main));
         assert!(insight.nodes.contains(&python_helper));
@@ -16048,8 +16069,9 @@ mod tests {
                 .any(|line| line.highlight && line.text.contains("missing"))
         );
         assert_eq!(card.total_insights, 3);
-        assert_eq!(card.insight_summary.by_severity.get("warning"), Some(&2));
-        assert_eq!(card.insight_summary.by_severity.get("info"), Some(&1));
+        // Error-flow and heuristic findings read as info on syntactic scans.
+        assert_eq!(card.insight_summary.by_severity.get("warning"), Some(&1));
+        assert_eq!(card.insight_summary.by_severity.get("info"), Some(&2));
         assert_eq!(
             card.insight_summary.by_kind.get("orphan_function"),
             Some(&1)
@@ -17005,7 +17027,7 @@ mod tests {
                 filters: WorkflowFilters {
                     edge_kind: Some("may_error".to_string()),
                     confidence: Some("heuristic".to_string()),
-                    risk_severity: Some("warning".to_string()),
+                    risk_severity: Some("info".to_string()),
                     ..WorkflowFilters::default()
                 },
                 compact: false,
@@ -17020,7 +17042,7 @@ mod tests {
                 && block
                     .risk_refs
                     .iter()
-                    .any(|risk| risk.severity == InsightSeverity::Warning)
+                    .any(|risk| risk.severity == InsightSeverity::Info)
         }));
         assert!(risky_errors.transitions.iter().all(|transition| {
             transition.edge.kind == EdgeKind::MayError
@@ -17028,7 +17050,7 @@ mod tests {
                 && transition
                     .risk_refs
                     .iter()
-                    .any(|risk| risk.severity == InsightSeverity::Warning)
+                    .any(|risk| risk.severity == InsightSeverity::Info)
         }));
     }
 
@@ -20331,7 +20353,8 @@ mod tests {
             .find(|insight| insight.kind == "ambiguous_call_resolution")
             .expect("expected ambiguous call insight");
 
-        assert_eq!(ambiguous.severity, InsightSeverity::Warning);
+        // Syntactic-only fixture: heuristic findings read as info.
+        assert_eq!(ambiguous.severity, InsightSeverity::Info);
         assert!(ambiguous.message.contains("main"));
         assert!(ambiguous.message.contains("parse"));
         assert!(ambiguous.nodes.contains(&caller));
@@ -21816,7 +21839,8 @@ mod tests {
             .find(|insight| insight.kind == "unreachable_error_flow")
             .expect("expected unreachable error flow insight");
 
-        assert_eq!(insight.severity, InsightSeverity::Warning);
+        // Error-flow facts are informational context.
+        assert_eq!(insight.severity, InsightSeverity::Info);
         assert_eq!(insight.nodes, vec![legacy_worker, legacy_error]);
         assert!(insight.message.contains("legacy_worker"));
         assert!(insight.message.contains("LegacyError"));

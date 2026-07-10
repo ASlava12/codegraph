@@ -191,6 +191,7 @@ Goal: answer practical code investigation questions.
 - [x] Add insight severity and kind breakdowns for triage.
 - [x] Calibrate `unresolved_call` insight severity for syntactic-only scans and deduplicate findings by call label (audit F3: 26.9k warnings grade this repository critical).
 - [x] Give branch/loop/async/return/error-flow facts a dedicated node kind or surface `item_kind` in kind facets instead of `unknown` (audit F4).
+- [ ] Dampen fixture-driven warnings (SQL table references, unresolved local imports) for facts extracted from test-convention files, mirroring the benchmark-oracle exclusions (Phase 9 dogfooding: 88 of 104 remaining warnings on this repository come from test fixtures).
 - [x] Make web insight severity breakdown chips clickable triage filters.
 - [x] Add web insight JSON export for filtered findings and triage handoff.
 - [x] Add CI/agent check command, API, and web quality gate for insight severity thresholds.
@@ -602,7 +603,7 @@ Audit and completion:
 - [x] Audit every checked roadmap item end-to-end across CLI, API, and web; file each found gap as a new unchecked item in its phase (see `docs/FEATURE_AUDIT.md`).
 - [x] Sweep all phases for remaining unchecked items and finish, re-scope, or explicitly drop each one with a recorded reason (dispositions in `docs/ROADMAP_TRIAGE.md`: 3 dropped, 2 re-scoped, 27 kept and scheduled).
 - [x] Verify CLI/API/web feature parity: every analysis available in one surface is reachable from the other two or documented as intentionally surface-specific (matrix and intentional gaps in `docs/SURFACE_PARITY.md`).
-- [ ] Dogfood CodeGraph on itself: run reports, insights, unreachable/journey queries against this repository and fix what the output makes hard to understand.
+- [x] Dogfood CodeGraph on itself: run reports, insights, unreachable/journey queries against this repository and fix what the output makes hard to understand (session and fixes recorded in `docs/FEATURE_AUDIT.md`; fixture-noise dampening filed above).
 
 Usability polish:
 
