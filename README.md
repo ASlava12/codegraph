@@ -241,6 +241,7 @@ Implemented now:
 - Incremental merge previews that use the persistent impact index to replace cached file scopes with changed-file rescans for fast review before a full scan.
 - Watch mode (`codegraph watch`) polls the project fingerprint and refreshes the graph cache automatically on changes, streaming NDJSON refresh events and falling back to a storing full rescan when a partial merge is not surface-stable.
 - Git hooks (`codegraph install-hooks`) refresh the graph cache after every commit and checkout through idempotent marker-delimited hook blocks, with optional export regeneration configured under `[hooks]` in `.codegraph/config.toml`.
+- Global graph registry (`codegraph registry-add`/`registry-list`/`registry-remove`/`registry-query`) runs one query or path expression across several registered local repositories with per-project results and inline per-repository errors.
 - API schema enum values document cache status, reuse strategy, incremental actions, and merge blocker kinds for agent-safe incremental workflows.
 - Web incremental cache diagnostics show localized completeness blockers and safe-update reasons.
 - Scan coverage reports in CLI, API, and web overview for indexed files, policy skips, large-file skips, and non-indexed files.
@@ -683,6 +684,19 @@ export_dir = ".codegraph/exports"  # default
 ```
 
 `install-hooks` writes marker-delimited blocks into `.git/hooks/post-commit` and `.git/hooks/post-checkout` (following `gitdir:` redirects for linked worktrees). Existing hook scripts are preserved — the codegraph block is appended or replaced in place, and reruns are idempotent. Each hook runs `codegraph hook-run <kind> .`, which performs the same safe incremental refresh as watch mode (with the full-rescan fallback) and regenerates any exports configured under `[hooks]`, appending one JSON result line per run to `.codegraph/hooks.log` so commits stay quiet. The hooks are no-ops when the `codegraph` binary is not on `PATH`.
+
+Query several local repositories as one set through the global registry:
+
+```bash
+cargo run -p codegraph-cli -- registry-add ~/work/backend --name backend
+cargo run -p codegraph-cli -- registry-add ~/work/frontend
+cargo run -p codegraph-cli -- registry-list
+cargo run -p codegraph-cli -- registry-query 'configs target:DATABASE_URL'
+cargo run -p codegraph-cli -- registry-query 'path from:main to:load_config' --project backend
+cargo run -p codegraph-cli -- registry-remove frontend
+```
+
+The registry is a machine-managed JSON file (default `<cache-dir>/registry.json`, override with `--registry-path`) mapping short project names to canonical repository roots. `registry-query` runs one query expression — any slice the query language supports, including `path from:.. to:..` — against every registered repository (or the `--project` subset) through the shared persistent cache, and returns per-project results with `succeeded`/`failed` counters. A repository that fails to scan reports its error inline instead of failing the whole run, unknown `--project` names fail loudly with the list of known projects, and re-adding the same root under the same name is a no-op.
 
 Save investigation outcomes as repository memory and reuse them between sessions:
 

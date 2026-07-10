@@ -3,6 +3,7 @@ mod install;
 mod mcp;
 mod memory;
 mod query_log;
+mod registry;
 mod watch;
 
 use anyhow::Result;
@@ -155,6 +156,59 @@ enum Command {
 
     /// Update the persistent graph cache when the incremental result is complete.
     IncrementalUpdate(CacheDiffArgs),
+
+    /// Register a repository in the global graph registry.
+    RegistryAdd {
+        /// Repository root to register.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Short project name; defaults to the directory name.
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Registry file override; defaults to <cache-dir>/registry.json.
+        #[arg(long)]
+        registry_path: Option<PathBuf>,
+    },
+
+    /// List repositories in the global graph registry.
+    RegistryList {
+        /// Registry file override; defaults to <cache-dir>/registry.json.
+        #[arg(long)]
+        registry_path: Option<PathBuf>,
+    },
+
+    /// Remove a repository from the global graph registry by name.
+    RegistryRemove {
+        /// Registered project name to remove.
+        name: String,
+
+        /// Registry file override; defaults to <cache-dir>/registry.json.
+        #[arg(long)]
+        registry_path: Option<PathBuf>,
+    },
+
+    /// Run one graph query expression across all (or selected) registered repositories.
+    RegistryQuery {
+        /// Query expression, for example: nodes kind:function or path from:main to:load_config.
+        expression: String,
+
+        /// Restrict the run to these registered project names (repeatable).
+        #[arg(long = "project")]
+        projects: Vec<String>,
+
+        /// Collapse repeated low-signal nodes in each query result.
+        #[arg(long)]
+        compact: bool,
+
+        /// Registry file override; defaults to <cache-dir>/registry.json.
+        #[arg(long)]
+        registry_path: Option<PathBuf>,
+
+        #[command(flatten)]
+        cache: CacheArgs,
+    },
 
     /// Install git post-commit/post-checkout hooks that refresh the graph cache automatically.
     InstallHooks {
@@ -1673,6 +1727,48 @@ fn main() -> Result<()> {
             let cache = GraphCache::new(args.cache_dir.unwrap_or_else(default_cache_dir));
             let update = cache.incremental_update(&args.path, &options, args.limit)?;
             println!("{}", serde_json::to_string_pretty(&update)?);
+        }
+        Command::RegistryAdd {
+            path,
+            name,
+            registry_path,
+        } => {
+            let registry_path = registry_path.unwrap_or_else(registry::default_registry_path);
+            let project = registry::add(&registry_path, &path, name)?;
+            println!("{}", serde_json::to_string_pretty(&project)?);
+        }
+        Command::RegistryList { registry_path } => {
+            let registry_path = registry_path.unwrap_or_else(registry::default_registry_path);
+            let report = registry::list(&registry_path)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::RegistryRemove {
+            name,
+            registry_path,
+        } => {
+            let registry_path = registry_path.unwrap_or_else(registry::default_registry_path);
+            let removed = registry::remove(&registry_path, &name)?;
+            println!("{}", serde_json::to_string_pretty(&removed)?);
+        }
+        Command::RegistryQuery {
+            expression,
+            projects,
+            compact,
+            registry_path,
+            cache,
+        } => {
+            let registry_path = registry_path.unwrap_or_else(registry::default_registry_path);
+            let graph_cache = (!cache.no_cache).then(|| {
+                GraphCache::new(cache.cache_dir.clone().unwrap_or_else(default_cache_dir))
+            });
+            let report = registry::run_query(
+                &registry_path,
+                graph_cache.as_ref(),
+                &expression,
+                &projects,
+                compact,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::InstallHooks { path } => {
             let report = hooks::install_hooks(&path)?;

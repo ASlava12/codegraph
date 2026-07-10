@@ -515,7 +515,7 @@ Update and team workflows:
 
 - [x] Add git hooks for post-commit/post-checkout incremental refresh, cache invalidation, and optional graph export regeneration.
 - [x] Add watch mode for automatic local graph refresh while editing.
-- [ ] Add global graph registry for multiple local repositories with cross-project path/query support.
+- [x] Add global graph registry for multiple local repositories with cross-project path/query support.
 - [ ] Add graph merge commands for combining project, docs, incident, and external-system graphs.
 - [ ] Add a conflict-safe merge strategy for committed graph artifacts.
 
