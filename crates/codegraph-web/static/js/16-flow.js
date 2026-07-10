@@ -203,6 +203,22 @@ function drawFlow() {
     const shortLabel = label.length > 30 ? `${label.slice(0, 29)}…` : label;
     flowCtx.fillText(shortLabel, position.x + 14, position.y + 40, FLOW_BLOCK_WIDTH - 28);
 
+    // Step badge (depth) so the left-to-right execution order reads clearly.
+    const step = Number(block.depth || 0);
+    const badgeX = position.x + FLOW_BLOCK_WIDTH - 15;
+    const badgeY = position.y + FLOW_BLOCK_HEIGHT - 13;
+    flowCtx.beginPath();
+    flowCtx.arc(badgeX, badgeY, 9, 0, Math.PI * 2);
+    flowCtx.fillStyle = "rgba(122, 162, 247, 0.2)";
+    flowCtx.fill();
+    flowCtx.fillStyle = "rgba(178, 201, 255, 0.95)";
+    flowCtx.font = "600 10px 'JetBrains Mono', ui-monospace, monospace";
+    flowCtx.textAlign = "center";
+    flowCtx.textBaseline = "middle";
+    flowCtx.fillText(String(step), badgeX, badgeY + 0.5);
+    flowCtx.textAlign = "left";
+    flowCtx.textBaseline = "alphabetic";
+
     const risks = Array.isArray(block.risk_refs) ? block.risk_refs : [];
     if (risks.length > 0) {
       const severity = risks.some((risk) => risk.severity === "error")
@@ -287,7 +303,7 @@ function renderFlowHud() {
   flowHud.textContent = `${title}${t("workflow.blockCount", { count: formatNumber(blocks) })} · ${t(
     "workflow.transitionCount",
     { count: formatNumber(transitions) },
-  )} · ${zoom}%`;
+  )} · ${zoom}% · ${t("flow.blockHint")}`;
 }
 
 function selectFlowBlock(block) {
@@ -295,7 +311,15 @@ function selectFlowBlock(block) {
   state.flow.selectedTransitionId = null;
   drawFlow();
   const nodeId = block?.node?.id;
-  if (nodeId != null) selectNodeById(nodeId);
+  if (nodeId != null) {
+    selectNodeById(nodeId);
+    // The node card with its source preview renders in the sidebar Selection
+    // panel, far below the flow stage — scroll it into view so a block click
+    // is a real drill-down into the implementation.
+    document
+      .querySelector(".selection")
+      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 }
 
 function onFlowPointerDown(event) {

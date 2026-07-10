@@ -393,6 +393,10 @@ const FLOW_BLOCK_WIDTH = 224;
 const FLOW_BLOCK_HEIGHT = 58;
 const FLOW_COLUMN_GAP = 120;
 const FLOW_ROW_GAP = 26;
+// Wrap a layer taller than this into side-by-side sub-columns so a wide
+// fan-out reads as a compact grid instead of one tall vertical wall.
+const FLOW_MAX_COLUMN_ROWS = 8;
+const FLOW_SUBCOLUMN_GAP = 34;
 const flowKindColors = {
   start: "#5cc8a7",
   call: "#7aa2f7",
@@ -508,18 +512,30 @@ function layoutFlow() {
     columns.get(depth).push(block);
   });
   const depths = [...columns.keys()].sort((left, right) => left - right);
-  const maxRows = Math.max(1, ...depths.map((depth) => columns.get(depth).length));
-  const totalHeight = maxRows * (FLOW_BLOCK_HEIGHT + FLOW_ROW_GAP);
-  depths.forEach((depth, columnIndex) => {
+  const rowStep = FLOW_BLOCK_HEIGHT + FLOW_ROW_GAP;
+  const columnStep = FLOW_BLOCK_WIDTH + FLOW_SUBCOLUMN_GAP;
+  // Depth flows left to right (horizontal); blocks in the same depth stack in
+  // rows, wrapping into sub-columns once a layer exceeds the row cap.
+  const rowsPerColumn = Math.min(
+    FLOW_MAX_COLUMN_ROWS,
+    Math.max(1, ...depths.map((depth) => columns.get(depth).length)),
+  );
+  const totalHeight = rowsPerColumn * rowStep;
+  let x = 0;
+  depths.forEach((depth) => {
     const blocks = columns.get(depth);
-    const columnHeight = blocks.length * (FLOW_BLOCK_HEIGHT + FLOW_ROW_GAP);
-    const startY = (totalHeight - columnHeight) / 2;
-    blocks.forEach((block, rowIndex) => {
+    const subColumns = Math.max(1, Math.ceil(blocks.length / rowsPerColumn));
+    const rows = Math.min(rowsPerColumn, blocks.length);
+    const startY = (totalHeight - rows * rowStep) / 2;
+    blocks.forEach((block, index) => {
+      const sub = Math.floor(index / rowsPerColumn);
+      const row = index % rowsPerColumn;
       positions.set(block.id, {
-        x: columnIndex * (FLOW_BLOCK_WIDTH + FLOW_COLUMN_GAP),
-        y: startY + rowIndex * (FLOW_BLOCK_HEIGHT + FLOW_ROW_GAP),
+        x: x + sub * columnStep,
+        y: startY + row * rowStep,
       });
     });
+    x += subColumns * columnStep - FLOW_SUBCOLUMN_GAP + FLOW_COLUMN_GAP;
   });
   state.flow.positions = positions;
 }
