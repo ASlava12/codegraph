@@ -130,7 +130,7 @@ Audit follow-ups (concrete completion work from `FEATURE_AUDIT.md`, one commit e
 - [x] Bound the report `quality_gate` payload to counts, severity breakdowns, and a capped finding sample (F1).
 - [x] Deduplicate unresolved-call placeholder nodes by label and classify language builtins separately from external dependencies (F2).
 - [x] Calibrate `unresolved_call` insight severity for syntactic-only scans and deduplicate findings by call label (F3).
-- [ ] Give control-flow facts a dedicated node kind or surface `item_kind` in kind facets instead of `unknown` (F4).
+- [x] Give control-flow facts a dedicated node kind or surface `item_kind` in kind facets instead of `unknown` (F4).
 - [ ] Route environment/config questions in `ask` to the config trace rule (F13).
 - [ ] Add MCP tools for `refactor_context`, `ask`, `source_search`, and memory save/list/reflect (F7).
 - [ ] Expose the PR impact dashboard through the API and web UI (F6).

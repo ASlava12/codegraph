@@ -26,6 +26,8 @@ pub enum NodeKind {
     Config,
     Environment,
     ExternalDependency,
+    /// Branch/loop/async/return/error-flow source facts.
+    ControlFlow,
     Unknown,
 }
 

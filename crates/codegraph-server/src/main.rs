@@ -3940,6 +3940,7 @@ fn api_schema_response() -> ApiSchemaResponse {
                     "config",
                     "environment",
                     "external_dependency",
+                    "control_flow",
                     "unknown",
                 ],
             ),

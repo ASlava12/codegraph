@@ -1420,7 +1420,7 @@ fn index_file(context: &mut IndexContext, path: &Path, label: &str, options: &In
                         | ParsedItemKind::Branch
                         | ParsedItemKind::Loop
                         | ParsedItemKind::Async
-                        | ParsedItemKind::Return => NodeKind::Unknown,
+                        | ParsedItemKind::Return => NodeKind::ControlFlow,
                         _ => unreachable!("only effect facts are processed here"),
                     };
                     let edge_kind = match item.kind {
@@ -4236,6 +4236,7 @@ fn node_kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Config => "config",
         NodeKind::Environment => "environment",
         NodeKind::ExternalDependency => "external_dependency",
+        NodeKind::ControlFlow => "control_flow",
         NodeKind::Unknown => "unknown",
     }
 }
@@ -15596,7 +15597,7 @@ CREATE TABLE users (
                     .nodes
                     .iter()
                     .find(|node| {
-                        node.kind == NodeKind::Unknown
+                        node.kind == NodeKind::ControlFlow
                             && node.label == label
                             && node.metadata.get("language").map(String::as_str) == Some(language)
                     })

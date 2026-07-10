@@ -1540,6 +1540,7 @@ const colors = {
   external_dependency: "#b88ee6",
   config: "#e5b454",
   environment: "#d8a657",
+  control_flow: "#9aa7d8",
   unknown: "#a5adb3",
 };
 

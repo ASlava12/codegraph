@@ -2434,6 +2434,7 @@ fn node_rank(kind: &NodeKind) -> usize {
         NodeKind::ExternalDependency => 7,
         NodeKind::Directory => 8,
         NodeKind::Repository => 9,
+        NodeKind::ControlFlow => 10,
         NodeKind::Unknown => 10,
     }
 }
@@ -6198,7 +6199,11 @@ fn query_compaction_low_signal_node(node: &Node) -> bool {
     }
     matches!(
         node.kind,
-        NodeKind::Function | NodeKind::Module | NodeKind::Unknown | NodeKind::ExternalDependency
+        NodeKind::Function
+            | NodeKind::Module
+            | NodeKind::Unknown
+            | NodeKind::ControlFlow
+            | NodeKind::ExternalDependency
     )
 }
 
@@ -15217,6 +15222,7 @@ fn dot_color(kind: &NodeKind) -> &'static str {
         NodeKind::Config => "#e5b454",
         NodeKind::Environment => "#d8a657",
         NodeKind::ExternalDependency => "#b88ee6",
+        NodeKind::ControlFlow => "#9aa7d8",
         NodeKind::Unknown => "#a5adb3",
     }
 }
