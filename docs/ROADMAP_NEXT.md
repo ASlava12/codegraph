@@ -161,7 +161,7 @@ Exit criteria:
 Goal: ROADMAP Phase 10 — pay down structural debt behind green tests.
 
 - [ ] Split monolithic files into focused modules: `codegraph-analysis/src/lib.rs`, `codegraph-indexer/src/lib.rs`, `codegraph-parser/src/lib.rs`, `codegraph-server/src/main.rs`, `codegraph-web/static/app.js`.
-- [ ] Fix all clippy warnings on current stable and keep `-D warnings` green in CI without allow-listing.
+- [x] Fix all clippy warnings on current stable and keep `-D warnings` green in CI without allow-listing (31 warnings fixed; CI clippy job green with zero allow attributes; GitHub Actions step indexers now take a bundled scope struct instead of eight parameters).
 - [ ] Extract shared report/filter/paging helpers and request structs to remove CLI/API/web duplication and long parameter lists.
 - [ ] Add module-level docs and tighten crate public APIs to intended surfaces.
 - [ ] Add regression fixtures first wherever a planned refactor lacks coverage, then land the refactor behind green workspace tests.

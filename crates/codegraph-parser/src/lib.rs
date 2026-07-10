@@ -1510,7 +1510,7 @@ mod tests {
                             ParsedItemKind::Branch | ParsedItemKind::Loop | ParsedItemKind::Async
                         ) && item.label == expected_label
                             && item.parent.as_deref() == Some(parent)
-                            && item.metadata.get("control_kind").is_some()
+                            && item.metadata.contains_key("control_kind")
                     }),
                     "missing {expected_label} in {path}: {:#?}",
                     parsed.items

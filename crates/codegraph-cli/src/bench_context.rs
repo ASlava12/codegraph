@@ -135,10 +135,10 @@ fn oracle_text(file: &CorpusFile) -> Option<&str> {
         return None;
     }
     let text = file.text.as_deref()?;
-    if file.path.ends_with(".rs") {
-        if let Some(index) = text.find("#[cfg(test)]") {
-            return Some(&text[..index]);
-        }
+    if file.path.ends_with(".rs")
+        && let Some(index) = text.find("#[cfg(test)]")
+    {
+        return Some(&text[..index]);
     }
     Some(text)
 }

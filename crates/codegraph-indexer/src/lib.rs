@@ -5488,6 +5488,14 @@ fn index_github_actions_workflow_entrypoints(
     }
 }
 
+/// One workflow/job/step position inside a GitHub Actions file, bundled so
+/// step indexers take one scope instead of three parallel parameters.
+struct GithubActionsStepScope<'a> {
+    workflow: &'a GithubActionsWorkflow,
+    job: &'a GithubActionsJob,
+    step: &'a GithubActionsStep,
+}
+
 fn index_github_actions_step(
     context: &mut IndexContext,
     job_id: NodeId,
@@ -5497,11 +5505,16 @@ fn index_github_actions_step(
     job: &GithubActionsJob,
     step: &GithubActionsStep,
 ) {
+    let scope = GithubActionsStepScope {
+        workflow,
+        job,
+        step,
+    };
     if let Some(action) = step.uses.as_deref() {
-        index_github_actions_uses_step(context, job_id, label, source, workflow, job, step, action);
+        index_github_actions_uses_step(context, job_id, label, source, &scope, action);
     }
     if let Some(command) = step.run.as_deref() {
-        index_github_actions_run_step(context, job_id, label, source, workflow, job, step, command);
+        index_github_actions_run_step(context, job_id, label, source, &scope, command);
     }
 }
 
@@ -5510,11 +5523,14 @@ fn index_github_actions_uses_step(
     job_id: NodeId,
     label: &str,
     source: &str,
-    workflow: &GithubActionsWorkflow,
-    job: &GithubActionsJob,
-    step: &GithubActionsStep,
+    scope: &GithubActionsStepScope<'_>,
     action: &str,
 ) {
+    let GithubActionsStepScope {
+        workflow,
+        job,
+        step,
+    } = scope;
     if let Some(local_path) = github_actions_local_action_path(action) {
         let mut metadata = BTreeMap::new();
         metadata.insert(
@@ -5557,11 +5573,14 @@ fn index_github_actions_run_step(
     job_id: NodeId,
     label: &str,
     source: &str,
-    workflow: &GithubActionsWorkflow,
-    job: &GithubActionsJob,
-    step: &GithubActionsStep,
+    scope: &GithubActionsStepScope<'_>,
     command: &str,
 ) {
+    let GithubActionsStepScope {
+        workflow,
+        job,
+        step,
+    } = scope;
     let mut metadata = BTreeMap::new();
     metadata.insert(
         "item_kind".to_string(),
@@ -6964,10 +6983,10 @@ fn github_actions_workflow(label: &str, source: &str) -> GithubActionsWorkflow {
             "needs" => {
                 if let Some(value) = trimmed.strip_prefix("- ") {
                     let dependency = yaml_clean_scalar(value);
-                    if !dependency.is_empty() {
-                        if let Some(job) = active_job.as_mut() {
-                            job.needs.push(dependency);
-                        }
+                    if !dependency.is_empty()
+                        && let Some(job) = active_job.as_mut()
+                    {
+                        job.needs.push(dependency);
                     }
                 }
             }
@@ -7028,10 +7047,10 @@ fn flush_github_actions_step(
     let Some((step, _)) = active_step.take() else {
         return;
     };
-    if step.uses.is_some() || step.run.is_some() {
-        if let Some(job) = active_job.as_mut() {
-            job.steps.push(step);
-        }
+    if (step.uses.is_some() || step.run.is_some())
+        && let Some(job) = active_job.as_mut()
+    {
+        job.steps.push(step);
     }
 }
 
@@ -7473,7 +7492,7 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
             } else if let Some(value) = yaml_key_value(trimmed, "environment") {
                 service
                     .environment
-                    .extend(compose_inline_environment(&value, index as u32 + 1).into_iter());
+                    .extend(compose_inline_environment(&value, index as u32 + 1));
             } else if yaml_key(trimmed).is_some_and(|key| key == "environment") {
                 active_section = Some(("environment".to_string(), indent));
             } else if let Some(value) = yaml_key_value(trimmed, "env_file") {
@@ -7561,10 +7580,10 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
                     } else if let Some((key, value)) = yaml_key_pair(value) {
                         active_port = Some(compose_long_port(key, value, index as u32 + 1));
                     }
-                } else if let Some((key, value)) = yaml_key_pair(trimmed) {
-                    if let Some(port) = active_port.as_mut() {
-                        apply_compose_port_field(port, key, value);
-                    }
+                } else if let Some((key, value)) = yaml_key_pair(trimmed)
+                    && let Some(port) = active_port.as_mut()
+                {
+                    apply_compose_port_field(port, key, value);
                 }
             }
             "volumes" => {
@@ -7575,10 +7594,10 @@ fn compose_services(source: &str) -> Vec<ComposeService> {
                     } else if let Some((key, value)) = yaml_key_pair(value) {
                         active_volume = Some(compose_long_volume(key, value, index as u32 + 1));
                     }
-                } else if let Some((key, value)) = yaml_key_pair(trimmed) {
-                    if let Some(volume) = active_volume.as_mut() {
-                        apply_compose_volume_field(volume, key, value);
-                    }
+                } else if let Some((key, value)) = yaml_key_pair(trimmed)
+                    && let Some(volume) = active_volume.as_mut()
+                {
+                    apply_compose_volume_field(volume, key, value);
                 }
             }
             _ => {}
@@ -8061,7 +8080,7 @@ fn makefile_targets(source: &str) -> Vec<MakefileTarget> {
             lines[index + 1..]
                 .iter()
                 .take_while(|line| makefile_recipe_or_blank_line(line))
-                .find_map(|line| makefile_recipe_command(line))
+                .find_map(makefile_recipe_command)
         });
 
         for name in target_names {
@@ -10442,7 +10461,7 @@ fn setup_py_keyword_value(source: &str, key: &str) -> Option<String> {
             continue;
         }
         let mut cursor = skip_ascii_whitespace(source, key_end);
-        if source[cursor..].chars().next() != Some('=') {
+        if !source[cursor..].starts_with('=') {
             search_start = key_end;
             continue;
         }
@@ -10609,7 +10628,7 @@ fn python_dict_list_values_for_key(source: &str, wanted_key: &str) -> Vec<String
             continue;
         };
         let mut after_key = skip_ascii_whitespace(source, key.end);
-        if source[after_key..].chars().next() != Some(':') {
+        if !source[after_key..].starts_with(':') {
             cursor = key.end;
             continue;
         }
@@ -10836,7 +10855,7 @@ fn dart_package_roots(
             packages.push(extra);
         }
     }
-    packages.sort_by(|left, right| right.name.len().cmp(&left.name.len()));
+    packages.sort_by_key(|package| std::cmp::Reverse(package.name.len()));
     packages
 }
 
@@ -10905,9 +10924,7 @@ fn resolve_dart_root_uri(config_dir: &str, root_uri: &str) -> Option<Option<Stri
         match part {
             "" | "." => {}
             ".." => {
-                if parts.pop().is_none() {
-                    return None;
-                }
+                parts.pop()?;
             }
             value => parts.push(value),
         }

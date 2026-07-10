@@ -2743,7 +2743,7 @@ pub fn bounded_quality_gate(mut check: CheckReport, sample_limit: usize) -> Chec
     check
         .report
         .insights
-        .sort_by(|a, b| b.severity.cmp(&a.severity));
+        .sort_by_key(|insight| std::cmp::Reverse(insight.severity));
     check.report.insights.truncate(sample_limit.max(1));
     check
 }
@@ -3371,11 +3371,7 @@ fn project_report_suggested_questions(report: &ProjectReport) -> Vec<String> {
 }
 
 fn markdown_text(value: &str) -> String {
-    value
-        .replace('\n', " ")
-        .replace('\r', " ")
-        .trim()
-        .to_string()
+    value.replace(['\n', '\r'], " ").trim().to_string()
 }
 
 fn markdown_table_cell(value: &str) -> String {
@@ -4669,7 +4665,7 @@ pub fn impact_with_insights(
         if node.kind == NodeKind::Repository {
             continue;
         }
-        let risk_refs = workflow_risk_refs_for_node(&insight_report, *node_id);
+        let risk_refs = workflow_risk_refs_for_node(insight_report, *node_id);
         for risk in &risk_refs {
             *severity_counts
                 .entry(severity_name(risk.severity).to_string())
@@ -4998,8 +4994,7 @@ fn workflow_with_insight_report(
     while let Some((node_id, depth)) = queue.pop_front() {
         if depth >= max_depth {
             if trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
-                .filter(|(_, edge)| workflow_edge_filter_matches(edge, &filters))
-                .next()
+                .find(|(_, edge)| workflow_edge_filter_matches(edge, &filters))
                 .is_some()
             {
                 truncated = true;
@@ -6173,8 +6168,7 @@ fn natural_query_candidates(question: &str) -> Vec<String> {
                 })
             })
             .filter(|token| token.chars().count() >= 3)
-            .filter(|token| !natural_query_stop_word(&token.to_lowercase()))
-            .last()
+            .rfind(|token| !natural_query_stop_word(&token.to_lowercase()))
     {
         candidates.push(token.to_string());
     }
@@ -9650,8 +9644,8 @@ fn document_relevant_edge(graph: &CodeGraph, edge: &Edge) -> bool {
         .iter()
         .find(|node| node.id == edge.target)
         .is_some_and(is_document_query_node);
-    (edge.kind == EdgeKind::Contains && (source_is_doc || target_is_doc))
-        || (edge.kind == EdgeKind::References && (source_is_doc || target_is_doc))
+    matches!(edge.kind, EdgeKind::Contains | EdgeKind::References)
+        && (source_is_doc || target_is_doc)
 }
 
 fn document_edges_search(graph: &CodeGraph, node_id: NodeId, expected: &str) -> bool {
@@ -15160,8 +15154,7 @@ fn mermaid_escape(value: &str) -> String {
     value
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
-        .replace('\n', " ")
-        .replace('|', " ")
+        .replace(['\n', '|'], " ")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16904,7 +16897,7 @@ mod tests {
         assert!(report.transitions.iter().any(|transition| {
             transition.source_node_id == load_config
                 && transition.target_node_id == error
-                && transition.edge.metadata.get("edge_index").is_some()
+                && transition.edge.metadata.contains_key("edge_index")
                 && transition
                     .risk_refs
                     .iter()
@@ -17854,7 +17847,7 @@ mod tests {
                 .iter()
                 .any(|dependent| dependent.node.id == unrelated)
         );
-        assert!(report.impact_score >= report.total_dependents + 5 + 1);
+        assert!(report.impact_score > report.total_dependents + 5);
         assert_eq!(report.dependents[0].distance, 1);
         assert_eq!(report.schema, IMPACT_SCHEMA);
         assert_eq!(

@@ -10492,7 +10492,7 @@ fn helper() {}
         assert!(focus_endpoint.parameters.iter().any(|parameter| {
             parameter.name == "compact"
                 && parameter.value_type == "bool"
-                && parameter.default.as_deref() == Some("false")
+                && parameter.default == Some("false")
         }));
         let semantic_plan_endpoint = schema
             .groups
@@ -10579,7 +10579,7 @@ fn helper() {}
         assert!(query_endpoint.parameters.iter().any(|parameter| {
             parameter.name == "compact"
                 && parameter.value_type == "bool"
-                && parameter.default.as_deref() == Some("false")
+                && parameter.default == Some("false")
         }));
         assert!(
             query_endpoint
@@ -10620,7 +10620,7 @@ fn helper() {}
         assert!(ask_endpoint.parameters.iter().any(|parameter| {
             parameter.name == "compact"
                 && parameter.value_type == "bool"
-                && parameter.default.as_deref() == Some("false")
+                && parameter.default == Some("false")
         }));
         assert!(ask_endpoint.response_fields.iter().any(|field| {
             field.name == "generated_query" && field.value_type == "string" && field.required
@@ -10885,7 +10885,7 @@ fn helper() {}
                 .any(|parameter| {
                     parameter.name == "compact"
                         && parameter.value_type == "bool"
-                        && parameter.default.as_deref() == Some("false")
+                        && parameter.default == Some("false")
                 })
         );
         assert!(
@@ -10935,7 +10935,7 @@ fn helper() {}
         assert!(workflow_endpoint.parameters.iter().any(|parameter| {
             parameter.name == "compact"
                 && parameter.value_type == "bool"
-                && parameter.default.as_deref() == Some("false")
+                && parameter.default == Some("false")
         }));
         assert!(
             workflow_endpoint
@@ -10975,7 +10975,7 @@ fn helper() {}
         assert!(workflow_query_endpoint.parameters.iter().any(|parameter| {
             parameter.name == "compact"
                 && parameter.value_type == "bool"
-                && parameter.default.as_deref() == Some("false")
+                && parameter.default == Some("false")
         }));
         assert!(
             workflow_query_endpoint.response_fields.iter().any(|field| {
@@ -11000,12 +11000,18 @@ fn helper() {}
                 .iter()
                 .any(|parameter| parameter.name == "to" && parameter.required)
         );
-        assert!(journey_endpoint.parameters.iter().any(|parameter| {
-            parameter.name == "depth" && parameter.default.as_deref() == Some("8")
-        }));
-        assert!(journey_endpoint.parameters.iter().any(|parameter| {
-            parameter.name == "paths" && parameter.default.as_deref() == Some("3")
-        }));
+        assert!(
+            journey_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| { parameter.name == "depth" && parameter.default == Some("8") })
+        );
+        assert!(
+            journey_endpoint
+                .parameters
+                .iter()
+                .any(|parameter| { parameter.name == "paths" && parameter.default == Some("3") })
+        );
         assert!(
             journey_endpoint
                 .response_fields
