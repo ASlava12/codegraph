@@ -479,6 +479,26 @@
           <div id="cacheDiffResult" class="query-result"></div>
         </section>
 
+        <section class="pr-impact" aria-label="PR impact" data-i18n-aria-label="aria.prImpact">
+          <header>
+            <h2 data-i18n="section.prImpact">PR Impact</h2>
+            <span id="prImpactStatus">idle</span>
+          </header>
+          <div class="pr-impact-fields">
+            <label class="field compact">
+              <span data-i18n="prImpact.base">Base ref</span>
+              <input id="prImpactBaseInput" type="text" value="HEAD" />
+            </label>
+            <label class="field">
+              <span data-i18n="prImpact.files">Changed files (optional, comma-separated)</span>
+              <input id="prImpactFilesInput" type="text" placeholder="src/main.rs, src/util.rs" />
+            </label>
+          </div>
+          <button id="prImpactButton" type="button" data-i18n="button.prImpact">Run PR Impact</button>
+          <button id="prImpactDownloadButton" type="button" data-i18n="button.prImpactDownload" disabled>Download JSON</button>
+          <div id="prImpactResult" class="query-result"></div>
+        </section>
+
         <section class="graph-export" aria-label="Graph export" data-i18n-aria-label="aria.graphExport">
           <header>
             <h2 data-i18n="section.export">Export</h2>

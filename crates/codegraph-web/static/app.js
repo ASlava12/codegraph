@@ -166,6 +166,22 @@ const I18N = {
     "button.ask": "Ask",
     "button.searchSource": "Search Source",
     "button.explainCache": "Explain Cache",
+    "section.prImpact": "PR Impact",
+    "aria.prImpact": "PR impact dashboard",
+    "prImpact.base": "Base ref",
+    "prImpact.files": "Changed files (optional, comma-separated)",
+    "button.prImpact": "Run PR Impact",
+    "button.prImpactDownload": "Download JSON",
+    "prImpact.loading": "Mapping changed files onto the graph...",
+    "prImpact.empty": "No changed files matched the graph.",
+    "prImpact.changed": "Changed files",
+    "prImpact.matched": "In graph",
+    "prImpact.dependents": "Dependents",
+    "prImpact.entrypoints": "Entrypoints",
+    "prImpact.tests": "Tests",
+    "prImpact.riskScore": "Risk score",
+    "prImpact.communities": "Touched communities",
+    "prImpact.risks": "Risks in changed scope",
     "button.cacheChunks": "Cache Chunks",
     "button.planIncremental": "Plan Incremental",
     "button.scanIncremental": "Scan Changed",
@@ -835,6 +851,22 @@ const I18N = {
     "button.ask": "Спросить",
     "button.searchSource": "Искать в коде",
     "button.explainCache": "Объяснить кеш",
+    "section.prImpact": "Влияние PR",
+    "aria.prImpact": "Дашборд влияния PR",
+    "prImpact.base": "Базовый ref",
+    "prImpact.files": "Изменённые файлы (опционально, через запятую)",
+    "button.prImpact": "Оценить влияние PR",
+    "button.prImpactDownload": "Скачать JSON",
+    "prImpact.loading": "Сопоставляю изменённые файлы с графом...",
+    "prImpact.empty": "Изменённые файлы не найдены в графе.",
+    "prImpact.changed": "Изменённых файлов",
+    "prImpact.matched": "В графе",
+    "prImpact.dependents": "Зависимые",
+    "prImpact.entrypoints": "Точки входа",
+    "prImpact.tests": "Тесты",
+    "prImpact.riskScore": "Оценка риска",
+    "prImpact.communities": "Затронутые области",
+    "prImpact.risks": "Риски в зоне изменений",
     "button.cacheChunks": "Фрагменты кеша",
     "button.planIncremental": "План инкремента",
     "button.scanIncremental": "Скан изменений",
@@ -1449,6 +1481,8 @@ const state = {
   queryRequest: 0,
   sourceSearchRequest: 0,
   cacheDiffRequest: 0,
+  prImpactRequest: 0,
+  prImpactReport: null,
   cacheChunksRequest: 0,
   incrementalPlanRequest: 0,
   incrementalScanRequest: 0,
@@ -1668,6 +1702,12 @@ const incrementalScanButton = document.querySelector("#incrementalScanButton");
 const incrementalMergeButton = document.querySelector("#incrementalMergeButton");
 const incrementalUpdateButton = document.querySelector("#incrementalUpdateButton");
 const cacheDiffResult = document.querySelector("#cacheDiffResult");
+const prImpactStatus = document.querySelector("#prImpactStatus");
+const prImpactBaseInput = document.querySelector("#prImpactBaseInput");
+const prImpactFilesInput = document.querySelector("#prImpactFilesInput");
+const prImpactButton = document.querySelector("#prImpactButton");
+const prImpactDownloadButton = document.querySelector("#prImpactDownloadButton");
+const prImpactResult = document.querySelector("#prImpactResult");
 const exportFormatInput = document.querySelector("#exportFormatInput");
 const exportButton = document.querySelector("#exportButton");
 const exportSliceButton = document.querySelector("#exportSliceButton");
@@ -1769,6 +1809,14 @@ for (const input of [sourceSearchInput, sourcePathFilterInput]) {
   });
 }
 cacheDiffButton.addEventListener("click", () => loadCacheDiff());
+prImpactButton.addEventListener("click", () => loadPrImpact());
+prImpactDownloadButton.addEventListener("click", () => {
+  if (!state.prImpactReport) return;
+  const blob = new Blob([JSON.stringify(state.prImpactReport, null, 2)], {
+    type: "application/json",
+  });
+  downloadBlob(blob, `${safeFilePart(selectionCardRoot())}-pr-impact.json`);
+});
 cacheChunksButton.addEventListener("click", () => loadCacheChunks());
 incrementalPlanButton.addEventListener("click", () => loadIncrementalPlan());
 incrementalScanButton.addEventListener("click", () => loadIncrementalScan());
@@ -5467,6 +5515,90 @@ function exportLastSourceSearchResult() {
       </div>
     `,
   );
+}
+
+async function loadPrImpact() {
+  state.prImpactRequest += 1;
+  const requestId = state.prImpactRequest;
+  prImpactButton.disabled = true;
+  prImpactDownloadButton.disabled = true;
+  state.prImpactReport = null;
+  prImpactStatus.textContent = t("status.loading");
+  prImpactResult.innerHTML = `<p class="empty">${escapeHtml(t("prImpact.loading"))}</p>`;
+
+  const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
+  const base = prImpactBaseInput.value.trim();
+  if (base) params.set("base", base);
+  const files = prImpactFilesInput.value.trim();
+  if (files) params.set("files", files);
+
+  try {
+    const response = await apiFetch(`/api/pr-impact?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.prImpactRequest) return;
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(body, response, "pr impact failed"));
+    }
+    state.prImpactReport = body;
+    prImpactStatus.textContent = `${t("prImpact.riskScore")}: ${formatCompactNumber(body.risk_score || 0)}`;
+    prImpactResult.innerHTML = renderPrImpact(body);
+    prImpactDownloadButton.disabled = false;
+  } catch (error) {
+    if (requestId !== state.prImpactRequest) return;
+    prImpactStatus.textContent = "error";
+    prImpactResult.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (requestId === state.prImpactRequest) {
+      prImpactButton.disabled = false;
+    }
+  }
+}
+
+function renderPrImpact(report) {
+  const summary = [
+    `${escapeHtml(t("prImpact.changed"))}: ${Number(report.total_changed_files || 0)}`,
+    `${escapeHtml(t("prImpact.matched"))}: ${Number(report.matched_files || 0)}`,
+    `${escapeHtml(t("prImpact.dependents"))}: ${Number(report.blast?.dependents || 0)}`,
+    `${escapeHtml(t("prImpact.entrypoints"))}: ${Number(report.blast?.affected_entrypoints || 0)}`,
+    `${escapeHtml(t("prImpact.tests"))}: ${Number(report.blast?.affected_tests || 0)}`,
+    `${escapeHtml(t("prImpact.riskScore"))}: ${Number(report.risk_score || 0)}`,
+  ];
+  const meta = [report.branch, report.base, report.ci_state, report.review_state]
+    .filter(Boolean)
+    .map((value) => escapeHtml(String(value)))
+    .join(" · ");
+  const parts = [];
+  if (meta) parts.push(`<p class="hint">${meta}</p>`);
+  parts.push(`<p>${summary.join(" · ")}</p>`);
+
+  const communities = Array.isArray(report.touched_communities)
+    ? report.touched_communities.slice(0, 6)
+    : [];
+  if (communities.length) {
+    const rows = communities
+      .map(
+        (community) =>
+          `<li><code>${escapeHtml(community.id || "")}</code> — ${Number(community.changed_files || 0)}</li>`,
+      )
+      .join("");
+    parts.push(
+      `<p>${escapeHtml(t("prImpact.communities"))}:</p><ul class="compact-list">${rows}</ul>`,
+    );
+  }
+
+  const risks = Array.isArray(report.risks) ? report.risks.slice(0, 10) : [];
+  if (risks.length) {
+    const rows = risks
+      .map(
+        (risk) =>
+          `<li><span class="severity-${escapeHtml(risk.severity || "info")}">${escapeHtml(risk.severity || "")}</span> <code>${escapeHtml(risk.kind || "")}</code> ${escapeHtml(risk.message || "")}</li>`,
+      )
+      .join("");
+    parts.push(`<p>${escapeHtml(t("prImpact.risks"))}:</p><ul class="compact-list">${rows}</ul>`);
+  } else if (!Number(report.matched_files || 0)) {
+    parts.push(`<p class="empty">${escapeHtml(t("prImpact.empty"))}</p>`);
+  }
+  return parts.join("");
 }
 
 async function loadCacheDiff() {

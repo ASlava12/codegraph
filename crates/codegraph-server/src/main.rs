@@ -8,6 +8,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
+use codegraph_analysis::pr_impact;
 use codegraph_analysis::{
     CheckReport, ComponentContractReport, ComponentContractRequest, ComponentDependencyReport,
     ComponentDependencyRequest, ConfigTraceRequest, ConfigTraceResult, DEFAULT_MERMAID_EDGE_LIMIT,
@@ -472,6 +473,16 @@ struct SeamQuery {
     path: Option<PathBuf>,
     limit: Option<usize>,
     edge_limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PrImpactQuery {
+    path: Option<PathBuf>,
+    base: Option<String>,
+    /// Comma-separated explicit changed files; skips git entirely.
+    files: Option<String>,
+    ci_state: Option<String>,
+    review_state: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1143,6 +1154,7 @@ async fn main() -> Result<()> {
         .route("/api/component-contract", get(component_contract_api))
         .route("/api/impact", get(impact_api))
         .route("/api/seams", get(seams_api))
+        .route("/api/pr-impact", get(pr_impact_api))
         .route("/api/refactor-context", get(refactor_context_api))
         .route("/api/dependents", get(dependents_api))
         .route("/api/trace-config", get(trace_config_api))
@@ -3039,6 +3051,53 @@ async fn seams_api(
         SeamRequest {
             limit: query.limit.unwrap_or(25).clamp(1, 100),
             edge_limit: query.edge_limit.unwrap_or(10).clamp(1, 50),
+        },
+    )))
+}
+
+async fn pr_impact_api(
+    State(state): State<AppState>,
+    Query(query): Query<PrImpactQuery>,
+) -> Result<Json<pr_impact::PrImpactReport>, ApiError> {
+    let root = resolve_scan_root(&state, query.path.as_deref())?;
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let explicit: Vec<String> = query
+        .files
+        .as_deref()
+        .map(|files| {
+            files
+                .split(',')
+                .map(str::trim)
+                .filter(|file| !file.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let (changed, base_used, branch) = {
+        let git_root = root.clone();
+        let base = query.base.clone();
+        tokio::task::spawn_blocking(move || {
+            let branch = pr_impact::git_current_branch(&git_root);
+            if explicit.is_empty() {
+                let base = base.unwrap_or_else(|| "HEAD".to_string());
+                pr_impact::git_changed_files(&git_root, &base)
+                    .map(|changed| (changed, Some(base), branch))
+            } else {
+                Ok((explicit, None, branch))
+            }
+        })
+        .await
+        .map_err(|error| ApiError::internal(format!("git task failed: {error}")))?
+        .map_err(|error| ApiError::bad_request(error.to_string()))?
+    };
+    Ok(Json(pr_impact::pr_impact(
+        &graph,
+        &changed,
+        pr_impact::PrImpactContext {
+            base: base_used,
+            branch,
+            ci_state: query.ci_state,
+            review_state: query.review_state,
         },
     )))
 }
@@ -5765,6 +5824,42 @@ fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "SeamReport",
                 )
                 .with_response_fields(seam_response_fields()),
+                api_get(
+                    "/api/pr-impact",
+                    "PR impact dashboard: map changed files onto graph communities, hotspots, blast radius, and risky findings, with optional CI/review context.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "base",
+                            false,
+                            "string",
+                            Some("HEAD"),
+                            "Git base ref diffed against the working tree for the changed-file list; ignored when `files` is set.",
+                        ),
+                        query_param(
+                            "files",
+                            false,
+                            "string",
+                            None,
+                            "Comma-separated explicit changed files; skips git entirely.",
+                        ),
+                        query_param(
+                            "ci_state",
+                            false,
+                            "string",
+                            None,
+                            "CI state stamped into the report, for example passing or failing.",
+                        ),
+                        query_param(
+                            "review_state",
+                            false,
+                            "string",
+                            None,
+                            "Review state stamped into the report, for example approved.",
+                        ),
+                    ],
+                    "PrImpactReport",
+                ),
                 api_get(
                     "/api/refactor-context",
                     "Emit a one-shot refactor context bundle: blast-radius impact, component dependencies, optional entrypoint journey, related risks, and a target source preview.",
@@ -8770,6 +8865,51 @@ fn ready() -> bool {
         .expect_err("unknown journey start should fail");
         assert_eq!(error.status, StatusCode::BAD_REQUEST);
         assert!(error.message.contains("journey start"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn pr_impact_api_maps_explicit_changed_files() {
+        let root = temp_server_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() {\n    helper();\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("util.rs"),
+            "// FIXME: helper still calls a missing function\npub fn helper() {\n    missing_helper();\n}\n",
+        )
+        .unwrap();
+        let state = test_state(root.clone(), vec![], true);
+
+        let response = pr_impact_api(
+            State(state.clone()),
+            Query(PrImpactQuery {
+                path: Some(root.clone()),
+                base: None,
+                files: Some("src/util.rs, docs/none.md".to_string()),
+                ci_state: Some("passing".to_string()),
+                review_state: None,
+            }),
+        )
+        .await
+        .expect("pr impact report");
+        let report = response.0;
+        assert_eq!(report.total_changed_files, 2);
+        assert_eq!(report.matched_files, 1);
+        assert_eq!(report.base, None, "explicit files skip git");
+        assert_eq!(report.ci_state.as_deref(), Some("passing"));
+        assert!(report.blast.dependents >= 1, "main depends on helper");
+        assert!(
+            report
+                .risks
+                .iter()
+                .any(|risk| risk.kind == "rationale_risk_comment"),
+            "FIXME in changed file must surface: {:?}",
+            report.risks
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

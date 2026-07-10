@@ -4,7 +4,7 @@ mod install;
 mod mcp;
 use codegraph_analysis::memory;
 mod merge;
-mod pr_impact;
+use codegraph_analysis::pr_impact;
 mod query_log;
 mod registry;
 mod watch;
@@ -1989,11 +1989,11 @@ fn main() -> Result<()> {
                 &cache,
             )?;
             let (changed, base_used) = if files.is_empty() {
-                (git_changed_files(&path, &base)?, Some(base))
+                (pr_impact::git_changed_files(&path, &base)?, Some(base))
             } else {
                 (files, None)
             };
-            let branch = git_current_branch(&path);
+            let branch = pr_impact::git_current_branch(&path);
             let report = pr_impact::pr_impact(
                 &graph,
                 &changed,
@@ -2921,41 +2921,6 @@ fn canonical_workspace_root(path: &Path) -> PathBuf {
 }
 
 /// Changed files from `git diff --name-only <base>` in the project root.
-fn git_changed_files(root: &Path, base: &str) -> Result<Vec<String>> {
-    let output = std::process::Command::new("git")
-        .arg("diff")
-        .arg("--name-only")
-        .arg(base)
-        .current_dir(root)
-        .output()
-        .map_err(|error| anyhow::anyhow!("failed to run git diff: {error}"))?;
-    if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "git diff --name-only {base} failed: {}; pass --file to list changes explicitly",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(ToString::to_string)
-        .collect())
-}
-
-fn git_current_branch(root: &Path) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(root)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!branch.is_empty()).then_some(branch)
-}
-
 /// Best-effort local query audit: never fails the command, only warns.
 fn log_cli_query(
     root: &Path,

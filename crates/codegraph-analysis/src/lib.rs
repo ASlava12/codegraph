@@ -1,5 +1,6 @@
 pub mod mcp;
 pub mod memory;
+pub mod pr_impact;
 
 pub use mcp::{MCP_PROTOCOL_VERSION, McpEngine, McpToolAudit, mcp_tool_definitions};
 

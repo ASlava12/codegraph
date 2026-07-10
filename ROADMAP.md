@@ -528,7 +528,7 @@ Exports and dashboards:
 - [x] Add GraphML, Mermaid/callflow HTML, Obsidian vault / Markdown wiki, Neo4j Cypher, and FalkorDB export targets.
 - [ ] Add SVG export target.
 - [x] Add PR impact dashboard using graph communities, changed files, CI/review state, conflicts, and risky shared subsystems.
-- [ ] Expose the PR impact dashboard through the API and web UI, not only the CLI (audit F6).
+- [x] Expose the PR impact dashboard through the API and web UI, not only the CLI (audit F6).
 - [x] Add query logging with privacy controls, response logging opt-in, and local JSONL audit output.
 - [x] Add benchmark harness for token/context savings and graph-query recall on real mixed corpora.
 - [ ] Exclude code patterns inside string literals and test fixtures from benchmark recall oracles (audit F12: fixture strings report false env-read misses).

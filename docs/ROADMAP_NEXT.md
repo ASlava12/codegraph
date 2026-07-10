@@ -133,7 +133,7 @@ Audit follow-ups (concrete completion work from `FEATURE_AUDIT.md`, one commit e
 - [x] Give control-flow facts a dedicated node kind or surface `item_kind` in kind facets instead of `unknown` (F4).
 - [x] Route environment/config questions in `ask` to the config trace rule (F13).
 - [x] Add MCP tools for `refactor_context`, `ask`, `source_search`, and memory save/list/reflect (F7).
-- [ ] Expose the PR impact dashboard through the API and web UI (F6).
+- [x] Expose the PR impact dashboard through the API and web UI (F6).
 - [ ] Add web views or node-card actions for impact, seams, component dependencies/contracts, and refactor-context download (F5).
 - [ ] Reuse cached report/insight results and bound journey search so refactor-context returns in seconds on a warm cache (F11).
 - [ ] Accept `n42`-style node ids everywhere node ids are accepted (F8).

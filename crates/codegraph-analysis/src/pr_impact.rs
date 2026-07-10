@@ -8,12 +8,14 @@
 //! code. CI and review state strings are recorded verbatim so pipelines can
 //! stamp their context into the `codegraph.pr_impact.v1` artifact.
 
-use codegraph_analysis::{
-    InsightSeverity, communities, community_id_for_path, entrypoints, hotspots, insights,
+use crate::{
+    InsightSeverity, QueryError, communities, community_id_for_path, entrypoints, hotspots,
+    insights,
 };
 use codegraph_core::{CodeGraph, EdgeKind, NodeId, NodeKind};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::path::Path;
 
 pub const PR_IMPACT_SCHEMA: &str = "codegraph.pr_impact.v1";
 const COMMUNITY_LIMIT: usize = 50;
@@ -104,6 +106,43 @@ fn severity_label(severity: InsightSeverity) -> &'static str {
 
 fn normalize(path: &str) -> String {
     path.trim().trim_start_matches("./").replace('\\', "/")
+}
+
+/// Changed files from `git diff --name-only <base>`, shared by the CLI
+/// command and the HTTP endpoint.
+pub fn git_changed_files(root: &Path, base: &str) -> Result<Vec<String>, QueryError> {
+    let output = std::process::Command::new("git")
+        .arg("diff")
+        .arg("--name-only")
+        .arg(base)
+        .current_dir(root)
+        .output()
+        .map_err(|error| QueryError::new(format!("failed to run git diff: {error}")))?;
+    if !output.status.success() {
+        return Err(QueryError::new(format!(
+            "git diff --name-only {base} failed: {}; pass explicit changed files instead",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToString::to_string)
+        .collect())
+}
+
+pub fn git_current_branch(root: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!branch.is_empty()).then_some(branch)
 }
 
 pub fn pr_impact(
