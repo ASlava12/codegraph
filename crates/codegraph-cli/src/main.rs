@@ -1,5 +1,6 @@
 mod install;
 mod mcp;
+mod memory;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -228,6 +229,59 @@ enum Command {
         /// Overwrite an existing conflicting codegraph entry in .mcp.json.
         #[arg(long)]
         force: bool,
+    },
+
+    /// Save an investigation outcome to repository memory (.codegraph/memory.jsonl).
+    MemorySave {
+        /// The query, ask question, or journey expression that was investigated.
+        query: String,
+
+        /// Project root the investigation ran against.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Investigation outcome.
+        #[arg(long, value_enum)]
+        outcome: memory::MemoryOutcome,
+
+        /// Free-text lesson or correction.
+        #[arg(long)]
+        note: Option<String>,
+
+        /// Linked graph node ids; repeat for multiple nodes.
+        #[arg(long = "node-id")]
+        node_ids: Vec<u64>,
+
+        /// Include hidden files and directories in the fingerprint.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories in the fingerprint.
+        #[arg(long)]
+        include_ignored: bool,
+    },
+
+    /// List saved investigation memory with staleness against the current project fingerprint.
+    MemoryList {
+        /// Project root the memory belongs to.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Filter records by outcome.
+        #[arg(long, value_enum)]
+        outcome: Option<memory::MemoryOutcome>,
+
+        /// Return only records whose source fingerprint no longer matches.
+        #[arg(long)]
+        only_stale: bool,
+
+        /// Include hidden files and directories in the fingerprint.
+        #[arg(long)]
+        include_hidden: bool,
+
+        /// Include default ignored directories in the fingerprint.
+        #[arg(long)]
+        include_ignored: bool,
     },
 
     /// Serve CodeGraph analysis tools to assistants over the MCP stdio transport.
@@ -1633,6 +1687,44 @@ fn main() -> Result<()> {
             let report = install::install_agent(&path, platform, force)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+        Command::MemorySave {
+            query,
+            path,
+            outcome,
+            note,
+            node_ids,
+            include_hidden,
+            include_ignored,
+        } => {
+            let fingerprint =
+                project_fingerprint_hash(&path, include_hidden, include_ignored, max_file_size)?;
+            let recorded_at_unix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_secs())
+                .unwrap_or_default();
+            let record = memory::save_memory(
+                &path,
+                query,
+                outcome,
+                note,
+                node_ids,
+                fingerprint,
+                recorded_at_unix,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&record)?);
+        }
+        Command::MemoryList {
+            path,
+            outcome,
+            only_stale,
+            include_hidden,
+            include_ignored,
+        } => {
+            let fingerprint =
+                project_fingerprint_hash(&path, include_hidden, include_ignored, max_file_size)?;
+            let report = memory::list_memory(&path, &fingerprint, outcome, only_stale)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         Command::Mcp {
             path,
             include_hidden,
@@ -2160,6 +2252,19 @@ fn language_report() -> Vec<LanguageInfo> {
 
 fn canonical_workspace_root(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn project_fingerprint_hash(
+    path: &Path,
+    include_hidden: bool,
+    include_ignored: bool,
+    max_file_size: Option<u64>,
+) -> Result<String> {
+    let options = configured_index_options(
+        path,
+        &scan_overrides(include_hidden, include_ignored, max_file_size),
+    )?;
+    Ok(GraphCache::fingerprint_project(path, &options)?.hash)
 }
 
 fn scan_with_options(

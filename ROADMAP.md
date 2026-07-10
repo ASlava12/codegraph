@@ -504,7 +504,7 @@ Repository knowledge ingestion:
 
 Agent memory and automation:
 
-- [ ] Add saved query/result memory with outcomes such as useful, dead-end, and corrected, linked back to graph nodes and invalidated by source changes.
+- [x] Add saved query/result memory with outcomes such as useful, dead-end, and corrected, linked back to graph nodes and invalidated by source changes.
 - [ ] Add reflection reports that aggregate saved investigation outcomes into repository lessons with provenance and stale-source warnings.
 - [x] Add assistant installation commands for Codex and generic agent-skill instructions, generating project-scoped guidance to query CodeGraph before broad file reads.
 - [ ] Add optional local hooks that nudge agents toward CodeGraph query/path/explain before grep-heavy or raw-file-heavy workflows.
