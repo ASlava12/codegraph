@@ -40,5 +40,5 @@ pub use refactoring::*;
 pub use report::*;
 pub use slices::*;
 pub use source_search::*;
-pub use support::*;
+pub(crate) use support::*;
 pub use traces::*;

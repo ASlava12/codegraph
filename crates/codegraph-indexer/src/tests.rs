@@ -1,3 +1,6 @@
+//! Unit tests for the indexer crate, driven by temporary project
+//! fixtures on disk.
+
 use super::*;
 use std::collections::BTreeSet;
 use std::fs;

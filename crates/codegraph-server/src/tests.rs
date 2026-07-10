@@ -1,3 +1,6 @@
+//! Unit tests for the HTTP server: handlers, schema contracts, jobs,
+//! middleware, and embedded web assets.
+
 use super::*;
 #[allow(unused_imports)]
 use anyhow::{Context, Result};

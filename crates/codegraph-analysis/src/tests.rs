@@ -1,3 +1,5 @@
+//! Unit tests for the analysis crate, organized by feature area.
+
 use super::*;
 use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan};
 use std::collections::{BTreeMap, BTreeSet};

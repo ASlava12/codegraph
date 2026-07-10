@@ -257,7 +257,7 @@ pub const DEFAULT_MERMAID_EDGE_LIMIT: usize = 600;
 /// Render the graph as a bounded Mermaid flowchart. Mermaid rendering
 /// degrades on very large diagrams, so nodes and edges are capped and the
 /// truncation is stated in a `%%` comment instead of failing silently.
-pub fn graph_mermaid(graph: &CodeGraph, node_limit: usize, edge_limit: usize) -> String {
+pub(crate) fn graph_mermaid(graph: &CodeGraph, node_limit: usize, edge_limit: usize) -> String {
     let node_limit = node_limit.max(1);
     let edge_limit = edge_limit.max(1);
     let mut lines = vec!["flowchart LR".to_string()];

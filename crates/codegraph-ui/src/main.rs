@@ -1,3 +1,6 @@
+//! Optional desktop launcher: a native WebView shell that starts the
+//! embedded CodeGraph server and opens the web UI for a local repository.
+
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use std::env;

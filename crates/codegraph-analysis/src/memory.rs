@@ -16,7 +16,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const MEMORY_FILE: &str = "memory.jsonl";
+pub(crate) const MEMORY_FILE: &str = "memory.jsonl";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -73,7 +73,7 @@ impl std::str::FromStr for MemoryOutcome {
     }
 }
 
-pub fn memory_path(root: &Path) -> PathBuf {
+pub(crate) fn memory_path(root: &Path) -> PathBuf {
     root.join(".codegraph").join(MEMORY_FILE)
 }
 

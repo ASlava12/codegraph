@@ -1,3 +1,8 @@
+//! Persistent graph caching: whole-graph cache records keyed by scan
+//! options, project fingerprints with diff reporting, per-file graph
+//! chunks, impact indexes for incremental planning, and safe
+//! incremental cache updates.
+
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind};
 use codegraph_indexer::{
     IndexError, IndexOptions, is_index_relevant_file, scan_project, scan_project_paths,

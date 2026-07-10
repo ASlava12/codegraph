@@ -1,3 +1,7 @@
+//! The `codegraph` command-line interface: scan, query, trace, workflow,
+//! journey, refactoring, insight, report, export, cache, registry, watch,
+//! memory, and MCP commands over the shared analysis crates.
+
 mod bench_context;
 mod hooks;
 mod install;

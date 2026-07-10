@@ -1,3 +1,7 @@
+//! The typed code graph model shared by every CodeGraph crate: nodes,
+//! edges, kinds, confidence taxonomy, source spans, and JSON round-trip
+//! serialization with a stable schema version.
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;

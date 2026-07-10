@@ -588,7 +588,7 @@ pub fn impact(graph: &CodeGraph, request: ImpactRequest) -> Result<ImpactReport,
 
 /// [`impact`] over an already-computed insight report, so bundle callers such
 /// as [`refactor_context`] evaluate insights once per request (audit F11).
-pub fn impact_with_insights(
+pub(crate) fn impact_with_insights(
     graph: &CodeGraph,
     request: ImpactRequest,
     insight_report: &InsightReport,

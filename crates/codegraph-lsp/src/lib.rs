@@ -1,3 +1,8 @@
+//! Semantic enrichment through language servers: LSP discovery,
+//! readiness and planning reports, capped work queues, executable
+//! request batches over stdio, response-to-patch mapping, and patch
+//! application with persistent semantic caches.
+
 use codegraph_core::{CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind, SourceSpan};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -558,17 +563,6 @@ pub fn semantic_readiness(languages: &BTreeMap<String, usize>) -> SemanticReadin
     semantic_readiness_with_discovery(languages, &discovery)
 }
 
-pub fn semantic_enrichment_plan(graph: &CodeGraph) -> SemanticEnrichmentPlan {
-    semantic_enrichment_plan_with_limit(graph, DEFAULT_SEMANTIC_WORK_ITEM_LIMIT)
-}
-
-pub fn semantic_enrichment_plan_with_limit(
-    graph: &CodeGraph,
-    work_item_limit: usize,
-) -> SemanticEnrichmentPlan {
-    semantic_enrichment_plan_with_filter(graph, work_item_limit, SemanticWorkItemFilter::default())
-}
-
 pub fn semantic_enrichment_plan_with_filter(
     graph: &CodeGraph,
     work_item_limit: usize,
@@ -599,7 +593,7 @@ pub fn semantic_execution_batch(
     )
 }
 
-pub fn run_semantic_execution_batch(
+pub(crate) fn run_semantic_execution_batch(
     batch: &SemanticExecutionBatch,
     options: &SemanticLspRunOptions,
 ) -> Result<Vec<SemanticLspResponse>, SemanticLspRunError> {
@@ -669,7 +663,7 @@ pub fn run_semantic_execution_batch_cached(
     })
 }
 
-pub fn semantic_readiness_with_discovery(
+pub(crate) fn semantic_readiness_with_discovery(
     languages: &BTreeMap<String, usize>,
     discovery: &LspDiscoveryReport,
 ) -> SemanticReadinessReport {
@@ -724,31 +718,7 @@ pub fn semantic_readiness_with_discovery(
     }
 }
 
-pub fn semantic_enrichment_plan_with_discovery(
-    graph: &CodeGraph,
-    discovery: &LspDiscoveryReport,
-) -> SemanticEnrichmentPlan {
-    semantic_enrichment_plan_with_discovery_and_limit(
-        graph,
-        discovery,
-        DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
-    )
-}
-
-pub fn semantic_enrichment_plan_with_discovery_and_limit(
-    graph: &CodeGraph,
-    discovery: &LspDiscoveryReport,
-    work_item_limit: usize,
-) -> SemanticEnrichmentPlan {
-    semantic_enrichment_plan_with_discovery_and_filter(
-        graph,
-        discovery,
-        work_item_limit,
-        SemanticWorkItemFilter::default(),
-    )
-}
-
-pub fn semantic_enrichment_plan_with_discovery_and_filter(
+pub(crate) fn semantic_enrichment_plan_with_discovery_and_filter(
     graph: &CodeGraph,
     discovery: &LspDiscoveryReport,
     work_item_limit: usize,
@@ -910,7 +880,7 @@ pub fn normalize_semantic_request_timeout_ms(request_timeout_ms: u64) -> u64 {
     request_timeout_ms.clamp(1, MAX_SEMANTIC_REQUEST_TIMEOUT_MS)
 }
 
-pub fn semantic_execution_batch_with_discovery(
+pub(crate) fn semantic_execution_batch_with_discovery(
     workspace_root: &Path,
     graph: &CodeGraph,
     discovery: &LspDiscoveryReport,
@@ -2020,19 +1990,6 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-pub fn server_specs() -> &'static [&'static str] {
-    const IDS: &[&str] = &[
-        "rust-analyzer",
-        "gopls",
-        "typescript-language-server",
-        "pyright-langserver",
-        "clangd",
-        "intelephense",
-        "bash-language-server",
-    ];
-    IDS
-}
-
 #[derive(Debug, Default)]
 struct LanguagePlanAccumulator {
     nodes: usize,
@@ -3090,7 +3047,12 @@ mod tests {
             ],
         };
 
-        let plan = semantic_enrichment_plan_with_discovery(&graph, &discovery);
+        let plan = semantic_enrichment_plan_with_discovery_and_filter(
+            &graph,
+            &discovery,
+            DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+            SemanticWorkItemFilter::default(),
+        );
         let rust = plan
             .languages
             .iter()

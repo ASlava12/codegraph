@@ -128,7 +128,7 @@ pub fn check_insights(report: InsightReport, fail_on: InsightSeverity) -> CheckR
 
 /// Cap the insight list embedded in a gate report to a failing-first sample.
 /// Totals, breakdowns, and the pass/fail verdict stay limit-independent.
-pub fn bounded_quality_gate(mut check: CheckReport, sample_limit: usize) -> CheckReport {
+pub(crate) fn bounded_quality_gate(mut check: CheckReport, sample_limit: usize) -> CheckReport {
     check
         .report
         .insights

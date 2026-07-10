@@ -1,3 +1,5 @@
+//! Unit tests for language detection and syntax-fact extraction.
+
 use super::*;
 use std::collections::BTreeSet;
 use std::path::Path;
