@@ -9473,6 +9473,12 @@ fn helper() {}
         assert!(app.contains("/api/refactor-context"));
         assert!(app.contains("/api/pr-impact"));
         assert!(app.contains("refactor-context.json"));
+        // Discoverability: startup panel hints and the large-graph default
+        // filter must stay wired.
+        assert!(app.contains("renderPanelHints"));
+        assert!(app.contains("\"hint.query\""));
+        assert!(app.contains("LARGE_GRAPH_FILTER_THRESHOLD"));
+        assert!(app.contains("largeGraphDefaults"));
         assert!(index.contains("insightExportButton"));
         assert!(index.contains("checkExportButton"));
         assert!(app.contains("exportCurrentInsights"));

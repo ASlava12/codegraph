@@ -182,6 +182,12 @@ const I18N = {
     "prImpact.riskScore": "Risk score",
     "prImpact.communities": "Touched communities",
     "prImpact.risks": "Risks in changed scope",
+    "hint.query": "Run a query or click a preset above — try entrypoints, docs, or hotspots min_score:5.",
+    "hint.journey": "Pick a start and target (labels or n42 ids) to read the execution chain — e.g. main → load_config.",
+    "hint.sourceSearch": "Search raw source text and open matches as focused graph slices.",
+    "hint.prImpact": "Map changed files onto communities and blast radius — diff a git ref or list files explicitly.",
+    "hint.refactor": "Enter a target (or use the canvas selection) to see impact, dependencies, seams, and the refactor bundle.",
+    "hint.cache": "Explain cache reuse, plan incremental scans, and preview merges for the current project.",
     "section.refactoring": "Refactoring",
     "aria.refactoring": "Refactoring reports",
     "refactor.target": "Target (label or node id)",
@@ -895,6 +901,12 @@ const I18N = {
     "prImpact.riskScore": "Оценка риска",
     "prImpact.communities": "Затронутые области",
     "prImpact.risks": "Риски в зоне изменений",
+    "hint.query": "Выполните запрос или нажмите пресет выше — например entrypoints, docs или hotspots min_score:5.",
+    "hint.journey": "Укажите старт и цель (метки или id вида n42), чтобы прочитать цепочку выполнения — например main → load_config.",
+    "hint.sourceSearch": "Ищите по исходному тексту и открывайте совпадения как фокусные срезы графа.",
+    "hint.prImpact": "Сопоставьте изменённые файлы с областями и радиусом влияния — по git-ref или явному списку файлов.",
+    "hint.refactor": "Укажите цель (или возьмите из выделения), чтобы увидеть влияние, зависимости, швы и бандл рефакторинга.",
+    "hint.cache": "Объясните переиспользование кеша, спланируйте инкрементальный скан и предпросмотрите слияние.",
     "section.refactoring": "Рефакторинг",
     "aria.refactoring": "Отчёты для рефакторинга",
     "refactor.target": "Цель (метка или id узла)",
@@ -1620,6 +1632,9 @@ const state = {
   pendingGraphPageLink: false,
 };
 
+// Full graphs above this node count start with control-flow facts hidden.
+const LARGE_GRAPH_FILTER_THRESHOLD = 2000;
+
 const colors = {
   repository: "#5cc8a7",
   directory: "#7f9cff",
@@ -2067,6 +2082,7 @@ function setLocale(locale) {
     // Local storage can be disabled; the in-memory locale still works.
   }
   applyLocale();
+  renderPanelHints();
 }
 
 function setLabelMode(mode) {
@@ -2126,7 +2142,27 @@ function applyLocale() {
   draw();
 }
 
+function renderPanelHints() {
+  const hints = [
+    [queryResult, t("hint.query")],
+    [journeyResult, t("hint.journey")],
+    [sourceSearchResult, t("hint.sourceSearch")],
+    [prImpactResult, t("hint.prImpact")],
+    [refactorResult, t("hint.refactor")],
+    [cacheDiffResult, t("hint.cache")],
+  ];
+  hints.forEach(([container, text]) => {
+    if (
+      container &&
+      (!container.innerHTML.trim() || container.querySelector(".panel-hint"))
+    ) {
+      container.innerHTML = `<p class="empty panel-hint">${escapeHtml(text)}</p>`;
+    }
+  });
+}
+
 async function init() {
+  renderPanelHints();
   await Promise.all([loadProjects(), loadCapabilities(), loadApiSchema(), loadMetrics()]);
   applyUrlState();
   loadJobQueue();
@@ -3118,7 +3154,7 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     configTraceResult.innerHTML = "";
     errorTraceResult.innerHTML = "";
     rootLabel.textContent = state.graphPage.root;
-    initializeGraph({ preserveView: !resetLayout });
+    initializeGraph({ preserveView: !resetLayout, largeGraphDefaults: true });
     await restorePendingQueryLink();
     await restorePendingSelectionLink();
     if (!preserveInvestigationLink && state.selectedId == null && !state.selectedEdgeKey && !state.queryFocus) {
@@ -5355,6 +5391,17 @@ function initializeGraph(options = {}) {
   state.velocities.clear();
   const kinds = [...new Set(state.graph.nodes.map((node) => node.kind))].sort();
   state.enabledKinds = new Set(kinds);
+  // Sane default for large graphs: hide low-signal control-flow facts on
+  // full graph pages until the user re-enables them via the legend. The
+  // canvas-filter status shows the active filter with a one-click reset.
+  if (
+    options.largeGraphDefaults &&
+    state.graphPage.totalNodes >= LARGE_GRAPH_FILTER_THRESHOLD &&
+    kinds.length > 1 &&
+    state.enabledKinds.has("control_flow")
+  ) {
+    state.enabledKinds.delete("control_flow");
+  }
   refreshRiskIndex();
   renderKindFilters(kinds);
   renderLegend();
