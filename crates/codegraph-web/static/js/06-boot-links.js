@@ -29,6 +29,38 @@ function applyUrlState() {
       focus: link.queryFocus,
     };
   }
+  if (link.flowNodeId != null) {
+    state.pendingFlowLink = link.flowNodeId;
+  }
+}
+
+// The flow view is a shareable, reload-surviving deep link: `flow=<nodeId>`
+// records the node the current flow is rooted on.
+function syncFlowUrl(rootNodeId) {
+  try {
+    const url = new URL(window.location.href);
+    writePathUrlParam(url);
+    if (rootNodeId != null) {
+      url.searchParams.set("flow", String(rootNodeId));
+    } else {
+      url.searchParams.delete("flow");
+    }
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  } catch (error) {
+    // Flow links are best-effort; the flow view works without the History API.
+  }
+}
+
+async function restorePendingFlowLink() {
+  const nodeId = state.pendingFlowLink;
+  if (nodeId == null) return;
+  const node = (state.graph?.nodes || []).find((candidate) => candidate.id === nodeId) || {
+    id: nodeId,
+    label: "",
+  };
+  setStageView("flow");
+  state.pendingFlowLink = null;
+  await buildFlowFromNode(node);
 }
 
 function readSelectionLinkFromUrl() {
@@ -38,12 +70,21 @@ function readSelectionLinkFromUrl() {
       path: params.get("path") || "",
       nodeId: parseUrlInteger(params.get("node")),
       edgeIndex: parseUrlInteger(params.get("edge")),
+      flowNodeId: parseUrlInteger(params.get("flow")),
       query: params.get("query") || "",
       queryFocus: params.get("query_focus") === "1",
       graphPage: readGraphPageLink(params),
     };
   } catch (error) {
-    return { path: "", nodeId: null, edgeIndex: null, query: "", queryFocus: false, graphPage: null };
+    return {
+      path: "",
+      nodeId: null,
+      edgeIndex: null,
+      flowNodeId: null,
+      query: "",
+      queryFocus: false,
+      graphPage: null,
+    };
   }
 }
 

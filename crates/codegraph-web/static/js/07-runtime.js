@@ -624,7 +624,15 @@ async function loadGraphPage({ root = null, resetPage = false, resetLayout = fal
     initializeGraph({ preserveView: !resetLayout, largeGraphDefaults: true });
     await restorePendingQueryLink();
     await restorePendingSelectionLink();
-    if (!preserveInvestigationLink && state.selectedId == null && !state.selectedEdgeKey && !state.queryFocus) {
+    const restoringFlow = state.pendingFlowLink != null;
+    await restorePendingFlowLink();
+    if (
+      !preserveInvestigationLink &&
+      !restoringFlow &&
+      state.selectedId == null &&
+      !state.selectedEdgeKey &&
+      !state.queryFocus
+    ) {
       syncGraphPageUrl();
     }
     loadProjectOverview();

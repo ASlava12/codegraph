@@ -56,6 +56,7 @@ const state = {
   flow: {
     report: null,
     title: "",
+    rootNodeId: null,
     trail: [],
     positions: new Map(),
     pan: { x: 48, y: 48 },
@@ -161,6 +162,7 @@ const state = {
   pendingSelectionLink: null,
   pendingQueryLink: null,
   pendingGraphPageLink: false,
+  pendingFlowLink: null,
 };
 
 // Full graphs above this node count start with control-flow facts hidden.

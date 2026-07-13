@@ -435,7 +435,11 @@ function setStageView(view) {
   if (flowActive) {
     populateFlowEntrypointPicker();
     resizeFlowCanvas();
-    if (!state.flow.report) ensureFlowReportForStage();
+    // Don't auto-build while a shared flow link is waiting to restore.
+    if (!state.flow.report && state.pendingFlowLink == null) ensureFlowReportForStage();
+    if (state.flow.report) syncFlowUrl(state.flow.rootNodeId);
+  } else {
+    syncFlowUrl(null);
   }
 }
 
@@ -504,6 +508,9 @@ async function buildFlowFromNode(node, requestId = null) {
       return;
     }
     openFlowView(body, node.label);
+    // Record the root so the flow survives reload and is shareable.
+    state.flow.rootNodeId = node.id;
+    syncFlowUrl(node.id);
   } catch (error) {
     console.error("flow: build failed", error);
     if (requestId === state.flowAutoRequest && flowHud) {
