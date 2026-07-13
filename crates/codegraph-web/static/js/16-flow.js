@@ -168,6 +168,72 @@ async function drillIntoFlowBlock(block) {
   }
 }
 
+// Reverse flow: show what calls a node (callers -> node) so exploration can go
+// upstream too, not only downstream. Useful on a leaf that nothing calls out
+// from but that several places reach.
+async function buildReverseFlow(node) {
+  if (!node || node.id == null) return;
+  state.flowAutoRequest = (state.flowAutoRequest || 0) + 1;
+  const requestId = state.flowAutoRequest;
+  if (flowHud) flowHud.textContent = t("flow.building");
+  try {
+    const params = new URLSearchParams({
+      path: pathInput.value.trim() || ".",
+      node_id: String(node.id),
+      edge_limit: "200",
+    });
+    const response = await apiFetch(`/api/node-context?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.flowAutoRequest || state.stageView !== "flow") return;
+    const nodesById = new Map((body.nodes || []).map((candidate) => [candidate.id, candidate]));
+    const seen = new Set();
+    const callers = [];
+    (body.edges || []).forEach((edge) => {
+      if (edge.target !== node.id || (edge.kind !== "calls" && edge.kind !== "references")) return;
+      if (seen.has(edge.source)) return;
+      seen.add(edge.source);
+      const caller = nodesById.get(edge.source);
+      if (caller) callers.push(caller);
+    });
+    if (callers.length === 0) {
+      if (flowHud) flowHud.textContent = t("flow.noCallers");
+      return;
+    }
+    const focusId = `focus-${node.id}`;
+    const blocks = [];
+    const transitions = [];
+    callers.forEach((caller, index) => {
+      const blockId = `caller-${caller.id}-${index}`;
+      blocks.push({ id: blockId, kind: "call", depth: 0, node: caller });
+      transitions.push({ id: `rev-${index}`, source: blockId, target: focusId });
+    });
+    blocks.push({ id: focusId, kind: "start", depth: 1, node });
+    const report = {
+      start: { label: node.label },
+      blocks,
+      transitions,
+      total_blocks: blocks.length,
+      total_transitions: transitions.length,
+    };
+    (state.flow.trail ||= []).push({ report: state.flow.report, title: state.flow.title });
+    openFlowView(report, t("flow.callersOf", { label: node.label }), { keepTrail: true });
+  } catch (error) {
+    console.error("flow: reverse flow failed", error);
+    if (flowHud) flowHud.textContent = t("flow.noCallers");
+  }
+}
+
+// The node a reverse-flow request focuses on: the selected block's node, else
+// the current flow's start node.
+function reverseFlowFocusNode() {
+  const selectedId = state.flow.selectedBlockId;
+  if (selectedId != null) {
+    const block = flowBlockById(selectedId);
+    if (block?.node?.id != null && Number(block.groupCount || 0) <= 1) return block.node;
+  }
+  return flowBlocks().find((block) => block.kind === "start")?.node || null;
+}
+
 // Jump back to an ancestor flow via a breadcrumb click.
 function restoreFlowLevel(index) {
   const trail = state.flow.trail || [];
@@ -536,11 +602,14 @@ function renderFlowHud() {
         : `<button type="button" class="flow-crumb" data-flow-crumb="${crumb.index}">${escapeHtml(shorten(crumb.label))}</button>`,
     )
     .join('<span class="flow-crumb-sep">›</span>');
+  const callers = `<button type="button" class="flow-crumb flow-callers" data-flow-callers>${escapeHtml(
+    t("flow.showCallers"),
+  )}</button>`;
   const meta = `${t("workflow.blockCount", { count: formatNumber(blocks) })} · ${t(
     "workflow.transitionCount",
     { count: formatNumber(transitions) },
   )} · ${zoom}% · ${escapeHtml(tail)}`;
-  flowHud.innerHTML = `${crumbHtml} · ${meta}`;
+  flowHud.innerHTML = `${crumbHtml} · ${callers} · ${meta}`;
 }
 
 function selectFlowBlock(block) {
@@ -688,6 +757,12 @@ function onFlowKeyDown(event) {
     event.preventDefault();
     state.flow.selectedBlockId = null;
     drawFlow();
+    return;
+  }
+  if (event.key === "c" || event.key === "C") {
+    event.preventDefault();
+    const focus = reverseFlowFocusNode();
+    if (focus) buildReverseFlow(focus);
     return;
   }
   if (navigating && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {

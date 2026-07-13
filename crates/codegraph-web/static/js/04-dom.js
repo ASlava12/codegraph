@@ -406,6 +406,11 @@ flowCanvas.addEventListener("dblclick", onFlowDoubleClick);
 flowCanvas.addEventListener("wheel", onFlowWheel, { passive: false });
 if (flowHud) {
   flowHud.addEventListener("click", (event) => {
+    if (event.target.closest("[data-flow-callers]")) {
+      const focus = reverseFlowFocusNode();
+      if (focus) buildReverseFlow(focus);
+      return;
+    }
     const crumb = event.target.closest("[data-flow-crumb]");
     if (crumb) restoreFlowLevel(Number(crumb.dataset.flowCrumb));
   });
