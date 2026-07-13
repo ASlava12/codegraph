@@ -575,8 +575,69 @@ function onFlowWheel(event) {
   flowZoomAt(event.offsetX, event.offsetY, event.deltaY > 0 ? 0.9 : 1.1);
 }
 
+// Select a block and center the view on it — the landing action for keyboard
+// walking so the current step stays in view with its source card open.
+function selectAndCenterFlowBlock(block) {
+  if (!block) return;
+  selectFlowBlock(block);
+  const position = state.flow.positions.get(block.id);
+  if (position) {
+    state.flow.pan.x = flowCanvas.width / 2 - (position.x + FLOW_BLOCK_WIDTH / 2) * state.flow.zoom;
+    state.flow.pan.y = flowCanvas.height / 2 - (position.y + FLOW_BLOCK_HEIGHT / 2) * state.flow.zoom;
+    drawFlow();
+  }
+}
+
+// Walk the flow from the keyboard: left/right follow transitions
+// upstream/downstream, up/down move between sibling blocks at the same depth.
+function flowNavigate(direction) {
+  const blocks = flowBlocks();
+  if (blocks.length === 0) return;
+  const currentId = state.flow.selectedBlockId;
+  if (currentId == null) {
+    selectAndCenterFlowBlock(blocks.find((block) => block.kind === "start") || blocks[0]);
+    return;
+  }
+  const current = flowBlockById(currentId);
+  if (!current) return;
+  const transitions = flowTransitions();
+  let nextId = null;
+  if (direction === "right") {
+    nextId = transitions.find((transition) => transition.source === currentId)?.target ?? null;
+  } else if (direction === "left") {
+    nextId = transitions.find((transition) => transition.target === currentId)?.source ?? null;
+  } else {
+    const depth = Number(current.depth || 0);
+    const peers = blocks.filter((block) => Number(block.depth || 0) === depth);
+    const index = peers.findIndex((block) => block.id === currentId);
+    const nextIndex = direction === "down" ? index + 1 : index - 1;
+    if (nextIndex >= 0 && nextIndex < peers.length) nextId = peers[nextIndex].id;
+  }
+  if (nextId != null) selectAndCenterFlowBlock(flowBlockById(nextId));
+}
+
 function onFlowKeyDown(event) {
   const panStep = event.shiftKey ? 120 : 48;
+  // With a block selected the arrows walk the flow; otherwise they pan.
+  const navigating = state.flow.selectedBlockId != null && !event.shiftKey;
+  if (event.key === "Enter" && state.flow.selectedBlockId != null) {
+    event.preventDefault();
+    drillIntoFlowBlock(flowBlockById(state.flow.selectedBlockId));
+    return;
+  }
+  if (event.key === "Escape" && state.flow.selectedBlockId != null) {
+    event.preventDefault();
+    state.flow.selectedBlockId = null;
+    drawFlow();
+    return;
+  }
+  if (navigating && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+    event.preventDefault();
+    flowNavigate(
+      { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" }[event.key],
+    );
+    return;
+  }
   switch (event.key) {
     case "ArrowLeft":
       event.preventDefault();
