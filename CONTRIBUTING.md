@@ -12,6 +12,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 for module in crates/codegraph-web/static/js/*.js; do node --check "$module"; done
 node crates/codegraph-web/static/check-defs.mjs
+node crates/codegraph-web/static/flow-smoke.mjs
 cargo run -p codegraph-cli -- scan . --format ndjson > /tmp/codegraph.ndjson
 ```
 
