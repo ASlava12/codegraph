@@ -1,12 +1,13 @@
 # Task-Oriented Guides
 
-Step-by-step walkthroughs for the three most common investigation tasks:
+Step-by-step walkthroughs for the most common investigation tasks:
 [investigate a bug](#guide-1-investigate-a-bug),
-[trace a config value](#guide-2-trace-a-config-value), and
-[plan a refactor](#guide-3-plan-a-refactor). Each guide follows one scenario
-end to end with copy-paste-ready commands, the output fields that matter, and
-the matching web UI and agent (MCP) surfaces. The feature-by-feature reference
-stays in the [README](../README.md).
+[trace a config value](#guide-2-trace-a-config-value),
+[plan a refactor](#guide-3-plan-a-refactor), and
+[follow an entrypoint as a flow](#guide-4-follow-an-entrypoint-as-a-flow).
+Each guide follows one scenario end to end with copy-paste-ready commands, the
+output fields that matter, and the matching web UI and agent (MCP) surfaces.
+The feature-by-feature reference stays in the [README](../README.md).
 
 Every command in these guides was run against this repository; the sample
 output fragments are real (trimmed for brevity). Node ids like `n5069` are
@@ -255,6 +256,99 @@ codegraph check . --fail-on error
 refactor-context download), Journey panel (pick start and target, read the
 step-numbered chain with fragile chips), PR Impact panel.
 **MCP tools:** `impact`, `shortest_path`, `refactor_context`, `report`.
+
+## Guide 4: Follow an entrypoint as a flow
+
+Scenario: understand how the program runs from an entrypoint onward — the
+call chain, its branches, and where it can fail — as a readable flow you can
+walk step by step, then drill into any step.
+
+### 1. List entrypoints and pick a start
+
+```bash
+codegraph entrypoints .
+```
+
+```json
+[
+  { "id": 3792, "kind": "entrypoint", "label": "cargo bin:codegraph-cli",
+    "metadata": { "entrypoint_kind": "binary", "target": "src/main.rs" } },
+  { "id": 4546, "kind": "function", "label": "main" },
+  { "id": 5623, "kind": "entrypoint", "label": "route GET /" }
+]
+```
+
+The workflow below starts from a label, so you can pass `"cargo
+bin:codegraph-cli"` directly; ids work too (`n3792`).
+
+### 2. Build a flow that follows the call chain into depth
+
+A workflow from a busy entrypoint fans out to everything it touches in one
+shallow level. `--max-fanout` caps how many outgoing edges each node expands
+(keeping calls first), so the block budget follows the call chain into depth
+instead of one wide node:
+
+```bash
+codegraph workflow 'cargo bin:codegraph-cli' . --depth 10 --max-fanout 8 --compact
+```
+
+```text
+start: cargo bin:codegraph-cli
+total_blocks: 93   total_transitions: 162   truncated: true
+max depth reached: 6
+```
+
+Without `--max-fanout` the same call saturates at depth 1–2; with it the flow
+reaches depth 6. Each block also reports `truncated_children` — how many more
+calls were trimmed from that node (e.g. `main` +405, `parse` +42) and are
+reachable by drilling into it.
+
+### 3. Read one focused path from entry to a target
+
+When you have a specific target, a journey is a single step-numbered chain
+rather than a fan:
+
+```bash
+codegraph journey --from node_card --to node_context .
+```
+
+```text
+node_card -> node_context   (1 path, 2 steps)
+  step 1  start  node_card
+  step 2  call   node_context
+```
+
+### 4. Explore it interactively in the web Flow view
+
+Start the server, open `http://127.0.0.1:3765`, and switch the stage to
+**Flow**. Pick an entrypoint from the Flow picker and the call chain renders
+left to right, deep, with same-kind branches collapsed into `×N` groups.
+From there:
+
+- **click** a block to open its source card; **double-click** or **Enter** to
+  re-root the flow on that block and walk deeper; the breadcrumb trail (`›`)
+  walks back.
+- **arrows** step along the flow, **c** shows a node's callers (reverse flow),
+  **f** is focus mode (dim all but the current thread), **?** lists every
+  control.
+- a **`+N`** marker flags nodes whose calls were trimmed (drill in for the
+  rest); **⚠ trimmed** in the HUD says the view is bounded.
+- the view deep-links as `?flow=<nodeId>`, so a flow survives reload and the
+  **⧉ link** button copies it to share.
+
+### 5. Agent (MCP) form
+
+The same flows are available over MCP without shelling out:
+
+```jsonc
+// workflow tool — deep call chain from an entrypoint
+{ "target": "cargo bin:codegraph-cli", "depth": 10, "max_fanout": 8, "compact": true }
+// shortest_path / journey — a focused entry-to-target chain
+```
+
+**Web UI:** Flow view (entrypoint picker, drill-down, callers, focus,
+group expansion), Entry Flows panel, Journey panel.
+**MCP tools:** `workflow` (with `max_fanout`), `shortest_path`, `get_neighbors`.
 
 ## Where to go next
 
