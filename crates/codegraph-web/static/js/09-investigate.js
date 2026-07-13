@@ -244,6 +244,7 @@ async function runEntryFlowWorkflows() {
     block_limit: "120",
     limit: "15",
     compact: "true",
+    max_fanout: "8",
   });
   const search = entryFlowSearchInput.value.trim();
   if (search) params.set("search", search);

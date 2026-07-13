@@ -2091,6 +2091,7 @@ fn workflow_entrypoints_returns_filtered_block_reports() {
             limit: 10,
             filters: WorkflowFilters::default(),
             compact: false,
+            max_fanout: None,
         },
     );
 
@@ -2166,6 +2167,7 @@ fn workflow_entrypoints_filters_by_entrypoint_kind() {
         limit: 10,
         filters: WorkflowFilters::default(),
         compact: false,
+        max_fanout: None,
     };
 
     let route_report = workflow_entrypoints(&graph, request("Route"));

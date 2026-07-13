@@ -157,7 +157,7 @@ pub fn workflow_entrypoints(
                     block_limit,
                     filters: request.filters.clone(),
                     compact: request.compact,
-                    max_fanout: None,
+                    max_fanout: request.max_fanout,
                 },
                 &insight_report,
             )

@@ -418,6 +418,7 @@ spec:
                 limit: 20,
                 filters: WorkflowFilters::default(),
                 compact: false,
+                max_fanout: None,
             },
         );
 

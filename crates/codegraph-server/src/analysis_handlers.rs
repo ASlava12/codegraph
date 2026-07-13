@@ -535,6 +535,7 @@ pub(crate) async fn entrypoint_workflows_api(
                 query.block_kind,
             ),
             compact: query.compact.unwrap_or(false),
+            max_fanout: query.max_fanout.map(|value| value.clamp(1, 200)),
         },
     )))
 }

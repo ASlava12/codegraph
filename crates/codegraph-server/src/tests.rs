@@ -1051,6 +1051,7 @@ fn helper() {}
             risk_severity: None,
             block_kind: None,
             compact: None,
+            max_fanout: None,
         }),
     )
     .await
@@ -1081,6 +1082,7 @@ fn helper() {}
         risk_severity: None,
         block_kind: None,
         compact: None,
+        max_fanout: None,
     };
     let state = test_state(root.clone(), vec![], true);
     let Json(binary_report) = entrypoint_workflows_api(
