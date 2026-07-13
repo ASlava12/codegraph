@@ -637,11 +637,17 @@ function renderFlowHud() {
   const callers = `<button type="button" class="flow-crumb flow-callers" data-flow-callers>${escapeHtml(
     t("flow.showCallers"),
   )}</button>`;
+  const copyLink =
+    state.flow.rootNodeId != null
+      ? `<button type="button" class="flow-crumb flow-copy" data-flow-copy>${escapeHtml(
+          t("flow.copyLink"),
+        )}</button>`
+      : "";
   const meta = `${t("workflow.blockCount", { count: formatNumber(blocks) })} · ${t(
     "workflow.transitionCount",
     { count: formatNumber(transitions) },
   )} · ${zoom}% · ${escapeHtml(tail)}`;
-  flowHud.innerHTML = `${crumbHtml} · ${callers} · ${meta}`;
+  flowHud.innerHTML = `${crumbHtml} · ${callers}${copyLink ? ` · ${copyLink}` : ""} · ${meta}`;
 }
 
 function selectFlowBlock(block) {

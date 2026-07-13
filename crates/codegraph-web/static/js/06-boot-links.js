@@ -51,6 +51,28 @@ function syncFlowUrl(rootNodeId) {
   }
 }
 
+function flowShareUrl() {
+  const url = new URL(window.location.href);
+  writePathUrlParam(url);
+  if (state.flow.rootNodeId != null) {
+    url.searchParams.set("flow", String(state.flow.rootNodeId));
+  }
+  return url.toString();
+}
+
+async function copyFlowLink(button) {
+  try {
+    await writeClipboardText(flowShareUrl());
+    const previous = button.textContent;
+    button.textContent = t("button.copied");
+    window.setTimeout(() => {
+      button.textContent = previous || t("flow.copyLink");
+    }, 1200);
+  } catch (error) {
+    // Clipboard is a convenience; the URL is still shareable from the address bar.
+  }
+}
+
 async function restorePendingFlowLink() {
   const nodeId = state.pendingFlowLink;
   if (nodeId == null) return;

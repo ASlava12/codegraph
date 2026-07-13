@@ -408,6 +408,11 @@ flowCanvas.addEventListener("dblclick", onFlowDoubleClick);
 flowCanvas.addEventListener("wheel", onFlowWheel, { passive: false });
 if (flowHud) {
   flowHud.addEventListener("click", (event) => {
+    const copyButton = event.target.closest("[data-flow-copy]");
+    if (copyButton) {
+      copyFlowLink(copyButton);
+      return;
+    }
     if (event.target.closest("[data-flow-callers]")) {
       const focus = reverseFlowFocusNode();
       if (focus) buildReverseFlow(focus);
