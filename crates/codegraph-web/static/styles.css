@@ -2631,6 +2631,10 @@ button.cancel-action:hover:not(:disabled) {
   color: var(--muted);
 }
 
+.flow-trimmed {
+  color: #f2c14e;
+}
+
 .flow-entry-select {
   max-width: 260px;
   height: 32px;

@@ -144,7 +144,7 @@ async function drillIntoFlowBlock(block) {
     depth: String(depth),
     block_limit: "250",
     compact: "true",
-    max_fanout: "16",
+    max_fanout: "8",
   });
   appendWorkflowFilterParams(params, readWorkflowFilters("workflow"));
 
@@ -644,11 +644,14 @@ function renderFlowHud() {
           t("flow.copyLink"),
         )}</button>`
       : "";
+  const trimmed = state.flow.report.truncated
+    ? ` · <span class="flow-trimmed">${escapeHtml(t("flow.trimmed"))}</span>`
+    : "";
   const meta = `${t("workflow.blockCount", { count: formatNumber(blocks) })} · ${t(
     "workflow.transitionCount",
     { count: formatNumber(transitions) },
   )} · ${zoom}% · ${escapeHtml(tail)}`;
-  flowHud.innerHTML = `${crumbHtml} · ${callers}${copyLink ? ` · ${copyLink}` : ""} · ${meta}`;
+  flowHud.innerHTML = `${crumbHtml} · ${callers}${copyLink ? ` · ${copyLink}` : ""} · ${meta}${trimmed}`;
 }
 
 function selectFlowBlock(block) {
