@@ -185,6 +185,12 @@ try {
   flow.flowNavigate("right");
   flow.flowNavigate("right");
   flow.drawFlow();
+
+  // Focus mode dims all but the current thread — must draw without throwing.
+  flow.state.flow.focusMode = true;
+  flow.state.flow.selectedBlockId = 4;
+  flow.drawFlow();
+  flow.state.flow.focusMode = false;
 } catch (error) {
   fail(`flow render path threw: ${error.stack || error.message}`);
 }

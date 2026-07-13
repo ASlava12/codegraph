@@ -57,6 +57,7 @@ const state = {
     report: null,
     title: "",
     rootNodeId: null,
+    focusMode: false,
     trail: [],
     positions: new Map(),
     pan: { x: 48, y: 48 },

@@ -373,6 +373,23 @@ function drawFlow() {
       ? flowPathToBlock(state.flow.selectedBlockId)
       : { blockIds: new Set(), transitionIds: new Set() };
 
+  // Focus mode dims everything except the path to the selected block ("how you
+  // got here") plus its direct next steps ("what's next"), so a dense deep flow
+  // reads as one thread at a time.
+  const focusActive = state.flow.focusMode && state.flow.selectedBlockId != null;
+  const focusBlocks = new Set(path.blockIds);
+  const focusTransitions = new Set(path.transitionIds);
+  if (focusActive) {
+    focusBlocks.add(state.flow.selectedBlockId);
+    flowTransitions().forEach((transition) => {
+      if (transition.source === state.flow.selectedBlockId) {
+        focusTransitions.add(transition.id);
+        focusBlocks.add(transition.target);
+      }
+    });
+  }
+  const DIM_ALPHA = 0.24;
+
   flowCtx.save();
   flowCtx.translate(state.flow.pan.x, state.flow.pan.y);
   flowCtx.scale(state.flow.zoom, state.flow.zoom);
@@ -392,6 +409,7 @@ function drawFlow() {
       state.flow.hoveredBlockId === transition.source ||
       state.flow.hoveredBlockId === transition.target;
     const risky = Array.isArray(transition.risk_refs) && transition.risk_refs.length > 0;
+    flowCtx.globalAlpha = focusActive && !focusTransitions.has(transition.id) ? DIM_ALPHA : 1;
     const { from, c1, c2, to } = geometry;
     flowCtx.beginPath();
     flowCtx.moveTo(from.x, from.y);
@@ -420,6 +438,7 @@ function drawFlow() {
     const selected = state.flow.selectedBlockId === block.id;
     const hovered = state.flow.hoveredBlockId === block.id;
     const onPath = !selected && path.blockIds.has(block.id);
+    flowCtx.globalAlpha = focusActive && !focusBlocks.has(block.id) ? DIM_ALPHA : 1;
     const accent = flowKindColor(block.kind || "unknown");
     const groupCount = Number(block.groupCount || 0);
     // Stacked shadow cards behind a grouped block signal that it folds many.
@@ -517,6 +536,7 @@ function drawFlow() {
     }
   });
 
+  flowCtx.globalAlpha = 1;
   flowCtx.restore();
 
   // A workflow with no transitions is a leaf: the single block is the node
@@ -603,6 +623,7 @@ function renderFlowHelp() {
     ["2× / Enter", "flow.help.deeper"],
     ["← → ↑ ↓", "flow.help.walk"],
     ["c", "flow.help.callers"],
+    ["f", "flow.help.focus"],
     ["×N", "flow.help.group"],
     ["+N", "flow.help.hidden"],
     ["›", "flow.help.back"],
@@ -834,6 +855,12 @@ function onFlowKeyDown(event) {
     event.preventDefault();
     const focus = reverseFlowFocusNode();
     if (focus) buildReverseFlow(focus);
+    return;
+  }
+  if (event.key === "f" || event.key === "F") {
+    event.preventDefault();
+    state.flow.focusMode = !state.flow.focusMode;
+    drawFlow();
     return;
   }
   if (navigating && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
