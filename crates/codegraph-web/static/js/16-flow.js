@@ -271,12 +271,38 @@ function journeyPathToFlowReport(report, path) {
   };
 }
 
+// The chain of transitions/blocks from the flow's start down to a block, so the
+// canvas can highlight "how you got here" when a block is selected.
+function flowPathToBlock(blockId) {
+  const parentEdge = new Map();
+  flowTransitions().forEach((transition) => {
+    if (!parentEdge.has(transition.target)) parentEdge.set(transition.target, transition);
+  });
+  const blockIds = new Set([blockId]);
+  const transitionIds = new Set();
+  let current = blockId;
+  let guard = 0;
+  while (parentEdge.has(current) && guard < 2000) {
+    guard += 1;
+    const edge = parentEdge.get(current);
+    transitionIds.add(edge.id);
+    blockIds.add(edge.source);
+    current = edge.source;
+  }
+  return { blockIds, transitionIds };
+}
+
 function drawFlow() {
   if (flowCanvas.hidden) return;
   flowCtx.clearRect(0, 0, flowCanvas.width, flowCanvas.height);
   const report = state.flow.report;
   renderFlowHud();
   if (!report) return;
+
+  const path =
+    state.flow.selectedBlockId != null
+      ? flowPathToBlock(state.flow.selectedBlockId)
+      : { blockIds: new Set(), transitionIds: new Set() };
 
   flowCtx.save();
   flowCtx.translate(state.flow.pan.x, state.flow.pan.y);
@@ -288,8 +314,10 @@ function drawFlow() {
     const focused =
       state.flow.selectedTransitionId === transition.id ||
       state.flow.hoveredTransitionId === transition.id;
+    const onPath = path.transitionIds.has(transition.id);
     const active =
       focused ||
+      onPath ||
       state.flow.selectedBlockId === transition.source ||
       state.flow.selectedBlockId === transition.target ||
       state.flow.hoveredBlockId === transition.source ||
@@ -301,10 +329,12 @@ function drawFlow() {
     flowCtx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, to.x, to.y);
     flowCtx.strokeStyle = risky
       ? "rgba(224, 108, 117, 0.85)"
-      : active
-        ? "rgba(92, 200, 167, 0.9)"
-        : "rgba(169, 177, 214, 0.42)";
-    flowCtx.lineWidth = focused ? 2.8 : active ? 2.2 : 1.3;
+      : onPath
+        ? "rgba(122, 162, 247, 0.95)"
+        : active
+          ? "rgba(92, 200, 167, 0.9)"
+          : "rgba(169, 177, 214, 0.42)";
+    flowCtx.lineWidth = onPath ? 3 : focused ? 2.8 : active ? 2.2 : 1.3;
     flowCtx.stroke();
     flowCtx.beginPath();
     flowCtx.moveTo(to.x, to.y);
@@ -320,6 +350,7 @@ function drawFlow() {
     if (!position) return;
     const selected = state.flow.selectedBlockId === block.id;
     const hovered = state.flow.hoveredBlockId === block.id;
+    const onPath = !selected && path.blockIds.has(block.id);
     const accent = flowKindColor(block.kind || "unknown");
     const groupCount = Number(block.groupCount || 0);
     // Stacked shadow cards behind a grouped block signal that it folds many.
@@ -340,10 +371,12 @@ function drawFlow() {
     flowCtx.fill();
     flowCtx.strokeStyle = selected
       ? "#5cc8a7"
-      : hovered
-        ? "rgba(92, 200, 167, 0.6)"
-        : "rgba(255, 255, 255, 0.14)";
-    flowCtx.lineWidth = selected ? 2 : 1.2;
+      : onPath
+        ? "rgba(122, 162, 247, 0.85)"
+        : hovered
+          ? "rgba(92, 200, 167, 0.6)"
+          : "rgba(255, 255, 255, 0.14)";
+    flowCtx.lineWidth = selected ? 2 : onPath ? 1.8 : 1.2;
     flowCtx.stroke();
     flowCtx.fillStyle = accent;
     flowCtx.fillRect(position.x, position.y + 6, 3.5, FLOW_BLOCK_HEIGHT - 12);
