@@ -497,6 +497,24 @@ function drawFlow() {
       flowCtx.fillStyle = riskColor(severity);
       flowCtx.fill();
     }
+
+    // Hidden downstream calls trimmed by the fan-out cap: "+N" signals there is
+    // more to see by drilling into this node.
+    const hidden = Number(block.truncated_children || 0);
+    if (hidden > 0) {
+      flowCtx.fillStyle = "rgba(242, 193, 78, 0.92)";
+      flowCtx.font = "600 10px 'JetBrains Mono', ui-monospace, monospace";
+      flowCtx.textAlign = "right";
+      flowCtx.textBaseline = "middle";
+      flowCtx.fillText(
+        `+${hidden}`,
+        position.x + FLOW_BLOCK_WIDTH - 8,
+        position.y + FLOW_BLOCK_HEIGHT / 2,
+        58,
+      );
+      flowCtx.textAlign = "left";
+      flowCtx.textBaseline = "alphabetic";
+    }
   });
 
   flowCtx.restore();
@@ -586,6 +604,7 @@ function renderFlowHelp() {
     ["← → ↑ ↓", "flow.help.walk"],
     ["c", "flow.help.callers"],
     ["×N", "flow.help.group"],
+    ["+N", "flow.help.hidden"],
     ["›", "flow.help.back"],
     ["+ − · Fit", "flow.help.zoom"],
     ["Esc", "flow.help.escape"],

@@ -955,6 +955,7 @@ pub(crate) fn journey_block(
         risk_refs: workflow_risk_refs_for_node(insight_report, node.id),
         compacted: false,
         compacted_count: 1,
+        truncated_children: 0,
     }
 }
 
@@ -992,6 +993,7 @@ pub(crate) fn workflow_with_insight_report(
     let mut queue = VecDeque::new();
     let mut transition_indexes = BTreeSet::new();
     let mut truncated = false;
+    let mut truncated_children: BTreeMap<NodeId, usize> = BTreeMap::new();
 
     visited.insert(start.id);
     depths.insert(start.id, 0);
@@ -1021,6 +1023,7 @@ pub(crate) fn workflow_with_insight_report(
             followable.sort_by_key(|(edge_index, edge)| {
                 (workflow_edge_priority(&edge.kind), *edge_index)
             });
+            truncated_children.insert(node_id, followable.len() - max_fanout);
             followable.truncate(max_fanout);
             truncated = true;
         }
@@ -1059,6 +1062,7 @@ pub(crate) fn workflow_with_insight_report(
                 risk_refs: workflow_risk_refs_for_node(insight_report, node.id),
                 compacted: false,
                 compacted_count: 1,
+                truncated_children: truncated_children.get(&node.id).copied().unwrap_or(0),
             }
         })
         .collect::<Vec<_>>();
@@ -1282,6 +1286,7 @@ pub(crate) fn workflow_compacted_block(
         risk_refs: Vec::new(),
         compacted: true,
         compacted_count: count,
+        truncated_children: 0,
     }
 }
 

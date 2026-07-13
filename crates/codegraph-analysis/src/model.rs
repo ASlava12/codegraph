@@ -297,6 +297,10 @@ pub struct WorkflowBlock {
     pub compacted: bool,
     #[serde(default)]
     pub compacted_count: usize,
+    /// Outgoing edges dropped from this node by the fan-out cap — how many more
+    /// steps are reachable by drilling into it. 0 when nothing was trimmed.
+    #[serde(default)]
+    pub truncated_children: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

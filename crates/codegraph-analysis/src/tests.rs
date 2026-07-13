@@ -1732,6 +1732,15 @@ fn workflow_fanout_cap_follows_calls_into_depth() {
         "lower-priority import edges are dropped by the fan-out cap: {capped_labels:?}"
     );
     assert!(capped.truncated, "the fan-out cap marks the flow truncated");
+    let root_block = capped
+        .blocks
+        .iter()
+        .find(|block| block.node.label == "root")
+        .expect("root block");
+    assert_eq!(
+        root_block.truncated_children, 2,
+        "root reports its two dropped downstream edges"
+    );
 }
 
 #[test]
