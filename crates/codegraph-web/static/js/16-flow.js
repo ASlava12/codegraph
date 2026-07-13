@@ -144,6 +144,7 @@ async function drillIntoFlowBlock(block) {
     depth: String(depth),
     block_limit: "250",
     compact: "true",
+    max_fanout: "16",
   });
   appendWorkflowFilterParams(params, readWorkflowFilters("workflow"));
 

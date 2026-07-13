@@ -2731,6 +2731,7 @@ fn main() -> Result<()> {
                         block_kind,
                     ),
                     compact,
+                    max_fanout: None,
                 },
             );
             match (format, report) {

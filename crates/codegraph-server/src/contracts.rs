@@ -296,6 +296,7 @@ pub(crate) struct WorkflowQuery {
     pub(crate) risk_severity: Option<String>,
     pub(crate) block_kind: Option<String>,
     pub(crate) compact: Option<bool>,
+    pub(crate) max_fanout: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

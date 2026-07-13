@@ -261,6 +261,7 @@ fn workflow_language_fixtures_keep_block_and_transition_shape() {
                 block_limit: 100,
                 filters: WorkflowFilters::default(),
                 compact: false,
+                max_fanout: None,
             },
         )
         .unwrap_or_else(|| panic!("{} fixture should build a workflow report", fixture.name));

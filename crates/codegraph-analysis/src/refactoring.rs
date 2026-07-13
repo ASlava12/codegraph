@@ -958,6 +958,20 @@ pub(crate) fn journey_block(
     }
 }
 
+// Priority for fan-out capping: lower is kept first. The call chain (Calls)
+// wins, then config/env reads and control-relevant references, with imports and
+// dependency edges dropped first since they are the least useful for following
+// execution.
+fn workflow_edge_priority(kind: &EdgeKind) -> u8 {
+    match kind {
+        EdgeKind::Calls => 0,
+        EdgeKind::ReadsConfig | EdgeKind::ReadsEnvironment => 1,
+        EdgeKind::References | EdgeKind::Defines | EdgeKind::Entrypoint => 2,
+        EdgeKind::MayError => 3,
+        EdgeKind::Imports | EdgeKind::DependsOn | EdgeKind::Contains => 4,
+    }
+}
+
 pub(crate) fn workflow_with_insight_report(
     graph: &CodeGraph,
     request: WorkflowRequest,
@@ -994,11 +1008,23 @@ pub(crate) fn workflow_with_insight_report(
             continue;
         }
 
-        for (edge_index, edge) in trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
+        let mut followable = trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
+            .filter(|(_, edge)| workflow_edge_filter_matches(edge, &filters))
+            .collect::<Vec<_>>();
+        // Cap the fan-out per node, keeping the highest-priority edges (calls
+        // first), so the block budget follows the call chain into depth instead
+        // of exhausting on one wide node. Unset = unbounded breadth (default).
+        if let Some(max_fanout) = request
+            .max_fanout
+            .filter(|value| *value > 0 && followable.len() > *value)
         {
-            if !workflow_edge_filter_matches(edge, &filters) {
-                continue;
-            }
+            followable.sort_by_key(|(edge_index, edge)| {
+                (workflow_edge_priority(&edge.kind), *edge_index)
+            });
+            followable.truncate(max_fanout);
+            truncated = true;
+        }
+        for (edge_index, edge) in followable {
             let next = edge.target;
             if visited.contains(&next) {
                 transition_indexes.insert(edge_index);

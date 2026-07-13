@@ -236,6 +236,7 @@ impl McpEngine<'_> {
                 block_limit: usize_arg(args, "block_limit", 200),
                 filters: WorkflowFilters::default(),
                 compact: bool_arg(args, "compact", false),
+                max_fanout: None,
             },
         )
         .ok_or_else(|| format!("workflow target `{target}` did not match a node"))?;

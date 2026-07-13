@@ -1628,6 +1628,7 @@ fn workflow_builds_block_steps_with_risk_context() {
             block_limit: 20,
             filters: WorkflowFilters::default(),
             compact: false,
+            max_fanout: None,
         },
     )
     .expect("workflow report");
@@ -1682,6 +1683,55 @@ fn workflow_builds_block_steps_with_risk_context() {
     assert!(mermaid.starts_with("flowchart TD"));
     assert!(mermaid.contains("start: cargo bin:api"));
     assert!(mermaid.contains("reads_environment/heuristic"));
+}
+
+#[test]
+fn workflow_fanout_cap_follows_calls_into_depth() {
+    // A wide node (root: 2 imports + 1 call) whose call leads deeper. Unbounded
+    // breadth visits everything at shallow depth; the fan-out cap keeps the
+    // highest-priority edge (the call) so the budget follows the chain to depth.
+    let mut graph = CodeGraph::new("repo");
+    let root = graph.add_node(NodeKind::Function, "root");
+    let a = graph.add_node(NodeKind::Function, "a");
+    let b = graph.add_node(NodeKind::Function, "b");
+    let dep1 = graph.add_node(NodeKind::ExternalDependency, "dep1");
+    let dep2 = graph.add_node(NodeKind::ExternalDependency, "dep2");
+    graph.add_edge(root, dep1, EdgeKind::Imports, Confidence::Heuristic);
+    graph.add_edge(root, dep2, EdgeKind::Imports, Confidence::Heuristic);
+    graph.add_edge(root, a, EdgeKind::Calls, Confidence::Heuristic);
+    graph.add_edge(a, b, EdgeKind::Calls, Confidence::Heuristic);
+
+    let build = |max_fanout| {
+        workflow(
+            &graph,
+            WorkflowRequest {
+                start: TraceStart::NodeId(root),
+                max_depth: 5,
+                block_limit: 100,
+                filters: WorkflowFilters::default(),
+                compact: false,
+                max_fanout,
+            },
+        )
+        .expect("workflow report")
+    };
+
+    let full = build(None);
+    let full_labels: BTreeSet<_> = full.blocks.iter().map(|b| b.node.label.clone()).collect();
+    assert!(full_labels.contains("dep1") && full_labels.contains("dep2"));
+    assert!(full_labels.contains("b"));
+
+    let capped = build(Some(1));
+    let capped_labels: BTreeSet<_> = capped.blocks.iter().map(|b| b.node.label.clone()).collect();
+    assert!(
+        capped_labels.contains("a") && capped_labels.contains("b"),
+        "the call chain is followed into depth: {capped_labels:?}"
+    );
+    assert!(
+        !capped_labels.contains("dep1") && !capped_labels.contains("dep2"),
+        "lower-priority import edges are dropped by the fan-out cap: {capped_labels:?}"
+    );
+    assert!(capped.truncated, "the fan-out cap marks the flow truncated");
 }
 
 #[test]
@@ -1764,6 +1814,7 @@ fn workflow_classifies_control_flow_blocks_from_item_kind() {
             block_limit: 20,
             filters: WorkflowFilters::default(),
             compact: false,
+            max_fanout: None,
         },
     )
     .expect("workflow report");
@@ -1826,6 +1877,7 @@ fn workflow_compacts_repeated_low_signal_blocks() {
             block_limit: 20,
             filters: WorkflowFilters::default(),
             compact: true,
+            max_fanout: None,
         },
     )
     .expect("workflow report");
@@ -1920,6 +1972,7 @@ fn workflow_filters_blocks_edges_language_and_risk() {
                 ..WorkflowFilters::default()
             },
             compact: false,
+            max_fanout: None,
         },
     )
     .expect("environment workflow");
@@ -1953,6 +2006,7 @@ fn workflow_filters_blocks_edges_language_and_risk() {
                 ..WorkflowFilters::default()
             },
             compact: false,
+            max_fanout: None,
         },
     )
     .expect("risk workflow");

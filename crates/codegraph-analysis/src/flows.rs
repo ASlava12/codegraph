@@ -157,6 +157,7 @@ pub fn workflow_entrypoints(
                     block_limit,
                     filters: request.filters.clone(),
                     compact: request.compact,
+                    max_fanout: None,
                 },
                 &insight_report,
             )
@@ -199,6 +200,7 @@ pub fn workflow_query(
                     block_limit,
                     filters: filters.clone(),
                     compact: request.compact,
+                    max_fanout: None,
                 },
                 &insight_report,
             )

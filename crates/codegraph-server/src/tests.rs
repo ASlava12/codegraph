@@ -602,6 +602,7 @@ fn helper() {
             risk_severity: None,
             block_kind: None,
             compact: None,
+            max_fanout: None,
         }),
     )
     .await

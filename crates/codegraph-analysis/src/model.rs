@@ -216,6 +216,12 @@ pub struct WorkflowRequest {
     pub filters: WorkflowFilters,
     #[serde(default)]
     pub compact: bool,
+    /// Cap on outgoing edges expanded per node, prioritizing calls. Lets the
+    /// block budget reach depth on wide entrypoints (e.g. a CLI `main` that
+    /// calls hundreds of things) instead of a shallow, wide fan. `None` keeps
+    /// the unbounded breadth-first behavior.
+    #[serde(default)]
+    pub max_fanout: Option<usize>,
 }
 
 /// Node investigation card options, shared by the CLI `node-card`
