@@ -165,6 +165,9 @@ function renderOverview() {
       focusNodeId(Number(button.dataset.nodeId), t("focus.entrypoint"));
     });
   });
+
+  // Keep the Flow entrypoint picker in sync with the loaded entrypoints.
+  populateFlowEntrypointPicker();
 }
 
 function renderOverviewChip(kind, value, count) {

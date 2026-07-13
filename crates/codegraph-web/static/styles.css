@@ -2631,6 +2631,17 @@ button.cancel-action:hover:not(:disabled) {
   color: var(--muted);
 }
 
+.flow-entry-select {
+  max-width: 260px;
+  height: 32px;
+  padding: 0 8px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
 .legend {
   position: absolute;
   right: 16px;

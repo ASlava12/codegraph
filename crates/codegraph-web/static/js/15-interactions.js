@@ -426,10 +426,12 @@ function setStageView(view) {
   flowCanvas.hidden = !flowActive;
   flowMinimapCanvas.hidden = !flowActive;
   flowHud.hidden = !flowActive;
+  if (flowEntrypointSelect) flowEntrypointSelect.hidden = !flowActive;
   stageViewButtons.forEach((button) => {
     button.setAttribute("aria-pressed", String(button.dataset.stageView === next));
   });
   if (flowActive) {
+    populateFlowEntrypointPicker();
     resizeFlowCanvas();
     if (!state.flow.report) ensureFlowReportForStage();
   }
@@ -468,7 +470,18 @@ async function ensureFlowReportForStage() {
     if (flowHud) flowHud.textContent = t("flow.noWorkflow");
     return;
   }
+  await buildFlowFromNode(node, requestId);
+}
 
+// Fetch a node's workflow and open it in the Flow view. Shared by the empty-
+// stage auto-build and the entrypoint picker.
+async function buildFlowFromNode(node, requestId = null) {
+  if (!node || node.id == null) return;
+  if (requestId == null) {
+    state.flowAutoRequest = (state.flowAutoRequest || 0) + 1;
+    requestId = state.flowAutoRequest;
+    if (flowHud) flowHud.textContent = t("flow.building");
+  }
   const depthInput = document.querySelector("#traceDepthInput");
   const depth = clampNumber(Number(depthInput?.value || 4), 1, 8);
   const params = new URLSearchParams({
@@ -490,11 +503,40 @@ async function ensureFlowReportForStage() {
     }
     openFlowView(body, node.label);
   } catch (error) {
-    console.error("flow: auto-build failed", error);
+    console.error("flow: build failed", error);
     if (requestId === state.flowAutoRequest && flowHud) {
       flowHud.textContent = t("flow.noWorkflow");
     }
   }
+}
+
+// Entrypoint picker in the Flow controls: pick which entrypoint to explore from
+// instead of being stuck with the auto-picked first one.
+function populateFlowEntrypointPicker() {
+  if (!flowEntrypointSelect) return;
+  const entrypoints = (state.entrypoints || []).filter((node) => node && node.id != null);
+  const current = flowEntrypointSelect.value;
+  const options = [`<option value="">${escapeHtml(t("flow.pickEntrypoint"))}</option>`].concat(
+    entrypoints.map(
+      (node) =>
+        `<option value="${node.id}">${escapeHtml(
+          `${formatKind(node.metadata?.entrypoint_kind || node.kind)}: ${node.label}`,
+        )}</option>`,
+    ),
+  );
+  flowEntrypointSelect.innerHTML = options.join("");
+  if (current && entrypoints.some((node) => String(node.id) === current)) {
+    flowEntrypointSelect.value = current;
+  }
+}
+
+function selectFlowEntrypoint(value) {
+  const node = (state.entrypoints || []).find((candidate) => String(candidate.id) === String(value));
+  if (!node) return undefined;
+  state.flowAutoRequest = (state.flowAutoRequest || 0) + 1;
+  const requestId = state.flowAutoRequest;
+  if (flowHud) flowHud.textContent = t("flow.building");
+  return buildFlowFromNode(node, requestId);
 }
 
 function openFlowView(report, title, options = {}) {
