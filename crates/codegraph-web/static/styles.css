@@ -2642,6 +2642,45 @@ button.cancel-action:hover:not(:disabled) {
   font-size: 12px;
 }
 
+.flow-group-members {
+  display: grid;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.flow-group-members button {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: baseline;
+  height: auto;
+  padding: 6px 8px;
+  color: var(--text);
+  text-align: left;
+  background: var(--panel-2, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.flow-group-members button:hover {
+  border-color: var(--accent);
+}
+
+.flow-group-members button span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.flow-group-members button strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .legend {
   position: absolute;
   right: 16px;

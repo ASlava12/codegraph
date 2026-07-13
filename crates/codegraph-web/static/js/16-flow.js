@@ -219,7 +219,9 @@ function refineFlowReport(report) {
     groupCounts.set(rep.id, members.length);
     groupMembers.set(
       rep.id,
-      members.map((m) => m.node?.id).filter((id) => id != null),
+      members
+        .filter((m) => m.node?.id != null)
+        .map((m) => ({ id: m.node.id, label: m.node.label, kind: m.kind })),
     );
     members.slice(1).forEach((m) => collapsed.set(m.id, rep.id));
   });
@@ -545,6 +547,10 @@ function selectFlowBlock(block) {
   state.flow.selectedBlockId = block ? block.id : null;
   state.flow.selectedTransitionId = null;
   drawFlow();
+  if (block && Number(block.groupCount || 0) > 1) {
+    showFlowGroupMembers(block);
+    return;
+  }
   const nodeId = block?.node?.id;
   if (nodeId != null) {
     selectNodeById(nodeId);
@@ -555,6 +561,26 @@ function selectFlowBlock(block) {
       .querySelector(".selection")
       ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
+}
+
+// A grouped block folds many same-kind steps; list its members in the selection
+// panel so the grouping is not lossy — each member opens its own source card.
+function showFlowGroupMembers(block) {
+  const members = Array.isArray(block.groupMembers) ? block.groupMembers : [];
+  if (!members.length || !selectionBody) return;
+  selectionTitle.textContent = `${formatKind(block.kind || "unknown")} ×${block.groupCount}`;
+  selectionBody.innerHTML = `<div class="flow-group-members">${members
+    .map(
+      (member) =>
+        `<button type="button" data-node-id="${member.id}"><span>${escapeHtml(
+          formatKind(member.kind || block.kind || "unknown"),
+        )}</span><strong>${escapeHtml(member.label || String(member.id))}</strong></button>`,
+    )
+    .join("")}</div>`;
+  selectionBody.querySelectorAll("[data-node-id]").forEach((button) => {
+    button.addEventListener("click", () => selectNodeById(Number(button.dataset.nodeId)));
+  });
+  document.querySelector(".selection")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function onFlowPointerDown(event) {
