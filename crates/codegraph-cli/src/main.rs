@@ -953,6 +953,11 @@ enum Command {
         #[arg(long)]
         include_ignored: bool,
 
+        /// Cap outgoing edges expanded per node (calls first), so the block
+        /// budget follows the call chain into depth instead of one wide node.
+        #[arg(long)]
+        max_fanout: Option<usize>,
+
         #[command(flatten)]
         cache: CacheArgs,
     },
@@ -2710,6 +2715,7 @@ fn main() -> Result<()> {
             risk_severity,
             block_kind,
             compact,
+            max_fanout,
             format,
             include_hidden,
             include_ignored,
@@ -2731,7 +2737,7 @@ fn main() -> Result<()> {
                         block_kind,
                     ),
                     compact,
-                    max_fanout: None,
+                    max_fanout,
                 },
             );
             match (format, report) {

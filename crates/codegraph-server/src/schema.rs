@@ -1607,11 +1607,18 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             Some("false"),
                             "Collapse repeated low-signal workflow blocks into aggregate blocks.",
                         ),
+                        query_param(
+                            "max_fanout",
+                            false,
+                            "usize",
+                            None,
+                            "Cap outgoing edges expanded per node (calls first) so the block budget follows the call chain into depth instead of one wide node. Try 8.",
+                        ),
                     ],
                     "WorkflowReport?",
                 )
                 .with_response_fields(workflow_response_fields())
-                .with_example("/api/workflow?path=.&label=main&depth=4"),
+                .with_example("/api/workflow?path=.&label=main&depth=4&max_fanout=8"),
                 api_get(
                     "/api/workflow-query",
                     "Convert graph query result nodes into block-style workflow reports.",

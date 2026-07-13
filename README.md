@@ -580,6 +580,7 @@ Trace outgoing dependencies from a label:
 cargo run -p codegraph-cli -- trace main . --depth 3
 cargo run -p codegraph-cli -- workflow main . --depth 4 --format mermaid
 cargo run -p codegraph-cli -- workflow main . --edge-kind calls --confidence heuristic --block-kind call
+cargo run -p codegraph-cli -- workflow main . --depth 10 --max-fanout 8 # follow the call chain into depth instead of a wide shallow fan
 cargo run -p codegraph-cli -- workflow-entrypoints . --search server --depth 4
 cargo run -p codegraph-cli -- workflow-entrypoints . --entrypoint-kind route --depth 4
 cargo run -p codegraph-cli -- workflow-query 'nodes kind:function search:main' . --edge-kind calls
@@ -1063,7 +1064,7 @@ curl --get 'http://127.0.0.1:3765/api/explain-edge' \
   --data-urlencode 'target=load_config' \
   --data-urlencode 'kind=calls'
 curl 'http://127.0.0.1:3765/api/trace?path=.&label=main&depth=3'
-curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&depth=4&block_limit=200&compact=true'
+curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&depth=10&block_limit=200&compact=true&max_fanout=8'
 curl 'http://127.0.0.1:3765/api/workflow?path=.&label=main&edge_kind=calls&confidence=heuristic&block_kind=call'
 curl 'http://127.0.0.1:3765/api/journey?path=.&from=main&to=load_config&depth=8&paths=3'
 curl --get 'http://127.0.0.1:3765/api/workflow-query' \

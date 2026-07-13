@@ -236,7 +236,10 @@ impl McpEngine<'_> {
                 block_limit: usize_arg(args, "block_limit", 200),
                 filters: WorkflowFilters::default(),
                 compact: bool_arg(args, "compact", false),
-                max_fanout: None,
+                max_fanout: args
+                    .get("max_fanout")
+                    .and_then(Value::as_u64)
+                    .map(|value| value as usize),
             },
         )
         .ok_or_else(|| format!("workflow target `{target}` did not match a node"))?;
@@ -534,7 +537,8 @@ pub fn mcp_tool_definitions() -> Vec<Value> {
                     "target": {"type": "string", "description": "Start label or node id."},
                     "depth": {"type": "integer", "description": "Traversal depth (default 4)."},
                     "block_limit": {"type": "integer", "description": "Maximum blocks (default 200)."},
-                    "compact": {"type": "boolean", "description": "Collapse repeated low-signal blocks."}
+                    "compact": {"type": "boolean", "description": "Collapse repeated low-signal blocks."},
+                    "max_fanout": {"type": "integer", "description": "Cap outgoing edges expanded per node (calls first) so the flow follows the call chain into depth instead of one wide node. Try 8."}
                 },
                 "required": ["target"]
             }
