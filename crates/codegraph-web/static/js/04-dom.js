@@ -12,6 +12,8 @@ const flowMinimapCanvas = document.querySelector("#flowMinimap");
 const flowMinimapCtx = flowMinimapCanvas.getContext("2d");
 const flowHud = document.querySelector("#flowHud");
 const flowEntrypointSelect = document.querySelector("#flowEntrypointSelect");
+const flowHelpButton = document.querySelector("#flowHelpButton");
+const flowHelp = document.querySelector("#flowHelp");
 const graphStage = document.querySelector(".graph-stage");
 const stageViewButtons = document.querySelectorAll("[data-stage-view]");
 const scanButton = document.querySelector("#scanButton");
@@ -420,6 +422,9 @@ if (flowEntrypointSelect) {
     const value = flowEntrypointSelect.value;
     if (value !== "") selectFlowEntrypoint(value);
   });
+}
+if (flowHelpButton) {
+  flowHelpButton.addEventListener("click", () => toggleFlowHelp());
 }
 flowMinimapCanvas.addEventListener("pointerdown", onFlowMinimapPointerDown);
 flowMinimapCanvas.addEventListener("pointermove", onFlowMinimapPointerMove);

@@ -576,6 +576,38 @@ function drawFlowMinimap() {
   );
 }
 
+// A compact controls legend so the Flow view's many gestures are discoverable.
+function renderFlowHelp() {
+  if (!flowHelp) return;
+  const rows = [
+    ["click", "flow.help.click"],
+    ["2× / Enter", "flow.help.deeper"],
+    ["← → ↑ ↓", "flow.help.walk"],
+    ["c", "flow.help.callers"],
+    ["×N", "flow.help.group"],
+    ["›", "flow.help.back"],
+    ["+ − · Fit", "flow.help.zoom"],
+    ["Esc", "flow.help.escape"],
+  ];
+  flowHelp.innerHTML =
+    `<div class="flow-help-title">${escapeHtml(t("flow.help.title"))}</div>` +
+    rows
+      .map(
+        ([keys, descKey]) =>
+          `<div class="flow-help-row"><kbd>${escapeHtml(keys)}</kbd><span>${escapeHtml(
+            t(descKey),
+          )}</span></div>`,
+      )
+      .join("");
+}
+
+function toggleFlowHelp(force) {
+  if (!flowHelp) return;
+  const show = force != null ? force : flowHelp.hidden;
+  if (show) renderFlowHelp();
+  flowHelp.hidden = !show;
+}
+
 function renderFlowHud() {
   if (!flowHud) return;
   if (!state.flow.report) {
@@ -751,6 +783,16 @@ function onFlowKeyDown(event) {
   if (event.key === "Enter" && state.flow.selectedBlockId != null) {
     event.preventDefault();
     drillIntoFlowBlock(flowBlockById(state.flow.selectedBlockId));
+    return;
+  }
+  if (event.key === "?" || event.key === "h" || event.key === "H") {
+    event.preventDefault();
+    toggleFlowHelp();
+    return;
+  }
+  if (event.key === "Escape" && flowHelp && !flowHelp.hidden) {
+    event.preventDefault();
+    toggleFlowHelp(false);
     return;
   }
   if (event.key === "Escape" && state.flow.selectedBlockId != null) {

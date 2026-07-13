@@ -427,6 +427,8 @@ function setStageView(view) {
   flowMinimapCanvas.hidden = !flowActive;
   flowHud.hidden = !flowActive;
   if (flowEntrypointSelect) flowEntrypointSelect.hidden = !flowActive;
+  if (flowHelpButton) flowHelpButton.hidden = !flowActive;
+  if (flowHelp && !flowActive) flowHelp.hidden = true;
   stageViewButtons.forEach((button) => {
     button.setAttribute("aria-pressed", String(button.dataset.stageView === next));
   });

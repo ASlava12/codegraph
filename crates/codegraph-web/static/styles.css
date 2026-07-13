@@ -2642,6 +2642,65 @@ button.cancel-action:hover:not(:disabled) {
   font-size: 12px;
 }
 
+.flow-help-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.flow-help-button:hover {
+  border-color: var(--accent);
+}
+
+.flow-help {
+  position: absolute;
+  top: 64px;
+  right: 16px;
+  z-index: 6;
+  display: grid;
+  gap: 6px;
+  width: max-content;
+  max-width: 320px;
+  padding: 12px 14px;
+  background: rgba(18, 21, 26, 0.96);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.flow-help-title {
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.flow-help-row {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.flow-help-row kbd {
+  padding: 1px 6px;
+  color: var(--accent);
+  background: rgba(92, 200, 167, 0.12);
+  border: 1px solid rgba(92, 200, 167, 0.28);
+  border-radius: 5px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  text-align: center;
+}
+
 .flow-group-members {
   display: grid;
   gap: 4px;

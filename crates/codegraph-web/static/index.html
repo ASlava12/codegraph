@@ -699,6 +699,14 @@
             data-i18n-aria-label="aria.flowEntrypoint"
             hidden
           ></select>
+          <button
+            id="flowHelpButton"
+            class="flow-help-button"
+            type="button"
+            aria-label="Flow controls help"
+            data-i18n-aria-label="aria.flowHelp"
+            hidden
+          >?</button>
           <div class="graph-control-group">
             <button id="zoomOutButton" type="button" aria-label="Zoom out" data-i18n-aria-label="aria.zoomOut">-</button>
             <button id="zoomInButton" type="button" aria-label="Zoom in" data-i18n-aria-label="aria.zoomIn">+</button>
@@ -738,6 +746,7 @@
         ></canvas>
         <div id="graphHud" class="graph-hud" aria-live="polite"></div>
         <div id="flowHud" class="graph-hud flow-hud" aria-live="polite" hidden></div>
+        <div id="flowHelp" class="flow-help" role="dialog" aria-label="Flow controls" hidden></div>
         <div class="legend" id="legend"></div>
       </section>
     </main>
