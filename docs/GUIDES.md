@@ -336,6 +336,11 @@ From there:
 - the view deep-links as `?flow=<nodeId>`, so a flow survives reload and the
   **⧉ link** button copies it to share.
 
+Rooting a flow on a **file** (not just an entrypoint) works too: a file has no
+call chain of its own, so its flow expands into the functions it defines, each
+followed into its own calls — handy when you know the file but not the exact
+entry function.
+
 ### 5. Agent (MCP) form
 
 The same flows are available over MCP without shelling out:

@@ -973,6 +973,41 @@ fn workflow_edge_priority(kind: &EdgeKind) -> u8 {
     }
 }
 
+/// Outgoing edges the workflow traversal follows from `node_id`: the trace edges
+/// that pass the active filters, plus — when the node is a container (file or
+/// directory) that has no execution flow of its own — the `Contains` edges to
+/// the code symbols (and nested containers) it defines. That way a flow rooted
+/// on a file expands into the flows of the functions it holds instead of
+/// dead-ending on a lonely "leaf" block.
+fn workflow_followable_edges<'graph>(
+    graph: &'graph CodeGraph,
+    nodes_by_id: &BTreeMap<NodeId, &'graph Node>,
+    node_id: NodeId,
+    filters: &WorkflowFilters,
+) -> Vec<(usize, &'graph Edge)> {
+    let mut edges: Vec<(usize, &Edge)> =
+        trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
+            .filter(|(_, edge)| workflow_edge_filter_matches(edge, filters))
+            .collect();
+    if matches!(
+        nodes_by_id.get(&node_id).map(|node| &node.kind),
+        Some(NodeKind::File | NodeKind::Directory)
+    ) {
+        for (edge_index, edge) in graph.edges.iter().enumerate() {
+            if edge.source == node_id
+                && edge.kind == EdgeKind::Contains
+                && nodes_by_id.get(&edge.target).is_some_and(|node| {
+                    is_code_symbol(&node.kind)
+                        || matches!(node.kind, NodeKind::File | NodeKind::Directory)
+                })
+            {
+                edges.push((edge_index, edge));
+            }
+        }
+    }
+    edges
+}
+
 pub(crate) fn workflow_with_insight_report(
     graph: &CodeGraph,
     request: WorkflowRequest,
@@ -986,6 +1021,8 @@ pub(crate) fn workflow_with_insight_report(
         TraceStart::Label(label) => graph.nodes.iter().find(|node| node.label == *label)?,
     }
     .clone();
+    let nodes_by_id: BTreeMap<NodeId, &Node> =
+        graph.nodes.iter().map(|node| (node.id, node)).collect();
 
     let mut visited = BTreeSet::new();
     let mut depths = BTreeMap::new();
@@ -1001,18 +1038,13 @@ pub(crate) fn workflow_with_insight_report(
 
     while let Some((node_id, depth)) = queue.pop_front() {
         if depth >= max_depth {
-            if trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
-                .find(|(_, edge)| workflow_edge_filter_matches(edge, &filters))
-                .is_some()
-            {
+            if !workflow_followable_edges(graph, &nodes_by_id, node_id, &filters).is_empty() {
                 truncated = true;
             }
             continue;
         }
 
-        let mut followable = trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
-            .filter(|(_, edge)| workflow_edge_filter_matches(edge, &filters))
-            .collect::<Vec<_>>();
+        let mut followable = workflow_followable_edges(graph, &nodes_by_id, node_id, &filters);
         // Cap the fan-out per node, keeping the highest-priority edges (calls
         // first), so the block budget follows the call chain into depth instead
         // of exhausting on one wide node. Unset = unbounded breadth (default).

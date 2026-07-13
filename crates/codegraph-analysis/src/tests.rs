@@ -1744,6 +1744,49 @@ fn workflow_fanout_cap_follows_calls_into_depth() {
 }
 
 #[test]
+fn workflow_from_file_expands_into_contained_symbols() {
+    // A file node has no execution flow of its own — it only `Contains` the
+    // functions it defines. A flow rooted on the file must expand into those
+    // functions (and their call chains) instead of dead-ending on one block.
+    let mut graph = CodeGraph::new("repo");
+    let file = graph.add_node(NodeKind::File, "src/handlers.rs");
+    let handler = graph.add_node(NodeKind::Function, "handle_request");
+    let helper = graph.add_node(NodeKind::Function, "helper");
+    let downstream = graph.add_node(NodeKind::Function, "validate");
+    graph.add_edge(file, handler, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(file, helper, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(handler, downstream, EdgeKind::Calls, Confidence::Exact);
+
+    let report = workflow(
+        &graph,
+        WorkflowRequest {
+            start: TraceStart::NodeId(file),
+            max_depth: 5,
+            block_limit: 100,
+            filters: WorkflowFilters::default(),
+            compact: false,
+            max_fanout: None,
+        },
+    )
+    .expect("workflow report");
+
+    let labels: BTreeSet<_> = report.blocks.iter().map(|b| b.node.label.clone()).collect();
+    assert!(
+        labels.contains("handle_request") && labels.contains("helper"),
+        "the file expands into the functions it contains: {labels:?}"
+    );
+    assert!(
+        labels.contains("validate"),
+        "and the call chain continues from those functions into depth: {labels:?}"
+    );
+    assert!(
+        report.total_transitions >= 3,
+        "contains + call edges become transitions: {}",
+        report.total_transitions
+    );
+}
+
+#[test]
 fn workflow_classifies_control_flow_blocks_from_item_kind() {
     let mut graph = CodeGraph::new("repo");
     let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:api");
