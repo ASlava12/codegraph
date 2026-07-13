@@ -401,7 +401,14 @@ flowCanvas.addEventListener("pointermove", onFlowPointerMove);
 flowCanvas.addEventListener("pointerup", onFlowPointerUp);
 flowCanvas.addEventListener("pointerleave", onFlowPointerUp);
 flowCanvas.addEventListener("keydown", onFlowKeyDown);
+flowCanvas.addEventListener("dblclick", onFlowDoubleClick);
 flowCanvas.addEventListener("wheel", onFlowWheel, { passive: false });
+if (flowHud) {
+  flowHud.addEventListener("click", (event) => {
+    const crumb = event.target.closest("[data-flow-crumb]");
+    if (crumb) restoreFlowLevel(Number(crumb.dataset.flowCrumb));
+  });
+}
 flowMinimapCanvas.addEventListener("pointerdown", onFlowMinimapPointerDown);
 flowMinimapCanvas.addEventListener("pointermove", onFlowMinimapPointerMove);
 flowMinimapCanvas.addEventListener("keydown", onFlowKeyDown);

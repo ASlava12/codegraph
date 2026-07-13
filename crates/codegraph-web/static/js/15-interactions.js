@@ -497,10 +497,13 @@ async function ensureFlowReportForStage() {
   }
 }
 
-function openFlowView(report, title) {
+function openFlowView(report, title, options = {}) {
   if (!report || !Array.isArray(report.blocks) || report.blocks.length === 0) return;
   state.flow.report = refineFlowReport(report);
   state.flow.title = title || report.start?.label || "";
+  // A fresh root (auto-build, journey) resets the drill-down trail; drilling
+  // into a block keeps it so breadcrumbs can walk back.
+  if (!options.keepTrail) state.flow.trail = [];
   state.flow.selectedBlockId = null;
   state.flow.hoveredBlockId = null;
   state.flow.selectedTransitionId = null;

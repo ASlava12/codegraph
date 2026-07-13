@@ -2610,6 +2610,27 @@ button.cancel-action:hover:not(:disabled) {
   font-size: 12px;
 }
 
+.flow-crumb {
+  height: auto;
+  padding: 1px 6px;
+  color: var(--accent);
+  background: rgba(92, 200, 167, 0.12);
+  border: 1px solid rgba(92, 200, 167, 0.28);
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.flow-crumb:hover {
+  background: rgba(92, 200, 167, 0.22);
+}
+
+.flow-crumb-sep {
+  margin: 0 4px;
+  color: var(--muted);
+}
+
 .legend {
   position: absolute;
   right: 16px;

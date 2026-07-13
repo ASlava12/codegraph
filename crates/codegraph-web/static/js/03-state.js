@@ -56,6 +56,7 @@ const state = {
   flow: {
     report: null,
     title: "",
+    trail: [],
     positions: new Map(),
     pan: { x: 48, y: 48 },
     zoom: 1,

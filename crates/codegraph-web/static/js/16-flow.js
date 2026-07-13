@@ -124,6 +124,64 @@ function selectFlowTransition(transition) {
   selectEdgeByKey(selectionKey);
 }
 
+// Re-root the Flow view on a block's node so exploration continues "onward":
+// double-clicking a call block rebuilds the workflow from that node and pushes
+// the current flow onto a breadcrumb trail to walk back.
+async function drillIntoFlowBlock(block) {
+  const node = block?.node;
+  if (!node || node.id == null) return;
+  // The start block is already the current root; a group folds many nodes.
+  if (block.kind === "start" || Number(block.groupCount || 0) > 1) return;
+
+  state.flowDrillRequest = (state.flowDrillRequest || 0) + 1;
+  const requestId = state.flowDrillRequest;
+  if (flowHud) flowHud.textContent = t("flow.building");
+  const depthInput = document.querySelector("#traceDepthInput");
+  const depth = clampNumber(Number(depthInput?.value || 4), 1, 8);
+  const params = new URLSearchParams({
+    path: pathInput.value.trim() || ".",
+    node_id: String(node.id),
+    depth: String(depth),
+    block_limit: "250",
+    compact: "true",
+  });
+  appendWorkflowFilterParams(params, readWorkflowFilters("workflow"));
+
+  try {
+    const response = await apiFetch(`/api/workflow?${params.toString()}`);
+    const body = await response.json();
+    if (requestId !== state.flowDrillRequest || state.stageView !== "flow") return;
+    if (!response.ok || !Array.isArray(body.blocks) || body.blocks.length === 0) {
+      renderFlowHud();
+      return;
+    }
+    if (!Array.isArray(body.transitions) || body.transitions.length === 0) {
+      // Leaf: nothing further to explore — keep the current view, just say so.
+      if (flowHud) flowHud.textContent = t("flow.noFurther");
+      return;
+    }
+    (state.flow.trail ||= []).push({ report: state.flow.report, title: state.flow.title });
+    openFlowView(body, node.label, { keepTrail: true });
+  } catch (error) {
+    console.error("flow: drill failed", error);
+    renderFlowHud();
+  }
+}
+
+// Jump back to an ancestor flow via a breadcrumb click.
+function restoreFlowLevel(index) {
+  const trail = state.flow.trail || [];
+  if (index < 0 || index >= trail.length) return;
+  const level = trail[index];
+  state.flow.trail = trail.slice(0, index);
+  state.flow.report = level.report;
+  state.flow.title = level.title;
+  state.flow.selectedBlockId = null;
+  state.flow.selectedTransitionId = null;
+  layoutFlow();
+  fitFlowView();
+}
+
 // Collapse a workflow into a readable shape: leaf blocks that share the same
 // parent and kind (e.g. the dozens of branch/error/import leaves that hang off
 // a CLI `main`) fold into one representative block carrying the group count, so
@@ -426,12 +484,28 @@ function renderFlowHud() {
   const blocks = flowBlocks().length;
   const transitions = flowTransitions().length;
   const zoom = Math.round(state.flow.zoom * 100);
-  const title = state.flow.title ? `${state.flow.title} · ` : "";
   const tail = transitions === 0 ? t("flow.noOutgoing") : t("flow.blockHint");
-  flowHud.textContent = `${title}${t("workflow.blockCount", { count: formatNumber(blocks) })} · ${t(
+  const shorten = (value) => {
+    const text = String(value || "");
+    return text.length > 22 ? `${text.slice(0, 21)}…` : text;
+  };
+  const trail = state.flow.trail || [];
+  const crumbs = [
+    ...trail.map((level, index) => ({ label: level.title, index })),
+    { label: state.flow.title, index: trail.length, current: true },
+  ];
+  const crumbHtml = crumbs
+    .map((crumb) =>
+      crumb.current
+        ? `<strong>${escapeHtml(shorten(crumb.label))}</strong>`
+        : `<button type="button" class="flow-crumb" data-flow-crumb="${crumb.index}">${escapeHtml(shorten(crumb.label))}</button>`,
+    )
+    .join('<span class="flow-crumb-sep">›</span>');
+  const meta = `${t("workflow.blockCount", { count: formatNumber(blocks) })} · ${t(
     "workflow.transitionCount",
     { count: formatNumber(transitions) },
-  )} · ${zoom}% · ${tail}`;
+  )} · ${zoom}% · ${escapeHtml(tail)}`;
+  flowHud.innerHTML = `${crumbHtml} · ${meta}`;
 }
 
 function selectFlowBlock(block) {
@@ -488,6 +562,12 @@ function onFlowPointerMove(event) {
 
 function onFlowPointerUp() {
   state.flow.lastPointer = null;
+}
+
+function onFlowDoubleClick(event) {
+  const world = flowScreenToWorld(event.offsetX, event.offsetY);
+  const hit = flowBlockAt(world);
+  if (hit) drillIntoFlowBlock(hit);
 }
 
 function onFlowWheel(event) {
