@@ -10,7 +10,9 @@ Run the same core checks used by CI before opening a PR:
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+node --check crates/codegraph-web/static/label-policy.js
 for module in crates/codegraph-web/static/js/*.js; do node --check "$module"; done
+node --test crates/codegraph-web/static/label-policy.test.js
 node crates/codegraph-web/static/check-defs.mjs
 node crates/codegraph-web/static/flow-smoke.mjs
 cargo run -p codegraph-cli -- scan . --format ndjson > /tmp/codegraph.ndjson

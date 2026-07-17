@@ -50,6 +50,11 @@ jobs:
       - name: Run web JavaScript tests
         run: node --test crates/codegraph-web/static/label-policy.test.js
 
+      - name: Guard the concatenated bundle
+        run: |
+          node crates/codegraph-web/static/check-defs.mjs
+          node crates/codegraph-web/static/flow-smoke.mjs
+
       - name: Build Docker image
         run: docker build -t codegraph:ci .
 
