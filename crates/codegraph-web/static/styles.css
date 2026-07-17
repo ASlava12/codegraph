@@ -2024,30 +2024,6 @@ button.cancel-action:hover:not(:disabled) {
   line-height: 1.2;
 }
 
-.detail-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.detail-table th,
-.detail-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--line);
-  vertical-align: top;
-  text-align: left;
-}
-
-.detail-table th {
-  width: 96px;
-  color: var(--muted);
-  font-weight: 700;
-}
-
-.detail-table td {
-  overflow-wrap: anywhere;
-}
-
 .neighbors {
   display: grid;
   gap: 6px;

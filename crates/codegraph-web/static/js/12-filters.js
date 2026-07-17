@@ -184,10 +184,6 @@ function attachInsightSeverityFilters() {
   });
 }
 
-function insightNodeId(insight) {
-  return insightNodeIds(insight)[0] || null;
-}
-
 function insightNodeIds(insight) {
   if (Array.isArray(insight.nodes) && insight.nodes.length > 0) return insight.nodes;
   if (insight.nodeId) return [insight.nodeId];
