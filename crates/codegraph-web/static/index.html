@@ -51,33 +51,38 @@
           <div><strong id="skippedCount">0</strong><span data-i18n="stat.skipped">Skipped</span></div>
         </section>
 
-        <section class="runtime-status" aria-label="Runtime status" data-i18n-aria-label="aria.runtimeStatus">
-          <header>
-            <h2 data-i18n="section.runtime">Runtime</h2>
-            <button id="metricsRefreshButton" type="button" data-i18n="button.refresh">Refresh</button>
-          </header>
-          <div id="runtimeMetricsList" class="runtime-metrics-list"></div>
-        </section>
+        <div class="side-group" aria-label="Analysis">
+          <h2 class="side-group__title" data-i18n="group.analysis">Analysis</h2>
 
-        <section class="job-queue" aria-label="Jobs" data-i18n-aria-label="aria.jobs">
+        <section class="insights" aria-label="Graph insights" data-i18n-aria-label="aria.graphInsights">
           <header>
-            <h2 data-i18n="section.jobs">Jobs</h2>
-            <button id="jobRefreshButton" type="button" data-i18n="button.refresh">Refresh</button>
+            <h2 data-i18n="section.insights">Insights</h2>
+            <span id="insightCount">0</span>
           </header>
-          <div class="job-summary">
-            <div><strong id="scanJobSummary">0</strong><span data-i18n="job.scan">Scan</span></div>
-            <div><strong id="semanticJobSummary">0</strong><span data-i18n="job.semantic">Semantic</span></div>
+          <div class="insight-filters">
+            <label class="field compact">
+              <span data-i18n="label.severity">Severity</span>
+              <input id="insightSeverityInput" type="text" list="severityOptions" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="label.failOn">Fail On</span>
+              <input id="checkFailOnInput" type="text" value="error" list="severityOptions" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="label.kind">Kind</span>
+              <input id="insightKindInput" type="text" list="insightKindOptions" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="label.search">Search</span>
+              <input id="insightSearchInput" type="text" autocomplete="off" />
+            </label>
+            <button id="insightFilterButton" type="button" data-i18n="button.apply">Apply</button>
+            <button id="checkButton" type="button" data-i18n="button.runCheck">Run Check</button>
+            <button id="checkExportButton" type="button" data-i18n="button.downloadCheck" disabled>Download Check</button>
+            <button id="insightExportButton" type="button" data-i18n="button.downloadInsights">Download Insights</button>
           </div>
-          <div class="job-columns">
-            <section>
-              <h3 data-i18n="job.scan">Scan</h3>
-              <div id="scanJobList" class="job-list"></div>
-            </section>
-            <section>
-              <h3 data-i18n="job.semantic">Semantic</h3>
-              <div id="semanticJobList" class="job-list"></div>
-            </section>
-          </div>
+          <div id="checkResult" class="check-result"></div>
+          <div id="insightList" class="insight-list"></div>
         </section>
 
         <section class="overview" aria-label="Project overview" data-i18n-aria-label="aria.projectOverview">
@@ -137,6 +142,60 @@
           <div id="annotationList" class="annotation-list"></div>
           <div id="entrypointList" class="entrypoint-list"></div>
         </section>
+
+        <section class="pr-impact" aria-label="PR impact" data-i18n-aria-label="aria.prImpact">
+          <header>
+            <h2 data-i18n="section.prImpact">PR Impact</h2>
+            <span id="prImpactStatus">idle</span>
+          </header>
+          <div class="pr-impact-fields">
+            <label class="field compact">
+              <span data-i18n="prImpact.base">Base ref</span>
+              <input id="prImpactBaseInput" type="text" value="HEAD" />
+            </label>
+            <label class="field">
+              <span data-i18n="prImpact.files">Changed files (optional, comma-separated)</span>
+              <input id="prImpactFilesInput" type="text" placeholder="src/main.rs, src/util.rs" />
+            </label>
+          </div>
+          <button id="prImpactButton" type="button" data-i18n="button.prImpact">Run PR Impact</button>
+          <button id="prImpactDownloadButton" type="button" data-i18n="button.prImpactDownload" disabled>Download JSON</button>
+          <div id="prImpactResult" class="query-result"></div>
+        </section>
+
+        <section class="refactoring" aria-label="Refactoring reports" data-i18n-aria-label="aria.refactoring">
+          <header>
+            <h2 data-i18n="section.refactoring">Refactoring</h2>
+            <span id="refactorStatus">idle</span>
+          </header>
+          <div class="refactoring-fields">
+            <label class="field">
+              <span data-i18n="refactor.target">Target (label or node id)</span>
+              <input id="refactorTargetInput" type="text" placeholder="load_config / n42" />
+            </label>
+            <button id="refactorUseSelectionButton" type="button" data-i18n="refactor.useSelection">Use selection</button>
+          </div>
+          <button id="refactorImpactButton" type="button" data-i18n="button.refactorImpact">Impact</button>
+          <button id="refactorDepsButton" type="button" data-i18n="button.refactorDeps">Dependencies</button>
+          <button id="refactorSeamsButton" type="button" data-i18n="button.refactorSeams">Seams</button>
+          <button id="refactorContextButton" type="button" data-i18n="button.refactorContext">Refactor Context JSON</button>
+          <div class="refactoring-fields">
+            <label class="field compact">
+              <span data-i18n="refactor.sourceArea">Source area</span>
+              <input id="refactorSourceAreaInput" type="text" placeholder="crates" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="refactor.targetArea">Target area</span>
+              <input id="refactorTargetAreaInput" type="text" placeholder="docs" />
+            </label>
+            <button id="refactorContractButton" type="button" data-i18n="button.refactorContract">Contract</button>
+          </div>
+          <div id="refactorResult" class="query-result"></div>
+        </section>
+        </div>
+
+        <div class="side-group" aria-label="Flow & navigation">
+          <h2 class="side-group__title" data-i18n="group.flow">Flow &amp; navigation</h2>
 
         <section class="entrypoint-flows" aria-label="Entrypoint flows" data-i18n-aria-label="aria.entrypointFlows">
           <header>
@@ -250,6 +309,33 @@
           <div id="journeyResult" class="query-result"></div>
         </section>
 
+        <section class="path-query" aria-label="Graph path" data-i18n-aria-label="aria.graphPath">
+          <header>
+            <h2 data-i18n="section.path">Path</h2>
+          </header>
+          <div class="path-fields">
+            <label class="field compact">
+              <span data-i18n="label.from">From</span>
+              <input id="pathFromInput" type="text" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="label.to">To</span>
+              <input id="pathToInput" type="text" autocomplete="off" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="label.depth">Depth</span>
+              <input id="pathDepthInput" type="number" min="1" max="32" value="8" />
+            </label>
+            <label class="field compact">
+              <span data-i18n="label.edge">Edge</span>
+              <input id="pathEdgeKindInput" type="text" list="edgeKindOptions" autocomplete="off" />
+            </label>
+          </div>
+          <button id="pathButton" type="button" data-i18n="button.findPath">Find Path</button>
+          <button id="pathExportButton" type="button" data-i18n="button.downloadPathResult" disabled>Download Path</button>
+          <div id="pathResult" class="query-result"></div>
+        </section>
+
         <section class="graph-page" aria-label="Graph page" data-i18n-aria-label="aria.graphPage">
           <header>
             <h2 data-i18n="section.graphPage">Graph Page</h2>
@@ -317,6 +403,10 @@
           </div>
           <div id="pageScope" class="page-scope" aria-live="polite"></div>
         </section>
+        </div>
+
+        <div class="side-group" aria-label="Query & search">
+          <h2 class="side-group__title" data-i18n="group.query">Query &amp; search</h2>
 
         <section class="query" aria-label="Graph query" data-i18n-aria-label="aria.graphQuery">
           <label class="field">
@@ -458,128 +548,56 @@
           <button id="sourceSearchExportButton" type="button" data-i18n="button.downloadSourceResults" disabled>Download Results</button>
           <div id="sourceSearchResult" class="query-result"></div>
         </section>
+        </div>
 
-        <section class="cache-diff" aria-label="Cache diagnostics" data-i18n-aria-label="aria.cacheDiagnostics">
-          <header>
-            <h2 data-i18n="section.cacheDiff">Cache Diff</h2>
-            <span id="cacheDiffStatus">idle</span>
-          </header>
-          <div class="cache-diff-fields">
-            <label class="field compact">
-              <span data-i18n="label.limit">Limit</span>
-              <input id="cacheDiffLimitInput" type="number" min="1" max="10000" value="50" />
-            </label>
-          </div>
-          <button id="cacheDiffButton" type="button" data-i18n="button.explainCache">Explain Cache</button>
-          <button id="cacheChunksButton" type="button" data-i18n="button.cacheChunks">Cache Chunks</button>
-          <button id="incrementalPlanButton" type="button" data-i18n="button.planIncremental">Plan Incremental</button>
-          <button id="incrementalScanButton" type="button" data-i18n="button.scanIncremental">Scan Changed</button>
-          <button id="incrementalMergeButton" type="button" data-i18n="button.previewMerge">Preview Merge</button>
-          <button id="incrementalUpdateButton" type="button" data-i18n="button.updateCache">Update Cache</button>
-          <div id="cacheDiffResult" class="query-result"></div>
+        <div class="side-group" aria-label="Graph & selection">
+          <h2 class="side-group__title" data-i18n="group.graph">Graph &amp; selection</h2>
+
+        <section class="filters" aria-label="Graph filters" data-i18n-aria-label="aria.graphFilters">
+          <label class="field">
+            <span data-i18n="label.search">Search</span>
+            <input id="searchInput" type="search" autocomplete="off" />
+          </label>
+          <button id="clearCanvasFiltersButton" type="button" data-i18n="button.clearCanvasFilters">Clear Canvas Filters</button>
+          <div id="kindFilters" class="kind-filters"></div>
         </section>
 
-        <section class="pr-impact" aria-label="PR impact" data-i18n-aria-label="aria.prImpact">
+        <section class="selection" aria-label="Selected node" data-i18n-aria-label="aria.selectedNode">
+          <h2 id="selectionTitle" data-i18n-fallback="selection.title">Selection</h2>
+          <div id="selectionBody" class="selection-body"></div>
+        </section>
+        </div>
+
+        <details class="side-group side-advanced">
+          <summary class="side-group__title" data-i18n="group.advanced">Advanced</summary>
+
+        <section class="runtime-status" aria-label="Runtime status" data-i18n-aria-label="aria.runtimeStatus">
           <header>
-            <h2 data-i18n="section.prImpact">PR Impact</h2>
-            <span id="prImpactStatus">idle</span>
+            <h2 data-i18n="section.runtime">Runtime</h2>
+            <button id="metricsRefreshButton" type="button" data-i18n="button.refresh">Refresh</button>
           </header>
-          <div class="pr-impact-fields">
-            <label class="field compact">
-              <span data-i18n="prImpact.base">Base ref</span>
-              <input id="prImpactBaseInput" type="text" value="HEAD" />
-            </label>
-            <label class="field">
-              <span data-i18n="prImpact.files">Changed files (optional, comma-separated)</span>
-              <input id="prImpactFilesInput" type="text" placeholder="src/main.rs, src/util.rs" />
-            </label>
-          </div>
-          <button id="prImpactButton" type="button" data-i18n="button.prImpact">Run PR Impact</button>
-          <button id="prImpactDownloadButton" type="button" data-i18n="button.prImpactDownload" disabled>Download JSON</button>
-          <div id="prImpactResult" class="query-result"></div>
+          <div id="runtimeMetricsList" class="runtime-metrics-list"></div>
         </section>
 
-        <section class="refactoring" aria-label="Refactoring reports" data-i18n-aria-label="aria.refactoring">
+        <section class="job-queue" aria-label="Jobs" data-i18n-aria-label="aria.jobs">
           <header>
-            <h2 data-i18n="section.refactoring">Refactoring</h2>
-            <span id="refactorStatus">idle</span>
+            <h2 data-i18n="section.jobs">Jobs</h2>
+            <button id="jobRefreshButton" type="button" data-i18n="button.refresh">Refresh</button>
           </header>
-          <div class="refactoring-fields">
-            <label class="field">
-              <span data-i18n="refactor.target">Target (label or node id)</span>
-              <input id="refactorTargetInput" type="text" placeholder="load_config / n42" />
-            </label>
-            <button id="refactorUseSelectionButton" type="button" data-i18n="refactor.useSelection">Use selection</button>
+          <div class="job-summary">
+            <div><strong id="scanJobSummary">0</strong><span data-i18n="job.scan">Scan</span></div>
+            <div><strong id="semanticJobSummary">0</strong><span data-i18n="job.semantic">Semantic</span></div>
           </div>
-          <button id="refactorImpactButton" type="button" data-i18n="button.refactorImpact">Impact</button>
-          <button id="refactorDepsButton" type="button" data-i18n="button.refactorDeps">Dependencies</button>
-          <button id="refactorSeamsButton" type="button" data-i18n="button.refactorSeams">Seams</button>
-          <button id="refactorContextButton" type="button" data-i18n="button.refactorContext">Refactor Context JSON</button>
-          <div class="refactoring-fields">
-            <label class="field compact">
-              <span data-i18n="refactor.sourceArea">Source area</span>
-              <input id="refactorSourceAreaInput" type="text" placeholder="crates" />
-            </label>
-            <label class="field compact">
-              <span data-i18n="refactor.targetArea">Target area</span>
-              <input id="refactorTargetAreaInput" type="text" placeholder="docs" />
-            </label>
-            <button id="refactorContractButton" type="button" data-i18n="button.refactorContract">Contract</button>
+          <div class="job-columns">
+            <section>
+              <h3 data-i18n="job.scan">Scan</h3>
+              <div id="scanJobList" class="job-list"></div>
+            </section>
+            <section>
+              <h3 data-i18n="job.semantic">Semantic</h3>
+              <div id="semanticJobList" class="job-list"></div>
+            </section>
           </div>
-          <div id="refactorResult" class="query-result"></div>
-        </section>
-
-        <section class="graph-export" aria-label="Graph export" data-i18n-aria-label="aria.graphExport">
-          <header>
-            <h2 data-i18n="section.export">Export</h2>
-          </header>
-          <div class="graph-export-fields">
-            <label class="field compact">
-              <span data-i18n="label.format">Format</span>
-              <select id="exportFormatInput">
-                <option value="json">JSON</option>
-                <option value="dot">DOT</option>
-                <option value="ndjson">NDJSON</option>
-                <option value="graphml">GraphML</option>
-                <option value="svg">SVG</option>
-                <option value="mermaid_html">Mermaid HTML</option>
-                <option value="cypher">Neo4j Cypher</option>
-                <option value="falkordb">FalkorDB</option>
-                <option value="report" data-i18n="export.report">Report JSON</option>
-                <option value="reportMarkdown" data-i18n="export.reportMarkdown">Report Markdown</option>
-              </select>
-            </label>
-          </div>
-          <button id="exportButton" type="button" data-i18n="button.download">Download</button>
-          <button id="exportSliceButton" type="button" data-i18n="button.downloadSlice">Download Slice</button>
-          <div id="exportResult" class="query-result"></div>
-        </section>
-
-        <section class="path-query" aria-label="Graph path" data-i18n-aria-label="aria.graphPath">
-          <header>
-            <h2 data-i18n="section.path">Path</h2>
-          </header>
-          <div class="path-fields">
-            <label class="field compact">
-              <span data-i18n="label.from">From</span>
-              <input id="pathFromInput" type="text" autocomplete="off" />
-            </label>
-            <label class="field compact">
-              <span data-i18n="label.to">To</span>
-              <input id="pathToInput" type="text" autocomplete="off" />
-            </label>
-            <label class="field compact">
-              <span data-i18n="label.depth">Depth</span>
-              <input id="pathDepthInput" type="number" min="1" max="32" value="8" />
-            </label>
-            <label class="field compact">
-              <span data-i18n="label.edge">Edge</span>
-              <input id="pathEdgeKindInput" type="text" list="edgeKindOptions" autocomplete="off" />
-            </label>
-          </div>
-          <button id="pathButton" type="button" data-i18n="button.findPath">Find Path</button>
-          <button id="pathExportButton" type="button" data-i18n="button.downloadPathResult" disabled>Download Path</button>
-          <div id="pathResult" class="query-result"></div>
         </section>
 
         <section class="config-trace" aria-label="Configuration trace" data-i18n-aria-label="aria.configurationTrace">
@@ -624,50 +642,52 @@
           <div id="errorTraceResult" class="query-result"></div>
         </section>
 
-        <section class="insights" aria-label="Graph insights" data-i18n-aria-label="aria.graphInsights">
+        <section class="cache-diff" aria-label="Cache diagnostics" data-i18n-aria-label="aria.cacheDiagnostics">
           <header>
-            <h2 data-i18n="section.insights">Insights</h2>
-            <span id="insightCount">0</span>
+            <h2 data-i18n="section.cacheDiff">Cache Diff</h2>
+            <span id="cacheDiffStatus">idle</span>
           </header>
-          <div class="insight-filters">
+          <div class="cache-diff-fields">
             <label class="field compact">
-              <span data-i18n="label.severity">Severity</span>
-              <input id="insightSeverityInput" type="text" list="severityOptions" autocomplete="off" />
+              <span data-i18n="label.limit">Limit</span>
+              <input id="cacheDiffLimitInput" type="number" min="1" max="10000" value="50" />
             </label>
-            <label class="field compact">
-              <span data-i18n="label.failOn">Fail On</span>
-              <input id="checkFailOnInput" type="text" value="error" list="severityOptions" autocomplete="off" />
-            </label>
-            <label class="field compact">
-              <span data-i18n="label.kind">Kind</span>
-              <input id="insightKindInput" type="text" list="insightKindOptions" autocomplete="off" />
-            </label>
-            <label class="field compact">
-              <span data-i18n="label.search">Search</span>
-              <input id="insightSearchInput" type="text" autocomplete="off" />
-            </label>
-            <button id="insightFilterButton" type="button" data-i18n="button.apply">Apply</button>
-            <button id="checkButton" type="button" data-i18n="button.runCheck">Run Check</button>
-            <button id="checkExportButton" type="button" data-i18n="button.downloadCheck" disabled>Download Check</button>
-            <button id="insightExportButton" type="button" data-i18n="button.downloadInsights">Download Insights</button>
           </div>
-          <div id="checkResult" class="check-result"></div>
-          <div id="insightList" class="insight-list"></div>
+          <button id="cacheDiffButton" type="button" data-i18n="button.explainCache">Explain Cache</button>
+          <button id="cacheChunksButton" type="button" data-i18n="button.cacheChunks">Cache Chunks</button>
+          <button id="incrementalPlanButton" type="button" data-i18n="button.planIncremental">Plan Incremental</button>
+          <button id="incrementalScanButton" type="button" data-i18n="button.scanIncremental">Scan Changed</button>
+          <button id="incrementalMergeButton" type="button" data-i18n="button.previewMerge">Preview Merge</button>
+          <button id="incrementalUpdateButton" type="button" data-i18n="button.updateCache">Update Cache</button>
+          <div id="cacheDiffResult" class="query-result"></div>
         </section>
 
-        <section class="filters" aria-label="Graph filters" data-i18n-aria-label="aria.graphFilters">
-          <label class="field">
-            <span data-i18n="label.search">Search</span>
-            <input id="searchInput" type="search" autocomplete="off" />
-          </label>
-          <button id="clearCanvasFiltersButton" type="button" data-i18n="button.clearCanvasFilters">Clear Canvas Filters</button>
-          <div id="kindFilters" class="kind-filters"></div>
+        <section class="graph-export" aria-label="Graph export" data-i18n-aria-label="aria.graphExport">
+          <header>
+            <h2 data-i18n="section.export">Export</h2>
+          </header>
+          <div class="graph-export-fields">
+            <label class="field compact">
+              <span data-i18n="label.format">Format</span>
+              <select id="exportFormatInput">
+                <option value="json">JSON</option>
+                <option value="dot">DOT</option>
+                <option value="ndjson">NDJSON</option>
+                <option value="graphml">GraphML</option>
+                <option value="svg">SVG</option>
+                <option value="mermaid_html">Mermaid HTML</option>
+                <option value="cypher">Neo4j Cypher</option>
+                <option value="falkordb">FalkorDB</option>
+                <option value="report" data-i18n="export.report">Report JSON</option>
+                <option value="reportMarkdown" data-i18n="export.reportMarkdown">Report Markdown</option>
+              </select>
+            </label>
+          </div>
+          <button id="exportButton" type="button" data-i18n="button.download">Download</button>
+          <button id="exportSliceButton" type="button" data-i18n="button.downloadSlice">Download Slice</button>
+          <div id="exportResult" class="query-result"></div>
         </section>
-
-        <section class="selection" aria-label="Selected node" data-i18n-aria-label="aria.selectedNode">
-          <h2 id="selectionTitle" data-i18n-fallback="selection.title">Selection</h2>
-          <div id="selectionBody" class="selection-body"></div>
-        </section>
+        </details>
       </aside>
 
       <section class="graph-stage" aria-label="Code graph" data-i18n-aria-label="aria.graphStage">
