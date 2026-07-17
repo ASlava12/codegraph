@@ -1787,6 +1787,53 @@ fn workflow_from_file_expands_into_contained_symbols() {
 }
 
 #[test]
+fn journey_skips_dangling_edge_targets_instead_of_leaving_holes() {
+    // A shorter route runs through a phantom node (an edge whose target has no
+    // node — reachable in a deserialized graph). The BFS must not walk it; it
+    // must take the real route so the step chain stays contiguous.
+    let mut graph = CodeGraph::new("repo");
+    let main = graph.add_node(NodeKind::Function, "main");
+    let mid = graph.add_node(NodeKind::Function, "mid");
+    let target = graph.add_node(NodeKind::Function, "target");
+    let phantom = codegraph_core::NodeId(9_999_999);
+    // Phantom route added first so it has the lower edge index the BFS sees first.
+    graph.add_edge(main, phantom, EdgeKind::Calls, Confidence::Exact);
+    graph.add_edge(phantom, target, EdgeKind::Calls, Confidence::Exact);
+    graph.add_edge(main, mid, EdgeKind::Calls, Confidence::Exact);
+    graph.add_edge(mid, target, EdgeKind::Calls, Confidence::Exact);
+
+    let report = journey(
+        &graph,
+        JourneyRequest {
+            from: "main".to_string(),
+            to: "target".to_string(),
+            max_depth: 8,
+            path_limit: 1,
+        },
+    )
+    .expect("journey report");
+
+    let path = &report.paths[0];
+    // No step references the phantom, and the transition chain is contiguous.
+    for step in &path.steps {
+        assert_ne!(step.block.node.id, phantom, "phantom node leaked into path");
+    }
+    for window in path.steps.windows(2) {
+        let prev = &window[0];
+        let next = &window[1];
+        let transition = next.transition.as_ref().expect("hop has a transition");
+        assert_eq!(
+            transition.source_node_id, prev.block.node.id,
+            "step chain is contiguous (no hole)"
+        );
+    }
+    assert!(
+        path.steps.iter().any(|step| step.block.node.id == mid),
+        "the real route through mid is taken"
+    );
+}
+
+#[test]
 fn workflow_from_file_with_edge_filter_leaves_no_orphan_blocks() {
     // With an edge_kind filter the contains expansion must obey the same filter
     // the transitions are later held to; otherwise the contains transition is

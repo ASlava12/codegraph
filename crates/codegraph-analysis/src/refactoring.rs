@@ -771,6 +771,7 @@ pub(crate) fn journey_shortest_path(
     max_depth: usize,
     banned_edges: &BTreeSet<usize>,
 ) -> Result<(Option<Vec<usize>>, bool), QueryError> {
+    let node_ids: BTreeSet<NodeId> = graph.nodes.iter().map(|node| node.id).collect();
     let mut visited = BTreeSet::from([start]);
     let mut parents: BTreeMap<NodeId, (NodeId, usize)> = BTreeMap::new();
     let mut queue = VecDeque::from([(start, 0usize)]);
@@ -788,6 +789,12 @@ pub(crate) fn journey_shortest_path(
         for (edge_index, edge) in trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
         {
             if banned_edges.contains(&edge_index) {
+                continue;
+            }
+            // A dangling edge target (no node — possible in a deserialized or
+            // externally built graph) must not be walked: the path would later
+            // skip the missing node and leave a hole with a broken step chain.
+            if !node_ids.contains(&edge.target) {
                 continue;
             }
             if !visited.insert(edge.target) {
