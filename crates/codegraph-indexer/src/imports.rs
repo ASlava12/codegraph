@@ -75,7 +75,8 @@ pub(crate) fn python_absolute_local_import_target(
                 .find(|part| !part.is_empty())?,
             None,
         )
-    } else if let Some(rest) = value.strip_prefix("from ") {
+    } else {
+        let rest = value.strip_prefix("from ")?;
         let module = rest.split_whitespace().next()?;
         if module.starts_with('.') {
             return None;
@@ -86,8 +87,6 @@ pub(crate) fn python_absolute_local_import_target(
                 .find(|part| !part.is_empty())
         });
         (module, imported)
-    } else {
-        return None;
     };
     if module.is_empty() || module.starts_with('.') {
         return None;
@@ -243,13 +242,12 @@ pub(crate) fn rust_local_import_target(
         (rust_crate_root(source_label), rest)
     } else if let Some(rest) = value.strip_prefix("self::") {
         (path_dir(source_label), rest)
-    } else if let Some(rest) = value.strip_prefix("super::") {
+    } else {
+        let rest = value.strip_prefix("super::")?;
         (
             path_dir(source_label).and_then(|path| path_dir(&path)),
             rest,
         )
-    } else {
-        return None;
     };
     let module = rest
         .split([':', ';', ',', '{', ' ', '\n', '\t'])
