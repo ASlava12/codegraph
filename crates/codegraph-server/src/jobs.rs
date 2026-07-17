@@ -52,7 +52,14 @@ pub(crate) async fn start_scan_job(
         summary: None,
         graph: None,
     };
-    insert_scan_job(&state.jobs, job.clone(), state.max_scan_jobs).await;
+    insert_scan_job(&state.jobs, job.clone(), state.max_scan_jobs)
+        .await
+        .map_err(|active| {
+            ApiError::too_many_requests(format!(
+                "{active} scan jobs are already queued or running (limit {}); wait or cancel one",
+                state.max_scan_jobs
+            ))
+        })?;
 
     let jobs = Arc::clone(&state.jobs);
     let cache = state.cache.clone();
@@ -303,10 +310,22 @@ pub(crate) async fn insert_scan_job(
     jobs: &RwLock<BTreeMap<String, ScanJob>>,
     job: ScanJob,
     max_jobs: usize,
-) {
+) -> Result<(), usize> {
     let mut jobs = jobs.write().await;
+    // Prune only removes terminal jobs, so without this bound a POST flood
+    // could queue unbounded work (each Queued job holds a task and, later, a
+    // graph). Checked under the write lock so concurrent inserts can't race
+    // past the limit together.
+    let active = jobs
+        .values()
+        .filter(|job| !job.status.is_terminal())
+        .count();
+    if active >= max_jobs {
+        return Err(active);
+    }
     jobs.insert(job.id.clone(), job);
     prune_scan_jobs(&mut jobs, max_jobs);
+    Ok(())
 }
 
 pub(crate) async fn update_scan_job(
@@ -447,10 +466,19 @@ pub(crate) async fn insert_semantic_job(
     jobs: &RwLock<BTreeMap<String, SemanticJob>>,
     job: SemanticJob,
     max_jobs: usize,
-) {
+) -> Result<(), usize> {
     let mut jobs = jobs.write().await;
+    // Same non-terminal bound as insert_scan_job — see the comment there.
+    let active = jobs
+        .values()
+        .filter(|job| !job.status.is_terminal())
+        .count();
+    if active >= max_jobs {
+        return Err(active);
+    }
     jobs.insert(job.id.clone(), job);
     prune_semantic_jobs(&mut jobs, max_jobs);
+    Ok(())
 }
 
 pub(crate) async fn update_semantic_job(

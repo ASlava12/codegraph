@@ -168,7 +168,14 @@ pub(crate) async fn start_semantic_job(
         report: None,
         result: None,
     };
-    insert_semantic_job(&state.semantic_jobs, job.clone(), state.max_semantic_jobs).await;
+    insert_semantic_job(&state.semantic_jobs, job.clone(), state.max_semantic_jobs)
+        .await
+        .map_err(|active| {
+            ApiError::too_many_requests(format!(
+                "{active} semantic jobs are already queued or running (limit {}); wait or cancel one",
+                state.max_semantic_jobs
+            ))
+        })?;
 
     let jobs = Arc::clone(&state.semantic_jobs);
     let cache = state.cache.clone();

@@ -3166,6 +3166,42 @@ async fn start_scan_job_with_bad_config_leaves_no_queued_job() {
 }
 
 #[tokio::test]
+async fn insert_scan_job_rejects_when_active_jobs_reach_limit() {
+    // Prune only removes terminal jobs, so the queue must refuse new work once
+    // max_jobs non-terminal jobs exist — otherwise a POST flood queues
+    // unbounded tasks. Terminal jobs don't count against the limit.
+    let jobs = RwLock::new(BTreeMap::new());
+    for index in 0..2 {
+        insert_scan_job(
+            &jobs,
+            test_scan_job(&format!("scan-{index}"), ScanJobStatus::Queued, 10, None),
+            2,
+        )
+        .await
+        .unwrap();
+    }
+
+    let rejected = insert_scan_job(
+        &jobs,
+        test_scan_job("scan-overflow", ScanJobStatus::Queued, 10, None),
+        2,
+    )
+    .await;
+    assert_eq!(rejected, Err(2), "third active job is refused");
+    assert!(!jobs.read().await.contains_key("scan-overflow"));
+
+    // A terminal job frees a slot.
+    cancel_scan_job_in_store(&jobs, "scan-0", 2).await.unwrap();
+    insert_scan_job(
+        &jobs,
+        test_scan_job("scan-after-cancel", ScanJobStatus::Queued, 11, None),
+        2,
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn cancel_scan_job_marks_queued_job_terminal() {
     let jobs = RwLock::new(BTreeMap::new());
     insert_scan_job(
@@ -3173,7 +3209,8 @@ async fn cancel_scan_job_marks_queued_job_terminal() {
         test_scan_job("scan-1", ScanJobStatus::Queued, 10, None),
         4,
     )
-    .await;
+    .await
+    .unwrap();
 
     let job = cancel_scan_job_in_store(&jobs, "scan-1", 4).await.unwrap();
 
@@ -3190,7 +3227,8 @@ async fn canceled_scan_job_is_not_overwritten_by_worker_update() {
         test_scan_job("scan-1", ScanJobStatus::Running, 10, None),
         4,
     )
-    .await;
+    .await
+    .unwrap();
     cancel_scan_job_in_store(&jobs, "scan-1", 4).await.unwrap();
 
     update_scan_job(
@@ -3220,7 +3258,8 @@ async fn cancel_semantic_job_marks_queued_job_terminal() {
         test_semantic_job("semantic-1", ScanJobStatus::Queued, 10, None),
         4,
     )
-    .await;
+    .await
+    .unwrap();
 
     let job = cancel_semantic_job_in_store(&jobs, "semantic-1", 4)
         .await
