@@ -1027,6 +1027,10 @@ pub(crate) fn workflow_with_insight_report(
 ) -> Option<WorkflowReport> {
     let max_depth = request.max_depth.clamp(1, 32);
     let block_limit = request.block_limit.clamp(1, 1_000);
+    // Normalize the fan-out cap here so every surface (HTTP, CLI, MCP) behaves
+    // identically regardless of what it passes: `Some(0)` means "narrowest",
+    // not "unbounded", and the cap never exceeds 200. `None` stays unbounded.
+    let max_fanout = request.max_fanout.map(|value| value.clamp(1, 200));
     let filters = normalize_workflow_filters(request.filters);
     let start = match &request.start {
         TraceStart::NodeId(id) => graph.nodes.iter().find(|node| node.id == *id)?,
@@ -1060,10 +1064,7 @@ pub(crate) fn workflow_with_insight_report(
         // Cap the fan-out per node, keeping the highest-priority edges (calls
         // first), so the block budget follows the call chain into depth instead
         // of exhausting on one wide node. Unset = unbounded breadth (default).
-        if let Some(max_fanout) = request
-            .max_fanout
-            .filter(|value| *value > 0 && followable.len() > *value)
-        {
+        if let Some(max_fanout) = max_fanout.filter(|value| followable.len() > *value) {
             followable.sort_by_key(|(edge_index, edge)| {
                 (workflow_edge_priority(&edge.kind), *edge_index)
             });

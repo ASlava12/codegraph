@@ -1744,6 +1744,42 @@ fn workflow_fanout_cap_follows_calls_into_depth() {
 }
 
 #[test]
+fn workflow_fanout_zero_clamps_to_narrowest_not_unbounded() {
+    // max_fanout is normalized in the engine: 0 must mean "narrowest" (1), not
+    // "unbounded", so every surface (HTTP/CLI/MCP) behaves identically.
+    let mut graph = CodeGraph::new("repo");
+    let root = graph.add_node(NodeKind::Function, "root");
+    let a = graph.add_node(NodeKind::Function, "a");
+    let b = graph.add_node(NodeKind::Function, "b");
+    let c = graph.add_node(NodeKind::Function, "c");
+    graph.add_edge(root, a, EdgeKind::Calls, Confidence::Heuristic);
+    graph.add_edge(root, b, EdgeKind::Calls, Confidence::Heuristic);
+    graph.add_edge(root, c, EdgeKind::Calls, Confidence::Heuristic);
+
+    let report = workflow(
+        &graph,
+        WorkflowRequest {
+            start: TraceStart::NodeId(root),
+            max_depth: 5,
+            block_limit: 100,
+            filters: WorkflowFilters::default(),
+            compact: false,
+            max_fanout: Some(0),
+        },
+    )
+    .expect("workflow report");
+
+    // root + exactly one followed child, not all three.
+    assert_eq!(report.total_blocks, 2, "0 clamps to a fan-out of 1");
+    let root_block = report
+        .blocks
+        .iter()
+        .find(|block| block.node.label == "root")
+        .expect("root block");
+    assert_eq!(root_block.truncated_children, 2, "two children were trimmed");
+}
+
+#[test]
 fn workflow_from_file_expands_into_contained_symbols() {
     // A file node has no execution flow of its own — it only `Contains` the
     // functions it defines. A flow rooted on the file must expand into those
