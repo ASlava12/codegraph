@@ -161,7 +161,15 @@ async function drillIntoFlowBlock(block) {
       if (flowHud) flowHud.textContent = t("flow.noFurther");
       return;
     }
-    (state.flow.trail ||= []).push({ report: state.flow.report, title: state.flow.title });
+    (state.flow.trail ||= []).push({
+      report: state.flow.report,
+      title: state.flow.title,
+      rootNodeId: state.flow.rootNodeId,
+    });
+    // Re-root before opening so the deep link (?flow=<id>, synced inside
+    // setStageView) and the copy button follow the drill instead of pointing
+    // at the original root.
+    state.flow.rootNodeId = node.id;
     openFlowView(body, node.label, { keepTrail: true });
   } catch (error) {
     console.error("flow: drill failed", error);
@@ -216,7 +224,15 @@ async function buildReverseFlow(node) {
       total_blocks: blocks.length,
       total_transitions: transitions.length,
     };
-    (state.flow.trail ||= []).push({ report: state.flow.report, title: state.flow.title });
+    (state.flow.trail ||= []).push({
+      report: state.flow.report,
+      title: state.flow.title,
+      rootNodeId: state.flow.rootNodeId,
+    });
+    // The callers view itself isn't reproducible from a URL; point the deep
+    // link at the focused node so a shared link lands on it, not on a stale
+    // ancestor root.
+    state.flow.rootNodeId = node.id;
     openFlowView(report, t("flow.callersOf", { label: node.label }), { keepTrail: true });
   } catch (error) {
     console.error("flow: reverse flow failed", error);
@@ -245,6 +261,12 @@ function restoreFlowLevel(index) {
   state.flow.title = level.title;
   state.flow.selectedBlockId = null;
   state.flow.selectedTransitionId = null;
+  // Walk the deep link back with the breadcrumb (older trail entries may
+  // predate rootNodeId tracking, hence the null check).
+  if (level.rootNodeId != null) {
+    state.flow.rootNodeId = level.rootNodeId;
+    syncFlowUrl(state.flow.rootNodeId);
+  }
   layoutFlow();
   fitFlowView();
 }

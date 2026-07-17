@@ -2344,6 +2344,37 @@ button.cancel-action:hover:not(:disabled) {
   background: rgba(229, 180, 84, 0.16);
 }
 
+/* PR-impact risk chips (severity-<level> spans in the risks list). */
+.severity-error,
+.severity-warning,
+.severity-info {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.severity-error {
+  color: #f1b0b5;
+  background: rgba(224, 108, 117, 0.18);
+}
+
+.severity-warning {
+  color: #ecd19d;
+  background: rgba(229, 180, 84, 0.16);
+}
+
+/* Journey step explanation note. */
+.journey-hop-note {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
 .workflow-transitions {
   display: grid;
   gap: 6px;

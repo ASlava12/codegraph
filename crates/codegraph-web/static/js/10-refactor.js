@@ -521,7 +521,7 @@ function exportVisibleGraphSlice() {
       node_limit: state.graphPage.nodeLimit,
       edge_offset: state.graphPage.edgeOffset,
       edge_limit: state.graphPage.edgeLimit,
-      path_prefix: state.graphPage.pathPrefix,
+      path_prefix: state.architecturePathPrefix,
     },
     server_filters: {
       kind: serverKindInput.value.trim(),
