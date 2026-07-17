@@ -426,7 +426,13 @@ impl GraphCache {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(source) => return Err(CacheError::Io { path, source }),
         };
-        let record: CacheRecord = serde_json::from_slice(&bytes)?;
+        // A truncated or garbled record (e.g. power loss mid-write, manual
+        // tampering) is treated like an incompatible one — invalidate and let
+        // the caller rescan — instead of failing the whole operation until the
+        // file is deleted by hand. Same policy at every decode site below.
+        let Some(record) = decode_cache_record(&bytes) else {
+            return Ok(None);
+        };
         if record.cache_schema_version != CACHE_SCHEMA_VERSION
             || record.graph_schema_version != record.graph.schema_version
             || record.graph_schema_version != CODEGRAPH_SCHEMA_VERSION
@@ -459,7 +465,14 @@ impl GraphCache {
             }
             Err(source) => return Err(CacheError::Io { path, source }),
         };
-        let record: CacheRecord = serde_json::from_slice(&bytes)?;
+        let Some(record) = decode_cache_record(&bytes) else {
+            return Ok(diff_without_record(
+                self,
+                current,
+                CacheRecordStatus::Incompatible,
+                limit,
+            ));
+        };
         if record.cache_schema_version != CACHE_SCHEMA_VERSION
             || record.graph_schema_version != record.graph.schema_version
             || record.graph_schema_version != CODEGRAPH_SCHEMA_VERSION
@@ -498,7 +511,15 @@ impl GraphCache {
             }
             Err(source) => return Err(CacheError::Io { path, source }),
         };
-        let record: CacheRecord = serde_json::from_slice(&bytes)?;
+        let Some(record) = decode_cache_record(&bytes) else {
+            return Ok(chunk_report_without_record(
+                self,
+                current,
+                None,
+                CacheRecordStatus::Incompatible,
+                limit,
+            ));
+        };
         if record.cache_schema_version != CACHE_SCHEMA_VERSION
             || record.graph_schema_version != record.graph.schema_version
             || record.graph_schema_version != CODEGRAPH_SCHEMA_VERSION
@@ -537,7 +558,14 @@ impl GraphCache {
             }
             Err(source) => return Err(CacheError::Io { path, source }),
         };
-        let record: CacheRecord = serde_json::from_slice(&bytes)?;
+        let Some(record) = decode_cache_record(&bytes) else {
+            return Ok(incremental_plan_without_record(
+                self,
+                current,
+                CacheRecordStatus::Incompatible,
+                limit,
+            ));
+        };
         if record.cache_schema_version != CACHE_SCHEMA_VERSION
             || record.graph_schema_version != record.graph.schema_version
             || record.graph_schema_version != CODEGRAPH_SCHEMA_VERSION
@@ -613,13 +641,14 @@ impl GraphCache {
             }
             Err(source) => return Err(CacheError::Io { path, source }),
         };
-        let record: CacheRecord = serde_json::from_slice(&bytes)?;
-        if record.cache_schema_version != CACHE_SCHEMA_VERSION
-            || record.graph_schema_version != record.graph.schema_version
-            || record.graph_schema_version != CODEGRAPH_SCHEMA_VERSION
-            || record.root != cache_root(root)
-            || record.options_hash != options_hash(options)
-        {
+        let compatible_record = decode_cache_record(&bytes).filter(|record| {
+            record.cache_schema_version == CACHE_SCHEMA_VERSION
+                && record.graph_schema_version == record.graph.schema_version
+                && record.graph_schema_version == CODEGRAPH_SCHEMA_VERSION
+                && record.root == cache_root(root)
+                && record.options_hash == options_hash(options)
+        });
+        let Some(record) = compatible_record else {
             let plan = incremental_plan_without_record(
                 self,
                 current,
@@ -629,7 +658,7 @@ impl GraphCache {
             let graph = scan_project_cached(root, options, Some(self))?.graph;
             let merge = complete_merge_report(&graph, &plan, 0, 0);
             return Ok(IncrementalMergePreview { plan, merge, graph });
-        }
+        };
 
         let plan = incremental_plan_from_fingerprints(
             self,
@@ -1673,6 +1702,12 @@ fn ratio_basis_points(part: u64, total: u64) -> u16 {
     ((part.saturating_mul(10_000)) / total).min(10_000) as u16
 }
 
+/// Decode a cache record, treating any malformed content as absent so a
+/// corrupt file invalidates the cache instead of wedging every cache API.
+fn decode_cache_record(bytes: &[u8]) -> Option<CacheRecord> {
+    serde_json::from_slice(bytes).ok()
+}
+
 fn modified_unix_nanos(metadata: &fs::Metadata) -> Option<u128> {
     metadata
         .modified()
@@ -1901,6 +1936,45 @@ mod tests {
         let loaded = cache.load(&root, &options, &fingerprint).unwrap().unwrap();
 
         assert_eq!(loaded, graph);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn corrupt_cache_record_invalidates_instead_of_erroring() {
+        // A truncated/garbled cache file (power loss mid-write, tampering) must
+        // behave like an incompatible record everywhere: scan misses, the
+        // diagnostics APIs report Incompatible, nothing returns Err.
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        let options = IndexOptions::default();
+        let fingerprint = GraphCache::fingerprint_project(&root, &options).unwrap();
+        let mut graph = CodeGraph::new("demo");
+        graph.add_node(NodeKind::File, "src/main.rs");
+        let cache = GraphCache::new(&cache_dir);
+        cache
+            .store(&root, &options, fingerprint.clone(), &graph)
+            .unwrap();
+        let record_path = cache.cache_path(&root, &options);
+        fs::write(&record_path, "{ this is not json").unwrap();
+
+        assert!(cache.load(&root, &options, &fingerprint).unwrap().is_none());
+        let diff = cache.diff(&root, &options, 10).unwrap();
+        assert_eq!(diff.cache_record, CacheRecordStatus::Incompatible);
+        let chunks = cache.chunks(&root, &options, 10).unwrap();
+        assert_eq!(chunks.cache_record, CacheRecordStatus::Incompatible);
+        let plan = cache.incremental_plan(&root, &options, 10).unwrap();
+        assert_eq!(plan.cache_record, CacheRecordStatus::Incompatible);
+        // incremental_merge_preview reports Incompatible and self-heals (its
+        // fallback runs scan_project_cached, which stores a fresh record).
+        let preview = cache
+            .incremental_merge_preview(&root, &options, 10)
+            .unwrap();
+        assert_eq!(preview.plan.cache_record, CacheRecordStatus::Incompatible);
+        assert!(cache.load(&root, &options, &fingerprint).unwrap().is_some());
+
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();
     }

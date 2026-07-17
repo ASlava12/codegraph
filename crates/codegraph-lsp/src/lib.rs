@@ -226,9 +226,11 @@ impl SemanticLspCache {
                 )));
             }
         };
-        let record: SemanticLspCacheRecord = serde_json::from_slice(&bytes).map_err(|error| {
-            SemanticLspRunError::new(format!("failed to decode semantic LSP cache: {error}"))
-        })?;
+        // A malformed record (truncated write, tampering) is a cache miss, not
+        // an error — the batch reruns and the entry is rewritten.
+        let Ok(record) = serde_json::from_slice::<SemanticLspCacheRecord>(&bytes) else {
+            return Ok(None);
+        };
         if record.cache_schema_version != SEMANTIC_CACHE_SCHEMA_VERSION
             || record.batch_hash != batch_hash
         {
@@ -1187,7 +1189,11 @@ fn run_semantic_server_batch(
     }
 
     shutdown_lsp_server(server_batch, &receiver, &mut stdin, options.request_timeout)?;
-    wait_for_lsp_exit(&mut child.child, &server_batch.server, options.request_timeout)?;
+    wait_for_lsp_exit(
+        &mut child.child,
+        &server_batch.server,
+        options.request_timeout,
+    )?;
     child.disarm();
     Ok(responses)
 }
