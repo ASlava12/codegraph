@@ -996,6 +996,11 @@ fn workflow_followable_edges<'graph>(
         for (edge_index, edge) in graph.edges.iter().enumerate() {
             if edge.source == node_id
                 && edge.kind == EdgeKind::Contains
+                // The same edge filter the transitions are later held to
+                // (workflow_transition_filter_matches); without it an
+                // edge_kind/confidence filter would drop the contains
+                // transition but keep the expanded block, leaving it orphaned.
+                && workflow_edge_filter_matches(edge, filters)
                 && nodes_by_id.get(&edge.target).is_some_and(|node| {
                     is_code_symbol(&node.kind)
                         || matches!(node.kind, NodeKind::File | NodeKind::Directory)

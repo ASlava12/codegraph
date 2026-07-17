@@ -1787,6 +1787,49 @@ fn workflow_from_file_expands_into_contained_symbols() {
 }
 
 #[test]
+fn workflow_from_file_with_edge_filter_leaves_no_orphan_blocks() {
+    // With an edge_kind filter the contains expansion must obey the same filter
+    // the transitions are later held to; otherwise the contains transition is
+    // dropped while the expanded block stays, orphaning it. Every block other
+    // than the start must have an incoming transition.
+    let mut graph = CodeGraph::new("repo");
+    let file = graph.add_node(NodeKind::File, "src/handlers.rs");
+    let handler = graph.add_node(NodeKind::Function, "handle_request");
+    let downstream = graph.add_node(NodeKind::Function, "validate");
+    graph.add_edge(file, handler, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(handler, downstream, EdgeKind::Calls, Confidence::Exact);
+
+    let report = workflow(
+        &graph,
+        WorkflowRequest {
+            start: TraceStart::NodeId(file),
+            max_depth: 5,
+            block_limit: 100,
+            filters: WorkflowFilters {
+                edge_kind: Some("calls".to_string()),
+                ..WorkflowFilters::default()
+            },
+            compact: false,
+            max_fanout: None,
+        },
+    )
+    .expect("workflow report");
+
+    let targets: BTreeSet<_> = report
+        .transitions
+        .iter()
+        .map(|transition| transition.target_node_id)
+        .collect();
+    for block in &report.blocks {
+        assert!(
+            block.node.id == file || targets.contains(&block.node.id),
+            "block {:?} has no incoming transition (orphan)",
+            block.node.label
+        );
+    }
+}
+
+#[test]
 fn workflow_classifies_control_flow_blocks_from_item_kind() {
     let mut graph = CodeGraph::new("repo");
     let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:api");
