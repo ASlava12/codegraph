@@ -761,3 +761,64 @@ fn deeply_nested_source_does_not_overflow_the_stack() {
     // Joins cleanly (no abort) with the cap in place.
     let _ = handle.join().expect("worker finished without overflow");
 }
+
+#[test]
+fn environment_reads_are_counted_once_per_access() {
+    // Substring matching used to file 2-3 facts per physical access (every
+    // enclosing call/member node whose text contained the pattern) and turn
+    // every bash local into a phantom env read.
+    let count = |path: &str, language: Language, source: &str| {
+        parse_source(path, source.as_bytes(), language)
+            .unwrap()
+            .items
+            .into_iter()
+            .filter(|item| matches!(item.kind, ParsedItemKind::EnvironmentRead))
+            .count()
+    };
+
+    assert_eq!(
+        count(
+            "app.py",
+            Language::Python,
+            "import os\nPORT = int(os.getenv(\"PORT\", \"8000\"))\n"
+        ),
+        1,
+        "wrapped os.getenv is one read"
+    );
+    assert_eq!(
+        count(
+            "app.py",
+            Language::Python,
+            "import os\nHOME = os.environ[\"HOME\"]\n"
+        ),
+        1,
+        "os.environ subscript is one read"
+    );
+    assert_eq!(
+        count(
+            "app.js",
+            Language::JavaScript,
+            "const port = parseInt(process.env.PORT);\n"
+        ),
+        1,
+        "wrapped process.env access is one read"
+    );
+    assert_eq!(
+        count(
+            "run.sh",
+            Language::Bash,
+            "PORT=\"${PORT:-5000}\"\necho \"$PORT\"\n"
+        ),
+        2,
+        "the expansion and the echo read count; the assignment LHS does not"
+    );
+    assert_eq!(
+        count(
+            "loop.sh",
+            Language::Bash,
+            "for item in a b c; do\n  echo ok\ndone\n"
+        ),
+        0,
+        "a for-loop variable is not an env read"
+    );
+}

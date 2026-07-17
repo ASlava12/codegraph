@@ -18,20 +18,30 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                     .as_deref()
                     .is_some_and(|value| matches!(value, "env::var" | "std::env::var" | "var"))
         }
-        Language::Python => {
-            matches!(node.kind(), "call" | "subscript")
-                && text.as_deref().is_some_and(|value| {
-                    value.contains("os.getenv") || value.contains("os.environ")
-                })
-        }
-        Language::JavaScript | Language::TypeScript | Language::Tsx => {
-            matches!(
-                node.kind(),
-                "call_expression" | "member_expression" | "subscript_expression"
-            ) && text
+        // Match only the innermost access form, not any enclosing node whose
+        // text merely contains it — `int(os.getenv("K"))` is one env read, not
+        // two, and `parseInt(process.env.PORT)` is one, not three.
+        Language::Python => match node.kind() {
+            "call" => call
                 .as_deref()
-                .is_some_and(|value| value.contains("process.env"))
-        }
+                .is_some_and(|value| matches!(value, "os.getenv" | "os.environ.get")),
+            "subscript" => named_child_text(node, "value", source).as_deref() == Some("os.environ"),
+            _ => false,
+        },
+        Language::JavaScript | Language::TypeScript | Language::Tsx => match node.kind() {
+            // `process.env.PORT` — a member access on exactly `process.env`.
+            "member_expression" | "subscript_expression" => {
+                named_child_text(node, "object", source).as_deref() == Some("process.env")
+                    || (text.as_deref() == Some("process.env")
+                        && !node.parent().is_some_and(|parent| {
+                            // Bare `process.env` only counts when it is not the
+                            // object of an enclosing keyed access (that access
+                            // is the fact).
+                            matches!(parent.kind(), "member_expression" | "subscript_expression")
+                        }))
+            }
+            _ => false,
+        },
         Language::Go => {
             is_call_node(language, node, source)
                 && call
@@ -60,7 +70,16 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                     || value.contains("Platform.environment")
             })
         }
-        Language::Bash => node.kind() == "variable_name",
+        Language::Bash => {
+            // Only expansions read a variable: `$VAR` / `${VAR:-default}`.
+            // A bare variable_name is also the LHS of an assignment or a
+            // `for` loop variable — counting those flooded the graph with
+            // phantom env reads for every local.
+            node.kind() == "variable_name"
+                && node
+                    .parent()
+                    .is_some_and(|parent| matches!(parent.kind(), "expansion" | "simple_expansion"))
+        }
     }
 }
 
