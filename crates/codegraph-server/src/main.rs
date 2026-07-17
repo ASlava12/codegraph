@@ -191,6 +191,13 @@ async fn main() -> Result<()> {
     } else {
         app
     };
+    // A loopback-bound server must reject foreign Host headers (DNS
+    // rebinding); a server deliberately exposed via --host keeps them.
+    let app = if bind_addr.ip().is_loopback() {
+        app.layer(axum_middleware::from_fn(loopback_host_guard))
+    } else {
+        app
+    };
     let app = if args.quiet_access_log {
         app
     } else {

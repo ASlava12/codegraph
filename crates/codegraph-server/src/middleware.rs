@@ -36,6 +36,49 @@ pub(crate) async fn response_timing_header(request: Request, next: Next) -> Resp
     response
 }
 
+/// DNS-rebinding guard, layered only when the server is bound to a loopback
+/// address: a hostile site can point its own domain at 127.0.0.1 and script
+/// same-origin requests against a local tool, so a loopback server must only
+/// answer requests addressed to a loopback host. Requests without a Host
+/// header (plain non-browser clients) are allowed — rebinding requires a
+/// browser, and browsers always send Host.
+pub(crate) async fn loopback_host_guard(request: Request, next: Next) -> Response {
+    let host = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| request.uri().host().map(str::to_string));
+    match host {
+        Some(host) if !host_value_is_loopback(&host) => {
+            ApiError::forbidden("this server only answers loopback hosts").into_response()
+        }
+        _ => next.run(request).await,
+    }
+}
+
+pub(crate) fn host_value_is_loopback(value: &str) -> bool {
+    let trimmed = value.trim();
+    // `[::1]:port` / `[::1]`
+    let host = if let Some(rest) = trimmed.strip_prefix('[') {
+        match rest.split_once(']') {
+            Some((inside, _)) => inside,
+            None => return false,
+        }
+    } else {
+        // `host:port` (a lone numeric port suffix) or bare `host`.
+        match trimmed.rsplit_once(':') {
+            Some((name, port))
+                if !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()) =>
+            {
+                name
+            }
+            _ => trimmed,
+        }
+    };
+    host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
+}
+
 pub(crate) async fn api_auth_middleware(
     State(auth): State<ApiAuth>,
     request: Request,

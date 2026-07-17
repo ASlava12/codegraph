@@ -348,6 +348,13 @@ impl ApiError {
             message: message.into(),
         }
     }
+
+    pub(crate) fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            message: message.into(),
+        }
+    }
 }
 
 impl IntoResponse for ApiError {

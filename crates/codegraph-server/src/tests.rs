@@ -3165,6 +3165,34 @@ async fn start_scan_job_with_bad_config_leaves_no_queued_job() {
     );
 }
 
+#[test]
+fn host_value_is_loopback_accepts_local_forms_and_rejects_foreign() {
+    for local in [
+        "localhost",
+        "LOCALHOST",
+        "localhost:3765",
+        "127.0.0.1",
+        "127.0.0.1:3765",
+        "[::1]",
+        "[::1]:3765",
+    ] {
+        assert!(host_value_is_loopback(local), "{local} must be accepted");
+    }
+    for foreign in [
+        "evil.example",
+        "evil.example:3765",
+        "127.0.0.1.evil.example",
+        "localhost.evil.example",
+        "[2001:db8::1]:3765",
+        "[::1",
+    ] {
+        assert!(
+            !host_value_is_loopback(foreign),
+            "{foreign} must be rejected"
+        );
+    }
+}
+
 #[tokio::test]
 async fn insert_scan_job_rejects_when_active_jobs_reach_limit() {
     // Prune only removes terminal jobs, so the queue must refuse new work once
