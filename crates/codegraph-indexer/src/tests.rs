@@ -77,6 +77,28 @@ fn configured_index_options_loads_project_scan_config() {
 }
 
 #[test]
+fn configured_index_options_rejects_non_string_ignored_entry() {
+    // A non-string array entry must surface as a config error, not be silently
+    // filtered out (the filter-before-collect bug swallowed the Err).
+    let root = temp_project_root();
+    fs::create_dir_all(root.join(".codegraph")).unwrap();
+    fs::write(
+        root.join(".codegraph").join("config.toml"),
+        "[scan]\nignored_names = [\"target\", 42]\n",
+    )
+    .unwrap();
+
+    let error = configured_index_options(&root, &IndexOptionOverrides::default())
+        .expect_err("non-string entry is rejected");
+    assert!(
+        error.to_string().contains("entries must be strings"),
+        "unexpected error: {error}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scan_project_skips_configured_ignored_globs() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src").join("generated")).unwrap();

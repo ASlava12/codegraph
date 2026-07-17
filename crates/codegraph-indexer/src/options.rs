@@ -247,7 +247,10 @@ pub(crate) fn optional_string_array(
                     &format!("scan.{key} must be an array"),
                 ));
             };
-            values
+            // Collect into a Result first so a non-string entry surfaces as a
+            // config error; only then drop the empty strings. Filtering before
+            // collecting would silently discard the Err alongside the empties.
+            let collected = values
                 .iter()
                 .map(|value| {
                     value
@@ -257,8 +260,8 @@ pub(crate) fn optional_string_array(
                             config_invalid(path, &format!("scan.{key} entries must be strings"))
                         })
                 })
-                .filter(|value| value.as_ref().is_ok_and(|value| !value.is_empty()))
-                .collect()
+                .collect::<Result<Vec<String>, _>>()?;
+            Ok(collected.into_iter().filter(|value| !value.is_empty()).collect())
         })
         .transpose()
 }
