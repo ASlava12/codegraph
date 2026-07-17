@@ -111,10 +111,20 @@ fn normalize(path: &str) -> String {
 /// Changed files from `git diff --name-only <base>`, shared by the CLI
 /// command and the HTTP endpoint.
 pub fn git_changed_files(root: &Path, base: &str) -> Result<Vec<String>, QueryError> {
+    // `base` is passed as a positional argument to git. A value starting with
+    // `-` would be parsed as an option (e.g. `--output=<file>` writes an
+    // arbitrary file), so reject it before spawning git rather than relying on
+    // git's own argument handling.
+    if base.starts_with('-') {
+        return Err(QueryError::new(format!(
+            "invalid base revision {base:?}: must not start with '-'"
+        )));
+    }
     let output = std::process::Command::new("git")
         .arg("diff")
         .arg("--name-only")
         .arg(base)
+        .arg("--")
         .current_dir(root)
         .output()
         .map_err(|error| QueryError::new(format!("failed to run git diff: {error}")))?;
@@ -387,6 +397,24 @@ mod tests {
         ));
         fs::create_dir_all(&dir).expect("temp dir");
         dir
+    }
+
+    #[test]
+    fn git_changed_files_rejects_option_like_base() {
+        // A `-`-prefixed base would be parsed by git as an option (e.g.
+        // `--output=<file>` writes an arbitrary file); it must be rejected
+        // before git is ever spawned.
+        let root = temp_dir("inject");
+        let error = git_changed_files(&root, "--output=/tmp/should-not-be-written")
+            .expect_err("option-like base is rejected");
+        assert!(
+            error.to_string().contains("must not start with '-'"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            !std::path::Path::new("/tmp/should-not-be-written").exists(),
+            "git must not have run"
+        );
     }
 
     #[test]
