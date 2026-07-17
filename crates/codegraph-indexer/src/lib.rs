@@ -24,10 +24,10 @@ mod tests;
 
 pub use options::{
     DEFAULT_MAX_FILE_SIZE, IndexError, IndexOptionOverrides, IndexOptions, ScanCoverageReport,
-    configured_index_options,
+    compile_ignored_globs, configured_index_options,
 };
 pub use scan::{scan_coverage, scan_project, scan_project_paths};
-pub use walk::is_index_relevant_file;
+pub use walk::{is_index_relevant_file, should_enter};
 
 pub(crate) use context::*;
 pub(crate) use detectors::*;

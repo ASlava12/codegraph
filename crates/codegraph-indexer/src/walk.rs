@@ -53,7 +53,10 @@ pub(crate) fn is_effect_item(kind: ParsedItemKind) -> bool {
     )
 }
 
-pub(crate) fn should_enter(
+/// Whether the walker should descend into / include `entry`. Shared with the
+/// cache fingerprint (codegraph-storage) so the set of files that are scanned
+/// and the set that are fingerprinted can never diverge.
+pub fn should_enter(
     entry: &DirEntry,
     root: &Path,
     options: &IndexOptions,

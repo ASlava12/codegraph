@@ -282,7 +282,9 @@ pub(crate) fn validate_ignored_globs(
     Ok(())
 }
 
-pub(crate) fn compile_ignored_globs(
+/// Compile the ignore globs into a matcher. Shared with the cache fingerprint
+/// (codegraph-storage) so both compile the patterns identically.
+pub fn compile_ignored_globs(
     patterns: &BTreeSet<String>,
 ) -> Result<Option<GlobSet>, IndexError> {
     if patterns.is_empty() {
