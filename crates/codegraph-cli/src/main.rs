@@ -984,6 +984,11 @@ enum Command {
         #[arg(long, default_value_t = 200)]
         block_limit: usize,
 
+        /// Cap outgoing edges expanded per node (calls first) so the block
+        /// budget follows the call chain into depth. Unset means unbounded.
+        #[arg(long)]
+        max_fanout: Option<usize>,
+
         /// Maximum entrypoint workflows to return.
         #[arg(long, default_value_t = 25)]
         limit: usize,
@@ -2768,6 +2773,7 @@ fn main() -> Result<()> {
             path,
             depth,
             block_limit,
+            max_fanout,
             limit,
             edge_kind,
             confidence,
@@ -2798,7 +2804,7 @@ fn main() -> Result<()> {
                         block_kind,
                     ),
                     compact,
-                    max_fanout: None,
+                    max_fanout,
                 },
             );
             match format {
