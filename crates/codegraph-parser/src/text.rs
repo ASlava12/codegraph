@@ -166,7 +166,13 @@ pub(crate) fn truncate_label(value: String, max_len: usize) -> String {
     if value.len() <= max_len {
         value
     } else {
-        format!("{}...", &value[..max_len])
+        // Byte-based cut point, walked back to the nearest char boundary so
+        // multi-byte text (Cyrillic, emoji) truncates instead of panicking.
+        let mut cut = max_len;
+        while !value.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!("{}...", &value[..cut])
     }
 }
 

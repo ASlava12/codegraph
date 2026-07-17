@@ -706,3 +706,21 @@ fn parses_mixed_language_smoke_samples() {
         );
     }
 }
+
+#[test]
+fn multibyte_labels_truncate_instead_of_panicking() {
+    // Regression: truncate_label sliced at a fixed byte offset, panicking when
+    // the cut landed inside a multi-byte char. The "a" prefix shifts every
+    // two-byte Cyrillic char to an odd offset so the 120-byte cut is mid-char.
+    let default = format!("a{}", "я".repeat(70));
+    let source = format!("import os\nVALUE = os.getenv(\"KEY\", \"{default}\")\n");
+    let parsed = parse_source("app.py", source.as_bytes(), Language::Python).unwrap();
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| matches!(item.kind, ParsedItemKind::EnvironmentRead)),
+        "env read fact survives truncation: {:?}",
+        parsed.items
+    );
+}
