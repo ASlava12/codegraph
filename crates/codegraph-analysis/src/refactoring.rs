@@ -616,7 +616,7 @@ pub(crate) fn impact_with_insights(
     // Reverse adjacency built once keeps the dependents BFS O(V + E).
     let mut incoming: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
     for edge in &graph.edges {
-        if is_trace_edge(&edge.kind) && edge.kind != EdgeKind::Contains {
+        if is_trace_edge(&edge.kind) {
             incoming.entry(edge.target).or_default().push(edge.source);
         }
     }
@@ -1150,7 +1150,7 @@ pub(crate) fn workflow_with_insight_report(
     let raw_total_blocks = blocks.len();
     let raw_total_transitions = transitions.len();
     let (blocks, transitions) = if request.compact {
-        compact_workflow_blocks_and_transitions(&start, blocks, transitions)
+        compact_workflow_blocks_and_transitions(blocks, transitions)
     } else {
         (blocks, transitions)
     };
@@ -1172,7 +1172,6 @@ pub(crate) fn workflow_with_insight_report(
 }
 
 pub(crate) fn compact_workflow_blocks_and_transitions(
-    _start: &Node,
     blocks: Vec<WorkflowBlock>,
     transitions: Vec<WorkflowTransition>,
 ) -> (Vec<WorkflowBlock>, Vec<WorkflowTransition>) {
