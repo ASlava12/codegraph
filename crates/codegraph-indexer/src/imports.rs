@@ -36,7 +36,10 @@ pub(crate) fn local_import_target(
         | Language::CSharp
         | Language::Kotlin
         | Language::Swift
-        | Language::Scala => None,
+        | Language::Scala
+        | Language::Lua
+        | Language::Elixir
+        | Language::Zig => None,
     }
 }
 

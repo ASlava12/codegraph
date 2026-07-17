@@ -243,6 +243,27 @@ pub(crate) fn classify_node(
             "import_declaration" => ParsedItemKind::Import,
             _ => return None,
         },
+        Language::Lua => match kind {
+            "function_declaration" => ParsedItemKind::Function,
+            "function_call" if lua_require_call(node, source) => ParsedItemKind::Import,
+            _ => return None,
+        },
+        // Elixir syntax is uniform: everything is a `call` whose target picks
+        // the special form (defmodule/def/import/...); see elixir_call_target.
+        Language::Elixir => match elixir_call_target(node, source).as_deref() {
+            Some("defmodule") => ParsedItemKind::Module,
+            Some("def" | "defp" | "defmacro" | "defmacrop" | "defdelegate") => {
+                ParsedItemKind::Function
+            }
+            Some("defprotocol" | "defimpl" | "defstruct") => ParsedItemKind::Type,
+            Some("import" | "require" | "use" | "alias") => ParsedItemKind::Import,
+            _ => return None,
+        },
+        Language::Zig => match kind {
+            "function_declaration" => ParsedItemKind::Function,
+            "builtin_function" if zig_import_builtin(node, source) => ParsedItemKind::Import,
+            _ => return None,
+        },
     };
 
     let label = item_label(language, item_kind, node, source)?;
@@ -337,7 +358,11 @@ pub(crate) fn classify_control_flow(
     path: &str,
     function_name: Option<&str>,
 ) -> Option<ParsedItem> {
-    let (kind, control_kind) = control_flow_fact(language, node)?;
+    let (kind, control_kind) = if language == Language::Elixir {
+        elixir_control_flow_fact(node, source)?
+    } else {
+        control_flow_fact(language, node)?
+    };
     let mut metadata = BTreeMap::new();
     metadata.insert("control_kind".to_string(), control_kind.to_string());
     metadata.insert("syntax_node".to_string(), node.kind().to_string());
@@ -528,6 +553,24 @@ pub(crate) fn control_flow_fact(
             "return_expression" => Some((ParsedItemKind::Return, "return")),
             _ => None,
         },
+        Language::Lua => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "for_statement" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "repeat_statement" => Some((ParsedItemKind::Loop, "repeat")),
+            "return_statement" => Some((ParsedItemKind::Return, "return")),
+            _ => None,
+        },
+        Language::Elixir => None, // handled below via elixir_control_flow
+        Language::Zig => match kind {
+            "if_statement" | "if_expression" => Some((ParsedItemKind::Branch, "if")),
+            "switch_expression" => Some((ParsedItemKind::Branch, "switch")),
+            "for_statement" | "for_expression" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" | "while_expression" => Some((ParsedItemKind::Loop, "while")),
+            "defer_statement" => Some((ParsedItemKind::Async, "defer")),
+            "return_expression" => Some((ParsedItemKind::Return, "return")),
+            _ => None,
+        },
     }
 }
 
@@ -562,7 +605,71 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
         }
         Language::Kotlin | Language::Swift => node.kind() == "call_expression",
         Language::Scala => matches!(node.kind(), "call_expression" | "instance_expression"),
+        Language::Lua => node.kind() == "function_call" && !lua_require_call(node, source),
+        Language::Elixir => {
+            node.kind() == "call"
+                && elixir_call_target(node, source)
+                    .as_deref()
+                    .is_some_and(|target| !ELIXIR_SPECIAL_FORMS.contains(&target))
+        }
+        Language::Zig => node.kind() == "call_expression",
     }
+}
+
+/// Elixir special forms parse as ordinary `call` nodes; these targets are
+/// definitions, imports, or control flow rather than function calls.
+pub(crate) const ELIXIR_SPECIAL_FORMS: &[&str] = &[
+    "def",
+    "defp",
+    "defmodule",
+    "defmacro",
+    "defmacrop",
+    "defimpl",
+    "defprotocol",
+    "defstruct",
+    "defdelegate",
+    "defguard",
+    "defguardp",
+    "import",
+    "require",
+    "use",
+    "alias",
+    "if",
+    "unless",
+    "case",
+    "cond",
+    "for",
+    "with",
+    "try",
+    "receive",
+    "raise",
+    "throw",
+    "quote",
+    "unquote",
+];
+
+/// The target text of an Elixir `call` node (an identifier or dotted access).
+pub(crate) fn elixir_call_target(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if node.kind() != "call" {
+        return None;
+    }
+    named_child_text(node, "target", source)
+}
+
+/// A Lua `require("module")` call: an import fact, not a call fact.
+pub(crate) fn lua_require_call(node: Node<'_>, source: &[u8]) -> bool {
+    node.kind() == "function_call"
+        && named_child_text(node, "name", source).as_deref() == Some("require")
+}
+
+/// Zig `@import("std")` builtin.
+pub(crate) fn zig_import_builtin(node: Node<'_>, source: &[u8]) -> bool {
+    node.kind() == "builtin_function"
+        && node
+            .named_child(0)
+            .and_then(|child| node_text(child, source))
+            .as_deref()
+            == Some("@import")
 }
 
 /// A Ruby `require`/`require_relative` call: an import fact, not a call fact.
@@ -596,6 +703,12 @@ pub(crate) fn call_label(language: Language, node: Node<'_>, source: &[u8]) -> O
         return Some(clean_call_label(simple_name(&callee)));
     }
 
+    if language == Language::Elixir
+        && let Some(target) = named_child_text(node, "target", source)
+    {
+        return Some(clean_call_label(&target));
+    }
+
     if let Some(function) = named_child_text(node, "function", source) {
         return Some(clean_call_label(&function));
     }
@@ -605,6 +718,37 @@ pub(crate) fn call_label(language: Language, node: Node<'_>, source: &[u8]) -> O
     }
 
     first_identifier(node, source).map(|name| clean_call_label(&name))
+}
+
+/// Control-flow facts for Elixir, whose if/case/cond/for/with parse as calls.
+pub(crate) fn elixir_control_flow_fact(
+    node: Node<'_>,
+    source: &[u8],
+) -> Option<(ParsedItemKind, &'static str)> {
+    match elixir_call_target(node, source).as_deref() {
+        Some("if" | "unless") => Some((ParsedItemKind::Branch, "if")),
+        Some("case") => Some((ParsedItemKind::Branch, "case")),
+        Some("cond") => Some((ParsedItemKind::Branch, "cond")),
+        Some("with") => Some((ParsedItemKind::Branch, "with")),
+        Some("try" | "receive") => Some((ParsedItemKind::Branch, "try")),
+        Some("for") => Some((ParsedItemKind::Loop, "for")),
+        _ => None,
+    }
+}
+
+/// Labels for Elixir definition calls: the module alias or the function-head
+/// target inside the arguments (`defmodule Billing.Invoice`, `def total(..)`).
+pub(crate) fn elixir_item_label(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    let arguments = node
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "arguments")?;
+    let first = arguments.named_child(0)?;
+    match first.kind() {
+        "alias" | "identifier" => node_text(first, source),
+        "call" => named_child_text(first, "target", source),
+        _ => None,
+    }
 }
 
 pub(crate) fn item_label(
@@ -622,6 +766,7 @@ pub(crate) fn item_label(
     }
 
     match language {
+        Language::Elixir => elixir_item_label(node, source),
         Language::C | Language::Cpp => first_identifier_in_field(node, "declarator", source)
             .or_else(|| first_identifier(node, source)),
         Language::Go if kind == ParsedItemKind::Function => {
@@ -644,6 +789,7 @@ pub(crate) fn is_entrypoint(language: Language, label: &str) -> bool {
         Language::Ruby | Language::Java => label == "main",
         Language::CSharp => label.eq_ignore_ascii_case("main"),
         Language::Kotlin | Language::Swift | Language::Scala => label == "main",
+        Language::Lua | Language::Elixir | Language::Zig => label == "main",
     }
 }
 

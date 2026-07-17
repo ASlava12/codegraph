@@ -29,6 +29,9 @@ pub enum Language {
     Kotlin,
     Swift,
     Scala,
+    Lua,
+    Elixir,
+    Zig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,7 +192,23 @@ static SCALA_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     file_names: &[],
 };
 
-static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 17] = [
+static LUA_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Lua,
+    extensions: &["lua"],
+    file_names: &[],
+};
+static ELIXIR_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Elixir,
+    extensions: &["ex", "exs"],
+    file_names: &[],
+};
+static ZIG_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Zig,
+    extensions: &["zig"],
+    file_names: &[],
+};
+
+static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 20] = [
     &RUST_ADAPTER,
     &PYTHON_ADAPTER,
     &JAVASCRIPT_ADAPTER,
@@ -207,6 +226,9 @@ static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 17] = [
     &KOTLIN_ADAPTER,
     &SWIFT_ADAPTER,
     &SCALA_ADAPTER,
+    &LUA_ADAPTER,
+    &ELIXIR_ADAPTER,
+    &ZIG_ADAPTER,
 ];
 
 pub fn language_adapters() -> &'static [&'static dyn LanguageAdapter] {
@@ -251,6 +273,9 @@ impl Language {
             Self::Kotlin => "kotlin",
             Self::Swift => "swift",
             Self::Scala => "scala",
+            Self::Lua => "lua",
+            Self::Elixir => "elixir",
+            Self::Zig => "zig",
         }
     }
 
@@ -273,6 +298,9 @@ impl Language {
             Self::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
             Self::Swift => tree_sitter_swift::LANGUAGE.into(),
             Self::Scala => tree_sitter_scala::LANGUAGE.into(),
+            Self::Lua => tree_sitter_lua::LANGUAGE.into(),
+            Self::Elixir => tree_sitter_elixir::LANGUAGE.into(),
+            Self::Zig => tree_sitter_zig::LANGUAGE.into(),
         }
     }
 }

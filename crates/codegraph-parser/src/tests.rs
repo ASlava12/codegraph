@@ -12,7 +12,7 @@ fn language_registry_exposes_all_builtin_adapters() {
         .map(|adapter| adapter.info().language)
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(adapters.len(), 17);
+    assert_eq!(adapters.len(), 20);
     assert_eq!(
         languages,
         BTreeSet::from([
@@ -22,9 +22,11 @@ fn language_registry_exposes_all_builtin_adapters() {
             "csharp",
             "dart",
             "go",
+            "elixir",
             "java",
             "javascript",
             "kotlin",
+            "lua",
             "php",
             "python",
             "ruby",
@@ -33,6 +35,7 @@ fn language_registry_exposes_all_builtin_adapters() {
             "swift",
             "tsx",
             "typescript",
+            "zig",
         ])
     );
     assert!(
@@ -1148,4 +1151,171 @@ object App {
     assert!(has(ParsedItemKind::Branch, "branch: match"));
     assert!(has(ParsedItemKind::Loop, "loop: for"));
     assert!(has(ParsedItemKind::Import, "import java.util.Locale"));
+}
+
+#[test]
+fn lua_adapter_extracts_symbols_calls_effects_and_control_flow() {
+    let source = r#"local json = require("json")
+local M = {}
+function M.total(items)
+    local key = os.getenv("API_KEY")
+    if #items == 0 then
+        error("empty")
+    end
+    for i, item in ipairs(items) do
+        compute(item)
+    end
+    return 42
+end
+"#;
+    let parsed = parse_source("mod.lua", source.as_bytes(), Language::Lua).unwrap();
+    let has = |kind: ParsedItemKind, label: &str| {
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == kind && item.label == label)
+    };
+    assert!(
+        has(ParsedItemKind::Function, "M.total"),
+        "{:?}",
+        parsed.items
+    );
+    assert!(has(ParsedItemKind::Import, "require(\"json\")"));
+    assert!(has(ParsedItemKind::Call, "compute"));
+    let env_reads = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .count();
+    assert_eq!(env_reads, 1);
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "API_KEY")
+    );
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error)
+    );
+    assert!(has(ParsedItemKind::Branch, "branch: if"));
+    assert!(has(ParsedItemKind::Loop, "loop: for"));
+    assert!(has(ParsedItemKind::Return, "return: return"));
+}
+
+#[test]
+fn elixir_adapter_extracts_symbols_calls_effects_and_control_flow() {
+    let source = r#"defmodule Billing.Invoice do
+  import Enum
+  def total(items) do
+    key = System.get_env("API_KEY")
+    if items == [] do
+      raise ArgumentError, "empty"
+    end
+    Enum.each(items, fn item -> compute(item) end)
+  end
+end
+"#;
+    let parsed = parse_source("invoice.ex", source.as_bytes(), Language::Elixir).unwrap();
+    let has = |kind: ParsedItemKind, label: &str| {
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == kind && item.label == label)
+    };
+    assert!(
+        has(ParsedItemKind::Module, "Billing.Invoice"),
+        "{:?}",
+        parsed.items
+    );
+    assert!(has(ParsedItemKind::Function, "total"));
+    assert!(has(ParsedItemKind::Call, "Enum.each"));
+    assert!(has(ParsedItemKind::Call, "compute"));
+    let env_reads = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .count();
+    assert_eq!(env_reads, 1);
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "API_KEY")
+    );
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error),
+        "raise is an error fact"
+    );
+    assert!(has(ParsedItemKind::Branch, "branch: if"));
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Import),
+        "import Enum lands as an import fact"
+    );
+}
+
+#[test]
+fn zig_adapter_extracts_symbols_calls_effects_and_control_flow() {
+    let source = r#"const std = @import("std");
+pub fn main() !void {
+    const key = std.posix.getenv("API_KEY");
+    if (key == null) {
+        @panic("empty");
+    }
+    for (0..3) |i| {
+        process(i);
+    }
+    return;
+}
+"#;
+    let parsed = parse_source("main.zig", source.as_bytes(), Language::Zig).unwrap();
+    let has = |kind: ParsedItemKind, label: &str| {
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == kind && item.label == label)
+    };
+    assert!(
+        has(ParsedItemKind::Entrypoint, "main"),
+        "{:?}",
+        parsed.items
+    );
+    assert!(has(ParsedItemKind::Call, "process"));
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Import && item.label.contains("@import")),
+        "@import lands as an import fact"
+    );
+    let env_reads = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .count();
+    assert_eq!(env_reads, 1);
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "API_KEY")
+    );
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error),
+        "@panic is an error fact"
+    );
+    assert!(has(ParsedItemKind::Branch, "branch: if"));
+    assert!(has(ParsedItemKind::Loop, "loop: for"));
+    assert!(has(ParsedItemKind::Return, "return: return"));
 }

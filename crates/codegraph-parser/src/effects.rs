@@ -125,6 +125,24 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                     .as_deref()
                     .is_some_and(|value| matches!(value, "sys.env.get" | "System.getenv"))
         }
+        Language::Lua => {
+            node.kind() == "function_call"
+                && named_child_text(node, "name", source).as_deref() == Some("os.getenv")
+        }
+        Language::Elixir => elixir_call_target(node, source)
+            .as_deref()
+            .is_some_and(|target| {
+                matches!(
+                    target,
+                    "System.get_env" | "System.fetch_env" | "System.fetch_env!"
+                )
+            }),
+        Language::Zig => {
+            node.kind() == "call_expression"
+                && call
+                    .as_deref()
+                    .is_some_and(|value| simple_name(value) == "getenv")
+        }
     }
 }
 
@@ -210,7 +228,13 @@ pub(crate) fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) 
             .as_deref()
             .is_some_and(|value| matches!(simple_name(value), "fromFile" | "getProperty" | "load")),
         // No reliable deterministic config-read shape identified yet.
-        Language::Swift => false,
+        Language::Swift | Language::Zig => false,
+        Language::Lua => call
+            .as_deref()
+            .is_some_and(|value| matches!(simple_name(value), "dofile" | "loadfile" | "open")),
+        Language::Elixir => call
+            .as_deref()
+            .is_some_and(|value| matches!(simple_name(value), "read" | "read!" | "load")),
     }
 }
 
@@ -268,6 +292,23 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
         Language::Java => node.kind() == "throw_statement",
         Language::CSharp => matches!(node.kind(), "throw_statement" | "throw_expression"),
         Language::Kotlin | Language::Scala => node.kind() == "throw_expression",
+        Language::Lua => {
+            node.kind() == "function_call"
+                && named_child_text(node, "name", source)
+                    .as_deref()
+                    .is_some_and(|name| matches!(name, "error" | "assert"))
+        }
+        Language::Elixir => elixir_call_target(node, source)
+            .as_deref()
+            .is_some_and(|target| matches!(target, "raise" | "throw")),
+        Language::Zig => {
+            node.kind() == "builtin_function"
+                && node
+                    .named_child(0)
+                    .and_then(|child| node_text(child, source))
+                    .as_deref()
+                    == Some("@panic")
+        }
         Language::Swift => {
             is_call_node(language, node, source)
                 && call_label(language, node, source)
@@ -336,7 +377,10 @@ pub(crate) fn effect_metadata(
         | Language::CSharp
         | Language::Kotlin
         | Language::Swift
-        | Language::Scala => None,
+        | Language::Scala
+        | Language::Lua
+        | Language::Elixir
+        | Language::Zig => None,
     };
 
     if let Some(default_value) = default_value {
