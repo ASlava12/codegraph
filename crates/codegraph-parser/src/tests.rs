@@ -12,18 +12,21 @@ fn language_registry_exposes_all_builtin_adapters() {
         .map(|adapter| adapter.info().language)
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(adapters.len(), 11);
+    assert_eq!(adapters.len(), 14);
     assert_eq!(
         languages,
         BTreeSet::from([
             "bash",
             "c",
             "cpp",
+            "csharp",
             "dart",
             "go",
+            "java",
             "javascript",
             "php",
             "python",
+            "ruby",
             "rust",
             "tsx",
             "typescript",
@@ -821,4 +824,175 @@ fn environment_reads_are_counted_once_per_access() {
         0,
         "a for-loop variable is not an env read"
     );
+}
+
+#[test]
+fn ruby_adapter_extracts_symbols_calls_effects_and_control_flow() {
+    let source = r#"require 'json'
+module Billing
+  class Invoice
+    def total(items)
+      key = ENV['API_KEY']
+      mode = ENV.fetch('MODE', 'dev')
+      if items.empty?
+        raise ArgumentError, "empty"
+      end
+      items.each do |item|
+        compute(item)
+      end
+      return 42
+    end
+  end
+end
+"#;
+    let parsed = parse_source("invoice.rb", source.as_bytes(), Language::Ruby).unwrap();
+    let has = |kind: ParsedItemKind, label: &str| {
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == kind && item.label == label)
+    };
+    assert!(has(ParsedItemKind::Module, "Billing"), "{:?}", parsed.items);
+    assert!(has(ParsedItemKind::Type, "Invoice"));
+    assert!(has(ParsedItemKind::Function, "total"));
+    assert!(has(ParsedItemKind::Import, "require 'json'"));
+    assert!(has(ParsedItemKind::Call, "compute"));
+    assert!(
+        has(ParsedItemKind::Call, "each"),
+        "call label uses the method field"
+    );
+    let env_reads: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .collect();
+    assert_eq!(env_reads.len(), 2, "{env_reads:?}");
+    assert!(env_reads.iter().any(|item| item.label == "API_KEY"));
+    assert!(
+        env_reads
+            .iter()
+            .any(|item| item.metadata.get("default_value").map(String::as_str) == Some("dev")),
+        "ENV.fetch default is captured: {env_reads:?}"
+    );
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error)
+    );
+    assert!(has(ParsedItemKind::Branch, "branch: if"));
+    assert!(has(ParsedItemKind::Return, "return: return"));
+}
+
+#[test]
+fn java_adapter_extracts_symbols_calls_effects_and_control_flow() {
+    let source = r#"import java.util.List;
+public class App {
+    interface Runner { void run(); }
+    enum Mode { DEV }
+    public static void main(String[] args) {
+        String key = System.getenv("API_KEY");
+        if (args.length == 0) {
+            throw new IllegalArgumentException("empty");
+        }
+        for (String a : args) {
+            process(a);
+        }
+        return;
+    }
+}
+"#;
+    let parsed = parse_source("App.java", source.as_bytes(), Language::Java).unwrap();
+    let has = |kind: ParsedItemKind, label: &str| {
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == kind && item.label == label)
+    };
+    assert!(has(ParsedItemKind::Type, "App"), "{:?}", parsed.items);
+    assert!(has(ParsedItemKind::Type, "Runner"));
+    assert!(has(ParsedItemKind::Type, "Mode"));
+    assert!(
+        has(ParsedItemKind::Entrypoint, "main"),
+        "main is an entrypoint"
+    );
+    assert!(has(ParsedItemKind::Call, "process"));
+    let env_reads = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .count();
+    assert_eq!(env_reads, 1);
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "API_KEY")
+    );
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error)
+    );
+    assert!(has(ParsedItemKind::Branch, "branch: if"));
+    assert!(has(ParsedItemKind::Loop, "loop: for"));
+    assert!(has(ParsedItemKind::Import, "import java.util.List;"));
+}
+
+#[test]
+fn csharp_adapter_extracts_symbols_calls_effects_and_control_flow() {
+    let source = r#"using System;
+namespace Billing {
+    interface IRunner { void Run(); }
+    class App {
+        static async System.Threading.Tasks.Task Main(string[] args) {
+            var key = Environment.GetEnvironmentVariable("API_KEY");
+            if (args.Length == 0) {
+                throw new ArgumentException("empty");
+            }
+            foreach (var a in args) { Process(a); }
+            var x = await Fetch();
+            return;
+        }
+    }
+}
+"#;
+    let parsed = parse_source("App.cs", source.as_bytes(), Language::CSharp).unwrap();
+    let has = |kind: ParsedItemKind, label: &str| {
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == kind && item.label == label)
+    };
+    assert!(has(ParsedItemKind::Module, "Billing"), "{:?}", parsed.items);
+    assert!(has(ParsedItemKind::Type, "App"));
+    assert!(has(ParsedItemKind::Type, "IRunner"));
+    assert!(
+        has(ParsedItemKind::Entrypoint, "Main"),
+        "Main is an entrypoint"
+    );
+    assert!(has(ParsedItemKind::Call, "Process"));
+    let env_reads = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .count();
+    assert_eq!(env_reads, 1);
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "API_KEY")
+    );
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error)
+    );
+    assert!(has(ParsedItemKind::Branch, "branch: if"));
+    assert!(has(ParsedItemKind::Loop, "loop: for"));
+    assert!(has(ParsedItemKind::Async, "async: await"));
+    assert!(has(ParsedItemKind::Import, "using System;"));
 }

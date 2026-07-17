@@ -28,6 +28,10 @@ pub(crate) fn local_import_target(
         Language::Rust => rust_local_import_target(source_label, import_label),
         Language::Go => go_local_import_target(source_label, import_label),
         Language::Dart => dart_local_import_target(source_label, import_label, dart_packages),
+        // No deterministic local-file resolution for these import systems yet
+        // (classpaths / gem load paths / assembly references); imports still
+        // land as facts and can join package hubs.
+        Language::Ruby | Language::Java | Language::CSharp => None,
     }
 }
 

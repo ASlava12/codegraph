@@ -162,7 +162,13 @@ pub(crate) fn framework_routes(language: Language, source: &str) -> Vec<Framewor
         Language::Rust => rust_framework_routes(source),
         Language::Go => go_framework_routes(source),
         Language::Php => php_framework_routes(source),
-        Language::C | Language::Cpp | Language::Dart | Language::Bash => Vec::new(),
+        Language::C
+        | Language::Cpp
+        | Language::Dart
+        | Language::Bash
+        | Language::Ruby
+        | Language::Java
+        | Language::CSharp => Vec::new(),
     }
 }
 
@@ -469,7 +475,8 @@ pub(crate) fn framework_configs(
         Some(Language::Php) => configs.extend(php_framework_configs(source)),
         Some(Language::Bash) => configs.extend(bash_framework_configs(source)),
         Some(Language::Dart) => configs.extend(dart_framework_configs(source)),
-        Some(Language::C | Language::Cpp) | None => {}
+        Some(Language::C | Language::Cpp | Language::Ruby | Language::Java | Language::CSharp)
+        | None => {}
     }
 
     configs.into_iter().collect()

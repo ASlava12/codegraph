@@ -296,7 +296,7 @@ pub(crate) fn rationale_comments(
 pub(crate) fn rationale_comment_text(language: Option<Language>, line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
     match language {
-        Some(Language::Python | Language::Bash) => trimmed.strip_prefix('#'),
+        Some(Language::Python | Language::Bash | Language::Ruby) => trimmed.strip_prefix('#'),
         Some(
             Language::Rust
             | Language::JavaScript
@@ -305,7 +305,9 @@ pub(crate) fn rationale_comment_text(language: Option<Language>, line: &str) -> 
             | Language::Go
             | Language::C
             | Language::Cpp
-            | Language::Dart,
+            | Language::Dart
+            | Language::Java
+            | Language::CSharp,
         ) => trimmed.strip_prefix("//").or_else(|| {
             trimmed
                 .strip_prefix("/*")

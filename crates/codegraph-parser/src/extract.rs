@@ -190,6 +190,36 @@ pub(crate) fn classify_node(
             }
             _ => return None,
         },
+        Language::Ruby => match kind {
+            "method" | "singleton_method" => ParsedItemKind::Function,
+            "class" => ParsedItemKind::Type,
+            "module" => ParsedItemKind::Module,
+            "call" if ruby_require_call(node, source) => ParsedItemKind::Import,
+            _ => return None,
+        },
+        Language::Java => match kind {
+            "method_declaration" | "constructor_declaration" => ParsedItemKind::Function,
+            "class_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+            | "annotation_type_declaration" => ParsedItemKind::Type,
+            "import_declaration" => ParsedItemKind::Import,
+            _ => return None,
+        },
+        Language::CSharp => match kind {
+            "method_declaration" | "constructor_declaration" | "local_function_statement" => {
+                ParsedItemKind::Function
+            }
+            "class_declaration"
+            | "interface_declaration"
+            | "struct_declaration"
+            | "enum_declaration"
+            | "record_declaration" => ParsedItemKind::Type,
+            "namespace_declaration" | "file_scoped_namespace_declaration" => ParsedItemKind::Module,
+            "using_directive" => ParsedItemKind::Import,
+            _ => return None,
+        },
     };
 
     let label = item_label(language, item_kind, node, source)?;
@@ -407,6 +437,39 @@ pub(crate) fn control_flow_fact(
             "until_statement" => Some((ParsedItemKind::Loop, "until")),
             _ => None,
         },
+        Language::Ruby => match kind {
+            "if" | "unless" => Some((ParsedItemKind::Branch, "if")),
+            "case" => Some((ParsedItemKind::Branch, "case")),
+            "rescue" => Some((ParsedItemKind::Branch, "rescue")),
+            "for" => Some((ParsedItemKind::Loop, "for")),
+            "while" => Some((ParsedItemKind::Loop, "while")),
+            "until" => Some((ParsedItemKind::Loop, "until")),
+            "return" => Some((ParsedItemKind::Return, "return")),
+            _ => None,
+        },
+        Language::Java => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "switch_expression" => Some((ParsedItemKind::Branch, "switch")),
+            "try_statement" => Some((ParsedItemKind::Branch, "try")),
+            "catch_clause" => Some((ParsedItemKind::Branch, "catch")),
+            "for_statement" | "enhanced_for_statement" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "do_statement" => Some((ParsedItemKind::Loop, "do")),
+            "return_statement" => Some((ParsedItemKind::Return, "return")),
+            _ => None,
+        },
+        Language::CSharp => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "switch_statement" | "switch_expression" => Some((ParsedItemKind::Branch, "switch")),
+            "try_statement" => Some((ParsedItemKind::Branch, "try")),
+            "catch_clause" => Some((ParsedItemKind::Branch, "catch")),
+            "for_statement" | "foreach_statement" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "do_statement" => Some((ParsedItemKind::Loop, "do")),
+            "await_expression" => Some((ParsedItemKind::Async, "await")),
+            "return_statement" => Some((ParsedItemKind::Return, "return")),
+            _ => None,
+        },
     }
 }
 
@@ -426,13 +489,40 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
         Language::Bash => {
             node.kind() == "command" && !command_text_starts_with(source, node, &["source", "."])
         }
+        Language::Ruby => node.kind() == "call" && !ruby_require_call(node, source),
+        Language::Java => {
+            matches!(
+                node.kind(),
+                "method_invocation" | "object_creation_expression"
+            )
+        }
+        Language::CSharp => {
+            matches!(
+                node.kind(),
+                "invocation_expression" | "object_creation_expression"
+            )
+        }
     }
+}
+
+/// A Ruby `require`/`require_relative` call: an import fact, not a call fact.
+pub(crate) fn ruby_require_call(node: Node<'_>, source: &[u8]) -> bool {
+    node.kind() == "call"
+        && named_child_text(node, "method", source)
+            .as_deref()
+            .is_some_and(|method| matches!(method, "require" | "require_relative"))
 }
 
 pub(crate) fn call_label(language: Language, node: Node<'_>, source: &[u8]) -> Option<String> {
     if language == Language::Bash {
         return node_text(node, source)
             .and_then(|text| text.split_whitespace().next().map(ToString::to_string));
+    }
+
+    if language == Language::Ruby
+        && let Some(method) = named_child_text(node, "method", source)
+    {
+        return Some(clean_call_label(&method));
     }
 
     if let Some(function) = named_child_text(node, "function", source) {
@@ -480,6 +570,8 @@ pub(crate) fn is_entrypoint(language: Language, label: &str) -> bool {
         }
         Language::Dart => label == "main",
         Language::Bash => label == "main",
+        Language::Ruby | Language::Java => label == "main",
+        Language::CSharp => label.eq_ignore_ascii_case("main"),
     }
 }
 

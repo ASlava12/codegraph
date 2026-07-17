@@ -80,6 +80,26 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                     .parent()
                     .is_some_and(|parent| matches!(parent.kind(), "expansion" | "simple_expansion"))
         }
+        Language::Ruby => match node.kind() {
+            // `ENV['KEY']`
+            "element_reference" => {
+                named_child_text(node, "object", source).as_deref() == Some("ENV")
+            }
+            // `ENV.fetch('KEY', 'default')` / `ENV.key?('KEY')`
+            "call" => named_child_text(node, "receiver", source).as_deref() == Some("ENV"),
+            _ => false,
+        },
+        Language::Java => {
+            node.kind() == "method_invocation"
+                && named_child_text(node, "name", source).as_deref() == Some("getenv")
+                && named_child_text(node, "object", source).as_deref() == Some("System")
+        }
+        Language::CSharp => {
+            node.kind() == "invocation_expression"
+                && call
+                    .as_deref()
+                    .is_some_and(|value| simple_name(value) == "GetEnvironmentVariable")
+        }
     }
 }
 
@@ -137,6 +157,24 @@ pub(crate) fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) 
         Language::Bash => {
             node.kind() == "command" && command_text_starts_with(source, node, &["source", "."])
         }
+        Language::Ruby => call.as_deref().is_some_and(|value| {
+            matches!(
+                simple_name(value),
+                "read" | "load_file" | "load" | "parse" | "foreach"
+            )
+        }),
+        Language::Java => call.as_deref().is_some_and(|value| {
+            matches!(
+                simple_name(value),
+                "readString" | "readAllBytes" | "readAllLines" | "getProperty" | "load"
+            )
+        }),
+        Language::CSharp => call.as_deref().is_some_and(|value| {
+            matches!(
+                simple_name(value),
+                "ReadAllText" | "ReadAllLines" | "ReadAllBytes" | "OpenText" | "OpenRead"
+            )
+        }),
     }
 }
 
@@ -185,6 +223,14 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
         Language::Bash => {
             node.kind() == "command" && command_text_starts_with(source, node, &["exit"])
         }
+        Language::Ruby => {
+            node.kind() == "call"
+                && call_label(language, node, source)
+                    .as_deref()
+                    .is_some_and(|value| simple_name(value) == "raise")
+        }
+        Language::Java => node.kind() == "throw_statement",
+        Language::CSharp => matches!(node.kind(), "throw_statement" | "throw_expression"),
     }
 }
 
@@ -237,6 +283,8 @@ pub(crate) fn effect_metadata(
         Language::C | Language::Cpp | Language::Php => getenv_default_value(node, source),
         Language::Dart => dart_env_default_value(node, source),
         Language::Bash => bash_env_default_value(node, source),
+        Language::Ruby => ruby_env_default_value(node, source),
+        Language::Java | Language::CSharp => None,
     };
 
     if let Some(default_value) = default_value {
@@ -330,6 +378,17 @@ pub(crate) fn dart_env_default_value(node: Node<'_>, source: &[u8]) -> Option<St
     let expression = short_ancestor_text(node, source, |candidate| {
         candidate.contains("Platform.environment")
             && (candidate.contains("??") || candidate.contains("?:"))
+    })?;
+    quoted_string_values(&expression).into_iter().nth(1)
+}
+
+pub(crate) fn ruby_env_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let text = short_node_text(node, source)?;
+    if text.contains("ENV.fetch") {
+        return all_string_literals(node, source).into_iter().nth(1);
+    }
+    let expression = short_ancestor_text(node, source, |candidate| {
+        candidate.contains("ENV[") && candidate.contains("||")
     })?;
     quoted_string_values(&expression).into_iter().nth(1)
 }

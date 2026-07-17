@@ -23,6 +23,9 @@ pub enum Language {
     Dart,
     Php,
     Bash,
+    Ruby,
+    Java,
+    CSharp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,7 +154,23 @@ static BASH_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     file_names: &["Makefile"],
 };
 
-static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 11] = [
+static RUBY_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Ruby,
+    extensions: &["rb", "rake", "gemspec"],
+    file_names: &["Rakefile", "Gemfile"],
+};
+static JAVA_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Java,
+    extensions: &["java"],
+    file_names: &[],
+};
+static CSHARP_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::CSharp,
+    extensions: &["cs"],
+    file_names: &[],
+};
+
+static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 14] = [
     &RUST_ADAPTER,
     &PYTHON_ADAPTER,
     &JAVASCRIPT_ADAPTER,
@@ -163,6 +182,9 @@ static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 11] = [
     &DART_ADAPTER,
     &PHP_ADAPTER,
     &BASH_ADAPTER,
+    &RUBY_ADAPTER,
+    &JAVA_ADAPTER,
+    &CSHARP_ADAPTER,
 ];
 
 pub fn language_adapters() -> &'static [&'static dyn LanguageAdapter] {
@@ -201,6 +223,9 @@ impl Language {
             Self::Dart => "dart",
             Self::Php => "php",
             Self::Bash => "bash",
+            Self::Ruby => "ruby",
+            Self::Java => "java",
+            Self::CSharp => "csharp",
         }
     }
 
@@ -217,6 +242,9 @@ impl Language {
             Self::Dart => tree_sitter_dart::LANGUAGE.into(),
             Self::Php => tree_sitter_php::LANGUAGE_PHP.into(),
             Self::Bash => tree_sitter_bash::LANGUAGE.into(),
+            Self::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+            Self::Java => tree_sitter_java::LANGUAGE.into(),
+            Self::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
         }
     }
 }
