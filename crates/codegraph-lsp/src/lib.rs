@@ -1093,6 +1093,34 @@ pub fn apply_semantic_graph_patch(
     SemanticGraphApplyResult { graph, report }
 }
 
+/// Owns a spawned language-server process and kills+reaps it on drop unless
+/// disarmed. Every error path after spawn (a hung server hitting the read
+/// timeout is the likely case) would otherwise leak the child and its stdout
+/// reader thread.
+struct ChildGuard {
+    child: Child,
+    armed: bool,
+}
+
+impl ChildGuard {
+    fn new(child: Child) -> Self {
+        Self { child, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
 fn run_semantic_server_batch(
     workspace_root: &Path,
     server_batch: &SemanticServerBatch,
@@ -1102,7 +1130,7 @@ fn run_semantic_server_batch(
         .path
         .as_deref()
         .unwrap_or(server_batch.command.as_str());
-    let mut child = Command::new(executable)
+    let child = Command::new(executable)
         .args(&server_batch.args)
         .current_dir(workspace_root)
         .stdin(Stdio::piped())
@@ -1115,14 +1143,15 @@ fn run_semantic_server_batch(
                 server_batch.server
             ))
         })?;
+    let mut child = ChildGuard::new(child);
 
-    let mut stdin = child.stdin.take().ok_or_else(|| {
+    let mut stdin = child.child.stdin.take().ok_or_else(|| {
         SemanticLspRunError::new(format!(
             "language server `{}` did not expose stdin",
             server_batch.server
         ))
     })?;
-    let stdout = child.stdout.take().ok_or_else(|| {
+    let stdout = child.child.stdout.take().ok_or_else(|| {
         SemanticLspRunError::new(format!(
             "language server `{}` did not expose stdout",
             server_batch.server
@@ -1158,7 +1187,8 @@ fn run_semantic_server_batch(
     }
 
     shutdown_lsp_server(server_batch, &receiver, &mut stdin, options.request_timeout)?;
-    wait_for_lsp_exit(&mut child, &server_batch.server, options.request_timeout)?;
+    wait_for_lsp_exit(&mut child.child, &server_batch.server, options.request_timeout)?;
+    child.disarm();
     Ok(responses)
 }
 
@@ -2727,6 +2757,26 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
+
+    #[cfg(unix)]
+    #[test]
+    fn child_guard_kills_process_on_drop_unless_disarmed() {
+        // A hung language server must not leak: dropping the guard kills+reaps it.
+        let child = Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn sleeper");
+        let pid = child.id();
+        let guard = ChildGuard::new(child);
+        drop(guard);
+        // kill+wait ran synchronously in drop, so the pid is gone (reaped).
+        let alive = Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .expect("run kill -0")
+            .success();
+        assert!(!alive, "guard must kill the child on drop");
+    }
 
     #[test]
     fn discovery_report_lists_target_language_servers() {
