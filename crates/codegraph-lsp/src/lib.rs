@@ -1355,11 +1355,44 @@ fn semantic_batch_hash(batch: &SemanticExecutionBatch) -> Result<String, Semanti
         SemanticLspRunError::new(format!("failed to hash semantic LSP batch: {error}"))
     })?;
     let mut hash = FNV_OFFSET;
-    for byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
+    fnv_update(&mut hash, &bytes);
+    // Mix in a stamp (size + mtime) of every file the batch touches. The batch
+    // itself is derived from the syntactic graph, so an edit that doesn't
+    // change the graph (e.g. a changed literal) would otherwise hash the same
+    // and replay stale diagnostics from the cache forever.
+    let root = Path::new(&batch.workspace_root);
+    let mut paths = BTreeSet::new();
+    for server_batch in &batch.server_batches {
+        for request in &server_batch.requests {
+            if let Some(path) = request.path.as_deref() {
+                paths.insert(path);
+            }
+        }
+    }
+    for path in paths {
+        fnv_update(&mut hash, path.as_bytes());
+        let stamp = fs::metadata(root.join(path))
+            .map(|metadata| {
+                let modified = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                    .map(|duration| duration.as_nanos())
+                    .unwrap_or(0);
+                (metadata.len(), modified)
+            })
+            .unwrap_or((u64::MAX, u128::MAX));
+        fnv_update(&mut hash, &stamp.0.to_le_bytes());
+        fnv_update(&mut hash, &stamp.1.to_le_bytes());
     }
     Ok(format!("{hash:016x}"))
+}
+
+fn fnv_update(hash: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *hash ^= u64::from(*byte);
+        *hash = hash.wrapping_mul(FNV_PRIME);
+    }
 }
 
 fn write_lsp_request<W: Write>(
@@ -2889,6 +2922,74 @@ mod tests {
 
         assert_eq!(run.cache.status, SemanticLspCacheStatus::Hit);
         assert_eq!(run.responses, responses);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn semantic_cache_misses_after_touched_file_changes() {
+        // The batch shape is graph-derived, so an edit that keeps the graph
+        // identical must still invalidate via the file stamp in the hash.
+        let workspace = temp_dir();
+        fs::create_dir_all(workspace.join("src")).unwrap();
+        fs::write(
+            workspace.join("src").join("main.rs"),
+            "fn main() { let x = 1; }\n",
+        )
+        .unwrap();
+        let dir = temp_dir();
+        let cache = SemanticLspCache::new(&dir);
+        let batch = SemanticExecutionBatch {
+            workspace_root: workspace.display().to_string(),
+            work_item_limit: 10,
+            work_item_filter: SemanticWorkItemFilter::default(),
+            total_work_items: 1,
+            truncated_work_items: false,
+            server_batches: vec![SemanticServerBatch {
+                server: "rust-analyzer".to_string(),
+                command: "rust-analyzer".to_string(),
+                args: Vec::new(),
+                installed: true,
+                path: None,
+                status: "ready",
+                languages: vec!["rust".to_string()],
+                work_items: Vec::new(),
+                requests: vec![SemanticLspRequest {
+                    id: "r1".to_string(),
+                    work_item_id: Some("w1".to_string()),
+                    request_kind: "request",
+                    method: "textDocument/definition",
+                    params: json!({}),
+                    document_uri: None,
+                    path: Some("src/main.rs".to_string()),
+                    line: Some(1),
+                    column: Some(4),
+                    expected_result: "definition",
+                }],
+            }],
+            blocked_items: Vec::new(),
+        };
+        let responses = vec![SemanticLspResponse {
+            request_id: "r1".to_string(),
+            method: "textDocument/definition".to_string(),
+            result: json!({}),
+            error: None,
+        }];
+        cache.store(&batch, &responses).unwrap();
+        assert!(cache.load(&batch).unwrap().is_some(), "warm cache hits");
+
+        // Same batch, edited file (different size → stamp differs even on
+        // coarse-mtime filesystems): must miss.
+        fs::write(
+            workspace.join("src").join("main.rs"),
+            "fn main() { let x = 100; }\n",
+        )
+        .unwrap();
+        assert!(
+            cache.load(&batch).unwrap().is_none(),
+            "an edited file invalidates the semantic cache"
+        );
+
+        fs::remove_dir_all(workspace).unwrap();
         fs::remove_dir_all(dir).unwrap();
     }
 
