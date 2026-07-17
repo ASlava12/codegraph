@@ -145,6 +145,9 @@ pub(crate) async fn start_semantic_job(
     Json(request): Json<SemanticEnrichRequest>,
 ) -> Result<Json<SemanticJob>, ApiError> {
     let root = resolve_scan_root(&state, request.path.as_deref())?;
+    // Resolve scan options before inserting the job, so a config error can't
+    // leave a Queued job that never reaches a terminal state (see start_scan_job).
+    let options = scan_options(&state, &root)?;
     let id = format!(
         "semantic-{}",
         state.next_job_id.fetch_add(1, Ordering::Relaxed)
@@ -168,7 +171,6 @@ pub(crate) async fn start_semantic_job(
     insert_semantic_job(&state.semantic_jobs, job.clone(), state.max_semantic_jobs).await;
 
     let jobs = Arc::clone(&state.semantic_jobs);
-    let options = scan_options(&state, &root)?;
     let cache = state.cache.clone();
     let semantic_cache = cache
         .as_ref()

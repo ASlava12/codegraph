@@ -33,6 +33,10 @@ pub(crate) async fn start_scan_job(
     Json(request): Json<ScanJobRequest>,
 ) -> Result<Json<ScanJob>, ApiError> {
     let root = resolve_scan_root(&state, request.path.as_deref())?;
+    // Resolve scan options before inserting the job. If this fails (e.g. a
+    // malformed .codegraph/config.toml) we must not leave a Queued job behind
+    // that never receives a terminal update and is polled forever over SSE.
+    let options = scan_options(&state, &root)?;
     let id = format!("scan-{}", state.next_job_id.fetch_add(1, Ordering::Relaxed));
     let path = root.display().to_string();
     let now = unix_seconds();
@@ -51,7 +55,6 @@ pub(crate) async fn start_scan_job(
     insert_scan_job(&state.jobs, job.clone(), state.max_scan_jobs).await;
 
     let jobs = Arc::clone(&state.jobs);
-    let options = scan_options(&state, &root)?;
     let cache = state.cache.clone();
     let max_jobs = state.max_scan_jobs;
     let scan_permits = Arc::clone(&state.scan_permits);

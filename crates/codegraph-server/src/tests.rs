@@ -3142,6 +3142,30 @@ fn sort_scan_jobs_orders_recent_jobs_first() {
 }
 
 #[tokio::test]
+async fn start_scan_job_with_bad_config_leaves_no_queued_job() {
+    // A config error must fail the request before a job is inserted; otherwise a
+    // Queued job lingers forever (no terminal update, SSE polls it indefinitely).
+    let temp = temp_server_root();
+    let root = temp.join("proj");
+    fs::create_dir_all(root.join(".codegraph")).unwrap();
+    fs::write(
+        root.join(".codegraph").join("config.toml"),
+        "this is not = valid = toml",
+    )
+    .unwrap();
+    let root = root.canonicalize().unwrap();
+    let state = test_state(root, vec![], false);
+
+    let result = start_scan_job(State(state.clone()), Json(ScanJobRequest { path: None })).await;
+
+    assert!(result.is_err(), "malformed config must fail the request");
+    assert!(
+        state.jobs.read().await.is_empty(),
+        "no Queued job may be left behind"
+    );
+}
+
+#[tokio::test]
 async fn cancel_scan_job_marks_queued_job_terminal() {
     let jobs = RwLock::new(BTreeMap::new());
     insert_scan_job(
