@@ -3,6 +3,13 @@ name = "codegraph-cli"
 version = "0.1.0"
 edition = "2024"
 
+# The clap command and every generated artifact (MCP config in install.rs, git
+# hooks in hooks.rs, the docs) invoke the tool as `codegraph`, so the installed
+# binary must be named `codegraph`, not the package name `codegraph-cli`.
+[[bin]]
+name = "codegraph"
+path = "src/main.rs"
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
