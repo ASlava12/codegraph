@@ -155,11 +155,20 @@ pub(crate) fn compact_label(value: String) -> String {
 }
 
 pub(crate) fn strip_quotes(value: String) -> String {
-    value
-        .trim()
-        .trim_start_matches(['r', 'b', 'u'])
-        .trim_matches(['"', '\'', '`'])
-        .to_string()
+    let trimmed = value.trim();
+    // String-literal prefixes (r, b, u and combinations like rb/br) only count
+    // when immediately followed by a quote. Trimming them unconditionally
+    // mangled bare values — `user` became `ser`, `ruby` became `y`.
+    let prefix_len = trimmed
+        .bytes()
+        .take_while(|byte| matches!(byte, b'r' | b'b' | b'u'))
+        .count();
+    let without_prefix = if prefix_len > 0 && trimmed[prefix_len..].starts_with(['"', '\'', '`']) {
+        &trimmed[prefix_len..]
+    } else {
+        trimmed
+    };
+    without_prefix.trim_matches(['"', '\'', '`']).to_string()
 }
 
 pub(crate) fn truncate_label(value: String, max_len: usize) -> String {

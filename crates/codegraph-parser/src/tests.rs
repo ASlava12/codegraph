@@ -724,3 +724,15 @@ fn multibyte_labels_truncate_instead_of_panicking() {
         parsed.items
     );
 }
+
+#[test]
+fn strip_quotes_preserves_bare_values_and_unwraps_prefixed_literals() {
+    // Bare values must survive (regression: `user` -> `ser`, `ruby` -> `y`).
+    assert_eq!(strip_quotes("user".to_string()), "user");
+    assert_eq!(strip_quotes("ruby".to_string()), "ruby");
+    assert_eq!(strip_quotes("build".to_string()), "build");
+    // Real string-literal prefixes are still unwrapped.
+    assert_eq!(strip_quotes("r\"path\"".to_string()), "path");
+    assert_eq!(strip_quotes("b'y'".to_string()), "y");
+    assert_eq!(strip_quotes("\"plain\"".to_string()), "plain");
+}
