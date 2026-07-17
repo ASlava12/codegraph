@@ -31,7 +31,12 @@ pub(crate) fn local_import_target(
         // No deterministic local-file resolution for these import systems yet
         // (classpaths / gem load paths / assembly references); imports still
         // land as facts and can join package hubs.
-        Language::Ruby | Language::Java | Language::CSharp => None,
+        Language::Ruby
+        | Language::Java
+        | Language::CSharp
+        | Language::Kotlin
+        | Language::Swift
+        | Language::Scala => None,
     }
 }
 

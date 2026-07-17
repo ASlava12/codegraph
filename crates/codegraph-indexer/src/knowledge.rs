@@ -307,7 +307,10 @@ pub(crate) fn rationale_comment_text(language: Option<Language>, line: &str) -> 
             | Language::Cpp
             | Language::Dart
             | Language::Java
-            | Language::CSharp,
+            | Language::CSharp
+            | Language::Kotlin
+            | Language::Swift
+            | Language::Scala,
         ) => trimmed.strip_prefix("//").or_else(|| {
             trimmed
                 .strip_prefix("/*")

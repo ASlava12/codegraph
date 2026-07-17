@@ -12,7 +12,7 @@ fn language_registry_exposes_all_builtin_adapters() {
         .map(|adapter| adapter.info().language)
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(adapters.len(), 14);
+    assert_eq!(adapters.len(), 17);
     assert_eq!(
         languages,
         BTreeSet::from([
@@ -24,10 +24,13 @@ fn language_registry_exposes_all_builtin_adapters() {
             "go",
             "java",
             "javascript",
+            "kotlin",
             "php",
             "python",
             "ruby",
             "rust",
+            "scala",
+            "swift",
             "tsx",
             "typescript",
         ])
@@ -995,4 +998,154 @@ namespace Billing {
     assert!(has(ParsedItemKind::Loop, "loop: for"));
     assert!(has(ParsedItemKind::Async, "async: await"));
     assert!(has(ParsedItemKind::Import, "using System;"));
+}
+
+#[test]
+fn kotlin_adapter_extracts_symbols_calls_effects_and_control_flow() {
+    let source = r#"import java.util.Locale
+object Config { }
+class App {
+    fun main(args: Array<String>) {
+        val key = System.getenv("API_KEY")
+        if (args.isEmpty()) {
+            throw IllegalArgumentException("empty")
+        }
+        for (a in args) { process(a) }
+        return
+    }
+}
+"#;
+    let parsed = parse_source("App.kt", source.as_bytes(), Language::Kotlin).unwrap();
+    let has = |kind: ParsedItemKind, label: &str| {
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == kind && item.label == label)
+    };
+    assert!(has(ParsedItemKind::Type, "App"), "{:?}", parsed.items);
+    assert!(has(ParsedItemKind::Type, "Config"));
+    assert!(has(ParsedItemKind::Entrypoint, "main"));
+    assert!(has(ParsedItemKind::Call, "process"));
+    let env_reads = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .count();
+    assert_eq!(env_reads, 1);
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "API_KEY")
+    );
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error)
+    );
+    assert!(has(ParsedItemKind::Branch, "branch: if"));
+    assert!(has(ParsedItemKind::Loop, "loop: for"));
+    assert!(has(ParsedItemKind::Import, "import java.util.Locale"));
+}
+
+#[test]
+fn swift_adapter_extracts_symbols_calls_effects_and_control_flow() {
+    let source = r#"import Foundation
+protocol Runner { func run() }
+class App {
+    func main() {
+        let key = ProcessInfo.processInfo.environment["API_KEY"]
+        if key == nil {
+            fatalError("empty")
+        }
+        for a in [1, 2] { process(a) }
+        guard let k = key else { return }
+        return
+    }
+}
+"#;
+    let parsed = parse_source("App.swift", source.as_bytes(), Language::Swift).unwrap();
+    let has = |kind: ParsedItemKind, label: &str| {
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == kind && item.label == label)
+    };
+    assert!(has(ParsedItemKind::Type, "App"), "{:?}", parsed.items);
+    assert!(has(ParsedItemKind::Type, "Runner"));
+    assert!(has(ParsedItemKind::Entrypoint, "main"));
+    assert!(has(ParsedItemKind::Function, "run"));
+    assert!(has(ParsedItemKind::Call, "process"));
+    let env_reads: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .collect();
+    assert_eq!(env_reads.len(), 1, "{env_reads:?}");
+    assert_eq!(env_reads[0].label, "API_KEY");
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error),
+        "fatalError is an error fact"
+    );
+    assert!(has(ParsedItemKind::Branch, "branch: if"));
+    assert!(has(ParsedItemKind::Branch, "branch: guard"));
+    assert!(has(ParsedItemKind::Loop, "loop: for"));
+    assert!(has(ParsedItemKind::Import, "import Foundation"));
+}
+
+#[test]
+fn scala_adapter_extracts_symbols_calls_effects_and_control_flow() {
+    let source = r#"import java.util.Locale
+object App {
+  trait Runner { def run(): Unit }
+  case class Point(x: Int)
+  def main(args: Array[String]): Unit = {
+    val key = sys.env.get("API_KEY")
+    if (args.isEmpty) {
+      throw new IllegalArgumentException("empty")
+    }
+    for (a <- args) { process(a) }
+    args.length match { case 0 => () }
+    return
+  }
+}
+"#;
+    let parsed = parse_source("App.scala", source.as_bytes(), Language::Scala).unwrap();
+    let has = |kind: ParsedItemKind, label: &str| {
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == kind && item.label == label)
+    };
+    assert!(has(ParsedItemKind::Type, "App"), "{:?}", parsed.items);
+    assert!(has(ParsedItemKind::Type, "Runner"));
+    assert!(has(ParsedItemKind::Type, "Point"));
+    assert!(has(ParsedItemKind::Entrypoint, "main"));
+    assert!(has(ParsedItemKind::Call, "process"));
+    let env_reads = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .count();
+    assert_eq!(env_reads, 1);
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "API_KEY")
+    );
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error)
+    );
+    assert!(has(ParsedItemKind::Branch, "branch: if"));
+    assert!(has(ParsedItemKind::Branch, "branch: match"));
+    assert!(has(ParsedItemKind::Loop, "loop: for"));
+    assert!(has(ParsedItemKind::Import, "import java.util.Locale"));
 }

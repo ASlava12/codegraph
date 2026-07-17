@@ -168,7 +168,10 @@ pub(crate) fn framework_routes(language: Language, source: &str) -> Vec<Framewor
         | Language::Bash
         | Language::Ruby
         | Language::Java
-        | Language::CSharp => Vec::new(),
+        | Language::CSharp
+        | Language::Kotlin
+        | Language::Swift
+        | Language::Scala => Vec::new(),
     }
 }
 
@@ -475,7 +478,16 @@ pub(crate) fn framework_configs(
         Some(Language::Php) => configs.extend(php_framework_configs(source)),
         Some(Language::Bash) => configs.extend(bash_framework_configs(source)),
         Some(Language::Dart) => configs.extend(dart_framework_configs(source)),
-        Some(Language::C | Language::Cpp | Language::Ruby | Language::Java | Language::CSharp)
+        Some(
+            Language::C
+            | Language::Cpp
+            | Language::Ruby
+            | Language::Java
+            | Language::CSharp
+            | Language::Kotlin
+            | Language::Swift
+            | Language::Scala,
+        )
         | None => {}
     }
 

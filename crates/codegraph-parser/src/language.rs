@@ -26,6 +26,9 @@ pub enum Language {
     Ruby,
     Java,
     CSharp,
+    Kotlin,
+    Swift,
+    Scala,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,7 +173,23 @@ static CSHARP_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     file_names: &[],
 };
 
-static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 14] = [
+static KOTLIN_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Kotlin,
+    extensions: &["kt", "kts"],
+    file_names: &[],
+};
+static SWIFT_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Swift,
+    extensions: &["swift"],
+    file_names: &[],
+};
+static SCALA_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Scala,
+    extensions: &["scala", "sc"],
+    file_names: &[],
+};
+
+static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 17] = [
     &RUST_ADAPTER,
     &PYTHON_ADAPTER,
     &JAVASCRIPT_ADAPTER,
@@ -185,6 +204,9 @@ static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 14] = [
     &RUBY_ADAPTER,
     &JAVA_ADAPTER,
     &CSHARP_ADAPTER,
+    &KOTLIN_ADAPTER,
+    &SWIFT_ADAPTER,
+    &SCALA_ADAPTER,
 ];
 
 pub fn language_adapters() -> &'static [&'static dyn LanguageAdapter] {
@@ -226,6 +248,9 @@ impl Language {
             Self::Ruby => "ruby",
             Self::Java => "java",
             Self::CSharp => "csharp",
+            Self::Kotlin => "kotlin",
+            Self::Swift => "swift",
+            Self::Scala => "scala",
         }
     }
 
@@ -245,6 +270,9 @@ impl Language {
             Self::Ruby => tree_sitter_ruby::LANGUAGE.into(),
             Self::Java => tree_sitter_java::LANGUAGE.into(),
             Self::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+            Self::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
+            Self::Swift => tree_sitter_swift::LANGUAGE.into(),
+            Self::Scala => tree_sitter_scala::LANGUAGE.into(),
         }
     }
 }

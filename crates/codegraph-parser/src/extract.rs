@@ -220,6 +220,29 @@ pub(crate) fn classify_node(
             "using_directive" => ParsedItemKind::Import,
             _ => return None,
         },
+        Language::Kotlin => match kind {
+            "function_declaration" => ParsedItemKind::Function,
+            "class_declaration" | "object_declaration" => ParsedItemKind::Type,
+            "import" => ParsedItemKind::Import,
+            _ => return None,
+        },
+        Language::Swift => match kind {
+            "function_declaration" | "protocol_function_declaration" | "init_declaration" => {
+                ParsedItemKind::Function
+            }
+            // The grammar folds struct/enum into class_declaration.
+            "class_declaration" | "protocol_declaration" => ParsedItemKind::Type,
+            "import_declaration" => ParsedItemKind::Import,
+            _ => return None,
+        },
+        Language::Scala => match kind {
+            "function_definition" | "function_declaration" => ParsedItemKind::Function,
+            "class_definition" | "object_definition" | "trait_definition" | "enum_definition" => {
+                ParsedItemKind::Type
+            }
+            "import_declaration" => ParsedItemKind::Import,
+            _ => return None,
+        },
     };
 
     let label = item_label(language, item_kind, node, source)?;
@@ -470,6 +493,41 @@ pub(crate) fn control_flow_fact(
             "return_statement" => Some((ParsedItemKind::Return, "return")),
             _ => None,
         },
+        Language::Kotlin => match kind {
+            "if_expression" => Some((ParsedItemKind::Branch, "if")),
+            "when_expression" => Some((ParsedItemKind::Branch, "when")),
+            "try_expression" => Some((ParsedItemKind::Branch, "try")),
+            "catch_block" => Some((ParsedItemKind::Branch, "catch")),
+            "for_statement" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "do_while_statement" => Some((ParsedItemKind::Loop, "do")),
+            "return_expression" => Some((ParsedItemKind::Return, "return")),
+            _ => None,
+        },
+        Language::Swift => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "guard_statement" => Some((ParsedItemKind::Branch, "guard")),
+            "switch_statement" => Some((ParsedItemKind::Branch, "switch")),
+            "do_statement" => Some((ParsedItemKind::Branch, "do")),
+            "catch_block" => Some((ParsedItemKind::Branch, "catch")),
+            "for_statement" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "repeat_while_statement" => Some((ParsedItemKind::Loop, "repeat")),
+            "await_expression" => Some((ParsedItemKind::Async, "await")),
+            "control_transfer_statement" => Some((ParsedItemKind::Return, "return")),
+            _ => None,
+        },
+        Language::Scala => match kind {
+            "if_expression" => Some((ParsedItemKind::Branch, "if")),
+            "match_expression" => Some((ParsedItemKind::Branch, "match")),
+            "try_expression" => Some((ParsedItemKind::Branch, "try")),
+            "catch_clause" => Some((ParsedItemKind::Branch, "catch")),
+            "for_expression" => Some((ParsedItemKind::Loop, "for")),
+            "while_expression" => Some((ParsedItemKind::Loop, "while")),
+            "do_while_expression" => Some((ParsedItemKind::Loop, "do")),
+            "return_expression" => Some((ParsedItemKind::Return, "return")),
+            _ => None,
+        },
     }
 }
 
@@ -502,6 +560,8 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
                 "invocation_expression" | "object_creation_expression"
             )
         }
+        Language::Kotlin | Language::Swift => node.kind() == "call_expression",
+        Language::Scala => matches!(node.kind(), "call_expression" | "instance_expression"),
     }
 }
 
@@ -523,6 +583,17 @@ pub(crate) fn call_label(language: Language, node: Node<'_>, source: &[u8]) -> O
         && let Some(method) = named_child_text(node, "method", source)
     {
         return Some(clean_call_label(&method));
+    }
+
+    // These grammars expose no named callee field; the callee is the first
+    // named child (an identifier or dotted navigation), so the label is its
+    // trailing path segment: `System.getenv(..)` -> `getenv`.
+    if matches!(language, Language::Kotlin | Language::Swift)
+        && let Some(callee) = node
+            .named_child(0)
+            .and_then(|child| node_text(child, source))
+    {
+        return Some(clean_call_label(simple_name(&callee)));
     }
 
     if let Some(function) = named_child_text(node, "function", source) {
@@ -572,6 +643,7 @@ pub(crate) fn is_entrypoint(language: Language, label: &str) -> bool {
         Language::Bash => label == "main",
         Language::Ruby | Language::Java => label == "main",
         Language::CSharp => label.eq_ignore_ascii_case("main"),
+        Language::Kotlin | Language::Swift | Language::Scala => label == "main",
     }
 }
 

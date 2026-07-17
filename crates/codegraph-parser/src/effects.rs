@@ -100,6 +100,31 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                     .as_deref()
                     .is_some_and(|value| simple_name(value) == "GetEnvironmentVariable")
         }
+        Language::Kotlin => {
+            // `System.getenv("K")` — the callee is the first named child.
+            node.kind() == "call_expression"
+                && node
+                    .named_child(0)
+                    .and_then(|child| node_text(child, source))
+                    .is_some_and(|callee| callee == "System.getenv")
+        }
+        Language::Swift => {
+            // `ProcessInfo.processInfo.environment["K"]` parses as a
+            // call_expression whose callee navigation ends in `.environment`.
+            node.kind() == "call_expression"
+                && node
+                    .named_child(0)
+                    .and_then(|child| node_text(child, source))
+                    .is_some_and(|callee| {
+                        callee.starts_with("ProcessInfo") && callee.ends_with(".environment")
+                    })
+        }
+        Language::Scala => {
+            node.kind() == "call_expression"
+                && call
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "sys.env.get" | "System.getenv"))
+        }
     }
 }
 
@@ -175,6 +200,17 @@ pub(crate) fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) 
                 "ReadAllText" | "ReadAllLines" | "ReadAllBytes" | "OpenText" | "OpenRead"
             )
         }),
+        Language::Kotlin => call.as_deref().is_some_and(|value| {
+            matches!(
+                simple_name(value),
+                "readText" | "readLines" | "getProperty" | "load"
+            )
+        }),
+        Language::Scala => call
+            .as_deref()
+            .is_some_and(|value| matches!(simple_name(value), "fromFile" | "getProperty" | "load")),
+        // No reliable deterministic config-read shape identified yet.
+        Language::Swift => false,
     }
 }
 
@@ -231,6 +267,18 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
         }
         Language::Java => node.kind() == "throw_statement",
         Language::CSharp => matches!(node.kind(), "throw_statement" | "throw_expression"),
+        Language::Kotlin | Language::Scala => node.kind() == "throw_expression",
+        Language::Swift => {
+            is_call_node(language, node, source)
+                && call_label(language, node, source)
+                    .as_deref()
+                    .is_some_and(|value| {
+                        matches!(
+                            value,
+                            "fatalError" | "preconditionFailure" | "assertionFailure"
+                        )
+                    })
+        }
     }
 }
 
@@ -284,7 +332,11 @@ pub(crate) fn effect_metadata(
         Language::Dart => dart_env_default_value(node, source),
         Language::Bash => bash_env_default_value(node, source),
         Language::Ruby => ruby_env_default_value(node, source),
-        Language::Java | Language::CSharp => None,
+        Language::Java
+        | Language::CSharp
+        | Language::Kotlin
+        | Language::Swift
+        | Language::Scala => None,
     };
 
     if let Some(default_value) = default_value {

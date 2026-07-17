@@ -13,7 +13,7 @@ Implemented now:
 - Rust workspace layout.
 - Core graph model.
 - Stable graph confidence taxonomy for `exact`, `semantic`, `syntactic`, `heuristic`, and `unknown` facts with JSON round-trip coverage.
-- Built-in language adapter registry for Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, Dart, PHP, Bash, Ruby, Java, and C# parser support.
+- Built-in language adapter registry for Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++, Dart, PHP, Bash, Ruby, Java, C#, Kotlin, Swift, and Scala parser support.
 - LSP server discovery for semantic enrichment readiness across Rust, Go, JavaScript/TypeScript, Python, C/C++, PHP, and Bash.
 - Semantic enrichment server contracts cover `rust-analyzer`, `gopls`, and `typescript-language-server --stdio` for primary Rust, Go, JavaScript, TypeScript, and TSX workflows.
 - Project semantic readiness reports showing which scanned languages are covered by installed LSP servers.
@@ -27,7 +27,7 @@ Implemented now:
 - Semantic LSP response patch reports that map definitions, references, and diagnostics back onto graph nodes.
 - Semantic graph patch application that emits enriched graphs with semantic edges and diagnostic nodes.
 - Filesystem scanner with default build/vendor ignore rules.
-- Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, Dart, PHP, Bash, Ruby, Java, and C#.
+- Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, Dart, PHP, Bash, Ruby, Java, C#, Kotlin, Swift, and Scala.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
 - Manifest-defined entrypoints from Cargo, npm, Go, Python, setup.py/setup.cfg, Composer, and CMake project metadata.
 - Shebang-defined script entrypoints for Bash, Python, Node.js, and PHP scripts, including extensionless CLI files.
