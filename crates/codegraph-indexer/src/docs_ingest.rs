@@ -79,7 +79,7 @@ pub(crate) fn index_markdown_document(
                 metadata,
             );
             add_edge_once_with_metadata(
-                &mut context.graph,
+                context,
                 file_id,
                 section_id,
                 EdgeKind::Contains,

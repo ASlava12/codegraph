@@ -261,7 +261,10 @@ pub(crate) fn optional_string_array(
                         })
                 })
                 .collect::<Result<Vec<String>, _>>()?;
-            Ok(collected.into_iter().filter(|value| !value.is_empty()).collect())
+            Ok(collected
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .collect())
         })
         .transpose()
 }
@@ -284,9 +287,7 @@ pub(crate) fn validate_ignored_globs(
 
 /// Compile the ignore globs into a matcher. Shared with the cache fingerprint
 /// (codegraph-storage) so both compile the patterns identically.
-pub fn compile_ignored_globs(
-    patterns: &BTreeSet<String>,
-) -> Result<Option<GlobSet>, IndexError> {
+pub fn compile_ignored_globs(patterns: &BTreeSet<String>) -> Result<Option<GlobSet>, IndexError> {
     if patterns.is_empty() {
         return Ok(None);
     }

@@ -296,7 +296,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 id
             };
             add_edge_once(
-                &mut context.graph,
+                context,
                 call.caller,
                 call_id,
                 EdgeKind::Calls,
@@ -319,7 +319,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
 
         for target in targets {
             add_edge_once_with_metadata(
-                &mut context.graph,
+                context,
                 call.caller,
                 target,
                 EdgeKind::Calls,
@@ -367,7 +367,7 @@ pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
             metadata.insert("resolution".to_string(), "local_import_file".to_string());
             metadata.insert("target".to_string(), import.target);
             add_edge_once_with_metadata(
-                &mut context.graph,
+                context,
                 import.import_node,
                 file_id,
                 EdgeKind::References,
@@ -439,7 +439,7 @@ pub(crate) fn resolve_pending_entrypoint_targets(context: &mut IndexContext) {
         for candidate in entrypoint_target_candidates(&pending) {
             if let Some(file_id) = context.file_nodes.get(&candidate.path).copied() {
                 add_entrypoint_reference(
-                    &mut context.graph,
+                    context,
                     pending.entrypoint,
                     file_id,
                     "entrypoint_file",
@@ -456,7 +456,7 @@ pub(crate) fn resolve_pending_entrypoint_targets(context: &mut IndexContext) {
                 function_targets_in_file(&context.graph, &candidate.path, symbol);
             for target in function_targets {
                 add_entrypoint_reference(
-                    &mut context.graph,
+                    context,
                     pending.entrypoint,
                     target,
                     "entrypoint_function",
@@ -548,7 +548,7 @@ pub(crate) fn link_imports_to_package_hubs(context: &mut IndexContext) {
     for (import_node, hub, id) in links {
         add_node_metadata(&mut context.graph, import_node, "package_id", &id);
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             import_node,
             hub,
             EdgeKind::DependsOn,
@@ -566,7 +566,7 @@ pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
     for reference in pending {
         for handler_id in resolve_function_targets(&context.function_symbols, &reference.handler) {
             add_entrypoint_reference(
-                &mut context.graph,
+                context,
                 reference.entrypoint,
                 handler_id,
                 "entrypoint_function",
@@ -597,7 +597,7 @@ pub(crate) fn resolve_pending_compose_config_targets(context: &mut IndexContext)
         );
         metadata.insert("source".to_string(), "compose".to_string());
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             pending.config,
             file_id,
             EdgeKind::References,
@@ -631,7 +631,7 @@ pub(crate) fn resolve_pending_compose_volume_targets(context: &mut IndexContext)
         );
         metadata.insert("source".to_string(), "compose".to_string());
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             pending.volume,
             target_id,
             EdgeKind::References,
@@ -661,7 +661,7 @@ pub(crate) fn resolve_pending_kubernetes_config_refs(context: &mut IndexContext)
         );
         metadata.insert("source".to_string(), "kubernetes".to_string());
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             pending.config_ref,
             config_id,
             EdgeKind::References,
@@ -690,7 +690,7 @@ pub(crate) fn resolve_pending_kubernetes_service_refs(context: &mut IndexContext
         );
         metadata.insert("source".to_string(), "kubernetes".to_string());
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             pending.service_ref,
             service_id,
             EdgeKind::References,
@@ -718,7 +718,7 @@ pub(crate) fn resolve_pending_github_actions_local_actions(context: &mut IndexCo
         );
         metadata.insert("source".to_string(), "github-actions".to_string());
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             pending.action,
             target_id,
             EdgeKind::References,
@@ -758,7 +758,7 @@ pub(crate) fn resolve_pending_document_path_refs(context: &mut IndexContext) {
             metadata.insert("line_ref".to_string(), line_ref);
         }
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             pending.source,
             target_id,
             EdgeKind::References,
@@ -809,7 +809,7 @@ pub(crate) fn resolve_pending_document_symbol_refs(context: &mut IndexContext) {
 
         for target in targets {
             add_edge_once_with_metadata(
-                &mut context.graph,
+                context,
                 pending.source,
                 target,
                 EdgeKind::References,
@@ -852,7 +852,7 @@ pub(crate) fn resolve_pending_sql_foreign_keys(context: &mut IndexContext) {
             metadata.insert("target_column".to_string(), target_column);
         }
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             pending.source,
             target_id,
             EdgeKind::References,
@@ -877,7 +877,7 @@ pub(crate) fn resolve_pending_sql_query_table_refs(context: &mut IndexContext) {
         };
 
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             pending.query,
             table_id,
             EdgeKind::References,
@@ -945,7 +945,7 @@ pub(crate) fn resolve_pending_sql_joins(context: &mut IndexContext) {
             metadata.insert("condition".to_string(), condition);
         }
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             left_id,
             right_id,
             EdgeKind::References,
@@ -965,7 +965,7 @@ pub(crate) fn resolve_pending_sql_alter_refs(context: &mut IndexContext) {
         match context.sql_tables.get(&table_key).copied() {
             Some(table_id) => {
                 add_edge_once_with_metadata(
-                    &mut context.graph,
+                    context,
                     reference.file,
                     table_id,
                     EdgeKind::References,
@@ -1044,7 +1044,7 @@ pub(crate) fn resolve_sql_migration_order(context: &mut IndexContext) {
             continue;
         }
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             pair[0].file,
             pair[1].file,
             EdgeKind::References,
@@ -1068,7 +1068,7 @@ pub(crate) fn resolve_pending_orm_table_refs(context: &mut IndexContext) {
             continue;
         };
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             reference.file,
             table_id,
             EdgeKind::References,
@@ -1104,7 +1104,7 @@ pub(crate) fn resolve_pending_migration_dir_refs(context: &mut IndexContext) {
         targets.dedup();
         for target in targets.into_iter().take(MIGRATION_LINK_LIMIT) {
             add_edge_once_with_metadata(
-                &mut context.graph,
+                context,
                 reference.file,
                 target,
                 EdgeKind::References,
@@ -1128,7 +1128,7 @@ pub(crate) fn resolve_pending_mcp_local_refs(context: &mut IndexContext) {
             continue;
         };
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             reference.server,
             target,
             EdgeKind::References,
@@ -1634,7 +1634,7 @@ pub(crate) fn function_symbol_matches(label: &str, symbol: &str) -> bool {
 }
 
 pub(crate) fn add_entrypoint_reference(
-    graph: &mut CodeGraph,
+    context: &mut IndexContext,
     source: NodeId,
     target: NodeId,
     relation: &str,
@@ -1667,7 +1667,7 @@ pub(crate) fn add_entrypoint_reference(
         metadata.insert("target_symbol".to_string(), target_symbol.to_string());
     }
     add_edge_once_with_metadata(
-        graph,
+        context,
         source,
         target,
         EdgeKind::References,
@@ -1745,31 +1745,39 @@ pub(crate) fn simple_symbol_name(label: &str) -> String {
 }
 
 pub(crate) fn add_edge_once(
-    graph: &mut CodeGraph,
+    context: &mut IndexContext,
     source: NodeId,
     target: NodeId,
     kind: EdgeKind,
     confidence: Confidence,
 ) {
-    add_edge_once_with_metadata(graph, source, target, kind, confidence, BTreeMap::new());
+    add_edge_once_with_metadata(context, source, target, kind, confidence, BTreeMap::new());
 }
 
 pub(crate) fn add_edge_once_with_metadata(
-    graph: &mut CodeGraph,
+    context: &mut IndexContext,
     source: NodeId,
     target: NodeId,
     kind: EdgeKind,
     confidence: Confidence,
     metadata: BTreeMap<String, String>,
 ) {
-    if graph
-        .edges
-        .iter()
-        .any(|edge| edge.source == source && edge.target == target && edge.kind == kind)
-    {
+    // Absorb edges appended since the last call (some passes push straight
+    // onto graph.edges); the key set then mirrors graph.edges exactly, so the
+    // set probe below is equivalent to the old linear scan at O(log E).
+    for edge in &context.graph.edges[context.edge_keys_synced..] {
+        context
+            .edge_keys
+            .insert((edge.source, edge.target, edge.kind));
+    }
+    if !context.edge_keys.insert((source, target, kind)) {
+        context.edge_keys_synced = context.graph.edges.len();
         return;
     }
-    graph.add_edge_with_metadata(source, target, kind, confidence, metadata);
+    context
+        .graph
+        .add_edge_with_metadata(source, target, kind, confidence, metadata);
+    context.edge_keys_synced = context.graph.edges.len();
 }
 
 pub(crate) fn add_file_metadata(

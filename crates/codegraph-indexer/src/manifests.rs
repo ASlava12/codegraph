@@ -111,7 +111,7 @@ pub(crate) fn index_manifest_entrypoints(
             metadata,
         );
         add_edge_once(
-            &mut context.graph,
+            context,
             file_id,
             entrypoint_id,
             EdgeKind::Contains,
@@ -119,7 +119,7 @@ pub(crate) fn index_manifest_entrypoints(
         );
         let root_id = context.graph.root;
         add_edge_once(
-            &mut context.graph,
+            context,
             root_id,
             entrypoint_id,
             EdgeKind::Entrypoint,
@@ -170,7 +170,7 @@ pub(crate) fn index_pubspec_assets(
         edge_metadata.insert("framework".to_string(), "flutter".to_string());
         edge_metadata.insert("config_kind".to_string(), "flutter_asset".to_string());
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             file_id,
             asset_id,
             EdgeKind::Contains,

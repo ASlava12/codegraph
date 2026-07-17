@@ -1560,7 +1560,7 @@ fn semantic_edge_from_patch(edge_patch: &SemanticEdgePatch) -> Edge {
     Edge {
         source: edge_patch.source,
         target: edge_patch.target,
-        kind: edge_patch.kind.clone(),
+        kind: edge_patch.kind,
         confidence: Confidence::Semantic,
         metadata: semantic_edge_metadata(edge_patch),
     }
@@ -1693,7 +1693,7 @@ fn collect_definition_edges(
     let edge_kind = work_item
         .edge_index
         .and_then(|index| graph.edges.get(index))
-        .map(|edge| edge.kind.clone())
+        .map(|edge| edge.kind)
         .unwrap_or(EdgeKind::References);
     let original_target = work_item.target.as_ref().map(|target| target.id);
 
@@ -1704,7 +1704,7 @@ fn collect_definition_edges(
                 work_item_id: work_item.id.clone(),
                 source: source.id,
                 target: target.id,
-                kind: edge_kind.clone(),
+                kind: edge_kind,
                 confidence: Confidence::Semantic,
                 replaced_edge_index: work_item.edge_index,
                 original_target,

@@ -46,6 +46,8 @@ pub(crate) fn scan_project_with_scope(
     let annotations = graph_annotations(root);
     let mut context = IndexContext {
         graph: CodeGraph::new(root_label),
+        edge_keys: BTreeSet::new(),
+        edge_keys_synced: 0,
         function_symbols: BTreeMap::new(),
         file_nodes: BTreeMap::new(),
         directory_nodes: BTreeMap::new(),
@@ -561,7 +563,7 @@ pub(crate) fn index_file(
                     && let Some(main_id) = resolve_local_function(&local_functions, "main")
                 {
                     add_entrypoint_reference(
-                        &mut context.graph,
+                        context,
                         entrypoint_id,
                         main_id,
                         "entrypoint_function",
@@ -636,7 +638,7 @@ pub(crate) fn index_file(
                         item_metadata,
                     );
                     add_edge_once(
-                        &mut context.graph,
+                        context,
                         source_id,
                         item_id,
                         edge_kind,

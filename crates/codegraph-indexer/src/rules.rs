@@ -13,7 +13,7 @@ use crate::*;
 pub(crate) fn apply_graph_annotations(context: &mut IndexContext) {
     let annotations = context.annotations.clone();
     for message in annotations.parse_errors {
-        add_annotation_parse_error(&mut context.graph, message);
+        add_annotation_parse_error(context, message);
     }
 
     for annotation in annotations.node_annotations {
@@ -36,15 +36,19 @@ pub(crate) fn apply_graph_annotations(context: &mut IndexContext) {
     }
 }
 
-pub(crate) fn add_annotation_parse_error(graph: &mut CodeGraph, message: String) {
+pub(crate) fn add_annotation_parse_error(context: &mut IndexContext, message: String) {
     let mut metadata = BTreeMap::new();
     metadata.insert("item_kind".to_string(), "annotation_error".to_string());
     metadata.insert("source".to_string(), "annotation".to_string());
     metadata.insert("message".to_string(), message);
-    let id =
-        graph.add_node_with_metadata(NodeKind::Unknown, "annotation parse error", None, metadata);
-    let root_id = graph.root;
-    add_edge_once(graph, root_id, id, EdgeKind::Contains, Confidence::Exact);
+    let id = context.graph.add_node_with_metadata(
+        NodeKind::Unknown,
+        "annotation parse error",
+        None,
+        metadata,
+    );
+    let root_id = context.graph.root;
+    add_edge_once(context, root_id, id, EdgeKind::Contains, Confidence::Exact);
 }
 
 pub(crate) fn node_annotation_matches(
@@ -488,7 +492,7 @@ pub(crate) fn add_custom_rule_violation_with_targets(
     );
     let root_id = context.graph.root;
     add_edge_once(
-        &mut context.graph,
+        context,
         root_id,
         violation,
         EdgeKind::Contains,
@@ -501,7 +505,7 @@ pub(crate) fn add_custom_rule_violation_with_targets(
         edge_metadata.insert("relation".to_string(), "custom_rule_target".to_string());
         edge_metadata.insert("rule_id".to_string(), rule_id.to_string());
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             violation,
             *target,
             EdgeKind::References,

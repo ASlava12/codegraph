@@ -51,7 +51,7 @@ pub(crate) fn index_script_entrypoint(
         metadata,
     );
     add_edge_once(
-        &mut context.graph,
+        context,
         file_id,
         entrypoint_id,
         EdgeKind::Contains,
@@ -59,14 +59,14 @@ pub(crate) fn index_script_entrypoint(
     );
     let root_id = context.graph.root;
     add_edge_once(
-        &mut context.graph,
+        context,
         root_id,
         entrypoint_id,
         EdgeKind::Entrypoint,
         Confidence::Exact,
     );
     add_entrypoint_reference(
-        &mut context.graph,
+        context,
         entrypoint_id,
         file_id,
         "entrypoint_file",
@@ -108,7 +108,7 @@ pub(crate) fn index_framework_routes(
             metadata,
         );
         add_edge_once(
-            &mut context.graph,
+            context,
             file_id,
             entrypoint_id,
             EdgeKind::Contains,
@@ -116,14 +116,14 @@ pub(crate) fn index_framework_routes(
         );
         let root_id = context.graph.root;
         add_edge_once(
-            &mut context.graph,
+            context,
             root_id,
             entrypoint_id,
             EdgeKind::Entrypoint,
             Confidence::Syntactic,
         );
         add_entrypoint_reference(
-            &mut context.graph,
+            context,
             entrypoint_id,
             file_id,
             "entrypoint_file",
@@ -135,7 +135,7 @@ pub(crate) fn index_framework_routes(
         if let Some(handler) = route.handler.as_deref() {
             if let Some(handler_id) = resolve_local_function(local_functions, handler) {
                 add_entrypoint_reference(
-                    &mut context.graph,
+                    context,
                     entrypoint_id,
                     handler_id,
                     "entrypoint_function",
@@ -205,7 +205,7 @@ pub(crate) fn index_commonjs_require_imports(
             metadata,
         );
         add_edge_once(
-            &mut context.graph,
+            context,
             file_id,
             import_id,
             EdgeKind::Imports,
@@ -263,7 +263,7 @@ pub(crate) fn index_dart_platform_channels(
         edge_metadata.insert("relation".to_string(), "platform_channel".to_string());
         edge_metadata.insert("channel_kind".to_string(), channel.channel_kind);
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             file_id,
             channel_id,
             EdgeKind::References,
@@ -362,7 +362,7 @@ pub(crate) fn resolve_pending_native_channel_handlers(context: &mut IndexContext
             metadata.insert("platform".to_string(), handler.platform.to_string());
             metadata.insert("line".to_string(), handler.line.to_string());
             add_edge_once_with_metadata(
-                &mut context.graph,
+                context,
                 handler.file,
                 *channel_id,
                 EdgeKind::References,
@@ -441,7 +441,7 @@ pub(crate) fn index_framework_configs(
         edge_metadata.insert("framework".to_string(), config.framework);
         edge_metadata.insert("config_kind".to_string(), config.config_kind);
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             file_id,
             config_id,
             EdgeKind::ReadsConfig,

@@ -310,7 +310,7 @@ pub(crate) fn index_inline_sql_queries(
             metadata,
         );
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             source_id,
             query_id,
             EdgeKind::References,
@@ -365,7 +365,7 @@ pub(crate) fn index_sql_create_table(
     );
     context.sql_tables.insert(table_key.clone(), table_id);
     add_edge_once_with_metadata(
-        &mut context.graph,
+        context,
         file_id,
         table_id,
         EdgeKind::Contains,
@@ -401,7 +401,7 @@ pub(crate) fn index_sql_create_table(
             );
             context.sql_columns.insert(column_key, column_id);
             add_edge_once_with_metadata(
-                &mut context.graph,
+                context,
                 table_id,
                 column_id,
                 EdgeKind::Contains,
@@ -462,7 +462,7 @@ pub(crate) fn index_sql_create_view(
         metadata,
     );
     add_edge_once_with_metadata(
-        &mut context.graph,
+        context,
         file_id,
         view_id,
         EdgeKind::Contains,
@@ -500,7 +500,7 @@ pub(crate) fn index_sql_create_index(
         metadata,
     );
     add_edge_once_with_metadata(
-        &mut context.graph,
+        context,
         file_id,
         index_id,
         EdgeKind::Contains,
@@ -509,7 +509,7 @@ pub(crate) fn index_sql_create_index(
     );
     if let Some(table_id) = context.sql_tables.get(&table_key).copied() {
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             index_id,
             table_id,
             EdgeKind::References,

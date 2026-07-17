@@ -228,7 +228,7 @@ pub(crate) fn index_mcp_config(
             metadata,
         );
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             file_id,
             server_id,
             EdgeKind::References,

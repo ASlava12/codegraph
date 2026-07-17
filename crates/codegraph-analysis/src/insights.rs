@@ -1700,7 +1700,7 @@ pub(crate) fn add_conflicting_config_default_insights(
         };
         let edges: Vec<_> = nodes
             .iter()
-            .flat_map(|node_id| incoming_edge_indexes(graph, *node_id, edge_kind.clone()))
+            .flat_map(|node_id| incoming_edge_indexes(graph, *node_id, edge_kind))
             .collect();
         let values = format_backtick_list(default_values.keys().map(String::as_str), 8);
 
@@ -1776,7 +1776,7 @@ pub(crate) fn add_mixed_config_requirement_insights(
         );
         let edges: Vec<_> = nodes
             .iter()
-            .flat_map(|node_id| incoming_edge_indexes(graph, *node_id, edge_kind.clone()))
+            .flat_map(|node_id| incoming_edge_indexes(graph, *node_id, edge_kind))
             .collect();
         let values = format_backtick_list(group.default_nodes.keys().map(String::as_str), 8);
 

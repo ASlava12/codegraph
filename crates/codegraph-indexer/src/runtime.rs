@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind};
+use codegraph_core::{Confidence, EdgeKind, NodeId, NodeKind};
 
 #[allow(unused_imports)]
 use crate::*;
@@ -43,7 +43,7 @@ pub(crate) fn index_makefile_entrypoints(
             metadata,
         );
         add_edge_once(
-            &mut context.graph,
+            context,
             file_id,
             entrypoint_id,
             EdgeKind::Contains,
@@ -51,14 +51,14 @@ pub(crate) fn index_makefile_entrypoints(
         );
         let root_id = context.graph.root;
         add_edge_once(
-            &mut context.graph,
+            context,
             root_id,
             entrypoint_id,
             EdgeKind::Entrypoint,
             Confidence::Exact,
         );
         add_entrypoint_reference(
-            &mut context.graph,
+            context,
             entrypoint_id,
             file_id,
             "entrypoint_file",
@@ -113,7 +113,7 @@ pub(crate) fn index_dockerfile_entrypoints(
             metadata,
         );
         add_edge_once(
-            &mut context.graph,
+            context,
             file_id,
             entrypoint_id,
             EdgeKind::Contains,
@@ -121,14 +121,14 @@ pub(crate) fn index_dockerfile_entrypoints(
         );
         let root_id = context.graph.root;
         add_edge_once(
-            &mut context.graph,
+            context,
             root_id,
             entrypoint_id,
             EdgeKind::Entrypoint,
             Confidence::Exact,
         );
         add_entrypoint_reference(
-            &mut context.graph,
+            context,
             entrypoint_id,
             file_id,
             "entrypoint_file",
@@ -217,7 +217,7 @@ pub(crate) fn index_compose_entrypoints(
         );
         service_nodes.insert(service.name.clone(), entrypoint_id);
         add_edge_once(
-            &mut context.graph,
+            context,
             file_id,
             entrypoint_id,
             EdgeKind::Contains,
@@ -225,14 +225,14 @@ pub(crate) fn index_compose_entrypoints(
         );
         let root_id = context.graph.root;
         add_edge_once(
-            &mut context.graph,
+            context,
             root_id,
             entrypoint_id,
             EdgeKind::Entrypoint,
             Confidence::Exact,
         );
         add_entrypoint_reference(
-            &mut context.graph,
+            context,
             entrypoint_id,
             file_id,
             "entrypoint_file",
@@ -293,7 +293,7 @@ pub(crate) fn index_compose_entrypoints(
             edge_metadata.insert("relation".to_string(), "compose_environment".to_string());
             edge_metadata.insert("service".to_string(), service.name.clone());
             add_edge_once_with_metadata(
-                &mut context.graph,
+                context,
                 service_id,
                 environment_id,
                 EdgeKind::ReadsEnvironment,
@@ -326,7 +326,7 @@ pub(crate) fn index_compose_entrypoints(
             edge_metadata.insert("relation".to_string(), "compose_env_file".to_string());
             edge_metadata.insert("service".to_string(), service.name.clone());
             add_edge_once_with_metadata(
-                &mut context.graph,
+                context,
                 service_id,
                 config_id,
                 EdgeKind::ReadsConfig,
@@ -373,7 +373,7 @@ pub(crate) fn index_compose_entrypoints(
             edge_metadata.insert("relation".to_string(), "compose_port".to_string());
             edge_metadata.insert("service".to_string(), service.name.clone());
             add_edge_once_with_metadata(
-                &mut context.graph,
+                context,
                 service_id,
                 port_id,
                 EdgeKind::References,
@@ -414,7 +414,7 @@ pub(crate) fn index_compose_entrypoints(
             edge_metadata.insert("relation".to_string(), "compose_volume".to_string());
             edge_metadata.insert("service".to_string(), service.name.clone());
             add_edge_once_with_metadata(
-                &mut context.graph,
+                context,
                 service_id,
                 volume_id,
                 EdgeKind::References,
@@ -452,7 +452,7 @@ pub(crate) fn index_compose_entrypoints(
             metadata.insert("service".to_string(), service.name.clone());
             metadata.insert("dependency".to_string(), dependency.clone());
             add_edge_once_with_metadata(
-                &mut context.graph,
+                context,
                 source_id,
                 target_id,
                 EdgeKind::DependsOn,
@@ -517,7 +517,7 @@ pub(crate) fn index_github_actions_workflow_entrypoints(
         );
         job_nodes.insert(job.id.clone(), job_id);
         add_edge_once(
-            &mut context.graph,
+            context,
             file_id,
             job_id,
             EdgeKind::Contains,
@@ -525,14 +525,14 @@ pub(crate) fn index_github_actions_workflow_entrypoints(
         );
         let root_id = context.graph.root;
         add_edge_once(
-            &mut context.graph,
+            context,
             root_id,
             job_id,
             EdgeKind::Entrypoint,
             Confidence::Exact,
         );
         add_entrypoint_reference(
-            &mut context.graph,
+            context,
             job_id,
             file_id,
             "entrypoint_file",
@@ -572,7 +572,7 @@ pub(crate) fn index_github_actions_workflow_entrypoints(
             metadata.insert("job".to_string(), job.id.clone());
             metadata.insert("dependency".to_string(), dependency.clone());
             add_edge_once_with_metadata(
-                &mut context.graph,
+                context,
                 source_id,
                 target_id,
                 EdgeKind::DependsOn,
@@ -648,7 +648,7 @@ pub(crate) fn index_github_actions_uses_step(
             Some(line_span(label, source, step.line)),
             metadata,
         );
-        add_github_actions_uses_edge(&mut context.graph, job_id, action_id, workflow, job, action);
+        add_github_actions_uses_edge(context, job_id, action_id, workflow, job, action);
         context
             .pending_github_actions_local_actions
             .push(PendingGithubActionsLocalAction {
@@ -660,7 +660,7 @@ pub(crate) fn index_github_actions_uses_step(
 
     let (name, version) = github_actions_remote_action(action);
     let action_id = github_actions_external_action_node(context, &name, version.as_deref());
-    add_github_actions_uses_edge(&mut context.graph, job_id, action_id, workflow, job, action);
+    add_github_actions_uses_edge(context, job_id, action_id, workflow, job, action);
 }
 
 pub(crate) fn index_github_actions_run_step(
@@ -705,7 +705,7 @@ pub(crate) fn index_github_actions_run_step(
     edge_metadata.insert("workflow".to_string(), workflow.name.clone());
     edge_metadata.insert("job".to_string(), job.id.clone());
     add_edge_once_with_metadata(
-        &mut context.graph,
+        context,
         job_id,
         step_id,
         EdgeKind::References,
@@ -724,7 +724,7 @@ pub(crate) fn index_github_actions_run_step(
 }
 
 pub(crate) fn add_github_actions_uses_edge(
-    graph: &mut CodeGraph,
+    context: &mut IndexContext,
     job_id: NodeId,
     action_id: NodeId,
     workflow: &GithubActionsWorkflow,
@@ -743,7 +743,7 @@ pub(crate) fn add_github_actions_uses_edge(
         metadata.insert("version".to_string(), version.trim().to_string());
     }
     add_edge_once_with_metadata(
-        graph,
+        context,
         job_id,
         action_id,
         EdgeKind::DependsOn,
@@ -837,7 +837,7 @@ pub(crate) fn index_gitlab_ci_entrypoints(
         );
         job_nodes.insert(job.name.clone(), job_id);
         add_edge_once(
-            &mut context.graph,
+            context,
             file_id,
             job_id,
             EdgeKind::Contains,
@@ -845,14 +845,14 @@ pub(crate) fn index_gitlab_ci_entrypoints(
         );
         let root_id = context.graph.root;
         add_edge_once(
-            &mut context.graph,
+            context,
             root_id,
             job_id,
             EdgeKind::Entrypoint,
             Confidence::Exact,
         );
         add_entrypoint_reference(
-            &mut context.graph,
+            context,
             job_id,
             file_id,
             "entrypoint_file",
@@ -883,7 +883,7 @@ pub(crate) fn index_gitlab_ci_entrypoints(
         };
         for dependency in &job.needs {
             add_gitlab_ci_job_dependency_edge(
-                &mut context.graph,
+                context,
                 source_id,
                 &job_nodes,
                 job,
@@ -893,7 +893,7 @@ pub(crate) fn index_gitlab_ci_entrypoints(
         }
         for dependency in &job.dependencies {
             add_gitlab_ci_job_dependency_edge(
-                &mut context.graph,
+                context,
                 source_id,
                 &job_nodes,
                 job,
@@ -942,7 +942,7 @@ pub(crate) fn index_gitlab_ci_script(
     edge_metadata.insert("job".to_string(), job.name.clone());
     edge_metadata.insert("script_kind".to_string(), script.script_kind.clone());
     add_edge_once_with_metadata(
-        &mut context.graph,
+        context,
         job_id,
         script_id,
         EdgeKind::References,
@@ -996,7 +996,7 @@ pub(crate) fn index_ci_environment(
     edge_metadata.insert("job".to_string(), job_name.to_string());
     edge_metadata.insert("scope".to_string(), environment.scope.clone());
     add_edge_once_with_metadata(
-        &mut context.graph,
+        context,
         job_id,
         environment_id,
         EdgeKind::ReadsEnvironment,
@@ -1006,7 +1006,7 @@ pub(crate) fn index_ci_environment(
 }
 
 pub(crate) fn add_gitlab_ci_job_dependency_edge(
-    graph: &mut CodeGraph,
+    context: &mut IndexContext,
     source_id: NodeId,
     job_nodes: &BTreeMap<String, NodeId>,
     job: &GitlabCiJob,
@@ -1022,7 +1022,7 @@ pub(crate) fn add_gitlab_ci_job_dependency_edge(
     metadata.insert("job".to_string(), job.name.clone());
     metadata.insert("dependency".to_string(), dependency.to_string());
     add_edge_once_with_metadata(
-        graph,
+        context,
         source_id,
         target_id,
         EdgeKind::DependsOn,
@@ -1072,7 +1072,7 @@ pub(crate) fn index_kubernetes_manifest_facts(
             );
             context.kubernetes_configs.insert(key, config_id);
             add_edge_once(
-                &mut context.graph,
+                context,
                 file_id,
                 config_id,
                 EdgeKind::Contains,
@@ -1105,7 +1105,7 @@ pub(crate) fn index_kubernetes_manifest_facts(
         }
     }
 
-    link_kubernetes_services_to_workloads(&mut context.graph, &service_nodes, &workload_nodes);
+    link_kubernetes_services_to_workloads(context, &service_nodes, &workload_nodes);
 }
 
 pub(crate) fn index_kubernetes_service(
@@ -1140,7 +1140,7 @@ pub(crate) fn index_kubernetes_service(
         metadata,
     );
     add_edge_once(
-        &mut context.graph,
+        context,
         file_id,
         service_id,
         EdgeKind::Contains,
@@ -1181,7 +1181,7 @@ pub(crate) fn index_kubernetes_service(
             "kubernetes_service_port".to_string(),
         );
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             service_id,
             port_id,
             EdgeKind::References,
@@ -1219,7 +1219,7 @@ pub(crate) fn index_kubernetes_ingress(
         metadata,
     );
     add_edge_once(
-        &mut context.graph,
+        context,
         file_id,
         ingress_id,
         EdgeKind::Contains,
@@ -1227,7 +1227,7 @@ pub(crate) fn index_kubernetes_ingress(
     );
     let root_id = context.graph.root;
     add_edge_once(
-        &mut context.graph,
+        context,
         root_id,
         ingress_id,
         EdgeKind::Entrypoint,
@@ -1238,7 +1238,7 @@ pub(crate) fn index_kubernetes_ingress(
     edge_metadata.insert("resolution".to_string(), "kubernetes_manifest".to_string());
     edge_metadata.insert("source".to_string(), "kubernetes".to_string());
     add_edge_once_with_metadata(
-        &mut context.graph,
+        context,
         ingress_id,
         file_id,
         EdgeKind::References,
@@ -1290,7 +1290,7 @@ pub(crate) fn index_kubernetes_ingress(
             edge_metadata.insert("host".to_string(), host.to_string());
         }
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             ingress_id,
             service_ref_id,
             EdgeKind::References,
@@ -1353,7 +1353,7 @@ pub(crate) fn index_kubernetes_workload(
         metadata,
     );
     add_edge_once(
-        &mut context.graph,
+        context,
         file_id,
         workload_id,
         EdgeKind::Contains,
@@ -1361,7 +1361,7 @@ pub(crate) fn index_kubernetes_workload(
     );
     let root_id = context.graph.root;
     add_edge_once(
-        &mut context.graph,
+        context,
         root_id,
         workload_id,
         EdgeKind::Entrypoint,
@@ -1372,7 +1372,7 @@ pub(crate) fn index_kubernetes_workload(
     edge_metadata.insert("resolution".to_string(), "kubernetes_manifest".to_string());
     edge_metadata.insert("source".to_string(), "kubernetes".to_string());
     add_edge_once_with_metadata(
-        &mut context.graph,
+        context,
         workload_id,
         file_id,
         EdgeKind::References,
@@ -1407,7 +1407,7 @@ pub(crate) fn index_kubernetes_workload(
         edge_metadata.insert("relation".to_string(), "kubernetes_config_ref".to_string());
         edge_metadata.insert("ref_kind".to_string(), config_ref.ref_kind.clone());
         add_edge_once_with_metadata(
-            &mut context.graph,
+            context,
             workload_id,
             config_ref_id,
             EdgeKind::ReadsConfig,
@@ -1427,7 +1427,7 @@ pub(crate) fn index_kubernetes_workload(
 }
 
 pub(crate) fn link_kubernetes_services_to_workloads(
-    graph: &mut CodeGraph,
+    context: &mut IndexContext,
     service_nodes: &[(NodeId, &KubernetesDocument)],
     workload_nodes: &[(NodeId, &KubernetesDocument)],
 ) {
@@ -1457,7 +1457,7 @@ pub(crate) fn link_kubernetes_services_to_workloads(
             metadata.insert("workload".to_string(), workload.name.clone());
             metadata.insert("namespace".to_string(), service.namespace.clone());
             add_edge_once_with_metadata(
-                graph,
+                context,
                 *service_id,
                 *workload_id,
                 EdgeKind::References,

@@ -1776,7 +1776,10 @@ fn workflow_fanout_zero_clamps_to_narrowest_not_unbounded() {
         .iter()
         .find(|block| block.node.label == "root")
         .expect("root block");
-    assert_eq!(root_block.truncated_children, 2, "two children were trimmed");
+    assert_eq!(
+        root_block.truncated_children, 2,
+        "two children were trimmed"
+    );
 }
 
 #[test]

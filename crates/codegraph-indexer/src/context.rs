@@ -2,9 +2,9 @@
 //! resolution queues, and descriptor structs for manifest, CI, container,
 //! and Kubernetes facts collected during the walk.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use codegraph_core::{CodeGraph, Confidence, NodeId, SourceSpan};
+use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, SourceSpan};
 use codegraph_parser::{Language, ParsedFile};
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +13,13 @@ use crate::*;
 
 pub(crate) struct IndexContext {
     pub(crate) graph: CodeGraph,
+    /// Lazily synced `(source, target, kind)` keys of `graph.edges`, kept by
+    /// `add_edge_once*` so edge dedup is a set probe instead of a linear scan
+    /// per insert (O(E^2) over a whole scan). `edge_keys_synced` marks how
+    /// many leading edges the set has absorbed; passes that push edges
+    /// directly are caught up on the next `add_edge_once*` call.
+    pub(crate) edge_keys: BTreeSet<(NodeId, NodeId, EdgeKind)>,
+    pub(crate) edge_keys_synced: usize,
     pub(crate) function_symbols: BTreeMap<String, Vec<NodeId>>,
     pub(crate) file_nodes: BTreeMap<String, NodeId>,
     pub(crate) directory_nodes: BTreeMap<String, NodeId>,

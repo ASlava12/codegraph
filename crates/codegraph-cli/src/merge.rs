@@ -223,7 +223,7 @@ pub fn merge_graphs(mut inputs: Vec<MergeInput>, label: &str) -> Result<(CodeGra
                     merged.edges.push(Edge {
                         source,
                         target,
-                        kind: edge.kind.clone(),
+                        kind: edge.kind,
                         confidence: edge.confidence,
                         metadata,
                     });
