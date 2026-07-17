@@ -736,3 +736,28 @@ fn strip_quotes_preserves_bare_values_and_unwraps_prefixed_literals() {
     assert_eq!(strip_quotes("b'y'".to_string()), "y");
     assert_eq!(strip_quotes("\"plain\"".to_string()), "plain");
 }
+
+#[test]
+fn deeply_nested_source_does_not_overflow_the_stack() {
+    // A pathological (minified/generated) file with thousands of nesting levels
+    // would overflow the stack via unbounded recursion. The depth cap must let
+    // it finish. Run on a small stack so an uncapped recursion would abort.
+    let depth = 8000;
+    let mut source = String::from("let x = ");
+    source.push_str(&"(".repeat(depth));
+    source.push('0');
+    source.push_str(&")".repeat(depth));
+    source.push_str(";\n");
+
+    let handle = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || {
+            parse_source("deep.js", source.as_bytes(), Language::JavaScript)
+                .expect("parse deep source")
+                .items
+                .len()
+        })
+        .expect("spawn worker");
+    // Joins cleanly (no abort) with the cap in place.
+    let _ = handle.join().expect("worker finished without overflow");
+}

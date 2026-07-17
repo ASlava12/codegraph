@@ -36,6 +36,7 @@ pub fn parse_source(
         &path.to_string_lossy(),
         None,
         &mut items,
+        0,
     );
     dedupe_items(&mut items);
 
@@ -46,6 +47,12 @@ pub fn parse_source(
     })
 }
 
+/// Deepest syntax-tree level walked. Real source nests far below this; the cap
+/// exists only to keep a pathological (minified/generated) file from
+/// overflowing the stack — hitting it degrades gracefully (deeper facts are
+/// skipped) instead of aborting the process.
+const MAX_TREE_DEPTH: usize = 512;
+
 pub(crate) fn collect_items(
     language: Language,
     node: Node<'_>,
@@ -53,7 +60,11 @@ pub(crate) fn collect_items(
     path: &str,
     current_function: Option<String>,
     items: &mut Vec<ParsedItem>,
+    depth: usize,
 ) {
+    if depth >= MAX_TREE_DEPTH {
+        return;
+    }
     if let Some(effect) = classify_effect(language, node, source, path, current_function.as_deref())
     {
         items.push(effect);
@@ -83,7 +94,15 @@ pub(crate) fn collect_items(
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_items(language, child, source, path, next_function.clone(), items);
+        collect_items(
+            language,
+            child,
+            source,
+            path,
+            next_function.clone(),
+            items,
+            depth + 1,
+        );
     }
 }
 

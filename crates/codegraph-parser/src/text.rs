@@ -34,40 +34,44 @@ pub(crate) fn first_identifier_in_field(
         .and_then(|child| first_identifier(child, source))
 }
 
-pub(crate) fn first_identifier(node: Node<'_>, source: &[u8]) -> Option<String> {
-    if matches!(
-        node.kind(),
-        "identifier"
-            | "field_identifier"
-            | "type_identifier"
-            | "namespace_identifier"
-            | "property_identifier"
-            | "variable_name"
-            | "identifier_dollar_escaped"
-            | "name"
-    ) {
-        return node_text(node, source);
-    }
+/// Push a node's children onto `stack` in reverse, so a LIFO pop yields them
+/// left-to-right — an iterative pre-order walk that can't overflow the stack on
+/// pathologically deep trees (see the recursion cap in extract.rs).
+fn push_children_reversed<'tree>(node: Node<'tree>, stack: &mut Vec<Node<'tree>>) {
+    let mut cursor: TreeCursor<'tree> = node.walk();
+    let start = stack.len();
+    stack.extend(node.children(&mut cursor));
+    stack[start..].reverse();
+}
 
-    let mut cursor: TreeCursor<'_> = node.walk();
-    for child in node.children(&mut cursor) {
-        if let Some(value) = first_identifier(child, source) {
-            return Some(value);
+pub(crate) fn first_identifier(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        if matches!(
+            current.kind(),
+            "identifier"
+                | "field_identifier"
+                | "type_identifier"
+                | "namespace_identifier"
+                | "property_identifier"
+                | "variable_name"
+                | "identifier_dollar_escaped"
+                | "name"
+        ) {
+            return node_text(current, source);
         }
+        push_children_reversed(current, &mut stack);
     }
     None
 }
 
 pub(crate) fn first_string_literal(node: Node<'_>, source: &[u8]) -> Option<String> {
-    if node.kind().contains("string") || matches!(node.kind(), "raw_string_literal") {
-        return node_text(node, source).map(strip_quotes);
-    }
-
-    let mut cursor: TreeCursor<'_> = node.walk();
-    for child in node.children(&mut cursor) {
-        if let Some(value) = first_string_literal(child, source) {
-            return Some(value);
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        if current.kind().contains("string") || matches!(current.kind(), "raw_string_literal") {
+            return node_text(current, source).map(strip_quotes);
         }
+        push_children_reversed(current, &mut stack);
     }
     None
 }
@@ -79,16 +83,16 @@ pub(crate) fn all_string_literals(node: Node<'_>, source: &[u8]) -> Vec<String> 
 }
 
 pub(crate) fn collect_string_literals(node: Node<'_>, source: &[u8], values: &mut Vec<String>) {
-    if node.kind().contains("string") || matches!(node.kind(), "raw_string_literal") {
-        if let Some(value) = node_text(node, source).map(strip_quotes) {
-            values.push(value);
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        if current.kind().contains("string") || matches!(current.kind(), "raw_string_literal") {
+            if let Some(value) = node_text(current, source).map(strip_quotes) {
+                values.push(value);
+            }
+            // A string literal is a collection leaf; do not descend into it.
+            continue;
         }
-        return;
-    }
-
-    let mut cursor: TreeCursor<'_> = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_string_literals(child, source, values);
+        push_children_reversed(current, &mut stack);
     }
 }
 
