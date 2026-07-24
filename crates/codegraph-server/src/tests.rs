@@ -733,48 +733,26 @@ async fn api_query_rejections_use_the_json_error_contract() {
 }
 
 #[tokio::test]
-async fn source_api_accepts_canonical_and_legacy_forms() {
+async fn source_api_requires_path_and_file() {
     let root = temp_server_root();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
     let state = test_state(root.clone(), vec![], true);
 
-    let canonical = source(
+    let preview = source(
         State(state.clone()),
         ApiQuery(SourceQuery {
             path: Some(root.clone()),
             file: Some(PathBuf::from("src/main.rs")),
-            root: None,
             start_line: Some(1),
             end_line: Some(1),
             context: Some(0),
         }),
     )
     .await
-    .expect("canonical path+file form works");
+    .expect("path+file form works");
     assert!(
-        canonical
-            .0
-            .lines
-            .iter()
-            .any(|line| line.text.contains("fn main"))
-    );
-
-    let legacy = source(
-        State(state.clone()),
-        ApiQuery(SourceQuery {
-            path: Some(PathBuf::from("src/main.rs")),
-            file: None,
-            root: Some(root.clone()),
-            start_line: Some(1),
-            end_line: Some(1),
-            context: Some(0),
-        }),
-    )
-    .await
-    .expect("legacy root+path form still works");
-    assert!(
-        legacy
+        preview
             .0
             .lines
             .iter()
@@ -786,7 +764,6 @@ async fn source_api_accepts_canonical_and_legacy_forms() {
         ApiQuery(SourceQuery {
             path: Some(root.clone()),
             file: None,
-            root: None,
             start_line: None,
             end_line: None,
             context: None,
@@ -1217,6 +1194,55 @@ fn capability_endpoints_include_discovery_and_agent_routes() {
     assert!(endpoints.contains(&"GET /api/entrypoint-workflows"));
     assert!(endpoints.contains(&"POST /api/scan-jobs"));
     assert!(endpoints.contains(&"POST /api/semantic-jobs"));
+}
+
+#[test]
+fn capability_catalog_covers_every_routed_api_path() {
+    // The /api/capabilities catalog must not silently fall behind main.rs:
+    // every routed /api path must appear in some capability group. Parse the
+    // routes straight out of main.rs so a new route without a catalog entry
+    // fails here.
+    let main_source = include_str!("main.rs");
+    let mut routed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for line in main_source.lines() {
+        let Some(start) = line.find(".route(\"") else {
+            continue;
+        };
+        let rest = &line[start + ".route(\"".len()..];
+        let Some(end) = rest.find('"') else { continue };
+        let path = &rest[..end];
+        if path.starts_with("/api/") {
+            routed.insert(path.to_string());
+        }
+    }
+    assert!(
+        routed.len() > 40,
+        "route extraction should find the API surface, got {routed:?}"
+    );
+
+    let cataloged: std::collections::BTreeSet<String> = capability_endpoints()
+        .into_iter()
+        .flat_map(|group| group.endpoints)
+        .map(|endpoint| {
+            let path = endpoint
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or(endpoint)
+                .split('?')
+                .next()
+                .unwrap_or(endpoint);
+            path.to_string()
+        })
+        .collect();
+
+    let missing: Vec<_> = routed
+        .iter()
+        .filter(|path| !cataloged.contains(*path))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "routes missing from capability_endpoints(): {missing:?}"
+    );
 }
 
 #[test]

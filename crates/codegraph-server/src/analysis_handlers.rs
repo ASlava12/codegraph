@@ -1017,21 +1017,13 @@ pub(crate) async fn source(
     State(state): State<AppState>,
     ApiQuery(query): ApiQuery<SourceQuery>,
 ) -> Result<Json<SourcePreview>, ApiError> {
-    // Canonical form: `path` = project root, `file` = source file. The
-    // pre-unification form (`root` = project root, `path` = file) stays
-    // accepted for older clients (audit F9).
-    let (root_param, file_param) = match (&query.file, &query.root, &query.path) {
-        (Some(file), _, _) => (
-            query.path.clone().or_else(|| query.root.clone()),
-            file.clone(),
-        ),
-        (None, Some(_), Some(file)) => (query.root.clone(), file.clone()),
-        _ => {
-            return Err(ApiError::bad_request(
-                "source requires a `file` parameter (source file inside the `path` project root)",
-            ));
-        }
+    // `path` = project root, `file` = source file.
+    let Some(file_param) = query.file.clone() else {
+        return Err(ApiError::bad_request(
+            "source requires a `file` parameter (source file inside the `path` project root)",
+        ));
     };
+    let root_param = query.path.clone();
     let source_root = resolve_scan_root(&state, root_param.as_deref())?;
     let path = resolve_path(&state, &source_root, &file_param)?;
     if !path.is_file() {

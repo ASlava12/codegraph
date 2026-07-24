@@ -2141,13 +2141,6 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             None,
                             "Source file inside the project root.",
                         ),
-                        query_param(
-                            "root",
-                            false,
-                            "path",
-                            None,
-                            "Legacy alias for the project root; with it, `path` may hold the source file instead of `file`.",
-                        ),
                         query_param("start_line", false, "u32", None, "First line."),
                         query_param("end_line", false, "u32", None, "Last line."),
                         query_param("context", false, "u32", None, "Context lines around span.")
@@ -4389,6 +4382,14 @@ pub(crate) fn capability_endpoints() -> Vec<EndpointGroupResponse> {
                 "GET /api/dependents",
                 "GET /api/trace-config",
                 "GET /api/trace-errors",
+                "GET /api/journey",
+                "GET /api/impact",
+                "GET /api/refactor-context",
+                "GET /api/component-dependencies",
+                "GET /api/component-contract",
+                "GET /api/seams",
+                "GET /api/pr-impact",
+                "POST /api/mcp",
             ],
         },
         EndpointGroupResponse {
@@ -4397,11 +4398,8 @@ pub(crate) fn capability_endpoints() -> Vec<EndpointGroupResponse> {
         },
         EndpointGroupResponse {
             group: "export",
-            endpoints: vec![
-                "GET /api/export?format=json",
-                "GET /api/export?format=dot",
-                "GET /api/export?format=ndjson",
-            ],
+            // One endpoint; formats are enumerated by `export_formats`.
+            endpoints: vec!["GET /api/export"],
         },
     ]
 }

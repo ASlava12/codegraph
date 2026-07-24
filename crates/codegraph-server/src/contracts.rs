@@ -258,8 +258,6 @@ pub(crate) struct SourceQuery {
     pub(crate) path: Option<PathBuf>,
     /// Source file inside the root (canonical form).
     pub(crate) file: Option<PathBuf>,
-    /// Legacy alias: project root when `file` is absent and `path` is the file.
-    pub(crate) root: Option<PathBuf>,
     pub(crate) start_line: Option<u32>,
     pub(crate) end_line: Option<u32>,
     pub(crate) context: Option<u32>,
