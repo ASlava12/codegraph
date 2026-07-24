@@ -1049,8 +1049,17 @@ pub fn apply_semantic_graph_patch(
     for edge_patch in &patch.semantic_edges {
         report.semantic_edges += 1;
         let edge = semantic_edge_from_patch(edge_patch);
+        // A patch can be serialized and applied later, possibly to a graph
+        // that has changed shape; only replace by index when the edge at that
+        // index is provably the one the patch was built from — otherwise fall
+        // through to the add path instead of overwriting a stranger.
         if let Some(index) = edge_patch.replaced_edge_index
-            && index < graph.edges.len()
+            && graph.edges.get(index).is_some_and(|existing| {
+                existing.source == edge_patch.source
+                    && edge_patch
+                        .original_target
+                        .is_none_or(|original| existing.target == original)
+            })
             && replaced_indexes.insert(index)
         {
             graph.edges[index] = edge;
@@ -1331,9 +1340,10 @@ fn wait_for_lsp_exit(
             SemanticLspRunError::new(format!("failed to poll `{server}` exit: {error}"))
         })? {
             if !status.success() {
-                return Err(SemanticLspRunError::new(format!(
-                    "language server `{server}` exited with {status}"
-                )));
+                // Some servers exit non-zero after a clean shutdown request.
+                // Every response has already been collected at this point;
+                // failing here threw away the whole batch for nothing.
+                eprintln!("warning: language server `{server}` exited with {status}");
             }
             return Ok(());
         }
@@ -1478,6 +1488,17 @@ fn read_lsp_message<R: BufRead>(reader: &mut R) -> io::Result<Option<Value>> {
             "missing LSP Content-Length header",
         ));
     };
+    // A broken server could declare an absurd length and drive an unbounded
+    // allocation; no real LSP response approaches this bound.
+    const MAX_LSP_MESSAGE_BYTES: usize = 256 * 1024 * 1024;
+    if content_length > MAX_LSP_MESSAGE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "LSP message of {content_length} bytes exceeds the {MAX_LSP_MESSAGE_BYTES}-byte limit"
+            ),
+        ));
+    }
     let mut body = vec![0; content_length];
     reader.read_exact(&mut body)?;
     serde_json::from_slice(&body).map(Some).map_err(|error| {
