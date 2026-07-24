@@ -815,7 +815,7 @@ function renderQueryResult(result, options = {}) {
     .map((edge) => renderQueryEdge(edge, nodeMap))
     .join("");
   const truncated = result.truncated
-    ? '<p class="empty">Result truncated by query limit.</p>'
+    ? `<p class="empty">${escapeHtml(t("query.truncated"))}</p>`
     : "";
   const hasResults = result.nodes.length > 0 || result.edges.length > 0;
   const resultLabel = options.label ? `<span>${escapeHtml(options.label)}</span>` : "";
@@ -836,13 +836,13 @@ function renderQueryResult(result, options = {}) {
     </div>
     ${renderQueryFacets(result.facets)}
     <div class="query-actions">
-      <button data-focus-result type="button" ${hasResults ? "" : "disabled"}>Focus result</button>
+      <button data-focus-result type="button" ${hasResults ? "" : "disabled"}>${escapeHtml(t("query.focusResult"))}</button>
       <button data-query-workflows type="button" ${hasResults ? "" : "disabled"}>${escapeHtml(t("button.buildQueryWorkflows"))}</button>
-      <button data-clear-focus type="button" ${state.queryFocus ? "" : "disabled"}>Clear focus</button>
+      <button data-clear-focus type="button" ${state.queryFocus ? "" : "disabled"}>${escapeHtml(t("query.clearFocus"))}</button>
     </div>
     ${nodeRows ? `<ul class="query-list">${nodeRows}</ul>` : ""}
     ${edgeRows ? `<ul class="query-list query-edge-list">${edgeRows}</ul>` : ""}
-    ${!nodeRows && !edgeRows ? '<p class="empty">No query results.</p>' : ""}
+    ${!nodeRows && !edgeRows ? `<p class="empty">${escapeHtml(t("query.noResults"))}</p>` : ""}
     ${truncated}
   `;
 }

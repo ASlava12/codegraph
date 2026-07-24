@@ -46,7 +46,7 @@ async function explainEdge(button) {
   const requestId = String(state.edgeExplainRequest);
   button.dataset.explainToken = requestId;
   target.hidden = false;
-  target.innerHTML = '<p class="empty">Explaining edge...</p>';
+  target.innerHTML = `<p class="empty">${escapeHtml(t("edge.explaining"))}</p>`;
   button.disabled = true;
 
   const params = new URLSearchParams({ path: pathInput.value.trim() || "." });
@@ -80,7 +80,7 @@ async function explainEdge(button) {
 
 function renderEdgeExplanation(explanation) {
   if (!explanation) {
-    return '<p class="empty">No matching edge explanation.</p>';
+    return `<p class="empty">${escapeHtml(t("edge.noExplanation"))}</p>`;
   }
   const evidence = (explanation.evidence || [])
     .map((item) => `<li>${escapeHtml(item)}</li>`)
@@ -98,7 +98,7 @@ function renderEdgeExplanation(explanation) {
       : "";
   const matchNote =
     explanation.total_matches > 1
-      ? `<span>${explanation.total_matches} matches, showing first</span>`
+      ? `<span>${escapeHtml(t("edge.matchesShowingFirst", { count: explanation.total_matches }))}</span>`
       : "";
 
   return `
@@ -107,7 +107,7 @@ function renderEdgeExplanation(explanation) {
       <span>edge ${explanation.edge_index}</span>
       ${matchNote}
     </div>
-    ${evidence ? `<ul>${evidence}</ul>` : '<p class="empty">No evidence metadata.</p>'}
+    ${evidence ? `<ul>${evidence}</ul>` : `<p class="empty">${escapeHtml(t("edge.noEvidence"))}</p>`}
     ${
       totalInsights > 0
         ? `<section class="edge-explanation-risks">
@@ -213,9 +213,15 @@ function onPointerMove(event) {
 
   if (state.draggingId) {
     const position = state.positions.get(state.draggingId);
+    const velocity = state.velocities.get(state.draggingId);
+    if (!position || !velocity) {
+      // The graph was replaced mid-drag (a page load finished and cleared
+      // positions); dropping the drag beats a TypeError in the handler.
+      state.draggingId = null;
+      return;
+    }
     position.x = world.x;
     position.y = world.y;
-    const velocity = state.velocities.get(state.draggingId);
     velocity.x = 0;
     velocity.y = 0;
   } else if (event.buttons === 1) {

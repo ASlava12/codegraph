@@ -258,7 +258,7 @@ async function focusInsight(insight) {
     if (!response.ok) {
       throw new Error(apiErrorMessage(body, response, "focus failed"));
     }
-    const label = `Focus: ${formatKind(insight.kind)}`;
+    const label = t("insight.focusLabel", { kind: formatKind(insight.kind) });
     showFocusedGraph(body, label, selectedId);
   } catch (error) {
     if (requestId !== state.insightFocusRequest) return;
@@ -340,7 +340,10 @@ function showFocusedGraph(result, label, selectedId = null, options = {}) {
   attachQueryFocusActions(queryResult, result);
   rootLabel.textContent = label;
   initializeGraph({ preserveView: false });
-  pageInfo.textContent = `focus ${result.nodes.length} / ${result.total_nodes}`;
+  pageInfo.textContent = t("page.focusInfo", {
+    shown: result.nodes.length,
+    total: result.total_nodes,
+  });
   renderGraphPageScope({ focused: true });
   pagePrevButton.disabled = true;
   pageNextButton.disabled = true;
@@ -358,6 +361,7 @@ function showFocusedGraph(result, label, selectedId = null, options = {}) {
 }
 
 function buildClientInsights(graph) {
+  const nodesById = new Map((graph.nodes || []).map((node) => [node.id, node]));
   const insights = [];
   const entrypointIds = new Set(
     graph.edges.filter((edge) => edge.kind === "entrypoint").map((edge) => edge.target),
@@ -459,9 +463,9 @@ function buildClientInsights(graph) {
   callsByLabel.forEach((edges) => {
     const targets = Array.from(new Set(edges.map((edge) => edge.target)));
     if (targets.length < 2) return;
-    const source = graph.nodes.find((node) => node.id === edges[0].source);
+    const source = nodesById.get(edges[0].source);
     const targetLabels = targets
-      .map((id) => graph.nodes.find((node) => node.id === id)?.label || id)
+      .map((id) => nodesById.get(id)?.label || id)
       .slice(0, 5)
       .join(", ");
     insights.push({
@@ -475,8 +479,8 @@ function buildClientInsights(graph) {
   graph.edges
     .filter((edge) => edge.kind === "may_error")
     .forEach((edge) => {
-      const source = graph.nodes.find((node) => node.id === edge.source);
-      const target = graph.nodes.find((node) => node.id === edge.target);
+      const source = nodesById.get(edge.source);
+      const target = nodesById.get(edge.target);
       insights.push({
         kind: "potential_error_flow",
         severity: "warning",

@@ -724,8 +724,8 @@ function selectedEdge() {
   const cachedNodes = state.edgeSelectionNodeCache.get(key) || {};
   return {
     edge,
-    source: cachedNodes.source || state.graph.nodes.find((node) => node.id === edge.source),
-    target: cachedNodes.target || state.graph.nodes.find((node) => node.id === edge.target),
+    source: cachedNodes.source || graphNodeById(edge.source),
+    target: cachedNodes.target || graphNodeById(edge.target),
   };
 }
 

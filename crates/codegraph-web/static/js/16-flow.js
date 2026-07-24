@@ -986,7 +986,7 @@ function nodeRadius(node) {
 }
 
 function nodeRadiusById(nodeId) {
-  const node = state.graph.nodes.find((candidate) => candidate.id === nodeId);
+  const node = graphNodeById(nodeId);
   return node ? nodeRadius(node) : 7;
 }
 

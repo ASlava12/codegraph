@@ -183,3 +183,17 @@ const colors = {
   control_flow: "#9aa7d8",
   unknown: "#a5adb3",
 };
+
+// Identity-cached node lookup for the current graph. Rebuilt automatically
+// whenever state.graph is replaced, so per-frame code (edge drawing, client
+// insights) does a Map get instead of a linear nodes.find per edge.
+let graphNodeIndex = new Map();
+let graphNodeIndexSource = null;
+
+function graphNodeById(nodeId) {
+  if (graphNodeIndexSource !== state.graph) {
+    graphNodeIndexSource = state.graph;
+    graphNodeIndex = new Map((state.graph.nodes || []).map((node) => [node.id, node]));
+  }
+  return graphNodeIndex.get(nodeId);
+}

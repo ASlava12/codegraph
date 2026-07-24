@@ -721,7 +721,10 @@ async function expandJourneyStep(button, report) {
   }
   const nodeId = Number(button.dataset.nodeIdExpand);
   if (!Number.isInteger(nodeId)) return;
-  const requestToken = String((state.journeyRequest += 1));
+  // Separate counter from runJourney: sharing state.journeyRequest made an
+  // expanded step silently cancel an in-flight journey run (and leave its
+  // button disabled, since the finally-guard token no longer matched).
+  const requestToken = String((state.journeyExpandRequest = (state.journeyExpandRequest || 0) + 1));
   button.dataset.expandToken = requestToken;
   target.hidden = false;
   target.innerHTML = `<p class="empty">${escapeHtml(t("journey.subflowLoading"))}</p>`;
