@@ -1671,6 +1671,14 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         )
                         .with_range(1, 1_000),
                         query_param(
+                            "max_fanout",
+                            false,
+                            "usize",
+                            None,
+                            "Cap outgoing edges expanded per node (calls first) so the block budget follows the call chain into depth. Unset means unbounded.",
+                        )
+                        .with_range(1, 200),
+                        query_param(
                             "limit",
                             false,
                             "usize",

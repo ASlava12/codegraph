@@ -937,6 +937,7 @@ pub(crate) async fn workflow_query_api(
             query: query.q,
             max_depth: query.depth.unwrap_or(4).clamp(1, 32),
             block_limit: query.block_limit.unwrap_or(200).clamp(1, 1_000),
+            max_fanout: query.max_fanout,
             limit: query.limit.unwrap_or(25).clamp(1, 500),
             filters: workflow_filters_from_query(
                 query.edge_kind,

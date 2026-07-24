@@ -634,6 +634,8 @@ pub struct WorkflowQueryRequest {
     pub filters: WorkflowFilters,
     #[serde(default)]
     pub compact: bool,
+    #[serde(default)]
+    pub max_fanout: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

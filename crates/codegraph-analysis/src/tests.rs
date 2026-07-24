@@ -3040,6 +3040,7 @@ fn workflow_query_builds_reports_from_query_result_nodes() {
                 ..WorkflowFilters::default()
             },
             compact: false,
+            max_fanout: None,
         },
     )
     .expect("workflow query report");
@@ -9315,3 +9316,4 @@ fn temp_analysis_root() -> std::path::PathBuf {
         "codegraph-analysis-test-{process_id}-{counter}-{nanos}"
     ))
 }
+

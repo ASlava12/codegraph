@@ -1119,6 +1119,7 @@ fn helper() {}
             risk_severity: None,
             block_kind: Some("call".to_string()),
             compact: None,
+            max_fanout: None,
         }),
     )
     .await

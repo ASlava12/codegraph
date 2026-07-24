@@ -328,6 +328,7 @@ pub(crate) struct WorkflowQuerySliceQuery {
     pub(crate) q: String,
     pub(crate) depth: Option<usize>,
     pub(crate) block_limit: Option<usize>,
+    pub(crate) max_fanout: Option<usize>,
     pub(crate) limit: Option<usize>,
     pub(crate) edge_kind: Option<String>,
     pub(crate) confidence: Option<String>,

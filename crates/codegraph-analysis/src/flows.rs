@@ -208,7 +208,7 @@ pub fn workflow_query(
                     block_limit,
                     filters: filters.clone(),
                     compact: request.compact,
-                    max_fanout: None,
+                    max_fanout: request.max_fanout,
                 },
                 &insight_report,
             )
