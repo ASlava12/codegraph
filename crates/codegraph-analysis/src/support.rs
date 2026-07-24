@@ -302,26 +302,66 @@ pub(crate) enum TraceDirection {
     Incoming,
 }
 
-pub(crate) fn trace_edges_from_indexed(
-    graph: &CodeGraph,
-    node_id: NodeId,
-    direction: TraceDirection,
-) -> impl Iterator<Item = (usize, &Edge)> {
-    graph.edges.iter().enumerate().filter(move |(_, edge)| {
-        is_trace_edge(&edge.kind)
-            && match direction {
-                TraceDirection::Outgoing => edge.source == node_id,
-                TraceDirection::Incoming => edge.target == node_id,
-            }
-    })
+/// Per-request adjacency over trace edges (plus `Contains` for container
+/// expansion), built in one pass so BFS traversals cost O(V + E) instead of a
+/// full edge scan per visited node. Edge indexes are stored in edge order, so
+/// iteration order is identical to the old linear filter.
+pub(crate) struct TraceAdjacency {
+    outgoing: BTreeMap<NodeId, Vec<usize>>,
+    incoming: BTreeMap<NodeId, Vec<usize>>,
+    contains_outgoing: BTreeMap<NodeId, Vec<usize>>,
 }
 
-pub(crate) fn trace_edges_from(
-    graph: &CodeGraph,
-    node_id: NodeId,
-    direction: TraceDirection,
-) -> impl Iterator<Item = &Edge> {
-    trace_edges_from_indexed(graph, node_id, direction).map(|(_, edge)| edge)
+impl TraceAdjacency {
+    pub(crate) fn build(graph: &CodeGraph) -> Self {
+        let mut outgoing: BTreeMap<NodeId, Vec<usize>> = BTreeMap::new();
+        let mut incoming: BTreeMap<NodeId, Vec<usize>> = BTreeMap::new();
+        let mut contains_outgoing: BTreeMap<NodeId, Vec<usize>> = BTreeMap::new();
+        for (index, edge) in graph.edges.iter().enumerate() {
+            if is_trace_edge(&edge.kind) {
+                outgoing.entry(edge.source).or_default().push(index);
+                incoming.entry(edge.target).or_default().push(index);
+            } else if edge.kind == EdgeKind::Contains {
+                contains_outgoing
+                    .entry(edge.source)
+                    .or_default()
+                    .push(index);
+            }
+        }
+        Self {
+            outgoing,
+            incoming,
+            contains_outgoing,
+        }
+    }
+
+    pub(crate) fn trace_edges<'graph>(
+        &self,
+        graph: &'graph CodeGraph,
+        node_id: NodeId,
+        direction: TraceDirection,
+    ) -> impl Iterator<Item = (usize, &'graph Edge)> {
+        let indexes = match direction {
+            TraceDirection::Outgoing => self.outgoing.get(&node_id),
+            TraceDirection::Incoming => self.incoming.get(&node_id),
+        };
+        indexes
+            .into_iter()
+            .flatten()
+            .filter_map(move |index| graph.edges.get(*index).map(|edge| (*index, edge)))
+    }
+
+    pub(crate) fn contains_edges<'graph>(
+        &self,
+        graph: &'graph CodeGraph,
+        node_id: NodeId,
+    ) -> impl Iterator<Item = (usize, &'graph Edge)> {
+        self.contains_outgoing
+            .get(&node_id)
+            .into_iter()
+            .flatten()
+            .filter_map(move |index| graph.edges.get(*index).map(|edge| (*index, edge)))
+    }
 }
 
 pub(crate) fn trace_next_node(edge: &Edge, node_id: NodeId, direction: TraceDirection) -> NodeId {

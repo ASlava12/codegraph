@@ -20,12 +20,16 @@ pub(crate) fn trace_with_direction(
     request: TraceRequest,
     direction: TraceDirection,
 ) -> Option<TraceResult> {
+    // Same depth contract as workflow/journey/impact; the public trace entry
+    // was the only one accepting an unclamped depth.
+    let max_depth = request.max_depth.clamp(1, 32);
     let start = match &request.start {
         TraceStart::NodeId(id) => graph.nodes.iter().find(|node| node.id == *id)?,
         TraceStart::Label(label) => graph.nodes.iter().find(|node| node.label == *label)?,
     }
     .clone();
 
+    let adjacency = TraceAdjacency::build(graph);
     let mut visited = BTreeSet::new();
     let mut depths = BTreeMap::new();
     let mut queue = VecDeque::new();
@@ -37,14 +41,18 @@ pub(crate) fn trace_with_direction(
     queue.push_back((start.id, 0));
 
     while let Some((node_id, depth)) = queue.pop_front() {
-        if depth >= request.max_depth {
-            if trace_edges_from(graph, node_id, direction).next().is_some() {
+        if depth >= max_depth {
+            if adjacency
+                .trace_edges(graph, node_id, direction)
+                .next()
+                .is_some()
+            {
                 truncated = true;
             }
             continue;
         }
 
-        for edge in trace_edges_from(graph, node_id, direction) {
+        for (_, edge) in adjacency.trace_edges(graph, node_id, direction) {
             edges.push(edge.clone());
             let next = trace_next_node(edge, node_id, direction);
             if visited.insert(next) {
@@ -67,7 +75,7 @@ pub(crate) fn trace_with_direction(
 
     Some(TraceResult {
         start,
-        max_depth: request.max_depth,
+        max_depth,
         nodes,
         edges,
         truncated,

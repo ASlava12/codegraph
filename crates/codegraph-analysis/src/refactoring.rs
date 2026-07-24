@@ -10,6 +10,17 @@ use crate::*;
 pub const JOURNEY_SCHEMA: &str = "codegraph.journey.v1";
 
 pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyReport, QueryError> {
+    let insight_report = insights(graph);
+    journey_with_insights(graph, request, &insight_report)
+}
+
+/// Journey over an already-computed insight report, so bundles (refactor
+/// context) evaluate insights once instead of once per section.
+pub(crate) fn journey_with_insights(
+    graph: &CodeGraph,
+    request: JourneyRequest,
+    insight_report: &InsightReport,
+) -> Result<JourneyReport, QueryError> {
     let max_depth = request.max_depth.clamp(1, 32);
     let from = request.from.trim();
     let to = request.to.trim();
@@ -34,13 +45,13 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
         .find(|node| node.id == target)
         .cloned()
         .ok_or_else(|| node_not_found_error(graph, "journey target", to))?;
-    let insight_report = insights(graph);
     let path_limit = if request.path_limit == 0 {
         3
     } else {
         request.path_limit.clamp(1, 10)
     };
 
+    let adjacency = TraceAdjacency::build(graph);
     let mut edge_paths: Vec<Vec<usize>> = Vec::new();
     let mut truncated = false;
     if start == target {
@@ -49,7 +60,7 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
         let mut banned_edges: BTreeSet<usize> = BTreeSet::new();
         while edge_paths.len() < path_limit {
             let (found, hit_depth_bound) =
-                journey_shortest_path(graph, start, target, max_depth, &banned_edges)?;
+                journey_shortest_path(graph, &adjacency, start, target, max_depth, &banned_edges)?;
             truncated = truncated || hit_depth_bound;
             let Some(edge_indexes) = found else {
                 break;
@@ -71,7 +82,7 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
                 explanation: None,
                 fragile: false,
                 fragile_reasons: Vec::new(),
-                block: journey_block(&insight_report, &start_node, None, true, 0),
+                block: journey_block(insight_report, &start_node, None, true, 0),
             });
             for (offset, edge_index) in edge_indexes.iter().enumerate() {
                 let Some(edge) = graph.edges.get(*edge_index) else {
@@ -94,11 +105,11 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
                     target_node_id: edge.target,
                     edge: edge_with_index(*edge_index, edge),
                     edge_index: *edge_index,
-                    risk_refs: workflow_risk_refs_for_edge(&insight_report, *edge_index),
+                    risk_refs: workflow_risk_refs_for_edge(insight_report, *edge_index),
                     compacted: false,
                     compacted_count: 1,
                 };
-                let block = journey_block(&insight_report, node, Some(edge), false, offset + 1);
+                let block = journey_block(insight_report, node, Some(edge), false, offset + 1);
                 let fragile_reasons = journey_fragile_reasons(edge, &transition, &block);
                 steps.push(JourneyStep {
                     step: offset + 2,
@@ -109,7 +120,7 @@ pub fn journey(graph: &CodeGraph, request: JourneyRequest) -> Result<JourneyRepo
                     block,
                 });
             }
-            let risk_summary = journey_risk_summary(graph, &steps);
+            let risk_summary = journey_risk_summary(graph, &adjacency, &steps);
             JourneyPath {
                 rank: 0,
                 total_steps: steps.len(),
@@ -436,7 +447,7 @@ pub fn refactor_context(
         },
     )?;
     let journey_report = match &request.from {
-        Some(from) if !from.trim().is_empty() => Some(journey(
+        Some(from) if !from.trim().is_empty() => Some(journey_with_insights(
             graph,
             JourneyRequest {
                 from: from.clone(),
@@ -446,6 +457,7 @@ pub fn refactor_context(
                 max_depth: max_depth.min(12),
                 path_limit: request.path_limit.clamp(1, 10),
             },
+            &insight_report,
         )?),
         _ => None,
     };
@@ -818,6 +830,7 @@ pub(crate) fn impact_suggested_commands(
 
 pub(crate) fn journey_shortest_path(
     graph: &CodeGraph,
+    adjacency: &TraceAdjacency,
     start: NodeId,
     target: NodeId,
     max_depth: usize,
@@ -831,15 +844,15 @@ pub(crate) fn journey_shortest_path(
 
     while let Some((node_id, depth)) = queue.pop_front() {
         if depth >= max_depth {
-            if trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
+            if adjacency
+                .trace_edges(graph, node_id, TraceDirection::Outgoing)
                 .any(|(edge_index, _)| !banned_edges.contains(&edge_index))
             {
                 hit_depth_bound = true;
             }
             continue;
         }
-        for (edge_index, edge) in trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
-        {
+        for (edge_index, edge) in adjacency.trace_edges(graph, node_id, TraceDirection::Outgoing) {
             if banned_edges.contains(&edge_index) {
                 continue;
             }
@@ -910,7 +923,11 @@ pub(crate) fn journey_fragile_reasons(
     reasons
 }
 
-pub(crate) fn journey_risk_summary(graph: &CodeGraph, steps: &[JourneyStep]) -> JourneyRiskSummary {
+pub(crate) fn journey_risk_summary(
+    graph: &CodeGraph,
+    adjacency: &TraceAdjacency,
+    steps: &[JourneyStep],
+) -> JourneyRiskSummary {
     let mut summary = JourneyRiskSummary::default();
     let mut step_order: BTreeMap<NodeId, usize> = BTreeMap::new();
     for (index, step) in steps.iter().enumerate() {
@@ -953,8 +970,7 @@ pub(crate) fn journey_risk_summary(graph: &CodeGraph, steps: &[JourneyStep]) -> 
     }
 
     for (step_index, step) in steps.iter().enumerate() {
-        for (_, edge) in
-            trace_edges_from_indexed(graph, step.block.node.id, TraceDirection::Outgoing)
+        for (_, edge) in adjacency.trace_edges(graph, step.block.node.id, TraceDirection::Outgoing)
         {
             if step_order
                 .get(&edge.target)
@@ -1040,21 +1056,21 @@ fn workflow_edge_priority(kind: &EdgeKind) -> u8 {
 /// dead-ending on a lonely "leaf" block.
 fn workflow_followable_edges<'graph>(
     graph: &'graph CodeGraph,
+    adjacency: &TraceAdjacency,
     nodes_by_id: &BTreeMap<NodeId, &'graph Node>,
     node_id: NodeId,
     filters: &WorkflowFilters,
 ) -> Vec<(usize, &'graph Edge)> {
-    let mut edges: Vec<(usize, &Edge)> =
-        trace_edges_from_indexed(graph, node_id, TraceDirection::Outgoing)
-            .filter(|(_, edge)| workflow_edge_filter_matches(edge, filters))
-            .collect();
+    let mut edges: Vec<(usize, &Edge)> = adjacency
+        .trace_edges(graph, node_id, TraceDirection::Outgoing)
+        .filter(|(_, edge)| workflow_edge_filter_matches(edge, filters))
+        .collect();
     if matches!(
         nodes_by_id.get(&node_id).map(|node| &node.kind),
         Some(NodeKind::File | NodeKind::Directory)
     ) {
-        for (edge_index, edge) in graph.edges.iter().enumerate() {
-            if edge.source == node_id
-                && edge.kind == EdgeKind::Contains
+        for (edge_index, edge) in adjacency.contains_edges(graph, node_id) {
+            if edge.kind == EdgeKind::Contains
                 // The same edge filter the transitions are later held to
                 // (workflow_transition_filter_matches); without it an
                 // edge_kind/confidence filter would drop the contains
@@ -1091,6 +1107,7 @@ pub(crate) fn workflow_with_insight_report(
     .clone();
     let nodes_by_id: BTreeMap<NodeId, &Node> =
         graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let adjacency = TraceAdjacency::build(graph);
 
     let mut visited = BTreeSet::new();
     let mut depths = BTreeMap::new();
@@ -1106,13 +1123,16 @@ pub(crate) fn workflow_with_insight_report(
 
     while let Some((node_id, depth)) = queue.pop_front() {
         if depth >= max_depth {
-            if !workflow_followable_edges(graph, &nodes_by_id, node_id, &filters).is_empty() {
+            if !workflow_followable_edges(graph, &adjacency, &nodes_by_id, node_id, &filters)
+                .is_empty()
+            {
                 truncated = true;
             }
             continue;
         }
 
-        let mut followable = workflow_followable_edges(graph, &nodes_by_id, node_id, &filters);
+        let mut followable =
+            workflow_followable_edges(graph, &adjacency, &nodes_by_id, node_id, &filters);
         // Cap the fan-out per node, keeping the highest-priority edges (calls
         // first), so the block budget follows the call chain into depth instead
         // of exhausting on one wide node. Unset = unbounded breadth (default).
