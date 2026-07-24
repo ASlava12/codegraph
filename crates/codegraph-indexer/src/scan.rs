@@ -374,6 +374,11 @@ pub(crate) fn index_file(
     options: &IndexOptions,
 ) {
     let mut metadata = BTreeMap::new();
+    // Stamp before reading: if the file changes between stat and read, the
+    // cache holds newer content under an older stamp and the next scan
+    // misses and reparses (self-healing). Stamping after the read could pin
+    // stale content under the new stamp forever.
+    let pre_read_stamp = file_stamp(path);
     let source_bytes = fs::read(path)
         .map_err(|error| {
             metadata.insert("read_error".to_string(), error.to_string());
@@ -415,7 +420,7 @@ pub(crate) fn index_file(
         let adapter = adapter.or_else(|| language.and_then(adapter_for_language))?;
         Some((
             adapter.language(),
-            parse_source_cached(options, path, label, source, adapter),
+            parse_source_cached(options, pre_read_stamp, label, source, adapter),
         ))
     });
 

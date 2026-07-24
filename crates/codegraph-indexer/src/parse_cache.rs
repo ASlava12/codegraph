@@ -2,7 +2,6 @@
 //! and modification time.
 
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -13,7 +12,7 @@ use crate::*;
 
 pub(crate) fn parse_source_cached(
     options: &IndexOptions,
-    path: &Path,
+    stamp: Option<FileStamp>,
     label: &str,
     source: &[u8],
     adapter: &dyn LanguageAdapter,
@@ -21,7 +20,9 @@ pub(crate) fn parse_source_cached(
     let Some(cache_dir) = options.parse_cache_dir.as_deref() else {
         return adapter.parse(Path::new(label), source);
     };
-    let Some(stamp) = file_stamp(path) else {
+    // The stamp is taken by the caller BEFORE reading the content (see
+    // index_file) so a mid-scan edit can only self-heal, never pin stale facts.
+    let Some(stamp) = stamp else {
         return adapter.parse(Path::new(label), source);
     };
     let language = adapter.language();
@@ -71,15 +72,35 @@ pub(crate) fn store_cached_parse(
         return;
     }
     if let Ok(bytes) = serde_json::to_vec(&record) {
-        let _ = fs::write(parse_cache_path(cache_dir, label, language), bytes);
+        // Atomic like the graph/semantic caches: a crash mid-write must not
+        // leave a torn record (it would be silently reparsed, but tmp+rename
+        // is as cheap and keeps the file always well-formed).
+        let final_path = parse_cache_path(cache_dir, label, language);
+        let temporary = final_path.with_extension(format!(
+            "json.tmp-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        if fs::write(&temporary, bytes).is_ok() && fs::rename(&temporary, &final_path).is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
     }
 }
 
 pub(crate) fn parse_cache_path(cache_dir: &Path, label: &str, language: Language) -> PathBuf {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    language.hash(&mut hasher);
-    label.hash(&mut hasher);
-    cache_dir.join(format!("parse-{:016x}.json", hasher.finish()))
+    // Stable FNV-1a: DefaultHasher's output is not guaranteed across Rust
+    // releases, so a toolchain upgrade orphaned every cache entry forever.
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = FNV_OFFSET;
+    for byte in language.name().bytes().chain([0u8]).chain(label.bytes()) {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    cache_dir.join(format!("parse-{hash:016x}.json"))
 }
 
 pub(crate) fn file_stamp(path: &Path) -> Option<FileStamp> {
