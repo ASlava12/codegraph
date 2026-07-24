@@ -2039,6 +2039,7 @@ pub(crate) fn go_module_roots(
 ) -> Vec<GoModuleRoot> {
     let mut modules = Vec::new();
     for entry in WalkDir::new(root)
+        .sort_by_file_name()
         .into_iter()
         .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
         .filter_map(Result::ok)
@@ -2084,6 +2085,7 @@ pub(crate) fn dart_package_roots(
 ) -> Vec<DartPackageRoot> {
     let mut packages = Vec::new();
     for entry in WalkDir::new(root)
+        .sort_by_file_name()
         .into_iter()
         .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
         .filter_map(Result::ok)
@@ -2225,6 +2227,7 @@ pub(crate) fn cmake_include_dirs(
 ) -> Vec<String> {
     let mut dirs = Vec::new();
     for entry in WalkDir::new(root)
+        .sort_by_file_name()
         .into_iter()
         .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
         .filter_map(Result::ok)
@@ -2261,6 +2264,7 @@ pub(crate) fn compile_commands_include_dirs(
 ) -> Vec<String> {
     let mut dirs = Vec::new();
     for entry in WalkDir::new(root)
+        .sort_by_file_name()
         .into_iter()
         .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
         .filter_map(Result::ok)

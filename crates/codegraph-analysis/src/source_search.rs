@@ -47,6 +47,7 @@ pub fn search_source(root: &Path, request: &SourceSearchRequest) -> SourceSearch
     let mut total_matches = 0usize;
 
     for entry in WalkDir::new(root)
+        .sort_by_file_name()
         .into_iter()
         .filter_entry(|entry| should_search_entry(entry, root, request, &ignored_globs))
         .filter_map(Result::ok)

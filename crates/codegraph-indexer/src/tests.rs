@@ -5919,3 +5919,25 @@ fn temp_project_root() -> PathBuf {
         std::process::id()
     ))
 }
+
+#[test]
+fn scan_is_deterministic_across_runs() {
+    // The walk is explicitly sorted (sort_by_file_name); two scans of the same
+    // tree must produce byte-identical graphs — node ids are positional, so an
+    // unsorted readdir order would silently reshuffle them.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src").join("b.rs"), "fn beta() {}\n").unwrap();
+    fs::write(root.join("src").join("a.rs"), "fn alpha() { beta(); }\n").unwrap();
+    fs::write(root.join("main.rs"), "fn main() { alpha(); }\n").unwrap();
+
+    let options = IndexOptions::default();
+    let first = scan_project(&root, &options).unwrap();
+    let second = scan_project(&root, &options).unwrap();
+
+    assert_eq!(
+        serde_json::to_string(&first).unwrap(),
+        serde_json::to_string(&second).unwrap()
+    );
+    fs::remove_dir_all(root).unwrap();
+}

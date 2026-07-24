@@ -89,6 +89,7 @@ pub(crate) fn scan_project_with_scope(
     };
 
     for entry in WalkDir::new(root)
+        .sort_by_file_name()
         .into_iter()
         .filter_entry(|entry| should_enter(entry, root, options, &ignored_globs))
     {
@@ -256,7 +257,7 @@ pub fn scan_coverage(
         languages: BTreeMap::new(),
     };
 
-    let mut entries = WalkDir::new(root).into_iter();
+    let mut entries = WalkDir::new(root).sort_by_file_name().into_iter();
     while let Some(entry) = entries.next() {
         let entry = entry.map_err(|source| IndexError::Walk {
             path: root.to_path_buf(),
@@ -273,7 +274,15 @@ pub fn scan_coverage(
             report.files_seen += 1;
         }
 
-        if let Some(exclusion) = entry_exclusion(&entry, root, options, &ignored_globs) {
+        // Mirror should_enter exactly: CI infrastructure under hidden dirs
+        // (.github/workflows, .gitlab-ci.yml, ...) is indexed even without
+        // include_hidden, so the coverage report must not count it as skipped.
+        let exclusion = if !options.include_hidden && is_ci_infrastructure_path(path, root) {
+            entry_exclusion_without_hidden(&entry, root, options, &ignored_globs)
+        } else {
+            entry_exclusion(&entry, root, options, &ignored_globs)
+        };
+        if let Some(exclusion) = exclusion {
             report.skipped_policy_entries += 1;
             match exclusion {
                 EntryExclusion::Hidden => report.skipped_hidden_entries += 1,
