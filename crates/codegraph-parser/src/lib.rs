@@ -19,7 +19,7 @@ pub use language::{
     Language, LanguageAdapter, LanguageAdapterInfo, adapter_for_language, adapter_for_path,
     language_adapters,
 };
-pub use model::{ParseError, ParsedFile, ParsedItem, ParsedItemKind};
+pub use model::{ParseError, ParsedFile, ParsedItem, ParsedItemKind, ParsedTypeReference};
 
 pub(crate) use effects::*;
 pub(crate) use extract::*;

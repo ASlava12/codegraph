@@ -112,7 +112,9 @@ Implemented now:
 - The web UI starts with onboarding hints in every investigation panel (query, journey, source search, PR impact, refactoring, cache) that state the next action and localize with the interface language, and full graphs above 2,000 nodes start with low-signal `control_flow` facts hidden — the canvas-filter status shows the active default with a one-click reset, and the legend re-enables the kind.
 - Key CLI commands ship `--help` examples (`scan`, `query`, `journey`, `ask`, `impact`, `refactor-context`, `pr-impact`, `trace-config`, `memory-save`, `mcp`), and node-not-found errors suggest up to three near-matching labels (`did you mean \`scan_project\`?`) or point at `entrypoints`/`query` for discovery.
 - API query-string errors always use the structured JSON contract with `request_id` (including deserialization failures), and `/api/source` takes the same `path` project-root parameter as every other endpoint plus a `file` parameter for the source file (the older `root`+`path` form stays accepted).
-- Node ids are accepted in both bare numeric (`42`) and n-prefixed (`n42`) form everywhere they appear as parameters — `node-card --node-id`, `/api/node-card`, `/api/node-context`, trace/workflow/dependents `node_id`, focus `node_ids` lists, and the MCP `get_node_card` tool — matching the format printed by query results and web deep links.
+- Every scanned node carries a deterministic `metadata.stable_id` (`cg-*`) derived from kind, source location, label, and language, so agents can retain references across unrelated file additions; graph queries and MCP target resolution accept these durable ids alongside numeric (`42`) and n-prefixed (`n42`) ids.
+- Syntactic call resolution is language- and file-aware. A duplicated method label becomes one explicit bounded ambiguity with candidate count/sample instead of edges to every same-named function, preventing cross-language false links and quadratic edge fan-out.
+- Dart type annotations and constructor invocations produce `type_reference` / `constructor_reference` edges to uniquely declared types, allowing impact analysis to recover service consumers that method-name-only call graphs miss.
 - Web canvas edges can be selected directly to open dependency cards with source, target, confidence, metadata, and provenance explanation actions.
 - Web canvas edges highlight on hover so dependency paths are easier to inspect before opening a card.
 - Edge explanations include related risk summaries and capped edge-scoped findings for dependency-level triage.
@@ -167,7 +169,7 @@ Implemented now:
 - Opt-in query audit logging (`[query_log]` in `.codegraph/config.toml`, `codegraph query-log`) appends CLI query/ask/journey and MCP tool calls to local `.codegraph/query-log.jsonl` with sensitive-value redaction and response previews only behind a second opt-in.
 - Refactor context bundles (CLI `refactor-context`, API `/api/refactor-context`) combine impact, component dependencies, optional ranked journey, related risks, and a target source preview into one `codegraph.refactor_context.v1` JSON for one-shot agent handoff.
 - Coupling/seam reports (CLI `seams`, API `/api/seams`) rank cross-area boundaries by deterministic friction score both ways: safest thin seams for extraction and most tangled boundaries needing work, with edge-kind/confidence breakdowns and sample edge evidence.
-- Blast-radius reports (CLI `impact`, API `/api/impact`) list transitive dependents with distances, test flags, and risk counts, extract affected entrypoints/routes/tests, and compute a deterministic risk-weighted impact score for refactor planning.
+- Blast-radius reports (CLI `impact`, API `/api/impact`) list transitive dependents with distances and test flags, extract affected entrypoints/routes/tests, and rank one representative per source file before repeated symbols. Agent-facing calls skip repository-wide risks by default; `--include-risks`, `include_risks=true`, or `refactor-context` enables risk counts and risk-weighted scoring.
 - Component dependency reports (CLI `component-dependencies`, API `/api/component-dependencies`) group a node's incoming/outgoing dependencies by architecture area, package, and language; component contract views (CLI `component-contract`, API `/api/component-contract`) list the exact cross-area edges with confidence and risk counts.
 - Journey paths carry a `risk_summary` (risky steps/transitions, low-confidence hops, unresolved and ambiguous calls, duplicate labels, cycle back edges, severity counts) and per-step `fragile` flags with reasons so refactor-breaking hops are visible before changes start.
 - Config trace API, CLI command, and web panel for finding config/environment readers and entrypoint paths.
@@ -467,7 +469,9 @@ extra_ignored_globs = ["fixtures/**", "public/**/*.min.js"]
 `ignored_names = [...]` replaces the default ignored directory list, while
 `extra_ignored_names = [...]` extends it. `ignored_globs = [...]` replaces the
 repository path-pattern ignore list, while `extra_ignored_globs = [...]` extends
-it. Glob patterns are matched against normalized project-relative paths. CLI/server flags such as
+it. Generated graph directories such as `.codegraph` and `graphify-out` are in
+the default ignore list, preventing one tool's index from being indexed as
+source by another. Glob patterns are matched against normalized project-relative paths. CLI/server flags such as
 `--include-hidden`, `--include-ignored`, and `--max-file-size` override the
 repository config for that run.
 
@@ -625,11 +629,12 @@ The seam report aggregates directed dependency edges between architecture areas 
 Report the blast radius of changing a node before a refactor:
 
 ```bash
-cargo run -p codegraph-cli -- impact load_config . --depth 6 --limit 100
+cargo run -p codegraph-cli -- impact load_config . --depth 6 --limit 40
+cargo run -p codegraph-cli -- impact load_config . --include-risks
 curl 'http://127.0.0.1:3765/api/impact?path=.&target=load_config&depth=6'
 ```
 
-The impact report walks reverse dependencies (excluding containment), lists dependents with reverse distance, test flags, and risk counts, extracts affected entrypoints/routes and test-file dependents, groups counts by language and architecture area, and computes a deterministic risk-weighted `impact_score` (dependents + 5 per affected entrypoint + 1 per test + 5/2/1 per error/warning/info risk).
+The default impact report performs only the bounded reverse traversal and marks `risks_evaluated: false`; this keeps CLI/API/MCP agent calls responsive on large graphs. With `--include-risks`, it also attaches dependent risk counts and computes the risk-weighted `impact_score` (dependents + 5 per entrypoint + 1 per test + 5/2/1 per error/warning/info risk).
 
 Trace incoming dependents for impact analysis:
 

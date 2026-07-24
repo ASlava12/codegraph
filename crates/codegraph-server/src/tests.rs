@@ -457,7 +457,7 @@ async fn capabilities_publish_runtime_graph_and_query_limits() {
     assert_eq!(response.limits.max_graph_node_limit, 1000);
     assert_eq!(response.limits.default_graph_edge_limit, 500);
     assert_eq!(response.limits.max_graph_edge_limit, 2000);
-    assert_eq!(response.limits.default_node_context_edge_limit, 80);
+    assert_eq!(response.limits.default_node_context_edge_limit, 24);
     assert_eq!(response.limits.max_node_context_edge_limit, 500);
     assert_eq!(response.limits.default_node_card_source_context, 5);
     assert_eq!(response.limits.max_node_card_source_context, 40);
@@ -826,6 +826,7 @@ async fn node_card_api_accepts_n_prefixed_ids() {
             edge_limit: None,
             source_context: None,
             insight_limit: None,
+            include_insights: None,
         }),
     )
     .await
@@ -852,6 +853,7 @@ async fn node_card_api_accepts_n_prefixed_ids() {
             edge_limit: None,
             source_context: None,
             insight_limit: None,
+            include_insights: None,
         }),
     )
     .await

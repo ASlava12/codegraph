@@ -168,6 +168,7 @@ pub(crate) fn default_ignored_names() -> BTreeSet<String> {
         "node_modules",
         "dist",
         "build",
+        "graphify-out",
         ".next",
         ".turbo",
         ".venv",

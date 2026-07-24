@@ -10,8 +10,8 @@ use crate::{
     ImpactRequest, InsightFilter, InsightSeverity, JourneyRequest, NaturalQueryRequest,
     NodeCardRequest, ProjectReportLimits, RefactorContextRequest, SourceSearchRequest, TraceStart,
     WorkflowFilters, WorkflowRequest, compact_query_result, filter_insight_report, impact,
-    insights, journey, memory, natural_query, node_card, project_report, query_graph,
-    refactor_context, search_source, workflow,
+    impact_fast, insights, journey, memory, natural_query, node_card, node_card_fast,
+    project_report, query_graph, refactor_context, search_source, workflow,
 };
 use codegraph_core::{CodeGraph, NodeId};
 use serde_json::{Value, json};
@@ -165,19 +165,24 @@ impl McpEngine<'_> {
     fn tool_node_card(&self, args: &Value) -> Result<Value, String> {
         let node_id = match args.get("node_id") {
             Some(Value::Number(number)) => number.as_u64(),
-            Some(Value::String(value)) => crate::parse_node_id(value).ok().map(|id| id.0),
+            Some(Value::String(value)) => self.resolve_target(value).map(|id| id.0),
             _ => None,
         }
         .ok_or_else(|| {
-            "get_node_card requires a `node_id` (integer or n-prefixed string such as n42)"
+            "get_node_card requires a `node_id` (integer, n-prefixed id, or stable cg-* id)"
                 .to_string()
         })?;
-        let card = node_card(
+        let card_builder = if bool_arg(args, "include_insights", false) {
+            node_card
+        } else {
+            node_card_fast
+        };
+        let card = card_builder(
             self.graph,
             self.root,
             NodeCardRequest {
                 node_id: NodeId(node_id),
-                edge_limit: usize_arg(args, "edge_limit", 80),
+                edge_limit: usize_arg(args, "edge_limit", 24),
                 source_context: u32_arg(args, "source_context", 5),
                 insight_limit: usize_arg(args, "insight_limit", 8),
             },
@@ -277,12 +282,17 @@ impl McpEngine<'_> {
     }
 
     fn tool_impact(&self, args: &Value) -> Result<Value, String> {
-        let report = impact(
+        let impact_builder = if bool_arg(args, "include_risks", false) {
+            impact
+        } else {
+            impact_fast
+        };
+        let report = impact_builder(
             self.graph,
             ImpactRequest {
                 target: required_str(args, "target")?.to_string(),
                 max_depth: usize_arg(args, "depth", 6),
-                limit: usize_arg(args, "limit", 100),
+                limit: usize_arg(args, "limit", 40),
             },
         )
         .map_err(|error| error.to_string())?;
@@ -442,7 +452,12 @@ impl McpEngine<'_> {
         self.graph
             .nodes
             .iter()
-            .find(|node| node.label == trimmed)
+            .find(|node| {
+                node.metadata
+                    .get("stable_id")
+                    .is_some_and(|stable_id| stable_id == trimmed)
+            })
+            .or_else(|| self.graph.nodes.iter().find(|node| node.label == trimmed))
             .map(|node| node.id)
     }
 }
@@ -492,10 +507,11 @@ pub fn mcp_tool_definitions() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "node_id": {"type": ["integer", "string"], "description": "Graph node id, numeric or n-prefixed (42 or n42)."},
-                    "edge_limit": {"type": "integer", "description": "Maximum neighbor edges (default 80)."},
+                    "node_id": {"type": ["integer", "string"], "description": "Graph node id: numeric, n-prefixed, or stable cg-* id."},
+                    "edge_limit": {"type": "integer", "description": "Maximum neighbor edges (default 24)."},
                     "source_context": {"type": "integer", "description": "Source preview context lines (default 5)."},
-                    "insight_limit": {"type": "integer", "description": "Maximum related risks (default 8)."}
+                    "insight_limit": {"type": "integer", "description": "Maximum related risks (default 8)."},
+                    "include_insights": {"type": "boolean", "description": "Run repository-wide insight analysis (default false)."}
                 },
                 "required": ["node_id"]
             }
@@ -564,7 +580,8 @@ pub fn mcp_tool_definitions() -> Vec<Value> {
                 "properties": {
                     "target": {"type": "string", "description": "Node label or id."},
                     "depth": {"type": "integer", "description": "Reverse dependency depth (default 6)."},
-                    "limit": {"type": "integer", "description": "Maximum listed dependents (default 100)."}
+                    "limit": {"type": "integer", "description": "Maximum listed dependents (default 40)."},
+                    "include_risks": {"type": "boolean", "description": "Run repository-wide risk analysis (default false; refactor_context includes risks)."}
                 },
                 "required": ["target"]
             }

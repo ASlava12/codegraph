@@ -49,6 +49,7 @@ pub(crate) fn scan_project_with_scope(
         edge_keys: BTreeSet::new(),
         edge_keys_synced: 0,
         function_symbols: BTreeMap::new(),
+        type_symbols: BTreeMap::new(),
         file_nodes: BTreeMap::new(),
         directory_nodes: BTreeMap::new(),
         external_dependencies: BTreeMap::new(),
@@ -60,6 +61,7 @@ pub(crate) fn scan_project_with_scope(
         custom_rules,
         annotations,
         pending_calls: Vec::new(),
+        pending_type_references: Vec::new(),
         pending_local_imports: Vec::new(),
         pending_entrypoint_targets: Vec::new(),
         pending_route_handlers: Vec::new(),
@@ -149,6 +151,7 @@ pub(crate) fn scan_project_with_scope(
     }
 
     resolve_pending_calls(&mut context);
+    resolve_pending_type_references(&mut context);
     resolve_pending_local_imports(&mut context);
     resolve_pending_entrypoint_targets(&mut context);
     resolve_pending_route_handlers(&mut context);
@@ -172,6 +175,7 @@ pub(crate) fn scan_project_with_scope(
     resolve_pending_mcp_local_refs(&mut context);
     apply_graph_annotations(&mut context);
     apply_custom_rules(&mut context);
+    annotate_stable_node_ids(&mut context.graph);
 
     Ok(context.graph)
 }
@@ -557,6 +561,9 @@ pub(crate) fn index_file(
                         );
                         register_local_function(&mut local_functions, &item.label, item_id);
                     }
+                    if item.kind == ParsedItemKind::Type {
+                        register_function_symbol(&mut context.type_symbols, &item.label, item_id);
+                    }
                 }
 
                 if let Some(entrypoint_id) = script_entrypoint
@@ -662,6 +669,20 @@ pub(crate) fn index_file(
                         label: item.label.clone(),
                         span: item.span.clone(),
                         language: language.to_string(),
+                    });
+                }
+
+                for reference in &parsed.type_references {
+                    let source = reference
+                        .parent
+                        .as_deref()
+                        .and_then(|parent| resolve_local_function(&local_functions, parent))
+                        .unwrap_or(file_id);
+                    context.pending_type_references.push(PendingTypeReference {
+                        source,
+                        label: reference.label.clone(),
+                        language: language.to_string(),
+                        span: reference.span.clone(),
                     });
                 }
             }

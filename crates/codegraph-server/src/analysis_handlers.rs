@@ -23,11 +23,11 @@ use codegraph_analysis::{
     check_insights, communities, compact_query_result, component_contract, component_dependencies,
     entrypoints, explain_edge, export_cypher, export_dot, export_falkordb,
     export_graph_mermaid_html, export_graphml, export_ndjson, export_svg, filter_insight_report,
-    focus_subgraph, hotspots, impact, insights, journey, language_dependencies, natural_query,
-    node_card, node_context, project_report, project_report_markdown, query_graph,
-    read_source_preview, refactor_context, seams, search_source, slice_graph, summarize,
-    surprising_links, trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
-    workflow, workflow_entrypoints, workflow_query,
+    focus_subgraph, hotspots, impact, impact_fast, insights, journey, language_dependencies,
+    natural_query, node_card, node_card_fast, node_context, project_report,
+    project_report_markdown, query_graph, read_source_preview, refactor_context, seams,
+    search_source, slice_graph, summarize, surprising_links, trace, trace_config, trace_dependents,
+    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_query,
 };
 use codegraph_indexer::scan_coverage;
 use codegraph_storage::{GraphCache, scan_project_cached};
@@ -322,11 +322,17 @@ pub(crate) async fn node_card_api(
     let insight_limit = query
         .insight_limit
         .unwrap_or(DEFAULT_NODE_CARD_INSIGHT_LIMIT);
+    let include_insights = query.include_insights.unwrap_or(false);
     let node_id = parse_node_id_param(&query.node_id)?;
     let card = tokio::task::spawn_blocking(move || {
         let output = scan_project_cached(root.clone(), &options, cache.as_ref())
             .map_err(|error| error.to_string())?;
-        node_card(
+        let card_builder = if include_insights {
+            node_card
+        } else {
+            node_card_fast
+        };
+        card_builder(
             &output.graph,
             Some(&root),
             NodeCardRequest {
@@ -785,12 +791,17 @@ pub(crate) async fn impact_api(
     ApiQuery(query): ApiQuery<ImpactQuery>,
 ) -> Result<Json<ImpactReport>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
-    let report = impact(
+    let impact_builder = if query.include_risks.unwrap_or(false) {
+        impact
+    } else {
+        impact_fast
+    };
+    let report = impact_builder(
         &graph,
         ImpactRequest {
             target: query.target,
             max_depth: query.depth.unwrap_or(6).clamp(1, 32),
-            limit: query.limit.unwrap_or(100).clamp(1, 1_000),
+            limit: query.limit.unwrap_or(40).clamp(1, 1_000),
         },
     )
     .map_err(|error| ApiError::bad_request(error.to_string()))?;

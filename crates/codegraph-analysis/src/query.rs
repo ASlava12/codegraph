@@ -43,6 +43,100 @@ pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, Q
     }
 }
 
+/// Validate query syntax and command selection without requiring a graph.
+/// CLI callers use this before an expensive scan so typos fail immediately.
+pub fn validate_query_expression(expression: &str) -> Result<(), QueryError> {
+    let spec = QuerySpec::parse(expression)?;
+    if matches!(
+        spec.command.as_str(),
+        "nodes"
+            | "node"
+            | "edges"
+            | "edge"
+            | "calls"
+            | "call"
+            | "dependencies"
+            | "depends"
+            | "trace"
+            | "dependents"
+            | "impact"
+            | "incoming"
+            | "neighbors"
+            | "neighbor"
+            | "neighborhood"
+            | "symbols"
+            | "symbol"
+            | "defs"
+            | "definitions"
+            | "files"
+            | "file"
+            | "sources"
+            | "source"
+            | "docs"
+            | "doc"
+            | "documents"
+            | "document"
+            | "adr"
+            | "adrs"
+            | "rfc"
+            | "rfcs"
+            | "sql"
+            | "schema"
+            | "database"
+            | "db"
+            | "entrypoints"
+            | "entrypoint"
+            | "starts"
+            | "startup"
+            | "routes"
+            | "route"
+            | "endpoints"
+            | "endpoint"
+            | "packages"
+            | "package"
+            | "deps"
+            | "external"
+            | "externals"
+            | "configs"
+            | "config"
+            | "environment"
+            | "env"
+            | "errors"
+            | "error"
+            | "exceptions"
+            | "exception"
+            | "cycles"
+            | "cycle"
+            | "hotspots"
+            | "hotspot"
+            | "central"
+            | "hubs"
+            | "unreachable"
+            | "dead"
+            | "diagnostics"
+            | "diagnostic"
+            | "annotations"
+            | "annotation"
+            | "tags"
+            | "tag"
+            | "insights"
+            | "insight"
+            | "risks"
+            | "risk"
+            | "findings"
+            | "finding"
+            | "path"
+            | "paths"
+    ) {
+        Ok(())
+    } else {
+        Err(QueryError::new(format!(
+            "unknown query command `{}`; validate with `codegraph query --help`",
+            spec.command
+        )))
+    }
+}
+
 pub fn compact_query_result(result: QueryResult) -> QueryResult {
     let mut group_members: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (index, node) in result.nodes.iter().enumerate() {
@@ -2244,7 +2338,7 @@ pub(crate) fn validate_insight_terms(spec: &QuerySpec) -> Result<(), QueryError>
 pub(crate) fn is_node_term(key: &str) -> bool {
     matches!(
         key,
-        "id" | "kind" | "label" | "search" | "language" | "item_kind" | "package_id"
+        "id" | "stable_id" | "kind" | "label" | "search" | "language" | "item_kind" | "package_id"
     ) || key.starts_with("metadata.")
 }
 
@@ -3342,6 +3436,10 @@ pub(crate) fn unreachable_scope(spec: &QuerySpec) -> Result<UnreachableScope, Qu
 pub(crate) fn node_matches(node: &Node, terms: &BTreeMap<String, String>) -> bool {
     terms.iter().all(|(key, expected)| match key.as_str() {
         "id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        "stable_id" => node
+            .metadata
+            .get("stable_id")
+            .is_some_and(|value| value == expected),
         "kind" => text_matches(&kind_name(&node.kind), expected),
         "label" => text_matches(&node.label, expected),
         "search" => node_search_matches(node, expected),
@@ -3708,7 +3806,12 @@ pub(crate) fn resolve_node_reference(graph: &CodeGraph, value: &str) -> Option<N
     graph
         .nodes
         .iter()
-        .find(|node| node.label == value)
+        .find(|node| {
+            node.metadata
+                .get("stable_id")
+                .is_some_and(|stable_id| stable_id == value)
+        })
+        .or_else(|| graph.nodes.iter().find(|node| node.label == value))
         .or_else(|| {
             graph
                 .nodes
@@ -4369,6 +4472,48 @@ pub(crate) fn add_ambiguous_call_resolution_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
 ) {
+    for placeholder in graph.nodes.iter().filter(|node| {
+        node.metadata
+            .get("item_kind")
+            .is_some_and(|kind| kind == "call")
+            && node
+                .metadata
+                .get("resolution")
+                .is_some_and(|resolution| resolution == "ambiguous")
+    }) {
+        let matches = graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| edge.kind == EdgeKind::Calls && edge.target == placeholder.id)
+            .collect::<Vec<_>>();
+        let mut nodes = vec![placeholder.id];
+        nodes.extend(matches.iter().map(|(_, edge)| edge.source));
+        nodes.sort_unstable();
+        nodes.dedup();
+        let count = placeholder
+            .metadata
+            .get("candidate_count")
+            .map(String::as_str)
+            .unwrap_or("multiple");
+        let sample = placeholder
+            .metadata
+            .get("candidate_sample")
+            .filter(|sample| !sample.is_empty())
+            .map(|sample| format!("; sample: {sample}"))
+            .unwrap_or_default();
+        insights.push(Insight {
+            kind: "ambiguous_call_resolution".to_string(),
+            severity: heuristic_scan_severity(graph),
+            message: format!(
+                "Call `{}` has {count} same-language candidates and was kept as one bounded ambiguity{sample}",
+                placeholder.label
+            ),
+            nodes,
+            edges: matches.iter().map(|(index, _)| *index).collect(),
+        });
+    }
+
     let mut groups: BTreeMap<(NodeId, String), Vec<(usize, NodeId)>> = BTreeMap::new();
     for (index, edge) in graph.edges.iter().enumerate() {
         if edge.kind != EdgeKind::Calls {

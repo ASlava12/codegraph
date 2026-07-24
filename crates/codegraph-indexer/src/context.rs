@@ -21,6 +21,7 @@ pub(crate) struct IndexContext {
     pub(crate) edge_keys: BTreeSet<(NodeId, NodeId, EdgeKind)>,
     pub(crate) edge_keys_synced: usize,
     pub(crate) function_symbols: BTreeMap<String, Vec<NodeId>>,
+    pub(crate) type_symbols: BTreeMap<String, Vec<NodeId>>,
     pub(crate) file_nodes: BTreeMap<String, NodeId>,
     pub(crate) directory_nodes: BTreeMap<String, NodeId>,
     pub(crate) external_dependencies: BTreeMap<String, NodeId>,
@@ -33,6 +34,7 @@ pub(crate) struct IndexContext {
     pub(crate) custom_rules: CustomRules,
     pub(crate) annotations: GraphAnnotations,
     pub(crate) pending_calls: Vec<PendingCall>,
+    pub(crate) pending_type_references: Vec<PendingTypeReference>,
     pub(crate) pending_local_imports: Vec<PendingLocalImport>,
     pub(crate) pending_entrypoint_targets: Vec<PendingEntrypointTarget>,
     pub(crate) pending_route_handlers: Vec<PendingRouteHandler>,
@@ -126,6 +128,13 @@ pub(crate) struct PendingCall {
     pub(crate) label: String,
     pub(crate) span: SourceSpan,
     pub(crate) language: String,
+}
+
+pub(crate) struct PendingTypeReference {
+    pub(crate) source: NodeId,
+    pub(crate) label: String,
+    pub(crate) language: String,
+    pub(crate) span: SourceSpan,
 }
 
 pub(crate) struct PendingLocalImport {

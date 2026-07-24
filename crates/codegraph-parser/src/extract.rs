@@ -28,21 +28,23 @@ pub fn parse_source(
         .parse(source_text, None)
         .ok_or(ParseError::ParseFailed { language })?;
     let root = tree.root_node();
-    let mut items = Vec::new();
+    let mut facts = CollectedFacts::default();
     collect_items(
         language,
         root,
         source_text.as_bytes(),
         &path.to_string_lossy(),
         None,
-        &mut items,
+        &mut facts,
         0,
     );
-    dedupe_items(&mut items);
+    dedupe_items(&mut facts.items);
+    dedupe_type_references(&mut facts.type_references);
 
     Ok(ParsedFile {
         language,
-        items,
+        items: facts.items,
+        type_references: facts.type_references,
         has_error_nodes: root.has_error(),
     })
 }
@@ -53,13 +55,19 @@ pub fn parse_source(
 /// skipped) instead of aborting the process.
 const MAX_TREE_DEPTH: usize = 512;
 
+#[derive(Default)]
+pub(crate) struct CollectedFacts {
+    items: Vec<ParsedItem>,
+    type_references: Vec<ParsedTypeReference>,
+}
+
 pub(crate) fn collect_items(
     language: Language,
     node: Node<'_>,
     source: &[u8],
     path: &str,
     current_function: Option<String>,
-    items: &mut Vec<ParsedItem>,
+    facts: &mut CollectedFacts,
     depth: usize,
 ) {
     if depth >= MAX_TREE_DEPTH {
@@ -67,18 +75,30 @@ pub(crate) fn collect_items(
     }
     if let Some(effect) = classify_effect(language, node, source, path, current_function.as_deref())
     {
-        items.push(effect);
+        facts.items.push(effect);
     }
     if let Some(control_flow) =
         classify_control_flow(language, node, source, path, current_function.as_deref())
     {
-        items.push(control_flow);
+        facts.items.push(control_flow);
     }
 
     if let Some(function_name) = current_function.as_deref()
         && let Some(call) = classify_call(language, node, source, path, function_name)
     {
-        items.push(call);
+        facts.items.push(call);
+    }
+
+    if language == Language::Dart
+        && node.kind() == "type_identifier"
+        && let Some(label) = node_text(node, source)
+        && !label.is_empty()
+    {
+        facts.type_references.push(ParsedTypeReference {
+            label,
+            span: span_for(path, node),
+            parent: current_function.clone(),
+        });
     }
 
     let mut next_function = current_function;
@@ -89,7 +109,7 @@ pub(crate) fn collect_items(
         ) {
             next_function = Some(item.label.clone());
         }
-        items.push(item);
+        facts.items.push(item);
     }
 
     let mut cursor = node.walk();
@@ -100,7 +120,7 @@ pub(crate) fn collect_items(
             source,
             path,
             next_function.clone(),
-            items,
+            facts,
             depth + 1,
         );
     }
@@ -761,6 +781,13 @@ pub(crate) fn item_label(
         return node_text(node, source).map(compact_label);
     }
 
+    if language == Language::Dart
+        && matches!(kind, ParsedItemKind::Function | ParsedItemKind::Entrypoint)
+        && let Some(name) = descendant_field_text(node, "name", source, 0)
+    {
+        return Some(name);
+    }
+
     if let Some(name) = named_child_text(node, "name", source) {
         return Some(name);
     }
@@ -775,6 +802,23 @@ pub(crate) fn item_label(
         Language::Bash => first_identifier(node, source),
         _ => first_identifier(node, source),
     }
+}
+
+pub(crate) fn descendant_field_text(
+    node: Node<'_>,
+    field: &str,
+    source: &[u8],
+    depth: usize,
+) -> Option<String> {
+    if depth > 4 {
+        return None;
+    }
+    if let Some(child) = node.child_by_field_name(field) {
+        return node_text(child, source);
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find_map(|child| descendant_field_text(child, field, source, depth + 1))
 }
 
 pub(crate) fn is_entrypoint(language: Language, label: &str) -> bool {
@@ -823,6 +867,29 @@ pub(crate) fn dedupe_items(items: &mut Vec<ParsedItem>) {
     items.dedup_by(|left, right| {
         left.kind == right.kind
             && left.label == right.label
+            && left.span.start_line == right.span.start_line
+            && left.span.start_column == right.span.start_column
+    });
+}
+
+pub(crate) fn dedupe_type_references(references: &mut Vec<ParsedTypeReference>) {
+    references.sort_by(|left, right| {
+        (
+            left.span.start_line,
+            left.span.start_column,
+            &left.label,
+            &left.parent,
+        )
+            .cmp(&(
+                right.span.start_line,
+                right.span.start_column,
+                &right.label,
+                &right.parent,
+            ))
+    });
+    references.dedup_by(|left, right| {
+        left.label == right.label
+            && left.parent == right.parent
             && left.span.start_line == right.span.start_line
             && left.span.start_column == right.span.start_column
     });

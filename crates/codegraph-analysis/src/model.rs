@@ -10,7 +10,9 @@ use std::fmt;
 #[allow(unused_imports)]
 use crate::*;
 
-pub(crate) const SOURCE_PREVIEW_LINE_LIMIT: usize = 240;
+/// Agent-facing previews stay small enough to fit beside graph context in a
+/// single model turn. Callers can use source-search for a different window.
+pub(crate) const SOURCE_PREVIEW_LINE_LIMIT: usize = 48;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphSummary {
@@ -598,6 +600,10 @@ pub struct ImpactReport {
     pub languages: BTreeMap<String, usize>,
     pub areas: BTreeMap<String, usize>,
     pub severity_counts: BTreeMap<String, usize>,
+    /// False for the latency-optimized agent path. Request risks explicitly
+    /// or use refactor-context when repository-wide findings are needed.
+    #[serde(default)]
+    pub risks_evaluated: bool,
     pub impact_score: usize,
     pub dependents: Vec<ImpactDependent>,
     pub truncated: bool,
@@ -967,6 +973,8 @@ pub struct NodeCard {
     pub total_insights: usize,
     pub insight_limit: usize,
     pub truncated_insights: bool,
+    #[serde(default)]
+    pub insights_evaluated: bool,
     #[serde(default)]
     pub actions: Vec<NodeCardAction>,
 }

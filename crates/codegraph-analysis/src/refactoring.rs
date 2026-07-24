@@ -583,7 +583,23 @@ pub const IMPACT_SCHEMA: &str = "codegraph.impact.v1";
 
 pub fn impact(graph: &CodeGraph, request: ImpactRequest) -> Result<ImpactReport, QueryError> {
     let insight_report = insights(graph);
-    impact_with_insights(graph, request, &insight_report)
+    impact_with_insights_mode(graph, request, &insight_report, true)
+}
+
+/// Exact reverse-dependency traversal without the repository-wide insight
+/// pass. Intended for latency-sensitive agent calls.
+pub fn impact_fast(graph: &CodeGraph, request: ImpactRequest) -> Result<ImpactReport, QueryError> {
+    impact_with_insights_mode(
+        graph,
+        request,
+        &InsightReport {
+            total: 0,
+            by_severity: BTreeMap::new(),
+            by_kind: BTreeMap::new(),
+            insights: Vec::new(),
+        },
+        false,
+    )
 }
 
 /// [`impact`] over an already-computed insight report, so bundle callers such
@@ -592,6 +608,15 @@ pub(crate) fn impact_with_insights(
     graph: &CodeGraph,
     request: ImpactRequest,
     insight_report: &InsightReport,
+) -> Result<ImpactReport, QueryError> {
+    impact_with_insights_mode(graph, request, insight_report, true)
+}
+
+pub(crate) fn impact_with_insights_mode(
+    graph: &CodeGraph,
+    request: ImpactRequest,
+    insight_report: &InsightReport,
+    risks_evaluated: bool,
 ) -> Result<ImpactReport, QueryError> {
     let max_depth = request.max_depth.clamp(1, 32);
     let limit = request.limit.clamp(1, 1_000);
@@ -702,8 +727,25 @@ pub(crate) fn impact_with_insights(
     dependents.sort_by(|left, right| {
         left.distance
             .cmp(&right.distance)
+            .then_with(|| left.is_test.cmp(&right.is_test))
+            .then_with(|| dependent_source_path(left).cmp(dependent_source_path(right)))
             .then_with(|| left.node.label.cmp(&right.node.label))
     });
+    // A class may be referenced by dozens of methods in one large UI file.
+    // Put one representative from each source file first so a bounded agent
+    // response preserves repository-wide recall before listing repetitions.
+    let mut represented_paths = BTreeSet::new();
+    let mut representatives = Vec::new();
+    let mut repetitions = Vec::new();
+    for dependent in dependents {
+        if represented_paths.insert(dependent_source_path(&dependent).to_string()) {
+            representatives.push(dependent);
+        } else {
+            repetitions.push(dependent);
+        }
+    }
+    representatives.extend(repetitions);
+    let mut dependents = representatives;
     affected_entrypoints.sort_by(|left, right| {
         left.distance
             .cmp(&right.distance)
@@ -734,11 +776,21 @@ pub(crate) fn impact_with_insights(
         languages,
         areas,
         severity_counts,
+        risks_evaluated,
         impact_score,
         dependents,
         truncated: truncated || listed_truncated,
         suggested_commands,
     })
+}
+
+pub(crate) fn dependent_source_path(dependent: &ImpactDependent) -> &str {
+    dependent
+        .node
+        .span
+        .as_ref()
+        .map(|span| span.path.as_str())
+        .unwrap_or(dependent.node.label.as_str())
 }
 
 /// Copy-paste-ready CLI follow-ups for an impact report: inspect the target,

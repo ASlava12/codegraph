@@ -574,6 +574,8 @@ class App {}
 mixin Bootable {}
 extension AppExt on App {}
 
+App buildApp() => App();
+
 void main() {
   const port = String.fromEnvironment('PORT', defaultValue: '8080');
   final api = Platform.environment['API_URL'] ?? 'http://localhost';
@@ -623,6 +625,18 @@ void main() {
             && item.label == "runApp"
             && item.parent.as_deref() == Some("main")
     }));
+    assert!(
+        parsed
+            .type_references
+            .iter()
+            .any(|reference| reference.label == "App")
+    );
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| { item.kind == ParsedItemKind::Function && item.label == "buildApp" })
+    );
 
     let port = parsed
         .items

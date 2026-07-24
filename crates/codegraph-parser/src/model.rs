@@ -23,7 +23,18 @@ pub enum ParseError {
 pub struct ParsedFile {
     pub language: Language,
     pub items: Vec<ParsedItem>,
+    /// Named type usages kept separate from structural items so the indexer
+    /// can resolve them after every file-level type declaration is known.
+    #[serde(default)]
+    pub type_references: Vec<ParsedTypeReference>,
     pub has_error_nodes: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParsedTypeReference {
+    pub label: String,
+    pub span: SourceSpan,
+    pub parent: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

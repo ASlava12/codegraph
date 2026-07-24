@@ -13,7 +13,7 @@ use thiserror::Error;
 use crate::*;
 
 pub const DEFAULT_MAX_FILE_SIZE: u64 = 2 * 1024 * 1024;
-pub(crate) const PARSE_CACHE_SCHEMA_VERSION: u32 = 1;
+pub(crate) const PARSE_CACHE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Error)]
 pub enum IndexError {

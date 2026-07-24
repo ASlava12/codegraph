@@ -38,7 +38,7 @@ pub fn trace_config(graph: &CodeGraph, request: ConfigTraceRequest) -> ConfigTra
     let max_depth = request.max_depth.clamp(1, 32);
     let limit = request.limit.clamp(1, 500);
     let target = request.target.trim().to_string();
-    let matched_targets: Vec<_> = graph
+    let mut matched_targets: Vec<_> = graph
         .nodes
         .iter()
         .filter(|node| {
@@ -47,6 +47,22 @@ pub fn trace_config(graph: &CodeGraph, request: ConfigTraceRequest) -> ConfigTra
         })
         .cloned()
         .collect();
+    matched_targets.sort_by(|left, right| {
+        let left_path = left
+            .span
+            .as_ref()
+            .map(|span| span.path.as_str())
+            .unwrap_or(left.label.as_str());
+        let right_path = right
+            .span
+            .as_ref()
+            .map(|span| span.path.as_str())
+            .unwrap_or(right.label.as_str());
+        is_test_like_source_path(left_path)
+            .cmp(&is_test_like_source_path(right_path))
+            .then_with(|| left_path.cmp(right_path))
+            .then_with(|| left.id.cmp(&right.id))
+    });
 
     let mut matches = Vec::new();
     let mut total_readers = 0;

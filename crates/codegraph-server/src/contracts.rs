@@ -397,6 +397,7 @@ pub(crate) struct ImpactQuery {
     pub(crate) target: String,
     pub(crate) depth: Option<usize>,
     pub(crate) limit: Option<usize>,
+    pub(crate) include_risks: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -517,6 +518,7 @@ pub(crate) struct NodeCardQuery {
     pub(crate) edge_limit: Option<usize>,
     pub(crate) source_context: Option<u32>,
     pub(crate) insight_limit: Option<usize>,
+    pub(crate) include_insights: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

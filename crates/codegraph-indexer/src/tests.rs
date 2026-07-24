@@ -19,9 +19,11 @@ fn scan_project_skips_default_ignored_directories() {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::create_dir_all(root.join("target")).unwrap();
     fs::create_dir_all(root.join(".codegraph")).unwrap();
+    fs::create_dir_all(root.join("graphify-out")).unwrap();
     fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
     fs::write(root.join("target").join("debug.log"), "noise\n").unwrap();
     fs::write(root.join(".codegraph").join("graph.json"), "{}\n").unwrap();
+    fs::write(root.join("graphify-out").join("graph.json"), "{}\n").unwrap();
 
     let graph = scan_project(&root, &IndexOptions::default()).unwrap();
     let labels: Vec<_> = graph.nodes.iter().map(|node| node.label.as_str()).collect();
@@ -31,6 +33,8 @@ fn scan_project_skips_default_ignored_directories() {
     assert!(!labels.contains(&"target/debug.log"));
     assert!(!labels.contains(&".codegraph"));
     assert!(!labels.contains(&".codegraph/graph.json"));
+    assert!(!labels.contains(&"graphify-out"));
+    assert!(!labels.contains(&"graphify-out/graph.json"));
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -2159,12 +2163,116 @@ fn scan_project_marks_ambiguous_call_edges() {
         .filter(|edge| edge.metadata.get("call_label").map(String::as_str) == Some("parse"))
         .collect::<Vec<_>>();
 
-    assert_eq!(ambiguous_edges.len(), 2);
-    assert!(
-        ambiguous_edges.iter().all(|edge| {
-            edge.metadata.get("resolution").map(String::as_str) == Some("ambiguous")
-        })
+    assert_eq!(ambiguous_edges.len(), 1);
+    assert_eq!(
+        ambiguous_edges[0]
+            .metadata
+            .get("resolution")
+            .map(String::as_str),
+        Some("ambiguous")
     );
+    let placeholder = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == ambiguous_edges[0].target)
+        .expect("bounded ambiguity placeholder");
+    assert_eq!(placeholder.kind, NodeKind::ExternalDependency);
+    assert_eq!(
+        placeholder
+            .metadata
+            .get("candidate_count")
+            .map(String::as_str),
+        Some("2")
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn call_resolution_never_crosses_languages() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(
+        root.join("src").join("main.rs"),
+        "fn main() { shared(); }\nfn shared() {}\n",
+    )
+    .unwrap();
+    fs::write(root.join("lib").join("main.dart"), "void shared() {}\n").unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let rust_main = function_id_in_file(&graph, "main", "src/main.rs");
+    let rust_shared = function_id_in_file(&graph, "shared", "src/main.rs");
+    let calls = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.source == rust_main && edge.kind == EdgeKind::Calls)
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].target, rust_shared);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn dart_type_references_link_consumers_without_fanout() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(
+        root.join("lib").join("service.dart"),
+        "class GroupService {}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib").join("consumer.dart"),
+        "GroupService? current;\nGroupService make() => GroupService();\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let service = node_id(&graph, NodeKind::Type, "GroupService");
+    let consumer = function_id_in_file(&graph, "make", "lib/consumer.dart");
+    let type_edges = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.target == service
+                && edge.kind == EdgeKind::References
+                && matches!(
+                    edge.metadata.get("relation").map(String::as_str),
+                    Some("type_reference" | "constructor_reference")
+                )
+        })
+        .collect::<Vec<_>>();
+    assert!(type_edges.iter().any(|edge| edge.source == consumer));
+    assert!(type_edges.len() <= 2, "one edge per consumer source");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn stable_ids_survive_unrelated_file_additions() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    let before = scan_project(&root, &IndexOptions::default()).unwrap();
+    let stable_before = before
+        .nodes
+        .iter()
+        .find(|node| node.label == "main")
+        .and_then(|node| node.metadata.get("stable_id"))
+        .cloned()
+        .expect("stable id");
+
+    fs::write(root.join("src").join("added.rs"), "fn added() {}\n").unwrap();
+    let after = scan_project(&root, &IndexOptions::default()).unwrap();
+    let stable_after = after
+        .nodes
+        .iter()
+        .find(|node| node.label == "main")
+        .and_then(|node| node.metadata.get("stable_id"))
+        .expect("stable id after rescan");
+    assert_eq!(stable_before, stable_after.as_str());
 
     fs::remove_dir_all(root).unwrap();
 }

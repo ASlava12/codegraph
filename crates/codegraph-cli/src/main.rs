@@ -28,17 +28,17 @@ use codegraph_analysis::{
     TraceRequest, TraceStart, WorkflowFilters, WorkflowQueryRequest, WorkflowRequest,
     architecture_map, check_insights, communities, compact_query_result, component_contract,
     component_dependencies, entrypoints, explain_edge, filter_insight_report, hotspots, impact,
-    insights, journey, language_dependencies, natural_query, project_report,
+    impact_fast, insights, journey, language_dependencies, natural_query, project_report,
     project_report_markdown, query_graph, read_source_preview, refactor_context, seams,
     search_source, summarize, surprising_links, trace, trace_config, trace_dependents,
-    trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_mermaid,
-    workflow_query,
+    trace_entrypoints, trace_errors, validate_query_expression, workflow, workflow_entrypoints,
+    workflow_mermaid, workflow_query,
 };
 use codegraph_analysis::{
     DEFAULT_MERMAID_EDGE_LIMIT, DEFAULT_MERMAID_NODE_LIMIT, DEFAULT_SVG_EDGE_LIMIT,
     DEFAULT_SVG_NODE_LIMIT, MermaidSection, export_cypher, export_dot, export_falkordb,
     export_graph_mermaid_html, export_graphml, export_mermaid_html, export_ndjson, export_svg,
-    node_card,
+    node_card, node_card_fast,
 };
 use codegraph_core::NodeId;
 use codegraph_indexer::{
@@ -676,8 +676,12 @@ enum Command {
         depth: usize,
 
         /// Maximum listed dependents.
-        #[arg(long, default_value_t = 100)]
+        #[arg(long, default_value_t = 40)]
         limit: usize,
+
+        /// Include repository-wide risks (slower; refactor-context also includes them).
+        #[arg(long)]
+        include_risks: bool,
 
         /// Include hidden files and directories.
         #[arg(long)]
@@ -1111,7 +1115,7 @@ enum Command {
         depth: usize,
 
         /// Maximum trace paths to return.
-        #[arg(long, default_value_t = 50)]
+        #[arg(long, default_value_t = 8)]
         limit: usize,
 
         /// Include hidden files and directories.
@@ -1452,7 +1456,7 @@ struct NodeCardArgs {
     node_id: u64,
 
     /// Maximum neighboring edges to include.
-    #[arg(long, default_value_t = 80)]
+    #[arg(long, default_value_t = 24)]
     edge_limit: usize,
 
     /// Source context lines around the node span.
@@ -1462,6 +1466,10 @@ struct NodeCardArgs {
     /// Maximum related insights to include.
     #[arg(long, default_value_t = 8)]
     insight_limit: usize,
+
+    /// Include repository-wide insights related to this node (slower).
+    #[arg(long)]
+    include_insights: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2220,6 +2228,7 @@ fn main() -> Result<()> {
             compact,
             cache,
         } => {
+            validate_query_expression(&expression)?;
             let graph = scan_with_options(
                 path.clone(),
                 include_hidden,
@@ -2479,13 +2488,15 @@ fn main() -> Result<()> {
             path,
             depth,
             limit,
+            include_risks,
             include_hidden,
             include_ignored,
             cache,
         } => {
             let graph =
                 scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
-            let report = impact(
+            let impact_builder = if include_risks { impact } else { impact_fast };
+            let report = impact_builder(
                 &graph,
                 ImpactRequest {
                     target,
@@ -2592,7 +2603,12 @@ fn main() -> Result<()> {
                 max_file_size,
                 &args.scan.cache,
             )?;
-            let card = node_card(
+            let card_builder = if args.include_insights {
+                node_card
+            } else {
+                node_card_fast
+            };
+            let card = card_builder(
                 &graph,
                 Some(&args.scan.path),
                 NodeCardRequest {

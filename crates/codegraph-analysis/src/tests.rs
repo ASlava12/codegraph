@@ -2842,6 +2842,7 @@ fn impact_reports_blast_radius_with_risk_weighted_score() {
     .expect("impact report");
 
     assert_eq!(report.target.label, "load_config");
+    assert!(report.risks_evaluated);
     assert_eq!(report.total_dependents, 3);
     assert_eq!(report.affected_entrypoints.len(), 1);
     assert_eq!(
@@ -2873,6 +2874,19 @@ fn impact_reports_blast_radius_with_risk_weighted_score() {
             format!("codegraph refactor-context {target} . --from {entrypoint}"),
         ]
     );
+
+    let fast = impact_fast(
+        &graph,
+        ImpactRequest {
+            target: "load_config".to_string(),
+            max_depth: 8,
+            limit: 100,
+        },
+    )
+    .expect("fast impact report");
+    assert!(!fast.risks_evaluated);
+    assert_eq!(fast.total_dependents, report.total_dependents);
+    assert_eq!(fast.affected_tests, report.affected_tests);
 
     let missing = impact(
         &graph,

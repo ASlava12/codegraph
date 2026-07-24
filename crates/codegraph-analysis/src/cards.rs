@@ -12,12 +12,33 @@ use crate::*;
 pub fn node_context(graph: &CodeGraph, node_id: NodeId, edge_limit: usize) -> Option<NodeContext> {
     let node = graph.nodes.iter().find(|node| node.id == node_id)?.clone();
     let edge_limit = edge_limit.clamp(1, 500);
-    let matched_edges: Vec<_> = graph
+    let mut matched_edges: Vec<_> = graph
         .edges
         .iter()
         .enumerate()
         .filter(|(_, edge)| edge.source == node_id || edge.target == node_id)
         .collect();
+    matched_edges.sort_by(|(left_index, left), (right_index, right)| {
+        let left_neighbor = if left.source == node_id {
+            left.target
+        } else {
+            left.source
+        };
+        let right_neighbor = if right.source == node_id {
+            right.target
+        } else {
+            right.source
+        };
+        let left_path = graph_node_source_path(graph, left_neighbor);
+        let right_path = graph_node_source_path(graph, right_neighbor);
+        card_edge_rank(left)
+            .cmp(&card_edge_rank(right))
+            .then_with(|| {
+                is_test_like_source_path(left_path).cmp(&is_test_like_source_path(right_path))
+            })
+            .then_with(|| left_path.cmp(right_path))
+            .then_with(|| left_index.cmp(right_index))
+    });
     let total_edges = matched_edges.len();
     let edges: Vec<_> = matched_edges
         .into_iter()
@@ -47,10 +68,62 @@ pub fn node_context(graph: &CodeGraph, node_id: NodeId, edge_limit: usize) -> Op
     })
 }
 
+pub(crate) fn graph_node_source_path(graph: &CodeGraph, node_id: NodeId) -> &str {
+    graph
+        .nodes
+        .iter()
+        .find(|node| node.id == node_id)
+        .map(|node| {
+            node.span
+                .as_ref()
+                .map(|span| span.path.as_str())
+                .unwrap_or(node.label.as_str())
+        })
+        .unwrap_or("")
+}
+
+pub(crate) fn card_edge_rank(edge: &Edge) -> (u8, u8) {
+    let kind = match edge.kind {
+        EdgeKind::Contains => 0,
+        EdgeKind::Calls => 1,
+        EdgeKind::References | EdgeKind::Defines | EdgeKind::Entrypoint => 2,
+        EdgeKind::ReadsConfig | EdgeKind::ReadsEnvironment => 3,
+        EdgeKind::Imports | EdgeKind::DependsOn => 4,
+        EdgeKind::MayError => 5,
+    };
+    let confidence = match edge.confidence {
+        codegraph_core::Confidence::Exact => 0,
+        codegraph_core::Confidence::Semantic => 1,
+        codegraph_core::Confidence::Syntactic => 2,
+        codegraph_core::Confidence::Heuristic => 3,
+        codegraph_core::Confidence::Unknown => 4,
+    };
+    (kind, confidence)
+}
+
 pub fn node_card(
     graph: &CodeGraph,
     root: Option<&Path>,
     request: NodeCardRequest,
+) -> io::Result<Option<NodeCard>> {
+    node_card_impl(graph, root, request, true)
+}
+
+/// Bounded node card for latency-sensitive CLI/API/MCP agent calls. Global
+/// findings remain available through [`node_card`] and the insights tool.
+pub fn node_card_fast(
+    graph: &CodeGraph,
+    root: Option<&Path>,
+    request: NodeCardRequest,
+) -> io::Result<Option<NodeCard>> {
+    node_card_impl(graph, root, request, false)
+}
+
+pub(crate) fn node_card_impl(
+    graph: &CodeGraph,
+    root: Option<&Path>,
+    request: NodeCardRequest,
+    include_insights: bool,
 ) -> io::Result<Option<NodeCard>> {
     let NodeCardRequest {
         node_id,
@@ -66,7 +139,11 @@ pub fn node_card(
         None => None,
     };
     let insight_limit = insight_limit.clamp(1, 500);
-    let related_insights = node_card_related_insights(graph, &context.node);
+    let related_insights = if include_insights {
+        node_card_related_insights(graph, &context.node)
+    } else {
+        Vec::new()
+    };
     let insight_summary = node_insight_summary(&related_insights);
     let total_insights = related_insights.len();
     let insights = related_insights.into_iter().take(insight_limit).collect();
@@ -82,6 +159,7 @@ pub fn node_card(
         total_insights,
         insight_limit,
         truncated_insights: insight_limit < total_insights,
+        insights_evaluated: include_insights,
     }))
 }
 

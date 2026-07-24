@@ -270,8 +270,61 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     let pending_calls = std::mem::take(&mut context.pending_calls);
 
     for call in pending_calls {
-        let targets = resolve_function_targets(&context.function_symbols, &call.label);
+        let all_targets = resolve_function_targets(&context.function_symbols, &call.label);
+        let caller_path = graph_node(&context.graph, call.caller)
+            .and_then(|node| node.span.as_ref())
+            .map(|span| span.path.as_str());
+        let language_targets = all_targets
+            .into_iter()
+            .filter(|target| {
+                graph_node(&context.graph, *target)
+                    .and_then(|node| node.metadata.get("language"))
+                    .is_some_and(|language| language == &call.language)
+            })
+            .collect::<Vec<_>>();
+        let local_targets = caller_path
+            .map(|path| {
+                language_targets
+                    .iter()
+                    .copied()
+                    .filter(|target| {
+                        graph_node(&context.graph, *target)
+                            .and_then(|node| node.span.as_ref())
+                            .is_some_and(|span| span.path == path)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let targets = if local_targets.is_empty() {
+            language_targets
+        } else {
+            local_targets
+        };
         if targets.is_empty() {
+            let type_targets = resolve_function_targets(&context.type_symbols, &call.label)
+                .into_iter()
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.metadata.get("language"))
+                        .is_some_and(|language| language == &call.language)
+                })
+                .collect::<Vec<_>>();
+            if type_targets.len() == 1 {
+                add_edge_once_with_metadata(
+                    context,
+                    call.caller,
+                    type_targets[0],
+                    EdgeKind::References,
+                    Confidence::Syntactic,
+                    BTreeMap::from([
+                        ("relation".to_string(), "constructor_reference".to_string()),
+                        ("type_label".to_string(), call.label),
+                        ("language".to_string(), call.language),
+                        ("line".to_string(), call.span.start_line.to_string()),
+                    ]),
+                );
+                continue;
+            }
             let key = (call.language.clone(), call.label.clone());
             let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
                 *id
@@ -305,16 +358,62 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             continue;
         }
 
+        // A syntactic label such as `build`, `read`, or `close` is often
+        // shared by hundreds of methods. Connecting the caller to every
+        // matching declaration invents dependencies and makes E grow toward
+        // O(call-sites * duplicate-labels). Preserve the uncertainty as one
+        // bounded node instead; semantic enrichment can replace it later.
+        if targets.len() > 1 {
+            let key = (call.language.clone(), call.label.clone());
+            let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
+                *id
+            } else {
+                let mut metadata = BTreeMap::new();
+                metadata.insert("language".to_string(), call.language.clone());
+                metadata.insert("parser".to_string(), "tree-sitter".to_string());
+                metadata.insert("item_kind".to_string(), "call".to_string());
+                metadata.insert("resolution".to_string(), "ambiguous".to_string());
+                metadata.insert("candidate_count".to_string(), targets.len().to_string());
+                let sample = targets
+                    .iter()
+                    .filter_map(|target| graph_node(&context.graph, *target))
+                    .take(5)
+                    .map(|node| {
+                        node.span
+                            .as_ref()
+                            .map(|span| format!("{}:{}", span.path, node.label))
+                            .unwrap_or_else(|| node.label.clone())
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                metadata.insert("candidate_sample".to_string(), sample);
+                let id = context.graph.add_node_with_metadata(
+                    NodeKind::ExternalDependency,
+                    call.label.clone(),
+                    Some(call.span.clone()),
+                    metadata,
+                );
+                context.unresolved_call_placeholders.insert(key, id);
+                id
+            };
+            add_edge_once_with_metadata(
+                context,
+                call.caller,
+                call_id,
+                EdgeKind::Calls,
+                Confidence::Heuristic,
+                BTreeMap::from([
+                    ("call_label".to_string(), call.label),
+                    ("resolution".to_string(), "ambiguous".to_string()),
+                    ("language".to_string(), call.language),
+                ]),
+            );
+            continue;
+        }
+
         let mut metadata = BTreeMap::new();
         metadata.insert("call_label".to_string(), call.label.clone());
-        metadata.insert(
-            "resolution".to_string(),
-            if targets.len() > 1 {
-                "ambiguous".to_string()
-            } else {
-                "resolved".to_string()
-            },
-        );
+        metadata.insert("resolution".to_string(), "resolved".to_string());
         metadata.insert("language".to_string(), call.language);
 
         for target in targets {
@@ -328,6 +427,115 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             );
         }
     }
+}
+
+pub(crate) fn resolve_pending_type_references(context: &mut IndexContext) {
+    let pending = std::mem::take(&mut context.pending_type_references);
+    let mut seen = BTreeSet::new();
+
+    for reference in pending {
+        let source_path = graph_node(&context.graph, reference.source)
+            .and_then(|node| node.span.as_ref())
+            .map(|span| span.path.as_str());
+        let targets = resolve_function_targets(&context.type_symbols, &reference.label)
+            .into_iter()
+            .filter(|target| {
+                let Some(node) = graph_node(&context.graph, *target) else {
+                    return false;
+                };
+                let same_language = node
+                    .metadata
+                    .get("language")
+                    .is_some_and(|language| language == &reference.language);
+                let same_file = source_path
+                    .is_some_and(|path| node.span.as_ref().is_some_and(|span| span.path == path));
+                same_language && !same_file
+            })
+            .collect::<Vec<_>>();
+
+        // Type labels are exact only when one declaration exists in the
+        // scanned language. Multiple declarations remain unresolved instead
+        // of manufacturing fan-out edges.
+        if targets.len() != 1 {
+            continue;
+        }
+        let target = targets[0];
+        if !seen.insert((reference.source, target)) {
+            continue;
+        }
+        add_edge_once_with_metadata(
+            context,
+            reference.source,
+            target,
+            EdgeKind::References,
+            Confidence::Syntactic,
+            BTreeMap::from([
+                ("relation".to_string(), "type_reference".to_string()),
+                ("type_label".to_string(), reference.label),
+                ("language".to_string(), reference.language),
+                ("line".to_string(), reference.span.start_line.to_string()),
+            ]),
+        );
+    }
+}
+
+pub(crate) fn graph_node(graph: &CodeGraph, id: NodeId) -> Option<&codegraph_core::Node> {
+    id.0.checked_sub(1)
+        .and_then(|index| graph.nodes.get(index as usize))
+        .filter(|node| node.id == id)
+        .or_else(|| graph.nodes.iter().find(|node| node.id == id))
+}
+
+/// Attach a location-derived identity that does not change when unrelated
+/// files add or remove earlier numeric nodes. Numeric `n42` ids stay as the
+/// compact in-memory key; `stable_id` is the durable handle for agents,
+/// bookmarks, and cross-scan investigation memory.
+pub(crate) fn annotate_stable_node_ids(graph: &mut CodeGraph) {
+    let mut used = BTreeSet::new();
+    for node in &mut graph.nodes {
+        let path = node
+            .span
+            .as_ref()
+            .map(|span| span.path.as_str())
+            .or_else(|| (node.kind == NodeKind::File).then_some(node.label.as_str()))
+            .unwrap_or("");
+        let (line, column) = node
+            .span
+            .as_ref()
+            .map(|span| (span.start_line, span.start_column))
+            .unwrap_or((0, 0));
+        let canonical = format!(
+            "{}\0{}\0{}\0{}\0{}\0{}\0{}",
+            node_kind_name(&node.kind),
+            path,
+            node.label,
+            line,
+            column,
+            node.metadata
+                .get("language")
+                .map(String::as_str)
+                .unwrap_or(""),
+            node.metadata
+                .get("item_kind")
+                .map(String::as_str)
+                .unwrap_or("")
+        );
+        let mut hash = stable_fnv1a64(canonical.as_bytes());
+        while !used.insert(hash) {
+            hash = hash.wrapping_add(1);
+        }
+        node.metadata
+            .insert("stable_id".to_string(), format!("cg-{hash:016x}"));
+    }
+}
+
+pub(crate) fn stable_fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {

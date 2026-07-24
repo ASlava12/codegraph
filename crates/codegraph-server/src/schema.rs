@@ -1110,7 +1110,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "edge_limit",
                             false,
                             "usize",
-                            Some("80"),
+                            Some("24"),
                             "Maximum context edges.",
                         )
                         .with_range(1, MAX_NODE_CONTEXT_EDGE_LIMIT)
@@ -1153,6 +1153,13 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                         )
                         .with_range(1, MAX_NODE_CARD_INSIGHT_LIMIT)
                         .with_capability_limit("max_node_card_insight_limit"),
+                        query_param(
+                            "include_insights",
+                            false,
+                            "bool",
+                            Some("false"),
+                            "Run repository-wide insight analysis for related risks.",
+                        ),
                     ],
                     "NodeCard",
                 )
@@ -1445,6 +1452,13 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "Maximum workflow blocks per entrypoint.",
                         )
                         .with_range(1, 1_000),
+                        query_param(
+                            "include_risks",
+                            false,
+                            "bool",
+                            Some("false"),
+                            "Run repository-wide risk analysis and include it in the score.",
+                        ),
                         query_param(
                             "max_fanout",
                             false,
@@ -1867,7 +1881,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "edge_limit",
                             false,
                             "usize",
-                            Some("100"),
+                            Some("40"),
                             "Maximum listed contract edges.",
                         )
                         .with_range(1, 500),
@@ -2938,6 +2952,12 @@ pub(crate) fn node_card_response_fields() -> Vec<ApiParameterSpec> {
             "Whether more related risks exist beyond the limit.",
         ),
         response_field(
+            "insights_evaluated",
+            true,
+            "bool",
+            "Whether repository-wide insights were evaluated for this card.",
+        ),
+        response_field(
             "actions",
             true,
             "NodeCardAction[]",
@@ -3666,6 +3686,12 @@ pub(crate) fn impact_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "map<string,usize>",
             "Risk severity counts across dependents.",
+        ),
+        response_field(
+            "risks_evaluated",
+            true,
+            "bool",
+            "Whether repository-wide risks were evaluated for this report.",
         ),
         response_field(
             "impact_score",
