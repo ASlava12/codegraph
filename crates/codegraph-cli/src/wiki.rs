@@ -187,6 +187,7 @@ pub fn export_wiki(graph: &CodeGraph, output_dir: &Path, label: &str) -> Result<
         if let Some(location) = node_location(node) {
             configs_md.push_str(&format!("- Location: {}\n", md_escape(&location)));
         }
+        let mut seen_readers = std::collections::BTreeSet::new();
         let mut readers = Vec::new();
         for edge in &graph.edges {
             let other = if edge.target == node.id {
@@ -196,11 +197,16 @@ pub fn export_wiki(graph: &CodeGraph, output_dir: &Path, label: &str) -> Result<
             } else {
                 continue;
             };
+            // A reader connected through several edges must list once; stop
+            // scanning as soon as the cap is reached.
             if let Some(reader) = node_labels.get(&other.0)
                 && !matches!(reader.kind, NodeKind::Repository | NodeKind::Directory)
-                && readers.len() < READERS_PER_CONFIG
+                && seen_readers.insert(other)
             {
                 readers.push(format!("`{}`", md_escape(&reader.label)));
+                if readers.len() >= READERS_PER_CONFIG {
+                    break;
+                }
             }
         }
         if !readers.is_empty() {

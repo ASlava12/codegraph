@@ -1,7 +1,9 @@
 [package]
 name = "codegraph-cli"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 # The clap command and every generated artifact (MCP config in install.rs, git
 # hooks in hooks.rs, the docs) invoke the tool as `codegraph`, so the installed

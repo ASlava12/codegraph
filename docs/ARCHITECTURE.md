@@ -176,9 +176,10 @@ Responsibilities:
 - serve the static web application
 - keep UI graph pages, query focus, path navigation/highlighting, trace, entrypoint trace, config trace, error trace, source search, cache diagnostics, insight checks, semantic work queue focus, and agent clients on the same JSON graph model
 
-Future crate: optionally `codegraph-ui`.
-
-A Tauri shell can wrap the web UI later for desktop distribution. The UI should visualize the graph without owning analysis logic.
+`codegraph-ui` is the desktop launcher: it spawns (or attaches to) a local
+`codegraph-server`, waits for its health endpoint, and wraps the web UI in a
+native WebView window (tao/wry), killing the child server when the window
+closes. The UI visualizes the graph without owning analysis logic.
 
 ## Confidence Model
 

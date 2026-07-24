@@ -114,6 +114,10 @@ pub fn merge_graphs(mut inputs: Vec<MergeInput>, label: &str) -> Result<(CodeGra
 
     let mut merged = CodeGraph::new(label);
     let mut key_to_id: BTreeMap<String, NodeId> = BTreeMap::new();
+    // id -> position in merged.nodes, so duplicate-node metadata merging is a
+    // map lookup instead of a linear scan (O(n^2) when re-merging near-equal
+    // graphs, the common case).
+    let mut id_to_position: BTreeMap<NodeId, usize> = BTreeMap::from([(merged.root, 0)]);
     let mut contributor_counts: BTreeMap<NodeId, usize> = BTreeMap::new();
     let mut conflicts = Vec::new();
     let mut truncated = false;
@@ -128,11 +132,10 @@ pub fn merge_graphs(mut inputs: Vec<MergeInput>, label: &str) -> Result<(CodeGra
             if let Some(&existing_id) = key_to_id.get(&key) {
                 remap.insert(node.id, existing_id);
                 *contributor_counts.entry(existing_id).or_insert(1) += 1;
-                let existing = merged
-                    .nodes
-                    .iter_mut()
-                    .find(|candidate| candidate.id == existing_id)
-                    .expect("merged node exists");
+                let position = *id_to_position
+                    .get(&existing_id)
+                    .expect("merged node position exists");
+                let existing = merged.nodes.get_mut(position).expect("merged node exists");
                 for (field, value) in &node.metadata {
                     match existing.metadata.get(field) {
                         None => {
@@ -168,6 +171,7 @@ pub fn merge_graphs(mut inputs: Vec<MergeInput>, label: &str) -> Result<(CodeGra
                     metadata,
                 );
                 key_to_id.insert(key, id);
+                id_to_position.insert(id, merged.nodes.len() - 1);
                 remap.insert(node.id, id);
             }
         }

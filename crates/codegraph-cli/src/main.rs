@@ -495,8 +495,9 @@ enum Command {
         #[arg(long)]
         note: Option<String>,
 
-        /// Linked graph node ids; repeat for multiple nodes.
-        #[arg(long = "node-id")]
+        /// Linked graph node ids (numeric or n-prefixed, e.g. 42 or n42);
+        /// repeat for multiple nodes.
+        #[arg(long = "node-id", value_parser = parse_cli_node_id)]
         node_ids: Vec<u64>,
 
         /// Include hidden files and directories in the fingerprint.

@@ -281,7 +281,9 @@ reads or grep sweeps — it answers structural questions in one bounded call.\n\
 \n\
 Over MCP, the `codegraph` server (see `.mcp.json`) exposes `query_graph`,\n\
 `get_node_card`, `get_neighbors`, `shortest_path`, `workflow`, `insights`,\n\
-`impact`, and `report` tools with the same graph answers.\n\
+`impact`, `report`, `ask`, `source_search`, `refactor_context`, and the\n\
+`memory_save`/`memory_list`/`memory_reflect` investigation-memory tools with\n\
+the same graph answers.\n\
 {GUIDANCE_END}"
     )
 }
