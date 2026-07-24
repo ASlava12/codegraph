@@ -17,7 +17,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use walkdir::WalkDir;
 
-const CACHE_SCHEMA_VERSION: u32 = 4;
+// v5: dropped the duplicated impact index from the record (the chunk index
+// carries the same per-path node/edge scopes), halving index bloat on disk.
+const CACHE_SCHEMA_VERSION: u32 = 5;
 const CHUNK_ID_PREVIEW_LIMIT: usize = 20;
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
@@ -239,21 +241,8 @@ struct CacheRecord {
     options_hash: String,
     fingerprint: ProjectFingerprint,
     #[serde(default)]
-    impact_index: GraphImpactIndex,
-    #[serde(default)]
     chunk_index: GraphChunkIndex,
     graph: CodeGraph,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct GraphImpactIndex {
-    by_path: BTreeMap<String, GraphImpactScope>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct GraphImpactScope {
-    node_ids: Vec<u64>,
-    edge_indexes: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -583,7 +572,7 @@ impl GraphCache {
         Ok(incremental_plan_from_fingerprints(
             self,
             &record.fingerprint,
-            &record.impact_index,
+            &record.chunk_index,
             current,
             limit,
         ))
@@ -663,7 +652,7 @@ impl GraphCache {
         let plan = incremental_plan_from_fingerprints(
             self,
             &record.fingerprint,
-            &record.impact_index,
+            &record.chunk_index,
             current,
             limit,
         );
@@ -688,7 +677,6 @@ impl GraphCache {
                 let changed_graph = scan_project_paths(root, &scan_options, &scan_paths)?;
                 merge_graph_preview(
                     &record.graph,
-                    &record.impact_index,
                     &record.chunk_index,
                     &changed_graph,
                     &scan_paths,
@@ -769,7 +757,6 @@ impl GraphCache {
             root: cache_root(root),
             options_hash: options_hash(options),
             fingerprint,
-            impact_index: graph_indexes.impact,
             chunk_index: graph_indexes.chunks,
             graph: graph.clone(),
         };
@@ -1119,7 +1106,7 @@ fn incremental_plan_without_record(
 fn incremental_plan_from_fingerprints(
     cache: &GraphCache,
     previous: &ProjectFingerprint,
-    impact_index: &GraphImpactIndex,
+    chunk_index: &GraphChunkIndex,
     current: ProjectFingerprint,
     limit: usize,
 ) -> IncrementalScanPlan {
@@ -1183,7 +1170,7 @@ fn incremental_plan_from_fingerprints(
         impacted_node_ids,
         impacted_edge_indexes,
         impact_truncated,
-    ) = graph_impact_from_index(impact_index, &impacted_paths, limit);
+    ) = graph_impact_from_index(chunk_index, &impacted_paths, limit);
 
     let changed_files = rescan_files + removed_files;
     let action = if changed_files == 0 {
@@ -1242,7 +1229,6 @@ fn incremental_plan_from_fingerprints(
 }
 
 struct GraphIndexes {
-    impact: GraphImpactIndex,
     chunks: GraphChunkIndex,
 }
 
@@ -1299,22 +1285,7 @@ fn build_graph_indexes(graph: &CodeGraph) -> GraphIndexes {
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let impact = GraphImpactIndex {
-        by_path: by_path
-            .iter()
-            .map(|(path, scope)| {
-                (
-                    path.clone(),
-                    GraphImpactScope {
-                        node_ids: scope.node_ids.clone(),
-                        edge_indexes: scope.edge_indexes.clone(),
-                    },
-                )
-            })
-            .collect(),
-    };
     GraphIndexes {
-        impact,
         chunks: GraphChunkIndex { by_path },
     }
 }
@@ -1354,7 +1325,7 @@ fn chunk_index_totals(index: &GraphChunkIndex) -> (usize, usize) {
 }
 
 fn graph_impact_from_index(
-    index: &GraphImpactIndex,
+    index: &GraphChunkIndex,
     paths: &BTreeSet<String>,
     limit: usize,
 ) -> (usize, usize, Vec<u64>, Vec<usize>, bool) {
@@ -1380,7 +1351,7 @@ fn graph_impact_from_index(
 }
 
 fn graph_scope_from_index(
-    index: &GraphImpactIndex,
+    index: &GraphChunkIndex,
     paths: &BTreeSet<String>,
 ) -> (BTreeSet<u64>, BTreeSet<usize>) {
     let mut node_ids = BTreeSet::new();
@@ -1425,7 +1396,6 @@ fn complete_merge_report(
 
 fn merge_graph_preview(
     cached: &CodeGraph,
-    index: &GraphImpactIndex,
     chunks: &GraphChunkIndex,
     changed: &CodeGraph,
     scan_paths: &BTreeSet<String>,
@@ -1433,7 +1403,7 @@ fn merge_graph_preview(
 ) -> (CodeGraph, IncrementalMergeReport) {
     let mut replaced_paths = scan_paths.clone();
     replaced_paths.extend(removed_paths.iter().cloned());
-    let (removed_node_ids, removed_edge_indexes) = graph_scope_from_index(index, &replaced_paths);
+    let (removed_node_ids, removed_edge_indexes) = graph_scope_from_index(chunks, &replaced_paths);
     let (chunk_removed_nodes, chunk_removed_edges) =
         graph_chunk_counts_from_index(chunks, &replaced_paths);
     let incoming_blockers =
@@ -1997,19 +1967,12 @@ mod tests {
         graph.add_edge(file, function, EdgeKind::Contains, Confidence::Exact);
 
         let indexes = build_graph_indexes(&graph);
-        let impact_scope = indexes
-            .impact
-            .by_path
-            .get("src/main.rs")
-            .expect("expected impact scope for source file");
         let chunk_scope = indexes
             .chunks
             .by_path
             .get("src/main.rs")
             .expect("expected graph chunk scope for source file");
 
-        assert_eq!(impact_scope.node_ids, vec![file.0, function.0]);
-        assert_eq!(impact_scope.edge_indexes, vec![0]);
         assert_eq!(chunk_scope.node_ids, vec![file.0, function.0]);
         assert_eq!(chunk_scope.edge_indexes, vec![0]);
         assert_eq!(chunk_scope.nodes, 2);
