@@ -3813,10 +3813,15 @@ pub(crate) fn resolve_node_reference(graph: &CodeGraph, value: &str) -> Option<N
         })
         .or_else(|| graph.nodes.iter().find(|node| node.label == value))
         .or_else(|| {
-            graph
+            // Substring fallback only when it is unambiguous: with several
+            // candidates the winner would be whichever node happens to come
+            // first, silently binding the query to the wrong symbol.
+            let mut matches = graph
                 .nodes
                 .iter()
-                .find(|node| text_matches(&node.label, value))
+                .filter(|node| text_matches(&node.label, value));
+            let first = matches.next()?;
+            matches.next().is_none().then_some(first)
         })
         .map(|node| node.id)
 }

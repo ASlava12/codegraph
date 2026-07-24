@@ -9317,3 +9317,28 @@ fn temp_analysis_root() -> std::path::PathBuf {
     ))
 }
 
+#[test]
+fn node_reference_substring_fallback_requires_a_unique_match() {
+    // With several substring candidates the old fallback bound to whichever
+    // node came first — nondeterministic relative to the user's intent.
+    let mut graph = CodeGraph::new("repo");
+    graph.add_node(NodeKind::Function, "handler_v2");
+    graph.add_node(NodeKind::Function, "handler_v3");
+    let unique = graph.add_node(NodeKind::Function, "load_config_once");
+
+    assert_eq!(
+        resolve_node_reference(&graph, "handler"),
+        None,
+        "ambiguous substring must not resolve"
+    );
+    assert_eq!(
+        resolve_node_reference(&graph, "load_config"),
+        Some(unique),
+        "unique substring still resolves"
+    );
+    assert_eq!(
+        resolve_node_reference(&graph, "handler_v2"),
+        Some(codegraph_core::NodeId(2)),
+        "exact label wins regardless of substring ambiguity"
+    );
+}

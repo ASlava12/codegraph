@@ -469,17 +469,20 @@ fn required_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("missing required string argument `{key}`"))
 }
 
+// Out-of-range or non-integer JSON values saturate to the nearest bound
+// instead of silently truncating (`as` wraps modulo) or silently falling back
+// to the default; downstream clamps then bring them into the documented range.
 fn usize_arg(args: &Value, key: &str, default: usize) -> usize {
     args.get(key)
         .and_then(Value::as_u64)
-        .map(|value| value as usize)
+        .map(|value| usize::try_from(value).unwrap_or(usize::MAX))
         .unwrap_or(default)
 }
 
 fn u32_arg(args: &Value, key: &str, default: u32) -> u32 {
     args.get(key)
         .and_then(Value::as_u64)
-        .map(|value| value as u32)
+        .map(|value| u32::try_from(value).unwrap_or(u32::MAX))
         .unwrap_or(default)
 }
 
