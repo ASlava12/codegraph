@@ -713,14 +713,21 @@ pub(crate) async fn refactor_context_api(
     .map_err(|error| ApiError::bad_request(error.to_string()))?;
     if let Some(span) = bundle.target.span.clone() {
         let source_root = resolve_scan_root(&state, query.path.as_deref())?;
-        bundle.target_source = read_source_preview(
-            &source_root,
-            std::path::Path::new(&span.path),
-            span.start_line,
-            span.end_line,
-            query.source_context.unwrap_or(6).min(50),
-        )
-        .ok();
+        let context = query.source_context.unwrap_or(6).min(50);
+        // File I/O off the async runtime thread, like the `source` handler.
+        bundle.target_source = tokio::task::spawn_blocking(move || {
+            read_source_preview(
+                &source_root,
+                std::path::Path::new(&span.path),
+                span.start_line,
+                span.end_line,
+                context,
+            )
+            .ok()
+        })
+        .await
+        .ok()
+        .flatten();
     }
     Ok(Json(bundle))
 }

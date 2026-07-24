@@ -288,7 +288,6 @@ pub(crate) async fn list_semantic_jobs(
     let mut list: Vec<_> = jobs
         .values()
         .filter(|job| status.is_none_or(|status| job.status == status))
-        .cloned()
         .map(semantic_job_without_result)
         .collect();
     sort_semantic_jobs_recent_first(&mut list);
@@ -311,7 +310,6 @@ pub(crate) async fn semantic_job_status(
     let jobs = state.semantic_jobs.read().await;
     let job = jobs
         .get(&id)
-        .cloned()
         .ok_or_else(|| ApiError::not_found("semantic job not found"))?;
     Ok(Json(semantic_job_without_result(job)))
 }
@@ -322,7 +320,7 @@ pub(crate) async fn cancel_semantic_job(
 ) -> Result<Json<SemanticJob>, ApiError> {
     let job =
         cancel_semantic_job_in_store(&state.semantic_jobs, &id, state.max_semantic_jobs).await?;
-    Ok(Json(semantic_job_without_result(job)))
+    Ok(Json(semantic_job_without_result(&job)))
 }
 
 pub(crate) async fn semantic_job_events(
@@ -341,7 +339,7 @@ pub(crate) async fn semantic_job_events(
         loop {
             let job = {
                 let jobs = jobs.read().await;
-                jobs.get(&id).cloned().map(semantic_job_without_result)
+                jobs.get(&id).map(semantic_job_without_result)
             };
 
             let Some(job) = job else {

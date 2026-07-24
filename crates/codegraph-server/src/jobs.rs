@@ -182,7 +182,6 @@ pub(crate) async fn list_scan_jobs(
     let mut list: Vec<_> = jobs
         .values()
         .filter(|job| status.is_none_or(|status| job.status == status))
-        .cloned()
         .map(job_without_graph)
         .collect();
     sort_scan_jobs_recent_first(&mut list);
@@ -205,7 +204,6 @@ pub(crate) async fn scan_job_status(
     let jobs = state.jobs.read().await;
     let job = jobs
         .get(&id)
-        .cloned()
         .ok_or_else(|| ApiError::not_found("scan job not found"))?;
     Ok(Json(job_without_graph(job)))
 }
@@ -215,7 +213,7 @@ pub(crate) async fn cancel_scan_job(
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<ScanJob>, ApiError> {
     let job = cancel_scan_job_in_store(&state.jobs, &id, state.max_scan_jobs).await?;
-    Ok(Json(job_without_graph(job)))
+    Ok(Json(job_without_graph(&job)))
 }
 
 pub(crate) async fn scan_job_events(
@@ -234,7 +232,7 @@ pub(crate) async fn scan_job_events(
         loop {
             let job = {
                 let jobs = jobs.read().await;
-                jobs.get(&id).cloned().map(job_without_graph)
+                jobs.get(&id).map(job_without_graph)
             };
 
             let Some(job) = job else {
@@ -608,12 +606,39 @@ pub(crate) fn unix_seconds() -> u64 {
         .as_secs()
 }
 
-pub(crate) fn job_without_graph(mut job: ScanJob) -> ScanJob {
-    job.graph = None;
-    job
+/// Clone a job for API responses without cloning the embedded graph — the
+/// graph can be hundreds of MB, and list/status/SSE paths cloned it every
+/// 350ms tick only to discard it.
+pub(crate) fn job_without_graph(job: &ScanJob) -> ScanJob {
+    ScanJob {
+        id: job.id.clone(),
+        status: job.status,
+        path: job.path.clone(),
+        message: job.message.clone(),
+        created_at_unix: job.created_at_unix,
+        updated_at_unix: job.updated_at_unix,
+        finished_at_unix: job.finished_at_unix,
+        cache: job.cache.clone(),
+        summary: job.summary.clone(),
+        graph: None,
+    }
 }
 
-pub(crate) fn semantic_job_without_result(mut job: SemanticJob) -> SemanticJob {
-    job.result = None;
-    job
+/// Clone a semantic job for API responses without cloning the embedded result
+/// graph (strip-before-clone; see job_without_graph).
+pub(crate) fn semantic_job_without_result(job: &SemanticJob) -> SemanticJob {
+    SemanticJob {
+        id: job.id.clone(),
+        status: job.status,
+        path: job.path.clone(),
+        message: job.message.clone(),
+        created_at_unix: job.created_at_unix,
+        updated_at_unix: job.updated_at_unix,
+        finished_at_unix: job.finished_at_unix,
+        responses: job.responses,
+        response_errors: job.response_errors,
+        unmatched_locations: job.unmatched_locations,
+        report: job.report.clone(),
+        result: None,
+    }
 }

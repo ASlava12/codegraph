@@ -93,6 +93,10 @@ pub(crate) async fn api_auth_middleware(
         header::WWW_AUTHENTICATE,
         HeaderValue::from_static("Bearer realm=\"CodeGraph API\""),
     );
+    // The auth layer sits outside the header layers, so a short-circuited 401
+    // would otherwise ship without CSP/cache headers.
+    apply_security_headers(response.headers_mut());
+    apply_cache_headers_for_path(request.uri().path(), response.headers_mut());
     response
 }
 
