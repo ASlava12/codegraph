@@ -390,7 +390,9 @@ function buildClientInsights(graph) {
     } else if (node.metadata?.syntax_errors === "true") {
       insights.push({
         kind: "syntax_error",
-        severity: "warning",
+        // A limit of the extraction rather than a defect in the code; kept
+        // in step with the server's own severity.
+        severity: "info",
         message: `${node.label} contains syntax error nodes`,
         nodeId: node.id,
       });

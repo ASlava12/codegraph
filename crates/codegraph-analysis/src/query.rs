@@ -4309,8 +4309,13 @@ pub(crate) fn add_parse_error_insights(graph: &CodeGraph, insights: &mut Vec<Ins
             .is_some_and(|value| value == "true")
         {
             insights.push(Insight {
+                // An error node says the grammar did not cover something,
+                // not that the code is broken: redis's `src/bio.c` compiles
+                // and tree-sitter-c still stumbles over its macros. This is
+                // a limit of the extraction, so it is reported as one — 686
+                // of the corpus warnings were the parser's own reach.
                 kind: "syntax_error".to_string(),
-                severity: InsightSeverity::Warning,
+                severity: InsightSeverity::Info,
                 message: format!("{} contains syntax error nodes", node.label),
                 nodes: vec![node.id],
                 edges: Vec::new(),
