@@ -109,6 +109,14 @@ pub struct IncrementalMergeBlocker {
 pub struct CacheInfo {
     pub status: CacheStatus,
     pub dir: Option<String>,
+    /// Whether this scan's graph reached the cache. A failed write never
+    /// fails a scan, but without this the next scan misses again and
+    /// nothing says why -- a cache directory that is not writable looks
+    /// exactly like a project that keeps changing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stored: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -865,6 +873,8 @@ pub fn scan_project_cached_cancelable(
             cache: CacheInfo {
                 status: CacheStatus::Disabled,
                 dir: None,
+                stored: None,
+                store_error: None,
             },
         });
     };
@@ -876,6 +886,8 @@ pub fn scan_project_cached_cancelable(
             cache: CacheInfo {
                 status: CacheStatus::Hit,
                 dir: Some(cache.dir().display().to_string()),
+                stored: None,
+                store_error: None,
             },
         });
     }
@@ -884,12 +896,19 @@ pub fn scan_project_cached_cancelable(
         .clone()
         .with_parse_cache_dir(cache.dir().join("parse-facts"));
     let graph = scan_project_cancelable(root, &scan_options, cancel)?;
-    let _ = cache.store(root, options, fingerprint, &graph);
+    // A cache that cannot be written must not fail the scan, but the
+    // reason belongs in the answer.
+    let store_error = cache
+        .store(root, options, fingerprint, &graph)
+        .err()
+        .map(|error| error.to_string());
     Ok(CachedScan {
         graph,
         cache: CacheInfo {
             status: CacheStatus::Miss,
             dir: Some(cache.dir().display().to_string()),
+            stored: Some(store_error.is_none()),
+            store_error,
         },
     })
 }
@@ -1829,6 +1848,48 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn a_cache_that_cannot_be_written_says_so() {
+        let root = temp_project_root();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+        // Outside the project: a cache inside it would change the
+        // fingerprint the moment it is written.
+        let cache_dir = root.with_extension("read-only-cache");
+        fs::create_dir_all(&cache_dir).unwrap();
+        let mut permissions = fs::metadata(&cache_dir).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&cache_dir, permissions).unwrap();
+        let cache = GraphCache::new(cache_dir.clone());
+        let options = IndexOptions::default();
+
+        // The scan still answers: a cache is an optimisation.
+        let scan = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert!(scan.graph.nodes.iter().any(|node| node.label == "main"));
+        assert_eq!(scan.cache.status, CacheStatus::Miss);
+        // ...but the next scan will miss again, and this says why.
+        assert_eq!(scan.cache.stored, Some(false));
+        assert!(
+            scan.cache.store_error.is_some(),
+            "a failed store must carry its reason"
+        );
+
+        let mut permissions = fs::metadata(&cache_dir).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        fs::set_permissions(&cache_dir, permissions).unwrap();
+        let stored = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(stored.cache.stored, Some(true));
+        assert!(stored.cache.store_error.is_none());
+        // A hit has nothing to store.
+        let hit = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(hit.cache.status, CacheStatus::Hit);
+        assert_eq!(hit.cache.stored, None);
+
+        fs::remove_dir_all(root).ok();
+        fs::remove_dir_all(cache_dir).ok();
+    }
 
     #[test]
     fn an_interrupted_write_does_not_sit_in_the_cache_forever() {
