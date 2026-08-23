@@ -537,18 +537,84 @@ fn parses_rust_environment_default_values() {
 }
 
 #[test]
+fn erlang_and_haskell_export_lists_are_read() {
+    // Both write the list at the top of the file, and what is not on it
+    // cannot be called from another module. A module that gives no list at
+    // all gives everything.
+    // A call carries the same label as the function it names, so the
+    // definition is what this looks for.
+    let visibility_of = |path: &str, source: &[u8], language: Language, label: &str| -> String {
+        parse_source(path, source, language)
+            .unwrap()
+            .items
+            .iter()
+            .find(|item| {
+                item.label == label
+                    && matches!(
+                        item.kind,
+                        ParsedItemKind::Function | ParsedItemKind::Entrypoint
+                    )
+            })
+            .and_then(|item| item.metadata.get("visibility").cloned())
+            .unwrap_or_else(|| format!("no `{label}` in {path}"))
+    };
+
+    let erlang = b"-module(demo).\n-export([start/1]).\n-export_type([state/0]).\n\nstart(Args) -> helper(Args).\nhelper(Args) -> Args.\n";
+    assert_eq!(
+        visibility_of("demo.erl", erlang, Language::Erlang, "start"),
+        "public"
+    );
+    // `-export_type` lists types, not functions, and does not let `helper`
+    // out.
+    assert_eq!(
+        visibility_of("demo.erl", erlang, Language::Erlang, "helper"),
+        "private"
+    );
+
+    let open = b"-module(demo).\n-compile(export_all).\n\nhelper(Args) -> Args.\n";
+    assert_eq!(
+        visibility_of("demo.erl", open, Language::Erlang, "helper"),
+        "public"
+    );
+
+    let haskell = b"module ShellCheck.Checker (checkScript) where\n\ncheckScript :: String -> Int\ncheckScript s = helper s\n\nhelper :: String -> Int\nhelper s = 1\n";
+    assert_eq!(
+        visibility_of("Checker.hs", haskell, Language::Haskell, "checkScript"),
+        "public"
+    );
+    assert_eq!(
+        visibility_of("Checker.hs", haskell, Language::Haskell, "helper"),
+        "private"
+    );
+
+    let everything = b"module Main where\n\nhelper :: Int\nhelper = 1\n";
+    assert_eq!(
+        visibility_of("Main.hs", everything, Language::Haskell, "helper"),
+        "public"
+    );
+}
+
+#[test]
 fn every_language_that_states_its_visibility_is_read() {
     // A library's coverage finding counts what it exports, and a function
     // nobody calls is either dead or the API. Both need the language to be
     // read where it says so: `static` in C, `local` in Lua, `defp` in
     // Elixir, `pub` in Zig, a modifier in C#, PHP, Swift and Scala, and a
     // leading underscore in Dart.
+    // A call carries the same label as the function it names, so the
+    // definition is what this looks for.
     let visibility_of = |path: &str, source: &[u8], language: Language, label: &str| -> String {
         parse_source(path, source, language)
             .unwrap()
             .items
             .iter()
-            .find(|item| item.label == label)
+            .find(|item| {
+                item.label == label
+                    && matches!(
+                        item.kind,
+                        ParsedItemKind::Function | ParsedItemKind::Entrypoint
+                    )
+            })
             .and_then(|item| item.metadata.get("visibility").cloned())
             .unwrap_or_else(|| format!("no `{label}` in {path}"))
     };

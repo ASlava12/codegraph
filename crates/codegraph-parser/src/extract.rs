@@ -763,6 +763,17 @@ pub(crate) fn visibility_label(
             Some("pub") => "public",
             _ => "private",
         }),
+        // Erlang and Haskell write the list at the top of the file: what is
+        // not on it cannot be called from another module. A module that
+        // gives no list at all gives everything.
+        Language::Erlang => Some(match erlang_exported_names(source) {
+            Some(exported) if !exported.contains(label) => "private",
+            _ => "public",
+        }),
+        Language::Haskell => Some(match haskell_exported_names(source) {
+            Some(exported) if !exported.contains(label) => "private",
+            _ => "public",
+        }),
         // Dart reads a leading underscore as library-private, as Python
         // reads it as a contract.
         Language::Dart => Some(if label.starts_with('_') {
@@ -797,6 +808,105 @@ fn modifier_visibility(node: Node<'_>, source: &[u8]) -> Option<&'static str> {
             text.split(|character: char| !character.is_alphanumeric())
                 .any(|word| word == *keyword)
         })
+}
+
+/// The names an Erlang module lets out, or `None` when it lets out
+/// everything: a module with no `-export` attribute at all, or one that
+/// says `-compile(export_all)`. `-export_type` lists types, not functions.
+fn erlang_exported_names(source: &[u8]) -> Option<BTreeSet<String>> {
+    let text = std::str::from_utf8(source).ok()?;
+    let mut names = BTreeSet::new();
+    let mut declared = false;
+    let mut collecting = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('%') {
+            continue;
+        }
+        if trimmed.contains("export_all") {
+            return None;
+        }
+        let body = if collecting {
+            trimmed
+        } else if let Some(rest) = trimmed.strip_prefix("-export(") {
+            declared = true;
+            collecting = true;
+            rest.trim_start().trim_start_matches('[')
+        } else {
+            continue;
+        };
+        let end = body.find(']');
+        for entry in body[..end.unwrap_or(body.len())].split(',') {
+            let name = entry.split('/').next().unwrap_or_default().trim();
+            if !name.is_empty() {
+                names.insert(name.to_string());
+            }
+        }
+        if end.is_some() {
+            collecting = false;
+        }
+    }
+    declared.then_some(names)
+}
+
+/// The names a Haskell module lists after its own, or `None` when it lists
+/// nothing and so exports everything. `Type(..)` and `module X` re-exports
+/// are left alone: only a plain name answers for a function.
+fn haskell_exported_names(source: &[u8]) -> Option<BTreeSet<String>> {
+    let text = std::str::from_utf8(source).ok()?;
+    let start = if text.starts_with("module ") {
+        0
+    } else {
+        text.find("\nmodule ")? + 1
+    };
+    let header = &text[start..];
+    let open = header.find('(')?;
+    if header
+        .find(" where")
+        .is_some_and(|where_index| where_index < open)
+    {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut end = None;
+    for (index, character) in header[open..].char_indices() {
+        match character {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(open + index);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let list = &header[open + 1..end?];
+    let mut names = BTreeSet::new();
+    let mut depth = 0usize;
+    for entry in list.split(|character: char| {
+        match character {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        character == ',' && depth == 0
+    }) {
+        let name = entry
+            .split('(')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .rsplit('.')
+            .next()
+            .unwrap_or_default()
+            .trim();
+        if !name.is_empty() {
+            names.insert(name.to_string());
+        }
+    }
+    Some(names)
 }
 
 /// Whether a Lua function is bound by a `local` declaration. `local
