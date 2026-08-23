@@ -141,7 +141,39 @@ pub(crate) fn bounded_quality_gate(mut check: CheckReport, sample_limit: usize) 
     check
 }
 
+/// Where one unresolved import points, as far as anything can tell. A
+/// relative target means a different file from each directory it is
+/// written in, so it is resolved against the file that wrote it; anything
+/// else is looked up on a search path and names the same missing file
+/// wherever it appears.
+fn missing_import_key(source: &str, target: &str) -> String {
+    if !target.starts_with('.') {
+        return target.to_string();
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    let directory = source.rsplit_once('/').map(|(head, _)| head).unwrap_or("");
+    for part in directory.split('/').chain(target.split('/')) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            value => parts.push(value),
+        }
+    }
+    parts.join("/")
+}
+
+struct MissingImport {
+    target: String,
+    sources: BTreeSet<String>,
+    production_source: bool,
+    nodes: BTreeSet<NodeId>,
+    edges: Vec<usize>,
+}
+
 pub(crate) fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let mut missing: BTreeMap<String, MissingImport> = BTreeMap::new();
     for node in &graph.nodes {
         if node.kind != NodeKind::ExternalDependency
             || node
@@ -164,6 +196,11 @@ pub(crate) fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: 
             .get("import_target")
             .map(String::as_str)
             .unwrap_or(node.label.as_str());
+        // `. ./$cache_file` names whatever the script put in that variable,
+        // so there is no file to go looking for.
+        if target.contains('$') {
+            continue;
+        }
         let edges = incoming_edge_indexes(graph, node.id, EdgeKind::Imports);
         let source = edges
             .first()
@@ -173,31 +210,54 @@ pub(crate) fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: 
         // Imports inside inline test modules or test-convention files are
         // fixture wiring, not production dead links, mirroring the
         // benchmark-oracle test exclusions (Phase 9 dogfooding).
-        let severity = if node
+        let production = !node
             .metadata
             .get("test_context")
             .is_some_and(|value| value == "true")
-            || is_test_like_source_path(source)
-        {
-            InsightSeverity::Info
-        } else {
-            InsightSeverity::Warning
-        };
+            && !is_test_like_source_path(source);
 
+        let entry = missing
+            .entry(missing_import_key(source, target))
+            .or_insert_with(|| MissingImport {
+                target: target.to_string(),
+                sources: BTreeSet::new(),
+                production_source: false,
+                nodes: BTreeSet::new(),
+                edges: Vec::new(),
+            });
+        entry.sources.insert(source.to_string());
+        entry.production_source |= production;
+        entry.nodes.insert(node.id);
+        entry.nodes.extend(
+            edges
+                .iter()
+                .filter_map(|index| graph.edges.get(*index).map(|edge| edge.source)),
+        );
+        entry.edges.extend(edges);
+    }
+
+    // 63 of redis's files include the same generated jemalloc header, and
+    // saying so 63 times says nothing the first one did not.
+    for entry in missing.into_values() {
+        let sources = format_backtick_list(entry.sources.iter().map(String::as_str), 3);
+        let verb = if entry.sources.len() == 1 {
+            "imports"
+        } else {
+            "import"
+        };
+        let target = entry.target;
         insights.push(Insight {
             kind: "unresolved_local_import".to_string(),
-            severity,
+            severity: if entry.production_source {
+                InsightSeverity::Warning
+            } else {
+                InsightSeverity::Info
+            },
             message: format!(
-                "`{source}` imports local target `{target}` but no matching file was found"
+                "{sources} {verb} local target `{target}` but no matching file was found"
             ),
-            nodes: std::iter::once(node.id)
-                .chain(
-                    edges
-                        .iter()
-                        .filter_map(|index| graph.edges.get(*index).map(|edge| edge.source)),
-                )
-                .collect(),
-            edges,
+            nodes: entry.nodes.into_iter().collect(),
+            edges: entry.edges,
         });
     }
 }

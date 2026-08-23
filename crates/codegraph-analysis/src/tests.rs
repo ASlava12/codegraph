@@ -7532,6 +7532,70 @@ fn one_unreachable_reader_and_key_is_one_finding() {
 }
 
 #[test]
+fn one_missing_file_is_one_finding() {
+    // 63 of redis's source files include the same generated jemalloc
+    // header. The same sentence 63 times says nothing the first one did
+    // not, while `./utils` written in two directories means two files.
+    let mut graph = CodeGraph::new("repo");
+    let unresolved = |graph: &mut CodeGraph, source: &str, target: &str| {
+        let file = graph.add_node(NodeKind::File, source);
+        let import = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            format!("#include \"{target}\""),
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "import".to_string()),
+                ("import_scope".to_string(), "local".to_string()),
+                ("resolution".to_string(), "unresolved".to_string()),
+                ("import_target".to_string(), target.to_string()),
+            ]),
+        );
+        graph.add_edge(file, import, EdgeKind::Imports, Confidence::Syntactic);
+    };
+    unresolved(&mut graph, "src/arena.c", "jemalloc/internal/preamble.h");
+    unresolved(&mut graph, "src/base.c", "jemalloc/internal/preamble.h");
+    unresolved(&mut graph, "src/bin.c", "jemalloc/internal/preamble.h");
+    unresolved(&mut graph, "packages/a/index.ts", "./utils");
+    unresolved(&mut graph, "packages/b/index.ts", "./utils");
+    unresolved(&mut graph, "configure", "./$cache_file");
+
+    let report = insights(&graph);
+    let found: Vec<&Insight> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "unresolved_local_import")
+        .collect();
+
+    assert_eq!(found.len(), 3, "{found:?}");
+    let header = found
+        .iter()
+        .find(|insight| insight.message.contains("preamble.h"))
+        .expect("the shared header");
+    assert!(
+        header.message.starts_with(
+            "`src/arena.c`, `src/base.c`, `src/bin.c` import local target `jemalloc/internal/preamble.h`"
+        ),
+        "{}",
+        header.message
+    );
+    assert_eq!(header.edges.len(), 3, "every include stays as evidence");
+    assert_eq!(
+        found
+            .iter()
+            .filter(|insight| insight.message.contains("`./utils`"))
+            .count(),
+        2,
+        "the same spelling in two directories is two files"
+    );
+    assert!(
+        found
+            .iter()
+            .all(|insight| !insight.message.contains("cache_file")),
+        "a target the script computes names no file"
+    );
+}
+
+#[test]
 fn insights_report_low_entrypoint_coverage() {
     let mut graph = CodeGraph::new("repo");
     let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
