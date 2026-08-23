@@ -6431,6 +6431,32 @@ fn insights_report_unresolved_makefile_command_paths() {
         ]),
     );
 
+    // `go run ./tools/protobuf-compile .` names a package directory, which
+    // is neither a file nor missing.
+    let directory_target = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "make target:protobuf",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "makefile_target".to_string()),
+            (
+                "command".to_string(),
+                "go run ./tools/protobuf-compile .".to_string(),
+            ),
+            (
+                "command_path".to_string(),
+                "tools/protobuf-compile".to_string(),
+            ),
+        ]),
+    );
+    graph.add_edge(
+        graph.root,
+        directory_target,
+        EdgeKind::Entrypoint,
+        Confidence::Exact,
+    );
+    graph.add_node(NodeKind::Directory, "tools/protobuf-compile");
+
     let report = insights(&graph);
     let insight = report
         .insights
@@ -6443,7 +6469,9 @@ fn insights_report_unresolved_makefile_command_paths() {
     assert!(insight.message.contains("scripts/deploy.sh"));
     assert!(!report.insights.iter().any(|insight| {
         insight.kind == "unresolved_makefile_command_path"
-            && (insight.nodes.contains(&resolved) || insight.nodes.contains(&shell_only))
+            && (insight.nodes.contains(&resolved)
+                || insight.nodes.contains(&shell_only)
+                || insight.nodes.contains(&directory_target))
     }));
 }
 

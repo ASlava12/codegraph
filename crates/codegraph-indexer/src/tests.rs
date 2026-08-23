@@ -910,6 +910,35 @@ fn scan_project_uses_persistent_parse_cache_records() {
 }
 
 #[test]
+fn a_command_names_the_path_the_shell_would_run() {
+    // `(cd ..; ./runtest)` runs the script one directory up from the
+    // Makefile that says so, not next to it.
+    assert_eq!(
+        normalized_command_path_candidate("src/Makefile", "(cd ..; ./runtest)"),
+        Some("runtest".to_string())
+    );
+    assert_eq!(
+        normalized_command_path_candidate("src/Makefile", "./redis-server test all"),
+        Some("src/redis-server".to_string())
+    );
+
+    // A make variable, a Go package walk, text to read, and where the
+    // output goes: none of them is a file in the project.
+    for command in [
+        "./$(REDIS_BENCHMARK_NAME)",
+        "go generate ./...",
+        "echo \"Please specify AE_DIR (e.g. <redis repository>/src)\"",
+        "(cd hiredis && $(MAKE) clean) > /dev/null || true",
+    ] {
+        assert_eq!(
+            normalized_command_path_candidate("deps/hiredis/Makefile", command),
+            None,
+            "{command}"
+        );
+    }
+}
+
+#[test]
 fn a_typescript_import_finds_the_file_typescript_would() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src").join("template")).unwrap();

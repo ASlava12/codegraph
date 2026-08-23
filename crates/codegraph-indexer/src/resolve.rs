@@ -2751,10 +2751,46 @@ pub(crate) fn normalized_command_path_candidate(
     manifest_label: &str,
     command: &str,
 ) -> Option<String> {
-    split_command_tokens(command)
+    command_paths(command)
         .into_iter()
-        .filter(|token| is_command_path_candidate(token))
         .find_map(|path| normalize_manifest_relative_path(manifest_label, &path))
+}
+
+/// The paths a command names, in the order it names them.
+///
+/// `(cd ..; ./runtest)` runs `runtest` one directory up, so a leading `cd`
+/// moves what everything after it is relative to. `echo "see <repo>/src"`
+/// names nothing: what follows `echo` is text for a person to read.
+fn command_paths(command: &str) -> Vec<String> {
+    let mut tokens = split_command_tokens(command);
+    let mut base = None;
+    if tokens.first().is_some_and(|token| token == "cd") && tokens.len() > 1 {
+        base = Some(tokens.remove(1));
+        tokens.remove(0);
+    }
+    if tokens.first().is_some_and(|token| token == "echo") {
+        return Vec::new();
+    }
+    let mut paths = Vec::new();
+    let mut redirected = false;
+    for token in tokens {
+        // `> /dev/null` says where the output goes, not what runs.
+        if token
+            .chars()
+            .all(|character| matches!(character, '>' | '<' | '&' | '0'..='9'))
+        {
+            redirected = true;
+            continue;
+        }
+        if std::mem::take(&mut redirected) || !is_command_path_candidate(&token) {
+            continue;
+        }
+        paths.push(match base.as_deref() {
+            Some(base) => format!("{base}/{token}"),
+            None => token,
+        });
+    }
+    paths
 }
 
 pub(crate) fn github_actions_run_command_path_candidate(command: &str) -> Option<String> {
@@ -2762,9 +2798,8 @@ pub(crate) fn github_actions_run_command_path_candidate(command: &str) -> Option
 }
 
 pub(crate) fn root_relative_command_path_candidate(command: &str) -> Option<String> {
-    split_command_tokens(command)
+    command_paths(command)
         .into_iter()
-        .filter(|token| is_command_path_candidate(token))
         .find_map(|path| normalize_relative_path(Path::new(&path)))
 }
 
@@ -2918,10 +2953,15 @@ pub(crate) fn clean_command_token(token: &str) -> Option<String> {
 
 pub(crate) fn is_command_path_candidate(token: &str) -> bool {
     if token.starts_with('-')
-        || token.starts_with('$')
+        // `src/$(REDIS_BENCHMARK_NAME)` is whatever the make variable
+        // holds, wherever the variable appears in the token.
+        || token.contains('$')
         || token.contains("://")
         || token.contains('=')
         || token.contains('*')
+        // `go generate ./...` walks every package under here. The three
+        // dots are the walk, not a directory anybody can open.
+        || token.split('/').any(|segment| segment == "...")
     {
         return false;
     }

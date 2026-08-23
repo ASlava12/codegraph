@@ -1539,6 +1539,12 @@ pub(crate) fn add_unresolved_workflow_command_path_insights(
     insight_kind: &str,
     label_prefix: &str,
 ) {
+    let directories: BTreeSet<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Directory)
+        .map(|node| node.label.as_str())
+        .collect();
     for node in &graph.nodes {
         if node.kind != NodeKind::Entrypoint
             || node
@@ -1565,6 +1571,12 @@ pub(crate) fn add_unresolved_workflow_command_path_insights(
                     .is_some_and(|value| value == resolution)
         });
         if resolved {
+            continue;
+        }
+        // `(cd ../deps && $(MAKE) distclean)` names a directory, and
+        // `go run ./tools/protobuf-compile .` names a package directory.
+        // Neither is a file, and neither is missing.
+        if directories.contains(command_path) {
             continue;
         }
 
