@@ -134,8 +134,9 @@ The biggest remaining work is not architectural feasibility; it is product compl
   sense that matters for CI: the syntactic graph depends only on the sources.
   Since 2026-08 a scan additionally runs a semantic pass when a matching
   language server is installed, which trades bit-for-bit reproducibility across
-  machines for accuracy. That pass is always labeled on the root node
-  (`semantic_enrichment`, `semantic_servers`), its edges carry
+  machines for accuracy. The outcome is always labeled on the root node
+  (`semantic_enrichment` = `applied` with `semantic_servers`, or `skipped`
+  with `semantic_skip_reason`), its edges carry
   `confidence: semantic`, and `--no-semantic` (CLI) / `--no-semantic` (server)
   restores a machine-independent graph — which is what CI must use.
 - Optional model-backed extraction must be explicit, isolated, and provenance-marked.

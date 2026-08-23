@@ -27,7 +27,7 @@ Implemented now:
 - Semantic LSP response patch reports that map definitions, references, and diagnostics back onto graph nodes.
 - Semantic graph patch application that emits enriched graphs with semantic edges and diagnostic nodes.
 - Filesystem scanner with default build/vendor ignore rules.
-- Automatic semantic enrichment: when a language server for a scanned language is installed, the scan asks it to resolve what syntax cannot and applies the result as `confidence: semantic` edges over the syntactic graph. The root node records `semantic_enrichment`/`semantic_servers`, a missing or failing server degrades silently to the syntactic graph, and `--no-semantic` restores a machine-independent scan (use it in CI).
+- Automatic semantic enrichment: when a language server for a scanned language is installed, the scan asks it to resolve what syntax cannot and applies the result as `confidence: semantic` edges over the syntactic graph. The root node records the outcome either way (`semantic_enrichment=applied` with `semantic_servers`, or `semantic_enrichment=skipped` with `semantic_skip_reason`), a missing or failing server degrades to the syntactic graph instead of failing the scan, and `--no-semantic` restores a machine-independent scan (use it in CI).
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, Dart, PHP, Bash, Ruby, Java, C#, Kotlin, Swift, Scala, Lua, Elixir, Zig, Haskell, OCaml, Julia, Erlang, Nix, and R.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
 - Manifest-defined entrypoints from Cargo, npm, Go, Python, setup.py/setup.cfg, Composer, and CMake project metadata.

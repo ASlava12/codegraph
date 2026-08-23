@@ -3990,7 +3990,41 @@ fn graph_languages(graph: &CodeGraph) -> BTreeSet<String> {
 /// the result is always labeled (`semantic_enrichment` on the root node) and
 /// callers that need a reproducible graph — CI gates above all — must disable
 /// it. Server responses are cached, so only the first run pays for the server.
+/// Run the automatic semantic pass and stamp the outcome onto the graph.
+///
+/// Whether a graph is syntax-only matters: the pass depends on which language
+/// servers the machine has, so two scans of the same commit can legitimately
+/// differ. A graph that stayed syntactic said nothing about why — no server,
+/// a failing server, and an explicit `--no-semantic` all looked alike — so the
+/// artifact could not answer the first question asked of it. Now every outcome
+/// is recorded on the root node.
 pub fn auto_enrich_graph(
+    root: &Path,
+    graph: CodeGraph,
+    cache: Option<&SemanticLspCache>,
+    options: &AutoEnrichmentOptions,
+) -> (CodeGraph, AutoEnrichmentReport) {
+    let (mut graph, report) = run_auto_enrichment(root, graph, cache, options);
+    let root_id = graph.root;
+    if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == root_id) {
+        if report.applied {
+            node.metadata
+                .insert("semantic_enrichment".to_string(), "applied".to_string());
+            node.metadata
+                .insert("semantic_servers".to_string(), report.servers.join(","));
+        } else {
+            node.metadata
+                .insert("semantic_enrichment".to_string(), "skipped".to_string());
+            if let Some(reason) = report.skipped_reason.as_deref() {
+                node.metadata
+                    .insert("semantic_skip_reason".to_string(), reason.to_string());
+            }
+        }
+    }
+    (graph, report)
+}
+
+fn run_auto_enrichment(
     root: &Path,
     graph: CodeGraph,
     cache: Option<&SemanticLspCache>,
@@ -4051,7 +4085,7 @@ pub fn auto_enrich_graph(
 
     let patch = semantic_graph_patch_from_responses(root, &graph, &batch, &run.responses);
     let applied = apply_semantic_graph_patch(&graph, &patch);
-    let mut enriched = applied.graph;
+    let enriched = applied.graph;
     let report = AutoEnrichmentReport {
         applied: true,
         servers: servers.clone(),
@@ -4059,13 +4093,6 @@ pub fn auto_enrich_graph(
         replaced_edges: applied.report.replaced_edges,
         skipped_reason: None,
     };
-    let root_id = enriched.root;
-    if let Some(node) = enriched.nodes.iter_mut().find(|node| node.id == root_id) {
-        node.metadata
-            .insert("semantic_enrichment".to_string(), "applied".to_string());
-        node.metadata
-            .insert("semantic_servers".to_string(), servers.join(","));
-    }
     (enriched, report)
 }
 
@@ -4073,6 +4100,31 @@ pub fn auto_enrich_graph(
 mod auto_enrichment_tests {
     use super::*;
     use codegraph_core::NodeKind;
+
+    /// The graph minus the provenance stamp, so a test can assert that the
+    /// facts are untouched while the stamp itself is checked separately.
+    fn without_provenance(graph: &CodeGraph) -> CodeGraph {
+        let mut graph = graph.clone();
+        let root_id = graph.root;
+        if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == root_id) {
+            node.metadata.remove("semantic_enrichment");
+            node.metadata.remove("semantic_skip_reason");
+            node.metadata.remove("semantic_servers");
+        }
+        graph
+    }
+
+    fn skip_stamp(graph: &CodeGraph) -> (Option<String>, Option<String>) {
+        let root = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == graph.root)
+            .expect("missing root");
+        (
+            root.metadata.get("semantic_enrichment").cloned(),
+            root.metadata.get("semantic_skip_reason").cloned(),
+        )
+    }
 
     #[test]
     fn disabled_enrichment_returns_the_graph_untouched() {
@@ -4088,9 +4140,18 @@ mod auto_enrichment_tests {
                 ..AutoEnrichmentOptions::default()
             },
         );
-        assert_eq!(after, before, "a disabled pass must not touch the graph");
+        assert_eq!(
+            without_provenance(&after),
+            before,
+            "a disabled pass must not touch the facts"
+        );
         assert!(!report.applied);
         assert_eq!(report.skipped_reason.as_deref(), Some("disabled"));
+        // The graph says for itself that it is syntax-only, and why.
+        assert_eq!(
+            skip_stamp(&after),
+            (Some("skipped".to_string()), Some("disabled".to_string()))
+        );
     }
 
     #[test]
@@ -4105,11 +4166,18 @@ mod auto_enrichment_tests {
             None,
             &AutoEnrichmentOptions::default(),
         );
-        assert_eq!(after, before);
+        assert_eq!(without_provenance(&after), before);
         assert!(!report.applied);
         assert_eq!(
             report.skipped_reason.as_deref(),
             Some("no languages in graph")
+        );
+        assert_eq!(
+            skip_stamp(&after),
+            (
+                Some("skipped".to_string()),
+                Some("no languages in graph".to_string())
+            )
         );
     }
 
@@ -4130,8 +4198,14 @@ mod auto_enrichment_tests {
             None,
             &AutoEnrichmentOptions::default(),
         );
-        assert_eq!(after, before);
+        assert_eq!(without_provenance(&after), before);
         assert!(!report.applied);
+        assert!(
+            skip_stamp(&after)
+                .1
+                .is_some_and(|reason| reason.contains("no language server")),
+            "the graph must record why it stayed syntactic"
+        );
         assert!(
             report
                 .skipped_reason

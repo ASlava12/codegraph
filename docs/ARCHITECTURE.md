@@ -192,8 +192,11 @@ a patch over the syntactic graph, so the base facts never change; only new
 This is a deliberate trade: two machines with different servers installed
 produce different graphs. It is contained by three rules:
 
-- the root node records `semantic_enrichment` and `semantic_servers`, so any
-  consumer can tell an enriched graph from a syntax-only one;
+- the root node records the outcome either way — `semantic_enrichment=applied`
+  with `semantic_servers`, or `semantic_enrichment=skipped` with
+  `semantic_skip_reason` (`disabled`, no installed server, a server error) — so
+  a consumer can tell an enriched graph from a syntax-only one and knows why
+  this one is what it is;
 - a failing or missing server never fails the scan — it degrades to the
   syntactic graph and reports why;
 - `--no-semantic` disables the pass, which is mandatory for CI gates and any
