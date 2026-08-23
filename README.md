@@ -38,8 +38,9 @@ Implemented now:
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved. Each edge records
   what settled it in `resolution_basis` — the file it sits in, the import that named the module, the
-  package, the enclosing scope, the receiver's declared type, or the name alone — and carries
-  `syntactic` confidence for everything but the last. A call that sits outside
+  package, the file a module is named after, the scope it is written in, the module's exports, the
+  receiver's declared type, the type that owns the method, a set of overloads, or the name alone — and
+  carries `syntactic` confidence for everything but the last. A call that sits outside
   any definition — a module initialiser, `bp.route(...)`, `if __name__ == "__main__": main()` — is attributed
   to the file that runs it; a call inside an unnamed callback is not, because it runs on invocation rather
   than on load.
@@ -53,7 +54,10 @@ Implemented now:
 - SQL query strings in application code are indexed as query cards and linked back to schema table nodes for common `SELECT`, `JOIN`, `INSERT`, `UPDATE`, and `DELETE` references. Only statement-shaped literals count (first token is an SQL keyword; `UPDATE` needs a `SET`, `WITH` needs a `SELECT`), so UI prose such as "Build a workflow from a selected node" no longer produces phantom table references, and queries extracted from inline `#[cfg(test)]` modules or test-convention files carry `test_context` metadata and read as `info` findings, mirroring the benchmark-oracle test exclusions.
 - Local import/include resolution for relative JavaScript/TypeScript imports and CommonJS requires, Python relative/absolute project imports, Go module-local imports, quoted C/C++ includes with CMake and compile database include directories, PHP include/require paths and namespace imports, Bash source paths, and common Rust module paths. Rust glob imports (`use super::*;`) and leading-uppercase item imports (`use crate::SomeType`) are item references, not module files, so they no longer raise `unresolved_local_import` findings; unresolved imports declared by test-convention files read as `info`.
 - Manifest dependency extraction from Cargo, npm/package-lock/pnpm-lock, Go including indirect requirements, Python/Poetry, setup.py/setup.cfg/Pipfile, Composer/composer.lock, vcpkg, Conan, and CMake `find_package` projects.
-- Heuristic config reads, environment reads, and potential error/exception constructs.
+- Heuristic config reads, environment reads, and potential error/exception constructs. A Python
+  application that keeps its configuration in a mapping — `app.config["SECRET_KEY"]`, or
+  `app.config.get("PORT", 8080)` with its fallback — has each key read indexed by name, so asking
+  where a key is read answers with the code that reads it.
 - CLI command that emits graph JSON.
 - HTTP API and embedded web UI for interactive graph exploration.
 - API capabilities endpoint for discovering supported languages, exports, features, limits, cache state, and route groups.
