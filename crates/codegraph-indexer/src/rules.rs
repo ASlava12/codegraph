@@ -366,8 +366,10 @@ pub(crate) fn matching_forbidden_edges(
             {
                 return None;
             }
-            let source = graph.nodes.iter().find(|node| node.id == edge.source)?;
-            let target = graph.nodes.iter().find(|node| node.id == edge.target)?;
+            // Once per edge, so searching the whole node list here made a
+            // rule cost the graph's edges times its nodes.
+            let source = graph_node(graph, edge.source)?;
+            let target = graph_node(graph, edge.target)?;
             if endpoint_rule_matches(
                 source,
                 rule.source_kind.as_deref(),

@@ -1572,6 +1572,18 @@ pub(crate) fn graph_node(graph: &CodeGraph, id: NodeId) -> Option<&codegraph_cor
         .or_else(|| graph.nodes.iter().find(|node| node.id == id))
 }
 
+/// [`graph_node`] for a caller that means to change what it finds.
+pub(crate) fn graph_node_mut(
+    graph: &mut CodeGraph,
+    id: NodeId,
+) -> Option<&mut codegraph_core::Node> {
+    let index = id.0.checked_sub(1).map(|index| index as usize);
+    if index.is_some_and(|index| graph.nodes.get(index).is_some_and(|node| node.id == id)) {
+        return graph.nodes.get_mut(index.unwrap_or_default());
+    }
+    graph.nodes.iter_mut().find(|node| node.id == id)
+}
+
 /// Attach a location-derived identity that does not change when unrelated
 /// files add or remove earlier numeric nodes. Numeric `n42` ids stay as the
 /// compact in-memory key; `stable_id` is the durable handle for agents,
@@ -3244,7 +3256,10 @@ pub(crate) fn add_node_metadata(
     key: &str,
     value: impl Into<String>,
 ) {
-    if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == node_id) {
+    // Nodes are appended in id order, so the id is the index: searching the
+    // whole graph for one node, once per fact, cost terraform's resolve
+    // pass a fifth of its time.
+    if let Some(node) = graph_node_mut(graph, node_id) {
         node.metadata.insert(key.to_string(), value.into());
     }
 }
