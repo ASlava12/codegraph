@@ -7503,3 +7503,79 @@ fn a_call_edge_says_what_settled_it() {
     );
     assert_eq!(by_name.confidence, Confidence::Heuristic);
 }
+
+#[test]
+fn overloads_of_one_method_are_not_a_choice() {
+    // `JsonConvert.SerializeObject` has six signatures, and a caller means
+    // the method rather than one of them — 4419 calls across the corpora
+    // read as ambiguous when every candidate was the same method of the
+    // same type. But a type name is not unique: terraform declares
+    // `Diagnostics.HasErrors` in two packages, two different types, and Go
+    // has no overloads at all.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src").join("alpha")).unwrap();
+    fs::create_dir_all(root.join("src").join("beta")).unwrap();
+    fs::write(
+        root.join("src").join("alpha").join("writer.cs"),
+        "namespace Alpha {\n    public class Writer {\n        public void Write(string value) { }\n        public void Write(int value) { }\n    }\n}\n",
+    )
+    .unwrap();
+    // A different file, so nothing but the overload rule can settle it.
+    fs::write(
+        root.join("src").join("alpha").join("user.cs"),
+        "namespace Alpha {\n    public class User {\n        public void Run(Writer writer) { writer.Write(\"x\"); }\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("alpha").join("diagnostics.go"),
+        "package alpha\n\ntype Diagnostics struct{}\n\nfunc (d Diagnostics) HasErrors() bool { return false }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("alpha").join("check.go"),
+        "package alpha\n\nfunc Check(d Diagnostics) bool { return d.HasErrors() }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("beta").join("other.go"),
+        "package beta\n\ntype Diagnostics struct{}\n\nfunc (d Diagnostics) HasErrors() bool { return true }\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .map(|edge| {
+                (
+                    edge.metadata.get("resolution").cloned().unwrap_or_default(),
+                    edge.metadata
+                        .get("resolution_basis")
+                        .cloned()
+                        .unwrap_or_default(),
+                )
+            })
+            .unwrap_or_default()
+    };
+
+    let (write_resolution, write_basis) = resolution("writer.Write");
+    assert_eq!(write_resolution, "resolved");
+    assert_eq!(write_basis, "overload");
+    let written: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("writer.Write")
+        })
+        .collect();
+    assert_eq!(written.len(), 2, "the call reaches both signatures");
+
+    // Two packages, two types of one name: not overloads.
+    assert_eq!(resolution("d.HasErrors").0, "ambiguous");
+}

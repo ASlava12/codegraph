@@ -961,6 +961,48 @@ fn add_external_call_placeholder(context: &mut IndexContext, call: PendingCall) 
     );
 }
 
+/// Whether every candidate is the same method of the same type: a set of
+/// overloads rather than a choice between unrelated definitions. Requires
+/// an owner, so free functions sharing a name never qualify.
+///
+/// The directory is part of the test because a type name is not unique:
+/// terraform declares `Diagnostics.HasErrors` in both `internal/policy`
+/// and `internal/tfdiags`, two different types that happen to agree on a
+/// name, and Go has no overloads at all. Where a language does overload,
+/// the signatures sit together — a C# partial class or a Swift extension
+/// splits a type across files, not across packages.
+fn one_methods_overloads(graph: &CodeGraph, targets: &[NodeId]) -> bool {
+    let mut owner: Option<String> = None;
+    let mut label: Option<String> = None;
+    let mut directory: Option<String> = None;
+    for target in targets {
+        let Some(node) = graph_node(graph, *target) else {
+            return false;
+        };
+        let Some(node_owner) = node.metadata.get("owner_type") else {
+            return false;
+        };
+        let Some(node_directory) = node.span.as_ref().map(|span| {
+            span.path
+                .rsplit_once('/')
+                .map(|(head, _)| head)
+                .unwrap_or("")
+        }) else {
+            return false;
+        };
+        if owner.get_or_insert_with(|| node_owner.clone()) != node_owner {
+            return false;
+        }
+        if label.get_or_insert_with(|| node.label.clone()) != &node.label {
+            return false;
+        }
+        if directory.get_or_insert_with(|| node_directory.to_string()) != node_directory {
+            return false;
+        }
+    }
+    owner.is_some()
+}
+
 pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     let pending_calls = std::mem::take(&mut context.pending_calls);
 
@@ -1315,12 +1357,23 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             }
         }
 
+        // Overloads are not a choice. `JsonConvert.SerializeObject` has six
+        // signatures, and a caller means the method, not one of them —
+        // 7554 calls across the corpora were reported as ambiguous when
+        // every candidate was the same method of the same type. Swift and
+        // C# spread a type over several files through extensions and
+        // partial classes, so the test is the owner, not the file.
+        let overloads = targets.len() > 1 && one_methods_overloads(&context.graph, &targets);
+        if overloads && basis == "name" {
+            basis = "overload";
+        }
+
         // A syntactic label such as `build`, `read`, or `close` is often
         // shared by hundreds of methods. Connecting the caller to every
         // matching declaration invents dependencies and makes E grow toward
         // O(call-sites * duplicate-labels). Preserve the uncertainty as one
         // bounded node instead; semantic enrichment can replace it later.
-        if targets.len() > 1 {
+        if targets.len() > 1 && !overloads {
             let key = (call.language.clone(), call.label.clone());
             let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
                 *id
