@@ -703,30 +703,67 @@ pub(crate) fn add_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Insi
 /// directory separator or a script extension can name something in the
 /// repository — a flag or a program name cannot.
 pub(crate) fn names_a_path(target: &str) -> bool {
-    target.split_whitespace().any(|token| {
+    path_like_tokens(target).next().is_some()
+}
+
+/// The words of a command that could name something the repository holds.
+fn path_like_tokens(target: &str) -> impl Iterator<Item = &str> {
+    target.split_whitespace().filter_map(|token| {
         let token = token.trim_matches(['"', '\'']);
-        // A flag names nothing, and `lib/**/*.js` is a pattern rather than
-        // a file the repository has to contain.
-        if token.starts_with('-') || token.contains('*') || token.contains('?') {
-            return false;
+        // A flag names nothing, `lib/**/*.js` is a pattern rather than a
+        // file the repository has to contain, and
+        // `http://localhost:3000/x.html` is somewhere else entirely.
+        if token.starts_with('-')
+            || token.contains('*')
+            || token.contains('?')
+            || token.contains("://")
+        {
+            return None;
         }
         if token.contains('/') {
-            return true;
+            return Some(token);
         }
         // `app.main` after `python -m` names a module the repository can
         // hold, and so does anything with a source extension.
         let segments: Vec<&str> = token.split('.').collect();
-        segments.len() >= 2
+        (segments.len() >= 2
             && segments.iter().all(|segment| {
                 !segment.is_empty()
                     && segment
                         .chars()
                         .all(|character| character.is_alphanumeric() || character == '_')
-            })
+            }))
+        .then_some(token)
     })
 }
 
+/// Whether a path sits in a hidden directory the scan never opened. A scan
+/// skips hidden directories unless asked for them, apart from `.github`,
+/// so `node --test .vitepress/search.test.js` names a file nobody looked
+/// for. If the scan did hold something under that directory -- because
+/// hidden files were included, or because it is `.github` -- then it did
+/// look, and a missing file there is a real one.
+fn is_unscanned_hidden_path(scanned_paths: &BTreeSet<&str>, token: &str) -> bool {
+    let Some(directory) = token
+        .split('/')
+        .next()
+        .filter(|segment| segment.starts_with('.') && *segment != "." && *segment != "..")
+    else {
+        return false;
+    };
+    let prefix = format!("{directory}/");
+    !scanned_paths
+        .iter()
+        .any(|path| path.starts_with(&prefix) || *path == directory)
+}
+
 pub(crate) fn add_unresolved_entrypoint_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let scanned_paths: BTreeSet<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, NodeKind::File | NodeKind::Directory))
+        .map(|node| node.label.as_str())
+        .collect();
     for node in &graph.nodes {
         if node.kind != NodeKind::Entrypoint
             || node
@@ -749,6 +786,20 @@ pub(crate) fn add_unresolved_entrypoint_insights(graph: &CodeGraph, insights: &m
         // repository, so there is nothing here that failed to resolve. 44
         // of the 59 unresolved targets across the corpora are of this kind.
         if !names_a_path(target) {
+            continue;
+        }
+        // `vite packages-private/sfc-playground --host` and `npm --prefix
+        // tests/module/cjs run test` name directories that are right
+        // there, and `conventional-changelog -i CHANGELOG.md` a file the
+        // scan holds. None of them failed to resolve; the entrypoint
+        // simply points at something other than a function.
+        if path_like_tokens(target).any(|token| {
+            let token = token
+                .trim_start_matches("./")
+                .trim_end_matches('/')
+                .trim_end_matches('\\');
+            scanned_paths.contains(token) || is_unscanned_hidden_path(&scanned_paths, token)
+        }) {
             continue;
         }
         let resolved = graph.edges.iter().any(|edge| {

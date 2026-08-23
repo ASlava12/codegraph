@@ -10799,6 +10799,54 @@ fn recursion_inside_a_file_is_not_the_coupling_a_cycle_warns_about() {
 }
 
 #[test]
+fn an_entrypoint_pointing_at_a_directory_or_a_url_resolved_fine() {
+    // `vite packages-private/sfc-playground --host` names a directory that
+    // is right there, `open http://localhost:3000/x.html` names somewhere
+    // else entirely, and `node --test .vitepress/search.test.js` names a
+    // file inside a directory the scan never opened.
+    let mut graph = CodeGraph::new("repo");
+    graph.add_node(NodeKind::Directory, "packages-private/sfc-playground");
+    graph.add_node(NodeKind::File, "scripts/build.js");
+    let manifest = graph.add_node(NodeKind::File, "package.json");
+    for (label, target) in [
+        (
+            "npm script:dev",
+            "vite packages-private/sfc-playground --host",
+        ),
+        (
+            "npm script:open",
+            "open http://localhost:3000/packages-private/local.html",
+        ),
+        (
+            "npm script:test:search",
+            "node --test .vitepress/search.test.js",
+        ),
+        ("npm script:missing", "node scripts/absent.js"),
+    ] {
+        let entry = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            label,
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "manifest_entrypoint".to_string()),
+                ("target".to_string(), target.to_string()),
+            ]),
+        );
+        graph.add_edge(manifest, entry, EdgeKind::Entrypoint, Confidence::Exact);
+    }
+
+    let report = insights(&graph);
+    let found: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "unresolved_entrypoint_target")
+        .map(|insight| insight.message.as_str())
+        .collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("scripts/absent.js"), "{}", found[0]);
+}
+
+#[test]
 fn a_specifier_that_names_no_package_is_not_undeclared() {
     // `node:fs` and `bun:test` say which runtime provides the module,
     // `http2` is one Node ships, and `import type` from `trusted-types` is
