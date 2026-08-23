@@ -131,10 +131,12 @@ has known problems.
 codegraph trace-config CODEGRAPH_API_TOKEN .
 ```
 
-Output: the environment node (with the exact file span where the read
-happens), `readers[]` — the functions holding the read edge, e.g.
-`configured_api_token` in `crates/codegraph-server/src/main.rs` — and
-upstream `paths` from entrypoints down to the read. Config files work the
+Output: the environment node — one node for the variable, whichever
+places name it, with the span of the first read the scan met — plus
+`readers[]`, the functions holding the read edge with the file and line
+of each read on it, e.g. `configured_api_token` in
+`crates/codegraph-server/src/middleware.rs`, and upstream `paths` from
+entrypoints down to the read. Config files work the
 same way: `codegraph trace-config config/settings.toml .`.
 
 ### 2. Or ask in natural language
@@ -214,12 +216,15 @@ them with `codegraph architecture .`:
 
 ```bash
 codegraph component-dependencies scan_project .
-codegraph component-contract . --source docs --target crates
+codegraph component-contract . --source docs --target crates/codegraph-analysis
 ```
 
-On this repository the `docs -> crates` contract lists 62 edges — every
-place the documentation cites code — each with its confidence and related
-risks, so you know what a rename will invalidate.
+Name an area exactly as `codegraph architecture .` lists it: `crates`
+names ten of them and the command says so rather than guessing. On this
+repository the `docs -> crates/codegraph-analysis` contract lists 49
+edges — every place the documentation cites that crate's code — each with
+its confidence and related risks, so you know what a rename will
+invalidate.
 
 ### 4. Find the safest seam
 
