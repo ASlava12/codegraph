@@ -910,6 +910,54 @@ fn scan_project_uses_persistent_parse_cache_records() {
 }
 
 #[test]
+fn a_python_route_belongs_to_the_framework_the_file_imports() {
+    // `@app.get("/")` is the same line in Flask 2 and in FastAPI. Reading
+    // it as FastAPI filed 45 of flask's own routes under the wrong
+    // framework; what the file imports tells them apart.
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("api.py"),
+        "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/items\")\ndef items():\n    return []\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("web.py"),
+        "from flask import Flask\n\napp = Flask(__name__)\n\n\n@app.get(\"/health\")\ndef health():\n    return \"ok\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("hooks.py"),
+        "from .app import app\n\n\n@app.post(\"/hook\")\ndef hook():\n    return \"\"\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let framework_of = |path: &str| -> String {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("item_kind")
+                    .is_some_and(|kind| kind == "framework_route")
+                    && node
+                        .metadata
+                        .get("target")
+                        .is_some_and(|target| target == path)
+            })
+            .and_then(|node| node.metadata.get("framework").cloned())
+            .unwrap_or_else(|| format!("no route in {path}"))
+    };
+    assert_eq!(framework_of("api.py"), "fastapi");
+    assert_eq!(framework_of("web.py"), "flask");
+    // A file that names neither is not filed under either.
+    assert_eq!(framework_of("hooks.py"), "python-route");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_handler_written_in_place_has_no_name_to_find() {
     // `mux.HandleFunc("/x", func(w http.ResponseWriter, ...))` puts the
     // handler right there. Reading `func(w http.ResponseWriter` as its

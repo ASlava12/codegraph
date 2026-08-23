@@ -381,12 +381,13 @@ pub(crate) fn sourced_shell_config(line: &str) -> Option<String> {
 pub(crate) fn python_framework_routes(source: &str) -> Vec<FrameworkRoute> {
     let mut routes = Vec::new();
     let mut pending = Vec::new();
+    let framework = python_route_framework(source);
 
     for (index, line) in source.lines().enumerate() {
         let line_number = index as u32 + 1;
         let trimmed = line.trim();
         if trimmed.starts_with('@') {
-            if let Some(mut route) = route_from_python_decorator(trimmed, line_number) {
+            if let Some(mut route) = route_from_python_decorator(trimmed, line_number, framework) {
                 route.handler = None;
                 pending.push(route);
             }
@@ -410,7 +411,29 @@ pub(crate) fn python_framework_routes(source: &str) -> Vec<FrameworkRoute> {
     routes
 }
 
-pub(crate) fn route_from_python_decorator(line: &str, line_number: u32) -> Option<FrameworkRoute> {
+/// Which Python web framework a file's routes belong to, as the file
+/// itself says. `@app.get("/")` is the same line in Flask 2 and in
+/// FastAPI, so the decorator cannot tell them apart, and reading it as
+/// FastAPI filed 45 of flask's own routes under the wrong framework. What
+/// a file imports can tell them apart; where it names neither, neither is
+/// claimed.
+fn python_route_framework(source: &str) -> &'static str {
+    let flask = source.contains("import flask")
+        || source.contains("from flask")
+        || source.contains("import Flask");
+    let fastapi = source.contains("import fastapi") || source.contains("from fastapi");
+    match (flask, fastapi) {
+        (true, false) => "flask",
+        (false, true) => "fastapi",
+        _ => "python-route",
+    }
+}
+
+pub(crate) fn route_from_python_decorator(
+    line: &str,
+    line_number: u32,
+    framework: &str,
+) -> Option<FrameworkRoute> {
     let lower = line.to_ascii_lowercase();
     if !(lower.contains(".route(")
         || route_methods()
@@ -427,12 +450,6 @@ pub(crate) fn route_from_python_decorator(line: &str, line_number: u32) -> Optio
         .or_else(|| method_from_python_route_methods(line))
         .unwrap_or("ROUTE")
         .to_string();
-    let framework = if method != "ROUTE" || lower.contains("fastapi") || lower.contains("router.") {
-        "fastapi"
-    } else {
-        "flask"
-    };
-
     Some(FrameworkRoute {
         framework: framework.to_string(),
         method,
