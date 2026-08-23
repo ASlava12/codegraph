@@ -5816,6 +5816,47 @@ fn insights_report_unresolved_calls_and_orphans() {
 }
 
 #[test]
+fn an_empty_answer_says_what_was_looked_for() {
+    // `configs target:SECRET_KEY` came back empty and said nothing, which
+    // reads as "this project has no such key" -- a claim the scan cannot
+    // make, since it may simply not read that form.
+    let mut graph = CodeGraph::new("repo");
+    let reader = graph.add_node(NodeKind::Function, "load");
+    let debug = graph.add_node(NodeKind::Environment, "DEBUG_MODE");
+    graph.add_edge(
+        reader,
+        debug,
+        EdgeKind::ReadsEnvironment,
+        Confidence::Heuristic,
+    );
+
+    let missing = query_graph(&graph, "configs target:SECRET_KEY").expect("the query runs");
+    assert!(missing.nodes.is_empty());
+    assert!(
+        missing
+            .notes
+            .first()
+            .is_some_and(|note| note.contains("`SECRET_KEY`")),
+        "{:?}",
+        missing.notes
+    );
+
+    // Not a substring of the real key, so nothing matches it outright.
+    let near = query_graph(&graph, "configs target:DEBUG_MOED").expect("the query runs");
+    assert!(
+        near.notes
+            .first()
+            .is_some_and(|note| note.contains("`DEBUG_MODE`")),
+        "a close key is named: {:?}",
+        near.notes
+    );
+
+    let found = query_graph(&graph, "configs target:DEBUG_MODE").expect("the query runs");
+    assert!(!found.nodes.is_empty());
+    assert!(found.notes.is_empty(), "{:?}", found.notes);
+}
+
+#[test]
 fn node_not_found_errors_suggest_near_matches() {
     let mut graph = CodeGraph::new("repo");
     graph.add_node(NodeKind::Function, "scan_project");

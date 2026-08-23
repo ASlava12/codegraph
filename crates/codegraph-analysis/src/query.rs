@@ -1104,7 +1104,8 @@ pub(crate) fn query_configs(
 
     let total_nodes = nodes.len();
     let total_edges = edges.len();
-    Ok(QueryResult::new(
+    let unmatched = named_but_unmatched(&spec, &matched_targets).map(str::to_string);
+    let result = QueryResult::new(
         graph,
         spec.original,
         nodes,
@@ -1112,7 +1113,28 @@ pub(crate) fn query_configs(
         total_nodes,
         total_edges,
         truncated,
-    ))
+    );
+    Ok(match unmatched {
+        Some(value) => result.with_note(nothing_matched_note(
+            graph,
+            "configuration key",
+            &value,
+            |node| matches!(node.kind, NodeKind::Config | NodeKind::Environment),
+        )),
+        None => result,
+    })
+}
+
+/// What a query asked for by name when nothing answered to it.
+fn named_but_unmatched<'a>(spec: &'a QuerySpec, matched: &[Node]) -> Option<&'a str> {
+    if !matched.is_empty() {
+        return None;
+    }
+    spec.terms
+        .get("target")
+        .or_else(|| spec.terms.get("search"))
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
 }
 
 pub(crate) fn query_errors(
@@ -1199,7 +1221,8 @@ pub(crate) fn query_errors(
 
     let total_nodes = nodes.len();
     let total_edges = edges.len();
-    Ok(QueryResult::new(
+    let unmatched = named_but_unmatched(&spec, &matched_errors).map(str::to_string);
+    let result = QueryResult::new(
         graph,
         spec.original,
         nodes,
@@ -1207,7 +1230,15 @@ pub(crate) fn query_errors(
         total_nodes,
         total_edges,
         truncated,
-    ))
+    );
+    Ok(match unmatched {
+        Some(value) => result.with_note(nothing_matched_note(graph, "error", &value, |node| {
+            node.metadata
+                .get("item_kind")
+                .is_some_and(|kind| kind == "error")
+        })),
+        None => result,
+    })
 }
 
 pub(crate) fn query_cycles(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
@@ -3792,11 +3823,17 @@ pub(crate) fn edit_distance_within(left: &str, right: &str, max: usize) -> Optio
 /// Actionable node-not-found error: appends up to three near-matches
 /// (bounded edit distance or meaningful substring overlap) so a mistyped
 /// label points at real candidates.
-pub(crate) fn node_not_found_error(graph: &CodeGraph, role: &str, value: &str) -> QueryError {
+/// The labels close enough to what was asked for to be worth naming: two
+/// edits away, or one containing the other.
+fn near_label_matches<'a>(
+    graph: &'a CodeGraph,
+    value: &str,
+    accept: impl Fn(&Node) -> bool,
+) -> Vec<&'a str> {
     let needle = value.trim().to_ascii_lowercase();
     let mut ranked: Vec<(usize, &str)> = Vec::new();
     if needle.len() >= 3 {
-        for node in &graph.nodes {
+        for node in graph.nodes.iter().filter(|node| accept(node)) {
             let label = node.label.as_str();
             if ranked.iter().any(|(_, seen)| *seen == label) {
                 continue;
@@ -3809,11 +3846,48 @@ pub(crate) fn node_not_found_error(graph: &CodeGraph, role: &str, value: &str) -
                 ranked.push((distance, label));
             } else if substring {
                 ranked.push((3, label));
+            } else if needle.len() >= 4
+                // An error is labelled by the line that raises it, so the
+                // name being asked for is one word inside a sentence.
+                && lower
+                    .split(|character: char| !character.is_alphanumeric() && character != '_')
+                    .filter(|word| word.len() >= 4)
+                    .any(|word| edit_distance_within(word, &needle, 2).is_some())
+            {
+                ranked.push((4, label));
             }
         }
     }
     ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.len().cmp(&b.1.len())));
-    let suggestions: Vec<&str> = ranked.iter().take(3).map(|(_, label)| *label).collect();
+    ranked.into_iter().take(3).map(|(_, label)| label).collect()
+}
+
+/// What to say when a query names something the graph does not hold. An
+/// empty answer on its own reads as "this project has no such thing",
+/// which is a claim the scan cannot make: it may simply not have seen it.
+fn nothing_matched_note(
+    graph: &CodeGraph,
+    role: &str,
+    value: &str,
+    accept: impl Fn(&Node) -> bool,
+) -> String {
+    let suggestions = near_label_matches(graph, value, accept);
+    if suggestions.is_empty() {
+        format!("no {role} named `{value}` is in the graph; the scan may not read that form")
+    } else {
+        format!(
+            "no {role} named `{value}` is in the graph; it holds {}",
+            suggestions
+                .iter()
+                .map(|label| format!("`{label}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+pub(crate) fn node_not_found_error(graph: &CodeGraph, role: &str, value: &str) -> QueryError {
+    let suggestions = near_label_matches(graph, value, |_| true);
     if suggestions.is_empty() {
         QueryError::new(format!(
             "{role} `{value}` did not match a node; try a label from `entrypoints`/`query 'nodes search:…'` or an id such as n42"
