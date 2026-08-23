@@ -1333,3 +1333,50 @@ pub fn main() !void {
     assert!(has(ParsedItemKind::Loop, "loop: for"));
     assert!(has(ParsedItemKind::Return, "return: return"));
 }
+
+#[test]
+fn calls_on_literals_are_labeled_by_method_not_by_the_literal() {
+    // `"x".to_string()` used to produce a call target carrying the whole
+    // literal, so each distinct literal minted its own placeholder node
+    // (1890 of them for to_string alone on this repository).
+    let source = r#"fn build() -> String {
+    let a = "low".to_string();
+    let b = "medium".to_string();
+    let c = "abc".len();
+    format!("{a}{b}{c}")
+}
+"#;
+    let parsed = parse_source("build.rs", source.as_bytes(), Language::Rust).unwrap();
+    let call_labels: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Call)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert!(
+        call_labels.contains(&"to_string"),
+        "literal receivers collapse to the method name: {call_labels:?}"
+    );
+    assert!(call_labels.contains(&"len"));
+    assert!(
+        !call_labels.iter().any(|label| label.contains('"')),
+        "no call label carries a string literal: {call_labels:?}"
+    );
+    // Ordinary paths keep their qualification.
+    let qualified = parse_source(
+        "q.rs",
+        b"fn run() { let v = Vec::new(); std::env::var(\"K\"); }\n",
+        Language::Rust,
+    )
+    .unwrap();
+    let qualified_labels: Vec<_> = qualified
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Call)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert!(
+        qualified_labels.contains(&"Vec::new"),
+        "qualified paths are unchanged: {qualified_labels:?}"
+    );
+}

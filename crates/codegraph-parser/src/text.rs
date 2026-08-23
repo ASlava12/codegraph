@@ -191,7 +191,21 @@ pub(crate) fn truncate_label(value: String, max_len: usize) -> String {
 
 pub(crate) fn clean_call_label(value: &str) -> String {
     let compact = compact_label(value.to_string());
-    compact.trim_end_matches('!').to_string()
+    let trimmed = compact.trim_end_matches('!');
+    // A method called directly on a literal (`" ".to_string()`,
+    // `"abc".len()`) yields a callee path that carries the whole literal.
+    // Keep just the method name: the literal is not part of the target's
+    // identity, and including it minted one placeholder node per distinct
+    // literal instead of one per method.
+    if trimmed.contains(['"', '\'', '`'])
+        && let Some((_, method)) = trimmed.rsplit_once('.')
+    {
+        let method = method.trim();
+        if !method.is_empty() && !method.contains(['"', '\'', '`']) {
+            return method.to_string();
+        }
+    }
+    trimmed.to_string()
 }
 
 pub(crate) fn simple_name(value: &str) -> &str {
