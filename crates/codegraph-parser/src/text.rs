@@ -214,6 +214,23 @@ pub(crate) fn clean_call_label(value: &str) -> String {
         .replace(" ::", "::")
         .replace(":: ", "::");
 
+    // Type arguments are not part of what is called: `DeserializeObject<Dict…>`
+    // and `cast<ffi.NativeFunction<…>>` name the same callee at every
+    // instantiation, and keeping the arguments minted a node per type. Only a
+    // real argument list counts — a lone `<` is a comparison, and `operator<`
+    // is a name.
+    let joined = match joined.find('<') {
+        Some(open) if joined[open..].contains('>') => {
+            let head = joined[..open].trim_end_matches([':', '.', ' ']);
+            if head.is_empty() {
+                joined
+            } else {
+                head.to_string()
+            }
+        }
+        _ => joined,
+    };
+
     // A callee that navigates through an expression carries that expression in
     // its text: another call (`fs::remove_dir_all(root).unwrap`), an index
     // (`line[open + 1..].find`), a composite literal

@@ -640,6 +640,44 @@ fn a_rust_error_is_named_by_its_own_message() {
 }
 
 #[test]
+fn type_arguments_are_not_part_of_what_is_called() {
+    let csharp = parse_source(
+        "reader.cs",
+        br#"class Reader {
+    void Run() {
+        JsonConvert.DeserializeObject<Dictionary<string, int>>(text);
+        Handle<Foo>(value);
+    }
+}
+"#,
+        Language::CSharp,
+    )
+    .unwrap();
+    let labels = |parsed: &ParsedFile| {
+        parsed
+            .items
+            .iter()
+            .filter(|item| item.kind == ParsedItemKind::Call)
+            .map(|item| item.label.clone())
+            .collect::<BTreeSet<_>>()
+    };
+    let names = labels(&csharp);
+
+    // Every instantiation names the same callee; keeping the type arguments
+    // minted a node per instantiation and stopped the label matching the
+    // method's declaration.
+    assert!(
+        names.contains("JsonConvert.DeserializeObject"),
+        "got {names:?}"
+    );
+    assert!(names.contains("Handle"), "got {names:?}");
+    assert!(
+        names.iter().all(|label| !label.contains('<')),
+        "no type arguments should survive: {names:?}"
+    );
+}
+
+#[test]
 fn a_call_label_names_the_callee_not_the_expression_before_it() {
     let rust = parse_source(
         "main.rs",
