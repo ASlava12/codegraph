@@ -2309,6 +2309,23 @@ pub(crate) fn resolve_pending_document_symbol_refs(context: &mut IndexContext) {
         let [target] = targets[..] else {
             continue;
         };
+        // Documentation describes what a project offers, not how it tests
+        // itself: 11 of nlohmann/json's 14 prose mentions named a helper
+        // inside its test suite. A document written among the tests may
+        // mean one, and is left alone.
+        let document_path = graph_node(&context.graph, pending.source)
+            .and_then(|node| node.span.as_ref().map(|span| span.path.clone()))
+            .or_else(|| graph_node(&context.graph, pending.source).map(|node| node.label.clone()));
+        let target_is_test = graph_node(&context.graph, target)
+            .and_then(|node| node.span.as_ref())
+            .is_some_and(|span| is_test_like_source_path(&span.path));
+        if target_is_test
+            && !document_path
+                .as_deref()
+                .is_some_and(is_test_like_source_path)
+        {
+            continue;
+        }
 
         let mut metadata = BTreeMap::new();
         metadata.insert("relation".to_string(), pending.relation.to_string());

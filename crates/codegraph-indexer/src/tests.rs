@@ -956,6 +956,62 @@ fn julia_and_r_packages_export_from_one_place() {
 }
 
 #[test]
+fn documentation_does_not_name_a_test_helper() {
+    // Documentation describes what a project offers, not how it tests
+    // itself: 11 of nlohmann/json's 14 prose mentions named a helper
+    // inside its test suite. A document written among the tests may mean
+    // one.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("tests")).unwrap();
+    fs::write(
+        root.join("tests").join("helpers.py"),
+        "def build_fixture(name):\n    return name\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("README.md"),
+        "# Demo\n\nCall `build_fixture` to get started.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tests").join("README.md"),
+        "# Tests\n\n`build_fixture` makes one.\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let mentions: Vec<&str> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.metadata
+                .get("resolution")
+                .is_some_and(|resolution| resolution == "document_symbol")
+        })
+        .filter_map(|edge| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == edge.source)
+                .map(|node| node.label.as_str())
+        })
+        .collect();
+
+    assert!(
+        mentions.iter().all(|label| !label.starts_with("README.md")),
+        "the project's own README does not name a test helper: {mentions:?}"
+    );
+    assert!(
+        mentions
+            .iter()
+            .any(|label| label.contains("tests/README.md")),
+        "a document among the tests may: {mentions:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_header_that_declares_a_namespace_is_cpp() {
     // `.h` is C's extension and C++'s alike, and the extension is all the
     // path can say. Redis vendors `fast_float.h`, which is C++: read as C
