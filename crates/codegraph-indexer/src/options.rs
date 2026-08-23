@@ -39,6 +39,8 @@ pub enum IndexError {
     ConfigInvalid { path: PathBuf, message: String },
     #[error("invalid scan options: {message}")]
     InvalidOptions { message: String },
+    #[error("scan canceled")]
+    Canceled,
 }
 
 #[derive(Debug, Clone)]

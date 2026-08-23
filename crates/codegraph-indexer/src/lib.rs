@@ -26,7 +26,9 @@ pub use options::{
     DEFAULT_MAX_FILE_SIZE, IndexError, IndexOptionOverrides, IndexOptions, ScanCoverageReport,
     compile_ignored_globs, configured_index_options,
 };
-pub use scan::{scan_coverage, scan_project, scan_project_paths};
+pub use scan::{
+    ScanCancellation, scan_coverage, scan_project, scan_project_cancelable, scan_project_paths,
+};
 pub use walk::{is_index_relevant_file, should_enter};
 
 pub(crate) use context::*;

@@ -6002,3 +6002,34 @@ fn reopened_namespaces_share_one_node_but_distinct_modules_do_not() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_canceled_scan_aborts_instead_of_finishing() {
+    // Cancellation must reach the scanner: previously "cancel" only relabeled
+    // the job while the scan ran to completion, holding its concurrency slot.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    for index in 0..8 {
+        fs::write(
+            root.join("src").join(format!("m{index}.rs")),
+            format!("fn f{index}() {{}}\n"),
+        )
+        .unwrap();
+    }
+
+    let cancel = ScanCancellation::new();
+    cancel.cancel();
+    let error = scan_project_cancelable(&root, &IndexOptions::default(), &cancel)
+        .expect_err("a tripped token aborts the scan");
+    assert!(
+        matches!(error, IndexError::Canceled),
+        "unexpected error: {error}"
+    );
+
+    // An untouched token scans normally.
+    let graph = scan_project_cancelable(&root, &IndexOptions::default(), &ScanCancellation::none())
+        .expect("uncanceled scan succeeds");
+    assert!(graph.nodes.len() > 8);
+
+    fs::remove_dir_all(root).unwrap();
+}

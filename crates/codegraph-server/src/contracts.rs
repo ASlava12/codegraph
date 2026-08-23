@@ -4,7 +4,7 @@
 use clap::Parser;
 use codegraph_analysis::{GraphSummary, ProjectReport};
 use codegraph_core::CodeGraph;
-use codegraph_indexer::IndexOptionOverrides;
+use codegraph_indexer::{IndexOptionOverrides, ScanCancellation};
 use codegraph_lsp::{SemanticGraphApplyReport, SemanticLspCacheInfo, SemanticLspResponse};
 use codegraph_storage::{CacheInfo, GraphCache};
 use serde::{Deserialize, Serialize};
@@ -111,6 +111,9 @@ pub(crate) struct AppState {
     pub(crate) scan_permits: Arc<Semaphore>,
     pub(crate) semantic_permits: Arc<Semaphore>,
     pub(crate) next_job_id: Arc<AtomicU64>,
+    /// Cancellation tokens for scans currently running, keyed by job id, so
+    /// canceling a job actually stops the work instead of only relabeling it.
+    pub(crate) scan_cancellations: Arc<RwLock<BTreeMap<String, ScanCancellation>>>,
 }
 
 #[derive(Clone)]

@@ -9,13 +9,16 @@ use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use codegraph_analysis::summarize;
 use codegraph_core::CodeGraph;
+use codegraph_indexer::ScanCancellation;
 use codegraph_lsp::{
     DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS, DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, SemanticLspCache,
     SemanticLspRunOptions, SemanticWorkItemFilter, apply_semantic_graph_patch,
     normalize_semantic_request_timeout_ms, run_semantic_execution_batch_cached,
     semantic_execution_batch, semantic_graph_patch_from_responses,
 };
-use codegraph_storage::{CacheInfo, CacheStatus, scan_project_cached};
+use codegraph_storage::{
+    CacheInfo, CacheStatus, scan_project_cached, scan_project_cached_cancelable,
+};
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::path::PathBuf;
@@ -65,6 +68,12 @@ pub(crate) async fn start_scan_job(
     let cache = state.cache.clone();
     let max_jobs = state.max_scan_jobs;
     let scan_permits = Arc::clone(&state.scan_permits);
+    let cancellations = Arc::clone(&state.scan_cancellations);
+    let cancel = ScanCancellation::new();
+    cancellations
+        .write()
+        .await
+        .insert(id.clone(), cancel.clone());
     tokio::spawn(async move {
         if scan_job_is_canceled(&jobs, &id).await {
             return;
@@ -106,11 +115,13 @@ pub(crate) async fn start_scan_job(
         .await;
 
         let scan_root = root.clone();
+        let scan_cancel = cancel.clone();
         let result = tokio::task::spawn_blocking(move || {
-            scan_project_cached(scan_root, &options, cache.as_ref())
+            scan_project_cached_cancelable(scan_root, &options, cache.as_ref(), &scan_cancel)
         })
         .await;
         drop(permit);
+        cancellations.write().await.remove(&id);
         match result {
             Ok(Ok(output)) => {
                 let graph = output.graph;
@@ -213,6 +224,11 @@ pub(crate) async fn cancel_scan_job(
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<ScanJob>, ApiError> {
     let job = cancel_scan_job_in_store(&state.jobs, &id, state.max_scan_jobs).await?;
+    // Stop the work, not just its label: the scan checks this token per walked
+    // entry and aborts with IndexError::Canceled.
+    if let Some(cancel) = state.scan_cancellations.write().await.remove(&id) {
+        cancel.cancel();
+    }
     Ok(Json(job_without_graph(&job)))
 }
 

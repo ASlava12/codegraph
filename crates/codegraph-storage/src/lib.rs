@@ -5,8 +5,8 @@
 
 use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind};
 use codegraph_indexer::{
-    IndexError, IndexOptions, compile_ignored_globs, is_index_relevant_file, scan_project,
-    scan_project_paths, should_enter,
+    IndexError, IndexOptions, ScanCancellation, compile_ignored_globs, is_index_relevant_file,
+    scan_project_cancelable, scan_project_paths, should_enter,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -786,10 +786,21 @@ pub fn scan_project_cached(
     options: &IndexOptions,
     cache: Option<&GraphCache>,
 ) -> Result<CachedScan, CacheError> {
+    scan_project_cached_cancelable(root, options, cache, &ScanCancellation::none())
+}
+
+/// Like [`scan_project_cached`], but a tripped token aborts the scan with
+/// [`IndexError::Canceled`] instead of running to completion.
+pub fn scan_project_cached_cancelable(
+    root: impl AsRef<Path>,
+    options: &IndexOptions,
+    cache: Option<&GraphCache>,
+    cancel: &ScanCancellation,
+) -> Result<CachedScan, CacheError> {
     let root = root.as_ref();
     let Some(cache) = cache else {
         return Ok(CachedScan {
-            graph: scan_project(root, options)?,
+            graph: scan_project_cancelable(root, options, cancel)?,
             cache: CacheInfo {
                 status: CacheStatus::Disabled,
                 dir: None,
@@ -811,7 +822,7 @@ pub fn scan_project_cached(
     let scan_options = options
         .clone()
         .with_parse_cache_dir(cache.dir().join("parse-facts"));
-    let graph = scan_project(root, &scan_options)?;
+    let graph = scan_project_cancelable(root, &scan_options, cancel)?;
     let _ = cache.store(root, options, fingerprint, &graph);
     Ok(CachedScan {
         graph,

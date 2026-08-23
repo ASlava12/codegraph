@@ -12,11 +12,63 @@ use walkdir::WalkDir;
 #[allow(unused_imports)]
 use crate::*;
 
+/// Cooperative cancellation for a running scan. Cloning shares the flag, so a
+/// caller can hand one clone to the scan and keep another to cancel it; an
+/// unset token (`ScanCancellation::none`) never cancels.
+#[derive(Debug, Clone, Default)]
+pub struct ScanCancellation {
+    flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+
+impl ScanCancellation {
+    pub fn new() -> Self {
+        Self {
+            flag: Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                false,
+            ))),
+        }
+    }
+
+    pub fn none() -> Self {
+        Self { flag: None }
+    }
+
+    pub fn cancel(&self) {
+        if let Some(flag) = &self.flag {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    pub fn is_canceled(&self) -> bool {
+        self.flag
+            .as_ref()
+            .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    fn check(&self) -> Result<(), IndexError> {
+        if self.is_canceled() {
+            return Err(IndexError::Canceled);
+        }
+        Ok(())
+    }
+}
+
 pub fn scan_project(
     root: impl AsRef<Path>,
     options: &IndexOptions,
 ) -> Result<CodeGraph, IndexError> {
-    scan_project_with_scope(root.as_ref(), options, None)
+    scan_project_with_scope(root.as_ref(), options, None, &ScanCancellation::none())
+}
+
+/// Like [`scan_project`], but aborts with [`IndexError::Canceled`] once the
+/// token is tripped, so a server can stop a scan it no longer needs instead of
+/// letting it run to completion.
+pub fn scan_project_cancelable(
+    root: impl AsRef<Path>,
+    options: &IndexOptions,
+    cancel: &ScanCancellation,
+) -> Result<CodeGraph, IndexError> {
+    scan_project_with_scope(root.as_ref(), options, None, cancel)
 }
 
 pub fn scan_project_paths(
@@ -25,7 +77,12 @@ pub fn scan_project_paths(
     paths: &BTreeSet<String>,
 ) -> Result<CodeGraph, IndexError> {
     let scope = ScanScope::new(paths);
-    scan_project_with_scope(root.as_ref(), options, Some(&scope))
+    scan_project_with_scope(
+        root.as_ref(),
+        options,
+        Some(&scope),
+        &ScanCancellation::none(),
+    )
 }
 
 /// Whether a `Module` declaration in this language reopens a single shared
@@ -39,6 +96,7 @@ pub(crate) fn scan_project_with_scope(
     root: &Path,
     options: &IndexOptions,
     scope: Option<&ScanScope>,
+    cancel: &ScanCancellation,
 ) -> Result<CodeGraph, IndexError> {
     let ignored_globs = compile_ignored_globs(&options.ignored_globs)?;
     let root_label = root
@@ -105,6 +163,9 @@ pub(crate) fn scan_project_with_scope(
             path: root.to_path_buf(),
             source,
         })?;
+        // Cooperative cancellation: checked per entry so a canceled scan stops
+        // promptly instead of running to completion for a result nobody wants.
+        cancel.check()?;
         let path = entry.path();
 
         if path == root {
@@ -159,6 +220,7 @@ pub(crate) fn scan_project_with_scope(
         }
     }
 
+    cancel.check()?;
     resolve_pending_calls(&mut context);
     resolve_pending_type_references(&mut context);
     resolve_pending_local_imports(&mut context);

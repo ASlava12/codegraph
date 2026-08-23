@@ -85,6 +85,7 @@ async fn main() -> Result<()> {
         scan_permits: Arc::new(Semaphore::new(max_scan_concurrency)),
         semantic_permits: Arc::new(Semaphore::new(max_semantic_concurrency)),
         next_job_id: Arc::new(AtomicU64::new(1)),
+        scan_cancellations: Arc::new(RwLock::new(BTreeMap::new())),
     };
 
     let app = Router::new()
