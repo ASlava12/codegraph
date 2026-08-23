@@ -489,6 +489,22 @@ pub(crate) fn enclosing_type_label(
             Language::Swift if kind == "class_declaration" || kind == "protocol_declaration" => {
                 named_child_text(candidate, "name", source)
             }
+            // A Dart extension's methods are called on the type it extends, so
+            // that type owns them — the extension's own name is not what a
+            // call says.
+            Language::Dart if kind == "extension_declaration" => {
+                named_child_text(candidate, "class", source)
+                    .map(|name| simple_name(&name).to_string())
+                    .or_else(|| named_child_text(candidate, "name", source))
+            }
+            Language::Dart
+                if matches!(
+                    kind,
+                    "class_declaration" | "mixin_declaration" | "enum_declaration"
+                ) =>
+            {
+                named_child_text(candidate, "name", source)
+            }
             Language::Php | Language::JavaScript | Language::TypeScript | Language::Tsx
                 if matches!(kind, "class_declaration" | "interface_declaration") =>
             {

@@ -700,6 +700,47 @@ func demo(name string) Absolute {
 }
 
 #[test]
+fn dart_methods_know_the_type_they_belong_to() {
+    let parsed = parse_source(
+        "client.dart",
+        br#"class Client {
+  void send() {}
+}
+
+mixin Retry {
+  void retry() {}
+}
+
+extension Extras on Client {
+  void extra() {}
+}
+
+void plain() {}
+"#,
+        Language::Dart,
+    )
+    .unwrap();
+
+    let owner = |label: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::Function && item.label == label)
+            .unwrap_or_else(|| panic!("missing {label}"))
+            .metadata
+            .get("owner_type")
+            .map(String::as_str)
+    };
+
+    assert_eq!(owner("send"), Some("Client"));
+    assert_eq!(owner("retry"), Some("Retry"));
+    // An extension's methods are called on the type it extends, so that type
+    // owns them — `Extras` is not what a call says.
+    assert_eq!(owner("extra"), Some("Client"));
+    assert_eq!(owner("plain"), None);
+}
+
+#[test]
 fn go_methods_know_the_type_they_belong_to() {
     let parsed = parse_source(
         "backend.go",
