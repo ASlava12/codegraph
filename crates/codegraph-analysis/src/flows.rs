@@ -24,6 +24,11 @@ pub(crate) fn trace_with_direction(
     // was the only one accepting an unclamped depth.
     let max_depth = request.max_depth.clamp(1, 32);
     let start = resolve_trace_start(graph, &request.start)?.clone();
+    // Which of several same-named definitions this trace is about.
+    let notes = match &request.start {
+        TraceStart::Label(label) => shared_name_note(graph, label, &start).into_iter().collect(),
+        TraceStart::NodeId(_) => Vec::new(),
+    };
 
     let adjacency = TraceAdjacency::build(graph);
     let mut visited = BTreeSet::new();
@@ -70,6 +75,7 @@ pub(crate) fn trace_with_direction(
         .collect();
 
     Some(TraceResult {
+        notes,
         start,
         max_depth,
         nodes,

@@ -9897,3 +9897,79 @@ fn a_trace_says_which_definition_it_started_from() {
     let single = query_graph(&graph, "dependents label:register depth:3").expect("query");
     assert!(single.notes.is_empty(), "{:?}", single.notes);
 }
+
+#[test]
+fn every_label_started_report_says_which_definition_it_took() {
+    // The note belongs wherever a name is turned into one node: impact and
+    // component-dependencies resolve a target, trace and workflow resolve a
+    // start. Each of them answered about one of several definitions
+    // without saying so.
+    let mut graph = CodeGraph::new("repo");
+    graph.add_node_with_span(
+        NodeKind::Function,
+        "handle",
+        SourceSpan {
+            path: "src/first.rs".to_string(),
+            start_line: 4,
+            start_column: 1,
+            end_line: 9,
+            end_column: 1,
+        },
+    );
+    graph.add_node_with_span(
+        NodeKind::Function,
+        "handle",
+        SourceSpan {
+            path: "src/second.rs".to_string(),
+            start_line: 11,
+            start_column: 1,
+            end_line: 20,
+            end_column: 1,
+        },
+    );
+    let only_one = graph.add_node(NodeKind::Function, "unique");
+    graph.add_edge(only_one, only_one, EdgeKind::Calls, Confidence::Syntactic);
+
+    let note_of = |notes: &[String]| notes.first().cloned().unwrap_or_default();
+
+    let impacted = impact(
+        &graph,
+        ImpactRequest {
+            target: "handle".to_string(),
+            max_depth: 3,
+            limit: 20,
+        },
+    )
+    .expect("impact");
+    assert!(
+        note_of(&impacted.notes).contains("2 definitions are named `handle`"),
+        "{:?}",
+        impacted.notes
+    );
+
+    let traced = trace_dependents(
+        &graph,
+        TraceRequest {
+            start: TraceStart::Label("handle".to_string()),
+            max_depth: 3,
+        },
+    )
+    .expect("trace");
+    assert!(
+        note_of(&traced.notes).contains("2 definitions are named `handle`"),
+        "{:?}",
+        traced.notes
+    );
+
+    // A name only one definition answers to needs no such warning.
+    let unique = impact(
+        &graph,
+        ImpactRequest {
+            target: "unique".to_string(),
+            max_depth: 3,
+            limit: 20,
+        },
+    )
+    .expect("impact");
+    assert!(unique.notes.is_empty(), "{:?}", unique.notes);
+}

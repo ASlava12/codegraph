@@ -777,17 +777,5 @@ fn ambiguous_start_note(graph: &CodeGraph, start: &TraceStart) -> Option<String>
     let TraceStart::Label(label) = start else {
         return None;
     };
-    let matches = labelled_node_count(graph, label);
-    if matches < 2 {
-        return None;
-    }
-    let chosen = resolve_trace_start(graph, start)?;
-    let where_it_is = chosen
-        .span
-        .as_ref()
-        .map(|span| format!("{}:{}", span.path, span.start_line))
-        .unwrap_or_else(|| format!("node {}", chosen.id));
-    Some(format!(
-        "{matches} definitions are named `{label}`; this answer traces the one at {where_it_is}"
-    ))
+    shared_name_note(graph, label, resolve_trace_start(graph, start)?)
 }

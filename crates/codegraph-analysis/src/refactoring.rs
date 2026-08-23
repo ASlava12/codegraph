@@ -247,6 +247,9 @@ pub fn component_dependencies(
         component_sorted_groups(language_groups, group_limit);
 
     Ok(ComponentDependencyReport {
+        notes: shared_name_note(graph, target, &target_node)
+            .into_iter()
+            .collect(),
         area: areas.get(&target_id).cloned(),
         target: target_node,
         total_incoming,
@@ -778,6 +781,9 @@ pub(crate) fn impact_with_insights_mode(
 
     Ok(ImpactReport {
         schema: IMPACT_SCHEMA.to_string(),
+        notes: shared_name_note(graph, target, &target_node)
+            .into_iter()
+            .collect(),
         area: node_areas.get(&target_id).cloned(),
         target: target_node,
         max_depth,
@@ -1101,6 +1107,10 @@ pub(crate) fn workflow_with_insight_report(
     let max_fanout = request.max_fanout.map(|value| value.clamp(1, 200));
     let filters = normalize_workflow_filters(request.filters);
     let start = resolve_trace_start(graph, &request.start)?.clone();
+    let notes = match &request.start {
+        TraceStart::Label(label) => shared_name_note(graph, label, &start).into_iter().collect(),
+        TraceStart::NodeId(_) => Vec::new(),
+    };
     let nodes_by_id: BTreeMap<NodeId, &Node> =
         graph.nodes.iter().map(|node| (node.id, node)).collect();
     let adjacency = TraceAdjacency::build(graph);
@@ -1248,6 +1258,7 @@ pub(crate) fn workflow_with_insight_report(
     };
 
     Some(WorkflowReport {
+        notes,
         start,
         max_depth,
         block_limit,

@@ -34,6 +34,26 @@ pub(crate) fn resolve_trace_start<'a>(
     }
 }
 
+/// What a report owes its reader when the name it was given belongs to
+/// more than one definition: how many there were, and which one the
+/// answer is about. Without it, "nothing depends on Blueprint" reads as a
+/// fact about the name when it is only a fact about one of two
+/// declarations.
+pub(crate) fn shared_name_note(graph: &CodeGraph, label: &str, chosen: &Node) -> Option<String> {
+    let matches = labelled_node_count(graph, label);
+    if matches < 2 {
+        return None;
+    }
+    let where_it_is = chosen
+        .span
+        .as_ref()
+        .map(|span| format!("{}:{}", span.path, span.start_line))
+        .unwrap_or_else(|| format!("node {}", chosen.id));
+    Some(format!(
+        "{matches} definitions are named `{label}`; this answer is about the one at {where_it_is}"
+    ))
+}
+
 /// How many definitions answer to a label. A trace has one start, so when
 /// this is more than one the answer is about a choice the query did not
 /// state — flask has two `Blueprint`s, and "nothing depends on Blueprint"

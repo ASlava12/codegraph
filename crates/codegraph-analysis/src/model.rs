@@ -208,6 +208,10 @@ pub struct TraceResult {
     pub nodes: Vec<TraceNode>,
     pub edges: Vec<Edge>,
     pub truncated: bool,
+    /// Which definition this answer is about when the name it was given
+    /// belongs to more than one; see `shared_name_note`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,6 +289,10 @@ pub struct WorkflowReport {
     pub raw_total_blocks: usize,
     pub raw_total_transitions: usize,
     pub truncated: bool,
+    /// Which definition this answer is about when the name it was given
+    /// belongs to more than one; see `shared_name_note`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -478,6 +486,10 @@ pub struct ComponentDependencyReport {
     pub packages: Vec<ComponentDependencyGroup>,
     pub languages: Vec<ComponentDependencyGroup>,
     pub truncated: bool,
+    /// Which definition this answer is about when the name it was given
+    /// belongs to more than one; see `shared_name_note`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -609,6 +621,10 @@ pub struct ImpactReport {
     pub truncated: bool,
     #[serde(default)]
     pub suggested_commands: Vec<String>,
+    /// Which definition this answer is about when the name it was given
+    /// belongs to more than one; see `shared_name_note`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
