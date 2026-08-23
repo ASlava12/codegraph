@@ -2370,3 +2370,49 @@ fn an_environment_read_is_named_only_when_the_name_is_known() {
         "the expression is kept on the fact"
     );
 }
+
+#[test]
+fn a_function_like_macro_is_a_definition_the_code_calls() {
+    // redis calls `serverAssert`, `UNUSED` and `serverLog` thousands of
+    // times and defines every one of them with `#define`. Those calls had
+    // nothing to point at: 8677 unresolved C calls across the corpora name
+    // a macro the project defines. An object-like `#define LIMIT 10` is a
+    // value rather than something to call, and stays out.
+    let parsed = parse_source(
+        "server.c",
+        b"#define UNUSED(V) ((void) V)\n#define LIMIT 10\n#define serverAssert(x) do { if (!(x)) panic(); } while (0)\n\nint main(void) {\n    UNUSED(1);\n    serverAssert(1);\n    return LIMIT;\n}\n",
+        Language::C,
+    )
+    .unwrap();
+    let functions: Vec<&ParsedItem> = parsed
+        .items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.kind,
+                ParsedItemKind::Function | ParsedItemKind::Entrypoint
+            )
+        })
+        .collect();
+    let labels: Vec<&str> = functions.iter().map(|item| item.label.as_str()).collect();
+    assert!(
+        labels.contains(&"UNUSED") && labels.contains(&"serverAssert"),
+        "{labels:?}"
+    );
+    assert!(
+        !labels.contains(&"LIMIT"),
+        "an object-like macro is a value, not a callable: {labels:?}"
+    );
+    let macro_item = functions
+        .iter()
+        .find(|item| item.label == "UNUSED")
+        .expect("the macro is recorded");
+    assert_eq!(
+        macro_item
+            .metadata
+            .get("definition_form")
+            .map(String::as_str),
+        Some("macro"),
+        "a reader can tell a macro from a function"
+    );
+}

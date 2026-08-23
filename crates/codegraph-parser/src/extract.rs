@@ -388,6 +388,10 @@ pub(crate) fn classify_node(
         },
         Language::C | Language::Cpp => match kind {
             "function_definition" => ParsedItemKind::Function,
+            // `#define serverAssert(x) …` defines something the code calls
+            // like a function, and redis calls 7300 of them. An object-like
+            // `#define LIMIT 10` is a value, not a callable, and stays out.
+            "preproc_function_def" => ParsedItemKind::Function,
             "struct_specifier" | "union_specifier" | "enum_specifier" | "class_specifier"
             | "type_definition" => ParsedItemKind::Type,
             "namespace_definition" => ParsedItemKind::Module,
@@ -584,6 +588,12 @@ pub(crate) fn classify_node(
         }
         if let Some(visibility) = visibility_label(language, node, source, &label) {
             metadata.insert("visibility".to_string(), visibility.to_string());
+        }
+        // A function-like macro is called like a function and resolves like
+        // one, but it is not one: it has no address, no types and no scope.
+        // Saying so lets a reader tell `serverAssert` from a function.
+        if node.kind() == "preproc_function_def" {
+            metadata.insert("definition_form".to_string(), "macro".to_string());
         }
     }
 
