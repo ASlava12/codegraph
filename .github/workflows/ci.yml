@@ -54,6 +54,7 @@ jobs:
         run: |
           node crates/codegraph-web/static/check-defs.mjs
           node crates/codegraph-web/static/flow-smoke.mjs
+          node crates/codegraph-web/static/views-smoke.mjs
 
       - name: Build Docker image
         run: docker build -t codegraph:ci .

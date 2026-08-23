@@ -15,6 +15,7 @@ for module in crates/codegraph-web/static/js/*.js; do node --check "$module"; do
 node --test crates/codegraph-web/static/label-policy.test.js
 node crates/codegraph-web/static/check-defs.mjs
 node crates/codegraph-web/static/flow-smoke.mjs
+node crates/codegraph-web/static/views-smoke.mjs
 cargo run -p codegraph-cli -- scan . --format ndjson > /tmp/codegraph.ndjson
 ```
 
