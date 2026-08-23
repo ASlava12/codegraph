@@ -1134,7 +1134,31 @@ pub(crate) fn workflow_with_insight_report(
         // of exhausting on one wide node. Unset = unbounded breadth (default).
         if let Some(max_fanout) = max_fanout.filter(|value| followable.len() > *value) {
             followable.sort_by_key(|(edge_index, edge)| {
-                (workflow_edge_priority(&edge.kind), *edge_index)
+                // Among equal edge kinds the order used to be the order the
+                // call sites appear in the file, so a capped node kept
+                // whichever calls were written first — on terraform's `main`
+                // that meant `fmt.Sprintf` and a tracing helper while the
+                // branch into the command layer was dropped. Keep what leads
+                // somewhere: code in this repository before a boundary out of
+                // it, and a target with a flow of its own before a leaf.
+                let target = nodes_by_id.get(&edge.target);
+                let leaves_repository = target.is_none_or(|node| {
+                    node.kind == NodeKind::ExternalDependency || node.kind == NodeKind::Unknown
+                });
+                let is_leaf = workflow_followable_edges(
+                    graph,
+                    &adjacency,
+                    &nodes_by_id,
+                    edge.target,
+                    &filters,
+                )
+                .is_empty();
+                (
+                    workflow_edge_priority(&edge.kind),
+                    u8::from(leaves_repository),
+                    u8::from(is_leaf),
+                    *edge_index,
+                )
             });
             truncated_children.insert(node_id, followable.len() - max_fanout);
             followable.truncate(max_fanout);

@@ -1578,6 +1578,48 @@ fn trace_entrypoints_returns_filtered_entrypoint_flows() {
 }
 
 #[test]
+fn a_capped_flow_keeps_the_children_that_lead_somewhere() {
+    let mut graph = CodeGraph::new("repo");
+    let main = graph.add_node(NodeKind::Function, "main");
+    graph.add_edge(graph.root, main, EdgeKind::Entrypoint, Confidence::Exact);
+    // Written first, and going nowhere: a boundary out of the repository.
+    let mut boundaries = Vec::new();
+    for index in 0..4 {
+        let external = graph.add_node(NodeKind::ExternalDependency, format!("fmt.Print{index}"));
+        graph.add_edge(main, external, EdgeKind::Calls, Confidence::Heuristic);
+        boundaries.push(external);
+    }
+    // Written later, and the actual program: a call with a flow of its own.
+    let real_main = graph.add_node(NodeKind::Function, "realMain");
+    let deeper = graph.add_node(NodeKind::Function, "runCommand");
+    graph.add_edge(main, real_main, EdgeKind::Calls, Confidence::Heuristic);
+    graph.add_edge(real_main, deeper, EdgeKind::Calls, Confidence::Heuristic);
+
+    let report = workflow(
+        &graph,
+        WorkflowRequest {
+            start: TraceStart::Label("main".to_string()),
+            max_depth: 4,
+            block_limit: 50,
+            filters: WorkflowFilters::default(),
+            compact: false,
+            max_fanout: Some(2),
+        },
+    )
+    .expect("workflow report");
+
+    let reached: Vec<_> = report.blocks.iter().map(|block| block.node.id).collect();
+    assert!(
+        reached.contains(&real_main),
+        "a capped flow must keep the call that leads somewhere"
+    );
+    assert!(
+        reached.contains(&deeper),
+        "...and reach what lies beyond it"
+    );
+}
+
+#[test]
 fn entrypoints_lead_with_programs_not_ci_jobs() {
     let mut graph = CodeGraph::new("repo");
     let span = |path: &str| {
