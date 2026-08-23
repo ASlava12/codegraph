@@ -1005,6 +1005,7 @@ function initializeGraph(options = {}) {
   renderKindFilters(kinds);
   renderLegend();
   state.layoutPaused = false;
+  state.layoutSettled = false;
   renderViewportControls();
 
   seedGraphLayout();

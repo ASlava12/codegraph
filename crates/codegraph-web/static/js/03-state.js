@@ -54,6 +54,8 @@ const state = {
   // Ratio the canvas backing stores are scaled by; all layout math stays in
   // CSS pixels via cssWidth/cssHeight.
   pixelRatio: 1,
+  layoutSettled: false,
+  minimapRect: null,
   lastPointer: null,
   stageView: "graph",
   flow: {

@@ -21,6 +21,8 @@ function applyFilters() {
     return kindEnabled && focusHit && riskHit && searchHit;
   });
 
+  // A changed visible set changes the forces; let the layout run again.
+  state.layoutSettled = false;
   state.visibleEdges = state.graph.edges.filter((edge) => {
     if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) {
       return false;
@@ -958,9 +960,19 @@ function renderLegend() {
 
 function startAnimation() {
   if (state.animationFrame) cancelAnimationFrame(state.animationFrame);
+  let framesSinceSimulation = 0;
   const tick = () => {
     if (!state.layoutPaused) {
-      simulateLayout();
+      // The force layout is the expensive part (pairwise repulsion). Once it
+      // settles, running it every frame is pure heat — skip it and re-check
+      // periodically so any disturbance still resumes the simulation even if
+      // a caller forgets to clear layoutSettled.
+      if (!state.layoutSettled || framesSinceSimulation >= LAYOUT_RECHECK_FRAMES) {
+        framesSinceSimulation = 0;
+        state.layoutSettled = simulateLayout() < LAYOUT_SETTLE_SPEED;
+      } else {
+        framesSinceSimulation += 1;
+      }
     }
     draw();
     state.animationFrame = requestAnimationFrame(tick);

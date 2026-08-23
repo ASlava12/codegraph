@@ -189,6 +189,7 @@ function onPointerDown(event) {
   if (hit) {
     selectNodeById(hit.id);
     state.draggingId = hit.id;
+    state.layoutSettled = false;
   } else {
     const edgeHit = findEdgeAt(world);
     if (edgeHit) {
@@ -385,6 +386,7 @@ function resizeCanvas() {
   const previousHeight = cssHeight(canvas);
   const rect = canvas.getBoundingClientRect();
   state.pixelRatio = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  state.minimapRect = null;
   const width = Math.max(1, Math.floor(rect.width));
   const height = Math.max(1, Math.floor(rect.height));
   canvas.width = Math.floor(width * state.pixelRatio);

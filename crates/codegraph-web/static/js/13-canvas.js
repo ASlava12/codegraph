@@ -60,10 +60,12 @@ function panGraphBy(dx, dy) {
   draw();
 }
 
+// Runs one force-layout step and returns the highest node speed, which the
+// animation loop uses to tell a settled layout from a moving one.
 function simulateLayout() {
   const nodes = state.visibleNodes;
   const edges = state.visibleEdges;
-  if (nodes.length === 0) return;
+  if (nodes.length === 0) return 0;
 
   const visibleIds = new Set(nodes.map((node) => node.id));
   const centerPull = 0.004;
@@ -112,6 +114,7 @@ function simulateLayout() {
     targetVelocity.y -= fy;
   });
 
+  let peakSpeed = 0;
   nodes.forEach((node) => {
     if (node.id === state.draggingId) return;
     const position = state.positions.get(node.id);
@@ -122,7 +125,10 @@ function simulateLayout() {
     velocity.y *= 0.82;
     position.x += velocity.x;
     position.y += velocity.y;
+    const speed = Math.abs(velocity.x) + Math.abs(velocity.y);
+    if (speed > peakSpeed) peakSpeed = speed;
   });
+  return peakSpeed;
 }
 
 function draw() {
@@ -263,9 +269,14 @@ function graphWorldBounds(padding = 32) {
 }
 
 function minimapTransform() {
-  const rect = minimapCanvas.getBoundingClientRect();
-  const width = Math.max(1, Math.floor(rect.width));
-  const height = Math.max(1, Math.floor(rect.height));
+  // getBoundingClientRect here forced a layout on every animation frame;
+  // the size only changes on resize, which refreshes this cache.
+  if (!state.minimapRect) {
+    const rect = minimapCanvas.getBoundingClientRect();
+    state.minimapRect = { width: rect.width, height: rect.height };
+  }
+  const width = Math.max(1, Math.floor(state.minimapRect.width));
+  const height = Math.max(1, Math.floor(state.minimapRect.height));
   const bounds = graphWorldBounds(48);
   if (!bounds) return null;
 
