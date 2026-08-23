@@ -961,6 +961,20 @@ fn add_external_call_placeholder(context: &mut IndexContext, call: PendingCall) 
     );
 }
 
+/// Every narrowing a call edge can record in `resolution_basis`. Published
+/// so a reader-facing surface can be held to explaining all of them: a
+/// basis with no words leaves the explanation quieter than the fact.
+pub const RESOLUTION_BASES: &[&str] = &[
+    "same_file",
+    "import",
+    "package",
+    "lexical_scope",
+    "receiver_type",
+    "owner_type",
+    "overload",
+    "name",
+];
+
 /// Whether every candidate is the same method of the same type: a set of
 /// overloads rather than a choice between unrelated definitions. Requires
 /// an owner, so free functions sharing a name never qualify.

@@ -10029,6 +10029,16 @@ fn explaining_a_call_says_what_resolved_it() {
         report.evidence
     );
 
+    // Every basis the resolver can write has words for the reader; a
+    // missing one would leave the explanation quieter than the fact. The
+    // list comes from the resolver itself, so a new narrowing cannot be
+    // added without one.
+    for basis in codegraph_indexer::RESOLUTION_BASES {
+        assert!(
+            resolution_basis_evidence(basis).is_some(),
+            "no words for `{basis}`"
+        );
+    }
     // A basis the reader would not recognise adds nothing rather than
     // echoing an internal token.
     assert_eq!(resolution_basis_evidence("something_new"), None);

@@ -3720,6 +3720,9 @@ pub(crate) fn resolution_basis_evidence(basis: &str) -> Option<&'static str> {
         "lexical_scope" => "resolution_note=the target is visible from the calling definition",
         "receiver_type" => "resolution_note=the receiver's declared type owns the target",
         "owner_type" => "resolution_note=the call names the type that owns the target",
+        "overload" => {
+            "resolution_note=the candidates are one method's overloads, so the call reaches all of them"
+        }
         "name" => "resolution_note=nothing but the name matched, across the whole project",
         _ => return None,
     })
