@@ -1,0 +1,1347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeGraph: .</title>
+<style>
+body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; margin: 2rem; color: #1a202c; }
+section { margin-bottom: 2.5rem; }
+pre.mermaid { background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; overflow-x: auto; }
+pre.mermaid-source { background: #edf2f7; border-radius: 6px; padding: 0.75rem; overflow-x: auto; font-size: 0.85rem; }
+.note { color: #4a5568; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<h1>CodeGraph: .</h1>
+<p class="note">Diagrams render via the Mermaid CDN when online; the raw Mermaid source under each diagram works offline and in wikis.</p>
+  <section>
+    <h2>Graph</h2>
+    <pre class="mermaid">
+flowchart LR
+  n1[&quot;. (repository)&quot;]
+  n2[&quot;.github (directory)&quot;]
+  n3[&quot;.github/workflows (directory)&quot;]
+  n4[&quot;.github/workflows/ci.yml (file)&quot;]
+  n5[&quot;github workflow:CI/test (entrypoint)&quot;]
+  n6[&quot;github action:actions/checkout (external_dependency)&quot;]
+  n7[&quot;github run:CI/test/24 (config)&quot;]
+  n8[&quot;github action:actions/setup-node (external_dependency)&quot;]
+  n9[&quot;github run:CI/test/34 (config)&quot;]
+  n10[&quot;github run:CI/test/37 (config)&quot;]
+  n11[&quot;github run:CI/test/40 (config)&quot;]
+  n12[&quot;github run:CI/test/43 (config)&quot;]
+  n13[&quot;github run:CI/test/50 (config)&quot;]
+  n14[&quot;github run:CI/test/53 (config)&quot;]
+  n15[&quot;github run:CI/test/59 (config)&quot;]
+  n16[&quot;github run:CI/test/62 (config)&quot;]
+  n17[&quot;github run:CI/test/92 (config)&quot;]
+  n18[&quot;github run:CI/test/100 (config)&quot;]
+  n19[&quot;CARGO_TERM_COLOR (environment)&quot;]
+  n20[&quot;CONTRIBUTING.md (file)&quot;]
+  n21[&quot;CONTRIBUTING.md#Contributing (module)&quot;]
+  n22[&quot;CONTRIBUTING.md#Local Checks (module)&quot;]
+  n23[&quot;CONTRIBUTING.md#Engineering Expectations (module)&quot;]
+  n24[&quot;Cargo.lock (file)&quot;]
+  n25[&quot;Cargo.toml (file)&quot;]
+  n26[&quot;Dockerfile (file)&quot;]
+  n27[&quot;docker entrypoint:/usr/local/bin/codegraph-server (entrypoint)&quot;]
+  n28[&quot;docker cmd:--host 0.0.0.0 --root /workspace --cache-dir /cache (entrypoint)&quot;]
+  n29[&quot;README.md (file)&quot;]
+  n30[&quot;README.md#CodeGraph (module)&quot;]
+  n31[&quot;README.md#Current Status (module)&quot;]
+  n32[&quot;README.md#Usage (module)&quot;]
+  n33[&quot;README.md#.codegraph/config.toml — optional export regeneration on every hook run (module)&quot;]
+  n34[&quot;README.md#.codegraph/config.toml (module)&quot;]
+  n35[&quot;README.md#Workspace (module)&quot;]
+  n36[&quot;README.md#Development (module)&quot;]
+  n37[&quot;README.md#Design Principles (module)&quot;]
+  n38[&quot;ROADMAP.md (file)&quot;]
+  n39[&quot;ROADMAP.md#Roadmap (module)&quot;]
+  n40[&quot;ROADMAP.md#Phase 0: Bootstrap (module)&quot;]
+  n41[&quot;ROADMAP.md#Phase 1: Universal Syntax Graph (module)&quot;]
+  n42[&quot;ROADMAP.md#Phase 2: Semantic Enrichment (module)&quot;]
+  n43[&quot;ROADMAP.md#Phase 3: Code Flow Exploration (module)&quot;]
+  n44[&quot;ROADMAP.md#Phase 4: API And UI (module)&quot;]
+  n45[&quot;ROADMAP.md#Phase 5: Scale And Incrementality (module)&quot;]
+  n46[&quot;ROADMAP.md#Phase 6: Plugin System (module)&quot;]
+  n47[&quot;ROADMAP.md#Phase 7: Repository Knowledge Graph Parity (module)&quot;]
+  n48[&quot;ROADMAP.md#Phase 8: Execution Journeys And Refactoring Intelligence (module)&quot;]
+  n49[&quot;ROADMAP.md#Phase 9: Feature Audit, Completion, And Usability (module)&quot;]
+  n50[&quot;ROADMAP.md#Phase 10: Code Refactoring And Internal Quality (module)&quot;]
+  n51[&quot;crates (directory)&quot;]
+  n52[&quot;crates/codegraph-analysis (directory)&quot;]
+  n53[&quot;crates/codegraph-analysis/Cargo.toml (file)&quot;]
+  n54[&quot;codegraph-core (external_dependency)&quot;]
+  n55[&quot;globset (external_dependency)&quot;]
+  n56[&quot;serde (external_dependency)&quot;]
+  n57[&quot;serde_json (external_dependency)&quot;]
+  n58[&quot;walkdir (external_dependency)&quot;]
+  n59[&quot;codegraph-indexer (external_dependency)&quot;]
+  n60[&quot;crates/codegraph-analysis/src (directory)&quot;]
+  n61[&quot;crates/codegraph-analysis/src/ask.rs (file)&quot;]
+  n62[&quot;use codegraph_core::{CodeGraph, Edge, Node, NodeId, NodeKind}; (external_dependency)&quot;]
+  n63[&quot;use std::collections::BTreeMap; (external_dependency)&quot;]
+  n64[&quot;use crate::*; (external_dependency)&quot;]
+  n65[&quot;natural_query (function)&quot;]
+  n66[&quot;graph_names_exactly (function)&quot;]
+  n67[&quot;NaturalQueryPlan (type)&quot;]
+  n68[&quot;natural_query_plan (function)&quot;]
+  n69[&quot;natural_query_plan_with_anchor (function)&quot;]
+  n70[&quot;natural_query_fallback_query (function)&quot;]
+  n71[&quot;screaming_snake_token (function)&quot;]
+  n72[&quot;natural_call_direction (function)&quot;]
+  n73[&quot;natural_query_mentions_any (function)&quot;]
+  n74[&quot;natural_query_candidates (function)&quot;]
+  n75[&quot;natural_query_guessed_anchor (function)&quot;]
+  n76[&quot;natural_query_quoted_terms (function)&quot;]
+  n77[&quot;natural_query_token_looks_specific (function)&quot;]
+  n78[&quot;natural_query_stop_word (function)&quot;]
+  n79[&quot;query_compaction_group_key (function)&quot;]
+  n80[&quot;query_compaction_low_signal_node (function)&quot;]
+  n81[&quot;query_compacted_node (function)&quot;]
+  n82[&quot;natural_query_plan (control_flow)&quot;]
+  n83[&quot;branch: try (control_flow)&quot;]
+  n84[&quot;branch: if (control_flow)&quot;]
+  n85[&quot;natural_query_plan_with_anchor (control_flow)&quot;]
+  n86[&quot;branch: try (control_flow)&quot;]
+  n87[&quot;branch: match (control_flow)&quot;]
+  n88[&quot;branch: if (control_flow)&quot;]
+  n89[&quot;return: return (control_flow)&quot;]
+  n90[&quot;query_graph (control_flow)&quot;]
+  n91[&quot;branch: try (control_flow)&quot;]
+  n92[&quot;branch: if (control_flow)&quot;]
+  n93[&quot;natural_query_plan_with_anchor (control_flow)&quot;]
+  n94[&quot;branch: try (control_flow)&quot;]
+  n95[&quot;branch: if (control_flow)&quot;]
+  n96[&quot;branch: if (control_flow)&quot;]
+  n97[&quot;branch: if (control_flow)&quot;]
+  n98[&quot;return: return (control_flow)&quot;]
+  n99[&quot;branch: if (control_flow)&quot;]
+  n100[&quot;branch: if (control_flow)&quot;]
+  n101[&quot;branch: if (control_flow)&quot;]
+  n102[&quot;branch: if (control_flow)&quot;]
+  n103[&quot;branch: if (control_flow)&quot;]
+  n104[&quot;branch: if (control_flow)&quot;]
+  n105[&quot;branch: if (control_flow)&quot;]
+  n106[&quot;branch: if (control_flow)&quot;]
+  n107[&quot;branch: if (control_flow)&quot;]
+  n108[&quot;branch: if (control_flow)&quot;]
+  n109[&quot;branch: if (control_flow)&quot;]
+  n110[&quot;branch: if (control_flow)&quot;]
+  n111[&quot;branch: if (control_flow)&quot;]
+  n112[&quot;branch: if (control_flow)&quot;]
+  n113[&quot;branch: if (control_flow)&quot;]
+  n114[&quot;branch: if (control_flow)&quot;]
+  n115[&quot;branch: if (control_flow)&quot;]
+  n116[&quot;branch: if (control_flow)&quot;]
+  n117[&quot;branch: if (control_flow)&quot;]
+  n118[&quot;branch: if (control_flow)&quot;]
+  n119[&quot;branch: if (control_flow)&quot;]
+  n120[&quot;branch: if (control_flow)&quot;]
+  n121[&quot;branch: if (control_flow)&quot;]
+  n122[&quot;branch: if (control_flow)&quot;]
+  n123[&quot;branch: if (control_flow)&quot;]
+  n124[&quot;branch: if (control_flow)&quot;]
+  n125[&quot;branch: if (control_flow)&quot;]
+  n126[&quot;branch: if (control_flow)&quot;]
+  n127[&quot;branch: if (control_flow)&quot;]
+  n128[&quot;branch: if (control_flow)&quot;]
+  n129[&quot;branch: if (control_flow)&quot;]
+  n130[&quot;return: return (control_flow)&quot;]
+  n131[&quot;branch: if (control_flow)&quot;]
+  n132[&quot;return: return (control_flow)&quot;]
+  n133[&quot;branch: match (control_flow)&quot;]
+  n134[&quot;loop: for (control_flow)&quot;]
+  n135[&quot;branch: if (control_flow)&quot;]
+  n136[&quot;branch: if (control_flow)&quot;]
+  n137[&quot;loop: for (control_flow)&quot;]
+  n138[&quot;branch: if (control_flow)&quot;]
+  n139[&quot;branch: if (control_flow)&quot;]
+  n140[&quot;branch: if (control_flow)&quot;]
+  n141[&quot;branch: if (control_flow)&quot;]
+  n142[&quot;branch: if (control_flow)&quot;]
+  n143[&quot;branch: if (control_flow)&quot;]
+  n144[&quot;return: return (control_flow)&quot;]
+  n145[&quot;branch: if (control_flow)&quot;]
+  n146[&quot;return: return (control_flow)&quot;]
+  n147[&quot;branch: if (control_flow)&quot;]
+  n148[&quot;return: return (control_flow)&quot;]
+  n149[&quot;branch: if (control_flow)&quot;]
+  n150[&quot;return: return (control_flow)&quot;]
+  n151[&quot;branch: if (control_flow)&quot;]
+  n152[&quot;return: return (control_flow)&quot;]
+  n153[&quot;branch: if (control_flow)&quot;]
+  n154[&quot;crates/codegraph-analysis/src/cards.rs (file)&quot;]
+  n155[&quot;use codegraph_core::{CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind}; (external_dependency)&quot;]
+  n156[&quot;use std::collections::{BTreeMap, BTreeSet}; (external_dependency)&quot;]
+  n157[&quot;use std::fs; (external_dependency)&quot;]
+  n158[&quot;use std::io; (external_dependency)&quot;]
+  n159[&quot;use std::path::Path; (external_dependency)&quot;]
+  n160[&quot;use crate::*; (external_dependency)&quot;]
+  n161[&quot;node_context (function)&quot;]
+  n162[&quot;graph_node_source_path (function)&quot;]
+  n163[&quot;card_edge_rank (function)&quot;]
+  n164[&quot;node_card (function)&quot;]
+  n165[&quot;node_card_fast (function)&quot;]
+  n166[&quot;node_card_impl (function)&quot;]
+  n167[&quot;node_insight_summary (function)&quot;]
+  n168[&quot;node_card_related_insights (function)&quot;]
+  n169[&quot;node_card_insight_matches (function)&quot;]
+  n170[&quot;nodes_by_id_index (function)&quot;]
+  n171[&quot;outgoing_edge_index (function)&quot;]
+  n172[&quot;incident_edge_index (function)&quot;]
+  n173[&quot;file_node_summary (function)&quot;]
+  n174[&quot;file_node_summary_indexed (function)&quot;]
+  n175[&quot;node_dependency_summary (function)&quot;]
+  n176[&quot;node_dependency_summary_indexed (function)&quot;]
+  n177[&quot;node_card_actions (function)&quot;]
+  n178[&quot;quote_query_value (function)&quot;]
+  n179[&quot;node_source_preview (function)&quot;]
+  n180[&quot;read_file_source_preview (function)&quot;]
+  n181[&quot;read_source_preview (function)&quot;]
+  n182[&quot;QuerySpec (type)&quot;]
+  n183[&quot;parse (function)&quot;]
+  n184[&quot;parse_call_expression (function)&quot;]
+  n185[&quot;query_nodes (function)&quot;]
+  n186[&quot;query_edges (function)&quot;]
+  n187[&quot;query_trace (function)&quot;]
+  n188[&quot;query_dependents (function)&quot;]
+  n189[&quot;query_trace_with (function)&quot;]
+  n190[&quot;ambiguous_start_note (function)&quot;]
+  n191[&quot;graph.nodes.iter (control_flow)&quot;]
+  n192[&quot;branch: try (control_flow)&quot;]
+  n193[&quot;branch: if (control_flow)&quot;]
+  n194[&quot;branch: if (control_flow)&quot;]
+  n195[&quot;loop: for (control_flow)&quot;]
+  n196[&quot;branch: match (control_flow)&quot;]
+  n197[&quot;branch: match (control_flow)&quot;]
+  n198[&quot;return: return (control_flow)&quot;]
+  n199[&quot;branch: match (control_flow)&quot;]
+  n200[&quot;node_source_preview (control_flow)&quot;]
+  n201[&quot;branch: try (control_flow)&quot;]
+  n202[&quot;branch: if (control_flow)&quot;]
+  n203[&quot;loop: for (control_flow)&quot;]
+  n204[&quot;branch: if (control_flow)&quot;]
+  n205[&quot;return: return (control_flow)&quot;]
+  n206[&quot;branch: if (control_flow)&quot;]
+  n207[&quot;return: return (control_flow)&quot;]
+  n208[&quot;return: return (control_flow)&quot;]
+  n209[&quot;loop: for (control_flow)&quot;]
+  n210[&quot;loop: for (control_flow)&quot;]
+  n211[&quot;branch: if (control_flow)&quot;]
+  n212[&quot;branch: if (control_flow)&quot;]
+  n213[&quot;return: return (control_flow)&quot;]
+  n214[&quot;loop: for (control_flow)&quot;]
+  n215[&quot;branch: match (control_flow)&quot;]
+  n216[&quot;branch: if (control_flow)&quot;]
+  n217[&quot;branch: if (control_flow)&quot;]
+  n218[&quot;branch: if (control_flow)&quot;]
+  n219[&quot;loop: for (control_flow)&quot;]
+  n220[&quot;loop: for (control_flow)&quot;]
+  n221[&quot;branch: if (control_flow)&quot;]
+  n222[&quot;branch: if (control_flow)&quot;]
+  n223[&quot;branch: match (control_flow)&quot;]
+  n224[&quot;branch: if (control_flow)&quot;]
+  n225[&quot;loop: for (control_flow)&quot;]
+  n226[&quot;branch: if (control_flow)&quot;]
+  n227[&quot;branch: if (control_flow)&quot;]
+  n228[&quot;branch: if (control_flow)&quot;]
+  n229[&quot;branch: if (control_flow)&quot;]
+  n230[&quot;branch: if (control_flow)&quot;]
+  n231[&quot;branch: if (control_flow)&quot;]
+  n232[&quot;branch: if (control_flow)&quot;]
+  n233[&quot;branch: if (control_flow)&quot;]
+  n234[&quot;branch: if (control_flow)&quot;]
+  n235[&quot;branch: if (control_flow)&quot;]
+  n236[&quot;branch: if (control_flow)&quot;]
+  n237[&quot;branch: if (control_flow)&quot;]
+  n238[&quot;branch: if (control_flow)&quot;]
+  n239[&quot;return: return (control_flow)&quot;]
+  n240[&quot;branch: if (control_flow)&quot;]
+  n241[&quot;return: return (control_flow)&quot;]
+  n242[&quot;branch: if (control_flow)&quot;]
+  n243[&quot;return: return (control_flow)&quot;]
+  n244[&quot;branch: if (control_flow)&quot;]
+  n245[&quot;return: return (control_flow)&quot;]
+  n246[&quot;branch: if (control_flow)&quot;]
+  n247[&quot;return: return (control_flow)&quot;]
+  n248[&quot;read_source_preview (control_flow)&quot;]
+  n249[&quot;branch: try (control_flow)&quot;]
+  n250[&quot;loop: for (control_flow)&quot;]
+  n251[&quot;branch: if (control_flow)&quot;]
+  n252[&quot;fs::read (control_flow)&quot;]
+  n253[&quot;branch: try (control_flow)&quot;]
+  n254[&quot;loop: for (control_flow)&quot;]
+  n255[&quot;branch: if (control_flow)&quot;]
+  n256[&quot;branch: if (control_flow)&quot;]
+  n257[&quot;branch: if (control_flow)&quot;]
+  n258[&quot;branch: if (control_flow)&quot;]
+  n259[&quot;return: return (control_flow)&quot;]
+  n260[&quot;branch: if (control_flow)&quot;]
+  n261[&quot;parse_call_expression (control_flow)&quot;]
+  n262[&quot;branch: try (control_flow)&quot;]
+  n263[&quot;return: return (control_flow)&quot;]
+  n264[&quot;split_query_tokens (control_flow)&quot;]
+  n265[&quot;branch: try (control_flow)&quot;]
+  n266[&quot;return: return (control_flow)&quot;]
+  n267[&quot;loop: for (control_flow)&quot;]
+  n268[&quot;branch: if (control_flow)&quot;]
+  n269[&quot;branch: if (control_flow)&quot;]
+  n270[&quot;return: return (control_flow)&quot;]
+  n271[&quot;branch: if (control_flow)&quot;]
+  n272[&quot;parse_limit (control_flow)&quot;]
+  n273[&quot;branch: try (control_flow)&quot;]
+  n274[&quot;return: return (control_flow)&quot;]
+  n275[&quot;return: return (control_flow)&quot;]
+  n276[&quot;loop: for (control_flow)&quot;]
+  n277[&quot;return: return (control_flow)&quot;]
+  n278[&quot;branch: match (control_flow)&quot;]
+  n279[&quot;validate_node_terms (control_flow)&quot;]
+  n280[&quot;branch: try (control_flow)&quot;]
+  n281[&quot;branch: if (control_flow)&quot;]
+  n282[&quot;branch: if (control_flow)&quot;]
+  n283[&quot;branch: if (control_flow)&quot;]
+  n284[&quot;branch: if (control_flow)&quot;]
+  n285[&quot;validate_edge_terms (control_flow)&quot;]
+  n286[&quot;branch: try (control_flow)&quot;]
+  n287[&quot;transpose() (control_flow)&quot;]
+  n288[&quot;branch: try (control_flow)&quot;]
+  n289[&quot;branch: if (control_flow)&quot;]
+  n290[&quot;parse_node_id (control_flow)&quot;]
+  n291[&quot;branch: try (control_flow)&quot;]
+  n292[&quot;branch: if (control_flow)&quot;]
+  n293[&quot;return: return (control_flow)&quot;]
+  n294[&quot;return: return (control_flow)&quot;]
+  n295[&quot;branch: match (control_flow)&quot;]
+  n296[&quot;return: return (control_flow)&quot;]
+  n297[&quot;resolve_trace_start (control_flow)&quot;]
+  n298[&quot;branch: try (control_flow)&quot;]
+  n299[&quot;crates/codegraph-analysis/src/exports.rs (file)&quot;]
+  n300[&quot;use codegraph_core::{CodeGraph, Confidence, Edge, Node, NodeId, NodeKind}; (external_dependency)&quot;]
+  n1 --&gt;|contains/exact| n2
+  n1 --&gt;|contains/exact| n3
+  n1 --&gt;|contains/exact| n4
+  n4 --&gt;|contains/exact| n5
+  n1 --&gt;|entrypoint/exact| n5
+  n5 --&gt;|references/exact| n4
+  n5 --&gt;|depends_on/exact| n6
+  n5 --&gt;|references/exact| n7
+  n5 --&gt;|depends_on/exact| n8
+  n5 --&gt;|references/exact| n9
+  n5 --&gt;|references/exact| n10
+  n5 --&gt;|references/exact| n11
+  n5 --&gt;|references/exact| n12
+  n5 --&gt;|references/exact| n13
+  n5 --&gt;|references/exact| n14
+  n5 --&gt;|references/exact| n15
+  n5 --&gt;|references/exact| n16
+  n5 --&gt;|references/exact| n17
+  n5 --&gt;|references/exact| n18
+  n5 --&gt;|reads_environment/exact| n19
+  n1 --&gt;|contains/exact| n20
+  n20 --&gt;|contains/exact| n21
+  n20 --&gt;|contains/exact| n22
+  n20 --&gt;|contains/exact| n23
+  n1 --&gt;|contains/exact| n24
+  n1 --&gt;|contains/exact| n25
+  n1 --&gt;|contains/exact| n26
+  n26 --&gt;|contains/exact| n27
+  n1 --&gt;|entrypoint/exact| n27
+  n27 --&gt;|references/exact| n26
+  n26 --&gt;|contains/exact| n28
+  n1 --&gt;|entrypoint/exact| n28
+  n28 --&gt;|references/exact| n26
+  n1 --&gt;|contains/exact| n29
+  n29 --&gt;|contains/exact| n30
+  n29 --&gt;|contains/exact| n31
+  n29 --&gt;|contains/exact| n32
+  n29 --&gt;|contains/exact| n33
+  n29 --&gt;|contains/exact| n34
+  n29 --&gt;|contains/exact| n35
+  n29 --&gt;|contains/exact| n36
+  n29 --&gt;|contains/exact| n37
+  n1 --&gt;|contains/exact| n38
+  n38 --&gt;|contains/exact| n39
+  n38 --&gt;|contains/exact| n40
+  n38 --&gt;|contains/exact| n41
+  n38 --&gt;|contains/exact| n42
+  n38 --&gt;|contains/exact| n43
+  n38 --&gt;|contains/exact| n44
+  n38 --&gt;|contains/exact| n45
+  n38 --&gt;|contains/exact| n46
+  n38 --&gt;|contains/exact| n47
+  n38 --&gt;|contains/exact| n48
+  n38 --&gt;|contains/exact| n49
+  n38 --&gt;|contains/exact| n50
+  n1 --&gt;|contains/exact| n51
+  n1 --&gt;|contains/exact| n52
+  n1 --&gt;|contains/exact| n53
+  n53 --&gt;|depends_on/exact| n54
+  n53 --&gt;|depends_on/exact| n55
+  n53 --&gt;|depends_on/exact| n56
+  n53 --&gt;|depends_on/exact| n57
+  n53 --&gt;|depends_on/exact| n58
+  n53 --&gt;|depends_on/exact| n59
+  n1 --&gt;|contains/exact| n60
+  n1 --&gt;|contains/exact| n61
+  n61 --&gt;|imports/syntactic| n62
+  n61 --&gt;|imports/syntactic| n63
+  n61 --&gt;|imports/syntactic| n64
+  n61 --&gt;|contains/syntactic| n65
+  n61 --&gt;|contains/syntactic| n66
+  n61 --&gt;|contains/syntactic| n67
+  n61 --&gt;|contains/syntactic| n68
+  n61 --&gt;|contains/syntactic| n69
+  n61 --&gt;|contains/syntactic| n70
+  n61 --&gt;|contains/syntactic| n71
+  n61 --&gt;|contains/syntactic| n72
+  n61 --&gt;|contains/syntactic| n73
+  n61 --&gt;|contains/syntactic| n74
+  n61 --&gt;|contains/syntactic| n75
+  n61 --&gt;|contains/syntactic| n76
+  n61 --&gt;|contains/syntactic| n77
+  n61 --&gt;|contains/syntactic| n78
+  n61 --&gt;|contains/syntactic| n79
+  n61 --&gt;|contains/syntactic| n80
+  n61 --&gt;|contains/syntactic| n81
+  n65 --&gt;|may_error/heuristic| n82
+  n65 --&gt;|references/heuristic| n83
+  n65 --&gt;|references/heuristic| n84
+  n65 --&gt;|may_error/heuristic| n85
+  n65 --&gt;|references/heuristic| n86
+  n65 --&gt;|references/heuristic| n87
+  n65 --&gt;|references/heuristic| n88
+  n65 --&gt;|references/heuristic| n89
+  n65 --&gt;|may_error/heuristic| n90
+  n65 --&gt;|references/heuristic| n91
+  n65 --&gt;|references/heuristic| n92
+  n65 --&gt;|may_error/heuristic| n93
+  n65 --&gt;|references/heuristic| n94
+  n65 --&gt;|references/heuristic| n95
+  n65 --&gt;|references/heuristic| n96
+  n69 --&gt;|references/heuristic| n97
+  n69 --&gt;|references/heuristic| n98
+  n69 --&gt;|references/heuristic| n99
+  n69 --&gt;|references/heuristic| n100
+  n69 --&gt;|references/heuristic| n101
+  n69 --&gt;|references/heuristic| n102
+  n69 --&gt;|references/heuristic| n103
+  n69 --&gt;|references/heuristic| n104
+  n69 --&gt;|references/heuristic| n105
+  n69 --&gt;|references/heuristic| n106
+  n69 --&gt;|references/heuristic| n107
+  n69 --&gt;|references/heuristic| n108
+  n69 --&gt;|references/heuristic| n109
+  n69 --&gt;|references/heuristic| n110
+  n69 --&gt;|references/heuristic| n111
+  n69 --&gt;|references/heuristic| n112
+  n69 --&gt;|references/heuristic| n113
+  n69 --&gt;|references/heuristic| n114
+  n69 --&gt;|references/heuristic| n115
+  n69 --&gt;|references/heuristic| n116
+  n69 --&gt;|references/heuristic| n117
+  n69 --&gt;|references/heuristic| n118
+  n69 --&gt;|references/heuristic| n119
+  n69 --&gt;|references/heuristic| n120
+  n69 --&gt;|references/heuristic| n121
+  n69 --&gt;|references/heuristic| n122
+  n69 --&gt;|references/heuristic| n123
+  n69 --&gt;|references/heuristic| n124
+  n69 --&gt;|references/heuristic| n125
+  n69 --&gt;|references/heuristic| n126
+  n69 --&gt;|references/heuristic| n127
+  n69 --&gt;|references/heuristic| n128
+  n72 --&gt;|references/heuristic| n129
+  n72 --&gt;|references/heuristic| n130
+  n72 --&gt;|references/heuristic| n131
+  n72 --&gt;|references/heuristic| n132
+  n72 --&gt;|references/heuristic| n133
+  n74 --&gt;|references/heuristic| n134
+  n74 --&gt;|references/heuristic| n135
+  n74 --&gt;|references/heuristic| n136
+  n76 --&gt;|references/heuristic| n137
+  n76 --&gt;|references/heuristic| n138
+  n76 --&gt;|references/heuristic| n139
+  n76 --&gt;|references/heuristic| n140
+  n76 --&gt;|references/heuristic| n141
+  n76 --&gt;|references/heuristic| n142
+  n77 --&gt;|references/heuristic| n143
+  n77 --&gt;|references/heuristic| n144
+  n79 --&gt;|references/heuristic| n145
+  n79 --&gt;|references/heuristic| n146
+  n79 --&gt;|references/heuristic| n147
+  n79 --&gt;|references/heuristic| n148
+  n80 --&gt;|references/heuristic| n149
+  n80 --&gt;|references/heuristic| n150
+  n80 --&gt;|references/heuristic| n151
+  n80 --&gt;|references/heuristic| n152
+  n81 --&gt;|references/heuristic| n153
+  n1 --&gt;|contains/exact| n154
+  n154 --&gt;|imports/syntactic| n155
+  n154 --&gt;|imports/syntactic| n156
+  n154 --&gt;|imports/syntactic| n157
+  n154 --&gt;|imports/syntactic| n158
+  n154 --&gt;|imports/syntactic| n159
+  n154 --&gt;|imports/syntactic| n160
+  n154 --&gt;|contains/syntactic| n161
+  n154 --&gt;|contains/syntactic| n162
+  n154 --&gt;|contains/syntactic| n163
+  n154 --&gt;|contains/syntactic| n164
+  n154 --&gt;|contains/syntactic| n165
+  n154 --&gt;|contains/syntactic| n166
+  n154 --&gt;|contains/syntactic| n167
+  n154 --&gt;|contains/syntactic| n168
+  n154 --&gt;|contains/syntactic| n169
+  n154 --&gt;|contains/syntactic| n170
+  n154 --&gt;|contains/syntactic| n171
+  n154 --&gt;|contains/syntactic| n172
+  n154 --&gt;|contains/syntactic| n173
+  n154 --&gt;|contains/syntactic| n174
+  n154 --&gt;|contains/syntactic| n175
+  n154 --&gt;|contains/syntactic| n176
+  n154 --&gt;|contains/syntactic| n177
+  n154 --&gt;|contains/syntactic| n178
+  n154 --&gt;|contains/syntactic| n179
+  n154 --&gt;|contains/syntactic| n180
+  n154 --&gt;|contains/syntactic| n181
+  n154 --&gt;|contains/syntactic| n182
+  n154 --&gt;|contains/syntactic| n183
+  n154 --&gt;|contains/syntactic| n184
+  n154 --&gt;|contains/syntactic| n185
+  n154 --&gt;|contains/syntactic| n186
+  n154 --&gt;|contains/syntactic| n187
+  n154 --&gt;|contains/syntactic| n188
+  n154 --&gt;|contains/syntactic| n189
+  n154 --&gt;|contains/syntactic| n190
+  n161 --&gt;|may_error/heuristic| n191
+  n161 --&gt;|references/heuristic| n192
+  n161 --&gt;|references/heuristic| n193
+  n161 --&gt;|references/heuristic| n194
+  n161 --&gt;|references/heuristic| n195
+  n163 --&gt;|references/heuristic| n196
+  n163 --&gt;|references/heuristic| n197
+  n166 --&gt;|references/heuristic| n198
+  n166 --&gt;|references/heuristic| n199
+  n166 --&gt;|may_error/heuristic| n200
+  n166 --&gt;|references/heuristic| n201
+  n166 --&gt;|references/heuristic| n202
+  n167 --&gt;|references/heuristic| n203
+  n169 --&gt;|references/heuristic| n204
+  n169 --&gt;|references/heuristic| n205
+  n169 --&gt;|references/heuristic| n206
+  n169 --&gt;|references/heuristic| n207
+  n169 --&gt;|references/heuristic| n208
+  n171 --&gt;|references/heuristic| n209
+  n172 --&gt;|references/heuristic| n210
+  n172 --&gt;|references/heuristic| n211
+  n174 --&gt;|references/heuristic| n212
+  n174 --&gt;|references/heuristic| n213
+  n174 --&gt;|references/heuristic| n214
+  n174 --&gt;|references/heuristic| n215
+  n174 --&gt;|references/heuristic| n216
+  n174 --&gt;|references/heuristic| n217
+  n174 --&gt;|references/heuristic| n218
+  n174 --&gt;|references/heuristic| n219
+  n174 --&gt;|references/heuristic| n220
+  n174 --&gt;|references/heuristic| n221
+  n174 --&gt;|references/heuristic| n222
+  n174 --&gt;|references/heuristic| n223
+  n174 --&gt;|references/heuristic| n224
+  n176 --&gt;|references/heuristic| n225
+  n176 --&gt;|references/heuristic| n226
+  n176 --&gt;|references/heuristic| n227
+  n176 --&gt;|references/heuristic| n228
+  n176 --&gt;|references/heuristic| n229
+  n176 --&gt;|references/heuristic| n230
+  n177 --&gt;|references/heuristic| n231
+  n177 --&gt;|references/heuristic| n232
+  n177 --&gt;|references/heuristic| n233
+  n177 --&gt;|references/heuristic| n234
+  n177 --&gt;|references/heuristic| n235
+  n177 --&gt;|references/heuristic| n236
+  n177 --&gt;|references/heuristic| n237
+  n178 --&gt;|references/heuristic| n238
+  n178 --&gt;|references/heuristic| n239
+  n178 --&gt;|references/heuristic| n240
+  n178 --&gt;|references/heuristic| n241
+  n178 --&gt;|references/heuristic| n242
+  n178 --&gt;|references/heuristic| n243
+  n179 --&gt;|references/heuristic| n244
+  n179 --&gt;|references/heuristic| n245
+  n179 --&gt;|references/heuristic| n246
+  n179 --&gt;|references/heuristic| n247
+  n180 --&gt;|may_error/heuristic| n248
+  n180 --&gt;|references/heuristic| n249
+  n180 --&gt;|references/heuristic| n250
+  n181 --&gt;|references/heuristic| n251
+  n181 --&gt;|may_error/heuristic| n252
+  n181 --&gt;|references/heuristic| n253
+  n181 --&gt;|references/heuristic| n254
+  n181 --&gt;|references/heuristic| n255
+  n181 --&gt;|references/heuristic| n256
+  n181 --&gt;|references/heuristic| n257
+  n183 --&gt;|references/heuristic| n258
+  n183 --&gt;|references/heuristic| n259
+  n183 --&gt;|references/heuristic| n260
+  n183 --&gt;|may_error/heuristic| n261
+  n183 --&gt;|references/heuristic| n262
+  n183 --&gt;|references/heuristic| n263
+  n183 --&gt;|may_error/heuristic| n264
+  n183 --&gt;|references/heuristic| n265
+  n183 --&gt;|references/heuristic| n266
+  n183 --&gt;|references/heuristic| n267
+  n183 --&gt;|references/heuristic| n268
+  n183 --&gt;|references/heuristic| n269
+  n183 --&gt;|references/heuristic| n270
+  n183 --&gt;|references/heuristic| n271
+  n183 --&gt;|may_error/heuristic| n272
+  n183 --&gt;|references/heuristic| n273
+  n184 --&gt;|references/heuristic| n274
+  n184 --&gt;|references/heuristic| n275
+  n184 --&gt;|references/heuristic| n276
+  n184 --&gt;|references/heuristic| n277
+  n184 --&gt;|references/heuristic| n278
+  n185 --&gt;|may_error/heuristic| n279
+  n185 --&gt;|references/heuristic| n280
+  n186 --&gt;|references/heuristic| n281
+  n186 --&gt;|references/heuristic| n282
+  n186 --&gt;|references/heuristic| n283
+  n186 --&gt;|references/heuristic| n284
+  n186 --&gt;|may_error/heuristic| n285
+  n186 --&gt;|references/heuristic| n286
+  n189 --&gt;|may_error/heuristic| n287
+  n189 --&gt;|references/heuristic| n288
+  n189 --&gt;|references/heuristic| n289
+  n189 --&gt;|may_error/heuristic| n290
+  n189 --&gt;|references/heuristic| n291
+  n189 --&gt;|references/heuristic| n292
+  n189 --&gt;|references/heuristic| n293
+  n189 --&gt;|references/heuristic| n294
+  n189 --&gt;|references/heuristic| n295
+  n190 --&gt;|references/heuristic| n296
+  n190 --&gt;|may_error/heuristic| n297
+  n190 --&gt;|references/heuristic| n298
+  n1 --&gt;|contains/exact| n299
+  n299 --&gt;|imports/syntactic| n300
+  n65 --&gt;|calls/syntactic| n68
+  n65 --&gt;|calls/syntactic| n66
+  n65 --&gt;|calls/syntactic| n69
+  n65 --&gt;|calls/syntactic| n70
+  n68 --&gt;|calls/syntactic| n69
+  n69 --&gt;|calls/syntactic| n74
+  n69 --&gt;|calls/syntactic| n75
+  n69 --&gt;|calls/syntactic| n77
+  n69 --&gt;|calls/syntactic| n70
+  n69 --&gt;|calls/syntactic| n73
+  n69 --&gt;|calls/syntactic| n71
+  n69 --&gt;|calls/syntactic| n72
+  n69 --&gt;|calls/heuristic| n178
+  n72 --&gt;|calls/syntactic| n73
+  n74 --&gt;|calls/syntactic| n76
+  n74 --&gt;|calls/syntactic| n77
+  n75 --&gt;|calls/syntactic| n78
+  n77 --&gt;|calls/syntactic| n78
+  n79 --&gt;|calls/syntactic| n80
+  n161 --&gt;|calls/syntactic| n162
+  n161 --&gt;|calls/syntactic| n163
+  n164 --&gt;|calls/syntactic| n166
+  n165 --&gt;|calls/syntactic| n166
+  n166 --&gt;|calls/syntactic| n161
+  n166 --&gt;|calls/syntactic| n179
+  n166 --&gt;|calls/syntactic| n168
+  n166 --&gt;|calls/syntactic| n167
+  n166 --&gt;|calls/syntactic| n177
+  n166 --&gt;|calls/syntactic| n175
+  n166 --&gt;|calls/syntactic| n173
+  n168 --&gt;|calls/syntactic| n170
+  n168 --&gt;|calls/syntactic| n169
+  n173 --&gt;|calls/syntactic| n170
+  n173 --&gt;|calls/syntactic| n171
+  n173 --&gt;|calls/syntactic| n174
+  n175 --&gt;|calls/syntactic| n170
+  n175 --&gt;|calls/syntactic| n176
+  n179 --&gt;|calls/syntactic| n181
+  n179 --&gt;|calls/syntactic| n180
+  n180 --&gt;|calls/syntactic| n181
+  n183 --&gt;|calls/syntactic| n184
+  n187 --&gt;|calls/syntactic| n189
+  n188 --&gt;|calls/syntactic| n189
+  n189 --&gt;|calls/syntactic| n190
+  n62 --&gt;|depends_on/heuristic| n54
+  n155 --&gt;|depends_on/heuristic| n54
+  n300 --&gt;|depends_on/heuristic| n54
+  n34 --&gt;|references/exact| n25
+  n36 --&gt;|references/exact| n20
+  n50 --&gt;|references/exact| n20
+  n50 --&gt;|references/heuristic| n164
+  %% truncated: showing 300 of 19330 nodes and 356 of 42227 edges
+    </pre>
+    <details>
+      <summary>Mermaid source</summary>
+      <pre class="mermaid-source">flowchart LR
+  n1[&quot;. (repository)&quot;]
+  n2[&quot;.github (directory)&quot;]
+  n3[&quot;.github/workflows (directory)&quot;]
+  n4[&quot;.github/workflows/ci.yml (file)&quot;]
+  n5[&quot;github workflow:CI/test (entrypoint)&quot;]
+  n6[&quot;github action:actions/checkout (external_dependency)&quot;]
+  n7[&quot;github run:CI/test/24 (config)&quot;]
+  n8[&quot;github action:actions/setup-node (external_dependency)&quot;]
+  n9[&quot;github run:CI/test/34 (config)&quot;]
+  n10[&quot;github run:CI/test/37 (config)&quot;]
+  n11[&quot;github run:CI/test/40 (config)&quot;]
+  n12[&quot;github run:CI/test/43 (config)&quot;]
+  n13[&quot;github run:CI/test/50 (config)&quot;]
+  n14[&quot;github run:CI/test/53 (config)&quot;]
+  n15[&quot;github run:CI/test/59 (config)&quot;]
+  n16[&quot;github run:CI/test/62 (config)&quot;]
+  n17[&quot;github run:CI/test/92 (config)&quot;]
+  n18[&quot;github run:CI/test/100 (config)&quot;]
+  n19[&quot;CARGO_TERM_COLOR (environment)&quot;]
+  n20[&quot;CONTRIBUTING.md (file)&quot;]
+  n21[&quot;CONTRIBUTING.md#Contributing (module)&quot;]
+  n22[&quot;CONTRIBUTING.md#Local Checks (module)&quot;]
+  n23[&quot;CONTRIBUTING.md#Engineering Expectations (module)&quot;]
+  n24[&quot;Cargo.lock (file)&quot;]
+  n25[&quot;Cargo.toml (file)&quot;]
+  n26[&quot;Dockerfile (file)&quot;]
+  n27[&quot;docker entrypoint:/usr/local/bin/codegraph-server (entrypoint)&quot;]
+  n28[&quot;docker cmd:--host 0.0.0.0 --root /workspace --cache-dir /cache (entrypoint)&quot;]
+  n29[&quot;README.md (file)&quot;]
+  n30[&quot;README.md#CodeGraph (module)&quot;]
+  n31[&quot;README.md#Current Status (module)&quot;]
+  n32[&quot;README.md#Usage (module)&quot;]
+  n33[&quot;README.md#.codegraph/config.toml — optional export regeneration on every hook run (module)&quot;]
+  n34[&quot;README.md#.codegraph/config.toml (module)&quot;]
+  n35[&quot;README.md#Workspace (module)&quot;]
+  n36[&quot;README.md#Development (module)&quot;]
+  n37[&quot;README.md#Design Principles (module)&quot;]
+  n38[&quot;ROADMAP.md (file)&quot;]
+  n39[&quot;ROADMAP.md#Roadmap (module)&quot;]
+  n40[&quot;ROADMAP.md#Phase 0: Bootstrap (module)&quot;]
+  n41[&quot;ROADMAP.md#Phase 1: Universal Syntax Graph (module)&quot;]
+  n42[&quot;ROADMAP.md#Phase 2: Semantic Enrichment (module)&quot;]
+  n43[&quot;ROADMAP.md#Phase 3: Code Flow Exploration (module)&quot;]
+  n44[&quot;ROADMAP.md#Phase 4: API And UI (module)&quot;]
+  n45[&quot;ROADMAP.md#Phase 5: Scale And Incrementality (module)&quot;]
+  n46[&quot;ROADMAP.md#Phase 6: Plugin System (module)&quot;]
+  n47[&quot;ROADMAP.md#Phase 7: Repository Knowledge Graph Parity (module)&quot;]
+  n48[&quot;ROADMAP.md#Phase 8: Execution Journeys And Refactoring Intelligence (module)&quot;]
+  n49[&quot;ROADMAP.md#Phase 9: Feature Audit, Completion, And Usability (module)&quot;]
+  n50[&quot;ROADMAP.md#Phase 10: Code Refactoring And Internal Quality (module)&quot;]
+  n51[&quot;crates (directory)&quot;]
+  n52[&quot;crates/codegraph-analysis (directory)&quot;]
+  n53[&quot;crates/codegraph-analysis/Cargo.toml (file)&quot;]
+  n54[&quot;codegraph-core (external_dependency)&quot;]
+  n55[&quot;globset (external_dependency)&quot;]
+  n56[&quot;serde (external_dependency)&quot;]
+  n57[&quot;serde_json (external_dependency)&quot;]
+  n58[&quot;walkdir (external_dependency)&quot;]
+  n59[&quot;codegraph-indexer (external_dependency)&quot;]
+  n60[&quot;crates/codegraph-analysis/src (directory)&quot;]
+  n61[&quot;crates/codegraph-analysis/src/ask.rs (file)&quot;]
+  n62[&quot;use codegraph_core::{CodeGraph, Edge, Node, NodeId, NodeKind}; (external_dependency)&quot;]
+  n63[&quot;use std::collections::BTreeMap; (external_dependency)&quot;]
+  n64[&quot;use crate::*; (external_dependency)&quot;]
+  n65[&quot;natural_query (function)&quot;]
+  n66[&quot;graph_names_exactly (function)&quot;]
+  n67[&quot;NaturalQueryPlan (type)&quot;]
+  n68[&quot;natural_query_plan (function)&quot;]
+  n69[&quot;natural_query_plan_with_anchor (function)&quot;]
+  n70[&quot;natural_query_fallback_query (function)&quot;]
+  n71[&quot;screaming_snake_token (function)&quot;]
+  n72[&quot;natural_call_direction (function)&quot;]
+  n73[&quot;natural_query_mentions_any (function)&quot;]
+  n74[&quot;natural_query_candidates (function)&quot;]
+  n75[&quot;natural_query_guessed_anchor (function)&quot;]
+  n76[&quot;natural_query_quoted_terms (function)&quot;]
+  n77[&quot;natural_query_token_looks_specific (function)&quot;]
+  n78[&quot;natural_query_stop_word (function)&quot;]
+  n79[&quot;query_compaction_group_key (function)&quot;]
+  n80[&quot;query_compaction_low_signal_node (function)&quot;]
+  n81[&quot;query_compacted_node (function)&quot;]
+  n82[&quot;natural_query_plan (control_flow)&quot;]
+  n83[&quot;branch: try (control_flow)&quot;]
+  n84[&quot;branch: if (control_flow)&quot;]
+  n85[&quot;natural_query_plan_with_anchor (control_flow)&quot;]
+  n86[&quot;branch: try (control_flow)&quot;]
+  n87[&quot;branch: match (control_flow)&quot;]
+  n88[&quot;branch: if (control_flow)&quot;]
+  n89[&quot;return: return (control_flow)&quot;]
+  n90[&quot;query_graph (control_flow)&quot;]
+  n91[&quot;branch: try (control_flow)&quot;]
+  n92[&quot;branch: if (control_flow)&quot;]
+  n93[&quot;natural_query_plan_with_anchor (control_flow)&quot;]
+  n94[&quot;branch: try (control_flow)&quot;]
+  n95[&quot;branch: if (control_flow)&quot;]
+  n96[&quot;branch: if (control_flow)&quot;]
+  n97[&quot;branch: if (control_flow)&quot;]
+  n98[&quot;return: return (control_flow)&quot;]
+  n99[&quot;branch: if (control_flow)&quot;]
+  n100[&quot;branch: if (control_flow)&quot;]
+  n101[&quot;branch: if (control_flow)&quot;]
+  n102[&quot;branch: if (control_flow)&quot;]
+  n103[&quot;branch: if (control_flow)&quot;]
+  n104[&quot;branch: if (control_flow)&quot;]
+  n105[&quot;branch: if (control_flow)&quot;]
+  n106[&quot;branch: if (control_flow)&quot;]
+  n107[&quot;branch: if (control_flow)&quot;]
+  n108[&quot;branch: if (control_flow)&quot;]
+  n109[&quot;branch: if (control_flow)&quot;]
+  n110[&quot;branch: if (control_flow)&quot;]
+  n111[&quot;branch: if (control_flow)&quot;]
+  n112[&quot;branch: if (control_flow)&quot;]
+  n113[&quot;branch: if (control_flow)&quot;]
+  n114[&quot;branch: if (control_flow)&quot;]
+  n115[&quot;branch: if (control_flow)&quot;]
+  n116[&quot;branch: if (control_flow)&quot;]
+  n117[&quot;branch: if (control_flow)&quot;]
+  n118[&quot;branch: if (control_flow)&quot;]
+  n119[&quot;branch: if (control_flow)&quot;]
+  n120[&quot;branch: if (control_flow)&quot;]
+  n121[&quot;branch: if (control_flow)&quot;]
+  n122[&quot;branch: if (control_flow)&quot;]
+  n123[&quot;branch: if (control_flow)&quot;]
+  n124[&quot;branch: if (control_flow)&quot;]
+  n125[&quot;branch: if (control_flow)&quot;]
+  n126[&quot;branch: if (control_flow)&quot;]
+  n127[&quot;branch: if (control_flow)&quot;]
+  n128[&quot;branch: if (control_flow)&quot;]
+  n129[&quot;branch: if (control_flow)&quot;]
+  n130[&quot;return: return (control_flow)&quot;]
+  n131[&quot;branch: if (control_flow)&quot;]
+  n132[&quot;return: return (control_flow)&quot;]
+  n133[&quot;branch: match (control_flow)&quot;]
+  n134[&quot;loop: for (control_flow)&quot;]
+  n135[&quot;branch: if (control_flow)&quot;]
+  n136[&quot;branch: if (control_flow)&quot;]
+  n137[&quot;loop: for (control_flow)&quot;]
+  n138[&quot;branch: if (control_flow)&quot;]
+  n139[&quot;branch: if (control_flow)&quot;]
+  n140[&quot;branch: if (control_flow)&quot;]
+  n141[&quot;branch: if (control_flow)&quot;]
+  n142[&quot;branch: if (control_flow)&quot;]
+  n143[&quot;branch: if (control_flow)&quot;]
+  n144[&quot;return: return (control_flow)&quot;]
+  n145[&quot;branch: if (control_flow)&quot;]
+  n146[&quot;return: return (control_flow)&quot;]
+  n147[&quot;branch: if (control_flow)&quot;]
+  n148[&quot;return: return (control_flow)&quot;]
+  n149[&quot;branch: if (control_flow)&quot;]
+  n150[&quot;return: return (control_flow)&quot;]
+  n151[&quot;branch: if (control_flow)&quot;]
+  n152[&quot;return: return (control_flow)&quot;]
+  n153[&quot;branch: if (control_flow)&quot;]
+  n154[&quot;crates/codegraph-analysis/src/cards.rs (file)&quot;]
+  n155[&quot;use codegraph_core::{CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind}; (external_dependency)&quot;]
+  n156[&quot;use std::collections::{BTreeMap, BTreeSet}; (external_dependency)&quot;]
+  n157[&quot;use std::fs; (external_dependency)&quot;]
+  n158[&quot;use std::io; (external_dependency)&quot;]
+  n159[&quot;use std::path::Path; (external_dependency)&quot;]
+  n160[&quot;use crate::*; (external_dependency)&quot;]
+  n161[&quot;node_context (function)&quot;]
+  n162[&quot;graph_node_source_path (function)&quot;]
+  n163[&quot;card_edge_rank (function)&quot;]
+  n164[&quot;node_card (function)&quot;]
+  n165[&quot;node_card_fast (function)&quot;]
+  n166[&quot;node_card_impl (function)&quot;]
+  n167[&quot;node_insight_summary (function)&quot;]
+  n168[&quot;node_card_related_insights (function)&quot;]
+  n169[&quot;node_card_insight_matches (function)&quot;]
+  n170[&quot;nodes_by_id_index (function)&quot;]
+  n171[&quot;outgoing_edge_index (function)&quot;]
+  n172[&quot;incident_edge_index (function)&quot;]
+  n173[&quot;file_node_summary (function)&quot;]
+  n174[&quot;file_node_summary_indexed (function)&quot;]
+  n175[&quot;node_dependency_summary (function)&quot;]
+  n176[&quot;node_dependency_summary_indexed (function)&quot;]
+  n177[&quot;node_card_actions (function)&quot;]
+  n178[&quot;quote_query_value (function)&quot;]
+  n179[&quot;node_source_preview (function)&quot;]
+  n180[&quot;read_file_source_preview (function)&quot;]
+  n181[&quot;read_source_preview (function)&quot;]
+  n182[&quot;QuerySpec (type)&quot;]
+  n183[&quot;parse (function)&quot;]
+  n184[&quot;parse_call_expression (function)&quot;]
+  n185[&quot;query_nodes (function)&quot;]
+  n186[&quot;query_edges (function)&quot;]
+  n187[&quot;query_trace (function)&quot;]
+  n188[&quot;query_dependents (function)&quot;]
+  n189[&quot;query_trace_with (function)&quot;]
+  n190[&quot;ambiguous_start_note (function)&quot;]
+  n191[&quot;graph.nodes.iter (control_flow)&quot;]
+  n192[&quot;branch: try (control_flow)&quot;]
+  n193[&quot;branch: if (control_flow)&quot;]
+  n194[&quot;branch: if (control_flow)&quot;]
+  n195[&quot;loop: for (control_flow)&quot;]
+  n196[&quot;branch: match (control_flow)&quot;]
+  n197[&quot;branch: match (control_flow)&quot;]
+  n198[&quot;return: return (control_flow)&quot;]
+  n199[&quot;branch: match (control_flow)&quot;]
+  n200[&quot;node_source_preview (control_flow)&quot;]
+  n201[&quot;branch: try (control_flow)&quot;]
+  n202[&quot;branch: if (control_flow)&quot;]
+  n203[&quot;loop: for (control_flow)&quot;]
+  n204[&quot;branch: if (control_flow)&quot;]
+  n205[&quot;return: return (control_flow)&quot;]
+  n206[&quot;branch: if (control_flow)&quot;]
+  n207[&quot;return: return (control_flow)&quot;]
+  n208[&quot;return: return (control_flow)&quot;]
+  n209[&quot;loop: for (control_flow)&quot;]
+  n210[&quot;loop: for (control_flow)&quot;]
+  n211[&quot;branch: if (control_flow)&quot;]
+  n212[&quot;branch: if (control_flow)&quot;]
+  n213[&quot;return: return (control_flow)&quot;]
+  n214[&quot;loop: for (control_flow)&quot;]
+  n215[&quot;branch: match (control_flow)&quot;]
+  n216[&quot;branch: if (control_flow)&quot;]
+  n217[&quot;branch: if (control_flow)&quot;]
+  n218[&quot;branch: if (control_flow)&quot;]
+  n219[&quot;loop: for (control_flow)&quot;]
+  n220[&quot;loop: for (control_flow)&quot;]
+  n221[&quot;branch: if (control_flow)&quot;]
+  n222[&quot;branch: if (control_flow)&quot;]
+  n223[&quot;branch: match (control_flow)&quot;]
+  n224[&quot;branch: if (control_flow)&quot;]
+  n225[&quot;loop: for (control_flow)&quot;]
+  n226[&quot;branch: if (control_flow)&quot;]
+  n227[&quot;branch: if (control_flow)&quot;]
+  n228[&quot;branch: if (control_flow)&quot;]
+  n229[&quot;branch: if (control_flow)&quot;]
+  n230[&quot;branch: if (control_flow)&quot;]
+  n231[&quot;branch: if (control_flow)&quot;]
+  n232[&quot;branch: if (control_flow)&quot;]
+  n233[&quot;branch: if (control_flow)&quot;]
+  n234[&quot;branch: if (control_flow)&quot;]
+  n235[&quot;branch: if (control_flow)&quot;]
+  n236[&quot;branch: if (control_flow)&quot;]
+  n237[&quot;branch: if (control_flow)&quot;]
+  n238[&quot;branch: if (control_flow)&quot;]
+  n239[&quot;return: return (control_flow)&quot;]
+  n240[&quot;branch: if (control_flow)&quot;]
+  n241[&quot;return: return (control_flow)&quot;]
+  n242[&quot;branch: if (control_flow)&quot;]
+  n243[&quot;return: return (control_flow)&quot;]
+  n244[&quot;branch: if (control_flow)&quot;]
+  n245[&quot;return: return (control_flow)&quot;]
+  n246[&quot;branch: if (control_flow)&quot;]
+  n247[&quot;return: return (control_flow)&quot;]
+  n248[&quot;read_source_preview (control_flow)&quot;]
+  n249[&quot;branch: try (control_flow)&quot;]
+  n250[&quot;loop: for (control_flow)&quot;]
+  n251[&quot;branch: if (control_flow)&quot;]
+  n252[&quot;fs::read (control_flow)&quot;]
+  n253[&quot;branch: try (control_flow)&quot;]
+  n254[&quot;loop: for (control_flow)&quot;]
+  n255[&quot;branch: if (control_flow)&quot;]
+  n256[&quot;branch: if (control_flow)&quot;]
+  n257[&quot;branch: if (control_flow)&quot;]
+  n258[&quot;branch: if (control_flow)&quot;]
+  n259[&quot;return: return (control_flow)&quot;]
+  n260[&quot;branch: if (control_flow)&quot;]
+  n261[&quot;parse_call_expression (control_flow)&quot;]
+  n262[&quot;branch: try (control_flow)&quot;]
+  n263[&quot;return: return (control_flow)&quot;]
+  n264[&quot;split_query_tokens (control_flow)&quot;]
+  n265[&quot;branch: try (control_flow)&quot;]
+  n266[&quot;return: return (control_flow)&quot;]
+  n267[&quot;loop: for (control_flow)&quot;]
+  n268[&quot;branch: if (control_flow)&quot;]
+  n269[&quot;branch: if (control_flow)&quot;]
+  n270[&quot;return: return (control_flow)&quot;]
+  n271[&quot;branch: if (control_flow)&quot;]
+  n272[&quot;parse_limit (control_flow)&quot;]
+  n273[&quot;branch: try (control_flow)&quot;]
+  n274[&quot;return: return (control_flow)&quot;]
+  n275[&quot;return: return (control_flow)&quot;]
+  n276[&quot;loop: for (control_flow)&quot;]
+  n277[&quot;return: return (control_flow)&quot;]
+  n278[&quot;branch: match (control_flow)&quot;]
+  n279[&quot;validate_node_terms (control_flow)&quot;]
+  n280[&quot;branch: try (control_flow)&quot;]
+  n281[&quot;branch: if (control_flow)&quot;]
+  n282[&quot;branch: if (control_flow)&quot;]
+  n283[&quot;branch: if (control_flow)&quot;]
+  n284[&quot;branch: if (control_flow)&quot;]
+  n285[&quot;validate_edge_terms (control_flow)&quot;]
+  n286[&quot;branch: try (control_flow)&quot;]
+  n287[&quot;transpose() (control_flow)&quot;]
+  n288[&quot;branch: try (control_flow)&quot;]
+  n289[&quot;branch: if (control_flow)&quot;]
+  n290[&quot;parse_node_id (control_flow)&quot;]
+  n291[&quot;branch: try (control_flow)&quot;]
+  n292[&quot;branch: if (control_flow)&quot;]
+  n293[&quot;return: return (control_flow)&quot;]
+  n294[&quot;return: return (control_flow)&quot;]
+  n295[&quot;branch: match (control_flow)&quot;]
+  n296[&quot;return: return (control_flow)&quot;]
+  n297[&quot;resolve_trace_start (control_flow)&quot;]
+  n298[&quot;branch: try (control_flow)&quot;]
+  n299[&quot;crates/codegraph-analysis/src/exports.rs (file)&quot;]
+  n300[&quot;use codegraph_core::{CodeGraph, Confidence, Edge, Node, NodeId, NodeKind}; (external_dependency)&quot;]
+  n1 --&gt;|contains/exact| n2
+  n1 --&gt;|contains/exact| n3
+  n1 --&gt;|contains/exact| n4
+  n4 --&gt;|contains/exact| n5
+  n1 --&gt;|entrypoint/exact| n5
+  n5 --&gt;|references/exact| n4
+  n5 --&gt;|depends_on/exact| n6
+  n5 --&gt;|references/exact| n7
+  n5 --&gt;|depends_on/exact| n8
+  n5 --&gt;|references/exact| n9
+  n5 --&gt;|references/exact| n10
+  n5 --&gt;|references/exact| n11
+  n5 --&gt;|references/exact| n12
+  n5 --&gt;|references/exact| n13
+  n5 --&gt;|references/exact| n14
+  n5 --&gt;|references/exact| n15
+  n5 --&gt;|references/exact| n16
+  n5 --&gt;|references/exact| n17
+  n5 --&gt;|references/exact| n18
+  n5 --&gt;|reads_environment/exact| n19
+  n1 --&gt;|contains/exact| n20
+  n20 --&gt;|contains/exact| n21
+  n20 --&gt;|contains/exact| n22
+  n20 --&gt;|contains/exact| n23
+  n1 --&gt;|contains/exact| n24
+  n1 --&gt;|contains/exact| n25
+  n1 --&gt;|contains/exact| n26
+  n26 --&gt;|contains/exact| n27
+  n1 --&gt;|entrypoint/exact| n27
+  n27 --&gt;|references/exact| n26
+  n26 --&gt;|contains/exact| n28
+  n1 --&gt;|entrypoint/exact| n28
+  n28 --&gt;|references/exact| n26
+  n1 --&gt;|contains/exact| n29
+  n29 --&gt;|contains/exact| n30
+  n29 --&gt;|contains/exact| n31
+  n29 --&gt;|contains/exact| n32
+  n29 --&gt;|contains/exact| n33
+  n29 --&gt;|contains/exact| n34
+  n29 --&gt;|contains/exact| n35
+  n29 --&gt;|contains/exact| n36
+  n29 --&gt;|contains/exact| n37
+  n1 --&gt;|contains/exact| n38
+  n38 --&gt;|contains/exact| n39
+  n38 --&gt;|contains/exact| n40
+  n38 --&gt;|contains/exact| n41
+  n38 --&gt;|contains/exact| n42
+  n38 --&gt;|contains/exact| n43
+  n38 --&gt;|contains/exact| n44
+  n38 --&gt;|contains/exact| n45
+  n38 --&gt;|contains/exact| n46
+  n38 --&gt;|contains/exact| n47
+  n38 --&gt;|contains/exact| n48
+  n38 --&gt;|contains/exact| n49
+  n38 --&gt;|contains/exact| n50
+  n1 --&gt;|contains/exact| n51
+  n1 --&gt;|contains/exact| n52
+  n1 --&gt;|contains/exact| n53
+  n53 --&gt;|depends_on/exact| n54
+  n53 --&gt;|depends_on/exact| n55
+  n53 --&gt;|depends_on/exact| n56
+  n53 --&gt;|depends_on/exact| n57
+  n53 --&gt;|depends_on/exact| n58
+  n53 --&gt;|depends_on/exact| n59
+  n1 --&gt;|contains/exact| n60
+  n1 --&gt;|contains/exact| n61
+  n61 --&gt;|imports/syntactic| n62
+  n61 --&gt;|imports/syntactic| n63
+  n61 --&gt;|imports/syntactic| n64
+  n61 --&gt;|contains/syntactic| n65
+  n61 --&gt;|contains/syntactic| n66
+  n61 --&gt;|contains/syntactic| n67
+  n61 --&gt;|contains/syntactic| n68
+  n61 --&gt;|contains/syntactic| n69
+  n61 --&gt;|contains/syntactic| n70
+  n61 --&gt;|contains/syntactic| n71
+  n61 --&gt;|contains/syntactic| n72
+  n61 --&gt;|contains/syntactic| n73
+  n61 --&gt;|contains/syntactic| n74
+  n61 --&gt;|contains/syntactic| n75
+  n61 --&gt;|contains/syntactic| n76
+  n61 --&gt;|contains/syntactic| n77
+  n61 --&gt;|contains/syntactic| n78
+  n61 --&gt;|contains/syntactic| n79
+  n61 --&gt;|contains/syntactic| n80
+  n61 --&gt;|contains/syntactic| n81
+  n65 --&gt;|may_error/heuristic| n82
+  n65 --&gt;|references/heuristic| n83
+  n65 --&gt;|references/heuristic| n84
+  n65 --&gt;|may_error/heuristic| n85
+  n65 --&gt;|references/heuristic| n86
+  n65 --&gt;|references/heuristic| n87
+  n65 --&gt;|references/heuristic| n88
+  n65 --&gt;|references/heuristic| n89
+  n65 --&gt;|may_error/heuristic| n90
+  n65 --&gt;|references/heuristic| n91
+  n65 --&gt;|references/heuristic| n92
+  n65 --&gt;|may_error/heuristic| n93
+  n65 --&gt;|references/heuristic| n94
+  n65 --&gt;|references/heuristic| n95
+  n65 --&gt;|references/heuristic| n96
+  n69 --&gt;|references/heuristic| n97
+  n69 --&gt;|references/heuristic| n98
+  n69 --&gt;|references/heuristic| n99
+  n69 --&gt;|references/heuristic| n100
+  n69 --&gt;|references/heuristic| n101
+  n69 --&gt;|references/heuristic| n102
+  n69 --&gt;|references/heuristic| n103
+  n69 --&gt;|references/heuristic| n104
+  n69 --&gt;|references/heuristic| n105
+  n69 --&gt;|references/heuristic| n106
+  n69 --&gt;|references/heuristic| n107
+  n69 --&gt;|references/heuristic| n108
+  n69 --&gt;|references/heuristic| n109
+  n69 --&gt;|references/heuristic| n110
+  n69 --&gt;|references/heuristic| n111
+  n69 --&gt;|references/heuristic| n112
+  n69 --&gt;|references/heuristic| n113
+  n69 --&gt;|references/heuristic| n114
+  n69 --&gt;|references/heuristic| n115
+  n69 --&gt;|references/heuristic| n116
+  n69 --&gt;|references/heuristic| n117
+  n69 --&gt;|references/heuristic| n118
+  n69 --&gt;|references/heuristic| n119
+  n69 --&gt;|references/heuristic| n120
+  n69 --&gt;|references/heuristic| n121
+  n69 --&gt;|references/heuristic| n122
+  n69 --&gt;|references/heuristic| n123
+  n69 --&gt;|references/heuristic| n124
+  n69 --&gt;|references/heuristic| n125
+  n69 --&gt;|references/heuristic| n126
+  n69 --&gt;|references/heuristic| n127
+  n69 --&gt;|references/heuristic| n128
+  n72 --&gt;|references/heuristic| n129
+  n72 --&gt;|references/heuristic| n130
+  n72 --&gt;|references/heuristic| n131
+  n72 --&gt;|references/heuristic| n132
+  n72 --&gt;|references/heuristic| n133
+  n74 --&gt;|references/heuristic| n134
+  n74 --&gt;|references/heuristic| n135
+  n74 --&gt;|references/heuristic| n136
+  n76 --&gt;|references/heuristic| n137
+  n76 --&gt;|references/heuristic| n138
+  n76 --&gt;|references/heuristic| n139
+  n76 --&gt;|references/heuristic| n140
+  n76 --&gt;|references/heuristic| n141
+  n76 --&gt;|references/heuristic| n142
+  n77 --&gt;|references/heuristic| n143
+  n77 --&gt;|references/heuristic| n144
+  n79 --&gt;|references/heuristic| n145
+  n79 --&gt;|references/heuristic| n146
+  n79 --&gt;|references/heuristic| n147
+  n79 --&gt;|references/heuristic| n148
+  n80 --&gt;|references/heuristic| n149
+  n80 --&gt;|references/heuristic| n150
+  n80 --&gt;|references/heuristic| n151
+  n80 --&gt;|references/heuristic| n152
+  n81 --&gt;|references/heuristic| n153
+  n1 --&gt;|contains/exact| n154
+  n154 --&gt;|imports/syntactic| n155
+  n154 --&gt;|imports/syntactic| n156
+  n154 --&gt;|imports/syntactic| n157
+  n154 --&gt;|imports/syntactic| n158
+  n154 --&gt;|imports/syntactic| n159
+  n154 --&gt;|imports/syntactic| n160
+  n154 --&gt;|contains/syntactic| n161
+  n154 --&gt;|contains/syntactic| n162
+  n154 --&gt;|contains/syntactic| n163
+  n154 --&gt;|contains/syntactic| n164
+  n154 --&gt;|contains/syntactic| n165
+  n154 --&gt;|contains/syntactic| n166
+  n154 --&gt;|contains/syntactic| n167
+  n154 --&gt;|contains/syntactic| n168
+  n154 --&gt;|contains/syntactic| n169
+  n154 --&gt;|contains/syntactic| n170
+  n154 --&gt;|contains/syntactic| n171
+  n154 --&gt;|contains/syntactic| n172
+  n154 --&gt;|contains/syntactic| n173
+  n154 --&gt;|contains/syntactic| n174
+  n154 --&gt;|contains/syntactic| n175
+  n154 --&gt;|contains/syntactic| n176
+  n154 --&gt;|contains/syntactic| n177
+  n154 --&gt;|contains/syntactic| n178
+  n154 --&gt;|contains/syntactic| n179
+  n154 --&gt;|contains/syntactic| n180
+  n154 --&gt;|contains/syntactic| n181
+  n154 --&gt;|contains/syntactic| n182
+  n154 --&gt;|contains/syntactic| n183
+  n154 --&gt;|contains/syntactic| n184
+  n154 --&gt;|contains/syntactic| n185
+  n154 --&gt;|contains/syntactic| n186
+  n154 --&gt;|contains/syntactic| n187
+  n154 --&gt;|contains/syntactic| n188
+  n154 --&gt;|contains/syntactic| n189
+  n154 --&gt;|contains/syntactic| n190
+  n161 --&gt;|may_error/heuristic| n191
+  n161 --&gt;|references/heuristic| n192
+  n161 --&gt;|references/heuristic| n193
+  n161 --&gt;|references/heuristic| n194
+  n161 --&gt;|references/heuristic| n195
+  n163 --&gt;|references/heuristic| n196
+  n163 --&gt;|references/heuristic| n197
+  n166 --&gt;|references/heuristic| n198
+  n166 --&gt;|references/heuristic| n199
+  n166 --&gt;|may_error/heuristic| n200
+  n166 --&gt;|references/heuristic| n201
+  n166 --&gt;|references/heuristic| n202
+  n167 --&gt;|references/heuristic| n203
+  n169 --&gt;|references/heuristic| n204
+  n169 --&gt;|references/heuristic| n205
+  n169 --&gt;|references/heuristic| n206
+  n169 --&gt;|references/heuristic| n207
+  n169 --&gt;|references/heuristic| n208
+  n171 --&gt;|references/heuristic| n209
+  n172 --&gt;|references/heuristic| n210
+  n172 --&gt;|references/heuristic| n211
+  n174 --&gt;|references/heuristic| n212
+  n174 --&gt;|references/heuristic| n213
+  n174 --&gt;|references/heuristic| n214
+  n174 --&gt;|references/heuristic| n215
+  n174 --&gt;|references/heuristic| n216
+  n174 --&gt;|references/heuristic| n217
+  n174 --&gt;|references/heuristic| n218
+  n174 --&gt;|references/heuristic| n219
+  n174 --&gt;|references/heuristic| n220
+  n174 --&gt;|references/heuristic| n221
+  n174 --&gt;|references/heuristic| n222
+  n174 --&gt;|references/heuristic| n223
+  n174 --&gt;|references/heuristic| n224
+  n176 --&gt;|references/heuristic| n225
+  n176 --&gt;|references/heuristic| n226
+  n176 --&gt;|references/heuristic| n227
+  n176 --&gt;|references/heuristic| n228
+  n176 --&gt;|references/heuristic| n229
+  n176 --&gt;|references/heuristic| n230
+  n177 --&gt;|references/heuristic| n231
+  n177 --&gt;|references/heuristic| n232
+  n177 --&gt;|references/heuristic| n233
+  n177 --&gt;|references/heuristic| n234
+  n177 --&gt;|references/heuristic| n235
+  n177 --&gt;|references/heuristic| n236
+  n177 --&gt;|references/heuristic| n237
+  n178 --&gt;|references/heuristic| n238
+  n178 --&gt;|references/heuristic| n239
+  n178 --&gt;|references/heuristic| n240
+  n178 --&gt;|references/heuristic| n241
+  n178 --&gt;|references/heuristic| n242
+  n178 --&gt;|references/heuristic| n243
+  n179 --&gt;|references/heuristic| n244
+  n179 --&gt;|references/heuristic| n245
+  n179 --&gt;|references/heuristic| n246
+  n179 --&gt;|references/heuristic| n247
+  n180 --&gt;|may_error/heuristic| n248
+  n180 --&gt;|references/heuristic| n249
+  n180 --&gt;|references/heuristic| n250
+  n181 --&gt;|references/heuristic| n251
+  n181 --&gt;|may_error/heuristic| n252
+  n181 --&gt;|references/heuristic| n253
+  n181 --&gt;|references/heuristic| n254
+  n181 --&gt;|references/heuristic| n255
+  n181 --&gt;|references/heuristic| n256
+  n181 --&gt;|references/heuristic| n257
+  n183 --&gt;|references/heuristic| n258
+  n183 --&gt;|references/heuristic| n259
+  n183 --&gt;|references/heuristic| n260
+  n183 --&gt;|may_error/heuristic| n261
+  n183 --&gt;|references/heuristic| n262
+  n183 --&gt;|references/heuristic| n263
+  n183 --&gt;|may_error/heuristic| n264
+  n183 --&gt;|references/heuristic| n265
+  n183 --&gt;|references/heuristic| n266
+  n183 --&gt;|references/heuristic| n267
+  n183 --&gt;|references/heuristic| n268
+  n183 --&gt;|references/heuristic| n269
+  n183 --&gt;|references/heuristic| n270
+  n183 --&gt;|references/heuristic| n271
+  n183 --&gt;|may_error/heuristic| n272
+  n183 --&gt;|references/heuristic| n273
+  n184 --&gt;|references/heuristic| n274
+  n184 --&gt;|references/heuristic| n275
+  n184 --&gt;|references/heuristic| n276
+  n184 --&gt;|references/heuristic| n277
+  n184 --&gt;|references/heuristic| n278
+  n185 --&gt;|may_error/heuristic| n279
+  n185 --&gt;|references/heuristic| n280
+  n186 --&gt;|references/heuristic| n281
+  n186 --&gt;|references/heuristic| n282
+  n186 --&gt;|references/heuristic| n283
+  n186 --&gt;|references/heuristic| n284
+  n186 --&gt;|may_error/heuristic| n285
+  n186 --&gt;|references/heuristic| n286
+  n189 --&gt;|may_error/heuristic| n287
+  n189 --&gt;|references/heuristic| n288
+  n189 --&gt;|references/heuristic| n289
+  n189 --&gt;|may_error/heuristic| n290
+  n189 --&gt;|references/heuristic| n291
+  n189 --&gt;|references/heuristic| n292
+  n189 --&gt;|references/heuristic| n293
+  n189 --&gt;|references/heuristic| n294
+  n189 --&gt;|references/heuristic| n295
+  n190 --&gt;|references/heuristic| n296
+  n190 --&gt;|may_error/heuristic| n297
+  n190 --&gt;|references/heuristic| n298
+  n1 --&gt;|contains/exact| n299
+  n299 --&gt;|imports/syntactic| n300
+  n65 --&gt;|calls/syntactic| n68
+  n65 --&gt;|calls/syntactic| n66
+  n65 --&gt;|calls/syntactic| n69
+  n65 --&gt;|calls/syntactic| n70
+  n68 --&gt;|calls/syntactic| n69
+  n69 --&gt;|calls/syntactic| n74
+  n69 --&gt;|calls/syntactic| n75
+  n69 --&gt;|calls/syntactic| n77
+  n69 --&gt;|calls/syntactic| n70
+  n69 --&gt;|calls/syntactic| n73
+  n69 --&gt;|calls/syntactic| n71
+  n69 --&gt;|calls/syntactic| n72
+  n69 --&gt;|calls/heuristic| n178
+  n72 --&gt;|calls/syntactic| n73
+  n74 --&gt;|calls/syntactic| n76
+  n74 --&gt;|calls/syntactic| n77
+  n75 --&gt;|calls/syntactic| n78
+  n77 --&gt;|calls/syntactic| n78
+  n79 --&gt;|calls/syntactic| n80
+  n161 --&gt;|calls/syntactic| n162
+  n161 --&gt;|calls/syntactic| n163
+  n164 --&gt;|calls/syntactic| n166
+  n165 --&gt;|calls/syntactic| n166
+  n166 --&gt;|calls/syntactic| n161
+  n166 --&gt;|calls/syntactic| n179
+  n166 --&gt;|calls/syntactic| n168
+  n166 --&gt;|calls/syntactic| n167
+  n166 --&gt;|calls/syntactic| n177
+  n166 --&gt;|calls/syntactic| n175
+  n166 --&gt;|calls/syntactic| n173
+  n168 --&gt;|calls/syntactic| n170
+  n168 --&gt;|calls/syntactic| n169
+  n173 --&gt;|calls/syntactic| n170
+  n173 --&gt;|calls/syntactic| n171
+  n173 --&gt;|calls/syntactic| n174
+  n175 --&gt;|calls/syntactic| n170
+  n175 --&gt;|calls/syntactic| n176
+  n179 --&gt;|calls/syntactic| n181
+  n179 --&gt;|calls/syntactic| n180
+  n180 --&gt;|calls/syntactic| n181
+  n183 --&gt;|calls/syntactic| n184
+  n187 --&gt;|calls/syntactic| n189
+  n188 --&gt;|calls/syntactic| n189
+  n189 --&gt;|calls/syntactic| n190
+  n62 --&gt;|depends_on/heuristic| n54
+  n155 --&gt;|depends_on/heuristic| n54
+  n300 --&gt;|depends_on/heuristic| n54
+  n34 --&gt;|references/exact| n25
+  n36 --&gt;|references/exact| n20
+  n50 --&gt;|references/exact| n20
+  n50 --&gt;|references/heuristic| n164
+  %% truncated: showing 300 of 19330 nodes and 356 of 42227 edges</pre>
+    </details>
+  </section>
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+mermaid.initialize({ startOnLoad: true, securityLevel: "strict" });
+</script>
+</body>
+</html>

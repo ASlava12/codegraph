@@ -626,7 +626,7 @@ cargo run -p codegraph-cli -- component-dependencies load_config .
 cargo run -p codegraph-cli -- component-contract --source web --target crates .
 ```
 
-`component-dependencies` groups a node's incoming/outgoing edges by architecture area, canonical package, and language with confidence counts and sample edge indexes; `component-contract` lists the exact directed dependency edges between two architecture areas with edge kinds, confidence counts, and related risk counts for boundary reviews.
+`component-dependencies` groups a node's incoming/outgoing edges by architecture area, canonical package, and language with confidence counts and sample edge indexes; `component-contract` lists the exact directed dependency edges between two architecture areas with edge kinds, confidence counts, and related risk counts for boundary reviews. Areas are named exactly as `architecture` lists them: a name that fits several areas — `crates` where each crate is its own area — is answered with the candidates rather than a guess.
 
 Hand an agent everything it needs to plan a refactor in one request:
 
