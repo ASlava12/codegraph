@@ -498,6 +498,13 @@ pub(crate) fn effect_label(
         return Some(truncate_label(key, 120));
     }
 
+    if kind == ParsedItemKind::Error
+        && language == Language::Rust
+        && let Some(label) = rust_error_label(node, source)
+    {
+        return Some(truncate_label(label, 120));
+    }
+
     // An empty string literal is not an identity: `panic!("")` and
     // `read("")` produced nodes labelled with nothing at all, and a key or
     // path is exactly what an effect fact is named by. Fall through to the
@@ -688,6 +695,50 @@ pub(crate) fn bash_parameter_default(expression: &str, key: &str) -> Option<Stri
     } else {
         Some(strip_quotes(value.to_string()))
     }
+}
+
+/// What a Rust error fact is called.
+///
+/// An error is named by its own message, not by a string that happens to sit
+/// inside it: `root.join("src").unwrap()` was filed as an error called `src`,
+/// 186 times in this repository, because the first string literal anywhere in
+/// the expression won. `unwrap`/`expect` take their message from their own
+/// arguments, and when there is none — as `unwrap()` never has one — the fact
+/// is named after the call that can fail. `?` is named after the expression it
+/// propagates from. `panic!` and friends keep falling through to the message.
+fn rust_error_label(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if node.kind() == "try_expression" {
+        return node
+            .named_child(0)
+            .and_then(|inner| node_text(inner, source))
+            .map(|text| clean_call_label(&text))
+            .filter(|label| !label.is_empty());
+    }
+
+    if node.kind() != "call_expression" {
+        return None;
+    }
+    let callee = node.child_by_field_name("function")?;
+    let name = node_text(callee, source)?;
+    if !matches!(simple_name(&name), "unwrap" | "expect") {
+        return None;
+    }
+
+    if let Some(message) = node
+        .child_by_field_name("arguments")
+        .and_then(|arguments| first_string_literal(arguments, source))
+        .filter(|message| !message.trim().is_empty())
+    {
+        return Some(message);
+    }
+
+    // No message: name the call that can fail, not the unwrapping.
+    callee
+        .child_by_field_name("value")
+        .and_then(|value| node_text(value, source))
+        .map(|text| clean_call_label(&text))
+        .filter(|label| !label.is_empty())
+        .or_else(|| Some(clean_call_label(&name)))
 }
 
 /// Drop Bash "environment reads" that are really reads of a variable the same

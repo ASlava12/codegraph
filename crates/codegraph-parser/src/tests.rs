@@ -606,6 +606,40 @@ echo "$arch $build_target $PORT $TOKEN $answer $HOME"
 }
 
 #[test]
+fn a_rust_error_is_named_by_its_own_message() {
+    let parsed = parse_source(
+        "main.rs",
+        br#"fn demo(root: &Path, path: &str) {
+    let dir = root.join("src").unwrap();
+    let text = read(path).expect("failed to read");
+    let plan = query_graph(path).map_err(|error| error.to_string())?;
+    panic!("boom");
+}
+"#,
+        Language::Rust,
+    )
+    .unwrap();
+
+    let errors = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Error)
+        .map(|item| item.label.as_str())
+        .collect::<BTreeSet<_>>();
+
+    // `unwrap()` carries no message, so the fact is named after the call that
+    // can fail — not after `"src"`, a string that merely sits inside the
+    // expression and named 186 error facts in this repository.
+    assert!(errors.contains("root.join"), "got {errors:?}");
+    assert!(!errors.contains("src"), "got {errors:?}");
+    // `expect` and `panic!` do carry a message, and that is their identity.
+    assert!(errors.contains("failed to read"), "got {errors:?}");
+    assert!(errors.contains("boom"), "got {errors:?}");
+    // `?` is named after what it propagates from.
+    assert!(errors.contains("query_graph"), "got {errors:?}");
+}
+
+#[test]
 fn a_call_label_names_the_callee_not_the_expression_before_it() {
     let rust = parse_source(
         "main.rs",
