@@ -10344,3 +10344,30 @@ fn a_type_import_and_a_tool_config_do_not_ship_a_dev_dependency() {
         "a value import of a dev dependency still ships it"
     );
 }
+
+#[test]
+fn a_script_that_runs_a_program_declares_no_missing_file() {
+    // `vitepress dev`, `patch-package --exclude nothing`, `eslint
+    // lib/**/*.js`: a script that runs a tool names no file in the
+    // repository, so nothing there failed to resolve. 44 of the 59
+    // unresolved entrypoint targets across the corpora were commands and
+    // several more were glob patterns.
+    for command in [
+        "vitepress dev",
+        "patch-package --exclude nothing",
+        "npm run docs:build && npm run test",
+        "eslint --fix lib/**/*.js",
+        "mocha --timeout 10000 \"tests/**/*.module.test.cjs\"",
+    ] {
+        assert!(!names_a_path(command), "`{command}` names no file");
+    }
+    for target in [
+        "dist/index.js",
+        "node scripts/build.js",
+        "./bin/run.sh",
+        "python -m app.main",
+        "src/main.rs",
+    ] {
+        assert!(names_a_path(target), "`{target}` does name a file");
+    }
+}

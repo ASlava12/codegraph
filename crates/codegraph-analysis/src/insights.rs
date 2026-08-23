@@ -607,6 +607,34 @@ pub(crate) fn add_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Insi
     }
 }
 
+/// Whether a manifest entrypoint's target mentions a file at all. A
+/// target is often a whole shell command, and only a token carrying a
+/// directory separator or a script extension can name something in the
+/// repository — a flag or a program name cannot.
+pub(crate) fn names_a_path(target: &str) -> bool {
+    target.split_whitespace().any(|token| {
+        let token = token.trim_matches(['"', '\'']);
+        // A flag names nothing, and `lib/**/*.js` is a pattern rather than
+        // a file the repository has to contain.
+        if token.starts_with('-') || token.contains('*') || token.contains('?') {
+            return false;
+        }
+        if token.contains('/') {
+            return true;
+        }
+        // `app.main` after `python -m` names a module the repository can
+        // hold, and so does anything with a source extension.
+        let segments: Vec<&str> = token.split('.').collect();
+        segments.len() >= 2
+            && segments.iter().all(|segment| {
+                !segment.is_empty()
+                    && segment
+                        .chars()
+                        .all(|character| character.is_alphanumeric() || character == '_')
+            })
+    })
+}
+
 pub(crate) fn add_unresolved_entrypoint_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     for node in &graph.nodes {
         if node.kind != NodeKind::Entrypoint
@@ -625,6 +653,13 @@ pub(crate) fn add_unresolved_entrypoint_insights(graph: &CodeGraph, insights: &m
         else {
             continue;
         };
+        // `vitepress dev`, `patch-package --exclude nothing`, `npm run a &&
+        // npm run b`: a script that runs a program names no file in the
+        // repository, so there is nothing here that failed to resolve. 44
+        // of the 59 unresolved targets across the corpora are of this kind.
+        if !names_a_path(target) {
+            continue;
+        }
         let resolved = graph.edges.iter().any(|edge| {
             edge.source == node.id
                 && edge.kind == EdgeKind::References
