@@ -1346,6 +1346,49 @@ fn capability_catalog_covers_every_routed_api_path() {
 }
 
 #[test]
+fn the_browser_fallback_only_reports_insight_kinds_the_analysis_knows() {
+    // The bundle recomputes ten insight kinds itself for the case where no
+    // server report is available. Two implementations of one rule set drift
+    // silently; a kind renamed on the Rust side would leave the browser
+    // publishing a name nothing else recognises.
+    let bundle = crate::limits::APP_JS;
+    // Only the fallback's own body: `kind:` also names graph slices and
+    // workflow blocks elsewhere in the bundle.
+    let start = bundle
+        .find("function buildClientInsights(")
+        .expect("the fallback is still in the bundle");
+    let rest = &bundle[start..];
+    let end = rest[1..]
+        .find("\nfunction ")
+        .map(|index| index + 1)
+        .unwrap_or(rest.len());
+    let fallback = &rest[..end];
+    let mut kinds = Vec::new();
+    for (index, _) in fallback.match_indices("kind: \"") {
+        let start = index + "kind: \"".len();
+        let Some(end) = fallback[start..].find('"') else {
+            continue;
+        };
+        kinds.push(&fallback[start..start + end]);
+    }
+    assert!(
+        kinds.len() >= 8,
+        "the fallback still computes insights, found {}",
+        kinds.len()
+    );
+
+    let known = codegraph_analysis::KNOWN_INSIGHT_KINDS;
+    let unknown: Vec<&str> = kinds
+        .into_iter()
+        .filter(|kind| !known.contains(kind))
+        .collect();
+    assert!(
+        unknown.is_empty(),
+        "the browser reports kinds the analysis does not define: {unknown:?}"
+    );
+}
+
+#[test]
 fn embedded_web_overview_uses_report_snapshot() {
     let index = include_str!("../../codegraph-web/static/index.html");
     let app = APP_JS;
