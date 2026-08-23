@@ -8717,51 +8717,36 @@ fn insights_ignore_locked_versions_as_conflicting_constraints() {
 
 #[test]
 fn insights_report_mixed_dependency_scopes() {
+    // One manifest asking for a package twice, in two scopes, is something
+    // a person wrote down and can fix. Two manifests disagreeing is a
+    // workspace where each project decided for itself, and a lockfile
+    // holding both scopes is what resolving that workspace produced.
     let mut graph = CodeGraph::new("repo");
     let manifest = graph.add_node(NodeKind::File, "package.json");
     let workspace_manifest = graph.add_node(NodeKind::File, "packages/app/package.json");
+    let lock = graph.add_node(NodeKind::File, "pnpm-lock.yaml");
     let react = dependency_node(&mut graph, "react", "npm:react");
     let lodash = dependency_node(&mut graph, "lodash", "npm:lodash");
-    graph.add_edge_with_metadata(
-        manifest,
-        react,
-        EdgeKind::DependsOn,
-        Confidence::Exact,
-        BTreeMap::from([
-            ("dependency_kind".to_string(), "runtime".to_string()),
-            ("dependency_version".to_string(), "^18".to_string()),
-        ]),
-    );
-    graph.add_edge_with_metadata(
-        workspace_manifest,
-        react,
-        EdgeKind::DependsOn,
-        Confidence::Exact,
-        BTreeMap::from([
-            ("dependency_kind".to_string(), "dev".to_string()),
-            ("dependency_version".to_string(), "^18".to_string()),
-        ]),
-    );
-    graph.add_edge_with_metadata(
-        workspace_manifest,
-        lodash,
-        EdgeKind::DependsOn,
-        Confidence::Exact,
-        BTreeMap::from([
-            ("dependency_kind".to_string(), "runtime".to_string()),
-            ("dependency_version".to_string(), "^4".to_string()),
-        ]),
-    );
-    graph.add_edge_with_metadata(
-        manifest,
-        lodash,
-        EdgeKind::DependsOn,
-        Confidence::Exact,
-        BTreeMap::from([
-            ("dependency_kind".to_string(), "runtime".to_string()),
-            ("dependency_version".to_string(), "^4".to_string()),
-        ]),
-    );
+    let vue = dependency_node(&mut graph, "vue", "npm:vue");
+
+    let declare = |graph: &mut CodeGraph, source, target, scope: &str| {
+        graph.add_edge_with_metadata(
+            source,
+            target,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), scope.to_string()),
+                ("dependency_version".to_string(), "^18".to_string()),
+            ]),
+        );
+    };
+    declare(&mut graph, manifest, react, "runtime");
+    declare(&mut graph, manifest, react, "dev");
+    declare(&mut graph, manifest, lodash, "runtime");
+    declare(&mut graph, workspace_manifest, lodash, "dev");
+    declare(&mut graph, lock, vue, "runtime");
+    declare(&mut graph, lock, vue, "dev");
 
     let report = insights(&graph);
     let mixed = report
@@ -8772,12 +8757,17 @@ fn insights_report_mixed_dependency_scopes() {
 
     assert_eq!(mixed.severity, InsightSeverity::Warning);
     assert!(mixed.message.contains("react"));
+    assert!(
+        mixed.message.contains("`package.json`"),
+        "{}",
+        mixed.message
+    );
     assert!(mixed.message.contains("`runtime`"));
     assert!(mixed.message.contains("`dev`"));
     assert!(mixed.nodes.contains(&manifest));
-    assert!(mixed.nodes.contains(&workspace_manifest));
     assert!(mixed.nodes.contains(&react));
     assert!(!mixed.nodes.contains(&lodash));
+    assert!(!mixed.nodes.contains(&workspace_manifest));
     assert_eq!(mixed.edges.len(), 2);
     assert_eq!(report.by_kind.get("mixed_dependency_scope"), Some(&1));
     assert!(
@@ -8787,7 +8777,6 @@ fn insights_report_mixed_dependency_scopes() {
             .any(|insight| insight.kind == "conflicting_dependency_declaration")
     );
 }
-
 #[test]
 fn insights_report_non_runtime_dependency_imports_from_production_sources() {
     let mut graph = CodeGraph::new("repo");

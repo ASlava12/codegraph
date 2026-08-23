@@ -2690,9 +2690,20 @@ pub(crate) fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &
     }
 }
 
+/// One line of a manifest asking for a package.
+struct ScopeDeclaration {
+    edge: usize,
+    package: NodeId,
+    scope: String,
+}
+
 pub(crate) fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let nodes_by_id = node_index(graph);
-    let mut groups: BTreeMap<String, Vec<(usize, NodeId, NodeId, String)>> = BTreeMap::new();
+    // Keyed by the manifest that declares it, because a workspace where one
+    // module needs a package directly and another only inherits it has
+    // declared nothing twice. Terraform's root `go.mod` and its
+    // `internal/legacy/go.mod` disagreed about 69 modules that way.
+    let mut groups: BTreeMap<(NodeId, String), Vec<ScopeDeclaration>> = BTreeMap::new();
     for (index, edge) in graph.edges.iter().enumerate() {
         if edge.kind != EdgeKind::DependsOn {
             continue;
@@ -2714,44 +2725,82 @@ pub(crate) fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &
             .cloned()
             .unwrap_or_else(|| format!("node:{}", target.id.0));
         groups
-            .entry(key)
+            .entry((edge.source, key))
             .or_default()
-            .push((index, edge.source, edge.target, scope.to_string()));
+            .push(ScopeDeclaration {
+                edge: index,
+                package: edge.target,
+                scope: scope.to_string(),
+            });
     }
 
-    for declarations in groups.into_values() {
+    for ((manifest, _), declarations) in groups {
         let scopes: BTreeSet<_> = declarations
             .iter()
-            .map(|(_, _, _, scope)| scope.as_str())
+            .map(|declaration| declaration.scope.as_str())
             .collect();
         if scopes.len() < 2 {
             continue;
         }
-
-        let mut nodes = BTreeSet::new();
-        let mut edges = Vec::new();
-        for (index, source, target, _) in &declarations {
-            nodes.insert(*source);
-            nodes.insert(*target);
-            edges.push(*index);
-        }
         let Some(package) = declarations
             .first()
-            .and_then(|(_, _, target, _)| node_label(graph, *target))
+            .and_then(|declaration| node_label(graph, declaration.package))
         else {
             continue;
         };
+        let manifest_label = node_label(graph, manifest).unwrap_or("an unknown manifest");
+        // A lockfile records what every project in a workspace resolved to,
+        // so one package arriving as a dependency of one project and a
+        // development dependency of another is the normal shape of the file
+        // rather than a disagreement anybody wrote down.
+        if is_dependency_lockfile(manifest_label) {
+            continue;
+        }
+
+        let mut nodes = BTreeSet::from([manifest]);
+        let mut edges = Vec::new();
+        for declaration in &declarations {
+            nodes.insert(declaration.package);
+            edges.push(declaration.edge);
+        }
         let scope_list = format_backtick_list(scopes.iter().copied(), 6);
         insights.push(Insight {
             kind: "mixed_dependency_scope".to_string(),
             severity: InsightSeverity::Warning,
             message: format!(
-                "Dependency `{package}` is declared in multiple dependency scopes: {scope_list}"
+                "`{manifest_label}` declares dependency `{package}` in multiple dependency scopes: {scope_list}"
             ),
             nodes: nodes.into_iter().collect(),
             edges,
         });
     }
+}
+
+/// Whether a path is a resolved lockfile rather than a declaration. What a
+/// lockfile says is the result of resolving the declarations, so it is
+/// evidence about the resolver and not about what a person asked for.
+pub(crate) fn is_dependency_lockfile(path: &str) -> bool {
+    let file = path
+        .replace('\\', "/")
+        .rsplit('/')
+        .next()
+        .unwrap_or(path)
+        .to_ascii_lowercase();
+    matches!(
+        file.as_str(),
+        "package-lock.json"
+            | "npm-shrinkwrap.json"
+            | "pnpm-lock.yaml"
+            | "yarn.lock"
+            | "bun.lockb"
+            | "composer.lock"
+            | "cargo.lock"
+            | "gemfile.lock"
+            | "poetry.lock"
+            | "pdm.lock"
+            | "uv.lock"
+            | "go.sum"
+    ) || file.ends_with(".lock")
 }
 
 /// Whether a path is a build tool's own configuration — `eslint.config.js`,
