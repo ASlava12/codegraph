@@ -863,203 +863,13 @@ pub(crate) enum Command {
     },
 
     /// Emit a block-style workflow from an entrypoint or node label.
-    Workflow {
-        /// Entrypoint/function/node label to convert into workflow blocks.
-        label: String,
-
-        /// Project root to scan.
-        #[arg(default_value = ".")]
-        path: PathBuf,
-
-        /// Maximum outgoing dependency depth.
-        #[arg(long, default_value_t = 4)]
-        depth: usize,
-
-        /// Maximum workflow blocks to return.
-        #[arg(long, default_value_t = 200)]
-        block_limit: usize,
-
-        /// Restrict traversal to an edge kind such as calls, reads_environment, may_error, or depends_on.
-        #[arg(long)]
-        edge_kind: Option<String>,
-
-        /// Restrict traversal to an edge confidence such as exact, semantic, syntactic, or heuristic.
-        #[arg(long)]
-        confidence: Option<String>,
-
-        /// Restrict returned blocks to a source language metadata value.
-        #[arg(long)]
-        language: Option<String>,
-
-        /// Restrict returned blocks/transitions to risk severity: info, warning, or error.
-        #[arg(long)]
-        risk_severity: Option<String>,
-
-        /// Restrict returned blocks to a workflow kind such as call, branch, loop, async, return, config_read, environment_read, or error.
-        #[arg(long)]
-        block_kind: Option<String>,
-
-        /// Collapse repeated low-signal workflow blocks into compact aggregate blocks.
-        #[arg(long)]
-        compact: bool,
-
-        /// Output format.
-        #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
-        format: WorkflowFormat,
-
-        /// Include hidden files and directories.
-        #[arg(long)]
-        include_hidden: bool,
-
-        /// Include default ignored directories such as target and node_modules.
-        #[arg(long)]
-        include_ignored: bool,
-
-        /// Cap outgoing edges expanded per node (calls first), so the block
-        /// budget follows the call chain into depth instead of one wide node.
-        #[arg(long)]
-        max_fanout: Option<usize>,
-
-        #[command(flatten)]
-        cache: CacheArgs,
-    },
+    Workflow(WorkflowArgs),
 
     /// Emit block-style workflows from entrypoint candidates.
-    WorkflowEntrypoints {
-        /// Filter entrypoints by label, kind, language, or metadata.
-        #[arg(long)]
-        search: Option<String>,
-
-        /// Restrict entrypoints to a matching entrypoint_kind metadata value such as route, workflow_job, pipeline_job, make_target, service, or cmd.
-        #[arg(long)]
-        entrypoint_kind: Option<String>,
-
-        /// Project root to scan.
-        #[arg(default_value = ".")]
-        path: PathBuf,
-
-        /// Maximum outgoing dependency depth.
-        #[arg(long, default_value_t = 4)]
-        depth: usize,
-
-        /// Maximum workflow blocks per entrypoint.
-        #[arg(long, default_value_t = 200)]
-        block_limit: usize,
-
-        /// Cap outgoing edges expanded per node (calls first) so the block
-        /// budget follows the call chain into depth. Unset means unbounded.
-        #[arg(long)]
-        max_fanout: Option<usize>,
-
-        /// Maximum entrypoint workflows to return.
-        #[arg(long, default_value_t = 25)]
-        limit: usize,
-
-        /// Restrict traversal to an edge kind such as calls, reads_environment, may_error, or depends_on.
-        #[arg(long)]
-        edge_kind: Option<String>,
-
-        /// Restrict traversal to an edge confidence such as exact, semantic, syntactic, or heuristic.
-        #[arg(long)]
-        confidence: Option<String>,
-
-        /// Restrict returned blocks to a source language metadata value.
-        #[arg(long)]
-        language: Option<String>,
-
-        /// Restrict returned blocks/transitions to risk severity: info, warning, or error.
-        #[arg(long)]
-        risk_severity: Option<String>,
-
-        /// Restrict returned blocks to a workflow kind such as call, branch, loop, async, return, config_read, environment_read, or error.
-        #[arg(long)]
-        block_kind: Option<String>,
-
-        /// Collapse repeated low-signal workflow blocks into compact aggregate blocks.
-        #[arg(long)]
-        compact: bool,
-
-        /// Output format.
-        #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
-        format: WorkflowFormat,
-
-        /// Include hidden files and directories.
-        #[arg(long)]
-        include_hidden: bool,
-
-        /// Include default ignored directories such as target and node_modules.
-        #[arg(long)]
-        include_ignored: bool,
-
-        #[command(flatten)]
-        cache: CacheArgs,
-    },
+    WorkflowEntrypoints(WorkflowEntrypointsArgs),
 
     /// Emit block-style workflows from graph query result nodes.
-    WorkflowQuery {
-        /// Graph query expression whose returned nodes become workflow starts.
-        query: String,
-
-        /// Project root to scan.
-        #[arg(default_value = ".")]
-        path: PathBuf,
-
-        /// Maximum outgoing dependency depth.
-        #[arg(long, default_value_t = 4)]
-        depth: usize,
-
-        /// Maximum workflow blocks per query node.
-        #[arg(long, default_value_t = 200)]
-        block_limit: usize,
-
-        /// Cap outgoing edges expanded per node (calls first) so the block
-        /// budget follows the call chain into depth. Unset means unbounded.
-        #[arg(long)]
-        max_fanout: Option<usize>,
-
-        /// Maximum query-node workflows to return.
-        #[arg(long, default_value_t = 25)]
-        limit: usize,
-
-        /// Restrict traversal to an edge kind such as calls, reads_environment, may_error, or depends_on.
-        #[arg(long)]
-        edge_kind: Option<String>,
-
-        /// Restrict traversal to an edge confidence such as exact, semantic, syntactic, or heuristic.
-        #[arg(long)]
-        confidence: Option<String>,
-
-        /// Restrict returned blocks to a source language metadata value.
-        #[arg(long)]
-        language: Option<String>,
-
-        /// Restrict returned blocks/transitions to risk severity: info, warning, or error.
-        #[arg(long)]
-        risk_severity: Option<String>,
-
-        /// Restrict returned blocks to a workflow kind such as call, branch, loop, async, return, config_read, environment_read, or error.
-        #[arg(long)]
-        block_kind: Option<String>,
-
-        /// Collapse repeated low-signal workflow blocks into compact aggregate blocks.
-        #[arg(long)]
-        compact: bool,
-
-        /// Output format.
-        #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
-        format: WorkflowFormat,
-
-        /// Include hidden files and directories.
-        #[arg(long)]
-        include_hidden: bool,
-
-        /// Include default ignored directories such as target and node_modules.
-        #[arg(long)]
-        include_ignored: bool,
-
-        #[command(flatten)]
-        cache: CacheArgs,
-    },
+    WorkflowQuery(WorkflowQueryArgs),
 
     /// Trace config files and environment variables back to readers and entrypoints.
     #[command(
@@ -1506,4 +1316,203 @@ pub(crate) enum InsightSeverityArg {
     Info,
     Warning,
     Error,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct WorkflowArgs {
+    /// Entrypoint/function/node label to convert into workflow blocks.
+    pub(crate) label: String,
+
+    /// Project root to scan.
+    #[arg(default_value = ".")]
+    pub(crate) path: PathBuf,
+
+    /// Maximum outgoing dependency depth.
+    #[arg(long, default_value_t = 4)]
+    pub(crate) depth: usize,
+
+    /// Maximum workflow blocks to return.
+    #[arg(long, default_value_t = 200)]
+    pub(crate) block_limit: usize,
+
+    /// Restrict traversal to an edge kind such as calls, reads_environment, may_error, or depends_on.
+    #[arg(long)]
+    pub(crate) edge_kind: Option<String>,
+
+    /// Restrict traversal to an edge confidence such as exact, semantic, syntactic, or heuristic.
+    #[arg(long)]
+    pub(crate) confidence: Option<String>,
+
+    /// Restrict returned blocks to a source language metadata value.
+    #[arg(long)]
+    pub(crate) language: Option<String>,
+
+    /// Restrict returned blocks/transitions to risk severity: info, warning, or error.
+    #[arg(long)]
+    pub(crate) risk_severity: Option<String>,
+
+    /// Restrict returned blocks to a workflow kind such as call, branch, loop, async, return, config_read, environment_read, or error.
+    #[arg(long)]
+    pub(crate) block_kind: Option<String>,
+
+    /// Collapse repeated low-signal workflow blocks into compact aggregate blocks.
+    #[arg(long)]
+    pub(crate) compact: bool,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
+    pub(crate) format: WorkflowFormat,
+
+    /// Include hidden files and directories.
+    #[arg(long)]
+    pub(crate) include_hidden: bool,
+
+    /// Include default ignored directories such as target and node_modules.
+    #[arg(long)]
+    pub(crate) include_ignored: bool,
+
+    /// Cap outgoing edges expanded per node (calls first), so the block
+    /// budget follows the call chain into depth instead of one wide node.
+    #[arg(long)]
+    pub(crate) max_fanout: Option<usize>,
+
+    #[command(flatten)]
+    pub(crate) cache: CacheArgs,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct WorkflowEntrypointsArgs {
+    /// Filter entrypoints by label, kind, language, or metadata.
+    #[arg(long)]
+    pub(crate) search: Option<String>,
+
+    /// Restrict entrypoints to a matching entrypoint_kind metadata value such as route, workflow_job, pipeline_job, make_target, service, or cmd.
+    #[arg(long)]
+    pub(crate) entrypoint_kind: Option<String>,
+
+    /// Project root to scan.
+    #[arg(default_value = ".")]
+    pub(crate) path: PathBuf,
+
+    /// Maximum outgoing dependency depth.
+    #[arg(long, default_value_t = 4)]
+    pub(crate) depth: usize,
+
+    /// Maximum workflow blocks per entrypoint.
+    #[arg(long, default_value_t = 200)]
+    pub(crate) block_limit: usize,
+
+    /// Cap outgoing edges expanded per node (calls first) so the block
+    /// budget follows the call chain into depth. Unset means unbounded.
+    #[arg(long)]
+    pub(crate) max_fanout: Option<usize>,
+
+    /// Maximum entrypoint workflows to return.
+    #[arg(long, default_value_t = 25)]
+    pub(crate) limit: usize,
+
+    /// Restrict traversal to an edge kind such as calls, reads_environment, may_error, or depends_on.
+    #[arg(long)]
+    pub(crate) edge_kind: Option<String>,
+
+    /// Restrict traversal to an edge confidence such as exact, semantic, syntactic, or heuristic.
+    #[arg(long)]
+    pub(crate) confidence: Option<String>,
+
+    /// Restrict returned blocks to a source language metadata value.
+    #[arg(long)]
+    pub(crate) language: Option<String>,
+
+    /// Restrict returned blocks/transitions to risk severity: info, warning, or error.
+    #[arg(long)]
+    pub(crate) risk_severity: Option<String>,
+
+    /// Restrict returned blocks to a workflow kind such as call, branch, loop, async, return, config_read, environment_read, or error.
+    #[arg(long)]
+    pub(crate) block_kind: Option<String>,
+
+    /// Collapse repeated low-signal workflow blocks into compact aggregate blocks.
+    #[arg(long)]
+    pub(crate) compact: bool,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
+    pub(crate) format: WorkflowFormat,
+
+    /// Include hidden files and directories.
+    #[arg(long)]
+    pub(crate) include_hidden: bool,
+
+    /// Include default ignored directories such as target and node_modules.
+    #[arg(long)]
+    pub(crate) include_ignored: bool,
+
+    #[command(flatten)]
+    pub(crate) cache: CacheArgs,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct WorkflowQueryArgs {
+    /// Graph query expression whose returned nodes become workflow starts.
+    pub(crate) query: String,
+
+    /// Project root to scan.
+    #[arg(default_value = ".")]
+    pub(crate) path: PathBuf,
+
+    /// Maximum outgoing dependency depth.
+    #[arg(long, default_value_t = 4)]
+    pub(crate) depth: usize,
+
+    /// Maximum workflow blocks per query node.
+    #[arg(long, default_value_t = 200)]
+    pub(crate) block_limit: usize,
+
+    /// Cap outgoing edges expanded per node (calls first) so the block
+    /// budget follows the call chain into depth. Unset means unbounded.
+    #[arg(long)]
+    pub(crate) max_fanout: Option<usize>,
+
+    /// Maximum query-node workflows to return.
+    #[arg(long, default_value_t = 25)]
+    pub(crate) limit: usize,
+
+    /// Restrict traversal to an edge kind such as calls, reads_environment, may_error, or depends_on.
+    #[arg(long)]
+    pub(crate) edge_kind: Option<String>,
+
+    /// Restrict traversal to an edge confidence such as exact, semantic, syntactic, or heuristic.
+    #[arg(long)]
+    pub(crate) confidence: Option<String>,
+
+    /// Restrict returned blocks to a source language metadata value.
+    #[arg(long)]
+    pub(crate) language: Option<String>,
+
+    /// Restrict returned blocks/transitions to risk severity: info, warning, or error.
+    #[arg(long)]
+    pub(crate) risk_severity: Option<String>,
+
+    /// Restrict returned blocks to a workflow kind such as call, branch, loop, async, return, config_read, environment_read, or error.
+    #[arg(long)]
+    pub(crate) block_kind: Option<String>,
+
+    /// Collapse repeated low-signal workflow blocks into compact aggregate blocks.
+    #[arg(long)]
+    pub(crate) compact: bool,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = WorkflowFormat::Json)]
+    pub(crate) format: WorkflowFormat,
+
+    /// Include hidden files and directories.
+    #[arg(long)]
+    pub(crate) include_hidden: bool,
+
+    /// Include default ignored directories such as target and node_modules.
+    #[arg(long)]
+    pub(crate) include_ignored: bool,
+
+    #[command(flatten)]
+    pub(crate) cache: CacheArgs,
 }

@@ -14,29 +14,27 @@ mod query_log;
 mod registry;
 mod watch;
 mod wiki;
+mod workflow_commands;
 
 use anyhow::Result;
 use clap::Parser;
 use cli::*;
 use codegraph_analysis::{
     ComponentContractRequest, ComponentDependencyRequest, ConfigTraceRequest,
-    EntrypointTraceRequest, EntrypointWorkflowRequest, ErrorTraceRequest, ExplainEdgeRequest,
-    ImpactRequest, InsightFilter, InsightSeverity, JourneyRequest, NaturalQueryRequest,
-    NodeCardRequest, ProjectReport, ProjectReportLimits, ProjectReportMarkdownOptions,
-    RefactorContextRequest, SeamRequest, SourceSearchRequest, TraceRequest, TraceStart,
-    WorkflowFilters, WorkflowQueryRequest, WorkflowRequest, architecture_map, check_insights,
-    communities, compact_query_result, component_contract, component_dependencies, entrypoints,
-    explain_edge, filter_insight_report, hotspots, impact, impact_fast, insights, journey,
-    language_dependencies, natural_query, project_report, project_report_markdown, query_graph,
-    read_source_preview, refactor_context, seams, search_source, summarize, surprising_links,
-    trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
-    validate_query_expression, workflow, workflow_entrypoints, workflow_mermaid, workflow_query,
+    EntrypointTraceRequest, ErrorTraceRequest, ExplainEdgeRequest, ImpactRequest, InsightFilter,
+    InsightSeverity, JourneyRequest, NaturalQueryRequest, NodeCardRequest, ProjectReport,
+    ProjectReportLimits, ProjectReportMarkdownOptions, RefactorContextRequest, SeamRequest,
+    SourceSearchRequest, TraceRequest, TraceStart, architecture_map, check_insights, communities,
+    compact_query_result, component_contract, component_dependencies, entrypoints, explain_edge,
+    filter_insight_report, hotspots, impact, impact_fast, insights, journey, language_dependencies,
+    natural_query, project_report, project_report_markdown, query_graph, read_source_preview,
+    refactor_context, seams, search_source, summarize, surprising_links, trace, trace_config,
+    trace_dependents, trace_entrypoints, trace_errors, validate_query_expression,
 };
 use codegraph_analysis::{
     DEFAULT_MERMAID_EDGE_LIMIT, DEFAULT_MERMAID_NODE_LIMIT, DEFAULT_SVG_EDGE_LIMIT,
-    DEFAULT_SVG_NODE_LIMIT, MermaidSection, export_cypher, export_dot, export_falkordb,
-    export_graph_mermaid_html, export_graphml, export_mermaid_html, export_ndjson, export_svg,
-    node_card, node_card_fast,
+    DEFAULT_SVG_NODE_LIMIT, export_cypher, export_dot, export_falkordb, export_graph_mermaid_html,
+    export_graphml, export_ndjson, export_svg, node_card, node_card_fast,
 };
 use codegraph_core::NodeId;
 use codegraph_indexer::{
@@ -1243,206 +1241,11 @@ fn main() -> Result<()> {
             );
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
-        Command::Workflow {
-            label,
-            path,
-            depth,
-            block_limit,
-            edge_kind,
-            confidence,
-            language,
-            risk_severity,
-            block_kind,
-            compact,
-            max_fanout,
-            format,
-            include_hidden,
-            include_ignored,
-            cache,
-        } => {
-            let graph =
-                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
-            let report = workflow(
-                &graph,
-                WorkflowRequest {
-                    start: TraceStart::Label(label),
-                    max_depth: depth,
-                    block_limit,
-                    filters: WorkflowFilters::from_parts(
-                        edge_kind,
-                        confidence,
-                        language,
-                        risk_severity,
-                        block_kind,
-                    ),
-                    compact,
-                    max_fanout,
-                },
-            );
-            match (format, report) {
-                (WorkflowFormat::Json, report) => {
-                    println!("{}", serde_json::to_string_pretty(&report)?);
-                }
-                (WorkflowFormat::Mermaid, Some(report)) => {
-                    println!("{}", workflow_mermaid(&report));
-                }
-                (WorkflowFormat::Mermaid, None) => {
-                    println!("flowchart TD");
-                }
-                (WorkflowFormat::Html, report) => {
-                    let sections = report
-                        .iter()
-                        .map(|report| MermaidSection {
-                            title: report.start.label.clone(),
-                            mermaid: workflow_mermaid(report),
-                        })
-                        .collect::<Vec<_>>();
-                    print!("{}", export_mermaid_html("CodeGraph workflow", &sections));
-                }
-            }
+        Command::Workflow(args) => workflow_commands::run_workflow(args, max_file_size)?,
+        Command::WorkflowEntrypoints(args) => {
+            workflow_commands::run_workflow_entrypoints(args, max_file_size)?
         }
-        Command::WorkflowEntrypoints {
-            search,
-            entrypoint_kind,
-            path,
-            depth,
-            block_limit,
-            max_fanout,
-            limit,
-            edge_kind,
-            confidence,
-            language,
-            risk_severity,
-            block_kind,
-            compact,
-            format,
-            include_hidden,
-            include_ignored,
-            cache,
-        } => {
-            let graph =
-                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
-            let report = workflow_entrypoints(
-                &graph,
-                EntrypointWorkflowRequest {
-                    search,
-                    entrypoint_kind,
-                    max_depth: depth,
-                    block_limit,
-                    limit,
-                    filters: WorkflowFilters::from_parts(
-                        edge_kind,
-                        confidence,
-                        language,
-                        risk_severity,
-                        block_kind,
-                    ),
-                    compact,
-                    max_fanout,
-                },
-            );
-            match format {
-                WorkflowFormat::Json => {
-                    println!("{}", serde_json::to_string_pretty(&report)?);
-                }
-                WorkflowFormat::Mermaid => {
-                    let rendered = report
-                        .workflows
-                        .iter()
-                        .map(|workflow| {
-                            format!(
-                                "%% {}\n{}",
-                                workflow.start.label,
-                                workflow_mermaid(workflow)
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n\n");
-                    println!("{rendered}");
-                }
-                WorkflowFormat::Html => {
-                    let sections = report
-                        .workflows
-                        .iter()
-                        .map(|workflow| MermaidSection {
-                            title: workflow.start.label.clone(),
-                            mermaid: workflow_mermaid(workflow),
-                        })
-                        .collect::<Vec<_>>();
-                    print!("{}", export_mermaid_html("CodeGraph workflows", &sections));
-                }
-            }
-        }
-        Command::WorkflowQuery {
-            query,
-            path,
-            depth,
-            block_limit,
-            max_fanout,
-            limit,
-            edge_kind,
-            confidence,
-            language,
-            risk_severity,
-            block_kind,
-            compact,
-            format,
-            include_hidden,
-            include_ignored,
-            cache,
-        } => {
-            let graph =
-                scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
-            let report = workflow_query(
-                &graph,
-                WorkflowQueryRequest {
-                    query,
-                    max_depth: depth,
-                    block_limit,
-                    limit,
-                    filters: WorkflowFilters::from_parts(
-                        edge_kind,
-                        confidence,
-                        language,
-                        risk_severity,
-                        block_kind,
-                    ),
-                    compact,
-                    max_fanout,
-                },
-            )?;
-            match format {
-                WorkflowFormat::Json => {
-                    println!("{}", serde_json::to_string_pretty(&report)?);
-                }
-                WorkflowFormat::Mermaid => {
-                    let rendered = report
-                        .workflows
-                        .iter()
-                        .map(|workflow| {
-                            format!(
-                                "%% {}\n{}",
-                                workflow.start.label,
-                                workflow_mermaid(workflow)
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n\n");
-                    println!("{rendered}");
-                }
-                WorkflowFormat::Html => {
-                    let sections = report
-                        .workflows
-                        .iter()
-                        .map(|workflow| MermaidSection {
-                            title: workflow.start.label.clone(),
-                            mermaid: workflow_mermaid(workflow),
-                        })
-                        .collect::<Vec<_>>();
-                    print!("{}", export_mermaid_html("CodeGraph workflows", &sections));
-                }
-            }
-        }
+        Command::WorkflowQuery(args) => workflow_commands::run_workflow_query(args, max_file_size)?,
         Command::TraceConfig {
             target,
             path,
@@ -1631,7 +1434,7 @@ fn project_fingerprint_hash(
     Ok(GraphCache::fingerprint_project(path, &options)?.hash)
 }
 
-fn scan_with_options(
+pub(crate) fn scan_with_options(
     path: PathBuf,
     include_hidden: bool,
     include_ignored: bool,
