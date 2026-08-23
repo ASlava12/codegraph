@@ -4856,6 +4856,38 @@ fn natural_query_routes_env_tokens_with_read_verbs_to_config_rule() {
 }
 
 #[test]
+fn a_grouped_link_keeps_a_sample_of_evidence_not_all_of_it() {
+    let mut graph = CodeGraph::new("repo");
+    let mut previous = None;
+    for index in 0..250 {
+        let node = graph.add_node_with_metadata(
+            NodeKind::Function,
+            format!("f{index}"),
+            Some(SourceSpan {
+                path: "main.go".to_string(),
+                start_line: 1,
+                start_column: 1,
+                end_line: 2,
+                end_column: 1,
+            }),
+            BTreeMap::from([("language".to_string(), "go".to_string())]),
+        );
+        if let Some(previous) = previous {
+            graph.add_edge(previous, node, EdgeKind::Calls, Confidence::Heuristic);
+        }
+        previous = Some(node);
+    }
+
+    let report = language_dependencies(&graph, 50);
+    let link = report.links.first().expect("one go->go link");
+
+    // The count is the fact; the indexes are there to jump to a few real
+    // edges. Keeping every one made this single link 1.4MB on terraform.
+    assert_eq!(link.count, 249);
+    assert_eq!(link.edge_indexes.len(), 100);
+}
+
+#[test]
 fn an_ambiguous_query_anchor_resolves_to_the_program() {
     let mut graph = CodeGraph::new("repo");
     let span = |path: &str| {

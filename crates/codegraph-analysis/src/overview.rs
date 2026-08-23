@@ -178,7 +178,7 @@ pub fn architecture_map(
             edge_indexes: Vec::new(),
         });
         architecture_edge.count += 1;
-        if architecture_edge.edge_indexes.len() < 100 {
+        if architecture_edge.edge_indexes.len() < LINK_EVIDENCE_LIMIT {
             architecture_edge.edge_indexes.push(edge_index);
         }
         *architecture_edge
@@ -221,6 +221,14 @@ pub fn architecture_map(
         truncated_edges: total_edges > edge_limit,
     }
 }
+
+/// How many edge indexes a grouped link keeps as evidence.
+///
+/// The indexes exist so a reader can jump to a few real edges behind a
+/// summary; keeping every one turns a summary back into the graph. terraform's
+/// go->go link alone held 190459 of them — 1.4MB, 78% of the whole report,
+/// which is unusable for an agent that has to read it.
+const LINK_EVIDENCE_LIMIT: usize = 100;
 
 pub fn language_dependencies(graph: &CodeGraph, limit: usize) -> LanguageDependencyReport {
     let limit = limit.clamp(1, 500);
@@ -265,7 +273,9 @@ pub fn language_dependencies(graph: &CodeGraph, limit: usize) -> LanguageDepende
             .confidences
             .entry(confidence_name(edge.confidence))
             .or_insert(0) += 1;
-        link.edge_indexes.push(edge_index);
+        if link.edge_indexes.len() < LINK_EVIDENCE_LIMIT {
+            link.edge_indexes.push(edge_index);
+        }
     }
 
     let total_links = links.len();
@@ -582,19 +592,19 @@ pub(crate) fn graph_community(
         match (source_inside, target_inside) {
             (true, true) => {
                 internal_edges += 1;
-                if edge_indexes.len() < 100 {
+                if edge_indexes.len() < LINK_EVIDENCE_LIMIT {
                     edge_indexes.push(edge_index);
                 }
             }
             (true, false) if node_community.contains_key(&edge.target) => {
                 outgoing_external_edges += 1;
-                if edge_indexes.len() < 100 {
+                if edge_indexes.len() < LINK_EVIDENCE_LIMIT {
                     edge_indexes.push(edge_index);
                 }
             }
             (false, true) if node_community.contains_key(&edge.source) => {
                 incoming_external_edges += 1;
-                if edge_indexes.len() < 100 {
+                if edge_indexes.len() < LINK_EVIDENCE_LIMIT {
                     edge_indexes.push(edge_index);
                 }
             }
