@@ -8,6 +8,11 @@ use std::sync::atomic::AtomicU64;
 use crate::*;
 
 pub(crate) const DEFAULT_MAX_SCAN_JOBS: usize = 64;
+/// How many completed scan jobs keep their graph in memory. The store holds up
+/// to max_scan_jobs entries for status history, but a graph can be hundreds of
+/// MB, so only the newest few stay resident; older results are re-scanned from
+/// the cache on demand.
+pub(crate) const MAX_RESIDENT_JOB_GRAPHS: usize = 3;
 pub(crate) const DEFAULT_MAX_SEMANTIC_JOBS: usize = 64;
 pub(crate) const DEFAULT_MAX_SCAN_CONCURRENCY: usize = 2;
 pub(crate) const DEFAULT_MAX_SEMANTIC_CONCURRENCY: usize = 1;

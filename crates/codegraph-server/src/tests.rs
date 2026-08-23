@@ -3410,3 +3410,55 @@ fn temp_server_root() -> PathBuf {
     let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!("codegraph-server-test-{nanos}-{id}"))
 }
+
+#[tokio::test]
+async fn only_the_newest_completed_jobs_keep_their_graph() {
+    // A completed job holds its whole graph, which can be hundreds of MB; the
+    // store keeps up to max_scan_jobs entries for history, so only the newest
+    // few may stay resident.
+    let jobs = RwLock::new(BTreeMap::new());
+    for index in 0..(MAX_RESIDENT_JOB_GRAPHS + 2) {
+        let id = format!("scan-{index}");
+        insert_scan_job(
+            &jobs,
+            test_scan_job(&id, ScanJobStatus::Running, 10 + index as u64, None),
+            32,
+        )
+        .await
+        .unwrap();
+        update_scan_job(
+            &jobs,
+            &id,
+            ScanJobUpdate {
+                status: ScanJobStatus::Complete,
+                message: "complete".to_string(),
+                cache: None,
+                summary: None,
+                graph: Some(CodeGraph::new("demo")),
+            },
+            32,
+        )
+        .await;
+    }
+
+    let store = jobs.read().await;
+    let resident: Vec<_> = store
+        .values()
+        .filter(|job| job.graph.is_some())
+        .map(|job| job.id.clone())
+        .collect();
+    assert_eq!(
+        resident.len(),
+        MAX_RESIDENT_JOB_GRAPHS,
+        "only the newest graphs stay resident: {resident:?}"
+    );
+    assert!(
+        resident.contains(&format!("scan-{}", MAX_RESIDENT_JOB_GRAPHS + 1)),
+        "the newest job keeps its graph: {resident:?}"
+    );
+    assert_eq!(
+        store.len(),
+        MAX_RESIDENT_JOB_GRAPHS + 2,
+        "status history is untouched"
+    );
+}

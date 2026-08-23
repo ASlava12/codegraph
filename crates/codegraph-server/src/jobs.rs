@@ -273,9 +273,26 @@ pub(crate) async fn scan_job_result(
         .ok_or_else(|| ApiError::not_found("scan job not found"))?;
     match job.status {
         ScanJobStatus::Complete => {
-            let graph = job
-                .graph
-                .ok_or_else(|| ApiError::internal("scan job completed without graph"))?;
+            // Only the newest few completed jobs keep their graph resident;
+            // older ones are re-scanned through the cache, which is a hit
+            // unless the project changed since the job ran.
+            let graph = match job.graph {
+                Some(graph) => graph,
+                None => {
+                    let root = PathBuf::from(&job.path);
+                    let options = scan_options(&state, &root)?;
+                    let cache = state.cache.clone();
+                    tokio::task::spawn_blocking(move || {
+                        scan_project_cached(root, &options, cache.as_ref())
+                    })
+                    .await
+                    .map_err(|error| {
+                        ApiError::internal(format!("scan job result task failed: {error}"))
+                    })?
+                    .map_err(|error| ApiError::internal(error.to_string()))?
+                    .graph
+                }
+            };
             Ok(Json(ScanJobResult {
                 id: job.id,
                 root: job.path,
@@ -348,7 +365,34 @@ pub(crate) async fn update_scan_job(
         job.summary = update.summary;
         job.graph = update.graph;
     }
+    release_stale_job_graphs(&mut jobs);
     prune_scan_jobs(&mut jobs, max_jobs);
+}
+
+/// Drop graphs from all but the newest completed jobs. The status history stays
+/// intact; `/scan-jobs/{id}/result` re-scans from the cache when an older
+/// result is requested.
+fn release_stale_job_graphs(jobs: &mut BTreeMap<String, ScanJob>) {
+    let mut resident: Vec<(u64, String)> = jobs
+        .values()
+        .filter(|job| job.graph.is_some())
+        .map(|job| {
+            (
+                job.finished_at_unix.unwrap_or(job.updated_at_unix),
+                job.id.clone(),
+            )
+        })
+        .collect();
+    if resident.len() <= MAX_RESIDENT_JOB_GRAPHS {
+        return;
+    }
+    // Newest first; ids break ties so eviction is deterministic.
+    resident.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+    for (_, id) in resident.into_iter().skip(MAX_RESIDENT_JOB_GRAPHS) {
+        if let Some(job) = jobs.get_mut(&id) {
+            job.graph = None;
+        }
+    }
 }
 
 pub(crate) async fn cancel_scan_job_in_store(
