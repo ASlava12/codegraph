@@ -910,6 +910,24 @@ fn scan_project_uses_persistent_parse_cache_records() {
 }
 
 #[test]
+fn python_extras_are_not_a_version() {
+    // `celery[redis]==5.2.7` asks for celery with its redis extra. Reading
+    // the extras as the version pinned celery to `[redis]`.
+    assert_eq!(
+        package_name_and_version_from_requirement("celery[redis]==5.2.7"),
+        Some(("celery".to_string(), Some("==5.2.7".to_string())))
+    );
+    assert_eq!(
+        package_name_and_version_from_requirement("celery[redis]"),
+        Some(("celery".to_string(), None))
+    );
+    assert_eq!(
+        package_name_and_version_from_requirement("flask>=3.1.0"),
+        Some(("flask".to_string(), Some(">=3.1.0".to_string())))
+    );
+}
+
+#[test]
 fn a_command_names_the_path_the_shell_would_run() {
     // `(cd ..; ./runtest)` runs the script one directory up from the
     // Makefile that says so, not next to it.
@@ -4182,7 +4200,7 @@ find_package(Boost 1.83 REQUIRED COMPONENTS filesystem)
             && edge
                 .metadata
                 .get("dependency_version")
-                .is_some_and(|value| value == "[standard]>=0.24")
+                .is_some_and(|value| value == ">=0.24")
     }));
     let wheel_dep = graph
         .nodes

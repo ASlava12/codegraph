@@ -2718,6 +2718,13 @@ pub(crate) fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &
         else {
             continue;
         };
+        // `catalog:` and `workspace:*` say where to get the package, and
+        // the version they stand for is written somewhere else. Reading
+        // one as a constraint makes every catalogued package disagree with
+        // itself.
+        if names_a_dependency_source(version) {
+            continue;
+        }
         groups
             .entry(edge.target)
             .or_default()
@@ -2750,11 +2757,23 @@ pub(crate) fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &
             .collect::<Vec<_>>()
             .join(", ");
         let package = node_label(graph, target).unwrap_or("unknown");
+        // Which files disagree is the whole of what a reader needs, and
+        // three quarters of these are a workspace where an example app and
+        // the library it shows off each pinned their own version.
+        let manifests = format_backtick_list(
+            declarations
+                .iter()
+                .filter_map(|(index, _)| graph.edges.get(*index))
+                .filter_map(|edge| node_label(graph, edge.source))
+                .collect::<BTreeSet<_>>()
+                .into_iter(),
+            3,
+        );
         insights.push(Insight {
             kind: "conflicting_dependency_declaration".to_string(),
             severity: InsightSeverity::Warning,
             message: format!(
-                "Dependency `{package}` is declared with multiple constraints: {versions}"
+                "Dependency `{package}` is declared with multiple constraints: {versions} in {manifests}"
             ),
             nodes: nodes.into_iter().collect(),
             edges: edge_indexes,
@@ -2846,6 +2865,24 @@ pub(crate) fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &
             edges,
         });
     }
+}
+
+/// Whether a declared version names where to get the package rather than
+/// which version of it. `catalog:` defers to a pnpm catalog, `workspace:*`
+/// to a sibling package, and `file:`, `link:`, `git+...` and `npm:` to a
+/// place to fetch it from.
+pub(crate) fn names_a_dependency_source(version: &str) -> bool {
+    let version = version.trim();
+    version == "catalog:"
+        || version.starts_with("catalog:")
+        || version.starts_with("workspace:")
+        || version.starts_with("link:")
+        || version.starts_with("file:")
+        || version.starts_with("path:")
+        || version.starts_with("npm:")
+        || version.starts_with("git+")
+        || version.starts_with("github:")
+        || version.starts_with("git:")
 }
 
 /// Whether a path is a resolved lockfile rather than a declaration. What a

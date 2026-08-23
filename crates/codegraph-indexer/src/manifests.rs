@@ -2636,14 +2636,22 @@ pub(crate) fn package_name_and_version_from_requirement(
         .unwrap_or(trimmed.len());
     let name = trimmed[..end].trim();
     if name.is_empty() {
-        None
-    } else {
-        let version = trimmed[end..].trim();
-        Some((
-            name.to_string(),
-            (!version.is_empty()).then(|| version.to_string()),
-        ))
+        return None;
     }
+    // `celery[redis]==5.2.7` asks for celery with its redis extra, at that
+    // version. The extras name optional parts to install, so reading them
+    // as the version leaves `celery` pinned to `[redis]`.
+    let mut rest = trimmed[end..].trim_start();
+    if let Some(extras) = rest.strip_prefix('[')
+        && let Some((_, tail)) = extras.split_once(']')
+    {
+        rest = tail.trim_start();
+    }
+    let version = rest.trim();
+    Some((
+        name.to_string(),
+        (!version.is_empty()).then(|| version.to_string()),
+    ))
 }
 
 /// Candidate package hub ids for a source import label, used to link code

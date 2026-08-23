@@ -8764,6 +8764,46 @@ fn insights_report_conflicting_dependency_declarations() {
     assert!(conflict.nodes.contains(&serde));
     assert!(!conflict.nodes.contains(&anyhow));
     assert_eq!(conflict.edges.len(), 2);
+    assert!(
+        conflict
+            .message
+            .contains("`Cargo.toml`, `crates/app/Cargo.toml`"),
+        "which files disagree is the whole of what a reader needs: {}",
+        conflict.message
+    );
+}
+
+#[test]
+fn a_catalogued_version_does_not_disagree_with_itself() {
+    // `catalog:` says the version lives in the pnpm catalog. Read as a
+    // constraint it disagrees with every real one, and vue core had five
+    // packages arguing with themselves that way.
+    let mut graph = CodeGraph::new("repo");
+    let root = graph.add_node(NodeKind::File, "package.json");
+    let package = graph.add_node(NodeKind::File, "packages/app/package.json");
+    let vite = dependency_node(&mut graph, "@vitejs/plugin-vue", "npm:@vitejs/plugin-vue");
+    for (manifest, version) in [(root, "^6.0.8"), (package, "catalog:")] {
+        graph.add_edge_with_metadata(
+            manifest,
+            vite,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "dev".to_string()),
+                ("dependency_version".to_string(), version.to_string()),
+            ]),
+        );
+    }
+
+    let report = insights(&graph);
+    assert!(
+        !report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "conflicting_dependency_declaration"),
+        "{:?}",
+        report.insights
+    );
 }
 
 #[test]
