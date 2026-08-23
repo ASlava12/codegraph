@@ -3,7 +3,9 @@
 //! chunks, impact indexes for incremental planning, and safe
 //! incremental cache updates.
 
-use codegraph_core::{CODEGRAPH_SCHEMA_VERSION, CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind};
+use codegraph_core::{
+    CODEGRAPH_SCHEMA_VERSION, CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind, build_identity,
+};
 use codegraph_indexer::{
     IndexError, IndexOptions, ScanCancellation, compile_ignored_globs, is_index_relevant_file,
     scan_project_cancelable, scan_project_paths, should_enter,
@@ -22,7 +24,11 @@ use walkdir::WalkDir;
 // v6: environment/config keys and reopened namespaces became one shared node
 // each. A cached graph still holds the old one-node-per-read shape, so records
 // written before that change have to be rebuilt rather than served.
-const CACHE_SCHEMA_VERSION: u32 = 6;
+// v7: module-level calls, Lua bindings and Haskell data constructors became
+// facts of their own, and call labels that name nothing stopped being
+// recorded. Every one of those changes what a scan of unchanged files
+// produces.
+const CACHE_SCHEMA_VERSION: u32 = 7;
 const CHUNK_ID_PREVIEW_LIMIT: usize = 20;
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
@@ -240,6 +246,12 @@ pub struct FingerprintChange {
 struct CacheRecord {
     cache_schema_version: u32,
     graph_schema_version: u32,
+    /// Which build produced this record. The schema version above says when
+    /// the record's *shape* changed; this says when the code that fills it
+    /// changed, which happens far more often and which nobody can be
+    /// relied upon to notice.
+    #[serde(default)]
+    build_identity: String,
     root: String,
     options_hash: String,
     fingerprint: ProjectFingerprint,
@@ -426,6 +438,7 @@ impl GraphCache {
             return Ok(None);
         };
         if record.cache_schema_version != CACHE_SCHEMA_VERSION
+            || record.build_identity != build_identity()
             || record.graph_schema_version != record.graph.schema_version
             || record.graph_schema_version != CODEGRAPH_SCHEMA_VERSION
             || record.root != cache_root(root)
@@ -466,6 +479,7 @@ impl GraphCache {
             ));
         };
         if record.cache_schema_version != CACHE_SCHEMA_VERSION
+            || record.build_identity != build_identity()
             || record.graph_schema_version != record.graph.schema_version
             || record.graph_schema_version != CODEGRAPH_SCHEMA_VERSION
             || record.root != cache_root(root)
@@ -513,6 +527,7 @@ impl GraphCache {
             ));
         };
         if record.cache_schema_version != CACHE_SCHEMA_VERSION
+            || record.build_identity != build_identity()
             || record.graph_schema_version != record.graph.schema_version
             || record.graph_schema_version != CODEGRAPH_SCHEMA_VERSION
             || record.root != cache_root(root)
@@ -559,6 +574,7 @@ impl GraphCache {
             ));
         };
         if record.cache_schema_version != CACHE_SCHEMA_VERSION
+            || record.build_identity != build_identity()
             || record.graph_schema_version != record.graph.schema_version
             || record.graph_schema_version != CODEGRAPH_SCHEMA_VERSION
             || record.root != cache_root(root)
@@ -756,6 +772,7 @@ impl GraphCache {
         let graph_indexes = build_graph_indexes(graph);
         let record = CacheRecord {
             cache_schema_version: CACHE_SCHEMA_VERSION,
+            build_identity: build_identity().to_string(),
             graph_schema_version: graph.schema_version,
             root: cache_root(root),
             options_hash: options_hash(options),
@@ -2472,6 +2489,51 @@ mod tests {
         assert!(update.preview.merge.completeness_blockers.is_empty());
         let hit = scan_project_cached(&root, &options, Some(&cache)).unwrap();
         assert_eq!(hit.cache.status, CacheStatus::Hit);
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn a_graph_record_from_another_build_is_not_served() {
+        // Nothing else in the key moves when the extraction rules do: the
+        // project is unchanged, so the fingerprint, the options and the
+        // schema all still match a record an earlier build wrote.
+        let root = temp_project_root();
+        let cache_dir = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        let options = IndexOptions::default();
+        let cache = GraphCache::new(&cache_dir);
+        let first = scan_project_cached(&root, &options, Some(&cache)).unwrap();
+        assert_eq!(first.cache.status, CacheStatus::Miss);
+        assert_eq!(
+            scan_project_cached(&root, &options, Some(&cache))
+                .unwrap()
+                .cache
+                .status,
+            CacheStatus::Hit,
+            "this build reuses its own record"
+        );
+
+        let path = cache.cache_path(&root, &options);
+        let text = fs::read_to_string(&path).unwrap();
+        // The graph record is stored pretty-printed, unlike the compact
+        // per-file parse records.
+        let key = "\"build_identity\": \"";
+        let start = text.find(key).expect("the record names its build") + key.len();
+        let end = start + text[start..].find('"').unwrap();
+        fs::write(
+            &path,
+            format!("{}0.0.0-other{}", &text[..start], &text[end..]),
+        )
+        .unwrap();
+
+        let fingerprint = GraphCache::fingerprint_project(&root, &options).unwrap();
+        assert!(
+            cache.load(&root, &options, &fingerprint).unwrap().is_none(),
+            "a record from another build is not this build's answer"
+        );
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();

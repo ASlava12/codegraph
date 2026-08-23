@@ -36,3 +36,7 @@ curl 'http://127.0.0.1:3765/api/scan?path=.'
 - Land refactors only behind green workspace tests: when a planned refactor touches code without regression coverage, add the fixture or guard test first (in the same or an earlier commit), then refactor. Structural changes must not change behavior silently — run a live CLI smoke against this repository and compare the insight-warning baseline before committing.
 - Keep UI behavior backed by the same API and graph model used by agents.
 - Avoid checking in generated build artifacts or local cache records.
+- Both caches are keyed by the build that filled them (`build_identity`), so changed extraction
+  rules never serve a previous binary's facts. Bump `CACHE_SCHEMA_VERSION` or
+  `PARSE_CACHE_SCHEMA_VERSION` as well when a record's *shape* changes, so an old record is
+  rejected rather than decoded into the new struct.

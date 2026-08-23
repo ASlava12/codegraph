@@ -445,6 +445,9 @@ pub(crate) struct FileStamp {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ParseCacheRecord {
     pub(crate) cache_schema_version: u32,
+    /// Which build extracted these facts; see [`build_identity`].
+    #[serde(default)]
+    pub(crate) build_identity: String,
     pub(crate) language: Language,
     pub(crate) stamp: FileStamp,
     pub(crate) parsed: ParsedFile,

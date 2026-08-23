@@ -1,10 +1,12 @@
-//! Persistent per-file parser fact cache keyed by language, path, size,
-//! and modification time.
+//! Persistent per-file parser fact cache keyed by the build that produced
+//! the facts, the language, and the file's path, size and modification
+//! time.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use codegraph_core::build_identity;
 use codegraph_parser::{Language, LanguageAdapter, ParsedFile};
 
 #[allow(unused_imports)]
@@ -45,7 +47,10 @@ pub(crate) fn load_cached_parse(
     let path = parse_cache_path(cache_dir, label, language);
     let bytes = fs::read(path).ok()?;
     let record: ParseCacheRecord = serde_json::from_slice(&bytes).ok()?;
+    // Facts from a different build are not this build's facts: the
+    // extraction rules move between releases while a file's stamp does not.
     if record.cache_schema_version == PARSE_CACHE_SCHEMA_VERSION
+        && record.build_identity == build_identity()
         && record.language == language
         && record.stamp == stamp
     {
@@ -64,6 +69,7 @@ pub(crate) fn store_cached_parse(
 ) {
     let record = ParseCacheRecord {
         cache_schema_version: PARSE_CACHE_SCHEMA_VERSION,
+        build_identity: build_identity().to_string(),
         language,
         stamp,
         parsed: parsed.clone(),

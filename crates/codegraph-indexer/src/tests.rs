@@ -7148,3 +7148,57 @@ fn a_call_naming_several_types_records_the_candidates() {
         "a single matching type still gives a constructor reference"
     );
 }
+
+#[test]
+fn parse_facts_from_another_build_are_not_reused() {
+    // A file's stamp does not move when the extraction rules do, so a
+    // record written by an earlier build would otherwise be served as
+    // though this build had produced it — the scan would answer with facts
+    // it no longer extracts.
+    let root = temp_project_root();
+    let cache_dir = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    let source_path = root.join("src").join("main.rs");
+    fs::write(&source_path, "fn main() {}\n").unwrap();
+    let options = IndexOptions::default().with_parse_cache_dir(cache_dir.clone());
+
+    scan_project(&root, &options).unwrap();
+    let stamp = file_stamp(&source_path).unwrap();
+    assert!(
+        load_cached_parse(&cache_dir, "src/main.rs", Language::Rust, stamp).is_some(),
+        "this build reuses its own records"
+    );
+
+    // Rewrite the stored record as though an earlier build had written it.
+    let mut rewritten = 0;
+    for entry in fs::read_dir(&cache_dir).unwrap().filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).unwrap();
+        let Some(replaced) = replace_build_identity(&text) else {
+            continue;
+        };
+        fs::write(&path, replaced).unwrap();
+        rewritten += 1;
+    }
+    assert_eq!(rewritten, 1, "exactly one parse record was written");
+
+    assert!(
+        load_cached_parse(&cache_dir, "src/main.rs", Language::Rust, stamp).is_none(),
+        "facts from another build are not this build's facts"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(cache_dir).unwrap();
+}
+
+/// Swap the `build_identity` of a stored JSON record for a different one,
+/// leaving everything else untouched.
+fn replace_build_identity(text: &str) -> Option<String> {
+    let key = "\"build_identity\":\"";
+    let start = text.find(key)? + key.len();
+    let end = start + text[start..].find('"')?;
+    Some(format!("{}0.0.0-other{}", &text[..start], &text[end..]))
+}

@@ -8,6 +8,36 @@ use std::fmt;
 
 pub const CODEGRAPH_SCHEMA_VERSION: u32 = 1;
 
+/// What identifies the build that produced a cached artefact.
+///
+/// Caches are keyed by a schema version that says when a record's *shape*
+/// changed. Extraction rules change far more often than that, and a scan
+/// of unchanged files is exactly the case where nothing else in the key
+/// moves — so a record written by an earlier build would be served as
+/// though the current one had produced it. The crate version covers
+/// released binaries and the executable's modification time covers
+/// everything between releases.
+///
+/// When the executable cannot be located the version alone is used: a
+/// cache that is too willing to be reused beats no cache at all, and the
+/// schema version still guards the record's shape. Computed once, because
+/// the per-file parse cache consults it for every file.
+pub fn build_identity() -> &'static str {
+    static IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    IDENTITY.get_or_init(|| {
+        let version = env!("CARGO_PKG_VERSION");
+        match std::env::current_exe()
+            .and_then(|path| path.metadata())
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        {
+            Some(since) => format!("{version}+{}", since.as_secs()),
+            None => version.to_string(),
+        }
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u64);
 

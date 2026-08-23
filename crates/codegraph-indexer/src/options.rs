@@ -13,7 +13,11 @@ use thiserror::Error;
 use crate::*;
 
 pub const DEFAULT_MAX_FILE_SIZE: u64 = 2 * 1024 * 1024;
-pub(crate) const PARSE_CACHE_SCHEMA_VERSION: u32 = 2;
+// v3: module-level calls, Lua bindings, Haskell data constructors and the
+// dropping of call labels that name nothing all changed what a parse of an
+// unchanged file yields. The build identity below catches the changes
+// nobody remembers to record here.
+pub(crate) const PARSE_CACHE_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Error)]
 pub enum IndexError {
