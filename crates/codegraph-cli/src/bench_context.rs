@@ -175,6 +175,28 @@ fn inside_string_literal(line: &str, column: usize) -> bool {
 /// independent of the Tree-sitter pipeline.
 /// Oracle names, plus the subset that only ever appears in files no language
 /// adapter parses.
+/// The lines a file's string literals and comments cover, from the same
+/// parse the graph is built from. The oracles scan text, so without this
+/// a code sample counts against extraction: codegraph's own test fixtures
+/// hold `env::var("API_KEY")` inside a Rust raw string, and the benchmark
+/// reported half its environment reads missing because of it.
+fn quoted_lines(file: &CorpusFile, text: &str) -> Vec<(u32, u32)> {
+    let path = Path::new(&file.path);
+    let Some(adapter) = adapter_for_path(path) else {
+        return Vec::new();
+    };
+    adapter
+        .parse(path, text.as_bytes())
+        .map(|parsed| parsed.quoted_line_ranges)
+        .unwrap_or_default()
+}
+
+fn line_is_quoted(ranges: &[(u32, u32)], line: u32) -> bool {
+    ranges
+        .iter()
+        .any(|(start, end)| line >= *start && line <= *end)
+}
+
 fn oracle_function_names_by_origin(files: &[CorpusFile]) -> (BTreeSet<String>, BTreeSet<String>) {
     const HEADS: &[&str] = &["fn ", "def ", "func ", "function "];
     let mut names = BTreeSet::new();
@@ -189,14 +211,17 @@ fn oracle_function_names_by_origin(files: &[CorpusFile]) -> (BTreeSet<String>, B
         // lines. Flask's `ctx.py` and `sansio/app.py` document themselves with
         // `.. code-block:: python`, and every one of those samples counted
         // against extraction.
+        let quoted = quoted_lines(file, text);
         let mut inside_block_string = false;
-        for line in text.lines() {
+        for (index, line) in text.lines().enumerate() {
             let fences = line.matches("\"\"\"").count() + line.matches("'''").count();
             let opened_here = inside_block_string;
             if fences % 2 == 1 {
                 inside_block_string = !inside_block_string;
             }
-            if opened_here {
+            // The parse answers for a language the project has an adapter
+            // for; the fence counting stays for the rest.
+            if opened_here || line_is_quoted(&quoted, index as u32 + 1) {
                 continue;
             }
             let trimmed = line.trim_start();
@@ -242,6 +267,7 @@ fn oracle_env_keys(files: &[CorpusFile]) -> BTreeSet<String> {
         let Some(text) = oracle_text(file) else {
             continue;
         };
+        let quoted = quoted_lines(file, text);
         for pattern in PATTERNS {
             let mut cursor = 0;
             while let Some(found) = text[cursor..].find(pattern) {
@@ -255,7 +281,10 @@ fn oracle_env_keys(files: &[CorpusFile]) -> BTreeSet<String> {
                     .find('\n')
                     .map(|index| line_start + index)
                     .unwrap_or(text.len());
-                if inside_string_literal(&text[line_start..line_end], match_start - line_start) {
+                let line_number = text[..line_start].lines().count() as u32 + 1;
+                if line_is_quoted(&quoted, line_number)
+                    || inside_string_literal(&text[line_start..line_end], match_start - line_start)
+                {
                     cursor = start;
                     continue;
                 }
@@ -551,6 +580,41 @@ mod tests {
         assert_eq!(functions.misses_outside_parsed_source, 1);
 
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn a_fixture_inside_a_string_is_not_missing_extraction() {
+        // codegraph's own tests hold Rust source in raw strings. The
+        // oracles scan text, so `env::var("API_KEY")` written inside one
+        // counted as an environment read the graph had failed to find, and
+        // the benchmark reported half of them missing.
+        let root = temp_dir();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() {\n    let _real = std::env::var(\"REAL_KEY\").unwrap();\n}\n\nfn fixture() -> &\'static str {\n    r#\"fn sample() {\n    let _ = std::env::var(\"FIXTURE_KEY\");\n}\n\"#\n}\n",
+        )
+        .unwrap();
+
+        let files = load_corpus(
+            &scan_project(&root, &IndexOptions::default()).unwrap(),
+            &root,
+        );
+        let keys = oracle_env_keys(&files);
+        assert!(keys.contains("REAL_KEY"), "{keys:?}");
+        assert!(
+            !keys.contains("FIXTURE_KEY"),
+            "a key inside a string literal is a sample, not a read: {keys:?}"
+        );
+
+        let (names, _) = oracle_function_names_by_origin(&files);
+        assert!(names.contains("fixture"), "{names:?}");
+        assert!(
+            !names.contains("sample"),
+            "a definition inside a string literal is a sample too: {names:?}"
+        );
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
