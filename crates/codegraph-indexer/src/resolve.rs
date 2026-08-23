@@ -968,12 +968,21 @@ pub const RESOLUTION_BASES: &[&str] = &[
     "same_file",
     "import",
     "package",
+    "module_file",
     "lexical_scope",
     "receiver_type",
     "owner_type",
     "overload",
     "name",
 ];
+
+/// Whether a path is the file OCaml would hold `module` in: the module
+/// name lowercased, with an `.ml` or `.mli` extension.
+fn ocaml_module_file(path: &str, module: &str) -> bool {
+    let file = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    let module = module.to_ascii_lowercase();
+    file == format!("{module}.ml") || file == format!("{module}.mli")
+}
 
 /// Whether every candidate is the same method of the same type: a set of
 /// overloads rather than a choice between unrelated definitions. Requires
@@ -1377,6 +1386,30 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // every candidate was the same method of the same type. Swift and
         // C# spread a type over several files through extensions and
         // partial classes, so the test is the owner, not the file.
+        // OCaml names a module after the file that holds it: `Json.assoc`
+        // is `assoc` in json.ml, and `Stdune.Json.assoc` is the same file.
+        // That is the language's own rule rather than a guess about where
+        // a name might live, and it settles 11214 of dune's ambiguous
+        // calls on its own.
+        if call.language == "ocaml"
+            && targets.len() > 1
+            && let Some((module, _)) = split_qualified_call(&call.label)
+        {
+            let in_module_file = targets
+                .iter()
+                .copied()
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.span.as_ref())
+                        .is_some_and(|span| ocaml_module_file(&span.path, module))
+                })
+                .collect::<Vec<_>>();
+            if in_module_file.len() == 1 {
+                targets = in_module_file;
+                basis = "module_file";
+            }
+        }
+
         let overloads = targets.len() > 1 && one_methods_overloads(&context.graph, &targets);
         if overloads && basis == "name" {
             basis = "overload";

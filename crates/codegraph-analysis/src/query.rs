@@ -3717,6 +3717,7 @@ pub(crate) fn resolution_basis_evidence(basis: &str) -> Option<&'static str> {
         "same_file" => "resolution_note=the target is defined in the calling file",
         "import" => "resolution_note=an import in the calling file names the target's module",
         "package" => "resolution_note=an unqualified call resolves inside its own package",
+        "module_file" => "resolution_note=the module named in the call is the file that defines it",
         "lexical_scope" => "resolution_note=the target is visible from the calling definition",
         "receiver_type" => "resolution_note=the receiver's declared type owns the target",
         "owner_type" => "resolution_note=the call names the type that owns the target",

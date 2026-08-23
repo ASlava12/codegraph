@@ -7579,3 +7579,67 @@ fn overloads_of_one_method_are_not_a_choice() {
     // Two packages, two types of one name: not overloads.
     assert_eq!(resolution("d.HasErrors").0, "ambiguous");
 }
+
+#[test]
+fn an_ocaml_module_call_finds_the_file_that_is_that_module() {
+    // OCaml names a module after its file: `Json.assoc` is `assoc` in
+    // json.ml. Matching by name alone left 11214 of dune's calls choosing
+    // between every `assoc` in the project.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("json.ml"),
+        "let assoc pairs = pairs\nlet string value = value\n",
+    )
+    .unwrap();
+    fs::write(root.join("src").join("table.ml"), "let assoc key = key\n").unwrap();
+    fs::write(
+        root.join("src").join("main.ml"),
+        "let run pairs = Json.assoc pairs\nlet nested pairs = Stdune.Json.assoc pairs\nlet other key = Missing.assoc key\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .unwrap_or_else(|| panic!("the call to {label} is recorded"))
+    };
+    let target_path = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.id == call(label).target)
+            .and_then(|node| node.span.as_ref())
+            .map(|span| span.path.clone())
+            .unwrap_or_default()
+    };
+
+    assert!(
+        target_path("Json.assoc").ends_with("json.ml"),
+        "{}",
+        target_path("Json.assoc")
+    );
+    assert_eq!(
+        call("Json.assoc")
+            .metadata
+            .get("resolution_basis")
+            .map(String::as_str),
+        Some("module_file")
+    );
+    // A path-qualified module is still that module.
+    assert!(target_path("Stdune.Json.assoc").ends_with("json.ml"));
+    // A module the project does not define settles nothing.
+    assert_eq!(
+        call("Missing.assoc")
+            .metadata
+            .get("resolution")
+            .map(String::as_str),
+        Some("ambiguous")
+    );
+}
