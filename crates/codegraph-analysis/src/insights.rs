@@ -3707,8 +3707,36 @@ pub(crate) fn insight_severity_from_str(value: &str) -> InsightSeverity {
     value.parse().unwrap_or(InsightSeverity::Warning)
 }
 
+/// Whether the whole component is one method written several times --
+/// Kotlin's `indexOf` has four signatures and okio's `Buffer` implements
+/// them all. A call names the method rather than one signature, so the
+/// graph links it to every overload, and the overloads then appear to
+/// call each other. "`indexOf` -> `indexOf` -> `indexOf`" is not a cycle
+/// a reader can act on: it is one method.
+fn component_is_one_method(nodes_by_id: &BTreeMap<NodeId, &Node>, component: &[NodeId]) -> bool {
+    let mut label: Option<&str> = None;
+    let mut owner: Option<&str> = None;
+    for id in component {
+        let Some(node) = nodes_by_id.get(id) else {
+            return false;
+        };
+        let Some(node_owner) = node.metadata.get("owner_type") else {
+            return false;
+        };
+        if *label.get_or_insert(node.label.as_str()) != node.label {
+            return false;
+        }
+        if *owner.get_or_insert(node_owner.as_str()) != node_owner {
+            return false;
+        }
+    }
+    label.is_some()
+}
+
 pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     const MAX_CYCLE_INSIGHTS: usize = 50;
+
+    let nodes_by_id = nodes_by_id_index(graph);
 
     let mut nodes = BTreeSet::new();
     let mut adjacency: BTreeMap<NodeId, Vec<(NodeId, usize)>> = BTreeMap::new();
@@ -3763,6 +3791,10 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
                 }
             })
             .collect();
+
+        if component_is_one_method(&nodes_by_id, &component) {
+            continue;
+        }
 
         let labels = component
             .iter()

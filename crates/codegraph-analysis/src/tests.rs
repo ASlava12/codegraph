@@ -8581,6 +8581,29 @@ fn insights_report_dependency_cycles() {
 }
 
 #[test]
+fn one_methods_overloads_are_not_a_cycle() {
+    let mut graph = CodeGraph::new("repo");
+    let owner = BTreeMap::from([("owner_type".to_string(), "Buffer".to_string())]);
+    let short = graph.add_node_with_metadata(NodeKind::Function, "indexOf", None, owner.clone());
+    let long = graph.add_node_with_metadata(NodeKind::Function, "indexOf", None, owner.clone());
+    graph.add_edge(short, long, EdgeKind::Calls, Confidence::Heuristic);
+    graph.add_edge(long, short, EdgeKind::Calls, Confidence::Heuristic);
+    // A second method of the same type, named differently, still cycles.
+    let read = graph.add_node_with_metadata(NodeKind::Function, "read", None, owner.clone());
+    let fill = graph.add_node_with_metadata(NodeKind::Function, "fill", None, owner);
+    graph.add_edge(read, fill, EdgeKind::Calls, Confidence::Heuristic);
+    graph.add_edge(fill, read, EdgeKind::Calls, Confidence::Heuristic);
+
+    let cycles: Vec<_> = insights(&graph)
+        .insights
+        .into_iter()
+        .filter(|insight| insight.kind == "dependency_cycle")
+        .collect();
+    assert_eq!(cycles.len(), 1, "cycles: {cycles:?}");
+    assert_eq!(cycles[0].nodes, vec![read, fill]);
+}
+
+#[test]
 fn insights_report_undeclared_external_imports() {
     let mut graph = CodeGraph::new("repo");
     let file = graph.add_node(NodeKind::File, "src/main.ts");
