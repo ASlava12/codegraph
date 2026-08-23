@@ -205,7 +205,37 @@ pub(crate) fn clean_call_label(value: &str) -> String {
             return method.to_string();
         }
     }
-    trimmed.to_string()
+    // A chain written across lines keeps the line breaks as spaces
+    // (`graph .nodes .iter`); the separator is not a place for whitespace, and
+    // leaving it there minted a different node per formatting.
+    let joined = trimmed
+        .replace(" .", ".")
+        .replace(". ", ".")
+        .replace(" ::", "::")
+        .replace(":: ", "::");
+
+    // A callee that navigates through an expression carries that expression in
+    // its text: another call (`fs::remove_dir_all(root).unwrap`), an index
+    // (`line[open + 1..].find`), a composite literal
+    // (`OutputValue{Name: name}.Absolute`). What is being called is the name
+    // after the expression closes; the receiver is not part of the target's
+    // identity, and keeping it minted one node per receiver.
+    if joined.contains(['(', '[', '{']) {
+        if let Some(close) = joined.rfind([')', ']', '}']) {
+            let tail = joined[close + 1..].trim_start_matches(['.', ':', '?', '&', '*', ' ']);
+            if !tail.is_empty() && !tail.contains(['(', '[', '{', ' ']) {
+                return tail.to_string();
+            }
+        }
+        if let Some(open) = joined.find(['(', '[', '{']) {
+            let head = joined[..open].trim();
+            if !head.is_empty() && !head.contains(' ') {
+                return head.to_string();
+            }
+        }
+    }
+
+    joined
 }
 
 pub(crate) fn simple_name(value: &str) -> &str {

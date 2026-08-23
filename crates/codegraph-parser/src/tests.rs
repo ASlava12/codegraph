@@ -606,6 +606,66 @@ echo "$arch $build_target $PORT $TOKEN $answer $HOME"
 }
 
 #[test]
+fn a_call_label_names_the_callee_not_the_expression_before_it() {
+    let rust = parse_source(
+        "main.rs",
+        br#"fn main() {
+    let text = std::fs::read_to_string("Cargo.toml").unwrap();
+    let first = text
+        .lines()
+        .next();
+    let trimmed = parts[index + 1..].join("-");
+}
+"#,
+        Language::Rust,
+    )
+    .unwrap();
+    let labels = |parsed: &ParsedFile| {
+        parsed
+            .items
+            .iter()
+            .filter(|item| item.kind == ParsedItemKind::Call)
+            .map(|item| item.label.clone())
+            .collect::<BTreeSet<_>>()
+    };
+    let rust_labels = labels(&rust);
+
+    // The receiver expression is not part of what is being called: keeping it
+    // minted a node per receiver, and half of this repository's call targets
+    // were such expressions.
+    assert!(
+        rust_labels.contains("unwrap"),
+        "expected `unwrap`, got {rust_labels:?}"
+    );
+    assert!(
+        rust_labels.contains("join"),
+        "expected `join`, got {rust_labels:?}"
+    );
+    // A chain written across lines is one name, not three words.
+    assert!(
+        rust_labels.iter().all(|label| !label.contains(' ')),
+        "labels must not carry whitespace: {rust_labels:?}"
+    );
+
+    let go = parse_source(
+        "addr.go",
+        br#"package addrs
+
+func demo(name string) Absolute {
+    return OutputValue{Name: name}.Absolute()
+}
+"#,
+        Language::Go,
+    )
+    .unwrap();
+    assert!(
+        labels(&go).contains("Absolute"),
+        "expected `Absolute`, got {:?}",
+        labels(&go)
+    );
+}
+
+#[test]
 fn go_methods_know_the_type_they_belong_to() {
     let parsed = parse_source(
         "backend.go",
