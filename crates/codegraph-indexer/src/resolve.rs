@@ -1197,6 +1197,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 targets = owned;
             }
         }
+        let mut ambiguous_candidates_are_types = false;
         if targets.is_empty() {
             let type_targets = resolve_function_targets(&context.type_symbols, &call.label)
                 .into_iter()
@@ -1222,48 +1223,63 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 );
                 continue;
             }
-            let key = (call.language.clone(), call.label.clone());
-            let resolution = if builtin_call_target(&call.language, &call.label) {
-                "builtin"
+            // Several declarations answer to the name: a Scala case class
+            // and its companion object, or the 53 `Ops` traits in cats.
+            // Which one the call builds is a real question the syntax does
+            // not settle, and reporting it as unresolved claims nothing was
+            // found when in fact several were. Let it join the ambiguous
+            // path below, which records the candidates.
+            // A name the language provides is a definite answer, and
+            // several project declarations sharing it is not: cats is
+            // cross-built, so its `compat/Seq.scala` exists once per Scala
+            // version, yet a bare `Seq(...)` is the standard library's.
+            if type_targets.len() > 1 && !builtin_call_target(&call.language, &call.label) {
+                targets = type_targets;
+                ambiguous_candidates_are_types = true;
             } else {
-                "unresolved"
-            };
-            let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
-                *id
-            } else {
-                let mut metadata = BTreeMap::new();
-                metadata.insert("language".to_string(), call.language.clone());
-                metadata.insert("parser".to_string(), "tree-sitter".to_string());
-                metadata.insert("item_kind".to_string(), "call".to_string());
-                metadata.insert("resolution".to_string(), resolution.to_string());
-                let id = context.graph.add_node_with_metadata(
-                    NodeKind::ExternalDependency,
-                    call.label.clone(),
-                    Some(call.span.clone()),
-                    metadata,
+                let key = (call.language.clone(), call.label.clone());
+                let resolution = if builtin_call_target(&call.language, &call.label) {
+                    "builtin"
+                } else {
+                    "unresolved"
+                };
+                let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
+                    *id
+                } else {
+                    let mut metadata = BTreeMap::new();
+                    metadata.insert("language".to_string(), call.language.clone());
+                    metadata.insert("parser".to_string(), "tree-sitter".to_string());
+                    metadata.insert("item_kind".to_string(), "call".to_string());
+                    metadata.insert("resolution".to_string(), resolution.to_string());
+                    let id = context.graph.add_node_with_metadata(
+                        NodeKind::ExternalDependency,
+                        call.label.clone(),
+                        Some(call.span.clone()),
+                        metadata,
+                    );
+                    context.unresolved_call_placeholders.insert(key, id);
+                    id
+                };
+                // The same provenance the other branches record: without it these
+                // edges alone could not say what was called or where, so a UI
+                // could not open the call site and the semantic pass could not ask
+                // about it.
+                add_edge_once_with_metadata(
+                    context,
+                    call.caller,
+                    call_id,
+                    EdgeKind::Calls,
+                    Confidence::Heuristic,
+                    BTreeMap::from([
+                        ("call_label".to_string(), call.label),
+                        ("resolution".to_string(), resolution.to_string()),
+                        ("language".to_string(), call.language),
+                        ("line".to_string(), call.span.start_line.to_string()),
+                        ("column".to_string(), call.span.start_column.to_string()),
+                    ]),
                 );
-                context.unresolved_call_placeholders.insert(key, id);
-                id
-            };
-            // The same provenance the other branches record: without it these
-            // edges alone could not say what was called or where, so a UI
-            // could not open the call site and the semantic pass could not ask
-            // about it.
-            add_edge_once_with_metadata(
-                context,
-                call.caller,
-                call_id,
-                EdgeKind::Calls,
-                Confidence::Heuristic,
-                BTreeMap::from([
-                    ("call_label".to_string(), call.label),
-                    ("resolution".to_string(), resolution.to_string()),
-                    ("language".to_string(), call.language),
-                    ("line".to_string(), call.span.start_line.to_string()),
-                    ("column".to_string(), call.span.start_column.to_string()),
-                ]),
-            );
-            continue;
+                continue;
+            }
         }
 
         // A syntactic label such as `build`, `read`, or `close` is often
@@ -1295,6 +1311,13 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     .collect::<Vec<_>>()
                     .join(",");
                 metadata.insert("candidate_sample".to_string(), sample);
+                if ambiguous_candidates_are_types {
+                    // Say what the candidates are, so a reader knows the
+                    // call builds one of several types rather than picking
+                    // between same-named functions.
+                    metadata.insert("candidate_kind".to_string(), "type".to_string());
+                    metadata.insert("relation".to_string(), "constructor_reference".to_string());
+                }
                 let id = context.graph.add_node_with_metadata(
                     NodeKind::ExternalDependency,
                     call.label.clone(),

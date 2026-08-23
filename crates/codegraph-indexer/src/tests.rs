@@ -7088,3 +7088,63 @@ fn a_projects_own_definition_wins_over_the_builtin_list() {
         "a name only the language provides is not a resolver miss"
     );
 }
+
+#[test]
+fn a_call_naming_several_types_records_the_candidates() {
+    // One type of that name gives a constructor reference. Several used to
+    // give nothing at all, so the call read as "found nothing" when in
+    // fact more than one declaration answered to the name.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("alpha.scala"),
+        "package alpha\n\ncase class Session(id: String)\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("beta.scala"),
+        "package beta\n\ncase class Session(token: String)\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("only.scala"),
+        "package only\n\ncase class Ticket(id: String)\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("main.scala"),
+        "package main\n\nobject Main {\n  def run(): Unit = {\n    val a = Session(\"x\")\n    val b = Ticket(\"y\")\n  }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let placeholder = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::ExternalDependency && node.label == "Session")
+        .expect("the ambiguous call is recorded");
+    assert_eq!(
+        placeholder.metadata.get("resolution"),
+        Some(&"ambiguous".to_string())
+    );
+    assert_eq!(
+        placeholder.metadata.get("candidate_kind"),
+        Some(&"type".to_string()),
+        "the candidates are types being constructed"
+    );
+    assert_eq!(
+        placeholder.metadata.get("candidate_count"),
+        Some(&"2".to_string())
+    );
+
+    // The unambiguous one still becomes a direct reference to its type.
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::References
+                && edge.metadata.get("relation").map(String::as_str)
+                    == Some("constructor_reference")
+                && edge.metadata.get("type_label").map(String::as_str) == Some("Ticket")
+        }),
+        "a single matching type still gives a constructor reference"
+    );
+}
