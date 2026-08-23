@@ -526,14 +526,19 @@ function buildClientInsights(graph) {
       const target = nodesById.get(edge.target);
       insights.push({
         kind: "potential_error_flow",
-        severity: "warning",
+        // Raising is ordinary control flow in Result- and exception-shaped
+        // code, so this is context rather than a defect -- the same
+        // severity the server gives it.
+        severity: "info",
         message: `${source?.label || edge.source} may error via ${target?.label || edge.target}`,
         nodeId: source?.id || target?.id,
       });
       if (reachableIds.size > 0 && !reachableIds.has(edge.source)) {
         insights.push({
           kind: "unreachable_error_flow",
-          severity: "warning",
+          // Reachability is heuristic on a syntax-only scan and error
+          // constructs are everywhere; context, not a defect.
+          severity: "info",
           message: `${source?.label || edge.source} may error via ${target?.label || edge.target} but is not reachable from any entrypoint`,
           nodeId: source?.id || target?.id,
         });

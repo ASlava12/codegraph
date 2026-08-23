@@ -242,4 +242,42 @@ drive("client insights read unresolved and ambiguous calls as the CLI does", () 
   }
 });
 
+// Every kind the browser recomputes has to carry the severity the CLI
+// gives it, or the same graph reads worse in the view than at the command
+// line. Raising is ordinary control flow, and reachability is heuristic on
+// a syntax-only scan: both are context.
+drive("client insights carry the CLI's severities", () => {
+  const graph = {
+    nodes: [
+      { id: 1, kind: "function", label: "run" },
+      { id: 2, kind: "function", label: "raise" },
+      { id: 3, kind: "function", label: "orphan" },
+      { id: 4, kind: "function", label: "twin" },
+      { id: 5, kind: "function", label: "twin" },
+      { id: 6, kind: "file", label: "broken.py", metadata: { parse_error: "unexpected token" } },
+    ],
+    edges: [
+      { kind: "may_error", source: 1, target: 2 },
+      // An entrypoint that reaches nothing else, so `run` is out of reach
+      // and its error flow is reported as such.
+      { kind: "entrypoint", source: 6, target: 3 },
+    ],
+  };
+  const bySeverity = new Map(
+    api.buildClientInsights(graph).map((insight) => [insight.kind, insight.severity]),
+  );
+  const expected = {
+    potential_error_flow: "info",
+    unreachable_error_flow: "info",
+    orphan_function: "info",
+    duplicate_function_label: "info",
+    parse_error: "error",
+  };
+  for (const [kind, severity] of Object.entries(expected)) {
+    if (bySeverity.get(kind) !== severity) {
+      throw new Error(`${kind}: expected ${severity}, got ${bySeverity.get(kind)}`);
+    }
+  }
+});
+
 if (!process.exitCode) console.log("views-smoke: ok (" + ok.join(", ") + ")");
