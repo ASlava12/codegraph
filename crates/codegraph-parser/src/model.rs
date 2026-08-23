@@ -27,7 +27,21 @@ pub struct ParsedFile {
     /// can resolve them after every file-level type declaration is known.
     #[serde(default)]
     pub type_references: Vec<ParsedTypeReference>,
+    /// Inclusive line ranges covered by string literals and comments.
+    /// Text-scanning detectors need them: a route written in a docstring
+    /// or a commented-out one is not a route the program serves.
+    #[serde(default)]
+    pub quoted_line_ranges: Vec<(u32, u32)>,
     pub has_error_nodes: bool,
+}
+
+impl ParsedFile {
+    /// Whether a line sits inside a string literal or a comment.
+    pub fn line_is_quoted(&self, line: u32) -> bool {
+        self.quoted_line_ranges
+            .iter()
+            .any(|(start, end)| line >= *start && line <= *end)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

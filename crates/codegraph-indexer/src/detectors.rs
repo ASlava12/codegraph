@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use codegraph_core::{Confidence, EdgeKind, NodeId, NodeKind, SourceSpan};
-use codegraph_parser::Language;
+use codegraph_parser::{Language, ParsedFile};
 
 #[allow(unused_imports)]
 use crate::*;
@@ -84,9 +84,18 @@ pub(crate) fn index_framework_routes(
     label: &str,
     language: Language,
     source: &str,
+    parsed: &ParsedFile,
     local_functions: &BTreeMap<String, NodeId>,
 ) {
     for route in framework_routes(language, source) {
+        // The detectors read text, so they cannot tell a route from an
+        // example of one. flask documents `@app.route("/")` inside a
+        // docstring, and that line claimed about 140 functions as its
+        // handler and made every file holding it look like a served
+        // entrypoint.
+        if parsed.line_is_quoted(route.line) {
+            continue;
+        }
         let mut metadata = BTreeMap::new();
         metadata.insert("item_kind".to_string(), "framework_route".to_string());
         metadata.insert("entrypoint_kind".to_string(), "route".to_string());

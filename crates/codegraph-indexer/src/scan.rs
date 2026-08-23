@@ -753,6 +753,7 @@ pub(crate) fn index_file(
                         label,
                         language,
                         source,
+                        &parsed,
                         &local_functions,
                     );
                     index_inline_sql_queries(

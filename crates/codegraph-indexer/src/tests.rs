@@ -7345,3 +7345,38 @@ fn a_document_mention_links_only_when_the_name_leaves_no_choice() {
         "only the name with one definition is linked"
     );
 }
+
+#[test]
+fn a_route_written_in_a_docstring_is_not_a_route() {
+    // The route detectors read text, so they cannot tell a route from an
+    // example of one. flask documents `@app.route("/")` inside docstrings,
+    // and those seven lines became served entrypoints — one of them
+    // claiming about 140 functions as its handler, and every file holding
+    // one looking reachable from an entrypoint.
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("app.py"),
+        "from flask import Flask\n\napp = Flask(__name__)\n\n\ndef documented():\n    \"\"\"Register a handler like this:\n\n    @app.route(\"/example\")\n    def index():\n        return \"x\"\n    \"\"\"\n    return 1\n\n\n@app.route(\"/real\")\ndef real_handler():\n    return \"ok\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("server.js"),
+        "const app = express();\n\n// app.get(\"/disabled\", handleDisabled);\napp.get(\"/live\", handleLive);\n\nfunction handleLive() { return 1; }\nfunction handleDisabled() { return 2; }\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let mut routes: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.metadata.get("entrypoint_kind").map(String::as_str) == Some("route"))
+        .filter_map(|node| node.metadata.get("path").map(String::as_str))
+        .collect();
+    routes.sort_unstable();
+    assert_eq!(
+        routes,
+        vec!["/live", "/real"],
+        "only the routes the program actually serves"
+    );
+}

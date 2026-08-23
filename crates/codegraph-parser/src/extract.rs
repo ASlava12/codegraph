@@ -52,9 +52,66 @@ pub fn parse_source(
         language,
         items: facts.items,
         type_references: facts.type_references,
+        quoted_line_ranges: quoted_line_ranges(root, source_text),
         has_error_nodes: root.has_error(),
     })
 }
+
+/// The lines covered by string literals and comments, merged. A detector
+/// that scans text rather than syntax needs them: `@app.route("/")` in a
+/// docstring is an example, not a route the program serves, and one such
+/// line in flask claimed about 140 functions as its handler.
+fn quoted_line_ranges(root: Node<'_>, source: &str) -> Vec<(u32, u32)> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut ranges: Vec<(u32, u32)> = Vec::new();
+    let mut stack = vec![root];
+    let mut visited = 0usize;
+    while let Some(node) = stack.pop() {
+        visited += 1;
+        if visited > MAX_QUOTED_SCAN_NODES {
+            break;
+        }
+        let kind = node.kind();
+        if kind.contains("string") || kind.contains("comment") || kind.contains("heredoc") {
+            let start = node.start_position();
+            let end = node.end_position();
+            if end.row > start.row {
+                // Only the lines the literal covers whole. Its first line
+                // holds the opening quote and whatever preceded it, and its
+                // last line holds whatever follows the close.
+                if end.row > start.row + 1 {
+                    ranges.push((start.row as u32 + 2, end.row as u32));
+                }
+            } else if lines
+                .get(start.row)
+                .is_some_and(|line| line[..start.column.min(line.len())].trim().is_empty())
+            {
+                // A line that begins with the literal is entirely inside it:
+                // a commented-out route is not a route.
+                ranges.push((start.row as u32 + 1, start.row as u32 + 1));
+            }
+            // Nothing inside a literal needs its own range.
+            continue;
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+    }
+    ranges.sort_unstable();
+    let mut merged: Vec<(u32, u32)> = Vec::new();
+    for (start, end) in ranges {
+        match merged.last_mut() {
+            Some((_, last_end)) if start <= last_end.saturating_add(1) => {
+                *last_end = (*last_end).max(end);
+            }
+            _ => merged.push((start, end)),
+        }
+    }
+    merged
+}
+
+/// A cap on the literal scan, for the same reason [`MAX_TREE_DEPTH`] exists:
+/// a generated file must degrade, not hang.
+const MAX_QUOTED_SCAN_NODES: usize = 200_000;
 
 /// Deepest syntax-tree level walked. Real source nests far below this; the cap
 /// exists only to keep a pathological (minified/generated) file from
