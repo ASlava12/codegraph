@@ -9,8 +9,7 @@
 //! stamp their context into the `codegraph.pr_impact.v1` artifact.
 
 use crate::{
-    InsightSeverity, QueryError, communities, community_id_for_path, entrypoints, hotspots,
-    insights,
+    InsightSeverity, ProjectAreas, QueryError, communities, entrypoints, hotspots, insights,
 };
 use codegraph_core::{CodeGraph, EdgeKind, NodeId, NodeKind};
 use serde::Serialize;
@@ -170,12 +169,13 @@ pub fn pr_impact(
     let mut changed_nodes: BTreeSet<NodeId> = BTreeSet::new();
     let mut changed_files = Vec::new();
     let mut community_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let project = ProjectAreas::from_graph(graph);
     for path in &changed_paths {
         let file_node = graph
             .nodes
             .iter()
             .find(|node| node.kind == NodeKind::File && node.label == *path);
-        let community = community_id_for_path(path);
+        let community = project.community_id_for_path(path);
         *community_counts.entry(community.clone()).or_insert(0) += 1;
         match file_node {
             Some(file) => {

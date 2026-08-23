@@ -2813,7 +2813,9 @@ fn component_dependencies_group_by_area_package_and_language() {
     .expect("component dependency report");
 
     assert_eq!(report.target.label, "load_config");
-    assert_eq!(report.area.as_deref(), Some("crates"));
+    // `crates/` only groups crates, so the areas are the crates themselves
+    // rather than one bucket holding the whole repository.
+    assert_eq!(report.area.as_deref(), Some("crates/app"));
     assert_eq!(report.total_incoming, 1);
     assert_eq!(report.total_outgoing, 2);
     let web_area = report
@@ -2827,8 +2829,8 @@ fn component_dependencies_group_by_area_package_and_language() {
     let crates_area = report
         .areas
         .iter()
-        .find(|group| group.key == "crates")
-        .expect("crates area group");
+        .find(|group| group.key == "crates/lib")
+        .expect("crates/lib area group");
     assert_eq!(crates_area.outgoing, 1);
     let package_group = report
         .packages
@@ -10042,4 +10044,49 @@ fn explaining_a_call_says_what_resolved_it() {
     // A basis the reader would not recognise adds nothing rather than
     // echoing an internal token.
     assert_eq!(resolution_basis_evidence("something_new"), None);
+}
+
+#[test]
+fn a_container_directory_is_not_an_architecture_area() {
+    // terraform keeps 4677 of its files under `internal/` and Vue all
+    // twelve packages under `packages/`. Calling that one area describes
+    // nothing: the architecture map said "internal: 4677 files" and
+    // stopped. A directory that only groups other directories is not an
+    // area; what it groups is.
+    let mut graph = CodeGraph::new("repo");
+    for path in [
+        "internal/command/apply.go",
+        "internal/command/plan.go",
+        "internal/terraform/graph.go",
+        "internal/configs/parser.go",
+        "docs/guide.md",
+        "README.md",
+    ] {
+        graph.add_node(NodeKind::File, path);
+    }
+    let project = ProjectAreas::from_graph(&graph);
+    assert_eq!(
+        project.group_for_path("internal/command/apply.go").0,
+        "internal/command"
+    );
+    assert_eq!(
+        project.group_for_path("internal/terraform/graph.go").0,
+        "internal/terraform"
+    );
+    // A directory that holds its own files stays one area.
+    assert_eq!(project.group_for_path("docs/guide.md").0, "docs");
+    assert_eq!(project.group_for_path("README.md").0, ".");
+
+    // A project whose top level already divides it is left alone.
+    let mut flat = CodeGraph::new("repo");
+    for path in [
+        "src/app.py",
+        "src/helpers/util.py",
+        "tests/test_app.py",
+        "docs/index.md",
+    ] {
+        flat.add_node(NodeKind::File, path);
+    }
+    let flat_areas = ProjectAreas::from_graph(&flat);
+    assert_eq!(flat_areas.group_for_path("src/helpers/util.py").0, "src");
 }

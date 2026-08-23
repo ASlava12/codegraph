@@ -642,10 +642,75 @@ pub(crate) fn node_kind_name(kind: &codegraph_core::NodeKind) -> &'static str {
     }
 }
 
-/// Stable community id for a repository-relative file path, matching the
-/// ids used by [`communities`] (`area:<top-level-directory>`).
-pub(crate) fn community_id_for_path(path: &str) -> String {
-    format!("area:{}", architecture_group_for_path(path).0)
+/// How a project divides into areas. The top-level directory is the usual
+/// answer, but plenty of repositories put everything under one container —
+/// terraform's `internal/` holds 4677 of its files and Vue's `packages/`
+/// all twelve packages — and calling that one area describes nothing. A
+/// directory that only groups other directories is not an area; what it
+/// groups is.
+pub(crate) struct ProjectAreas {
+    /// Top-level directories whose children are the real areas.
+    split: BTreeSet<String>,
+}
+
+impl ProjectAreas {
+    pub(crate) fn from_graph(graph: &CodeGraph) -> Self {
+        let paths: Vec<String> = graph
+            .nodes
+            .iter()
+            .filter(|node| node.kind == NodeKind::File)
+            .map(|node| node.label.replace('\\', "/"))
+            .collect();
+        let total = paths.len();
+        let mut beneath: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut direct: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut children: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for path in &paths {
+            let mut parts = path.split('/');
+            let Some(top) = parts.next() else {
+                continue;
+            };
+            let rest: Vec<&str> = parts.collect();
+            if rest.is_empty() {
+                continue;
+            }
+            *beneath.entry(top).or_default() += 1;
+            if rest.len() == 1 {
+                *direct.entry(top).or_default() += 1;
+            } else {
+                children.entry(top).or_default().insert(rest[0]);
+            }
+        }
+
+        let split = beneath
+            .iter()
+            .filter(|(top, count)| {
+                // Several children to divide into, almost nothing of its
+                // own, and большая часть проекта underneath: that is a
+                // container rather than an area.
+                children.get(*top).is_some_and(|kids| kids.len() >= 2)
+                    && direct.get(*top).copied().unwrap_or(0) * 10 <= **count
+                    && **count * 2 > total
+            })
+            .map(|(top, _)| (*top).to_string())
+            .collect();
+        Self { split }
+    }
+
+    /// The area a repository-relative path belongs to, as an id and a label.
+    pub(crate) fn group_for_path(&self, path: &str) -> (String, String) {
+        let normalized = path.trim_matches('/').replace('\\', "/");
+        let parts: Vec<&str> = normalized.split('/').collect();
+        if parts.len() > 2 && self.split.contains(parts[0]) {
+            let area = format!("{}/{}", parts[0], parts[1]);
+            return (area.clone(), area);
+        }
+        architecture_group_for_path(path)
+    }
+
+    pub(crate) fn community_id_for_path(&self, path: &str) -> String {
+        format!("area:{}", self.group_for_path(path).0)
+    }
 }
 
 pub(crate) fn architecture_group_for_path(path: &str) -> (String, String) {
@@ -665,10 +730,11 @@ pub(crate) fn node_architecture_areas(
     graph: &CodeGraph,
     nodes_by_id: &BTreeMap<NodeId, &Node>,
 ) -> BTreeMap<NodeId, String> {
+    let project = ProjectAreas::from_graph(graph);
     let mut areas = BTreeMap::new();
     for node in nodes_by_id.values() {
         if node.kind == NodeKind::File {
-            let (area, _) = architecture_group_for_path(&node.label);
+            let (area, _) = project.group_for_path(&node.label);
             areas.insert(node.id, area);
         }
     }

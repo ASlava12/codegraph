@@ -96,11 +96,12 @@ pub fn architecture_map(
     let mut node_groups = BTreeMap::new();
     let mut groups: BTreeMap<String, ArchitectureGroup> = BTreeMap::new();
 
+    let project = ProjectAreas::from_graph(graph);
     for node in &graph.nodes {
         if node.kind != NodeKind::File {
             continue;
         }
-        let (id, label) = architecture_group_for_path(&node.label);
+        let (id, label) = project.group_for_path(&node.label);
         let group = groups
             .entry(id.clone())
             .or_insert_with(|| ArchitectureGroup {
@@ -438,6 +439,7 @@ pub fn communities(graph: &CodeGraph, limit: usize) -> CommunityReport {
     let limit = limit.clamp(1, MAX_REPORT_COMMUNITY_LIMIT);
     let nodes_by_id: BTreeMap<NodeId, &Node> =
         graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let project = ProjectAreas::from_graph(graph);
     let mut node_community: BTreeMap<NodeId, String> = BTreeMap::new();
     let mut components: BTreeMap<String, BTreeSet<NodeId>> = BTreeMap::new();
 
@@ -446,7 +448,7 @@ pub fn communities(graph: &CodeGraph, limit: usize) -> CommunityReport {
         .iter()
         .filter(|node| node.kind == NodeKind::File)
     {
-        let (group_id, _) = architecture_group_for_path(&node.label);
+        let (group_id, _) = project.group_for_path(&node.label);
         let community_id = format!("area:{group_id}");
         node_community.insert(node.id, community_id.clone());
         components.entry(community_id).or_default().insert(node.id);
@@ -548,6 +550,7 @@ pub(crate) fn graph_community(
     let mut languages = BTreeMap::new();
     let mut node_kinds = BTreeMap::new();
     let mut area_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let project = ProjectAreas::from_graph(graph);
     let mut nodes: Vec<Node> = component
         .iter()
         .filter_map(|id| nodes_by_id.get(id).map(|node| (*node).clone()))
@@ -562,7 +565,7 @@ pub(crate) fn graph_community(
     for node in &nodes {
         if node.kind == NodeKind::File {
             files += 1;
-            let (_, area) = architecture_group_for_path(&node.label);
+            let (_, area) = project.group_for_path(&node.label);
             *area_counts.entry(area).or_insert(0) += 1;
         }
         if node.kind == NodeKind::Entrypoint {
