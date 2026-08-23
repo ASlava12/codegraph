@@ -6,7 +6,7 @@
 use codegraph_core::{CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind, SourceSpan};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -1720,6 +1720,19 @@ fn collect_definition_edges(
 
     for location in lsp_locations(result) {
         match graph_node_for_location(workspace_root, graph, &location) {
+            // A definition that lands back on the asking node says nothing:
+            // it happens when the position falls inside the caller itself (a
+            // local variable, a recursive call). Recording it would add an
+            // edge from a node to itself and call it semantic knowledge.
+            Some((_, target)) if target.id == source.id => {
+                unmatched_locations.push(unmatched_location(
+                    request,
+                    work_item,
+                    &location,
+                    workspace_root,
+                    "definition_resolves_to_the_asking_node",
+                ))
+            }
             Some((path, target)) => semantic_edges.push(SemanticEdgePatch {
                 request_id: request.id.clone(),
                 work_item_id: work_item.id.clone(),
@@ -2409,8 +2422,33 @@ fn semantic_work_items(
         }
 
         if plan.capabilities.contains(&"definitions") {
-            for (edge_index, edge) in language_heuristic_edges(graph, &nodes_by_id, &plan.language)
-            {
+            // The budget is small next to the number of candidate edges, so
+            // spend it where syntax gave up: a call the scanner could not
+            // resolve, or resolved to several look-alike declarations. Asking
+            // about an edge that already points at one declaration mostly
+            // confirms what is known. Ties keep graph order, so the selection
+            // stays deterministic.
+            let mut candidates: Vec<_> =
+                language_heuristic_edges(graph, &nodes_by_id, &plan.language)
+                    .map(|(edge_index, edge)| {
+                        let unresolved = nodes_by_id
+                            .get(&edge.target)
+                            .and_then(|node| node.metadata.get("resolution"))
+                            .is_some_and(|resolution| {
+                                matches!(resolution.as_str(), "unresolved" | "ambiguous")
+                            });
+                        (u8::from(!unresolved), edge_index, edge)
+                    })
+                    .collect();
+            candidates.sort_by_key(|(rank, edge_index, _)| (*rank, *edge_index));
+            let candidates = spread_over_directories(candidates, |(_, _, edge)| {
+                nodes_by_id
+                    .get(&edge.source)
+                    .and_then(|node| node.span.as_ref())
+                    .map(|span| span.path.as_str())
+                    .unwrap_or_default()
+            });
+            for (_, edge_index, edge) in candidates {
                 let source = nodes_by_id.get(&edge.source).copied();
                 let target = nodes_by_id.get(&edge.target).copied();
                 push_semantic_work_item(
@@ -2418,7 +2456,7 @@ fn semantic_work_items(
                     &mut total_work_items,
                     work_item_limit,
                     work_item_filter,
-                    edge_work_item("definitions", plan, edge_index, source, target),
+                    edge_work_item("definitions", plan, edge_index, edge, source, target),
                 );
             }
         }
@@ -2503,6 +2541,42 @@ fn language_heuristic_edges<'a>(
                 .and_then(|node| node_language(node.metadata.get("language").map(String::as_str)))
                 == Some(language)
     })
+}
+
+/// Interleave candidates so no single directory can spend the whole budget.
+///
+/// Candidates arrive in graph order, which is the alphabetical file walk, so a
+/// vendored `deps/` directory took every request on redis and the project's own
+/// `src/` never got asked. Taking one candidate per directory in turn samples
+/// the project instead of its first folder, without the scanner having to guess
+/// which directories are "third-party". Order within a directory is preserved,
+/// and directories are visited in sorted order, so the selection is
+/// deterministic.
+fn spread_over_directories<T>(candidates: Vec<T>, path_of: impl Fn(&T) -> &str) -> Vec<T> {
+    let mut by_directory: BTreeMap<String, VecDeque<T>> = BTreeMap::new();
+    for candidate in candidates {
+        let path = path_of(&candidate);
+        let directory = path
+            .rsplit_once('/')
+            .map(|(directory, _)| directory)
+            .unwrap_or("")
+            .to_string();
+        by_directory
+            .entry(directory)
+            .or_default()
+            .push_back(candidate);
+    }
+
+    let mut spread = Vec::new();
+    while !by_directory.is_empty() {
+        by_directory.retain(|_, queue| {
+            if let Some(candidate) = queue.pop_front() {
+                spread.push(candidate);
+            }
+            !queue.is_empty()
+        });
+    }
+    spread
 }
 
 fn push_semantic_work_item(
@@ -2604,10 +2678,19 @@ fn edge_work_item(
     capability: &'static str,
     plan: &LanguageEnrichmentPlan,
     edge_index: usize,
+    edge: &Edge,
     source: Option<&Node>,
     target: Option<&Node>,
 ) -> SemanticWorkItem {
+    // Ask where the fact actually is. A call edge records its call site, and
+    // asking there is the whole point — asking at the caller's own declaration
+    // just makes the server answer with the caller, which is how the pass used
+    // to spend its budget producing self-referential edges.
     let (path, line, column) = source.map(node_location).unwrap_or((None, None, None));
+    let (line, column) = match edge_site(edge) {
+        Some(site) => site,
+        None => (line, column),
+    };
     let id = work_item_id(
         capability,
         &plan.language,
@@ -2710,6 +2793,17 @@ fn node_ref(node: &Node) -> SemanticNodeRef {
         line,
         column,
     }
+}
+
+/// The position an edge was recorded at, when it carries one. Call edges do:
+/// the indexer stamps the call site on them.
+fn edge_site(edge: &Edge) -> Option<(Option<u32>, Option<u32>)> {
+    let line = edge.metadata.get("line")?.parse::<u32>().ok()?;
+    let column = edge
+        .metadata
+        .get("column")
+        .and_then(|column| column.parse::<u32>().ok());
+    Some((Some(line), column))
 }
 
 fn node_location(node: &Node) -> (Option<String>, Option<u32>, Option<u32>) {
@@ -3465,6 +3559,121 @@ mod tests {
     }
 
     #[test]
+    fn definition_requests_ask_at_the_call_site() {
+        let (mut graph, caller, _) = semantic_patch_graph();
+        // The call happens deep inside the caller, not at its declaration.
+        if let Some(edge) = graph
+            .edges
+            .iter_mut()
+            .find(|edge| edge.kind == EdgeKind::Calls)
+        {
+            edge.metadata.insert("line".to_string(), "3".to_string());
+            edge.metadata.insert("column".to_string(), "17".to_string());
+        }
+        let discovery = semantic_patch_discovery(&["definitions"]);
+        let batch = semantic_execution_batch_with_discovery(
+            Path::new("/workspace/repo"),
+            &graph,
+            &discovery,
+            DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+            SemanticWorkItemFilter {
+                language: Some("rust".to_string()),
+                status: Some("ready".to_string()),
+                capability: Some("definitions".to_string()),
+            },
+        );
+        let request = definition_request(&batch);
+
+        assert_eq!(request.line, Some(3), "the request must target the call");
+        assert_eq!(request.column, Some(17));
+        assert_ne!(
+            request.line,
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == caller)
+                .and_then(|node| node.span.as_ref())
+                .map(|span| span.start_line),
+            "asking at the caller's declaration is what produced self-referential edges"
+        );
+    }
+
+    #[test]
+    fn a_definition_resolving_to_the_asking_node_is_not_an_edge() {
+        let (graph, caller, _) = semantic_patch_graph();
+        let discovery = semantic_patch_discovery(&["definitions"]);
+        let batch = semantic_execution_batch_with_discovery(
+            Path::new("/workspace/repo"),
+            &graph,
+            &discovery,
+            DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+            SemanticWorkItemFilter {
+                language: Some("rust".to_string()),
+                status: Some("ready".to_string()),
+                capability: Some("definitions".to_string()),
+            },
+        );
+        let request = definition_request(&batch);
+
+        // The server answers with a position inside the caller itself.
+        let patch = semantic_graph_patch_from_responses(
+            Path::new("/workspace/repo"),
+            &graph,
+            &batch,
+            &[SemanticLspResponse {
+                request_id: request.id.clone(),
+                method: request.method.to_string(),
+                result: json!({
+                    "uri": "file:///workspace/repo/src/main.rs",
+                    "range": {
+                        "start": { "line": 2, "character": 4 },
+                        "end": { "line": 2, "character": 10 }
+                    }
+                }),
+                error: None,
+            }],
+        );
+
+        assert!(
+            patch.semantic_edges.is_empty(),
+            "a node cannot semantically resolve to itself: {:?}",
+            patch.semantic_edges
+        );
+        assert_eq!(
+            patch
+                .unmatched_locations
+                .first()
+                .map(|location| location.reason),
+            Some("definition_resolves_to_the_asking_node")
+        );
+        let _ = caller;
+    }
+
+    #[test]
+    fn work_items_are_spread_over_directories() {
+        let candidates = vec![
+            ("deps/a.c", 0),
+            ("deps/b.c", 1),
+            ("deps/c.c", 2),
+            ("src/main.c", 3),
+            ("modules/mod.c", 4),
+        ];
+        let spread = spread_over_directories(candidates, |(path, _)| *path);
+        // One per directory in sorted order, then the next round: the first
+        // directory alphabetically cannot take the whole budget.
+        assert_eq!(
+            spread.iter().map(|(path, _)| *path).collect::<Vec<_>>(),
+            vec![
+                "deps/a.c",
+                "modules/mod.c",
+                "src/main.c",
+                "deps/b.c",
+                "deps/c.c"
+            ]
+        );
+    }
+
+    #[test]
     fn semantic_graph_patch_maps_lsp_location_definitions_to_graph_edges() {
         let (graph, caller, helper) = semantic_patch_graph();
         let discovery = semantic_patch_discovery(&["definitions"]);
@@ -3958,6 +4167,12 @@ pub struct AutoEnrichmentReport {
     pub servers: Vec<String>,
     pub semantic_edges: usize,
     pub replaced_edges: usize,
+    /// Work items the pass actually asked about, and how many it could have
+    /// asked about. The automatic pass is bounded so a scan stays fast, so
+    /// these two numbers are usually far apart — an enriched graph is a
+    /// sampled graph, and it should say so.
+    pub requested_work_items: usize,
+    pub total_work_items: usize,
     pub skipped_reason: Option<String>,
 }
 
@@ -3968,6 +4183,8 @@ impl AutoEnrichmentReport {
             servers: Vec::new(),
             semantic_edges: 0,
             replaced_edges: 0,
+            requested_work_items: 0,
+            total_work_items: 0,
             skipped_reason: Some(reason.to_string()),
         }
     }
@@ -4012,6 +4229,15 @@ pub fn auto_enrich_graph(
                 .insert("semantic_enrichment".to_string(), "applied".to_string());
             node.metadata
                 .insert("semantic_servers".to_string(), report.servers.join(","));
+            // The pass samples; say how much of the possible work it did so a
+            // sampled graph is not mistaken for a fully resolved one.
+            node.metadata.insert(
+                "semantic_work_items".to_string(),
+                format!(
+                    "{}/{}",
+                    report.requested_work_items, report.total_work_items
+                ),
+            );
         } else {
             node.metadata
                 .insert("semantic_enrichment".to_string(), "skipped".to_string());
@@ -4086,11 +4312,18 @@ fn run_auto_enrichment(
     let patch = semantic_graph_patch_from_responses(root, &graph, &batch, &run.responses);
     let applied = apply_semantic_graph_patch(&graph, &patch);
     let enriched = applied.graph;
+    let requested_work_items = batch
+        .server_batches
+        .iter()
+        .map(|server_batch| server_batch.work_items.len())
+        .sum();
     let report = AutoEnrichmentReport {
         applied: true,
         servers: servers.clone(),
         semantic_edges: applied.report.added_edges,
         replaced_edges: applied.report.replaced_edges,
+        requested_work_items,
+        total_work_items: batch.total_work_items,
         skipped_reason: None,
     };
     (enriched, report)
