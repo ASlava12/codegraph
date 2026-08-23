@@ -477,7 +477,23 @@ pub(crate) fn index_file(
             metadata.insert("read_error".to_string(), error.to_string());
         })
         .ok();
-    let adapter = adapter_for_path(path);
+    let adapter = adapter_for_path(path).map(|adapter| {
+        // `.h` is C's extension and C++'s alike, and the extension is all
+        // the path can say. A header that declares a namespace, a
+        // template, a class or an access section is C++: parsing 21 such
+        // headers in the corpus as C++ produced fewer errors every time,
+        // and redis's `fast_float.h` went from 1152 to 150.
+        if adapter.language() == Language::C
+            && source_bytes
+                .as_deref()
+                .and_then(|source| std::str::from_utf8(source).ok())
+                .is_some_and(declares_cpp)
+            && let Some(cpp) = adapter_for_language(Language::Cpp)
+        {
+            return cpp;
+        }
+        adapter
+    });
     let language = adapter.map(|adapter| adapter.language()).or_else(|| {
         source_bytes
             .as_deref()
@@ -1131,4 +1147,19 @@ fn r_exported_names(
         }
     }
     names
+}
+
+/// Whether a header written for either language is C++. C has no
+/// namespaces, no templates, no classes and no access sections, so a line
+/// opening one settles it.
+fn declares_cpp(source: &str) -> bool {
+    source.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("namespace ")
+            || trimmed.starts_with("template <")
+            || trimmed.starts_with("template<")
+            || trimmed.starts_with("class ")
+            || trimmed.starts_with("public:")
+            || trimmed.starts_with("private:")
+    })
 }

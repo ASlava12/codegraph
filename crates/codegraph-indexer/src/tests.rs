@@ -956,6 +956,46 @@ fn julia_and_r_packages_export_from_one_place() {
 }
 
 #[test]
+fn a_header_that_declares_a_namespace_is_cpp() {
+    // `.h` is C's extension and C++'s alike, and the extension is all the
+    // path can say. Redis vendors `fast_float.h`, which is C++: read as C
+    // it gave 1152 parse errors and 56 functions, and as C++ 150 and 178.
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("vendored.h"),
+        "namespace fast_float {\n\ntemplate <typename T>\nT parse(const char* input) {\n  return T();\n}\n\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("plain.h"),
+        "#ifndef PLAIN_H\n#define PLAIN_H\n\nint add(int a, int b);\n\n#endif\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let language_of = |path: &str| -> String {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::File && node.label == path)
+            .and_then(|node| node.metadata.get("language").cloned())
+            .unwrap_or_else(|| format!("no `{path}`"))
+    };
+    assert_eq!(language_of("vendored.h"), "cpp");
+    assert_eq!(language_of("plain.h"), "c");
+    assert!(
+        graph
+            .nodes
+            .iter()
+            .any(|node| node.kind == NodeKind::Function && node.label == "parse"),
+        "the template is read as the function it is"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_static_c_function_answers_only_its_own_translation_unit() {
     // `static` belongs to the file that compiles it -- unless it sits in a
     // header, which every file that includes it compiles for itself. 2681
