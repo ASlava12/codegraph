@@ -14,6 +14,18 @@ pub fn natural_query(
     request: NaturalQueryRequest,
 ) -> Result<NaturalQueryReport, QueryError> {
     let mut plan = natural_query_plan(&request.question)?;
+    // A guessed anchor is a word from the question, not a name from the
+    // project: "what routes exist" became `routes handler:exist` and
+    // answered with nothing at all, where the question deserved the
+    // project's routes. Keep the filter only when the name is really there.
+    if plan.anchor_is_guessed
+        && plan
+            .term
+            .as_deref()
+            .is_some_and(|term| !graph_names_exactly(graph, term))
+    {
+        plan = natural_query_plan_with_anchor(&request.question, false)?;
+    }
     let mut alternatives = plan.alternatives.clone();
     let mut result = match query_graph(graph, &plan.generated_query) {
         Ok(result) => result,
@@ -29,6 +41,21 @@ pub fn natural_query(
             query_graph(graph, &plan.generated_query)?
         }
     };
+    // The name was there, but the question did not turn out to be about it:
+    // flask has something called `read`, yet "what config does the app read"
+    // is not asking about it, and `configs target:read` answered with
+    // nothing. A guess that yields nothing was not a name in this question.
+    if plan.anchor_is_guessed && result.nodes.is_empty() {
+        let widened = natural_query_plan_with_anchor(&request.question, false)?;
+        if widened.generated_query != plan.generated_query
+            && let Ok(widened_result) = query_graph(graph, &widened.generated_query)
+            && !widened_result.nodes.is_empty()
+        {
+            alternatives.insert(0, plan.generated_query.clone());
+            plan = widened;
+            result = widened_result;
+        }
+    }
     if request.compact {
         result = compact_query_result(result);
     }
@@ -47,23 +74,54 @@ pub fn natural_query(
     })
 }
 
+/// Whether the project has something by exactly this name. The bar is
+/// deliberately higher than the query language's substring filters: the
+/// caller is checking a guess, and `exists` must not be taken as evidence
+/// that "exist" was a name, nor `startswith` that "start" was one.
+fn graph_names_exactly(graph: &CodeGraph, term: &str) -> bool {
+    let needle = term.to_lowercase();
+    graph
+        .nodes
+        .iter()
+        .any(|node| node.label.to_lowercase() == needle)
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct NaturalQueryPlan {
     pub(crate) generated_query: String,
     pub(crate) rule: String,
     pub(crate) confidence: String,
     pub(crate) term: Option<String>,
+    /// The anchor is a word taken from the question because nothing in it
+    /// looked like a name. Filtering on it is only sound once the project
+    /// is known to have something by that name.
+    pub(crate) anchor_is_guessed: bool,
     pub(crate) alternatives: Vec<String>,
 }
 
 pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, QueryError> {
+    natural_query_plan_with_anchor(question, true)
+}
+
+pub(crate) fn natural_query_plan_with_anchor(
+    question: &str,
+    allow_guessed_anchor: bool,
+) -> Result<NaturalQueryPlan, QueryError> {
     let question = question.trim();
     if question.is_empty() {
         return Err(QueryError::new("natural-language question is empty"));
     }
 
     let lower = question.to_lowercase();
-    let candidates = natural_query_candidates(question);
+    let mut candidates = natural_query_candidates(question);
+    let mut anchor_is_guessed = false;
+    if candidates.is_empty()
+        && allow_guessed_anchor
+        && let Some(guess) = natural_query_guessed_anchor(question)
+    {
+        candidates.push(guess);
+        anchor_is_guessed = true;
+    }
     let term = candidates.first().cloned();
     // Route on the question, not on the name being asked about. `load_config`
     // contains "config", so "What calls `load_config`?" was answered with the
@@ -142,6 +200,29 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             "config_or_environment".to_string(),
             "high".to_string(),
         )
+    // Naming calling outright settles the question before any topic word
+    // can: `who calls route` asks about the function named `route`, not
+    // about the project's HTTP routes, and `does main call init` is not a
+    // question about entrypoints. The topic rules below all key on nouns
+    // that a symbol's own name may contain.
+    } else if natural_query_mentions_any(
+        &routing,
+        &["call", "caller", "callee", "invoke", "вызов", "вызыва"],
+    ) {
+        if let Some(term) = quoted_term.as_deref() {
+            let direction = natural_call_direction(&lower, Some(term));
+            (
+                format!("neighbors label:{term} direction:{direction} depth:2 edge_kind:calls"),
+                "call_neighborhood".to_string(),
+                "medium".to_string(),
+            )
+        } else {
+            (
+                fallback.clone(),
+                "general_search".to_string(),
+                "low".to_string(),
+            )
+        }
     } else if natural_query_mentions_any(
         &routing,
         &[
@@ -154,9 +235,6 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             "настрой",
             "окружен",
         ],
-    ) && !natural_query_mentions_any(
-        &routing,
-        &["call", "caller", "callee", "invoke", "вызов", "вызыва"],
     ) {
         if let Some(term) = quoted_term.as_deref() {
             (
@@ -312,24 +390,6 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
                 "medium".to_string(),
             )
         }
-    } else if natural_query_mentions_any(
-        &routing,
-        &["call", "caller", "callee", "invoke", "вызов", "вызыва"],
-    ) {
-        if let Some(term) = quoted_term.as_deref() {
-            let direction = natural_call_direction(&lower, Some(term));
-            (
-                format!("neighbors label:{term} direction:{direction} depth:2 edge_kind:calls"),
-                "call_neighborhood".to_string(),
-                "medium".to_string(),
-            )
-        } else {
-            (
-                fallback.clone(),
-                "general_search".to_string(),
-                "low".to_string(),
-            )
-        }
     } else if natural_query_mentions_any(&routing, &["file", "source", "path", "файл", "исход"])
     {
         if let Some(raw_term) = term.as_deref() {
@@ -473,6 +533,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
         rule,
         confidence,
         term,
+        anchor_is_guessed,
         alternatives,
     })
 }
@@ -563,21 +624,24 @@ pub(crate) fn natural_query_candidates(question: &str) -> Vec<String> {
         }
     }
 
-    if candidates.is_empty()
-        && let Some(token) = question
-            .split_whitespace()
-            .map(|token| {
-                token.trim_matches(|character: char| {
-                    !character.is_alphanumeric() && !matches!(character, '_' | '.' | '/' | '-')
-                })
-            })
-            .filter(|token| token.chars().count() >= 3)
-            .rfind(|token| !natural_query_stop_word(&token.to_lowercase()))
-    {
-        candidates.push(token.to_string());
-    }
-
     candidates
+}
+
+/// The word a question is about when nothing in it looks like a name. It
+/// is a guess by construction — the last word that is not a stop word —
+/// so callers must confirm the project has something by that name before
+/// filtering on it.
+pub(crate) fn natural_query_guessed_anchor(question: &str) -> Option<String> {
+    question
+        .split_whitespace()
+        .map(|token| {
+            token.trim_matches(|character: char| {
+                !character.is_alphanumeric() && !matches!(character, '_' | '.' | '/' | '-')
+            })
+        })
+        .filter(|token| token.chars().count() >= 3)
+        .rfind(|token| !natural_query_stop_word(&token.to_lowercase()))
+        .map(ToString::to_string)
 }
 
 pub(crate) fn natural_query_quoted_terms(question: &str) -> Vec<String> {

@@ -9812,3 +9812,43 @@ fn node_reference_substring_fallback_requires_a_unique_match() {
         "exact label wins regardless of substring ambiguity"
     );
 }
+
+#[test]
+fn a_word_from_the_question_is_not_used_as_a_name_it_cannot_be() {
+    // When nothing in a question looks like a name, the last ordinary word
+    // was taken as one: "what routes exist" became `routes handler:exist`
+    // and answered with nothing, where the question deserved the project's
+    // routes. The guess survives only when the project really has
+    // something by that name.
+    let asked = |graph: &CodeGraph, question: &str| {
+        natural_query(
+            graph,
+            NaturalQueryRequest {
+                question: question.to_string(),
+                compact: false,
+            },
+        )
+        .expect("ask")
+        .generated_query
+    };
+
+    let without_the_name = CodeGraph::new("repo");
+    assert_eq!(
+        asked(&without_the_name, "What routes exist?"),
+        "routes depth:4 edge_limit:300"
+    );
+
+    let mut with_the_name = CodeGraph::new("repo");
+    with_the_name.add_node(NodeKind::Function, "exist");
+    with_the_name.add_node(NodeKind::Function, "route");
+    assert_eq!(
+        asked(&with_the_name, "What routes exist?"),
+        "routes handler:exist depth:4 edge_limit:300",
+        "a project that really has an `exist` keeps the filter"
+    );
+
+    // Naming calling outright settles the question before a topic word can.
+    let rule = |question: &str| natural_query_plan(question).expect("plan").rule;
+    assert_eq!(rule("who calls route"), "call_neighborhood");
+    assert_eq!(rule("does main call init"), "call_neighborhood");
+}
