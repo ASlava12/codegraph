@@ -362,6 +362,39 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///local.db")
 }
 
 #[test]
+fn effect_facts_are_never_labelled_with_nothing() {
+    let parsed = parse_source(
+        "main.rs",
+        br#"fn main() {
+    let raw = std::fs::read_to_string("");
+    if raw.is_err() {
+        panic!("");
+    }
+}
+"#,
+        Language::Rust,
+    )
+    .unwrap();
+
+    // Both facts are real, so both are kept — but an empty string literal is
+    // not an identity, and a node labelled with nothing is not a node.
+    for item in &parsed.items {
+        assert!(
+            !item.label.trim().is_empty(),
+            "empty label on {:?}",
+            item.kind
+        );
+    }
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error),
+        "the panic is still a fact"
+    );
+}
+
+#[test]
 fn javascript_config_reads_need_a_config_to_read() {
     let parsed = parse_source(
         "build.js",

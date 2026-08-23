@@ -498,8 +498,14 @@ pub(crate) fn effect_label(
         return Some(truncate_label(key, 120));
     }
 
+    // An empty string literal is not an identity: `panic!("")` and
+    // `read("")` produced nodes labelled with nothing at all, and a key or
+    // path is exactly what an effect fact is named by. Fall through to the
+    // expression instead, and file no fact when even that is empty.
     first_string_literal(node, source)
+        .filter(|value| !value.trim().is_empty())
         .or_else(|| node_text(node, source).map(compact_label))
+        .filter(|value| !value.trim().is_empty())
         .map(|value| truncate_label(value, 120))
 }
 
