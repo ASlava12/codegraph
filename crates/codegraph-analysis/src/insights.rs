@@ -2412,6 +2412,7 @@ pub(crate) fn project_own_package_ids(graph: &CodeGraph) -> BTreeSet<String> {
 pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let nodes_by_id = node_index(graph);
     let own_packages = project_own_package_ids(graph);
+    let mut grouped: BTreeMap<(String, String), UndeclaredImportGroup> = BTreeMap::new();
     let declared = declared_package_ids(graph);
     let declared_ecosystems: BTreeSet<_> = declared
         .iter()
@@ -2464,6 +2465,12 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
         {
             continue;
         }
+        // `import(`${pkgDir}/package.json`)` names no package: the
+        // specifier is built at runtime, and reading the template as a name
+        // produced findings about `${pkgbasepath}`.
+        if import_node.label.contains("${") {
+            continue;
+        }
         let imports = import_package_candidates(language, &import_node.label, &declared_ecosystems);
         if imports.is_empty() {
             continue;
@@ -2490,17 +2497,56 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
             continue;
         }
 
-        let source = source_node.label.as_str();
+        grouped
+            .entry((import.ecosystem.clone(), import.package.clone()))
+            .or_insert_with(|| UndeclaredImportGroup {
+                sources: BTreeSet::new(),
+                nodes: Vec::new(),
+                edges: Vec::new(),
+            })
+            .record(source_node.label.as_str(), edge.source, edge.target, index);
+    }
+
+    // One finding per package rather than per import site: guzzle imports
+    // `psr/http` from 169 places, and 169 identical findings say no more
+    // than one that counts them.
+    for ((ecosystem, package), group) in grouped {
+        let where_from = format_backtick_list(group.sources.iter().map(String::as_str), 3);
+        let extra = group.sources.len().saturating_sub(3);
+        let suffix = if extra > 0 {
+            format!(" and {extra} more")
+        } else {
+            String::new()
+        };
         insights.push(Insight {
             kind: "undeclared_external_import".to_string(),
             severity: InsightSeverity::Warning,
             message: format!(
-                "`{source}` imports `{}` but no matching {} dependency was found",
-                import.package, import.ecosystem
+                "`{package}` is imported from {where_from}{suffix} but no matching {ecosystem} dependency was found"
             ),
-            nodes: vec![edge.source, edge.target],
-            edges: vec![index],
+            nodes: group.nodes,
+            edges: group.edges,
         });
+    }
+}
+
+/// Where one undeclared package is imported from, so the finding can name
+/// the package once instead of once per import site.
+struct UndeclaredImportGroup {
+    sources: BTreeSet<String>,
+    nodes: Vec<NodeId>,
+    edges: Vec<usize>,
+}
+
+impl UndeclaredImportGroup {
+    fn record(&mut self, source: &str, source_id: NodeId, import_id: NodeId, edge: usize) {
+        self.sources.insert(source.to_string());
+        for node in [source_id, import_id] {
+            if !self.nodes.contains(&node) {
+                self.nodes.push(node);
+            }
+        }
+        self.edges.push(edge);
     }
 }
 

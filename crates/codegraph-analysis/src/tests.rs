@@ -10541,3 +10541,63 @@ fn recursion_inside_a_file_is_not_the_coupling_a_cycle_warns_about() {
         .expect("the coupling is reported");
     assert_eq!(across.severity, InsightSeverity::Warning);
 }
+
+#[test]
+fn one_undeclared_package_is_one_finding() {
+    // guzzle imports `psr/http` from 169 places, and 169 identical findings
+    // say no more than one that counts them. A specifier built at runtime
+    // names no package at all.
+    let mut graph = CodeGraph::new("repo");
+    let manifest = graph.add_node(NodeKind::File, "package.json");
+    let declared = dependency_node(&mut graph, "vue", "npm:vue");
+    graph.add_edge_with_metadata(
+        manifest,
+        declared,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+    );
+
+    for file in ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts"] {
+        let source = graph.add_node_with_metadata(
+            NodeKind::File,
+            file,
+            None,
+            BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+        );
+        let import = import_node(&mut graph, "import { z } from \"zod\";", "typescript");
+        graph.add_edge(source, import, EdgeKind::Imports, Confidence::Syntactic);
+    }
+    let templated_source = graph.add_node_with_metadata(
+        NodeKind::File,
+        "scripts/build.ts",
+        None,
+        BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+    );
+    let templated = import_node(&mut graph, "import(`${pkgDir}/package.json`)", "typescript");
+    graph.add_edge(
+        templated_source,
+        templated,
+        EdgeKind::Imports,
+        Confidence::Syntactic,
+    );
+
+    let report = insights(&graph);
+    let undeclared: Vec<&Insight> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "undeclared_external_import")
+        .collect();
+    assert_eq!(undeclared.len(), 1, "{:?}", undeclared);
+    assert!(
+        undeclared[0].message.starts_with("`zod` is imported from"),
+        "{}",
+        undeclared[0].message
+    );
+    assert!(
+        undeclared[0].message.contains("and 1 more"),
+        "the finding counts the sites it does not name: {}",
+        undeclared[0].message
+    );
+    assert_eq!(undeclared[0].edges.len(), 4, "every site stays as evidence");
+}
