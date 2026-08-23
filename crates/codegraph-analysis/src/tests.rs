@@ -9096,6 +9096,13 @@ fn insights_report_non_runtime_dependency_imports_from_production_sources() {
         report.by_kind.get("non_runtime_dependency_import"),
         Some(&1)
     );
+    // One finding per package: six of vue's files import `vitest` and five
+    // import `picocolors`, which is two facts rather than eleven.
+    assert!(
+        insight.message.starts_with("`src/app.ts` imports `vite`"),
+        "{}",
+        insight.message
+    );
 }
 
 #[test]

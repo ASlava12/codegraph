@@ -3072,6 +3072,7 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
 
     let path_index = node_path_index(graph);
     let mut reported = BTreeSet::new();
+    let mut grouped: BTreeMap<String, NonRuntimeImport> = BTreeMap::new();
     for (import_edge_index, edge) in graph.edges.iter().enumerate() {
         if edge.kind != EdgeKind::Imports {
             continue;
@@ -3139,29 +3140,65 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
             continue;
         }
 
-        let mut nodes = BTreeSet::from([edge.source, edge.target]);
-        let mut edges = vec![import_edge_index];
-        for declaration in package_declarations {
-            nodes.insert(declaration.source);
-            nodes.insert(declaration.target);
-            edges.push(declaration.edge_index);
-        }
-        let scope_list = format_backtick_list(scopes.iter().copied(), 6);
         let source_label = node_label(graph, edge.source).unwrap_or("unknown");
         let package = package_declarations
             .first()
             .and_then(|declaration| node_label(graph, declaration.target))
             .unwrap_or(package_id.as_str());
+        let group = grouped
+            .entry(package.to_string())
+            .or_insert_with(|| NonRuntimeImport {
+                scopes: BTreeSet::new(),
+                sources: BTreeSet::new(),
+                nodes: BTreeSet::new(),
+                edges: Vec::new(),
+            });
+        group
+            .scopes
+            .extend(scopes.iter().map(|scope| scope.to_string()));
+        group.sources.insert(source_label.to_string());
+        group.nodes.insert(edge.source);
+        group.nodes.insert(edge.target);
+        group.edges.push(import_edge_index);
+        for declaration in package_declarations {
+            group.nodes.insert(declaration.source);
+            group.nodes.insert(declaration.target);
+            group.edges.push(declaration.edge_index);
+        }
+    }
+
+    // One finding per package, as with the undeclared imports: vue reports
+    // six files importing `vitest` and five importing `picocolors`, which
+    // is two facts rather than eleven.
+    for (package, group) in grouped {
+        let scope_list = format_backtick_list(group.scopes.iter().map(String::as_str), 6);
+        let sources = format_backtick_list(group.sources.iter().map(String::as_str), 3);
+        let verb = if group.sources.len() == 1 {
+            "imports"
+        } else {
+            "import"
+        };
+        let mut edges = group.edges;
+        edges.sort_unstable();
+        edges.dedup();
         insights.push(Insight {
             kind: "non_runtime_dependency_import".to_string(),
             severity: InsightSeverity::Warning,
             message: format!(
-                "`{source_label}` imports `{package}` from production-like code, but the package is declared only as {scope_list}"
+                "{sources} {verb} `{package}` from production-like code, but the package is declared only as {scope_list}"
             ),
-            nodes: nodes.into_iter().collect(),
+            nodes: group.nodes.into_iter().collect(),
             edges,
         });
     }
+}
+
+/// Where one package declared for development only is imported from.
+struct NonRuntimeImport {
+    scopes: BTreeSet<String>,
+    sources: BTreeSet<String>,
+    nodes: BTreeSet<NodeId>,
+    edges: Vec<usize>,
 }
 
 pub(crate) fn add_test_only_runtime_dependency_insights(
