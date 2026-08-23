@@ -2,8 +2,9 @@
 //!
 //! `codegraph merge` combines exported graph JSON files and/or registered
 //! projects (project graphs, docs graphs, incident graphs, external-system
-//! graphs) into one typed graph. Nodes merge only when kind, label, and
-//! source path all match; every merged node and edge records which inputs
+//! graphs) into one typed graph. Nodes merge only when kind, label, source
+//! path, and position all match — two facts on different lines of one file are
+//! two facts, however alike they read; every merged node and edge records which inputs
 //! contributed it in `merge_sources` metadata. The strategy is conflict-safe
 //! for committed artifacts: inputs are processed in sorted-by-name order, ids
 //! are reassigned deterministically, and the same inputs always produce
@@ -82,7 +83,18 @@ fn node_key(node: &Node) -> String {
         .map(|span| span.path.as_str())
         .or_else(|| node.metadata.get("path").map(String::as_str))
         .unwrap_or("");
-    format!("{kind}\u{1}{}\u{1}{path}", node.label)
+    // Two facts at different lines of one file are two facts. Keying on
+    // kind/label/path alone made every `branch: if` in a file the same node
+    // and collapsed same-named functions declared side by side: merging
+    // Flask's own graph dropped 1650 control-flow nodes to 287 and 35% of the
+    // project overall. The position keeps them apart while a re-merge of the
+    // same artifact still lands on the same key.
+    let position = node
+        .span
+        .as_ref()
+        .map(|span| format!("{}:{}", span.start_line, span.start_column))
+        .unwrap_or_default();
+    format!("{kind}\u{1}{}\u{1}{path}\u{1}{position}", node.label)
 }
 
 fn append_source(metadata: &mut BTreeMap<String, String>, source: &str) {
@@ -290,6 +302,16 @@ mod tests {
             start_line: 1,
             start_column: 0,
             end_line: 1,
+            end_column: 0,
+        }
+    }
+
+    fn span_at(path: &str, line: u32) -> SourceSpan {
+        SourceSpan {
+            path: path.to_string(),
+            start_line: line,
+            start_column: 0,
+            end_line: line,
             end_column: 0,
         }
     }
@@ -528,5 +550,51 @@ mod tests {
         )
         .expect_err("duplicate names");
         assert!(error.to_string().contains("duplicate input name"));
+    }
+
+    #[test]
+    fn two_facts_on_different_lines_stay_two_nodes() {
+        let mut left = CodeGraph::new("repo");
+        let file = left.add_node_with_span(NodeKind::File, "src/app.rs", span_at("src/app.rs", 1));
+        // The same label twice in one file: two `if` branches, or two methods
+        // of different types declared side by side.
+        let first = left.add_node_with_span(
+            NodeKind::ControlFlow,
+            "branch: if",
+            span_at("src/app.rs", 10),
+        );
+        let second = left.add_node_with_span(
+            NodeKind::ControlFlow,
+            "branch: if",
+            span_at("src/app.rs", 42),
+        );
+        left.add_edge(file, first, EdgeKind::References, Confidence::Syntactic);
+        left.add_edge(file, second, EdgeKind::References, Confidence::Syntactic);
+
+        let right = CodeGraph::new("other");
+        let (merged, report) = merge_graphs(
+            vec![
+                MergeInput {
+                    name: "left".to_string(),
+                    origin: "left".to_string(),
+                    graph: left,
+                },
+                MergeInput {
+                    name: "right".to_string(),
+                    origin: "right".to_string(),
+                    graph: right,
+                },
+            ],
+            "merged",
+        )
+        .expect("merge");
+
+        let branches = merged
+            .nodes
+            .iter()
+            .filter(|node| node.label == "branch: if")
+            .count();
+        assert_eq!(branches, 2, "keying without the position lost one of them");
+        assert_eq!(report.merged_nodes, 0);
     }
 }
