@@ -184,7 +184,7 @@ pub fn export_wiki(graph: &CodeGraph, output_dir: &Path, label: &str) -> Result<
     let config_nodes: Vec<_> = graph
         .nodes
         .iter()
-        .filter(|node| matches!(node.kind, NodeKind::Config | NodeKind::Environment))
+        .filter(|node| is_configuration_node(node))
         .take(CONFIG_LIMIT)
         .collect();
     for node in &config_nodes {
@@ -226,7 +226,7 @@ pub fn export_wiki(graph: &CodeGraph, output_dir: &Path, label: &str) -> Result<
     let total_config_nodes = graph
         .nodes
         .iter()
-        .filter(|node| matches!(node.kind, NodeKind::Config | NodeKind::Environment))
+        .filter(|node| is_configuration_node(node))
         .count();
     if total_config_nodes > config_nodes.len() {
         configs_md.push_str(&format!(
@@ -376,6 +376,44 @@ mod tests {
     }
 
     #[test]
+    fn the_config_page_holds_configuration() {
+        let root = temp_dir("configs");
+        fs::create_dir_all(root.join(".github/workflows")).unwrap();
+        // Eleven CI steps on this repository pushed every environment
+        // variable off the page.
+        let mut workflow = String::from(
+            "name: CI\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n",
+        );
+        for index in 0..12 {
+            workflow.push_str(&format!("      - run: echo step {index}\n"));
+        }
+        fs::write(root.join(".github/workflows/ci.yml"), workflow).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src").join("main.rs"),
+            "fn main() {\n    let _ = std::env::var(\"DATABASE_URL\");\n}\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).expect("scan");
+        let out = temp_dir("vault");
+        export_wiki(&graph, &out, "demo").expect("export");
+        let page = fs::read_to_string(out.join("Config Flows.md")).expect("page");
+
+        assert!(
+            page.contains("`DATABASE_URL` (environment)"),
+            "the variable the code reads is missing:\n{page}"
+        );
+        assert!(
+            !page.contains("github run:"),
+            "a CI step is not configuration:\n{page}"
+        );
+
+        fs::remove_dir_all(root).ok();
+        fs::remove_dir_all(out).ok();
+    }
+
+    #[test]
     fn exports_interlinked_vault_from_scanned_project() {
         let root = temp_dir("root");
         fs::create_dir_all(root.join("src")).unwrap();
@@ -454,4 +492,18 @@ fn connect(_url: &str) {}
     fn markdown_labels_are_escaped() {
         assert_eq!(md_escape("a|b [c]"), "a\\|b \\[c\\]");
     }
+}
+
+/// Whether this node is configuration a reader came to the page for. A
+/// workflow's `run:` step and a SQL statement are `config` nodes too, and
+/// on this repository the eleven CI steps pushed the environment
+/// variables off the page.
+fn is_configuration_node(node: &codegraph_core::Node) -> bool {
+    if !matches!(node.kind, NodeKind::Config | NodeKind::Environment) {
+        return false;
+    }
+    !matches!(
+        node.metadata.get("item_kind").map(String::as_str),
+        Some("github_actions_run_step" | "gitlab_ci_script" | "app_sql_query" | "sql_index")
+    )
 }
