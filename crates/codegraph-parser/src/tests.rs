@@ -537,6 +537,33 @@ fn parses_rust_environment_default_values() {
 }
 
 #[test]
+fn a_future_import_is_a_directive_not_a_dependency() {
+    // `from __future__ import annotations` turns on a language feature;
+    // there is no package called `__future__` to depend on. Python's
+    // grammar gives it a node of its own, which the extraction does not
+    // list -- and should not, though flask writes the line in 45 files and
+    // it looks like an import in every one of them.
+    let parsed = parse_source(
+        "app.py",
+        b"from __future__ import annotations\n\nimport os\nfrom datetime import datetime\n",
+        Language::Python,
+    )
+    .unwrap();
+
+    let imports: Vec<&str> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Import)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(
+        imports,
+        vec!["import os", "from datetime import datetime"],
+        "a language directive is not one of the file's imports"
+    );
+}
+
+#[test]
 fn a_named_function_expression_keeps_its_own_name() {
     // `new Promise(function dispatchXhrRequest(resolve) {...})` is a
     // function with a name of its own and nothing to bind it to. Axios
