@@ -578,12 +578,17 @@ async function runJourney() {
 
 function renderJourneyReport(report) {
   const paths = Array.isArray(report.paths) ? report.paths : [];
+  // Which definition each end is about, when the name named more than one.
+  const notes = Array.isArray(report.notes)
+    ? report.notes.map((note) => `<p class="query-note">${escapeHtml(String(note))}</p>`).join("")
+    : "";
   const summary = `
     <div class="query-summary">
       <span>${escapeHtml(`${report.from?.label || ""} → ${report.to?.label || ""}`)}</span>
       <span>${escapeHtml(t("journey.pathCount", { count: formatNumber(report.total_paths || 0) }))}</span>
       <span>${escapeHtml(t("trace.depth", { depth: formatNumber(report.max_depth || 0) }))}</span>
     </div>
+    ${notes}
   `;
   if (!paths.length) {
     const key = report.truncated ? "journey.truncatedNoPath" : "journey.noPaths";

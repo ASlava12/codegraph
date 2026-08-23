@@ -9961,6 +9961,23 @@ fn every_label_started_report_says_which_definition_it_took() {
         traced.notes
     );
 
+    // A journey resolves a name at both ends, so both can be a choice.
+    let travelled = journey(
+        &graph,
+        JourneyRequest {
+            from: "handle".to_string(),
+            to: "unique".to_string(),
+            max_depth: 3,
+            path_limit: 3,
+        },
+    )
+    .expect("journey");
+    assert!(
+        note_of(&travelled.notes).contains("2 definitions are named `handle`"),
+        "{:?}",
+        travelled.notes
+    );
+
     // A name only one definition answers to needs no such warning.
     let unique = impact(
         &graph,

@@ -639,6 +639,10 @@ pub struct JourneyReport {
     pub truncated: bool,
     #[serde(default)]
     pub suggested_commands: Vec<String>,
+    /// Which definitions these answers are about when a name it was
+    /// given belongs to more than one; see `shared_name_note`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

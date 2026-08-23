@@ -147,6 +147,12 @@ pub(crate) fn journey_with_insights(
 
     Ok(JourneyReport {
         schema: JOURNEY_SCHEMA.to_string(),
+        // Both ends are resolved from a name, so both can be a choice the
+        // caller did not make.
+        notes: shared_name_note(graph, from, &start_node)
+            .into_iter()
+            .chain(shared_name_note(graph, to, &target_node))
+            .collect(),
         from: start_node,
         to: target_node,
         max_depth,

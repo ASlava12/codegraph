@@ -64,6 +64,18 @@ drive("renderJourneyReport", () => api.renderJourneyReport({
   ] }],
 }));
 
+// A journey whose ends are ambiguous carries notes; the view must show them.
+drive("journey with a note", () => {
+  const html = api.renderJourneyReport({
+    from: { id: 1, label: "handle" }, to: { id: 2, label: "helper" }, total_paths: 0,
+    paths: [], max_depth: 4,
+    notes: ["2 definitions are named `handle`; this answer is about the one at src/first.rs:4"],
+  });
+  if (!html.includes("query-note") || !html.includes("2 definitions are named")) {
+    throw new Error("the journey note is missing from the rendered result");
+  }
+});
+
 drive("renderCheckReport", () => api.renderCheckReport({
   passed: false, fail_on: "warning", failing_insights: 1,
   report: { total: 1, by_severity: { warning: 1 }, by_kind: { unresolved_call: 1 },
