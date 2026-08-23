@@ -682,6 +682,10 @@ Trace config files and environment variables back to readers and entrypoints:
 cargo run -p codegraph-cli -- trace-config DATABASE_URL . --depth 6
 ```
 
+Each entry says which side it is on: `role` is `sets` for a workflow job or
+Compose service that assigns the variable and `reads` for everything that
+uses it.
+
 Trace potential error and exception constructs back to sources and entrypoints:
 
 ```bash

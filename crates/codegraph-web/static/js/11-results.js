@@ -321,7 +321,7 @@ function renderConfigTrace(result) {
           (reader) => `
             <li>
               <button class="query-item" type="button" data-node-id="${reader.node.id}">
-                <span>${escapeHtml(formatKind(reader.edge.kind))}</span>
+                <span>${escapeHtml(reader.role === "sets" ? t("configTrace.roleSets") : formatKind(reader.edge.kind))}</span>
                 <strong>${escapeHtml(reader.node.label)}</strong>
               </button>
             </li>

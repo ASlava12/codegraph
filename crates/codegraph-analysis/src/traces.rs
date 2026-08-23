@@ -1,6 +1,6 @@
 //! Workflow Mermaid rendering plus config and error trace reports.
 
-use codegraph_core::{CodeGraph, EdgeKind, NodeKind};
+use codegraph_core::{CodeGraph, Edge, EdgeKind, NodeKind};
 
 #[allow(unused_imports)]
 use crate::*;
@@ -98,6 +98,7 @@ pub fn trace_config(graph: &CodeGraph, request: ConfigTraceRequest) -> ConfigTra
                 node: reader_node.clone(),
                 edge: edge.clone(),
                 edge_index,
+                role: config_reader_role(edge).to_string(),
             });
 
             let (mut reader_paths, reader_truncated) = config_reader_paths(
@@ -233,5 +234,15 @@ pub fn trace_errors(graph: &CodeGraph, request: ErrorTraceRequest) -> ErrorTrace
         total_paths,
         matches,
         truncated,
+    }
+}
+
+/// Whether this edge is a read of the value or an assignment of it. A CI
+/// job and a Compose service declare what the variable holds; everything
+/// else named it to use it.
+pub(crate) fn config_reader_role(edge: &Edge) -> &'static str {
+    match edge.metadata.get("item_kind").map(String::as_str) {
+        Some("ci_environment" | "compose_environment") => "sets",
+        _ => "reads",
     }
 }

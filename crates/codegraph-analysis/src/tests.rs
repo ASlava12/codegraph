@@ -5361,6 +5361,7 @@ fn trace_config_returns_readers_and_entrypoint_paths() {
     let matched = &result.matches[0];
     assert_eq!(matched.target.id, database_url);
     assert_eq!(matched.readers[0].node.id, load_config);
+    assert_eq!(matched.readers[0].role, "reads");
     assert_eq!(
         matched.paths[0]
             .nodes
@@ -5370,6 +5371,50 @@ fn trace_config_returns_readers_and_entrypoint_paths() {
         vec!["cargo bin:demo", "main", "load_config", "DATABASE_URL"]
     );
     assert!(matched.paths[0].reached_entrypoint);
+}
+
+#[test]
+fn a_job_that_assigns_a_variable_is_not_a_reader() {
+    let mut graph = CodeGraph::new("repo");
+    let job = graph.add_node(NodeKind::Entrypoint, "github workflow:CI/deploy");
+    let script = graph.add_node(NodeKind::File, "src/deploy.sh");
+    let token = graph.add_node(NodeKind::Environment, "DEPLOY_TOKEN");
+    graph.add_edge_with_metadata(
+        job,
+        token,
+        EdgeKind::ReadsEnvironment,
+        Confidence::Exact,
+        BTreeMap::from([("item_kind".to_string(), "ci_environment".to_string())]),
+    );
+    graph.add_edge_with_metadata(
+        script,
+        token,
+        EdgeKind::ReadsEnvironment,
+        Confidence::Heuristic,
+        BTreeMap::from([("item_kind".to_string(), "environment_read".to_string())]),
+    );
+
+    let result = trace_config(
+        &graph,
+        ConfigTraceRequest {
+            target: "DEPLOY_TOKEN".to_string(),
+            max_depth: 4,
+            limit: 10,
+        },
+    );
+
+    let roles: Vec<(&str, &str)> = result.matches[0]
+        .readers
+        .iter()
+        .map(|reader| (reader.node.label.as_str(), reader.role.as_str()))
+        .collect();
+    assert_eq!(
+        roles,
+        vec![
+            ("github workflow:CI/deploy", "sets"),
+            ("src/deploy.sh", "reads"),
+        ]
+    );
 }
 
 #[test]

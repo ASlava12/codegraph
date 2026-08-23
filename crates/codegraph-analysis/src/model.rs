@@ -704,6 +704,10 @@ pub struct ConfigReader {
     pub node: Node,
     pub edge: Edge,
     pub edge_index: usize,
+    /// `reads` or `sets`: a workflow job or a Compose service that assigns
+    /// the variable holds the same edge kind as the code that reads it,
+    /// and calling both a reader tells the wrong story.
+    pub role: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
