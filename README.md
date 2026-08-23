@@ -36,6 +36,9 @@ Implemented now:
   OCaml one. A library's coverage finding counts what it exports as starting points, an uncalled
   function says whether it is dead or the API, and a call from another file is not answered by a
   definition that file cannot name.
+- Every call and every fact belongs to the definition whose body contains it. One file can write
+  one name several times — Go declares `String()` once per type, and Python writes an overload stub
+  above the implementation — so the line decides, not the name.
 - Manifest-defined entrypoints from Cargo, npm, Go, Python, setup.py/setup.cfg, Composer, and CMake project metadata.
 - Shebang-defined script entrypoints for Bash, Python, Node.js, and PHP scripts, including extensionless CLI files.
 - Dockerfile, Docker Compose, GitHub Actions, GitLab CI, and Kubernetes runtime entrypoints, including Compose service dependencies, workflow/pipeline job dependencies, CI environment inputs with secret-safe value classification, CI job-reference and script-path checks, runtime config inputs, published ports, local bind volumes, Kubernetes workloads, Ingresses, services, Service selector links, and ConfigMap/Secret references.
@@ -1175,6 +1178,10 @@ When a manifest target can be mapped back to code, the entrypoint node also
 emits `references` edges with metadata such as `relation=entrypoint_file` or
 `relation=entrypoint_function`; traces follow these edges before continuing into
 regular call, import, config, environment, dependency, and error-flow edges.
+A node that declares a block spans it: a workflow job runs from its name
+through its last step, a Compose service through its ports and volumes, a
+Kubernetes document through the resource it declares, and a `CREATE TABLE`
+through its columns.
 Compose services also emit `depends_on`, `reads_environment`, `reads_config`,
 and `references` edges for service dependencies, `environment`, `env_file`,
 published `ports`, and local bind `volumes` entries without storing literal
@@ -1187,6 +1194,12 @@ to matching Service manifests, preserving host/path route context for traffic
 entrypoint investigation.
 Entrypoint trace reports run this traversal for all matching entrypoints so a
 project's startup flows can be compared without manually copying labels.
+An environment variable or config key is one node however many places name
+it, so the workflow job that sets `GITHUB_TOKEN` and the function that reads
+it meet there. What each site says about the variable — the value kind, the
+line, the job or service that assigns it — travels on the edge, because
+another job can assign something else and a read says nothing about a value
+at all.
 Config traces specialize that graph traversal by matching `config` and
 `environment` nodes, listing direct readers, and returning shortest known paths
 from manifest entrypoints to the reader and final read edge.
