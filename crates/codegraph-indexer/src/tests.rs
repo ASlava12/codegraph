@@ -7050,3 +7050,41 @@ fn javascript_imports_name_which_module_a_call_means() {
         "a package the repository does not contain is external"
     );
 }
+
+#[test]
+fn a_projects_own_definition_wins_over_the_builtin_list() {
+    // Naming `type` as a Lua builtin must not hide a project that defines
+    // its own. Builtins are only consulted once matching by name has found
+    // nothing, so the local definition still takes the call.
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("mod.lua"),
+        "local function type(value)\n    return value\n end\n\nlocal function run()\n    return type(1) .. tostring(2)\nend\n\nreturn run\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution"))
+            .cloned()
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        resolution("type"),
+        "resolved",
+        "the file's own `type` takes the call"
+    );
+    assert_eq!(
+        resolution("tostring"),
+        "builtin",
+        "a name only the language provides is not a resolver miss"
+    );
+}
