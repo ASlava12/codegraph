@@ -6068,6 +6068,52 @@ fn insights_report_unresolved_sql_table_references() {
 }
 
 #[test]
+fn a_name_the_query_fills_in_is_not_a_missing_table() {
+    // `fmt.Sprintf("... FROM %s.%s", schema, table)` writes the name when
+    // it runs, and `information_schema.schemata` is the database's own
+    // catalogue. Neither is a table anybody forgot to define.
+    let mut graph = CodeGraph::new("repo");
+    let configure = graph.add_node(NodeKind::Function, "Configure");
+    for (label, unresolved) in [
+        ("sql query:backend.go:108", "information_schema.schemata"),
+        ("sql query:client.go:64", "%s.%s"),
+        ("sql query:state.go:12", "%s, audit_log"),
+    ] {
+        let query = graph.add_node_with_metadata(
+            NodeKind::Config,
+            label,
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "app_sql_query".to_string()),
+                ("operation".to_string(), "select".to_string()),
+                ("unresolved_tables".to_string(), unresolved.to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            configure,
+            query,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            BTreeMap::from([("relation".to_string(), "app_sql_query".to_string())]),
+        );
+    }
+
+    let report = insights(&graph);
+    let found: Vec<&Insight> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "unresolved_sql_table_reference")
+        .collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].message.contains("`audit_log`"),
+        "the real name survives on its own: {}",
+        found[0].message
+    );
+    assert!(!found[0].message.contains('%'), "{}", found[0].message);
+}
+
+#[test]
 fn fixture_driven_unresolved_findings_read_as_info() {
     let mut graph = CodeGraph::new("repo");
 

@@ -318,6 +318,15 @@ pub(crate) fn add_unresolved_sql_table_reference_insights(
         else {
             continue;
         };
+        let named: Vec<&str> = tables
+            .split(',')
+            .map(str::trim)
+            .filter(|table| !table.is_empty() && names_a_project_table(table))
+            .collect();
+        if named.is_empty() {
+            continue;
+        }
+        let tables = named.join(", ");
 
         let incoming = incoming_edge_indexes(graph, node.id, EdgeKind::References);
         let outgoing = outgoing_edge_indexes(graph, node.id, EdgeKind::References);
@@ -378,6 +387,23 @@ pub(crate) fn add_unresolved_sql_table_reference_insights(
             edges,
         });
     }
+}
+
+/// Whether a name a query reads from could be a table this project
+/// defines. `fmt.Sprintf("... FROM %s.%s", schema, table)` fills the name
+/// in when the query runs, and `information_schema` and `pg_catalog`
+/// belong to the database rather than to anybody's migrations.
+fn names_a_project_table(table: &str) -> bool {
+    let lowered = table.to_ascii_lowercase();
+    !table.contains('%')
+        && !table.contains('$')
+        && !lowered.starts_with("information_schema.")
+        && !lowered.starts_with("pg_catalog.")
+        && !lowered.starts_with("sys.")
+        && !matches!(
+            lowered.as_str(),
+            "sqlite_master" | "sqlite_sequence" | "current_timestamp" | "dual"
+        )
 }
 
 pub(crate) fn add_cross_language_heuristic_edge_insights(
