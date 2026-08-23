@@ -171,6 +171,34 @@ pub(crate) fn collect_items(
     }
 }
 
+/// The node a call invokes, following the same precedence `call_label`
+/// uses to read its text. Parentheses around it are unwrapped: an
+/// immediately-invoked function is written `(function () { … })()` in
+/// most languages, so the literal sits one level down.
+fn call_callee<'tree>(language: Language, node: Node<'tree>) -> Option<Node<'tree>> {
+    let mut callee = match language {
+        Language::Kotlin | Language::Swift | Language::Julia => node.named_child(0),
+        // Lua names the field `name`, which `call_label` also falls back to.
+        _ => node
+            .child_by_field_name("function")
+            .or_else(|| node.child_by_field_name("name")),
+    }?;
+    for _ in 0..MAX_PARENTHESIS_DEPTH {
+        if !callee.kind().contains("parenthesized") {
+            break;
+        }
+        let Some(inner) = callee.named_child(0) else {
+            break;
+        };
+        callee = inner;
+    }
+    Some(callee)
+}
+
+/// How many layers of `((f))` to look through before giving up. Deeper
+/// than this is not real code, and the loop must end.
+const MAX_PARENTHESIS_DEPTH: usize = 8;
+
 /// A callable with no name of its own: a closure, a lambda, a block passed
 /// to a method. Its statements run when something invokes it, so a call
 /// inside it belongs to that unnamed function — not to the file that
@@ -182,6 +210,12 @@ fn is_deferred_body(language: Language, kind: &str) -> bool {
     // Python `if __name__ == "__main__":` body is exactly the load-time
     // code this must keep.
     if language == Language::Ruby && matches!(kind, "block" | "do_block") {
+        return true;
+    }
+    // Lua splits the two: `function foo() end` is a `function_declaration`,
+    // and only the anonymous `function() end` is a `function_definition` —
+    // a kind that names the ordinary declaration in Python and C.
+    if language == Language::Lua && kind == "function_definition" {
         return true;
     }
     kind.contains("lambda")
@@ -340,6 +374,13 @@ pub(crate) fn classify_node(
         },
         Language::Lua => match kind {
             "function_declaration" => ParsedItemKind::Function,
+            // `M.handle = function() … end` and `{ init = function() … end }`
+            // are how Lua modules are written; the binding names the
+            // function even though the literal does not. Without this the
+            // whole body has no definition to belong to.
+            "function_definition" if lua_bound_function_name(node, source).is_some() => {
+                ParsedItemKind::Function
+            }
             "function_call" if lua_require_call(node, source) => ParsedItemKind::Import,
             _ => return None,
         },
@@ -645,8 +686,23 @@ pub(crate) fn classify_call(
         return None;
     }
 
+    // `go func() { … }()`, `(() => { … })()`, a C++ `[&](){ … }()` — the
+    // callee is a literal with no name of its own, and its text reduced to
+    // a label like `func` or to the whole body. terraform alone recorded
+    // 179 calls to a function named `func`. The body's own calls already
+    // carry their real caller, so there is nothing to record here.
+    if let Some(callee) = call_callee(language, node)
+        && is_deferred_body(language, callee.kind())
+    {
+        return None;
+    }
+
     let label = call_label(language, node, source)?;
-    if label.is_empty() {
+    // A name cannot hold a block, a statement separator or a line break.
+    // When one of those survives, the callee was an expression rather than
+    // a name — or the parser recovered from a syntax error mid-file — and
+    // the label is a fragment of source, not something to put in a graph.
+    if label.is_empty() || label.contains(['{', '}', ';', '\n']) {
         return None;
     }
 
@@ -1394,6 +1450,29 @@ fn elixir_definition_head(node: Node<'_>, source: &[u8]) -> Option<String> {
 /// The name a JS/TS function expression inherits from the binding it is
 /// assigned to: `const f = () => {}`, `{ key: () => {} }`, `obj.m = () => {}`.
 /// Returns None for a truly anonymous expression such as a bare callback.
+/// The name a Lua binding gives an anonymous function: the field in
+/// `{ init = function() end }`, the variable in `M.bar = function() end`.
+/// A multiple assignment (`local a, b = function() end, 2`) is left alone —
+/// matching a value to its name by position would be a guess.
+pub(crate) fn lua_bound_function_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let parent = node.parent()?;
+    match parent.kind() {
+        "field" => named_child_text(parent, "name", source),
+        "expression_list" if parent.named_child_count() == 1 => {
+            let assignment = parent.parent()?;
+            if assignment.kind() != "assignment_statement" {
+                return None;
+            }
+            let variables = assignment.named_child(0)?;
+            if variables.kind() != "variable_list" || variables.named_child_count() != 1 {
+                return None;
+            }
+            node_text(variables.named_child(0)?, source)
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn js_bound_function_name(node: Node<'_>, source: &[u8]) -> Option<String> {
     let parent = node.parent()?;
     match parent.kind() {
@@ -1417,6 +1496,10 @@ pub(crate) fn item_label(
     ) && matches!(node.kind(), "arrow_function" | "function_expression")
     {
         return js_bound_function_name(node, source);
+    }
+
+    if language == Language::Lua && node.kind() == "function_definition" {
+        return lua_bound_function_name(node, source);
     }
 
     if kind == ParsedItemKind::Import {

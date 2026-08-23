@@ -2180,3 +2180,97 @@ fn javascript_function_expressions_are_named_by_their_binding() {
         );
     }
 }
+
+#[test]
+fn an_invoked_literal_records_no_call_because_it_has_no_name() {
+    // `go func() { … }()` reduced to a call to a function named `func` —
+    // 179 of them in terraform — and a JavaScript IIFE put its whole body
+    // in the label. Neither names anything, and a graph node labelled with
+    // a block of source is noise.
+    let go = parse_source(
+        "worker.go",
+        b"package main\n\nfunc run() {\n\tgo func() { work() }()\n\tdefer func() { done() }()\n}\n",
+        Language::Go,
+    )
+    .unwrap();
+    let go_calls: Vec<&str> = go
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Call)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert!(
+        !go_calls.contains(&"func"),
+        "the literal is not a callable name, got {go_calls:?}"
+    );
+    assert!(
+        go_calls.contains(&"work") && go_calls.contains(&"done"),
+        "the literal's own body still calls, got {go_calls:?}"
+    );
+
+    let js = parse_source(
+        "app.js",
+        b"export function boot() {\n  (function () { start(); })();\n  (() => { stop(); })();\n}\n",
+        Language::JavaScript,
+    )
+    .unwrap();
+    for item in js
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Call)
+    {
+        assert!(
+            !item.label.contains(['{', '}', ';', '\n']),
+            "a call label holds a name, not source: {:?}",
+            item.label
+        );
+    }
+}
+
+#[test]
+fn a_lua_binding_names_the_function_it_holds() {
+    // Lua modules are written as tables of anonymous functions. Without the
+    // binding's name they had no definition to belong to, and kong's 12000
+    // calls inside them were credited to the file that loaded them.
+    let source = r#"local M = {}
+
+M.handle = function(request)
+    return route(request)
+end
+
+local handlers = {
+    init = function()
+        return setup()
+    end,
+}
+
+register(function()
+    return orphaned()
+end)
+
+return M
+"#;
+    let parsed = parse_source("mod.lua", source.as_bytes(), Language::Lua).unwrap();
+    let function = |label: &str| {
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Function && item.label == label)
+    };
+    assert!(function("M.handle"), "{:?}", parsed.items);
+    assert!(function("init"), "{:?}", parsed.items);
+
+    let parent_of = |label: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::Call && item.label == label)
+            .map(|item| item.parent.clone())
+    };
+    assert_eq!(parent_of("route"), Some(Some("M.handle".to_string())));
+    assert_eq!(parent_of("setup"), Some(Some("init".to_string())));
+    // The callback handed to `register` is named by nothing, and it runs
+    // when something invokes it rather than when the file loads, so its
+    // body belongs to neither a definition nor the file.
+    assert_eq!(parent_of("orphaned"), None);
+}
