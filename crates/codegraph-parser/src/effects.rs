@@ -120,12 +120,18 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                     .is_some_and(|value| simple_name(value) == "GetEnvironmentVariable")
         }
         Language::Kotlin => {
-            // `System.getenv("K")` — the callee is the first named child.
+            // `System.getenv("K")` on the JVM — the callee is the first
+            // named child. Kotlin/Native imports `getenv` from
+            // `platform.posix` and calls it bare, and Windows spells the
+            // same call `_wgetenv`; okio reads TMPDIR, TEMP, TMP and
+            // USERPROFILE that way.
             node.kind() == "call_expression"
                 && node
                     .named_child(0)
                     .and_then(|child| node_text(child, source))
-                    .is_some_and(|callee| callee == "System.getenv")
+                    .is_some_and(|callee| {
+                        matches!(callee.as_str(), "System.getenv" | "getenv" | "_wgetenv")
+                    })
         }
         Language::Swift => {
             // `ProcessInfo.processInfo.environment["K"]` parses as a

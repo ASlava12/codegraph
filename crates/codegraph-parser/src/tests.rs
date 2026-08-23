@@ -537,6 +537,38 @@ fn parses_rust_environment_default_values() {
 }
 
 #[test]
+fn parses_kotlin_native_environment_reads() {
+    // okio reads TMPDIR through `platform.posix.getenv` and TEMP through
+    // the Windows `_wgetenv`, and only `System.getenv` was recognised: the
+    // project's own benchmark oracle found four of its seven environment
+    // reads missing.
+    let parsed = parse_source(
+        "Variant.kt",
+        br#"import platform.posix._wgetenv
+import platform.posix.getenv
+
+fun tmpdir(): String? {
+    val jvm = System.getenv("HOME")
+    val unix = getenv("TMPDIR")
+    val windows = _wgetenv("TEMP".wcstr)
+    return jvm ?: unix ?: windows
+}
+"#,
+        Language::Kotlin,
+    )
+    .unwrap();
+
+    let mut keys: Vec<&str> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .map(|item| item.label.as_str())
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(keys, vec!["HOME", "TEMP", "TMPDIR"]);
+}
+
+#[test]
 fn parses_python_configuration_mapping_reads() {
     // Flask keeps configuration in a mapping on the application, so
     // `app.config["SECRET_KEY"]` reads that key the way `os.environ` reads
