@@ -1172,7 +1172,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // local helper cannot be the target of a call from anywhere else. On
         // shellcheck 869 of 989 ambiguous calls had a `where` binding among
         // their candidates — one label, `f`, had 167 of them.
-        if targets.len() > 1 {
+        {
             let caller_scope = graph_node(&context.graph, call.caller).map(|node| {
                 (
                     node.label.clone(),
@@ -1197,9 +1197,17 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                         })
                 })
                 .collect::<Vec<_>>();
-            if !visible.is_empty() && visible.len() < targets.len() {
+            // Dropping every candidate leaves the call unresolved, which
+            // is what a call to something out of scope is: `db.close()` in
+            // an example was answered by a `close` defined inside a test,
+            // and `ngx.req.get_method` by a function kong builds in a
+            // factory. Keeping them because nothing better was found is
+            // how a resolver invents a dependency.
+            if visible.len() < targets.len() {
                 targets = visible;
-                basis = "lexical_scope";
+                if !targets.is_empty() {
+                    basis = "lexical_scope";
+                }
             }
         }
 

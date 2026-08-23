@@ -910,6 +910,58 @@ fn scan_project_uses_persistent_parse_cache_records() {
 }
 
 #[test]
+fn a_call_to_something_out_of_scope_stays_unresolved() {
+    // `db.close()` in flask's tutorial example was answered by a `close`
+    // defined inside a test function. Where no candidate is visible from
+    // the caller, keeping them all because nothing better was found is how
+    // a resolver invents a dependency.
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("app.py"),
+        r#"def use_database(db):
+    db.close()
+
+
+def test_streaming():
+    class Recorder:
+        def close(self):
+            return 1
+
+    return Recorder()
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let nested = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "close"
+                && node
+                    .metadata
+                    .get("enclosing_function")
+                    .is_some_and(|enclosing| enclosing == "test_streaming")
+        })
+        .expect("the nested close is indexed");
+    let caller = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "use_database")
+        .expect("the caller is indexed");
+
+    assert!(
+        !graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls && edge.source == caller.id && edge.target == nested.id
+        }),
+        "a definition nested in another one is not visible outside it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_python_route_belongs_to_the_framework_the_file_imports() {
     // `@app.get("/")` is the same line in Flask 2 and in FastAPI. Reading
     // it as FastAPI filed 45 of flask's own routes under the wrong
