@@ -2595,17 +2595,16 @@ mod tests {
         );
 
         let path = cache.cache_path(&root, &options);
-        let text = fs::read_to_string(&path).unwrap();
-        // The graph record is stored pretty-printed, unlike the compact
-        // per-file parse records.
-        let key = "\"build_identity\": \"";
-        let start = text.find(key).expect("the record names its build") + key.len();
-        let end = start + text[start..].find('"').unwrap();
-        fs::write(
-            &path,
-            format!("{}0.0.0-other{}", &text[..start], &text[end..]),
-        )
-        .unwrap();
+        // Read as JSON rather than as text: how the record is spaced is the
+        // writer's business, not this test's.
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(
+            record["build_identity"].is_string(),
+            "the record names its build"
+        );
+        record["build_identity"] = serde_json::Value::String("0.0.0-other".to_string());
+        fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
 
         let fingerprint = GraphCache::fingerprint_project(&root, &options).unwrap();
         assert!(
