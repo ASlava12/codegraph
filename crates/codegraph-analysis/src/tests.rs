@@ -11080,6 +11080,55 @@ fn an_entrypoint_pointing_at_a_directory_or_a_url_resolved_fine() {
 }
 
 #[test]
+fn a_module_a_file_declares_is_not_a_crate() {
+    // `mod cli;` puts `cli` in main.rs's own scope, and the `use cli::*`
+    // beneath it names that module. Reading it as a package had this
+    // repository's own scan reporting a cargo dependency nobody declared.
+    let mut graph = CodeGraph::new("repo");
+    let manifest = graph.add_node(NodeKind::File, "Cargo.toml");
+    let dependency = dependency_node(&mut graph, "serde", "cargo:serde");
+    graph.add_edge_with_metadata(
+        manifest,
+        dependency,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+    );
+
+    let main = graph.add_node_with_metadata(
+        NodeKind::File,
+        "src/main.rs",
+        None,
+        BTreeMap::from([("language".to_string(), "rust".to_string())]),
+    );
+    graph.add_node_with_span(
+        NodeKind::Module,
+        "cli",
+        SourceSpan {
+            path: "src/main.rs".to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 1,
+            end_column: 9,
+        },
+    );
+    let import = import_node(&mut graph, "use cli::*;", "rust");
+    graph.add_edge(main, import, EdgeKind::Imports, Confidence::Syntactic);
+    let other = import_node(&mut graph, "use anyhow::Result;", "rust");
+    graph.add_edge(main, other, EdgeKind::Imports, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    let undeclared: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "undeclared_external_import")
+        .map(|insight| insight.message.as_str())
+        .collect();
+    assert_eq!(undeclared.len(), 1, "{undeclared:?}");
+    assert!(undeclared[0].contains("anyhow"), "{}", undeclared[0]);
+}
+
+#[test]
 fn a_specifier_that_names_no_package_is_not_undeclared() {
     // `node:fs` and `bun:test` say which runtime provides the module,
     // `http2` is one Node ships, and `import type` from `trusted-types` is

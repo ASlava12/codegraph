@@ -956,6 +956,65 @@ fn julia_and_r_packages_export_from_one_place() {
 }
 
 #[test]
+fn a_rust_use_may_name_a_module_or_an_item() {
+    // `use crate::parse_cli_node_id;` names a function and `mod cli; use
+    // cli::*;` a module of the file's own. Rust writes all of it the same
+    // way, and only what the project holds tells them apart -- the scan of
+    // this very repository reported the function as a missing file and the
+    // module as a crate nobody had declared.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("helpers.rs"),
+        "pub fn parse_node_id(value: &str) -> usize {\n    value.len()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("main.rs"),
+        "mod helpers;\n\nuse helpers::*;\nuse crate::parse_node_id;\n\nfn main() {\n    parse_node_id(\"n1\");\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let unresolved: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata
+                .get("item_kind")
+                .is_some_and(|kind| kind == "import")
+                && node
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|resolution| resolution == "unresolved")
+        })
+        .map(|node| node.label.as_str())
+        .collect();
+    assert!(unresolved.is_empty(), "{unresolved:?}");
+
+    // `use helpers::*` names the module declared above it, and the module
+    // node the insight checks for is right there in the same file.
+    assert!(
+        graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::Module
+                && node.label == "helpers"
+                && node
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.path == "src/main.rs")
+        }),
+        "the file's own module declaration is indexed"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn documentation_does_not_name_a_test_helper() {
     // Documentation describes what a project offers, not how it tests
     // itself: 11 of nlohmann/json's 14 prose mentions named a helper

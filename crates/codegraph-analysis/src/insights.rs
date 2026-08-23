@@ -2767,6 +2767,16 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
         if imports.is_empty() {
             continue;
         }
+        // `mod cli;` puts `cli` in the file's own scope, and `use cli::*`
+        // beneath it names that module rather than a crate anybody
+        // published.
+        if language == "rust"
+            && imports
+                .iter()
+                .any(|import| declares_module(graph, &source_node.label, import.package.as_str()))
+        {
+            continue;
+        }
         // Nothing declares a dependency on itself. guzzle's own sources
         // `use GuzzleHttp\…`, which names the package its composer.json
         // claims — 363 findings said the project had failed to require
@@ -3079,6 +3089,16 @@ pub(crate) fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &
             edges,
         });
     }
+}
+
+/// Whether a file declares a module of its own by that name, as `mod
+/// cli;` does for the `use cli::*` written under it.
+fn declares_module(graph: &CodeGraph, file: &str, name: &str) -> bool {
+    graph.nodes.iter().any(|node| {
+        node.kind == NodeKind::Module
+            && node.label == name
+            && node.span.as_ref().is_some_and(|span| span.path == file)
+    })
 }
 
 /// The DefinitelyTyped package that carries types for another: `lodash`

@@ -1621,6 +1621,23 @@ pub(crate) fn graph_node(graph: &CodeGraph, id: NodeId) -> Option<&codegraph_cor
         .or_else(|| graph.nodes.iter().find(|node| node.id == id))
 }
 
+/// The definition a Rust `use` names when no module file answers it.
+/// `use crate::parse_cli_node_id;` and `use crate::cli;` are written the
+/// same way, and only what the project holds tells them apart.
+fn rust_imported_item(context: &IndexContext, import: &PendingLocalImport) -> Option<NodeId> {
+    if graph_node(&context.graph, import.import_node)
+        .and_then(|node| node.metadata.get("language"))
+        .map(String::as_str)
+        != Some("rust")
+    {
+        return None;
+    }
+    let [target] = resolve_function_targets(&context.function_symbols, &import.target)[..] else {
+        return None;
+    };
+    Some(target)
+}
+
 /// Whether a definition can answer a call from `caller_path`. What
 /// "private" reaches differs by language, and so does what the fact rests
 /// on: an export list, an interface file beside the module, a `static`, a
@@ -1838,6 +1855,32 @@ pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
                 ]),
             );
         } else if import.mark_unresolved {
+            // `use crate::parse_cli_node_id;` names a function, not a
+            // module file: Rust writes both the same way, and only the
+            // project can say which it is. An item import is resolved, to
+            // the item.
+            if let Some(item) = rust_imported_item(context, &import) {
+                add_node_metadata(
+                    &mut context.graph,
+                    import.import_node,
+                    "resolution",
+                    "resolved",
+                );
+                add_edge_once_with_metadata(
+                    context,
+                    import.import_node,
+                    item,
+                    EdgeKind::References,
+                    Confidence::Syntactic,
+                    BTreeMap::from([
+                        ("relation".to_string(), "local_import_item".to_string()),
+                        ("source".to_string(), "syntax".to_string()),
+                        ("resolution".to_string(), "local_import_item".to_string()),
+                        ("target".to_string(), import.target),
+                    ]),
+                );
+                continue;
+            }
             add_node_metadata(
                 &mut context.graph,
                 import.import_node,
