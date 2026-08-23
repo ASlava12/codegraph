@@ -53,6 +53,13 @@ pub struct RecallTask {
     pub expected: usize,
     pub found: usize,
     pub recall_basis_points: u64,
+    /// Recall over what a parser was actually given: the same count with
+    /// the misses outside parsed source taken out of the denominator.
+    /// Flask reads 79% raw and 100% here, because all 94 of its misses are
+    /// code samples in prose, and the raw figure alone reads like an
+    /// extraction gap that is not there.
+    #[serde(default)]
+    pub parsed_source_recall_basis_points: u64,
     /// Up to ten oracle items the graph missed, for direct follow-up.
     pub sample_misses: Vec<String>,
     /// Misses that live only in files no language adapter parses — code
@@ -312,6 +319,15 @@ fn oracle_env_keys_by_origin(files: &[CorpusFile]) -> (BTreeSet<String>, BTreeSe
     (keys, outside_parsed_source)
 }
 
+/// Recall over the items a parser could see, given the raw counts.
+fn parsed_source_recall(expected: usize, found: usize, outside: usize) -> u64 {
+    let reachable = expected.saturating_sub(outside);
+    if reachable == 0 {
+        return 10_000;
+    }
+    ((found.min(reachable) as u64) * 10_000) / reachable as u64
+}
+
 fn json_bytes<T: Serialize>(value: &T) -> u64 {
     serde_json::to_string(value)
         .map(|s| s.len() as u64)
@@ -366,11 +382,17 @@ pub fn run_benchmark(graph: &CodeGraph, root: &Path, samples: usize) -> Result<B
         .iter()
         .filter(|name| documentation_only_functions.contains(name.as_str()))
         .count();
+    let found_functions = oracle_functions.len() - missing_functions.len();
     recall.push(RecallTask {
         misses_outside_parsed_source,
+        parsed_source_recall_basis_points: parsed_source_recall(
+            oracle_functions.len(),
+            found_functions,
+            misses_outside_parsed_source,
+        ),
         task: "function_definitions".to_string(),
         expected: oracle_functions.len(),
-        found: oracle_functions.len() - missing_functions.len(),
+        found: found_functions,
         recall_basis_points: if oracle_functions.is_empty() {
             10_000
         } else {
@@ -391,16 +413,23 @@ pub fn run_benchmark(graph: &CodeGraph, root: &Path, samples: usize) -> Result<B
         })
         .cloned()
         .collect();
+    // A key read by a workflow's inline script sits in a file no adapter
+    // parses, so the graph never had the chance to claim it.
+    let keys_outside = missing_keys
+        .iter()
+        .filter(|key| keys_outside_parsed_source.contains(key.as_str()))
+        .count();
+    let found_keys = oracle_keys.len() - missing_keys.len();
     recall.push(RecallTask {
-        // A key read by a workflow's inline script sits in a file no
-        // adapter parses, so the graph never had the chance to claim it.
-        misses_outside_parsed_source: missing_keys
-            .iter()
-            .filter(|key| keys_outside_parsed_source.contains(key.as_str()))
-            .count(),
+        misses_outside_parsed_source: keys_outside,
+        parsed_source_recall_basis_points: parsed_source_recall(
+            oracle_keys.len(),
+            found_keys,
+            keys_outside,
+        ),
         task: "environment_reads".to_string(),
         expected: oracle_keys.len(),
-        found: oracle_keys.len() - missing_keys.len(),
+        found: found_keys,
         recall_basis_points: if oracle_keys.is_empty() {
             10_000
         } else {
@@ -594,6 +623,20 @@ mod tests {
         assert_eq!(functions.misses_outside_parsed_source, 1);
 
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn recall_separates_what_a_parser_could_see() {
+        // A `def` inside an .rst tutorial is a name the graph never claimed
+        // and never could: flask reads 79% raw against 100% of what was
+        // offered to a parser, and only the second number says anything
+        // about extraction.
+        assert_eq!(parsed_source_recall(450, 356, 94), 10_000);
+        assert_eq!(parsed_source_recall(1093, 1089, 3), 9_990);
+        // Nothing outside parsed source leaves both figures equal.
+        assert_eq!(parsed_source_recall(10, 8, 0), 8_000);
+        // A corpus the parser saw nothing of cannot be judged.
+        assert_eq!(parsed_source_recall(4, 0, 4), 10_000);
     }
 
     #[test]
