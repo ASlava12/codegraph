@@ -185,12 +185,16 @@ pub(crate) fn js_local_import_target(
     if !(module.starts_with("./") || module.starts_with("../")) {
         return None;
     }
+    // A bundler reads `./template/index.html?raw` as that file, asked for
+    // in a particular way. The question mark and everything after it say
+    // how to load the file, not which one.
+    let path = module.split('?').next().unwrap_or(&module);
     Some(LocalImportTarget {
         target: module.clone(),
         candidates: module_file_candidates(
             source_label,
-            &module,
-            &["js", "ts", "tsx", "mjs", "cjs"],
+            path,
+            &["js", "ts", "tsx", "jsx", "mjs", "cjs", "mts", "cts", "d.ts"],
         ),
     })
 }
@@ -551,14 +555,20 @@ pub(crate) fn module_file_candidates(
 }
 
 pub(crate) fn with_file_extensions(path: &str, extensions: &[&str]) -> Vec<String> {
+    let mut candidates = Vec::new();
     if path_has_extension(path) {
-        vec![normalize_path(path)]
-    } else {
+        candidates.push(normalize_path(path));
+    }
+    // A dot in a name is not always an extension: `./vFor.spec` is how a
+    // test file next door is spelled, and the file is `vFor.spec.ts`. The
+    // written name is tried first, so a file that really is named that
+    // still wins.
+    candidates.extend(
         extensions
             .iter()
-            .map(|extension| normalize_path(&format!("{path}.{extension}")))
-            .collect()
-    }
+            .map(|extension| normalize_path(&format!("{path}.{extension}"))),
+    );
+    candidates
 }
 
 pub(crate) fn path_has_extension(path: &str) -> bool {

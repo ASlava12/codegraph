@@ -910,6 +910,55 @@ fn scan_project_uses_persistent_parse_cache_records() {
 }
 
 #[test]
+fn a_typescript_import_finds_the_file_typescript_would() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src").join("template")).unwrap();
+    fs::write(
+        root.join("src").join("app.ts"),
+        "import { expectType } from './utils'\nimport { isVSlot } from './vFor.spec'\nimport readme from './template/index.html?raw'\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("utils.d.ts"),
+        "export declare function expectType(): void\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("vFor.spec.ts"),
+        "export const isVSlot = true\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("template").join("index.html"),
+        "<!-- -->\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolved = |written: &str| -> String {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.label.contains(written))
+            .and_then(|node| node.metadata.get("resolved_path").cloned())
+            .unwrap_or_else(|| format!("`{written}` did not resolve"))
+    };
+
+    // A declaration file is what `./utils` names when it is the only
+    // `utils` around, `vFor.spec` wears a dot without being a file
+    // extension, and `?raw` tells a bundler how to load the file rather
+    // than which file to load.
+    assert_eq!(resolved("'./utils'"), "src/utils.d.ts");
+    assert_eq!(resolved("'./vFor.spec'"), "src/vFor.spec.ts");
+    assert_eq!(
+        resolved("'./template/index.html?raw'"),
+        "src/template/index.html"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scan_project_resolves_local_import_files() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();
