@@ -1710,17 +1710,27 @@ pub(crate) fn link_imports_to_package_hubs(context: &mut IndexContext) {
 pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
     let pending = std::mem::take(&mut context.pending_route_handlers);
     for reference in pending {
-        for handler_id in resolve_function_targets(&context.function_symbols, &reference.handler) {
-            add_entrypoint_reference(
-                context,
-                reference.entrypoint,
-                handler_id,
-                "entrypoint_function",
-                "framework_route_handler",
-                Confidence::Heuristic,
-                Some(&reference.handler),
-            );
-        }
+        let targets = resolve_function_targets(&context.function_symbols, &reference.handler);
+        // A decorator sits directly above the function it registers, so the
+        // handler is in the route's own file — which `detectors` already
+        // tried. Reaching here means it was not, and linking to every
+        // same-named function invented the links wholesale: one `@app.route`
+        // in a flask docstring claimed about 140 different `index`
+        // functions as its handler. Take the single candidate when the name
+        // leaves no choice, and otherwise leave the handler unresolved,
+        // which `unresolved_framework_route_handler` already reports.
+        let [handler_id] = targets[..] else {
+            continue;
+        };
+        add_entrypoint_reference(
+            context,
+            reference.entrypoint,
+            handler_id,
+            "entrypoint_function",
+            "framework_route_handler",
+            Confidence::Heuristic,
+            Some(&reference.handler),
+        );
     }
 }
 

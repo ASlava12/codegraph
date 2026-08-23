@@ -7202,3 +7202,67 @@ fn replace_build_identity(text: &str) -> Option<String> {
     let end = start + text[start..].find('"')?;
     Some(format!("{}0.0.0-other{}", &text[..start], &text[end..]))
 }
+
+#[test]
+fn a_route_handler_is_not_every_function_of_that_name() {
+    // A decorator sits above the function it registers, so the handler is
+    // in the route's own file. When it is not — a route written inside a
+    // docstring, say — linking to every same-named function invented the
+    // links wholesale: one `@app.route` in flask claimed about 140
+    // different `index` functions as its handler.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app")).unwrap();
+    fs::write(
+        root.join("app").join("main.py"),
+        "from flask import Flask\n\napp = Flask(__name__)\n\n\n@app.route(\"/here\")\ndef index():\n    return \"here\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("other.py"),
+        "def index():\n    return \"other\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("third.py"),
+        "def index():\n    return \"third\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("docs.py"),
+        "def helper():\n    \"\"\"Example:\n\n    @app.route(\"/example\")\n    def index():\n        return \"x\"\n    \"\"\"\n    return 1\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let handler_edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.metadata.get("resolution").map(String::as_str) == Some("framework_route_handler")
+        })
+        .collect();
+
+    // The route in main.py finds its own file's `index` and nothing else.
+    assert_eq!(
+        handler_edges.len(),
+        1,
+        "one route resolves to one handler, got {:?}",
+        handler_edges
+            .iter()
+            .map(|edge| edge.target)
+            .collect::<Vec<_>>()
+    );
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == handler_edges[0].target)
+        .expect("the handler exists");
+    assert!(
+        target
+            .span
+            .as_ref()
+            .is_some_and(|span| span.path.ends_with("main.py")),
+        "the handler is the one beside the route, got {:?}",
+        target.span
+    );
+}
