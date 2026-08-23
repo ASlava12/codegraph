@@ -976,6 +976,16 @@ pub(crate) fn index_file(
 fn ocaml_interface_names(path: &Path) -> Option<BTreeSet<String>> {
     let interface = path.with_extension("mli");
     let text = fs::read_to_string(interface).ok()?;
+    // `include Io_intf.S` brings in names written in another file, which
+    // this cannot enumerate. 125 of dune's 931 interfaces do it, and
+    // guessing that what it cannot see is private would call `read_file`
+    // hidden when the interface plainly offers it.
+    if text
+        .lines()
+        .any(|line| line.trim_start().starts_with("include "))
+    {
+        return None;
+    }
     let mut names = BTreeSet::new();
     for line in text.lines() {
         let Some(rest) = line.trim_start().strip_prefix("val ") else {

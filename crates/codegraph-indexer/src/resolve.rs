@@ -1229,37 +1229,19 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             }
         }
 
-        // A module keeps what it does not export. `e.tag.toLowerCase()` in
-        // one vue package was answered by a `const toLowerCase` in
-        // another, and `/dns/i.test(...)` by a `test` inside an axios
-        // adapter: 1000 calls across the corpus landed on a definition
-        // their own file had no way to name.
-        if matches!(call.language.as_str(), "typescript" | "javascript" | "tsx")
-            && !targets.is_empty()
-        {
+        // A definition kept to its own file cannot answer a call from
+        // another one. `e.tag.toLowerCase()` in one vue package was
+        // answered by a `const toLowerCase` in another, `ngx.req` by a
+        // `local` in kong, and 2681 of redis's calls by a `static` in a
+        // file that never sees them.
+        if !targets.is_empty() {
             let reachable = targets
                 .iter()
                 .copied()
                 .filter(|target| {
-                    let Some(node) = graph_node(&context.graph, *target) else {
-                        return true;
-                    };
-                    let Some(path) = node.span.as_ref().map(|span| span.path.as_str()) else {
-                        return true;
-                    };
-                    if caller_path == Some(path) {
-                        return true;
-                    }
-                    // A method is reached through its type, whose own
-                    // export governs it: `AxiosHeaders.has` is not private
-                    // because the method carries no `export` of its own.
-                    node.metadata.contains_key("owner_type")
-                        || node.metadata.get("visibility").map(String::as_str) != Some("private")
-                        // A file that exports nothing says nothing about
-                        // what is private: CommonJS hands its functions out
-                        // through `module.exports`, which is not an export
-                        // statement.
-                        || !exporting_files.contains(path)
+                    graph_node(&context.graph, *target).is_none_or(|node| {
+                        definition_is_reachable(node, caller_path, &exporting_files)
+                    })
                 })
                 .collect::<Vec<_>>();
             if reachable.len() < targets.len() {
@@ -1637,6 +1619,61 @@ pub(crate) fn graph_node(graph: &CodeGraph, id: NodeId) -> Option<&codegraph_cor
         .and_then(|index| graph.nodes.get(index as usize))
         .filter(|node| node.id == id)
         .or_else(|| graph.nodes.iter().find(|node| node.id == id))
+}
+
+/// Whether a definition can answer a call from `caller_path`. What
+/// "private" reaches differs by language, and so does what the fact rests
+/// on: an export list, an interface file beside the module, a `static`, a
+/// `local`.
+fn definition_is_reachable(
+    node: &codegraph_core::Node,
+    caller_path: Option<&str>,
+    exporting_files: &BTreeSet<String>,
+) -> bool {
+    let Some(path) = node.span.as_ref().map(|span| span.path.as_str()) else {
+        return true;
+    };
+    if caller_path == Some(path) {
+        return true;
+    }
+    if node.metadata.get("visibility").map(String::as_str) != Some("private") {
+        return true;
+    }
+    let language = node
+        .metadata
+        .get("language")
+        .map(String::as_str)
+        .unwrap_or_default();
+    match language {
+        "javascript" | "typescript" | "tsx" => {
+            // A method is reached through its type, whose own export
+            // governs it, and a file that exports nothing says nothing
+            // about what is private: CommonJS hands its functions out
+            // through `module.exports`.
+            node.metadata.contains_key("owner_type") || !exporting_files.contains(path)
+        }
+        // A `static` function belongs to the translation unit compiling
+        // it -- unless it sits in a header, which every file that includes
+        // it compiles for itself.
+        "c" | "cpp" => matches!(
+            Path::new(path)
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("h") | Some("hpp") | Some("hh") | Some("hxx") | Some("inc")
+        ),
+        // An interface file states a module's whole surface, a `local` Lua
+        // function is its file's, an unexported Erlang or Haskell name
+        // cannot be written from outside, and none of Java, Kotlin, Scala,
+        // PHP or Zig spreads a type across files.
+        "ocaml" | "lua" | "erlang" | "haskell" | "php" | "java" | "kotlin" | "scala" | "zig" => {
+            false
+        }
+        // Go's lowercase reaches its whole package, Python's and Dart's
+        // underscore is a convention, Ruby's `private` only refuses an
+        // explicit receiver, and C# and Swift spread a type across files
+        // with partial classes and extensions.
+        _ => true,
+    }
 }
 
 /// [`graph_node`] for a caller that means to change what it finds.

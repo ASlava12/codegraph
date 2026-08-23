@@ -910,6 +910,60 @@ fn scan_project_uses_persistent_parse_cache_records() {
 }
 
 #[test]
+fn a_static_c_function_answers_only_its_own_translation_unit() {
+    // `static` belongs to the file that compiles it -- unless it sits in a
+    // header, which every file that includes it compiles for itself. 2681
+    // of redis's calls landed on a `static` in a file that never sees
+    // them, and every one that remains is in a header.
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("helpers.h"),
+        "static int shared_helper(int value) { return value; }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("other.c"),
+        "static int hidden_helper(int value) { return value; }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("main.c"),
+        "#include \"helpers.h\"\n\nint main(void) {\n    return shared_helper(1) + hidden_helper(2);\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let node_in = |label: &str, path: &str| {
+        graph.nodes.iter().find(|node| {
+            node.kind == NodeKind::Function
+                && node.label == label
+                && node.span.as_ref().is_some_and(|span| span.path == path)
+        })
+    };
+    let main = node_in("main", "main.c").expect("main is indexed");
+    let shared = node_in("shared_helper", "helpers.h").expect("the header helper is indexed");
+    let hidden = node_in("hidden_helper", "other.c").expect("the other unit's helper is indexed");
+    let called: Vec<NodeId> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Calls && edge.source == main.id)
+        .map(|edge| edge.target)
+        .collect();
+
+    assert!(
+        called.contains(&shared.id),
+        "a header is compiled into whoever includes it"
+    );
+    assert!(
+        !called.contains(&hidden.id),
+        "another translation unit cannot name it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_ocaml_module_offers_what_its_interface_states() {
     // `filename.mli` lists what `filename.ml` offers, and the parser never
     // sees the file beside the one it is reading. A module with no
