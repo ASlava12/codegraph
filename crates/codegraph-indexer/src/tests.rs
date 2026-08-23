@@ -910,6 +910,69 @@ fn scan_project_uses_persistent_parse_cache_records() {
 }
 
 #[test]
+fn a_module_keeps_what_it_does_not_export() {
+    // `e.tag.toLowerCase()` in one vue package was answered by a `const
+    // toLowerCase` in another. A module keeps what it does not export, so
+    // no other file can be calling it.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("helpers.ts"),
+        "export const shared = (value: string) => value\n\nconst hidden = (value: string) => value\n\nexport const use = (value: string) => hidden(value)\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("main.ts"),
+        "import { shared } from './helpers'\n\nexport function run(tag: string) {\n  shared(tag)\n  return tag.hidden()\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let node_at = |label: &str, line: u32| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == label
+                    && node
+                        .span
+                        .as_ref()
+                        .is_some_and(|span| span.start_line == line)
+            })
+            .unwrap_or_else(|| panic!("no `{label}` on line {line}"))
+    };
+    let shared = node_at("shared", 1);
+    let hidden = node_at("hidden", 3);
+    let run = node_at("run", 3);
+    assert_eq!(
+        shared.metadata.get("visibility").map(String::as_str),
+        Some("public"),
+        "`export const` exports it, however many wrappers stand between"
+    );
+    assert_eq!(
+        hidden.metadata.get("visibility").map(String::as_str),
+        Some("private")
+    );
+
+    let called_from_run: Vec<NodeId> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Calls && edge.source == run.id)
+        .map(|edge| edge.target)
+        .collect();
+    assert!(
+        called_from_run.contains(&shared.id),
+        "the export is reached"
+    );
+    assert!(
+        !called_from_run.contains(&hidden.id),
+        "another file cannot name what the module keeps"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_call_to_something_out_of_scope_stays_unresolved() {
     // `db.close()` in flask's tutorial example was answered by a `close`
     // defined inside a test function. Where no candidate is visible from

@@ -682,12 +682,23 @@ pub(crate) fn visibility_label(
                 "private"
             },
         ),
-        // An `export` wraps the declaration.
+        // An `export` wraps the declaration, and `export const f = () =>
+        // {}` wraps it twice over: the arrow function sits inside a
+        // declarator inside a declaration inside the export. Reading only
+        // the immediate parent called 1227 of vue's exported functions
+        // private, `isString` among them.
         Language::JavaScript | Language::TypeScript | Language::Tsx => {
-            let exported = node
-                .parent()
-                .is_some_and(|parent| parent.kind() == "export_statement");
-            Some(if exported { "public" } else { "private" })
+            let mut current = node.parent();
+            while let Some(parent) = current {
+                match parent.kind() {
+                    "export_statement" => return Some("public"),
+                    "variable_declarator" | "lexical_declaration" | "variable_declaration" => {
+                        current = parent.parent();
+                    }
+                    _ => break,
+                }
+            }
+            Some("private")
         }
         // Convention, but a convention the whole ecosystem reads as a
         // contract.

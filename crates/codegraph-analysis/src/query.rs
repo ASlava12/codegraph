@@ -3750,6 +3750,9 @@ pub(crate) fn resolution_basis_evidence(basis: &str) -> Option<&'static str> {
         "package" => "resolution_note=an unqualified call resolves inside its own package",
         "module_file" => "resolution_note=the module named in the call is the file that defines it",
         "lexical_scope" => "resolution_note=the target is visible from the calling definition",
+        "module_export" => {
+            "resolution_note=the target's module exports it, so another file can name it"
+        }
         "receiver_type" => "resolution_note=the receiver's declared type owns the target",
         "owner_type" => "resolution_note=the call names the type that owns the target",
         "overload" => {

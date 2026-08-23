@@ -970,6 +970,7 @@ pub const RESOLUTION_BASES: &[&str] = &[
     "package",
     "module_file",
     "lexical_scope",
+    "module_export",
     "receiver_type",
     "owner_type",
     "overload",
@@ -1028,6 +1029,23 @@ fn one_methods_overloads(graph: &CodeGraph, targets: &[NodeId]) -> bool {
 
 pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     let pending_calls = std::mem::take(&mut context.pending_calls);
+    // The files that export something. Only there does "not exported"
+    // mean private: a CommonJS file hands its functions out through
+    // `module.exports`, which is not an export statement, so nothing in it
+    // can be called private on that evidence.
+    let exporting_files: BTreeSet<String> = context
+        .graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata.get("visibility").map(String::as_str) == Some("public")
+                && matches!(
+                    node.metadata.get("language").map(String::as_str),
+                    Some("typescript") | Some("javascript") | Some("tsx")
+                )
+        })
+        .filter_map(|node| node.span.as_ref().map(|span| span.path.clone()))
+        .collect();
 
     for call in pending_calls {
         let all_targets = resolve_function_targets(&context.function_symbols, &call.label);
@@ -1207,6 +1225,47 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 targets = visible;
                 if !targets.is_empty() {
                     basis = "lexical_scope";
+                }
+            }
+        }
+
+        // A module keeps what it does not export. `e.tag.toLowerCase()` in
+        // one vue package was answered by a `const toLowerCase` in
+        // another, and `/dns/i.test(...)` by a `test` inside an axios
+        // adapter: 1000 calls across the corpus landed on a definition
+        // their own file had no way to name.
+        if matches!(call.language.as_str(), "typescript" | "javascript" | "tsx")
+            && !targets.is_empty()
+        {
+            let reachable = targets
+                .iter()
+                .copied()
+                .filter(|target| {
+                    let Some(node) = graph_node(&context.graph, *target) else {
+                        return true;
+                    };
+                    let Some(path) = node.span.as_ref().map(|span| span.path.as_str()) else {
+                        return true;
+                    };
+                    if caller_path == Some(path) {
+                        return true;
+                    }
+                    // A method is reached through its type, whose own
+                    // export governs it: `AxiosHeaders.has` is not private
+                    // because the method carries no `export` of its own.
+                    node.metadata.contains_key("owner_type")
+                        || node.metadata.get("visibility").map(String::as_str) != Some("private")
+                        // A file that exports nothing says nothing about
+                        // what is private: CommonJS hands its functions out
+                        // through `module.exports`, which is not an export
+                        // statement.
+                        || !exporting_files.contains(path)
+                })
+                .collect::<Vec<_>>();
+            if reachable.len() < targets.len() {
+                targets = reachable;
+                if !targets.is_empty() {
+                    basis = "module_export";
                 }
             }
         }
