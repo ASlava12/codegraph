@@ -105,11 +105,20 @@ pub(crate) fn collect_items(
     }
 
     let mut next_function = current_function;
-    if let Some(item) = classify_node(language, node, source, path) {
+    if let Some(mut item) = classify_node(language, node, source, path) {
         if matches!(
             item.kind,
             ParsedItemKind::Function | ParsedItemKind::Entrypoint
         ) {
+            // A definition nested in another one is visible only inside it —
+            // a Haskell `where` binding, a local `fn`, a closure bound to a
+            // name. Recording which definition encloses it lets call
+            // resolution stop treating 167 unrelated local `f`s as candidates
+            // for one call.
+            if let Some(enclosing) = next_function.as_deref() {
+                item.metadata
+                    .insert("enclosing_function".to_string(), enclosing.to_string());
+            }
             next_function = Some(item.label.clone());
         }
         facts.items.push(item);

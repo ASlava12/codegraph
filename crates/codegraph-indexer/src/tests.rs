@@ -1977,6 +1977,73 @@ fn scan_project_resolves_python_absolute_local_imports() {
 }
 
 #[test]
+fn a_nested_helper_is_only_visible_inside_its_own_function() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("app.py"),
+        r#"def outer_a():
+    def helper():
+        return 1
+
+    return helper()
+
+
+def outer_b():
+    def helper():
+        return 2
+
+    return helper()
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let function_at = |line: u32| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == NodeKind::Function
+                    && node
+                        .span
+                        .as_ref()
+                        .is_some_and(|span| span.start_line == line)
+            })
+            .unwrap_or_else(|| panic!("no function starting on line {line}"))
+    };
+    let outer_a = function_at(1);
+    let helper_a = function_at(2);
+    let helper_b = function_at(9);
+    assert_eq!(
+        helper_a
+            .metadata
+            .get("enclosing_function")
+            .map(String::as_str),
+        Some("outer_a")
+    );
+
+    // Both helpers share a label, so matching by name alone made the call
+    // ambiguous. Lexical scope settles it: `outer_a` can only mean its own.
+    let called: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.source == outer_a.id && edge.kind == EdgeKind::Calls)
+        .map(|edge| edge.target)
+        .collect();
+    assert!(
+        called.contains(&helper_a.id),
+        "outer_a should call its own helper"
+    );
+    assert!(
+        !called.contains(&helper_b.id),
+        "outer_a cannot see outer_b's helper"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn call_edges_carry_the_call_site() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

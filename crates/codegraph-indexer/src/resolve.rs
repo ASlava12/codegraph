@@ -376,6 +376,40 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             _ if !local_targets.is_empty() => local_targets,
             _ => language_targets,
         };
+        // A definition nested in another one is only visible inside it, so a
+        // local helper cannot be the target of a call from anywhere else. On
+        // shellcheck 869 of 989 ambiguous calls had a `where` binding among
+        // their candidates — one label, `f`, had 167 of them.
+        if targets.len() > 1 {
+            let caller_scope = graph_node(&context.graph, call.caller).map(|node| {
+                (
+                    node.label.clone(),
+                    node.metadata.get("enclosing_function").cloned(),
+                )
+            });
+            let visible = targets
+                .iter()
+                .copied()
+                .filter(|target| {
+                    let Some(enclosing) = graph_node(&context.graph, *target)
+                        .and_then(|node| node.metadata.get("enclosing_function"))
+                    else {
+                        // Top level: visible to the whole module.
+                        return true;
+                    };
+                    caller_scope
+                        .as_ref()
+                        .is_some_and(|(label, caller_enclosing)| {
+                            label == enclosing
+                                || caller_enclosing.as_deref() == Some(enclosing.as_str())
+                        })
+                })
+                .collect::<Vec<_>>();
+            if !visible.is_empty() && visible.len() < targets.len() {
+                targets = visible;
+            }
+        }
+
         // A qualified call (`CodeGraph::new`, `Foo.bar`) matches many bare
         // `new`/`bar` declarations; keep only methods whose owning type is the
         // one named in the call, which turns an ambiguous set into one edge.
