@@ -2368,8 +2368,28 @@ pub(crate) fn placeholder_credential_default(default_value: &str) -> bool {
     has_placeholder && has_credential
 }
 
+/// The package ids the project's own manifests claim for it, as recorded
+/// on the repository node by the scan.
+pub(crate) fn project_own_package_ids(graph: &CodeGraph) -> BTreeSet<String> {
+    graph
+        .nodes
+        .iter()
+        .find(|node| node.id == graph.root)
+        .and_then(|node| node.metadata.get("own_package_ids"))
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let nodes_by_id = node_index(graph);
+    let own_packages = project_own_package_ids(graph);
     let declared = declared_package_ids(graph);
     let declared_ecosystems: BTreeSet<_> = declared
         .iter()
@@ -2424,6 +2444,15 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
         }
         let imports = import_package_candidates(language, &import_node.label, &declared_ecosystems);
         if imports.is_empty() {
+            continue;
+        }
+        // Nothing declares a dependency on itself. guzzle's own sources
+        // `use GuzzleHttp\…`, which names the package its composer.json
+        // claims — 363 findings said the project had failed to require
+        // itself.
+        if imports.iter().any(|import| {
+            own_packages.contains(&format!("{}:{}", import.ecosystem, import.package))
+        }) {
             continue;
         }
         let Some(import) = imports
@@ -3645,8 +3674,18 @@ pub(crate) fn php_namespace_package_candidates(namespace: &str) -> Vec<String> {
         ["Symfony", "Component", component, ..] => {
             packages.push(format!("symfony/{}", composer_package_part(component)));
         }
-        ["Psr", component, ..] => {
+        ["Psr", component, rest @ ..] => {
+            // `Psr\Log` is psr/log, but `Psr\Http\Message` is
+            // psr/http-message rather than psr/http. Offer both, and let
+            // the declared set decide which one the project actually has.
             packages.push(format!("psr/{}", composer_package_part(component)));
+            if let Some(second) = rest.first() {
+                packages.push(format!(
+                    "psr/{}-{}",
+                    composer_package_part(component),
+                    composer_package_part(second)
+                ));
+            }
         }
         _ => {}
     }

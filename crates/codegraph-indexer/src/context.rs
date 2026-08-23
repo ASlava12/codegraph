@@ -46,6 +46,9 @@ pub(crate) struct IndexContext {
     pub(crate) go_modules: Vec<GoModuleRoot>,
     pub(crate) dart_packages: Vec<DartPackageRoot>,
     pub(crate) npm_packages: Vec<NpmPackageRoot>,
+    /// Package names the project's own manifests claim. Nothing declares
+    /// a dependency on itself.
+    pub(crate) own_package_ids: BTreeSet<String>,
     pub(crate) c_include_dirs: Vec<String>,
     pub(crate) custom_rules: CustomRules,
     pub(crate) annotations: GraphAnnotations,

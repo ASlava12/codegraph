@@ -14,12 +14,40 @@ use walkdir::WalkDir;
 #[allow(unused_imports)]
 use crate::*;
 
+/// The package this manifest declares the project itself to be. A project
+/// does not depend on itself: guzzle's own sources `use GuzzleHttp\…`,
+/// and without this the graph reported 363 imports of an undeclared
+/// `guzzlehttp/guzzle`.
+pub(crate) fn manifest_own_package_id(path: &Path, source: &str) -> Option<String> {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some("package.json") => package_json_name(source).map(|name| format!("npm:{name}")),
+        Some("composer.json") => serde_json::from_str::<serde_json::Value>(source)
+            .ok()
+            .and_then(|value| value.get("name")?.as_str().map(str::to_string))
+            .map(|name| format!("composer:{}", name.to_ascii_lowercase())),
+        Some("Cargo.toml") => source
+            .lines()
+            .skip_while(|line| line.trim() != "[package]")
+            .skip(1)
+            .take_while(|line| !line.trim_start().starts_with('['))
+            .find_map(|line| {
+                let (key, value) = line.split_once('=')?;
+                (key.trim() == "name").then(|| value.trim().trim_matches('"').to_string())
+            })
+            .map(|name| format!("cargo:{name}")),
+        _ => None,
+    }
+}
+
 pub(crate) fn index_manifest_dependencies(
     context: &mut IndexContext,
     file_id: NodeId,
     path: &Path,
     source: &str,
 ) {
+    if let Some(own) = manifest_own_package_id(path, source) {
+        context.own_package_ids.insert(own);
+    }
     let dependencies = manifest_dependencies(path, source, &context.cargo_workspace_dependencies);
     for dependency in dependencies {
         let package_name = canonical_package_name(&dependency.ecosystem, &dependency.name);

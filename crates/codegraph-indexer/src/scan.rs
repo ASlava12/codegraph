@@ -127,6 +127,7 @@ pub(crate) fn scan_project_with_scope(
         cargo_workspace_dependencies,
         go_modules,
         npm_packages,
+        own_package_ids: BTreeSet::new(),
         dart_packages,
         c_include_dirs,
         custom_rules,
@@ -226,6 +227,18 @@ pub(crate) fn scan_project_with_scope(
     }
 
     cancel.check()?;
+    // What the project calls itself, so nothing downstream mistakes its own
+    // package for an outside dependency.
+    if !context.own_package_ids.is_empty() {
+        let own = context
+            .own_package_ids
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(",");
+        let root_id = context.graph.root;
+        add_node_metadata(&mut context.graph, root_id, "own_package_ids", own);
+    }
     resolve_pending_calls(&mut context);
     resolve_pending_type_references(&mut context);
     resolve_pending_local_imports(&mut context);

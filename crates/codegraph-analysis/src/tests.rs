@@ -10371,3 +10371,71 @@ fn a_script_that_runs_a_program_declares_no_missing_file() {
         assert!(names_a_path(target), "`{target}` does name a file");
     }
 }
+
+#[test]
+fn a_project_does_not_import_itself_from_outside() {
+    // guzzle's own sources `use GuzzleHttp\…`, which names the package its
+    // composer.json claims, and 363 findings said the project had failed
+    // to require itself. `Psr\Http\Message` is psr/http-message, not the
+    // psr/http the two-segment rule produced.
+    let candidates = php_namespace_package_candidates("Psr\\Http\\Message\\RequestInterface");
+    assert!(
+        candidates.contains(&"psr/http-message".to_string()),
+        "{candidates:?}"
+    );
+    assert!(
+        candidates.contains(&"psr/http".to_string()),
+        "the shorter reading stays a candidate: {candidates:?}"
+    );
+
+    let mut graph = CodeGraph::new("repo");
+    let root = graph.root;
+    if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == root) {
+        node.metadata.insert(
+            "own_package_ids".to_string(),
+            "composer:guzzlehttp/guzzle".to_string(),
+        );
+    }
+    let manifest = graph.add_node(NodeKind::File, "composer.json");
+    let source = graph.add_node_with_metadata(
+        NodeKind::File,
+        "src/Client.php",
+        None,
+        BTreeMap::from([("language".to_string(), "php".to_string())]),
+    );
+    let promises = dependency_node(
+        &mut graph,
+        "guzzlehttp/promises",
+        "composer:guzzlehttp/promises",
+    );
+    graph.add_edge_with_metadata(
+        manifest,
+        promises,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+    );
+    let own_import = import_node(&mut graph, "use GuzzleHttp\\Psr7\\Request;", "php");
+    let other_import = import_node(&mut graph, "use Monolog\\Logger;", "php");
+    graph.add_edge(source, own_import, EdgeKind::Imports, Confidence::Syntactic);
+    graph.add_edge(
+        source,
+        other_import,
+        EdgeKind::Imports,
+        Confidence::Syntactic,
+    );
+
+    let report = insights(&graph);
+    let undeclared: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "undeclared_external_import")
+        .map(|insight| insight.message.as_str())
+        .collect();
+    assert_eq!(undeclared.len(), 1, "{undeclared:?}");
+    assert!(
+        undeclared[0].contains("monolog/monolog"),
+        "only a package that really is outside: {}",
+        undeclared[0]
+    );
+}
