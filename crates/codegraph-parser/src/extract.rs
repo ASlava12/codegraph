@@ -272,9 +272,10 @@ pub(crate) fn classify_node(
         // the special form (defmodule/def/import/...); see elixir_call_target.
         Language::Elixir => match elixir_call_target(node, source).as_deref() {
             Some("defmodule") => ParsedItemKind::Module,
-            Some("def" | "defp" | "defmacro" | "defmacrop" | "defdelegate") => {
-                ParsedItemKind::Function
-            }
+            Some(
+                "def" | "defp" | "defmacro" | "defmacrop" | "defdelegate" | "defguard"
+                | "defguardp",
+            ) => ParsedItemKind::Function,
             Some("defprotocol" | "defimpl" | "defstruct") => ParsedItemKind::Type,
             Some("import" | "require" | "use" | "alias") => ParsedItemKind::Import,
             _ => return None,
@@ -1044,9 +1045,19 @@ pub(crate) fn elixir_item_label(node: Node<'_>, source: &[u8]) -> Option<String>
         .named_children(&mut cursor)
         .find(|child| child.kind() == "arguments")?;
     let first = arguments.named_child(0)?;
-    match first.kind() {
-        "alias" | "identifier" => node_text(first, source),
-        "call" => named_child_text(first, "target", source),
+    elixir_definition_head(first, source)
+}
+
+/// The name inside a definition's first argument. `def foo(x) when guard` puts
+/// the head on the left of the `when` operator, so a guarded clause — a common
+/// Elixir idiom — needs one more hop to reach the name.
+fn elixir_definition_head(node: Node<'_>, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "alias" | "identifier" => node_text(node, source),
+        "call" => named_child_text(node, "target", source),
+        "binary_operator" => node
+            .named_child(0)
+            .and_then(|left| elixir_definition_head(left, source)),
         _ => None,
     }
 }

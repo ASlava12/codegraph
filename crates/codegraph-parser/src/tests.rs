@@ -1687,3 +1687,29 @@ fn julia_short_function_definitions_are_definitions_not_calls() {
         "only the real call inside `full` counts: {calls:?}"
     );
 }
+
+#[test]
+fn elixir_guarded_and_one_line_definitions_are_extracted() {
+    // `def foo(x) when guard` puts the head on the left of the `when`
+    // operator; that shape used to yield no name, dropping the definition
+    // entirely (490 of them on ecto). defguard was not classified at all.
+    let source = "defmodule M do\n\
+                  \x20 def one, do: :ok\n\
+                  \x20 def two(x) when is_list(x), do: x\n\
+                  \x20 def three(x) do\n    x\n  end\n\
+                  \x20 defguard is_ok(v) when v == :ok\n\
+                  end\n";
+    let parsed = parse_source("m.ex", source.as_bytes(), Language::Elixir).unwrap();
+    let functions: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Function)
+        .map(|item| item.label.as_str())
+        .collect();
+    for name in ["one", "two", "three", "is_ok"] {
+        assert!(
+            functions.contains(&name),
+            "`{name}` must be extracted: {functions:?}"
+        );
+    }
+}
