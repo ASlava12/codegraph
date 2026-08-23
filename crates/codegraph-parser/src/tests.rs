@@ -2274,3 +2274,42 @@ return M
     // body belongs to neither a definition nor the file.
     assert_eq!(parent_of("orphaned"), None);
 }
+
+#[test]
+fn haskell_data_constructors_are_the_functions_they_are() {
+    // `T_Literal :: Id -> String -> Token` is applied like any function,
+    // but only the type it builds was recorded, so every application
+    // pointed at nothing. The names in a `deriving` clause are not
+    // constructors and must not be picked up with them.
+    let source = r#"module T where
+
+data Token = T_Literal Id String | T_Word Id [Token]
+  deriving (Show, Eq)
+
+newtype Wrapper = Wrapper { unwrap :: Int }
+
+build :: Id -> Token
+build i = T_Literal i "x"
+"#;
+    let parsed = parse_source("T.hs", source.as_bytes(), Language::Haskell).unwrap();
+    let constructor = |label: &str, owner: &str| {
+        parsed.items.iter().any(|item| {
+            item.kind == ParsedItemKind::Function
+                && item.label == label
+                && item.metadata.get("owner_type").map(String::as_str) == Some(owner)
+        })
+    };
+    assert!(constructor("T_Literal", "Token"), "{:?}", parsed.items);
+    assert!(constructor("T_Word", "Token"));
+    assert!(constructor("Wrapper", "Wrapper"), "a newtype has one too");
+
+    for derived in ["Show", "Eq"] {
+        assert!(
+            !parsed
+                .items
+                .iter()
+                .any(|item| item.kind == ParsedItemKind::Function && item.label == derived),
+            "{derived} is a derived class, not a constructor"
+        );
+    }
+}

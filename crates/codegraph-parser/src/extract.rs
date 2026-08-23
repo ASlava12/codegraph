@@ -155,6 +155,16 @@ pub(crate) fn collect_items(
         facts.items.push(item);
     }
 
+    // A Haskell data constructor is a function — `T_Literal :: Id ->
+    // String -> Token` — and code applies it like one. Only the type it
+    // belongs to was recorded, so shellcheck's 1474 constructor
+    // applications had nothing to point at.
+    if language == Language::Haskell {
+        facts
+            .items
+            .extend(haskell_data_constructors(node, source, path));
+    }
+
     let next_scope = next_scope.as_ref().unwrap_or(scope);
     let next_deferred = deferred || is_deferred_body(language, node.kind());
     let mut cursor = node.walk();
@@ -198,6 +208,50 @@ fn call_callee<'tree>(language: Language, node: Node<'tree>) -> Option<Node<'tre
 /// How many layers of `((f))` to look through before giving up. Deeper
 /// than this is not real code, and the loop must end.
 const MAX_PARENTHESIS_DEPTH: usize = 8;
+
+/// The constructors a `data` or `newtype` declaration introduces, each
+/// carrying the type it builds. Only the subtree under the declaration's
+/// constructor field is read, so the names in a `deriving` clause are not
+/// mistaken for constructors.
+fn haskell_data_constructors(node: Node<'_>, source: &[u8], path: &str) -> Vec<ParsedItem> {
+    if !matches!(node.kind(), "data_type" | "newtype") {
+        return Vec::new();
+    }
+    let Some(owner) = node
+        .child_by_field_name("name")
+        .and_then(|name| node_text(name, source))
+    else {
+        return Vec::new();
+    };
+    let Some(constructors) = node
+        .child_by_field_name("constructors")
+        .or_else(|| node.child_by_field_name("constructor"))
+    else {
+        return Vec::new();
+    };
+
+    let mut items = Vec::new();
+    let mut stack = vec![constructors];
+    while let Some(current) = stack.pop() {
+        if current.kind() == "constructor"
+            && let Some(label) = node_text(current, source)
+            && !label.is_empty()
+        {
+            items.push(ParsedItem {
+                kind: ParsedItemKind::Function,
+                label,
+                span: span_for(path, current),
+                parent: None,
+                metadata: BTreeMap::from([("owner_type".to_string(), owner.clone())]),
+            });
+            continue;
+        }
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    items.sort_by_key(|item| item.span.start_line);
+    items
+}
 
 /// A callable with no name of its own: a closure, a lambda, a block passed
 /// to a method. Its statements run when something invokes it, so a call
