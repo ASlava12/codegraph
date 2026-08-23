@@ -7514,6 +7514,45 @@ fn insights_report_unreachable_config_reads() {
 }
 
 #[test]
+fn thin_reachability_does_not_warn_about_being_thin() {
+    // The coverage finding already says entrypoints reach almost nothing
+    // here. Repeating that once per configuration read describes the gap,
+    // not the read, so those findings drop to Info.
+    let mut graph = CodeGraph::new("repo");
+    let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+    let main = graph.add_node(NodeKind::Function, "main");
+    graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+    graph.add_edge(entry, main, EdgeKind::References, Confidence::Exact);
+    for index in 0..40 {
+        graph.add_node(NodeKind::Function, format!("unreached_{index}"));
+    }
+
+    let reader = graph.add_node(NodeKind::Function, "load_settings");
+    let key = graph.add_node(NodeKind::Environment, "DATABASE_URL");
+    graph.add_edge(
+        reader,
+        key,
+        EdgeKind::ReadsEnvironment,
+        Confidence::Heuristic,
+    );
+
+    let report = insights(&graph);
+    let read = report
+        .insights
+        .iter()
+        .find(|insight| insight.kind == "unreachable_config_read")
+        .expect("the read is still reported");
+    assert_eq!(read.severity, InsightSeverity::Info);
+    assert!(
+        report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "low_entrypoint_coverage"),
+        "the gap itself is still said once"
+    );
+}
+
+#[test]
 fn one_unreachable_reader_and_key_is_one_finding() {
     // A shell function that reads $HOME_MANAGER_BACKUP_EXT on two lines
     // reported the same sentence twice, and a key the code assembles at

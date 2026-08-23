@@ -1705,18 +1705,13 @@ pub(crate) fn add_entrypoint_coverage_insights(
         .iter()
         .filter(|node| node.kind == NodeKind::Function)
         .collect();
-    if functions.len() < MIN_FUNCTIONS_FOR_COVERAGE {
+    if !entrypoint_coverage_is_low(graph, reachable) {
         return;
     }
     let reached = functions
         .iter()
         .filter(|function| reachable.contains(&function.id))
         .count();
-    if reached * LOW_ENTRYPOINT_COVERAGE_DENOMINATOR
-        >= functions.len() * LOW_ENTRYPOINT_COVERAGE_NUMERATOR
-    {
-        return;
-    }
 
     let function_ids: BTreeSet<NodeId> = functions.iter().map(|function| function.id).collect();
     let (calls, resolved_calls) = graph
@@ -1783,6 +1778,25 @@ pub(crate) fn add_entrypoint_coverage_insights(
     });
 }
 
+/// Whether entrypoints reach enough of the code for "unreachable" to be a
+/// claim about the code. Below half, [`add_entrypoint_coverage_insights`]
+/// says so once, and what every other unreachability finding describes is
+/// that gap rather than dead code.
+fn entrypoint_coverage_is_low(graph: &CodeGraph, reachable: &BTreeSet<NodeId>) -> bool {
+    let functions = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Function);
+    let (total, reached) = functions.fold((0usize, 0usize), |(total, reached), function| {
+        (
+            total + 1,
+            reached + usize::from(reachable.contains(&function.id)),
+        )
+    });
+    total >= MIN_FUNCTIONS_FOR_COVERAGE
+        && reached * LOW_ENTRYPOINT_COVERAGE_DENOMINATOR < total * LOW_ENTRYPOINT_COVERAGE_NUMERATOR
+}
+
 /// Whole-percent share, reported as 0 when there is nothing to divide.
 fn percentage(part: usize, whole: usize) -> usize {
     (part * 100).checked_div(whole).unwrap_or_default()
@@ -1797,6 +1811,14 @@ pub(crate) fn add_unreachable_config_read_insights(
         return;
     }
 
+    // When entrypoints reach less than half the code, the coverage finding
+    // has already said so, and repeating it once per configuration read
+    // states the gap rather than anything about the read.
+    let severity = if entrypoint_coverage_is_low(graph, reachable) {
+        InsightSeverity::Info
+    } else {
+        InsightSeverity::Warning
+    };
     let path_index = node_path_index(graph);
     let mut reads: BTreeMap<(NodeId, NodeId), Vec<usize>> = BTreeMap::new();
     for (index, edge) in graph.edges.iter().enumerate() {
@@ -1848,7 +1870,7 @@ pub(crate) fn add_unreachable_config_read_insights(
         let target_label = node_label(graph, target).unwrap_or("unknown");
         insights.push(Insight {
             kind: "unreachable_config_read".to_string(),
-            severity: InsightSeverity::Warning,
+            severity,
             message: format!(
                 "`{reader}` reads `{target_label}` but is not reachable from any entrypoint"
             ),
