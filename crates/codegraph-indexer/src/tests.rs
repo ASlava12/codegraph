@@ -952,6 +952,31 @@ fn python_extras_are_not_a_version() {
 }
 
 #[test]
+fn sql_literals_carry_the_line_they_were_written_on() {
+    // The line used to be counted from the start of the file for every
+    // literal, which cost a long file its length squared. It is carried
+    // along with the cursor now, and has to agree with what it was.
+    let source = "package main\n\nfunc run() {\n\tconst greeting = \"hello\"\n\tq := \"SELECT id FROM users\"\n\t// a comment\n\tother := `INSERT INTO audit_log VALUES (1)`\n}\n";
+    let literals = source_sql_literals(source);
+    let found: Vec<(u32, &str)> = literals
+        .iter()
+        .map(|literal| (literal.line, literal.value.as_str()))
+        .collect();
+    assert_eq!(
+        found,
+        vec![
+            (4, "hello"),
+            (5, "SELECT id FROM users"),
+            (7, "INSERT INTO audit_log VALUES (1)"),
+        ]
+    );
+
+    // A file with no SQL verb in it holds no query, so its literals are
+    // never pulled out.
+    assert!(source_sql_literals("let greeting = \"hello\"\n").is_empty());
+}
+
+#[test]
 fn a_computed_require_names_no_module() {
     // `require(resolve(`package.json`))` asks for whatever that call
     // returns. Reaching past it for the first quoted string inside

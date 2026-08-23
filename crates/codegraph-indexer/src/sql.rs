@@ -221,8 +221,8 @@ pub(crate) struct SqlTableConstraint {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceSqlLiteral {
-    value: String,
-    line: u32,
+    pub(crate) value: String,
+    pub(crate) line: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -534,16 +534,43 @@ pub(crate) fn rust_test_module_cutoff(language: Language, source: &str) -> Optio
         .map(|offset| byte_line_number(source, offset))
 }
 
+/// Whether a source could hold a SQL statement at all. A statement has to
+/// open with one of six verbs, so a file whose text holds none of them
+/// holds no query, and the literals never have to be pulled out of it.
+fn could_hold_sql(source: &str) -> bool {
+    const VERBS: [&[u8]; 6] = [
+        b"select", b"insert", b"update", b"delete", b"replace", b"with",
+    ];
+    let bytes = source.as_bytes();
+    bytes.iter().enumerate().any(|(index, byte)| {
+        let opening = byte.to_ascii_lowercase();
+        matches!(opening, b's' | b'i' | b'u' | b'd' | b'r' | b'w')
+            && VERBS.iter().any(|verb| {
+                verb[0] == opening
+                    && bytes
+                        .get(index..index + verb.len())
+                        .is_some_and(|window| window.eq_ignore_ascii_case(verb))
+            })
+    })
+}
+
 pub(crate) fn source_sql_literals(source: &str) -> Vec<SourceSqlLiteral> {
     let mut literals = Vec::new();
+    if !could_hold_sql(source) {
+        return literals;
+    }
     let mut cursor = 0;
+    // The line is carried along with the cursor, which only ever moves
+    // forward. Counting newlines from the start of the file for every
+    // literal made a long file with many strings cost its length squared.
+    let mut line = 1u32;
+    let mut counted = 0usize;
 
     while cursor < source.len() {
         if let Some((value, end)) = raw_string_literal_at(source, cursor) {
-            literals.push(SourceSqlLiteral {
-                value,
-                line: byte_line_number(source, cursor),
-            });
+            line += newlines_in(&source[counted..cursor]);
+            counted = cursor;
+            literals.push(SourceSqlLiteral { value, line });
             cursor = end;
             continue;
         }
@@ -555,17 +582,23 @@ pub(crate) fn source_sql_literals(source: &str) -> Vec<SourceSqlLiteral> {
             cursor += character.len_utf8();
             continue;
         }
+        line += newlines_in(&source[counted..cursor]);
+        counted = cursor;
 
-        let delimiter = character.to_string();
-        let triple_delimiter = delimiter.repeat(3);
-        if character != '`' && source[cursor..].starts_with(&triple_delimiter) {
-            let content_start = cursor + triple_delimiter.len();
-            if let Some(relative_end) = source[content_start..].find(&triple_delimiter) {
+        let quote = character as u8;
+        let bytes = source.as_bytes();
+        let is_triple = character != '`'
+            && bytes.get(cursor + 1) == Some(&quote)
+            && bytes.get(cursor + 2) == Some(&quote);
+        if is_triple {
+            let content_start = cursor + 3;
+            let triple = &source[cursor..content_start];
+            if let Some(relative_end) = source[content_start..].find(triple) {
                 literals.push(SourceSqlLiteral {
                     value: source[content_start..content_start + relative_end].to_string(),
-                    line: byte_line_number(source, cursor),
+                    line,
                 });
-                cursor = content_start + relative_end + triple_delimiter.len();
+                cursor = content_start + relative_end + triple.len();
                 continue;
             }
         }
@@ -592,10 +625,7 @@ pub(crate) fn source_sql_literals(source: &str) -> Vec<SourceSqlLiteral> {
         }
 
         if let Some(end) = end {
-            literals.push(SourceSqlLiteral {
-                value,
-                line: byte_line_number(source, cursor),
-            });
+            literals.push(SourceSqlLiteral { value, line });
             cursor = end;
         } else {
             cursor += character.len_utf8();
@@ -603,6 +633,10 @@ pub(crate) fn source_sql_literals(source: &str) -> Vec<SourceSqlLiteral> {
     }
 
     literals
+}
+
+fn newlines_in(text: &str) -> u32 {
+    text.bytes().filter(|byte| *byte == b'\n').count() as u32
 }
 
 pub(crate) fn raw_string_literal_at(source: &str, cursor: usize) -> Option<(String, usize)> {
