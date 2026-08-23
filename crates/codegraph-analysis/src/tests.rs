@@ -8609,6 +8609,39 @@ fn insights_report_dependency_cycles() {
 }
 
 #[test]
+fn a_suggestion_is_a_name_a_reader_can_ask_about() {
+    let mut graph = CodeGraph::new("repo");
+    graph.add_node(NodeKind::Function, "scan_project");
+    // An import statement and an error construct carry a label too.
+    graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "use codegraph_indexer::scan_project;",
+        None,
+        BTreeMap::from([("item_kind".to_string(), "import".to_string())]),
+    );
+    graph.add_node_with_metadata(
+        NodeKind::ControlFlow,
+        "scan_project",
+        None,
+        BTreeMap::from([("item_kind".to_string(), "error".to_string())]),
+    );
+
+    let error = impact(
+        &graph,
+        ImpactRequest {
+            target: "scan_projekt".to_string(),
+            max_depth: 3,
+            limit: 10,
+        },
+    )
+    .expect_err("expected a miss");
+    assert_eq!(
+        error.to_string(),
+        "impact target `scan_projekt` did not match a node; did you mean `scan_project`?"
+    );
+}
+
+#[test]
 fn explain_edge_says_what_it_searched_for() {
     let mut graph = CodeGraph::new("repo");
     let main = graph.add_node(NodeKind::Function, "main");

@@ -3898,7 +3898,12 @@ pub fn missing_node_error(graph: &CodeGraph, role: &str, value: &str) -> QueryEr
 }
 
 pub(crate) fn node_not_found_error(graph: &CodeGraph, role: &str, value: &str) -> QueryError {
-    let suggestions = near_label_matches(graph, value, |_| true);
+    // Only names a reader can ask about again: an import statement and an
+    // error construct carry a label, but "did you mean `use
+    // codegraph_indexer::{IndexOptions,`?" is not a suggestion.
+    let suggestions = near_label_matches(graph, value, |node| {
+        declares_its_name(node) && node.kind != NodeKind::ExternalDependency
+    });
     if suggestions.is_empty() {
         QueryError::new(format!(
             "{role} `{value}` did not match a node; try a label from `entrypoints`/`query 'nodes search:…'` or an id such as n42"

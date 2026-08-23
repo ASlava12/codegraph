@@ -10,8 +10,8 @@ use crate::{
     ImpactRequest, InsightFilter, InsightSeverity, JourneyRequest, NaturalQueryRequest,
     NodeCardRequest, ProjectReportLimits, RefactorContextRequest, SourceSearchRequest, TraceStart,
     WorkflowFilters, WorkflowRequest, compact_query_result, filter_insight_report, impact,
-    impact_fast, insights, journey, memory, natural_query, node_card, node_card_fast,
-    project_report, query_graph, refactor_context, search_source, workflow,
+    impact_fast, insights, journey, memory, missing_node_error, natural_query, node_card,
+    node_card_fast, project_report, query_graph, refactor_context, search_source, workflow,
 };
 use codegraph_core::{CodeGraph, NodeId};
 use serde_json::{Value, json};
@@ -163,15 +163,21 @@ impl McpEngine<'_> {
     }
 
     fn tool_node_card(&self, args: &Value) -> Result<Value, String> {
+        // A name that was given and did not resolve is a different answer
+        // from a name that was never given.
         let node_id = match args.get("node_id") {
-            Some(Value::Number(number)) => number.as_u64(),
-            Some(Value::String(value)) => self.resolve_target(value).map(|id| id.0),
-            _ => None,
-        }
-        .ok_or_else(|| {
-            "get_node_card requires a `node_id` (integer, n-prefixed id, or stable cg-* id)"
-                .to_string()
-        })?;
+            Some(Value::Number(number)) => number
+                .as_u64()
+                .ok_or_else(|| format!("node_id `{number}` is not a node id")),
+            Some(Value::String(value)) => self
+                .resolve_target(value)
+                .map(|id| id.0)
+                .ok_or_else(|| missing_node_error(self.graph, "node_id", value).to_string()),
+            _ => Err(
+                "get_node_card requires a `node_id` (integer, n-prefixed id, or stable cg-* id)"
+                    .to_string(),
+            ),
+        }?;
         let card_builder = if bool_arg(args, "include_insights", false) {
             node_card
         } else {
@@ -199,9 +205,9 @@ impl McpEngine<'_> {
             .and_then(Value::as_str)
             .unwrap_or("out");
         let depth = usize_arg(args, "depth", 1).clamp(1, 8);
-        let start = self
-            .resolve_target(target)
-            .ok_or_else(|| format!("neighbors target `{target}` did not match a node"))?;
+        let start = self.resolve_target(target).ok_or_else(|| {
+            missing_node_error(self.graph, "neighbors target", target).to_string()
+        })?;
         let mut expression = format!(
             "neighbors id:{} direction:{direction} depth:{depth}",
             start.0
@@ -247,7 +253,7 @@ impl McpEngine<'_> {
                     .map(|value| value as usize),
             },
         )
-        .ok_or_else(|| format!("workflow target `{target}` did not match a node"))?;
+        .ok_or_else(|| missing_node_error(self.graph, "workflow target", target).to_string())?;
         serde_json::to_value(report).map_err(|error| error.to_string())
     }
 
