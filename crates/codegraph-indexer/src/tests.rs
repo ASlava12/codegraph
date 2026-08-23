@@ -1977,6 +1977,67 @@ fn scan_project_resolves_python_absolute_local_imports() {
 }
 
 #[test]
+fn a_qualified_receiver_type_picks_the_package_it_names() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("tfdiags")).unwrap();
+    fs::create_dir_all(root.join("addrs")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.23\n").unwrap();
+    // The same type name with the same method in two packages: neither the
+    // label nor the owner's name alone can choose between them.
+    fs::write(
+        root.join("tfdiags").join("diagnostics.go"),
+        "package tfdiags\n\ntype Diagnostics struct{}\n\nfunc (d Diagnostics) Append() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("addrs").join("addrs.go"),
+        "package addrs\n\ntype Diagnostics struct{}\n\nfunc (d Diagnostics) Append() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("run.go"),
+        r#"package app
+
+import "example.com/app/tfdiags"
+
+func run() {
+    var diags tfdiags.Diagnostics
+    diags.Append()
+}
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge
+                    .metadata
+                    .get("call_label")
+                    .is_some_and(|label| label == "diags.Append")
+        })
+        .expect("missing call edge");
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == call.target)
+        .expect("target node");
+
+    // `var diags tfdiags.Diagnostics` states both halves: the type picks the
+    // method, the package picks which `Diagnostics`.
+    assert_eq!(target.kind, NodeKind::Function);
+    assert_eq!(
+        target.span.as_ref().map(|span| span.path.as_str()),
+        Some("tfdiags/diagnostics.go")
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_receiver_from_outside_the_repository_is_an_external_call() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

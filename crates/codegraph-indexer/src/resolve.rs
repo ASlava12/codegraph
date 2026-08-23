@@ -430,20 +430,46 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
 
         // The receiver's declared type names the method's owner directly, so
         // it settles the choice that the label alone cannot: `b.Configure()`
-        // inside `func (b *Backend)` is `Backend.Configure`.
-        if let Some(receiver_type) = call
-            .receiver_type
-            .as_deref()
-            .map(|receiver_type| receiver_type.rsplit('.').next().unwrap_or(receiver_type))
+        // inside `func (b *Backend)` is `Backend.Configure`. When the type is
+        // qualified — `diags tfdiags.Diagnostics` — the package narrows it the
+        // rest of the way: terraform declares `Diagnostics` in more than one,
+        // so the owner's name alone still left a choice.
+        if let Some(receiver_type) = call.receiver_type.as_deref()
             && targets.len() > 1
         {
+            let (package, owner) = match receiver_type.rsplit_once('.') {
+                Some((package, owner)) => (Some(package), owner),
+                None => (None, receiver_type),
+            };
+            let package_directory = package.and_then(|package| {
+                match context
+                    .file_import_qualifiers
+                    .get(call.span.path.as_str())
+                    .and_then(|qualifiers| qualifiers.get(package))
+                {
+                    Some(ImportedPackage::Local(directory)) => Some(directory.clone()),
+                    _ => None,
+                }
+            });
             let owned = targets
                 .iter()
                 .copied()
                 .filter(|target| {
-                    graph_node(&context.graph, *target)
-                        .and_then(|node| node.metadata.get("owner_type"))
-                        .is_some_and(|declared| declared == receiver_type)
+                    let Some(node) = graph_node(&context.graph, *target) else {
+                        return false;
+                    };
+                    if node
+                        .metadata
+                        .get("owner_type")
+                        .is_none_or(|declared| declared != owner)
+                    {
+                        return false;
+                    }
+                    package_directory.as_deref().is_none_or(|directory| {
+                        node.span
+                            .as_ref()
+                            .is_some_and(|span| declared_in_directory(&span.path, directory))
+                    })
                 })
                 .collect::<Vec<_>>();
             if !owned.is_empty() {
