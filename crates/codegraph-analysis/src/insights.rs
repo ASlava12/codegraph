@@ -1634,11 +1634,41 @@ pub(crate) fn add_entrypoint_coverage_insights(
 
     let coverage = percentage(reached, functions.len());
     let resolution = percentage(resolved_calls, calls);
+    // A library has no `main`: its code is reached by whoever imports it, so
+    // "unreachable from an entrypoint" is a statement about this repository
+    // running alone, not about dead code. Saying which of the two the reader
+    // is looking at costs one more walk.
+    let exported: BTreeSet<NodeId> = functions
+        .iter()
+        .filter(|function| {
+            function
+                .metadata
+                .get("visibility")
+                .is_some_and(|visibility| visibility == "public")
+        })
+        .map(|function| function.id)
+        .collect();
+    let exported_note = if exported.is_empty() {
+        String::new()
+    } else {
+        let mut roots: BTreeSet<NodeId> = reachable.clone();
+        roots.extend(exported.iter().copied());
+        let with_api = entrypoint_reachable_nodes_from(graph, &roots);
+        let api_reached = functions
+            .iter()
+            .filter(|function| with_api.contains(&function.id))
+            .count();
+        format!(
+            "; counting the {} exported functions as starting points reaches {}%",
+            exported.len(),
+            percentage(api_reached, functions.len())
+        )
+    };
     insights.push(Insight {
         kind: "low_entrypoint_coverage".to_string(),
         severity: InsightSeverity::Warning,
         message: format!(
-            "entrypoints reach {reached} of {} functions ({coverage}%), and {resolution}% of calls resolve to a scanned function — treat `unreachable_*` findings as gaps in call resolution before reading them as dead code",
+            "entrypoints reach {reached} of {} functions ({coverage}%), and {resolution}% of calls resolve to a scanned function{exported_note} — treat `unreachable_*` findings as gaps in call resolution, or as a library reached through its API, before reading them as dead code",
             functions.len()
         ),
         nodes: entrypoints.into_iter().take(8).collect(),

@@ -461,8 +461,17 @@ pub(crate) fn trace_next_node(edge: &Edge, node_id: NodeId, direction: TraceDire
 }
 
 pub(crate) fn entrypoint_reachable_nodes(graph: &CodeGraph) -> BTreeSet<NodeId> {
-    let mut reachable = BTreeSet::new();
-    let mut queue = VecDeque::new();
+    entrypoint_reachable_nodes_from(graph, &BTreeSet::new())
+}
+
+/// The same walk, seeded with extra roots — a library's exported functions,
+/// say, which nothing in the repository has to call for them to run.
+pub(crate) fn entrypoint_reachable_nodes_from(
+    graph: &CodeGraph,
+    extra_roots: &BTreeSet<NodeId>,
+) -> BTreeSet<NodeId> {
+    let mut reachable: BTreeSet<NodeId> = extra_roots.clone();
+    let mut queue: VecDeque<NodeId> = extra_roots.iter().copied().collect();
 
     // Most entrypoints name a file (`script:scripts/build.sh`), not a
     // function, and a file holds its symbols through `contains`. Without that

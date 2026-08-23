@@ -388,9 +388,13 @@ pub(crate) fn classify_node(
     if matches!(
         item_kind,
         ParsedItemKind::Function | ParsedItemKind::Entrypoint
-    ) && let Some(owner) = enclosing_type_label(language, node, source)
-    {
-        metadata.insert("owner_type".to_string(), owner);
+    ) {
+        if let Some(owner) = enclosing_type_label(language, node, source) {
+            metadata.insert("owner_type".to_string(), owner);
+        }
+        if let Some(visibility) = visibility_label(language, node, source, &label) {
+            metadata.insert("visibility".to_string(), visibility.to_string());
+        }
     }
 
     Some(ParsedItem {
@@ -429,6 +433,69 @@ pub(crate) fn go_qualified_type_name(node: Node<'_>, source: &[u8]) -> Option<St
         "pointer_type" | "slice_type" | "array_type" | "parenthesized_type" => node
             .named_child(0)
             .and_then(|inner| go_qualified_type_name(inner, source)),
+        _ => None,
+    }
+}
+
+/// Whether a definition is part of what the project offers outwards.
+///
+/// A library has no `main`, so "reachable from an entrypoint" says nothing
+/// about it; what it offers is its public surface. Each language states that
+/// differently — a keyword, a wrapper, a capital letter, a leading underscore
+/// — and only the unambiguous statements are recorded, so a language that says
+/// nothing here leaves the question open rather than guessing.
+pub(crate) fn visibility_label(
+    language: Language,
+    node: Node<'_>,
+    source: &[u8],
+    label: &str,
+) -> Option<&'static str> {
+    match language {
+        // `pub` / `pub(crate)` / `pub(super)`.
+        Language::Rust => {
+            let mut cursor = node.walk();
+            let Some(modifier) = node
+                .children(&mut cursor)
+                .find(|child| child.kind() == "visibility_modifier")
+            else {
+                // No `pub` is not an absence of information in Rust: it is
+                // private, and the compiler enforces that.
+                return Some("private");
+            };
+            let text = node_text(modifier, source).unwrap_or_default();
+            Some(if text.trim() == "pub" {
+                "public"
+            } else {
+                "crate"
+            })
+        }
+        // Go says it with a capital letter, and means it: an identifier
+        // starting lowercase cannot be referenced from another package.
+        Language::Go => Some(
+            if label
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_uppercase())
+            {
+                "public"
+            } else {
+                "private"
+            },
+        ),
+        // An `export` wraps the declaration.
+        Language::JavaScript | Language::TypeScript | Language::Tsx => {
+            let exported = node
+                .parent()
+                .is_some_and(|parent| parent.kind() == "export_statement");
+            Some(if exported { "public" } else { "private" })
+        }
+        // Convention, but a convention the whole ecosystem reads as a
+        // contract.
+        Language::Python => Some(if label.starts_with('_') {
+            "private"
+        } else {
+            "public"
+        }),
         _ => None,
     }
 }

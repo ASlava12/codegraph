@@ -640,6 +640,58 @@ fn a_rust_error_is_named_by_its_own_message() {
 }
 
 #[test]
+fn a_definition_records_whether_it_faces_outwards() {
+    fn visibility<'a>(parsed: &'a ParsedFile, label: &str) -> Option<&'a str> {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::Function && item.label == label)
+            .unwrap_or_else(|| panic!("missing {label}"))
+            .metadata
+            .get("visibility")
+            .map(String::as_str)
+    }
+
+    let rust = parse_source(
+        "lib.rs",
+        b"pub fn exported() {}\npub(crate) fn shared() {}\nfn hidden() {}\n",
+        Language::Rust,
+    )
+    .unwrap();
+    assert_eq!(visibility(&rust, "exported"), Some("public"));
+    assert_eq!(visibility(&rust, "shared"), Some("crate"));
+    assert_eq!(visibility(&rust, "hidden"), Some("private"));
+
+    // Go states it with a capital letter, and the compiler enforces it.
+    let go = parse_source(
+        "app.go",
+        b"package app\n\nfunc Exported() {}\n\nfunc hidden() {}\n",
+        Language::Go,
+    )
+    .unwrap();
+    assert_eq!(visibility(&go, "Exported"), Some("public"));
+    assert_eq!(visibility(&go, "hidden"), Some("private"));
+
+    let ts = parse_source(
+        "index.ts",
+        b"export function exported() {}\nfunction hidden() {}\n",
+        Language::TypeScript,
+    )
+    .unwrap();
+    assert_eq!(visibility(&ts, "exported"), Some("public"));
+    assert_eq!(visibility(&ts, "hidden"), Some("private"));
+
+    let python = parse_source(
+        "app.py",
+        b"def public_api():\n    pass\n\ndef _internal():\n    pass\n",
+        Language::Python,
+    )
+    .unwrap();
+    assert_eq!(visibility(&python, "public_api"), Some("public"));
+    assert_eq!(visibility(&python, "_internal"), Some("private"));
+}
+
+#[test]
 fn type_arguments_are_not_part_of_what_is_called() {
     let csharp = parse_source(
         "reader.cs",
