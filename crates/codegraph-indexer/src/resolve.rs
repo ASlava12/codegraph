@@ -410,10 +410,31 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             }
         }
 
+        // A receiver whose declared type comes from outside the repository
+        // cannot be calling anything in it: `t.Fatalf()` on a `*testing.T` is
+        // 7564 of terraform's calls, and reporting them as unresolved suggests
+        // a resolver that failed rather than a dependency that left.
+        if let Some((package, _)) = call
+            .receiver_type
+            .as_deref()
+            .and_then(|receiver_type| receiver_type.split_once('.'))
+            && context
+                .file_import_qualifiers
+                .get(call.span.path.as_str())
+                .and_then(|qualifiers| qualifiers.get(package))
+                == Some(&ImportedPackage::External)
+        {
+            add_external_call_placeholder(context, call);
+            continue;
+        }
+
         // The receiver's declared type names the method's owner directly, so
         // it settles the choice that the label alone cannot: `b.Configure()`
         // inside `func (b *Backend)` is `Backend.Configure`.
-        if let Some(receiver_type) = call.receiver_type.as_deref()
+        if let Some(receiver_type) = call
+            .receiver_type
+            .as_deref()
+            .map(|receiver_type| receiver_type.rsplit('.').next().unwrap_or(receiver_type))
             && targets.len() > 1
         {
             let owned = targets

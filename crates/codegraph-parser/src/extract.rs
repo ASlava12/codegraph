@@ -1,7 +1,7 @@
 //! Tree walking and fact classification: parse a source file and turn
 //! syntax nodes into structural, call, entrypoint, and control-flow items.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use codegraph_core::SourceSpan;
@@ -405,12 +405,30 @@ pub(crate) fn classify_node(
 /// The bare name of a Go type node, unwrapping the forms a receiver or
 /// parameter can take: `Backend`, `*Backend`, `pkg.Backend`, `[]Backend`.
 pub(crate) fn go_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    go_qualified_type_name(node, source).map(|name| {
+        name.rsplit_once('.')
+            .map_or(name.clone(), |(_, bare)| bare.to_string())
+    })
+}
+
+/// Like [`go_type_name`], but keeping the package a type is qualified by
+/// (`testing.T`). The package is what says whether a value's methods live in
+/// this repository at all: `t.Fatalf()` on a `*testing.T` cannot resolve here,
+/// and saying so is more useful than calling it unresolved.
+pub(crate) fn go_qualified_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
     match node.kind() {
         "type_identifier" => node_text(node, source),
-        "qualified_type" => named_child_text(node, "name", source),
+        "qualified_type" => {
+            let package = named_child_text(node, "package", source);
+            let name = named_child_text(node, "name", source)?;
+            Some(match package {
+                Some(package) => format!("{package}.{name}"),
+                None => name,
+            })
+        }
         "pointer_type" | "slice_type" | "array_type" | "parenthesized_type" => node
             .named_child(0)
-            .and_then(|inner| go_type_name(inner, source)),
+            .and_then(|inner| go_qualified_type_name(inner, source)),
         _ => None,
     }
 }
@@ -555,7 +573,7 @@ pub(crate) fn declared_variable_types(
             }
             let Some(type_name) = declaration
                 .child_by_field_name("type")
-                .and_then(|type_node| go_type_name(type_node, source))
+                .and_then(|type_node| go_qualified_type_name(type_node, source))
             else {
                 continue;
             };
@@ -570,7 +588,52 @@ pub(crate) fn declared_variable_types(
             }
         }
     }
+    // A name the body re-declares is no longer what the signature said: Go
+    // code shadows `ctx` constantly, and terraform's `multiPartUploadImpl`
+    // takes a `context.Context` and then binds `ctx := &uploadContext{}`.
+    // Trusting the signature there would call a local method external.
+    for shadowed in go_shadowed_names(node, source) {
+        declared.remove(&shadowed);
+    }
     declared
+}
+
+/// Names a function body re-declares with `:=` or `var`, which supersede the
+/// signature for the rest of that body.
+fn go_shadowed_names(node: Node<'_>, source: &[u8]) -> BTreeSet<String> {
+    let mut shadowed = BTreeSet::new();
+    let Some(body) = node.child_by_field_name("body") else {
+        return shadowed;
+    };
+    let mut stack = vec![body];
+    while let Some(current) = stack.pop() {
+        match current.kind() {
+            "short_var_declaration" => {
+                if let Some(left) = current.child_by_field_name("left") {
+                    let mut cursor = left.walk();
+                    for name in left.named_children(&mut cursor) {
+                        if name.kind() == "identifier"
+                            && let Some(text) = node_text(name, source)
+                        {
+                            shadowed.insert(text);
+                        }
+                    }
+                }
+            }
+            "var_spec" => {
+                if let Some(name) = current
+                    .child_by_field_name("name")
+                    .and_then(|name| node_text(name, source))
+                {
+                    shadowed.insert(name);
+                }
+            }
+            _ => {}
+        }
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    shadowed
 }
 
 pub(crate) fn classify_effect(

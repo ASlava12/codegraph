@@ -1977,6 +1977,73 @@ fn scan_project_resolves_python_absolute_local_imports() {
 }
 
 #[test]
+fn a_receiver_from_outside_the_repository_is_an_external_call() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.23\n").unwrap();
+    fs::write(
+        root.join("worker.go"),
+        r#"package app
+
+import (
+    "context"
+    "testing"
+)
+
+type worker struct{}
+
+func (w *worker) work() {}
+
+func Fatalf(format string) {}
+
+func TestWorker(t *testing.T) {
+    t.Fatalf("boom")
+}
+
+func run(ctx context.Context) {
+    ctx := &worker{}
+    ctx.work()
+}
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let target_of = |call_label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge
+                        .metadata
+                        .get("call_label")
+                        .is_some_and(|label| label == call_label)
+            })
+            .and_then(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+            .unwrap_or_else(|| panic!("no call edge for {call_label}"))
+    };
+
+    // `t` is a `*testing.T`: whatever `Fatalf` means, it is not this file's
+    // own `Fatalf`, and calling it unresolved suggests a resolver that failed
+    // rather than a dependency that left.
+    let fatalf = target_of("t.Fatalf");
+    assert_eq!(
+        fatalf.metadata.get("resolution").map(String::as_str),
+        Some("external"),
+        "got {:?}",
+        fatalf.label
+    );
+
+    // ...but a name the body re-declares is no longer what the signature said.
+    let work = target_of("ctx.work");
+    assert_eq!(work.kind, NodeKind::Function);
+    assert_eq!(work.label, "work");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_declared_receiver_type_picks_the_method_it_owns() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();
