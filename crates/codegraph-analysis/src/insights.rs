@@ -1,7 +1,7 @@
 //! Investigation insights: the public insight API, quality gate, and
 //! every insight generator with severity calibration.
 
-use codegraph_core::{CodeGraph, EdgeKind, Node, NodeId, NodeKind};
+use codegraph_core::{COMPUTED_ENVIRONMENT_KEY, CodeGraph, EdgeKind, Node, NodeId, NodeKind};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[allow(unused_imports)]
@@ -1726,6 +1726,7 @@ pub(crate) fn add_unreachable_config_read_insights(
     }
 
     let path_index = node_path_index(graph);
+    let mut reads: BTreeMap<(NodeId, NodeId), Vec<usize>> = BTreeMap::new();
     for (index, edge) in graph.edges.iter().enumerate() {
         if !matches!(
             edge.kind,
@@ -1756,16 +1757,31 @@ pub(crate) fn add_unreachable_config_read_insights(
             continue;
         }
 
-        let reader = node_label(graph, edge.source).unwrap_or("unknown");
-        let target = node_label(graph, edge.target).unwrap_or("unknown");
+        // A key assembled at runtime names nothing to go and look at, and
+        // `reads <computed name>` reads as a hole in the report.
+        if node_label(graph, edge.target).is_some_and(|label| label == COMPUTED_ENVIRONMENT_KEY) {
+            continue;
+        }
+
+        // Reading the same variable on two lines of one function is one
+        // fact about that function, not two.
+        reads
+            .entry((edge.source, edge.target))
+            .or_default()
+            .push(index);
+    }
+
+    for ((source, target), edges) in reads {
+        let reader = node_label(graph, source).unwrap_or("unknown");
+        let target_label = node_label(graph, target).unwrap_or("unknown");
         insights.push(Insight {
             kind: "unreachable_config_read".to_string(),
             severity: InsightSeverity::Warning,
             message: format!(
-                "`{reader}` reads `{target}` but is not reachable from any entrypoint"
+                "`{reader}` reads `{target_label}` but is not reachable from any entrypoint"
             ),
-            nodes: vec![edge.source, edge.target],
-            edges: vec![index],
+            nodes: vec![source, target],
+            edges,
         });
     }
 }

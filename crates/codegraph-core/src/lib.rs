@@ -8,6 +8,11 @@ use std::fmt;
 
 pub const CODEGRAPH_SCHEMA_VERSION: u32 = 1;
 
+/// What an environment read is called when its key is computed. The angle
+/// brackets are deliberate: no variable is named this, so it cannot be
+/// mistaken for one.
+pub const COMPUTED_ENVIRONMENT_KEY: &str = "<computed name>";
+
 /// What identifies the build that produced a cached artefact.
 ///
 /// Caches are keyed by a schema version that says when a record's *shape*

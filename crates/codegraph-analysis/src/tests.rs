@@ -1,7 +1,9 @@
 //! Unit tests for the analysis crate, organized by feature area.
 
 use super::*;
-use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan};
+use codegraph_core::{
+    COMPUTED_ENVIRONMENT_KEY, CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
@@ -7481,6 +7483,52 @@ fn insights_report_unreachable_config_reads() {
     assert!(!report.insights.iter().any(|insight| {
         insight.kind == "unreachable_config_read" && insight.nodes.contains(&main)
     }));
+}
+
+#[test]
+fn one_unreachable_reader_and_key_is_one_finding() {
+    // A shell function that reads $HOME_MANAGER_BACKUP_EXT on two lines
+    // reported the same sentence twice, and a key the code assembles at
+    // runtime named nothing worth going to look at.
+    let mut graph = CodeGraph::new("repo");
+    let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+    let main = graph.add_node(NodeKind::Function, "main");
+    graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+    graph.add_edge(entry, main, EdgeKind::References, Confidence::Exact);
+
+    let reader = graph.add_node(NodeKind::Function, "checkCollision");
+    let key = graph.add_node(NodeKind::Environment, "HOME_MANAGER_BACKUP_EXT");
+    let computed = graph.add_node(NodeKind::Environment, COMPUTED_ENVIRONMENT_KEY);
+    for line in ["23", "25"] {
+        graph.add_edge_with_metadata(
+            reader,
+            key,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+            BTreeMap::from([("line".to_string(), line.to_string())]),
+        );
+    }
+    graph.add_edge(
+        reader,
+        computed,
+        EdgeKind::ReadsEnvironment,
+        Confidence::Heuristic,
+    );
+
+    let report = insights(&graph);
+    let found: Vec<&Insight> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "unreachable_config_read")
+        .collect();
+
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].message.contains("HOME_MANAGER_BACKUP_EXT"),
+        "{}",
+        found[0].message
+    );
+    assert_eq!(found[0].edges.len(), 2, "both reads stay as evidence");
 }
 
 #[test]

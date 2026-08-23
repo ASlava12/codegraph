@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use codegraph_core::COMPUTED_ENVIRONMENT_KEY;
 use tree_sitter::Node;
 
 use crate::*;
@@ -541,11 +542,6 @@ pub(crate) fn effect_label(
     }
     Some(label)
 }
-
-/// What an environment read is called when its key is computed. The angle
-/// brackets are deliberate: no variable is named this, so it cannot be
-/// mistaken for one.
-pub const COMPUTED_ENVIRONMENT_KEY: &str = "<computed name>";
 
 /// Whether a label could be the name of an environment variable: letters,
 /// digits, underscores, and the dots and dashes some systems allow, not
