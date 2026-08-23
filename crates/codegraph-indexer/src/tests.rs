@@ -3851,6 +3851,84 @@ fn scan_project_adds_environment_config_and_error_edges() {
 }
 
 #[test]
+fn a_closure_assigned_to_an_outer_name_is_callable_everywhere() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    // Vue's shape: a module-level binding filled in by one function and
+    // called by another.
+    fs::write(
+        root.join("src").join("component.ts"),
+        r#"let installWithProxy: (i: number) => void
+
+export function registerRuntimeCompiler(compile: any) {
+  installWithProxy = i => {
+    compile(i)
+  }
+}
+
+export function finishComponentSetup(instance: number) {
+  if (installWithProxy) {
+    installWithProxy(instance)
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let installed = node_id(&graph, NodeKind::Function, "installWithProxy");
+    let setup = node_id(&graph, NodeKind::Function, "finishComponentSetup");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls && edge.source == setup && edge.target == installed
+        }),
+        "the call from finishComponentSetup was left unresolved"
+    );
+}
+
+#[test]
+fn a_builtin_namespace_call_is_not_a_project_function() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(
+        root.join("lib").join("axios.js"),
+        r#"function createInstance(defaultConfig) {
+  const instance = {};
+  instance.create = function create(instanceConfig) {
+    return createInstance(instanceConfig);
+  };
+  return instance;
+}
+
+module.exports = createInstance;
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib").join("mergeConfig.js"),
+        r#"function mergeConfig(config1, config2) {
+  const config = Object.create(null);
+  config.merged = true;
+  return config;
+}
+
+module.exports = mergeConfig;
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let create = node_id(&graph, NodeKind::Function, "instance.create");
+    let merge = node_id(&graph, NodeKind::Function, "mergeConfig");
+    assert!(
+        !graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls && edge.source == merge && edge.target == create
+        }),
+        "`Object.create` was answered by the project's `instance.create`"
+    );
+}
+
+#[test]
 fn a_call_belongs_to_the_method_that_makes_it() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

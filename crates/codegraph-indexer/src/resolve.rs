@@ -1048,7 +1048,17 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         .collect();
 
     for call in pending_calls {
-        let all_targets = resolve_function_targets(&context.function_symbols, &call.label);
+        // A qualified name the language itself provides is answered by the
+        // language. `Object.create(...)` in axios shares only its tail with
+        // the repository's `instance.create`, and matching on that tail
+        // invented a dependency cycle between two files that never call
+        // each other.
+        let all_targets =
+            if call.label.contains('.') && builtin_call_target(&call.language, &call.label) {
+                Vec::new()
+            } else {
+                resolve_function_targets(&context.function_symbols, &call.label)
+            };
         let caller_path = graph_node(&context.graph, call.caller)
             .and_then(|node| node.span.as_ref())
             .map(|span| span.path.as_str());

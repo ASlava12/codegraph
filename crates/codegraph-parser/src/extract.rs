@@ -202,7 +202,9 @@ pub(crate) fn collect_items(
             // name. Recording which definition encloses it lets call
             // resolution stop treating 167 unrelated local `f`s as candidates
             // for one call.
-            if let Some(enclosing) = next_function.as_deref() {
+            if let Some(enclosing) = next_function.as_deref()
+                && !binds_an_outer_name(language, node)
+            {
                 item.metadata
                     .insert("enclosing_function".to_string(), enclosing.to_string());
             }
@@ -2014,6 +2016,22 @@ pub(crate) fn lua_bound_function_name(node: Node<'_>, source: &[u8]) -> Option<S
         }
         _ => None,
     }
+}
+
+/// Whether this definition is assigned to a name that lives outside the
+/// function holding it. `let x` at module level and `x = i => {...}` inside
+/// a function is one binding the whole module can call: vue writes
+/// `installWithProxy` that way inside `registerRuntimeCompiler`, and
+/// `finishComponentSetup` calls it. A declaration -- `const x = () => {}`
+/// -- is the local case and keeps its scope.
+pub(crate) fn binds_an_outer_name(language: Language, node: Node<'_>) -> bool {
+    matches!(
+        language,
+        Language::JavaScript | Language::TypeScript | Language::Tsx
+    ) && matches!(node.kind(), "arrow_function" | "function_expression")
+        && node
+            .parent()
+            .is_some_and(|parent| parent.kind() == "assignment_expression")
 }
 
 pub(crate) fn js_bound_function_name(node: Node<'_>, source: &[u8]) -> Option<String> {
