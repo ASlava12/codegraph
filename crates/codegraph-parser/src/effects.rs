@@ -217,6 +217,13 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
 }
 
 pub(crate) fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) -> bool {
+    // Flask and its kind keep configuration in a mapping on the
+    // application object, so `app.config["SECRET_KEY"]` reads that key the
+    // way `os.environ["HOME"]` reads the environment. It is a subscript
+    // rather than a call, which is why this comes before the test below.
+    if language == Language::Python && python_config_mapping_read(node, source) {
+        return true;
+    }
     if language != Language::Bash && !is_call_node(language, node, source) {
         return false;
     }
@@ -564,7 +571,26 @@ pub(crate) fn effect_metadata(
     source: &[u8],
 ) -> BTreeMap<String, String> {
     let mut metadata = BTreeMap::new();
-    if kind != ParsedItemKind::EnvironmentRead {
+    if !matches!(
+        kind,
+        ParsedItemKind::EnvironmentRead | ParsedItemKind::ConfigRead
+    ) {
+        return metadata;
+    }
+
+    // A configuration read is usually a file, which has no fallback. The
+    // one form that does is the mapping read: `app.config.get("PORT",
+    // 8080)`. Nothing else is asked, so a second argument that happens to
+    // be `"utf8"` or `"r"` cannot be taken for a default.
+    if kind == ParsedItemKind::ConfigRead {
+        if language == Language::Python
+            && let Some(default_value) = python_config_mapping_default(node, source)
+        {
+            metadata.insert(
+                "default_value".to_string(),
+                truncate_label(default_value, 120),
+            );
+        }
         return metadata;
     }
 
@@ -640,6 +666,50 @@ fn bash_assigns_same_variable(node: Node<'_>, source: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// Whether a Python expression reads one key out of a configuration
+/// mapping: `app.config["SECRET_KEY"]`, or `app.config.get("PORT", 8080)`
+/// which reads it with a fallback. `app.config[name]` names a key the code
+/// works out as it runs, and there is nothing there to record.
+fn python_config_mapping_read(node: Node<'_>, source: &[u8]) -> bool {
+    match node.kind() {
+        "subscript" => {
+            node.child_by_field_name("subscript")
+                .is_some_and(|key| key.kind() == "string")
+                && names_config_mapping(node.child_by_field_name("value"), source)
+        }
+        "call" => node
+            .child_by_field_name("function")
+            .is_some_and(|function| {
+                function.kind() == "attribute"
+                    && named_child_text(function, "attribute", source).as_deref() == Some("get")
+                    && names_config_mapping(function.child_by_field_name("object"), source)
+                    && first_string_literal(node, source).is_some()
+            }),
+        _ => false,
+    }
+}
+
+/// Whether an expression names something's `config`.
+fn names_config_mapping(node: Option<Node<'_>>, source: &[u8]) -> bool {
+    node.is_some_and(|node| {
+        node.kind() == "attribute"
+            && named_child_text(node, "attribute", source).as_deref() == Some("config")
+    })
+}
+
+/// The fallback in `app.config.get("PORT", 8080)`, which need not be a
+/// string.
+fn python_config_mapping_default(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if !python_config_mapping_read(node, source) {
+        return None;
+    }
+    let arguments = node.child_by_field_name("arguments")?;
+    let mut cursor = arguments.walk();
+    let mut named = arguments.named_children(&mut cursor);
+    named.next()?;
+    node_text(named.next()?, source).map(compact_label)
 }
 
 pub(crate) fn python_env_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {

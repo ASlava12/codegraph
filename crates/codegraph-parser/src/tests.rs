@@ -537,6 +537,56 @@ fn parses_rust_environment_default_values() {
 }
 
 #[test]
+fn parses_python_configuration_mapping_reads() {
+    // Flask keeps configuration in a mapping on the application, so
+    // `app.config["SECRET_KEY"]` reads that key the way `os.environ` reads
+    // the environment. Asking flask where SECRET_KEY is read used to
+    // answer with nothing at all.
+    let parsed = parse_source(
+        "app.py",
+        br#"def start(app, name):
+    secret = app.config["SECRET_KEY"]
+    port = app.config.get("PORT", 8080)
+    debug = current_app.config['DEBUG']
+    computed = app.config[name]
+    other = app.settings["NOT_CONFIG"]
+    return secret, port, debug, computed, other
+"#,
+        Language::Python,
+    )
+    .unwrap();
+
+    let reads: Vec<&str> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::ConfigRead)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(
+        reads,
+        vec!["SECRET_KEY", "PORT", "DEBUG"],
+        "a key the code works out, and a mapping that is not `config`, name nothing to record"
+    );
+
+    let port = parsed
+        .items
+        .iter()
+        .find(|item| item.label == "PORT")
+        .expect("the PORT read");
+    assert_eq!(
+        port.metadata.get("default_value").map(String::as_str),
+        Some("8080"),
+        "`get` states the fallback outright"
+    );
+    let secret = parsed
+        .items
+        .iter()
+        .find(|item| item.label == "SECRET_KEY")
+        .expect("the SECRET_KEY read");
+    assert!(!secret.metadata.contains_key("default_value"));
+}
+
+#[test]
 fn parses_bash_environment_default_values() {
     let parsed = parse_source(
         "entrypoint.sh",
