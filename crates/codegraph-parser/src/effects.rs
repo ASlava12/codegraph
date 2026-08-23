@@ -332,7 +332,21 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
             is_call_node(language, node, source)
                 && call_label(language, node, source)
                     .as_deref()
-                    .is_some_and(|value| simple_name(value) == "panic")
+                    .is_some_and(|value| {
+                        // Go has no `raise`/`throw`: outside of `panic`, an
+                        // error is constructed and returned, so construction is
+                        // where the error flow starts. Match the qualified name
+                        // — an unrelated `pool.New(...)` is not an error.
+                        simple_name(value) == "panic"
+                            || matches!(
+                                value,
+                                "errors.New"
+                                    | "errors.Join"
+                                    | "errors.Wrap"
+                                    | "errors.Wrapf"
+                                    | "fmt.Errorf"
+                            )
+                    })
         }
         Language::C => {
             is_call_node(language, node, source)

@@ -538,6 +538,51 @@ echo "$arch $build_target $PORT $TOKEN $answer $HOME"
 }
 
 #[test]
+fn go_error_constructors_are_error_facts() {
+    let parsed = parse_source(
+        "backend.go",
+        br#"package main
+
+import (
+    "errors"
+    "fmt"
+)
+
+func load(name string) error {
+    if name == "" {
+        return errors.New("empty name")
+    }
+    if len(name) > 64 {
+        return fmt.Errorf("name %q is too long", name)
+    }
+    pool := cache.New(name)
+    if pool == nil {
+        panic("no pool")
+    }
+    return nil
+}
+"#,
+        Language::Go,
+    )
+    .unwrap();
+
+    let errors = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Error)
+        .map(|item| item.label.as_str())
+        .collect::<BTreeSet<_>>();
+
+    // Go signals failure by constructing an error and returning it, so
+    // construction is the error fact; `cache.New` is not one.
+    assert_eq!(
+        errors,
+        BTreeSet::from(["empty name", "name %q is too long", "no pool"]),
+        "unexpected Go error facts"
+    );
+}
+
+#[test]
 fn parses_go_environment_default_values() {
     let parsed = parse_source(
         "main.go",
