@@ -9990,3 +9990,46 @@ fn every_label_started_report_says_which_definition_it_took() {
     .expect("impact");
     assert!(unique.notes.is_empty(), "{:?}", unique.notes);
 }
+
+#[test]
+fn explaining_a_call_says_what_resolved_it() {
+    // "syntax-level fact" is true of every syntactic edge and tells the
+    // reader nothing about this one. The call already records what
+    // narrowed it down, so the explanation can name it.
+    let mut graph = CodeGraph::new("repo");
+    let caller = graph.add_node(NodeKind::Function, "run");
+    let target = graph.add_node(NodeKind::Function, "build");
+    graph.add_edge_with_metadata(
+        caller,
+        target,
+        EdgeKind::Calls,
+        Confidence::Syntactic,
+        BTreeMap::from([
+            ("call_label".to_string(), "build".to_string()),
+            ("resolution".to_string(), "resolved".to_string()),
+            ("resolution_basis".to_string(), "import".to_string()),
+        ]),
+    );
+
+    let report = explain_edge(
+        &graph,
+        ExplainEdgeRequest {
+            edge_index: Some(0),
+            kind: None,
+            source: None,
+            target: None,
+        },
+    )
+    .expect("explain")
+    .expect("the edge exists");
+    assert!(
+        report.evidence.iter().any(|item| item
+            == "resolution_note=an import in the calling file names the target's module"),
+        "{:?}",
+        report.evidence
+    );
+
+    // A basis the reader would not recognise adds nothing rather than
+    // echoing an internal token.
+    assert_eq!(resolution_basis_evidence("something_new"), None);
+}

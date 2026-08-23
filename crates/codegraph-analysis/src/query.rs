@@ -3681,6 +3681,17 @@ pub(crate) fn edge_evidence(
         confidence_evidence(edge.confidence).to_string(),
     ];
 
+    // A call edge knows what narrowed it down; saying so turns "syntax-level
+    // fact" into the fact itself.
+    if let Some(note) = edge
+        .metadata
+        .get("resolution_basis")
+        .map(String::as_str)
+        .and_then(resolution_basis_evidence)
+    {
+        evidence.push(note.to_string());
+    }
+
     if let Some(span) = &source.span {
         evidence.push(format!(
             "source_span={}:{}:{}-{}:{}",
@@ -3698,6 +3709,20 @@ pub(crate) fn edge_evidence(
     }
 
     evidence
+}
+
+/// What a call's `resolution_basis` means, in the reader's terms.
+pub(crate) fn resolution_basis_evidence(basis: &str) -> Option<&'static str> {
+    Some(match basis {
+        "same_file" => "resolution_note=the target is defined in the calling file",
+        "import" => "resolution_note=an import in the calling file names the target's module",
+        "package" => "resolution_note=an unqualified call resolves inside its own package",
+        "lexical_scope" => "resolution_note=the target is visible from the calling definition",
+        "receiver_type" => "resolution_note=the receiver's declared type owns the target",
+        "owner_type" => "resolution_note=the call names the type that owns the target",
+        "name" => "resolution_note=nothing but the name matched, across the whole project",
+        _ => return None,
+    })
 }
 
 pub(crate) fn confidence_evidence(confidence: codegraph_core::Confidence) -> &'static str {
