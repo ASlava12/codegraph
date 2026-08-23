@@ -71,25 +71,42 @@ pub fn is_test_like_source_path(path: &str) -> bool {
         .rsplit_once('.')
         .map(|(stem, _)| stem)
         .unwrap_or(file_name);
-    normalized.split('/').any(|part| {
-        matches!(
-            part,
-            "testdata"
-                | "testing"
-                | "testthat"
-                | "fixture"
-                | "fixtures"
-                | "example"
-                | "examples"
-                | "sample"
-                | "samples"
-                | "mock"
-                | "mocks"
-        )
-    })
-        // Case matters for this one: `jvmTest` and `BufferedSourceTest`
-        // only give up their words before they are lowercased.
-        || normalized_original.split('/').any(names_tests)
+    let in_test_directory = normalized
+        .split('/')
+        .rev()
+        .skip(1)
+        .any(|part| {
+            matches!(
+                part,
+                "testdata"
+                    | "testing"
+                    | "testthat"
+                    | "fixture"
+                    | "fixtures"
+                    | "example"
+                    | "examples"
+                    | "sample"
+                    | "samples"
+                    | "mock"
+                    | "mocks"
+            )
+        })
+        // Case matters for this one: `jvmTest` only gives up its words
+        // before it is lowercased.
+        || normalized_original.split('/').rev().skip(1).any(names_tests);
+
+    // Go compiles a test only from a file whose name ends `_test.go`, so
+    // `test_file.go` is ordinary code however it reads -- terraform writes
+    // its `terraform test` command in five files named that way. A test
+    // directory still counts.
+    if file_name.ends_with(".go") {
+        return in_test_directory || stem.ends_with("_test");
+    }
+
+    in_test_directory
+        // `BufferedSourceTest.kt` only gives up its words before it is
+        // lowercased, as `jvmTest` does above.
+        || names_tests(original_file_name)
         || stem == "test"
         || stem == "tests"
         || stem.starts_with("test_")
@@ -340,6 +357,11 @@ mod test_path_words {
             "src/protest.go",
             "crates/codegraph-core/src/lib.rs",
             "src/specify_options.ts",
+            // Go compiles a test only from a file ending `_test.go`, so
+            // these are ordinary code: terraform writes its `terraform
+            // test` command in files named exactly this way.
+            "internal/configs/test_file.go",
+            "internal/command/test_cleanup.go",
         ] {
             assert!(!is_test_like_source_path(path), "{path}");
         }
