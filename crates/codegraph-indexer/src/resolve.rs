@@ -376,6 +376,33 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             _ if !local_targets.is_empty() => local_targets,
             _ => language_targets,
         };
+
+        // A Go call written without a qualifier can only mean something in the
+        // caller's own package, and a package is a directory. Matching by name
+        // across the repository left 5491 such calls ambiguous on terraform,
+        // 3373 of which have exactly one candidate next door.
+        if call.language == "go"
+            && !call.label.contains('.')
+            && targets.len() > 1
+            && let Some(directory) = caller_path.and_then(|path| path.rsplit_once('/'))
+        {
+            let same_package = targets
+                .iter()
+                .copied()
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.span.as_ref())
+                        .is_some_and(|span| {
+                            span.path
+                                .rsplit_once('/')
+                                .is_some_and(|(candidate, _)| candidate == directory.0)
+                        })
+                })
+                .collect::<Vec<_>>();
+            if !same_package.is_empty() {
+                targets = same_package;
+            }
+        }
         // A definition nested in another one is only visible inside it, so a
         // local helper cannot be the target of a call from anywhere else. On
         // shellcheck 869 of 989 ambiguous calls had a `where` binding among

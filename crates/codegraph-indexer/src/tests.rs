@@ -1977,6 +1977,58 @@ fn scan_project_resolves_python_absolute_local_imports() {
 }
 
 #[test]
+fn an_unqualified_go_call_stays_in_its_own_package() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("alpha")).unwrap();
+    fs::create_dir_all(root.join("beta")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.23\n").unwrap();
+    // The same helper name in two packages. Written without a qualifier, the
+    // call can only mean the one next door — Go has no other reading.
+    fs::write(
+        root.join("alpha").join("helper.go"),
+        "package alpha\n\nfunc helper() int { return 1 }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("beta").join("helper.go"),
+        "package beta\n\nfunc helper() int { return 2 }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("alpha").join("run.go"),
+        "package alpha\n\nfunc run() int { return helper() }\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge
+                    .metadata
+                    .get("call_label")
+                    .is_some_and(|label| label == "helper")
+        })
+        .expect("missing call edge");
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == call.target)
+        .expect("target node");
+
+    assert_eq!(target.kind, NodeKind::Function);
+    assert_eq!(
+        target.span.as_ref().map(|span| span.path.as_str()),
+        Some("alpha/helper.go"),
+        "an unqualified call cannot reach another package"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_qualified_receiver_type_picks_the_package_it_names() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("tfdiags")).unwrap();
