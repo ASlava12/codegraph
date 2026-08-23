@@ -858,12 +858,13 @@ pub(crate) fn index_file(
                     .iter()
                     .filter(|item| item.kind == ParsedItemKind::Call)
                 {
-                    let Some(parent) = item.parent.as_deref() else {
-                        continue;
-                    };
-                    let Some(caller) = resolve_local_function(&local_functions, parent) else {
-                        continue;
-                    };
+                    // A call at module level has no enclosing definition;
+                    // the file itself is what runs it.
+                    let caller = item
+                        .parent
+                        .as_deref()
+                        .and_then(|parent| resolve_local_function(&local_functions, parent))
+                        .unwrap_or(file_id);
                     context.pending_calls.push(PendingCall {
                         caller,
                         label: item.label.clone(),

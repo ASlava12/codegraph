@@ -36,7 +36,10 @@ Implemented now:
 - Framework route entrypoints for common Python, JavaScript/TypeScript, Rust, Go, and PHP web route declarations.
 - Rust/Axum route entrypoints handle multiline `.route(...)` calls and ignore string literal route markers.
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
-- Approximate `calls` edges between functions when syntax-level names can be resolved.
+- Approximate `calls` edges between functions when syntax-level names can be resolved. A call that sits outside
+  any definition — a module initialiser, `bp.route(...)`, `if __name__ == "__main__": main()` — is attributed
+  to the file that runs it; a call inside an unnamed callback is not, because it runs on invocation rather
+  than on load.
 - Unresolved call targets share one placeholder node per language and label (every call site keeps its own `calls` edge), and language builtins/std macros (`Some`, `format!`, `println!`, `len`, `console.log`, `make`, …) are classified as `resolution: builtin` instead of counting as external dependencies or unresolved-call findings. `unresolved_call` findings are grouped per call label and read as `info` on syntactic-only scans — they escalate to `warning` only after semantic (LSP) enrichment has run and the target still cannot be resolved.
 - Source rationale comments such as `WHY`, `NOTE`, `TODO`, `FIXME`, `HACK`, `BUG`, `XXX`, and `SECURITY` are indexed as linked graph facts with source spans for human and agent review.
 - Common branch, loop, async/concurrency, and return/exit constructs are indexed as source-spanned graph facts for workflow diagrams and node-card investigation, and workflow blocks classify them as branch, loop, async, and return steps. These facts carry the dedicated `control_flow` node kind, so kind facets, summaries, and web filters show them by name instead of `unknown`.

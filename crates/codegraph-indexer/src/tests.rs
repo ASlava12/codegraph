@@ -6808,3 +6808,75 @@ fn qualified_calls_resolve_to_the_named_types_method() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn module_level_calls_belong_to_the_file_but_callback_bodies_do_not() {
+    // Registration calls, initialisers and `if __name__ == "__main__"` run
+    // when the file loads, yet they used to be dropped for having no
+    // enclosing definition. A call inside an unnamed callback is different:
+    // it runs when something invokes the callback, so it stays out.
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("main.py"),
+        "def start():\n    return 1\n\n\nif __name__ == \"__main__\":\n    start()\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app.js"),
+        "function helper() { return 1; }\nfunction run(cb) { return cb(); }\nconst value = helper();\nrun(() => { helper(); });\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let file_id = |name: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::File && node.label == name)
+            .unwrap_or_else(|| panic!("{name} is indexed"))
+            .id
+    };
+    let called_labels = |source: NodeId| -> Vec<String> {
+        graph
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == EdgeKind::Calls && edge.source == source)
+            .filter_map(|edge| edge.metadata.get("call_label").cloned())
+            .collect()
+    };
+
+    let python = called_labels(file_id("main.py"));
+    assert!(
+        python.contains(&"start".to_string()),
+        "the guarded entry call is attributed to the file, got {python:?}"
+    );
+
+    let js = called_labels(file_id("app.js"));
+    assert!(
+        js.contains(&"helper".to_string()) && js.contains(&"run".to_string()),
+        "both load-time calls are attributed to the file, got {js:?}"
+    );
+
+    // `helper` inside the arrow reaches the graph only through the
+    // module-level `const value = helper()`, so exactly one edge exists and
+    // the callback adds nothing of its own.
+    let run_calls: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("cb")
+        })
+        .collect();
+    assert_eq!(
+        run_calls.len(),
+        1,
+        "the call inside `run` belongs to `run` itself"
+    );
+    let run_id = function_id_in_file(&graph, "run", "app.js");
+    assert_eq!(
+        run_calls[0].source, run_id,
+        "a named function keeps its own calls"
+    );
+}

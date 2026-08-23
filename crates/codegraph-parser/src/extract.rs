@@ -40,6 +40,7 @@ pub fn parse_source(
         &BTreeMap::new(),
         &mut facts,
         0,
+        false,
     );
     if language == Language::Bash {
         drop_bash_local_variable_reads(&mut facts.items, root, source_text.as_bytes());
@@ -82,6 +83,7 @@ pub(crate) fn collect_items(
     scope: &BTreeMap<String, String>,
     facts: &mut CollectedFacts,
     depth: usize,
+    deferred: bool,
 ) {
     let WalkContext {
         language,
@@ -101,8 +103,20 @@ pub(crate) fn collect_items(
         facts.items.push(control_flow);
     }
 
-    if let Some(function_name) = current_function.as_deref()
-        && let Some(call) = classify_call(language, node, source, path, function_name, scope)
+    // A call outside any definition still happens: module initialisers,
+    // registration calls and whole script bodies run at load time. Those
+    // belong to the file, so the parent stays open rather than the call
+    // being dropped — unless the call sits in an unnamed callback, which
+    // runs when something invokes it and not when the file loads.
+    if (current_function.is_some() || !deferred)
+        && let Some(call) = classify_call(
+            language,
+            node,
+            source,
+            path,
+            current_function.as_deref(),
+            scope,
+        )
     {
         facts.items.push(call);
     }
@@ -142,6 +156,7 @@ pub(crate) fn collect_items(
     }
 
     let next_scope = next_scope.as_ref().unwrap_or(scope);
+    let next_deferred = deferred || is_deferred_body(language, node.kind());
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         collect_items(
@@ -151,8 +166,31 @@ pub(crate) fn collect_items(
             next_scope,
             facts,
             depth + 1,
+            next_deferred,
         );
     }
+}
+
+/// A callable with no name of its own: a closure, a lambda, a block passed
+/// to a method. Its statements run when something invokes it, so a call
+/// inside it belongs to that unnamed function — not to the file that
+/// happens to hold it. Named callables never reach here, because a call
+/// inside one already carries that name as its parent.
+fn is_deferred_body(language: Language, kind: &str) -> bool {
+    // Ruby writes callbacks as blocks, and only Ruby calls those nodes
+    // `block` — elsewhere `block` is an ordinary statement list, and a
+    // Python `if __name__ == "__main__":` body is exactly the load-time
+    // code this must keep.
+    if language == Language::Ruby && matches!(kind, "block" | "do_block") {
+        return true;
+    }
+    kind.contains("lambda")
+        || kind.contains("closure")
+        || kind.contains("anonymous")
+        || matches!(
+            kind,
+            "arrow_function" | "function_expression" | "func_literal" | "fn"
+        )
 }
 
 pub(crate) fn classify_node(
@@ -600,7 +638,7 @@ pub(crate) fn classify_call(
     node: Node<'_>,
     source: &[u8],
     path: &str,
-    function_name: &str,
+    function_name: Option<&str>,
     scope: &BTreeMap<String, String>,
 ) -> Option<ParsedItem> {
     if !is_call_node(language, node, source) {
@@ -628,7 +666,7 @@ pub(crate) fn classify_call(
         kind: ParsedItemKind::Call,
         label,
         span: span_for(path, node),
-        parent: Some(function_name.to_string()),
+        parent: function_name.map(str::to_string),
         metadata,
     })
 }
