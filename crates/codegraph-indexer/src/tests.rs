@@ -1595,22 +1595,22 @@ fn scan_project_indexes_dart_flutter_pubspec_and_imports() {
         }));
     }
 
-    assert!(graph.nodes.iter().any(|node| {
-        node.kind == NodeKind::Environment
-            && node.label == "PORT"
-            && node
-                .metadata
-                .get("default_value")
-                .is_some_and(|value| value == "8080")
-    }));
-    assert!(graph.nodes.iter().any(|node| {
-        node.kind == NodeKind::Environment
-            && node.label == "API_URL"
-            && node
-                .metadata
-                .get("default_value")
-                .is_some_and(|value| value == "http://localhost")
-    }));
+    let environment_default = |label: &str, expected: &str| {
+        graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::Environment
+                && node.label == label
+                && graph.edges.iter().any(|edge| {
+                    edge.target == node.id
+                        && edge.kind == EdgeKind::ReadsEnvironment
+                        && edge
+                            .metadata
+                            .get("default_value")
+                            .is_some_and(|value| value == expected)
+                })
+        })
+    };
+    assert!(environment_default("PORT", "8080"));
+    assert!(environment_default("API_URL", "http://localhost"));
     assert!(
         graph
             .nodes
@@ -2643,11 +2643,25 @@ PORT="${PORT:-5000}"
     .unwrap();
 
     let graph = scan_project(&root, &IndexOptions::default()).unwrap();
-    let defaults = graph
+    // One variable is one node no matter how many files read it; the per-read
+    // fallback rides on the reading edge.
+    let ports = graph
         .nodes
         .iter()
         .filter(|node| node.kind == NodeKind::Environment && node.label == "PORT")
-        .filter_map(|node| node.metadata.get("default_value").map(String::as_str))
+        .collect::<Vec<_>>();
+    assert_eq!(ports.len(), 1, "PORT should be one shared node");
+    let port = ports[0];
+    assert_eq!(
+        port.metadata.get("declaration_scope").map(String::as_str),
+        Some("shared")
+    );
+
+    let defaults = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.target == port.id && edge.kind == EdgeKind::ReadsEnvironment)
+        .filter_map(|edge| edge.metadata.get("default_value").map(String::as_str))
         .collect::<BTreeSet<_>>();
 
     assert_eq!(
@@ -2655,6 +2669,78 @@ PORT="${PORT:-5000}"
         BTreeSet::from([
             "3000", "5000", "7000", "8000", "8080", "9090", "9091", "9092"
         ])
+    );
+    // Each read still names its own language and file.
+    let languages = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.target == port.id && edge.kind == EdgeKind::ReadsEnvironment)
+        .filter_map(|edge| edge.metadata.get("language").map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    assert!(languages.contains("python"), "languages: {languages:?}");
+    assert!(languages.contains("rust"), "languages: {languages:?}");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn scan_project_keeps_every_read_site_of_one_environment_key() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("settings.py"),
+        r#"import os
+
+
+def configure():
+    required = os.environ["PORT"]
+    fallback = os.getenv("PORT", "8080")
+    return required, fallback
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let ports = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Environment && node.label == "PORT")
+        .collect::<Vec<_>>();
+    assert_eq!(ports.len(), 1, "PORT should be one shared node");
+
+    // Both reads happen inside the same function, so they share a source and a
+    // target; keeping one edge per read site is what lets the analysis see
+    // that the key is read once as required and once with a fallback.
+    let reads = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.target == ports[0].id && edge.kind == EdgeKind::ReadsEnvironment)
+        .collect::<Vec<_>>();
+    assert_eq!(reads.len(), 2, "expected both read sites, got {reads:?}");
+    assert_eq!(
+        reads
+            .iter()
+            .map(|edge| edge.source)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([reads[0].source]),
+        "both reads come from the same function"
+    );
+    assert_eq!(
+        reads
+            .iter()
+            .filter_map(|edge| edge.metadata.get("default_value").map(String::as_str))
+            .collect::<Vec<_>>(),
+        vec!["8080"],
+        "only the fallback read carries a default"
+    );
+    assert_eq!(
+        reads
+            .iter()
+            .filter_map(|edge| edge.metadata.get("line"))
+            .collect::<BTreeSet<_>>()
+            .len(),
+        2,
+        "read sites are distinguished by line"
     );
 
     fs::remove_dir_all(root).unwrap();

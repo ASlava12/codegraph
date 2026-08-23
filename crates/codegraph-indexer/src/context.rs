@@ -24,6 +24,10 @@ pub(crate) struct IndexContext {
     /// Canonical node per (language, namespace label) for languages whose
     /// namespace declaration reopens one entity across many files.
     pub(crate) namespace_nodes: BTreeMap<(&'static str, String), NodeId>,
+    /// Canonical node per (`environment`|`config`, key) read from source, so a
+    /// key that many files read stays one entity; the reading edge carries the
+    /// per-read facts (default value, language, file, line).
+    pub(crate) effect_entities: BTreeMap<(&'static str, String), NodeId>,
     pub(crate) type_symbols: BTreeMap<String, Vec<NodeId>>,
     pub(crate) file_nodes: BTreeMap<String, NodeId>,
     pub(crate) directory_nodes: BTreeMap<String, NodeId>,

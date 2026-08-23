@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeKind};
+use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind};
 use codegraph_parser::{Language, ParsedItemKind, adapter_for_language, adapter_for_path};
 use walkdir::WalkDir;
 
@@ -115,6 +115,7 @@ pub(crate) fn scan_project_with_scope(
         edge_keys_synced: 0,
         function_symbols: BTreeMap::new(),
         namespace_nodes: BTreeMap::new(),
+        effect_entities: BTreeMap::new(),
         type_symbols: BTreeMap::new(),
         file_nodes: BTreeMap::new(),
         directory_nodes: BTreeMap::new(),
@@ -708,6 +709,12 @@ pub(crate) fn index_file(
                     );
                 }
 
+                // One edge per read site, so two reads of the same key in one
+                // function stay two facts: `add_edge_once` would keep only the
+                // first, hiding a key that is read once with a fallback and
+                // once without it.
+                let mut effect_read_sites: BTreeSet<(NodeId, NodeId, EdgeKind, u32)> =
+                    BTreeSet::new();
                 for item in parsed.items.iter().filter(|item| is_effect_item(item.kind)) {
                     let source_id = item
                         .parent
@@ -737,7 +744,6 @@ pub(crate) fn index_file(
                     let mut item_metadata = BTreeMap::new();
                     item_metadata.extend(item.metadata.clone());
                     item_metadata.insert("language".to_string(), language.to_string());
-                    item_metadata.insert("parser".to_string(), "tree-sitter".to_string());
                     item_metadata.insert(
                         "item_kind".to_string(),
                         parsed_item_kind_name(item.kind).to_string(),
@@ -746,18 +752,71 @@ pub(crate) fn index_file(
                         item_metadata.insert("parent".to_string(), parent.to_string());
                     }
 
-                    let item_id = context.graph.add_node_with_metadata(
-                        node_kind,
-                        item.label.clone(),
-                        Some(item.span.clone()),
-                        item_metadata,
-                    );
-                    add_edge_once(
-                        context,
+                    // An environment variable or config key names one entity
+                    // the whole project shares, so every read points at the
+                    // same node. Emitting a node per read split a key's
+                    // readers across look-alike duplicates (kong: 1211 nodes
+                    // for 371 keys), and the per-read facts — default value,
+                    // language, position — belong to the read, not the key:
+                    // they travel on the edge instead.
+                    let entity_kind = match item.kind {
+                        ParsedItemKind::EnvironmentRead => Some("environment"),
+                        ParsedItemKind::ConfigRead => Some("config"),
+                        _ => None,
+                    };
+
+                    let Some(entity_kind) = entity_kind else {
+                        item_metadata.insert("parser".to_string(), "tree-sitter".to_string());
+                        let item_id = context.graph.add_node_with_metadata(
+                            node_kind,
+                            item.label.clone(),
+                            Some(item.span.clone()),
+                            item_metadata,
+                        );
+                        add_edge_once(
+                            context,
+                            source_id,
+                            item_id,
+                            edge_kind,
+                            Confidence::Heuristic,
+                        );
+                        continue;
+                    };
+
+                    let entity_key = (entity_kind, item.label.clone());
+                    let item_id = match context.effect_entities.get(&entity_key) {
+                        Some(existing) => *existing,
+                        None => {
+                            let mut entity_metadata = BTreeMap::new();
+                            entity_metadata.insert("parser".to_string(), "tree-sitter".to_string());
+                            entity_metadata.insert(
+                                "item_kind".to_string(),
+                                parsed_item_kind_name(item.kind).to_string(),
+                            );
+                            entity_metadata
+                                .insert("declaration_scope".to_string(), "shared".to_string());
+                            let id = context.graph.add_node_with_metadata(
+                                node_kind,
+                                item.label.clone(),
+                                Some(item.span.clone()),
+                                entity_metadata,
+                            );
+                            context.effect_entities.insert(entity_key, id);
+                            id
+                        }
+                    };
+                    let line = item.span.start_line;
+                    if !effect_read_sites.insert((source_id, item_id, edge_kind, line)) {
+                        continue;
+                    }
+                    item_metadata.insert("file".to_string(), label.to_string());
+                    item_metadata.insert("line".to_string(), line.to_string());
+                    context.graph.add_edge_with_metadata(
                         source_id,
                         item_id,
                         edge_kind,
                         Confidence::Heuristic,
+                        item_metadata,
                     );
                 }
 

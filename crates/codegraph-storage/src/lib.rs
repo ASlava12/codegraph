@@ -19,7 +19,10 @@ use walkdir::WalkDir;
 
 // v5: dropped the duplicated impact index from the record (the chunk index
 // carries the same per-path node/edge scopes), halving index bloat on disk.
-const CACHE_SCHEMA_VERSION: u32 = 5;
+// v6: environment/config keys and reopened namespaces became one shared node
+// each. A cached graph still holds the old one-node-per-read shape, so records
+// written before that change have to be rebuilt rather than served.
+const CACHE_SCHEMA_VERSION: u32 = 6;
 const CHUNK_ID_PREVIEW_LIMIT: usize = 20;
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;

@@ -1654,77 +1654,31 @@ pub(crate) fn add_unreachable_source_file_insights(graph: &CodeGraph, insights: 
     }
 }
 
-pub(crate) fn add_conflicting_config_default_insights(
-    graph: &CodeGraph,
-    insights: &mut Vec<Insight>,
-) {
-    let mut groups: BTreeMap<(String, String), Vec<(NodeId, String)>> = BTreeMap::new();
-    for node in &graph.nodes {
-        if !matches!(node.kind, NodeKind::Config | NodeKind::Environment) {
-            continue;
-        }
-        let Some(default_value) = node
-            .metadata
-            .get("default_value")
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        else {
-            continue;
-        };
-        groups
-            .entry((kind_name(&node.kind), node.label.clone()))
-            .or_default()
-            .push((node.id, default_value.to_string()));
-    }
-
-    for ((kind, label), node_defaults) in groups {
-        let mut default_values = BTreeMap::<String, Vec<NodeId>>::new();
-        for (node_id, default_value) in node_defaults {
-            default_values
-                .entry(default_value)
-                .or_default()
-                .push(node_id);
-        }
-        if default_values.len() < 2 {
-            continue;
-        }
-
-        let nodes: Vec<_> = default_values
-            .values()
-            .flat_map(|ids| ids.iter().copied())
-            .collect();
-        let edge_kind = if kind == "environment" {
-            EdgeKind::ReadsEnvironment
-        } else {
-            EdgeKind::ReadsConfig
-        };
-        let edges: Vec<_> = nodes
-            .iter()
-            .flat_map(|node_id| incoming_edge_indexes(graph, *node_id, edge_kind))
-            .collect();
-        let values = format_backtick_list(default_values.keys().map(String::as_str), 8);
-
-        insights.push(Insight {
-            kind: "conflicting_config_default".to_string(),
-            severity: InsightSeverity::Warning,
-            message: format!("{kind} `{label}` is read with multiple fallback values: {values}"),
-            nodes,
-            edges,
-        });
-    }
+/// One environment variable or config key, with every read of it that the
+/// scan recorded. The key is one node, so the per-read facts — above all the
+/// fallback value — live on the reading edges; older graphs (and declaration
+/// nodes minted by the compose/CI passes) still carry a `default_value` on the
+/// node, which stands in when an edge does not name one.
+#[derive(Default)]
+struct ConfigKeyReads {
+    /// Fallback value -> the key nodes and reading edges that use it.
+    defaults: BTreeMap<String, (BTreeSet<NodeId>, BTreeSet<usize>)>,
+    /// Reads with no fallback at all: the key is required there.
+    required_nodes: BTreeSet<NodeId>,
+    required_edges: BTreeSet<usize>,
 }
 
-pub(crate) fn add_mixed_config_requirement_insights(
-    graph: &CodeGraph,
-    insights: &mut Vec<Insight>,
-) {
-    #[derive(Default)]
-    struct ConfigRequirementGroup {
-        required_nodes: Vec<NodeId>,
-        default_nodes: BTreeMap<String, Vec<NodeId>>,
-    }
+fn trimmed_default(metadata: &BTreeMap<String, String>) -> Option<String> {
+    metadata
+        .get("default_value")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
 
-    let mut groups: BTreeMap<(String, String), ConfigRequirementGroup> = BTreeMap::new();
+/// Group every environment/config read in the graph by `(kind, key)`.
+fn config_key_reads(graph: &CodeGraph) -> BTreeMap<(String, String), ConfigKeyReads> {
+    let mut groups: BTreeMap<(String, String), ConfigKeyReads> = BTreeMap::new();
     for node in &graph.nodes {
         if !matches!(node.kind, NodeKind::Config | NodeKind::Environment) {
             continue;
@@ -1734,51 +1688,103 @@ pub(crate) fn add_mixed_config_requirement_insights(
         } else {
             EdgeKind::ReadsConfig
         };
-        if incoming_edge_indexes(graph, node.id, edge_kind).is_empty() {
+        let node_default = trimmed_default(&node.metadata);
+        let reads = incoming_edge_indexes(graph, node.id, edge_kind);
+        if reads.is_empty() {
+            // Nothing reads the key; only a node-level fallback can still say
+            // something about it.
+            if let Some(default_value) = node_default {
+                groups
+                    .entry((kind_name(&node.kind), node.label.clone()))
+                    .or_default()
+                    .defaults
+                    .entry(default_value)
+                    .or_default()
+                    .0
+                    .insert(node.id);
+            }
             continue;
         }
 
         let entry = groups
             .entry((kind_name(&node.kind), node.label.clone()))
             .or_default();
-        if let Some(default_value) = node
-            .metadata
-            .get("default_value")
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            entry
-                .default_nodes
-                .entry(default_value.to_string())
-                .or_default()
-                .push(node.id);
-        } else {
-            entry.required_nodes.push(node.id);
+        for index in reads {
+            let edge_default = graph
+                .edges
+                .get(index)
+                .and_then(|edge| trimmed_default(&edge.metadata));
+            match edge_default.or_else(|| node_default.clone()) {
+                Some(default_value) => {
+                    let slot = entry.defaults.entry(default_value).or_default();
+                    slot.0.insert(node.id);
+                    slot.1.insert(index);
+                }
+                None => {
+                    entry.required_nodes.insert(node.id);
+                    entry.required_edges.insert(index);
+                }
+            }
         }
     }
+    groups
+}
 
-    for ((kind, label), group) in groups {
-        if group.required_nodes.is_empty() || group.default_nodes.is_empty() {
+pub(crate) fn add_conflicting_config_default_insights(
+    graph: &CodeGraph,
+    insights: &mut Vec<Insight>,
+) {
+    for ((kind, label), reads) in config_key_reads(graph) {
+        if reads.defaults.len() < 2 {
             continue;
         }
 
-        let edge_kind = if kind == "environment" {
-            EdgeKind::ReadsEnvironment
-        } else {
-            EdgeKind::ReadsConfig
-        };
-        let mut nodes = group.required_nodes.clone();
-        nodes.extend(
-            group
-                .default_nodes
-                .values()
-                .flat_map(|ids| ids.iter().copied()),
-        );
-        let edges: Vec<_> = nodes
-            .iter()
-            .flat_map(|node_id| incoming_edge_indexes(graph, *node_id, edge_kind))
+        let nodes: BTreeSet<NodeId> = reads
+            .defaults
+            .values()
+            .flat_map(|(nodes, _)| nodes.iter().copied())
             .collect();
-        let values = format_backtick_list(group.default_nodes.keys().map(String::as_str), 8);
+        let edges: BTreeSet<usize> = reads
+            .defaults
+            .values()
+            .flat_map(|(_, edges)| edges.iter().copied())
+            .collect();
+        let values = format_backtick_list(reads.defaults.keys().map(String::as_str), 8);
+
+        insights.push(Insight {
+            kind: "conflicting_config_default".to_string(),
+            severity: InsightSeverity::Warning,
+            message: format!("{kind} `{label}` is read with multiple fallback values: {values}"),
+            nodes: nodes.into_iter().collect(),
+            edges: edges.into_iter().collect(),
+        });
+    }
+}
+
+pub(crate) fn add_mixed_config_requirement_insights(
+    graph: &CodeGraph,
+    insights: &mut Vec<Insight>,
+) {
+    for ((kind, label), reads) in config_key_reads(graph) {
+        if reads.required_edges.is_empty() || reads.defaults.is_empty() {
+            continue;
+        }
+
+        let mut nodes = reads.required_nodes.clone();
+        nodes.extend(
+            reads
+                .defaults
+                .values()
+                .flat_map(|(default_nodes, _)| default_nodes.iter().copied()),
+        );
+        let mut edges = reads.required_edges.clone();
+        edges.extend(
+            reads
+                .defaults
+                .values()
+                .flat_map(|(_, default_edges)| default_edges.iter().copied()),
+        );
+        let values = format_backtick_list(reads.defaults.keys().map(String::as_str), 8);
 
         insights.push(Insight {
             kind: "mixed_config_requirement".to_string(),
@@ -1786,8 +1792,8 @@ pub(crate) fn add_mixed_config_requirement_insights(
             message: format!(
                 "{kind} `{label}` is read both as required and with fallback values: {values}"
             ),
-            nodes,
-            edges,
+            nodes: nodes.into_iter().collect(),
+            edges: edges.into_iter().collect(),
         });
     }
 }
@@ -1800,24 +1806,25 @@ pub(crate) fn add_sensitive_config_default_insights(
         if !matches!(node.kind, NodeKind::Config | NodeKind::Environment) {
             continue;
         }
-        let Some(default_value) = node
-            .metadata
-            .get("default_value")
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        else {
-            continue;
-        };
-        if !sensitive_config_default_candidate(&node.label, default_value) {
-            continue;
-        }
-
         let edge_kind = if node.kind == NodeKind::Environment {
             EdgeKind::ReadsEnvironment
         } else {
             EdgeKind::ReadsConfig
         };
-        let edges = incoming_edge_indexes(graph, node.id, edge_kind);
+        let node_default = trimmed_default(&node.metadata);
+        let edges: Vec<usize> = incoming_edge_indexes(graph, node.id, edge_kind)
+            .into_iter()
+            .filter(|index| {
+                graph
+                    .edges
+                    .get(*index)
+                    .and_then(|edge| trimmed_default(&edge.metadata))
+                    .or_else(|| node_default.clone())
+                    .is_some_and(|default_value| {
+                        sensitive_config_default_candidate(&node.label, &default_value)
+                    })
+            })
+            .collect();
         if edges.is_empty() {
             continue;
         }
