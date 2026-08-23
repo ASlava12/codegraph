@@ -12,7 +12,7 @@ fn language_registry_exposes_all_builtin_adapters() {
         .map(|adapter| adapter.info().language)
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(adapters.len(), 23);
+    assert_eq!(adapters.len(), 26);
     assert_eq!(
         languages,
         BTreeSet::from([
@@ -24,14 +24,17 @@ fn language_registry_exposes_all_builtin_adapters() {
             "go",
             "haskell",
             "elixir",
+            "erlang",
             "java",
             "javascript",
             "julia",
             "kotlin",
             "lua",
+            "nix",
             "ocaml",
             "php",
             "python",
+            "r",
             "ruby",
             "rust",
             "scala",
@@ -1503,4 +1506,107 @@ fn haskell_ocaml_julia_adapters_extract_core_facts() {
             "{language}: error construct recorded"
         );
     }
+}
+
+#[test]
+fn erlang_nix_and_r_adapters_extract_core_facts() {
+    // Erlang: the name lives on the function clause; `mod:fun(..)` is a remote
+    // node wrapping an inner call, and must count once.
+    let erlang = parse_source(
+        "demo.erl",
+        b"-module(demo).\nmain() ->\n    H = os:getenv(\"HOME\"),\n    case H of\n        false -> throw(bad);\n        _ -> H\n    end.\n",
+        Language::Erlang,
+    )
+    .unwrap();
+    let has = |items: &[ParsedItem], kind: ParsedItemKind, label: &str| {
+        items
+            .iter()
+            .any(|item| item.kind == kind && item.label == label)
+    };
+    assert!(
+        has(&erlang.items, ParsedItemKind::Module, "demo"),
+        "{:?}",
+        erlang.items
+    );
+    assert!(has(&erlang.items, ParsedItemKind::Entrypoint, "main"));
+    assert!(has(&erlang.items, ParsedItemKind::Branch, "branch: case"));
+    assert_eq!(
+        erlang
+            .items
+            .iter()
+            .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+            .count(),
+        1,
+        "one env read for os:getenv: {:?}",
+        erlang.items
+    );
+    assert!(
+        erlang
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error)
+    );
+
+    // Nix: a binding whose value is a lambda is the named callable.
+    let nix = parse_source(
+        "default.nix",
+        b"let\n  run = x: if x == \"\" then throw \"bad\" else builtins.getEnv \"HOME\";\nin run \"\"\n",
+        Language::Nix,
+    )
+    .unwrap();
+    assert!(
+        has(&nix.items, ParsedItemKind::Function, "run"),
+        "{:?}",
+        nix.items
+    );
+    assert!(has(&nix.items, ParsedItemKind::Branch, "branch: if"));
+    assert_eq!(
+        nix.items
+            .iter()
+            .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+            .count(),
+        1,
+        "one env read for builtins.getEnv: {:?}",
+        nix.items
+    );
+    assert!(
+        nix.items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error)
+    );
+
+    // R: functions are assignments of a lambda; library() is an import.
+    let r = parse_source(
+        "run.R",
+        b"library(stats)\nrun <- function(k) {\n  h <- Sys.getenv(\"HOME\")\n  if (k > 0) stop(\"bad\")\n  for (i in 1:3) print(i)\n  h\n}\n",
+        Language::R,
+    )
+    .unwrap();
+    assert!(
+        has(&r.items, ParsedItemKind::Function, "run"),
+        "{:?}",
+        r.items
+    );
+    assert!(has(&r.items, ParsedItemKind::Call, "print"));
+    assert!(has(&r.items, ParsedItemKind::Branch, "branch: if"));
+    assert!(has(&r.items, ParsedItemKind::Loop, "loop: for"));
+    assert!(
+        r.items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Import),
+        "library() is an import: {:?}",
+        r.items
+    );
+    assert_eq!(
+        r.items
+            .iter()
+            .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+            .count(),
+        1
+    );
+    assert!(
+        r.items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error)
+    );
 }

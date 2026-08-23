@@ -42,7 +42,10 @@ pub(crate) fn local_import_target(
         | Language::Zig
         | Language::Haskell
         | Language::OCaml
-        | Language::Julia => None,
+        | Language::Julia
+        | Language::Erlang
+        | Language::Nix
+        | Language::R => None,
     }
 }
 

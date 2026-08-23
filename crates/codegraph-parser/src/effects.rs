@@ -161,6 +161,24 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                     .as_deref()
                     .is_some_and(|value| matches!(value, "Sys.getenv" | "Sys.getenv_opt"))
         }
+        Language::Erlang => {
+            node.kind() == "remote"
+                && call
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "os:getenv" | "os:env"))
+        }
+        Language::Nix => {
+            is_call_node(language, node, source)
+                && call
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "builtins.getEnv" | "getEnv"))
+        }
+        Language::R => {
+            node.kind() == "call"
+                && call
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "Sys.getenv" | "Sys.setenv"))
+        }
         Language::Julia => match node.kind() {
             // `ENV["KEY"]`
             "index_expression" => {
@@ -283,6 +301,15 @@ pub(crate) fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) 
         Language::Julia => call
             .as_deref()
             .is_some_and(|value| matches!(simple_name(value), "read" | "readlines" | "open")),
+        Language::Erlang => call
+            .as_deref()
+            .is_some_and(|value| matches!(value, "file:read_file" | "file:consult")),
+        Language::Nix => call
+            .as_deref()
+            .is_some_and(|value| matches!(value, "builtins.readFile" | "builtins.fromJSON")),
+        Language::R => call.as_deref().is_some_and(|value| {
+            matches!(simple_name(value), "read.csv" | "readRDS" | "readLines")
+        }),
     }
 }
 
@@ -382,6 +409,29 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
                     .as_deref()
                     .is_some_and(|value| matches!(value, "throw" | "error" | "rethrow"))
         }
+        Language::Erlang => {
+            is_call_node(language, node, source)
+                && call_label(language, node, source)
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "throw" | "error" | "exit"))
+        }
+        Language::Nix => {
+            is_call_node(language, node, source)
+                && call_label(language, node, source)
+                    .as_deref()
+                    .is_some_and(|value| {
+                        matches!(
+                            value,
+                            "throw" | "abort" | "builtins.throw" | "builtins.abort"
+                        )
+                    })
+        }
+        Language::R => {
+            node.kind() == "call"
+                && call_label(language, node, source)
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "stop" | "stopifnot" | "warning"))
+        }
         Language::Swift => {
             is_call_node(language, node, source)
                 && call_label(language, node, source)
@@ -456,7 +506,10 @@ pub(crate) fn effect_metadata(
         | Language::Zig
         | Language::Haskell
         | Language::OCaml
-        | Language::Julia => None,
+        | Language::Julia
+        | Language::Erlang
+        | Language::Nix
+        | Language::R => None,
     };
 
     if let Some(default_value) = default_value {

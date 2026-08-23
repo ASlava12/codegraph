@@ -300,7 +300,9 @@ pub(crate) fn rationale_comment_text(language: Option<Language>, line: &str) -> 
             trimmed.strip_prefix('#')
         }
         Some(Language::Lua | Language::Haskell) => trimmed.strip_prefix("--"),
-        Some(Language::Julia) => trimmed.strip_prefix('#'),
+        Some(Language::Julia | Language::Erlang | Language::Nix | Language::R) => trimmed
+            .strip_prefix('%')
+            .or_else(|| trimmed.strip_prefix('#')),
         Some(Language::OCaml) => trimmed
             .strip_prefix("(*")
             .map(|text| text.trim_end_matches("*)").trim()),

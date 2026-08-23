@@ -35,6 +35,9 @@ pub enum Language {
     Haskell,
     OCaml,
     Julia,
+    Erlang,
+    Nix,
+    R,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,7 +230,23 @@ static JULIA_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     file_names: &[],
 };
 
-static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 23] = [
+static ERLANG_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Erlang,
+    extensions: &["erl", "hrl"],
+    file_names: &[],
+};
+static NIX_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Nix,
+    extensions: &["nix"],
+    file_names: &[],
+};
+static R_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::R,
+    extensions: &["r", "R"],
+    file_names: &[],
+};
+
+static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 26] = [
     &RUST_ADAPTER,
     &PYTHON_ADAPTER,
     &JAVASCRIPT_ADAPTER,
@@ -251,6 +270,9 @@ static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 23] = [
     &HASKELL_ADAPTER,
     &OCAML_ADAPTER,
     &JULIA_ADAPTER,
+    &ERLANG_ADAPTER,
+    &NIX_ADAPTER,
+    &R_ADAPTER,
 ];
 
 pub fn language_adapters() -> &'static [&'static dyn LanguageAdapter] {
@@ -301,6 +323,9 @@ impl Language {
             Self::Haskell => "haskell",
             Self::OCaml => "ocaml",
             Self::Julia => "julia",
+            Self::Erlang => "erlang",
+            Self::Nix => "nix",
+            Self::R => "r",
         }
     }
 
@@ -329,6 +354,9 @@ impl Language {
             Self::Haskell => tree_sitter_haskell::LANGUAGE.into(),
             Self::OCaml => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
             Self::Julia => tree_sitter_julia::LANGUAGE.into(),
+            Self::Erlang => tree_sitter_erlang::LANGUAGE.into(),
+            Self::Nix => tree_sitter_nix::LANGUAGE.into(),
+            Self::R => tree_sitter_r::LANGUAGE.into(),
         }
     }
 }

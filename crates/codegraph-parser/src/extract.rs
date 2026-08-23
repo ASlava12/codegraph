@@ -301,6 +301,24 @@ pub(crate) fn classify_node(
             "open_module" | "include_module" => ParsedItemKind::Import,
             _ => return None,
         },
+        Language::Erlang => match kind {
+            "fun_decl" => ParsedItemKind::Function,
+            "module_attribute" => ParsedItemKind::Module,
+            _ => return None,
+        },
+        // Nix has no functions or types as such; a binding whose value is a
+        // lambda is the closest thing to a named callable, and `import` calls
+        // pull in other expressions.
+        Language::Nix => match kind {
+            "binding" if nix_binding_is_function(node) => ParsedItemKind::Function,
+            _ => return None,
+        },
+        // R declares functions by assigning a lambda: `run <- function(x) ...`.
+        Language::R => match kind {
+            "binary_operator" if r_assignment_defines_function(node) => ParsedItemKind::Function,
+            "call" if r_library_call(node, source) => ParsedItemKind::Import,
+            _ => return None,
+        },
         Language::Julia => match kind {
             "function_definition" | "short_function_definition" | "macro_definition" => {
                 ParsedItemKind::Function
@@ -699,6 +717,24 @@ pub(crate) fn control_flow_fact(
             "while_expression" => Some((ParsedItemKind::Loop, "while")),
             _ => None,
         },
+        Language::Erlang => match kind {
+            "case_expr" => Some((ParsedItemKind::Branch, "case")),
+            "if_expr" => Some((ParsedItemKind::Branch, "if")),
+            "try_expr" => Some((ParsedItemKind::Branch, "try")),
+            "receive_expr" => Some((ParsedItemKind::Async, "receive")),
+            _ => None,
+        },
+        Language::Nix => match kind {
+            "if_expression" => Some((ParsedItemKind::Branch, "if")),
+            _ => None,
+        },
+        Language::R => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "for_statement" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "repeat_statement" => Some((ParsedItemKind::Loop, "repeat")),
+            _ => None,
+        },
         Language::Julia => match kind {
             "if_statement" => Some((ParsedItemKind::Branch, "if")),
             "try_statement" => Some((ParsedItemKind::Branch, "try")),
@@ -769,7 +805,44 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
         }
         Language::OCaml => node.kind() == "application_expression",
         Language::Julia => node.kind() == "call_expression",
+        // A remote call (`os:getenv(..)`) wraps an inner `call`; count the
+        // remote node and skip the inner one so one call is one fact.
+        Language::Erlang => match node.kind() {
+            "remote" => true,
+            "call" => !node
+                .parent()
+                .is_some_and(|parent| parent.kind() == "remote"),
+            _ => false,
+        },
+        // `f a b` nests as apply(apply(f, a), b), as in Haskell.
+        Language::Nix => {
+            node.kind() == "apply_expression"
+                && !node
+                    .child_by_field_name("function")
+                    .is_some_and(|callee| callee.kind() == "apply_expression")
+        }
+        Language::R => node.kind() == "call" && !r_library_call(node, source),
     }
+}
+
+/// A Nix binding whose value is a lambda, i.e. a named function.
+pub(crate) fn nix_binding_is_function(node: Node<'_>) -> bool {
+    node.child_by_field_name("expression")
+        .is_some_and(|value| value.kind() == "function_expression")
+}
+
+/// An R assignment (`name <- function(..)`) that defines a function.
+pub(crate) fn r_assignment_defines_function(node: Node<'_>) -> bool {
+    node.child_by_field_name("rhs")
+        .is_some_and(|value| value.kind() == "function_definition")
+}
+
+/// `library(pkg)` / `require(pkg)`: an import fact, not a call fact.
+pub(crate) fn r_library_call(node: Node<'_>, source: &[u8]) -> bool {
+    node.kind() == "call"
+        && named_child_text(node, "function", source)
+            .as_deref()
+            .is_some_and(|name| matches!(name, "library" | "require" | "requireNamespace"))
 }
 
 /// Elixir special forms parse as ordinary `call` nodes; these targets are
@@ -885,6 +958,30 @@ pub(crate) fn call_label(language: Language, node: Node<'_>, source: &[u8]) -> O
         return Some(clean_call_label(&callee));
     }
 
+    // Erlang: `mod:fun(..)` is a remote node wrapping the inner call.
+    if language == Language::Erlang {
+        if node.kind() == "remote" {
+            let module = named_child_text(node, "module", source)
+                .unwrap_or_default()
+                .trim_end_matches(':')
+                .to_string();
+            let function = node
+                .child_by_field_name("fun")
+                .and_then(|inner| named_child_text(inner, "expr", source))
+                .or_else(|| named_child_text(node, "fun", source))
+                .unwrap_or_default();
+            let label = if module.is_empty() {
+                function
+            } else {
+                format!("{module}:{function}")
+            };
+            return (!label.is_empty()).then(|| clean_call_label(&label));
+        }
+        if let Some(expr) = named_child_text(node, "expr", source) {
+            return Some(clean_call_label(&expr));
+        }
+    }
+
     if let Some(function) = named_child_text(node, "function", source) {
         return Some(clean_call_label(&function));
     }
@@ -949,6 +1046,15 @@ pub(crate) fn item_label(
     }
 
     match language {
+        // Erlang keeps the name on the function clause, not on the declaration.
+        Language::Erlang => node
+            .child_by_field_name("clause")
+            .and_then(|clause| named_child_text(clause, "name", source))
+            .or_else(|| named_child_text(node, "name", source)),
+        // Nix names a binding through its attribute path.
+        Language::Nix => named_child_text(node, "attrpath", source),
+        // R assigns the lambda to the left-hand identifier.
+        Language::R => named_child_text(node, "lhs", source),
         // OCaml names a binding through its `pattern` field.
         Language::OCaml => named_child_text(node, "pattern", source)
             .or_else(|| named_child_text(node, "name", source))
@@ -995,6 +1101,7 @@ pub(crate) fn is_entrypoint(language: Language, label: &str) -> bool {
         Language::Kotlin | Language::Swift | Language::Scala => label == "main",
         Language::Lua | Language::Elixir | Language::Zig => label == "main",
         Language::Haskell | Language::OCaml | Language::Julia => label == "main",
+        Language::Erlang | Language::Nix | Language::R => label == "main",
     }
 }
 
