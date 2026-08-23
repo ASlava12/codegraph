@@ -537,6 +537,94 @@ fn parses_rust_environment_default_values() {
 }
 
 #[test]
+fn every_language_that_states_its_visibility_is_read() {
+    // A library's coverage finding counts what it exports, and a function
+    // nobody calls is either dead or the API. Both need the language to be
+    // read where it says so: `static` in C, `local` in Lua, `defp` in
+    // Elixir, `pub` in Zig, a modifier in C#, PHP, Swift and Scala, and a
+    // leading underscore in Dart.
+    let visibility_of = |path: &str, source: &[u8], language: Language, label: &str| -> String {
+        parse_source(path, source, language)
+            .unwrap()
+            .items
+            .iter()
+            .find(|item| item.label == label)
+            .and_then(|item| item.metadata.get("visibility").cloned())
+            .unwrap_or_else(|| format!("no `{label}` in {path}"))
+    };
+
+    let c = b"static int hidden(void) { return 1; }\nint shared(void) { return 2; }\n";
+    assert_eq!(visibility_of("a.c", c, Language::C, "hidden"), "private");
+    assert_eq!(visibility_of("a.c", c, Language::C, "shared"), "public");
+
+    let lua =
+        b"local function hidden() end\nlocal bound = function() end\nfunction M.shared() end\n";
+    assert_eq!(
+        visibility_of("a.lua", lua, Language::Lua, "hidden"),
+        "private"
+    );
+    // `local bound = function() end` keeps it to the file too, though the
+    // expression itself opens with `function`.
+    assert_eq!(
+        visibility_of("a.lua", lua, Language::Lua, "bound"),
+        "private"
+    );
+    assert_eq!(
+        visibility_of("a.lua", lua, Language::Lua, "M.shared"),
+        "public"
+    );
+
+    let elixir = b"defmodule A do\n  def shared do\n  end\n  defp hidden do\n  end\nend\n";
+    assert_eq!(
+        visibility_of("a.ex", elixir, Language::Elixir, "hidden"),
+        "private"
+    );
+    assert_eq!(
+        visibility_of("a.ex", elixir, Language::Elixir, "shared"),
+        "public"
+    );
+
+    let zig = b"pub fn shared() void {}\nfn hidden() void {}\n";
+    assert_eq!(
+        visibility_of("a.zig", zig, Language::Zig, "shared"),
+        "public"
+    );
+    assert_eq!(
+        visibility_of("a.zig", zig, Language::Zig, "hidden"),
+        "private"
+    );
+
+    let dart = b"void shared() {}\nvoid _hidden() {}\n";
+    assert_eq!(
+        visibility_of("a.dart", dart, Language::Dart, "_hidden"),
+        "private"
+    );
+
+    let php = b"<?php\nclass A { public function shared() {} private function hidden() {} }\n";
+    assert_eq!(
+        visibility_of("a.php", php, Language::Php, "hidden"),
+        "private"
+    );
+    assert_eq!(
+        visibility_of("a.php", php, Language::Php, "shared"),
+        "public"
+    );
+
+    // A C# member says nothing when it is private, and Swift's silence
+    // means its own module.
+    let csharp = b"class A { public void Shared() {} void Hidden() {} }\n";
+    assert_eq!(
+        visibility_of("a.cs", csharp, Language::CSharp, "Hidden"),
+        "private"
+    );
+    let swift = b"public func shared() {}\nfunc scoped() {}\n";
+    assert_eq!(
+        visibility_of("a.swift", swift, Language::Swift, "scoped"),
+        "crate"
+    );
+}
+
+#[test]
 fn java_and_kotlin_say_what_they_offer_outwards() {
     // okio and gson are libraries, and without a visibility fact the
     // coverage finding could not say so: it now reads "counting the 3428

@@ -721,6 +721,55 @@ pub(crate) fn visibility_label(
             Some("internal") => "crate",
             _ => "public",
         }),
+        // A C# member says nothing when it is private; PHP when it is
+        // public; Swift's silence means its module, which is what `crate`
+        // says here.
+        Language::CSharp => Some(match modifier_visibility(node, source) {
+            Some("public") => "public",
+            Some("internal") => "crate",
+            _ => "private",
+        }),
+        Language::Php => Some(match modifier_visibility(node, source) {
+            Some("private") | Some("protected") => "private",
+            _ => "public",
+        }),
+        Language::Swift | Language::Scala => Some(match modifier_visibility(node, source) {
+            Some("public") => "public",
+            Some("private") | Some("protected") => "private",
+            _ if language == Language::Scala => "public",
+            _ => "crate",
+        }),
+        // The keyword these languages open a declaration with is the whole
+        // of what they say: `static` gives a C function internal linkage,
+        // `local` keeps a Lua function to its file, Elixir writes `defp`,
+        // and Zig lets `pub` out.
+        Language::C | Language::Cpp => Some(match leading_keyword(node, source).as_deref() {
+            Some("static") => "private",
+            _ => "public",
+        }),
+        Language::Lua => Some(
+            if leading_keyword(node, source).as_deref() == Some("local") || lua_local_binding(node)
+            {
+                "private"
+            } else {
+                "public"
+            },
+        ),
+        Language::Elixir => Some(match leading_keyword(node, source).as_deref() {
+            Some("defp") => "private",
+            _ => "public",
+        }),
+        Language::Zig => Some(match leading_keyword(node, source).as_deref() {
+            Some("pub") => "public",
+            _ => "private",
+        }),
+        // Dart reads a leading underscore as library-private, as Python
+        // reads it as a contract.
+        Language::Dart => Some(if label.starts_with('_') {
+            "private"
+        } else {
+            "public"
+        }),
         _ => None,
     }
 }
@@ -731,16 +780,48 @@ pub(crate) fn visibility_label(
 /// inner node still answers.
 fn modifier_visibility(node: Node<'_>, source: &[u8]) -> Option<&'static str> {
     let mut cursor = node.walk();
-    let modifiers = node
+    let text = node
         .children(&mut cursor)
-        .find(|child| child.kind() == "modifiers")?;
-    let text = node_text(modifiers, source)?;
+        .filter(|child| {
+            matches!(
+                child.kind(),
+                "modifiers" | "modifier" | "visibility_modifier"
+            )
+        })
+        .filter_map(|child| node_text(child, source))
+        .collect::<Vec<_>>()
+        .join(" ");
     ["public", "private", "protected", "internal"]
         .into_iter()
         .find(|keyword| {
             text.split(|character: char| !character.is_alphanumeric())
                 .any(|word| word == *keyword)
         })
+}
+
+/// Whether a Lua function is bound by a `local` declaration. `local
+/// handler = function() end` keeps it to its file exactly as `local
+/// function handler()` does, but the expression itself opens with
+/// `function`, so the binding has to be looked at.
+fn lua_local_binding(node: Node<'_>) -> bool {
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        match parent.kind() {
+            "variable_declaration" => return true,
+            "expression_list" | "assignment_statement" => current = parent.parent(),
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// The word a declaration opens with, which is where several languages put
+/// what they let others see.
+fn leading_keyword(node: Node<'_>, source: &[u8]) -> Option<String> {
+    node_text(node, source)?
+        .split_whitespace()
+        .next()
+        .map(str::to_string)
 }
 
 /// The type a method belongs to: the nearest enclosing type declaration (or
