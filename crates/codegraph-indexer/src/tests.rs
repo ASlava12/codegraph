@@ -3851,6 +3851,57 @@ fn scan_project_adds_environment_config_and_error_edges() {
 }
 
 #[test]
+fn a_fact_belongs_to_the_definition_that_holds_it() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    // One name, three definitions -- the shape flask writes for a typed
+    // function. The `raise` is written inside the last one.
+    fs::write(
+        root.join("cli.py"),
+        r#"import typing as t
+
+
+@t.overload
+def locate_app(module_name: str, app_name: str) -> t.Any: ...
+
+
+@t.overload
+def locate_app(module_name: str, app_name: None) -> None: ...
+
+
+def locate_app(module_name, app_name):
+    if not app_name:
+        raise RuntimeError("no application found")
+    return app_name
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let error_source = graph
+        .edges
+        .iter()
+        .find(|edge| edge.kind == EdgeKind::MayError)
+        .map(|edge| edge.source)
+        .expect("no may_error edge");
+    let holder = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == error_source)
+        .expect("missing source node");
+    let span = holder.span.as_ref().expect("source has no span");
+    assert_eq!(holder.label, "locate_app");
+    assert!(
+        span.start_line <= 13 && 15 <= span.end_line,
+        "the raise on line 15 is outside {}-{}, so it went to a stub",
+        span.start_line,
+        span.end_line
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scan_project_adds_rationale_comment_nodes() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

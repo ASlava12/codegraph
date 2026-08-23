@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind};
+use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan};
 use codegraph_parser::{Language, ParsedItemKind, adapter_for_language, adapter_for_path};
 use globset::GlobSet;
 use walkdir::WalkDir;
@@ -581,6 +581,11 @@ pub(crate) fn index_file(
                 }
 
                 let mut local_functions = BTreeMap::new();
+                // Several definitions in one file can answer to one name:
+                // flask writes `locate_app` three times, twice as a
+                // `@t.overload` stub with no body. Keeping every span lets
+                // a fact go to the definition that contains it.
+                let mut local_function_spans: Vec<(String, NodeId, SourceSpan)> = Vec::new();
                 let test_cutoff = source_text
                     .as_deref()
                     .and_then(|source| rust_test_module_cutoff(language, source));
@@ -815,6 +820,7 @@ pub(crate) fn index_file(
                             item_id,
                         );
                         register_local_function(&mut local_functions, &item.label, item_id);
+                        local_function_spans.push((item.label.clone(), item_id, item.span.clone()));
                     }
                     if item.kind == ParsedItemKind::Type {
                         register_function_symbol(&mut context.type_symbols, &item.label, item_id);
@@ -866,7 +872,10 @@ pub(crate) fn index_file(
                     let source_id = item
                         .parent
                         .as_deref()
-                        .and_then(|parent| resolve_local_function(&local_functions, parent))
+                        .and_then(|parent| {
+                            enclosing_local_function(&local_function_spans, parent, &item.span)
+                                .or_else(|| resolve_local_function(&local_functions, parent))
+                        })
                         .unwrap_or(file_id);
                     let node_kind = match item.kind {
                         ParsedItemKind::EnvironmentRead => NodeKind::Environment,
@@ -1162,4 +1171,26 @@ fn declares_cpp(source: &str) -> bool {
             || trimmed.starts_with("public:")
             || trimmed.starts_with("private:")
     })
+}
+
+/// The definition of `name` in this file whose body holds `span`. Several
+/// can share a name -- a Python `@t.overload` stub and the implementation
+/// under it -- and the fact belongs to the one it was written inside.
+fn enclosing_local_function(
+    definitions: &[(String, NodeId, SourceSpan)],
+    name: &str,
+    span: &SourceSpan,
+) -> Option<NodeId> {
+    definitions
+        .iter()
+        .filter(|(label, _, definition)| {
+            label == name
+                && definition.path == span.path
+                && definition.start_line <= span.start_line
+                && span.start_line <= definition.end_line
+        })
+        // The innermost definition wins, as a nested helper does over the
+        // function that holds it.
+        .min_by_key(|(_, _, definition)| definition.end_line - definition.start_line)
+        .map(|(_, id, _)| *id)
 }
