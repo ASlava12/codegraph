@@ -1713,3 +1713,46 @@ fn elixir_guarded_and_one_line_definitions_are_extracted() {
         );
     }
 }
+
+#[test]
+fn javascript_function_expressions_are_named_by_their_binding() {
+    // Most modern JS declares functions as arrow/function expressions bound to
+    // a name. They used to be invisible — no function fact, and no calls from
+    // their bodies either, since nothing established an enclosing function.
+    let source = "const handler = async (req) => { doWork(req); };\n\
+                  let plain = function (x) { return helper(x); };\n\
+                  const obj = { method: (a) => compute(a) };\n\
+                  api.send = () => transmit();\n\
+                  items.map((x) => x * 2);\n";
+    let parsed = parse_source("app.js", source.as_bytes(), Language::JavaScript).unwrap();
+    let functions: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Function)
+        .map(|item| item.label.as_str())
+        .collect();
+    for name in ["handler", "plain", "method", "api.send"] {
+        assert!(
+            functions.contains(&name),
+            "`{name}` is bound to a name and must be extracted: {functions:?}"
+        );
+    }
+    assert_eq!(
+        functions.len(),
+        4,
+        "the anonymous map callback stays anonymous: {functions:?}"
+    );
+
+    let calls: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Call)
+        .map(|item| item.label.as_str())
+        .collect();
+    for call in ["doWork", "helper", "compute", "transmit"] {
+        assert!(
+            calls.contains(&call),
+            "calls inside function expressions are extracted: {calls:?}"
+        );
+    }
+}

@@ -153,6 +153,14 @@ pub(crate) fn classify_node(
             "function_declaration" | "method_definition" | "generator_function_declaration" => {
                 ParsedItemKind::Function
             }
+            // `const handler = () => {}` and `const f = function () {}` are how
+            // most modern JS/TS declares functions. Only named bindings count;
+            // an anonymous callback stays anonymous.
+            "arrow_function" | "function_expression"
+                if js_bound_function_name(node, source).is_some() =>
+            {
+                ParsedItemKind::Function
+            }
             "class_declaration"
             | "interface_declaration"
             | "type_alias_declaration"
@@ -1062,12 +1070,34 @@ fn elixir_definition_head(node: Node<'_>, source: &[u8]) -> Option<String> {
     }
 }
 
+/// The name a JS/TS function expression inherits from the binding it is
+/// assigned to: `const f = () => {}`, `{ key: () => {} }`, `obj.m = () => {}`.
+/// Returns None for a truly anonymous expression such as a bare callback.
+pub(crate) fn js_bound_function_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let parent = node.parent()?;
+    match parent.kind() {
+        "variable_declarator" => named_child_text(parent, "name", source),
+        "pair" => named_child_text(parent, "key", source),
+        "assignment_expression" => named_child_text(parent, "left", source),
+        _ => None,
+    }
+}
+
 pub(crate) fn item_label(
     language: Language,
     kind: ParsedItemKind,
     node: Node<'_>,
     source: &[u8],
 ) -> Option<String> {
+    // A function expression has no name of its own; it borrows the binding's.
+    if matches!(
+        language,
+        Language::JavaScript | Language::TypeScript | Language::Tsx
+    ) && matches!(node.kind(), "arrow_function" | "function_expression")
+    {
+        return js_bound_function_name(node, source);
+    }
+
     if kind == ParsedItemKind::Import {
         return node_text(node, source).map(compact_label);
     }
