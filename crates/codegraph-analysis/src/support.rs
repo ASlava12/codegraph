@@ -8,6 +8,15 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 #[allow(unused_imports)]
 use crate::*;
 
+/// Nodes by id, for loops that would otherwise scan every node per edge.
+///
+/// Ids are handed out densely, but a sliced graph keeps the original ids with
+/// fewer nodes, so this indexes what is actually there rather than assuming
+/// the id is the position.
+pub(crate) fn node_index(graph: &CodeGraph) -> BTreeMap<NodeId, &Node> {
+    graph.nodes.iter().map(|node| (node.id, node)).collect()
+}
+
 pub(crate) fn incoming_edge_indexes(
     graph: &CodeGraph,
     target: NodeId,

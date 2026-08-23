@@ -4477,6 +4477,21 @@ pub(crate) fn add_ambiguous_call_resolution_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
 ) {
+    // Severity and the callers of a placeholder were both recomputed by
+    // scanning every edge, once per placeholder: on terraform that is 6700
+    // placeholders times 223000 edges, twice over. One pass builds what the
+    // loops need.
+    let severity = heuristic_scan_severity(graph);
+    let mut callers: BTreeMap<NodeId, Vec<(usize, NodeId)>> = BTreeMap::new();
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind == EdgeKind::Calls {
+            callers
+                .entry(edge.target)
+                .or_default()
+                .push((index, edge.source));
+        }
+    }
+
     for placeholder in graph.nodes.iter().filter(|node| {
         node.metadata
             .get("item_kind")
@@ -4486,14 +4501,12 @@ pub(crate) fn add_ambiguous_call_resolution_insights(
                 .get("resolution")
                 .is_some_and(|resolution| resolution == "ambiguous")
     }) {
-        let matches = graph
-            .edges
-            .iter()
-            .enumerate()
-            .filter(|(_, edge)| edge.kind == EdgeKind::Calls && edge.target == placeholder.id)
-            .collect::<Vec<_>>();
+        let matches = callers
+            .get(&placeholder.id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         let mut nodes = vec![placeholder.id];
-        nodes.extend(matches.iter().map(|(_, edge)| edge.source));
+        nodes.extend(matches.iter().map(|(_, source)| *source));
         nodes.sort_unstable();
         nodes.dedup();
         let count = placeholder
@@ -4509,7 +4522,7 @@ pub(crate) fn add_ambiguous_call_resolution_insights(
             .unwrap_or_default();
         insights.push(Insight {
             kind: "ambiguous_call_resolution".to_string(),
-            severity: heuristic_scan_severity(graph),
+            severity,
             message: format!(
                 "Call `{}` has {count} same-language candidates and was kept as one bounded ambiguity{sample}",
                 placeholder.label
@@ -4559,7 +4572,7 @@ pub(crate) fn add_ambiguous_call_resolution_insights(
 
         insights.push(Insight {
             kind: "ambiguous_call_resolution".to_string(),
-            severity: heuristic_scan_severity(graph),
+            severity,
             message: format!(
                 "`{caller}` calls `{call_label}` but it resolves to multiple targets: {target_labels}"
             ),

@@ -38,10 +38,13 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unresolved_dockerfile_command_path_insights(graph, &mut insights);
     add_unresolved_makefile_command_path_insights(graph, &mut insights);
     add_entrypoint_dead_end_insights(graph, &mut insights);
-    add_entrypoint_coverage_insights(graph, &mut insights);
-    add_unreachable_config_read_insights(graph, &mut insights);
-    add_unreachable_error_flow_insights(graph, &mut insights);
-    add_unreachable_source_file_insights(graph, &mut insights);
+    // One walk feeds every reachability finding: recomputing it per insight
+    // meant four BFS passes over the whole graph.
+    let reachable = entrypoint_reachable_nodes(graph);
+    add_entrypoint_coverage_insights(graph, &reachable, &mut insights);
+    add_unreachable_config_read_insights(graph, &reachable, &mut insights);
+    add_unreachable_error_flow_insights(graph, &reachable, &mut insights);
+    add_unreachable_source_file_insights(graph, &reachable, &mut insights);
     add_conflicting_config_default_insights(graph, &mut insights);
     add_mixed_config_requirement_insights(graph, &mut insights);
     add_undeclared_flutter_asset_insights(graph, &mut insights);
@@ -1581,8 +1584,11 @@ const MIN_FUNCTIONS_FOR_COVERAGE: usize = 20;
 /// through values (`client.Do(...)`) or outside the repository has few
 /// reachable functions no matter how alive its code is. Without this line the
 /// thousands of `unreachable_*` findings read as "this code is dead".
-pub(crate) fn add_entrypoint_coverage_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
-    let reachable = entrypoint_reachable_nodes(graph);
+pub(crate) fn add_entrypoint_coverage_insights(
+    graph: &CodeGraph,
+    reachable: &BTreeSet<NodeId>,
+    insights: &mut Vec<Insight>,
+) {
     if reachable.is_empty() {
         return;
     }
@@ -1645,8 +1651,11 @@ fn percentage(part: usize, whole: usize) -> usize {
     (part * 100).checked_div(whole).unwrap_or_default()
 }
 
-pub(crate) fn add_unreachable_config_read_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
-    let reachable = entrypoint_reachable_nodes(graph);
+pub(crate) fn add_unreachable_config_read_insights(
+    graph: &CodeGraph,
+    reachable: &BTreeSet<NodeId>,
+    insights: &mut Vec<Insight>,
+) {
     if reachable.is_empty() {
         return;
     }
@@ -1674,8 +1683,11 @@ pub(crate) fn add_unreachable_config_read_insights(graph: &CodeGraph, insights: 
     }
 }
 
-pub(crate) fn add_unreachable_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
-    let reachable = entrypoint_reachable_nodes(graph);
+pub(crate) fn add_unreachable_error_flow_insights(
+    graph: &CodeGraph,
+    reachable: &BTreeSet<NodeId>,
+    insights: &mut Vec<Insight>,
+) {
     if reachable.is_empty() {
         return;
     }
@@ -1702,8 +1714,11 @@ pub(crate) fn add_unreachable_error_flow_insights(graph: &CodeGraph, insights: &
     }
 }
 
-pub(crate) fn add_unreachable_source_file_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
-    let reachable = entrypoint_reachable_nodes(graph);
+pub(crate) fn add_unreachable_source_file_insights(
+    graph: &CodeGraph,
+    reachable: &BTreeSet<NodeId>,
+    insights: &mut Vec<Insight>,
+) {
     if reachable.is_empty() {
         return;
     }
@@ -1713,7 +1728,7 @@ pub(crate) fn add_unreachable_source_file_insights(graph: &CodeGraph, insights: 
         .iter()
         .filter(|node| is_source_file_candidate(graph, node));
     for file in source_files {
-        if reachable.contains(&file.id) || file_has_reachable_code(graph, file.id, &reachable) {
+        if reachable.contains(&file.id) || file_has_reachable_code(graph, file.id, reachable) {
             continue;
         }
 
@@ -1987,6 +2002,7 @@ pub(crate) fn add_undeclared_flutter_asset_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
 ) {
+    let nodes_by_id = node_index(graph);
     let declared_assets = flutter_declared_assets(graph);
     if declared_assets.is_empty() {
         return;
@@ -1997,7 +2013,7 @@ pub(crate) fn add_undeclared_flutter_asset_insights(
         if edge.kind != EdgeKind::ReadsConfig {
             continue;
         }
-        let Some(target) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+        let Some(target) = nodes_by_id.get(&edge.target).copied() else {
             continue;
         };
         let Some(asset_path) = flutter_asset_read_path(target) else {
@@ -2288,6 +2304,7 @@ pub(crate) fn placeholder_credential_default(default_value: &str) -> bool {
 }
 
 pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let nodes_by_id = node_index(graph);
     let declared = declared_package_ids(graph);
     let declared_ecosystems: BTreeSet<_> = declared
         .iter()
@@ -2307,13 +2324,13 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
             continue;
         }
 
-        let Some(source_node) = graph.nodes.iter().find(|node| node.id == edge.source) else {
+        let Some(source_node) = nodes_by_id.get(&edge.source).copied() else {
             continue;
         };
         if is_dependency_manifest_source_path(&source_node.label) {
             continue;
         }
-        let Some(import_node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+        let Some(import_node) = nodes_by_id.get(&edge.target).copied() else {
             continue;
         };
         if import_node
@@ -2361,6 +2378,7 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
 }
 
 pub(crate) fn add_unused_dependency_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let nodes_by_id = node_index(graph);
     let used_packages = dependency_usage_packages(graph);
     let used_ecosystems: BTreeSet<_> = used_packages
         .iter()
@@ -2380,7 +2398,7 @@ pub(crate) fn add_unused_dependency_insights(graph: &CodeGraph, insights: &mut V
             continue;
         }
 
-        let Some(dependency) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+        let Some(dependency) = nodes_by_id.get(&edge.target).copied() else {
             continue;
         };
         let Some(package_id) = dependency.metadata.get("package_id") else {
@@ -2484,6 +2502,7 @@ pub(crate) fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &
 }
 
 pub(crate) fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let nodes_by_id = node_index(graph);
     let mut groups: BTreeMap<String, Vec<(usize, NodeId, NodeId, String)>> = BTreeMap::new();
     for (index, edge) in graph.edges.iter().enumerate() {
         if edge.kind != EdgeKind::DependsOn {
@@ -2497,7 +2516,7 @@ pub(crate) fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &
         else {
             continue;
         };
-        let Some(target) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+        let Some(target) = nodes_by_id.get(&edge.target).copied() else {
             continue;
         };
         let key = target
@@ -2550,6 +2569,7 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
 ) {
+    let nodes_by_id = node_index(graph);
     let declarations = dependency_declarations_by_package(graph);
     if declarations.is_empty() {
         return;
@@ -2562,7 +2582,7 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
         if edge.kind != EdgeKind::Imports {
             continue;
         }
-        let Some(source) = graph.nodes.iter().find(|node| node.id == edge.source) else {
+        let Some(source) = nodes_by_id.get(&edge.source).copied() else {
             continue;
         };
         if is_dependency_manifest_source_path(&source.label) {
@@ -2577,7 +2597,7 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
             continue;
         }
 
-        let Some(import_node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+        let Some(import_node) = nodes_by_id.get(&edge.target).copied() else {
             continue;
         };
         if import_node
@@ -2702,6 +2722,7 @@ pub(crate) struct DependencyDeclaration {
 pub(crate) fn dependency_declarations_by_package(
     graph: &CodeGraph,
 ) -> BTreeMap<String, Vec<DependencyDeclaration>> {
+    let nodes_by_id = node_index(graph);
     let mut declarations: BTreeMap<String, Vec<DependencyDeclaration>> = BTreeMap::new();
     for (edge_index, edge) in graph.edges.iter().enumerate() {
         if edge.kind != EdgeKind::DependsOn {
@@ -2715,7 +2736,7 @@ pub(crate) fn dependency_declarations_by_package(
         else {
             continue;
         };
-        let Some(target) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+        let Some(target) = nodes_by_id.get(&edge.target).copied() else {
             continue;
         };
         let Some(package_id) = target.metadata.get("package_id") else {
@@ -2745,6 +2766,7 @@ pub(crate) struct DependencyImportUsage {
 pub(crate) fn dependency_import_usages_by_package(
     graph: &CodeGraph,
 ) -> BTreeMap<String, Vec<DependencyImportUsage>> {
+    let nodes_by_id = node_index(graph);
     let path_index = node_path_index(graph);
     let declared = declared_package_ids(graph);
     let declared_ecosystems = declared_ecosystems_from_package_ids(declared.iter());
@@ -2753,13 +2775,13 @@ pub(crate) fn dependency_import_usages_by_package(
         if edge.kind != EdgeKind::Imports {
             continue;
         }
-        let Some(source) = graph.nodes.iter().find(|node| node.id == edge.source) else {
+        let Some(source) = nodes_by_id.get(&edge.source).copied() else {
             continue;
         };
         if is_dependency_manifest_source_path(&source.label) {
             continue;
         }
-        let Some(import_node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+        let Some(import_node) = nodes_by_id.get(&edge.target).copied() else {
             continue;
         };
         if import_node
@@ -3152,6 +3174,7 @@ pub(crate) fn declared_package_ids(graph: &CodeGraph) -> BTreeSet<String> {
 }
 
 pub(crate) fn import_packages(graph: &CodeGraph) -> Vec<(usize, ImportPackage)> {
+    let nodes_by_id = node_index(graph);
     let declared = declared_package_ids(graph);
     let declared_ecosystems = declared_ecosystems_from_package_ids(declared.iter());
     graph
@@ -3170,7 +3193,7 @@ pub(crate) fn import_packages(graph: &CodeGraph) -> Vec<(usize, ImportPackage)> 
             {
                 return Vec::new();
             }
-            let Some(import_node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+            let Some(import_node) = nodes_by_id.get(&edge.target).copied() else {
                 return Vec::new();
             };
             let Some(language) = import_node.metadata.get("language") else {
