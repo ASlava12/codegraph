@@ -554,7 +554,12 @@ pub(crate) fn index_file(
     let source_text = fs::read_to_string(path).ok();
     let mut script_entrypoint = None;
     if let Some(source) = source_text.as_deref() {
-        index_rationale_comments(context, file_id, label, language, source);
+        let string_lines = parse_result
+            .as_ref()
+            .and_then(|(_, parsed)| parsed.as_ref().ok())
+            .map(|parsed| parsed.string_line_ranges.as_slice())
+            .unwrap_or_default();
+        index_rationale_comments(context, file_id, label, language, source, string_lines);
         script_entrypoint = index_script_entrypoint(context, file_id, label, source);
         index_manifest_facts(context, file_id, path, label, source);
         index_markdown_document(context, file_id, path, label, source);

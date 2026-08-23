@@ -52,7 +52,8 @@ pub fn parse_source(
         language,
         items: facts.items,
         type_references: facts.type_references,
-        quoted_line_ranges: quoted_line_ranges(root, source_text),
+        quoted_line_ranges: line_ranges_of(root, source_text, QuotedKinds::StringsAndComments),
+        string_line_ranges: line_ranges_of(root, source_text, QuotedKinds::StringsOnly),
         has_error_nodes: root.has_error(),
     })
 }
@@ -61,7 +62,16 @@ pub fn parse_source(
 /// that scans text rather than syntax needs them: `@app.route("/")` in a
 /// docstring is an example, not a route the program serves, and one such
 /// line in flask claimed about 140 functions as its handler.
-fn quoted_line_ranges(root: Node<'_>, source: &str) -> Vec<(u32, u32)> {
+/// Which literals a range scan is about. A comment marker inside a raw
+/// string is a fixture rather than a comment on this repository, so the
+/// rationale scan needs the strings without the comments.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QuotedKinds {
+    StringsAndComments,
+    StringsOnly,
+}
+
+fn line_ranges_of(root: Node<'_>, source: &str, kinds: QuotedKinds) -> Vec<(u32, u32)> {
     let lines: Vec<&str> = source.lines().collect();
     let mut ranges: Vec<(u32, u32)> = Vec::new();
     let mut stack = vec![root];
@@ -72,7 +82,9 @@ fn quoted_line_ranges(root: Node<'_>, source: &str) -> Vec<(u32, u32)> {
             break;
         }
         let kind = node.kind();
-        if kind.contains("string") || kind.contains("comment") || kind.contains("heredoc") {
+        let is_string = kind.contains("string") || kind.contains("heredoc");
+        let is_comment = kind.contains("comment");
+        if is_string || (is_comment && kinds == QuotedKinds::StringsAndComments) {
             let start = node.start_position();
             let end = node.end_position();
             if end.row > start.row {

@@ -4151,6 +4151,34 @@ def main():
 }
 
 #[test]
+fn a_marker_inside_a_string_is_a_fixture() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    // The shape this repository's own tests are written in: a fixture
+    // carrying comment markers inside a raw string.
+    fs::write(
+        root.join("lib.rs"),
+        "// HACK: this one is a note about this file\nfn write_fixture() -> &'static str {\n    r#\"fn sample() {\n    // HACK: this one is a sample\n}\n\"#\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let markers: Vec<u32> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata
+                .get("item_kind")
+                .is_some_and(|kind| kind == "rationale_comment")
+        })
+        .filter_map(|node| node.span.as_ref().map(|span| span.start_line))
+        .collect();
+    assert_eq!(markers, vec![1], "the sample inside the string was counted");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_marker_is_shouted_or_punctuated_but_never_prose() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

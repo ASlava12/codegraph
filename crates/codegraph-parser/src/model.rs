@@ -32,6 +32,11 @@ pub struct ParsedFile {
     /// or a commented-out one is not a route the program serves.
     #[serde(default)]
     pub quoted_line_ranges: Vec<(u32, u32)>,
+    /// Inclusive line ranges covered by string literals alone. A `// HACK`
+    /// written inside a test's raw string is a fixture, not a note about
+    /// this repository.
+    #[serde(default)]
+    pub string_line_ranges: Vec<(u32, u32)>,
     pub has_error_nodes: bool,
 }
 

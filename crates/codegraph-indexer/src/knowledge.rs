@@ -16,8 +16,9 @@ pub(crate) fn index_rationale_comments(
     label: &str,
     language: Option<Language>,
     source: &str,
+    string_lines: &[(u32, u32)],
 ) {
-    for comment in rationale_comments(label, language, source) {
+    for comment in rationale_comments(label, language, source, string_lines) {
         let mut metadata = BTreeMap::new();
         metadata.insert("item_kind".to_string(), "rationale_comment".to_string());
         metadata.insert("source".to_string(), "source_comment".to_string());
@@ -272,10 +273,21 @@ pub(crate) fn rationale_comments(
     label: &str,
     language: Option<Language>,
     source: &str,
+    string_lines: &[(u32, u32)],
 ) -> Vec<RationaleComment> {
     source
         .lines()
         .enumerate()
+        // A marker inside a string literal is a fixture: this repository's
+        // own tests write `// HACK ...` inside a raw string to exercise
+        // this very scan, and two of them were reported as notes about the
+        // repository.
+        .filter(|(index, _)| {
+            let line = *index as u32 + 1;
+            !string_lines
+                .iter()
+                .any(|(start, end)| line >= *start && line <= *end)
+        })
         .filter_map(|(index, line)| {
             comment_text(label, language, line)
                 .and_then(|text| rationale_marker(text))
