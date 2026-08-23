@@ -2009,6 +2009,23 @@ pub(crate) fn add_unreachable_error_flow_insights(
     }
 }
 
+/// How many of a file's functions it offers outwards.
+fn exported_function_count(graph: &CodeGraph, file: NodeId) -> usize {
+    graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Contains && edge.source == file)
+        .filter_map(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+        .filter(|node| {
+            node.kind == NodeKind::Function
+                && node
+                    .metadata
+                    .get("visibility")
+                    .is_some_and(|visibility| visibility == "public")
+        })
+        .count()
+}
+
 pub(crate) fn add_unreachable_source_file_insights(
     graph: &CodeGraph,
     reachable: &BTreeSet<NodeId>,
@@ -2032,11 +2049,24 @@ pub(crate) fn add_unreachable_source_file_insights(
             .get("language")
             .map(String::as_str)
             .unwrap_or("unknown");
+        // Most files a library never reaches from an entrypoint are its
+        // API: 129 of okio's 176, 383 of terraform's 500. Saying how many
+        // of its functions are exported is the difference between "dead"
+        // and "reached from outside".
+        let exported = exported_function_count(graph, file.id);
+        let offered = match exported {
+            0 => String::new(),
+            1 => "; one of its functions is exported, so callers may be outside this repository"
+                .to_string(),
+            _ => format!(
+                "; {exported} of its functions are exported, so callers may be outside this repository"
+            ),
+        };
         insights.push(Insight {
             kind: "unreachable_source_file".to_string(),
             severity: InsightSeverity::Info,
             message: format!(
-                "`{}` contains {language} code but is not reachable from any entrypoint",
+                "`{}` contains {language} code but is not reachable from any entrypoint{offered}",
                 file.label
             ),
             nodes: vec![file.id],

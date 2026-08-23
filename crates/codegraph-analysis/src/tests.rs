@@ -8960,6 +8960,75 @@ fn insights_report_conflicting_dependency_declarations() {
 }
 
 #[test]
+fn an_unreachable_file_says_what_it_offers() {
+    // Most files a library never reaches from an entrypoint are its API:
+    // 129 of okio's 176, 383 of terraform's 500. "Contains code but is not
+    // reachable" reads as dead code for all of them.
+    let mut graph = CodeGraph::new("repo");
+    let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+    let main_file = graph.add_node_with_metadata(
+        NodeKind::File,
+        "src/main.rs",
+        None,
+        BTreeMap::from([("language".to_string(), "rust".to_string())]),
+    );
+    let main = graph.add_node(NodeKind::Function, "main");
+    graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+    graph.add_edge(entry, main, EdgeKind::References, Confidence::Exact);
+    graph.add_edge(main_file, main, EdgeKind::Contains, Confidence::Exact);
+
+    let api_file = graph.add_node_with_metadata(
+        NodeKind::File,
+        "src/api.rs",
+        None,
+        BTreeMap::from([("language".to_string(), "rust".to_string())]),
+    );
+    let offered = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "parse",
+        None,
+        BTreeMap::from([("visibility".to_string(), "public".to_string())]),
+    );
+    graph.add_edge(api_file, offered, EdgeKind::Contains, Confidence::Exact);
+
+    let dead_file = graph.add_node_with_metadata(
+        NodeKind::File,
+        "src/dead.rs",
+        None,
+        BTreeMap::from([("language".to_string(), "rust".to_string())]),
+    );
+    let hidden = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "forgotten",
+        None,
+        BTreeMap::from([("visibility".to_string(), "private".to_string())]),
+    );
+    graph.add_edge(dead_file, hidden, EdgeKind::Contains, Confidence::Exact);
+
+    let report = insights(&graph);
+    let message_for = |path: &str| -> String {
+        report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "unreachable_source_file" && insight.message.contains(path)
+            })
+            .map(|insight| insight.message.clone())
+            .unwrap_or_else(|| format!("no finding for {path}"))
+    };
+    assert!(
+        message_for("src/api.rs").contains("one of its functions is exported"),
+        "{}",
+        message_for("src/api.rs")
+    );
+    assert!(
+        !message_for("src/dead.rs").contains("exported"),
+        "{}",
+        message_for("src/dead.rs")
+    );
+}
+
+#[test]
 fn an_orphan_says_whether_it_is_dead_or_the_api() {
     // A function nobody in the repository calls is either dead code or the
     // API. Terraform has 11406 exported functions with no in-repo caller
