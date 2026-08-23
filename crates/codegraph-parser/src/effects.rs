@@ -230,11 +230,16 @@ pub(crate) fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) 
             )
         }),
         Language::JavaScript | Language::TypeScript | Language::Tsx => {
-            text.contains("readFile")
-                || text.contains("require(")
-                || call
-                    .as_deref()
-                    .is_some_and(|value| matches!(simple_name(value), "readFile" | "readFileSync"))
+            call.as_deref()
+                .is_some_and(|value| match simple_name(value) {
+                    "readFile" | "readFileSync" => true,
+                    // `require('./package.json')` reads configuration, but
+                    // `require('lodash')` is a module import and is already
+                    // indexed as one.
+                    "require" => first_string_literal(node, source)
+                        .is_some_and(|path| is_data_file_path(&path)),
+                    _ => false,
+                })
         }
         Language::Go => call
             .as_deref()
@@ -458,6 +463,16 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
                     })
         }
     }
+}
+
+/// Does this path name a data/config file rather than a code module?
+fn is_data_file_path(path: &str) -> bool {
+    let path = path.trim().trim_end_matches(['"', '\'']);
+    let extension = path.rsplit('.').next().unwrap_or_default();
+    matches!(
+        extension,
+        "json" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "env" | "properties" | "xml"
+    )
 }
 
 pub(crate) fn effect_label(

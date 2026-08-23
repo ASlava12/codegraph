@@ -362,6 +362,41 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///local.db")
 }
 
 #[test]
+fn javascript_config_reads_need_a_config_to_read() {
+    let parsed = parse_source(
+        "build.js",
+        br#"const fs = require('fs')
+const pkg = require('./package.json')
+const lodash = require('lodash')
+
+function load(configPath) {
+    const parsed = ts.parseJsonConfigFileContent(ts.readConfigFile(configPath, fs.readFile).config)
+    return fs.readFileSync('config.yaml')
+}
+"#,
+        Language::JavaScript,
+    )
+    .unwrap();
+
+    let configs = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::ConfigRead)
+        .map(|item| item.label.as_str())
+        .collect::<BTreeSet<_>>();
+
+    // `require` of a data file reads configuration; `require('lodash')` and
+    // `require('fs')` are module imports, and an expression that merely
+    // mentions `readFile` is not a read at all — matching on text filed both
+    // of those, labelled with a slab of source code.
+    assert_eq!(
+        configs,
+        BTreeSet::from(["./package.json", "config.yaml"]),
+        "unexpected config reads"
+    );
+}
+
+#[test]
 fn parses_javascript_environment_default_values() {
     let parsed = parse_source(
         "app.js",
