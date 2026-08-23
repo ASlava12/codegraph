@@ -707,8 +707,40 @@ pub(crate) fn visibility_label(
         } else {
             "public"
         }),
+        // Java writes the visibility down or means package-private, and
+        // Kotlin means public when it says nothing. Both are libraries'
+        // languages, and without this the coverage finding cannot say what
+        // okio and gson offer outwards.
+        Language::Java => Some(match modifier_visibility(node, source) {
+            Some("public") => "public",
+            Some("private") | Some("protected") => "private",
+            _ => "package",
+        }),
+        Language::Kotlin => Some(match modifier_visibility(node, source) {
+            Some("private") | Some("protected") => "private",
+            Some("internal") => "crate",
+            _ => "public",
+        }),
         _ => None,
     }
+}
+
+/// The visibility keyword a declaration carries, if it carries one. Java
+/// hangs them off a `modifiers` child and Kotlin off a `visibility_modifier`
+/// inside one; both are read from the text so a grammar that renames the
+/// inner node still answers.
+fn modifier_visibility(node: Node<'_>, source: &[u8]) -> Option<&'static str> {
+    let mut cursor = node.walk();
+    let modifiers = node
+        .children(&mut cursor)
+        .find(|child| child.kind() == "modifiers")?;
+    let text = node_text(modifiers, source)?;
+    ["public", "private", "protected", "internal"]
+        .into_iter()
+        .find(|keyword| {
+            text.split(|character: char| !character.is_alphanumeric())
+                .any(|word| word == *keyword)
+        })
 }
 
 /// The type a method belongs to: the nearest enclosing type declaration (or

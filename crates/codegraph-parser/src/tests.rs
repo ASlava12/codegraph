@@ -537,6 +537,42 @@ fn parses_rust_environment_default_values() {
 }
 
 #[test]
+fn java_and_kotlin_say_what_they_offer_outwards() {
+    // okio and gson are libraries, and without a visibility fact the
+    // coverage finding could not say so: it now reads "counting the 3428
+    // exported functions as starting points reaches 92%" for okio.
+    let java = parse_source(
+        "A.java",
+        b"class A {\n  public void open() {}\n  private void hidden() {}\n  void shared() {}\n}\n",
+        Language::Java,
+    )
+    .unwrap();
+    let visibility_of = |parsed: &ParsedFile, label: &str| -> String {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.label == label)
+            .and_then(|item| item.metadata.get("visibility").cloned())
+            .unwrap_or_else(|| format!("no `{label}`"))
+    };
+    assert_eq!(visibility_of(&java, "open"), "public");
+    assert_eq!(visibility_of(&java, "hidden"), "private");
+    // Java means package-private when it says nothing.
+    assert_eq!(visibility_of(&java, "shared"), "package");
+
+    let kotlin = parse_source(
+        "B.kt",
+        b"fun open() {}\nprivate fun hidden() {}\ninternal fun shared() {}\n",
+        Language::Kotlin,
+    )
+    .unwrap();
+    // Kotlin means public when it says nothing.
+    assert_eq!(visibility_of(&kotlin, "open"), "public");
+    assert_eq!(visibility_of(&kotlin, "hidden"), "private");
+    assert_eq!(visibility_of(&kotlin, "shared"), "crate");
+}
+
+#[test]
 fn a_future_import_is_a_directive_not_a_dependency() {
     // `from __future__ import annotations` turns on a language feature;
     // there is no package called `__future__` to depend on. Python's
