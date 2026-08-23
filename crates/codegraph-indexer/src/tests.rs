@@ -3887,6 +3887,47 @@ export function finishComponentSetup(instance: number) {
 }
 
 #[test]
+fn a_lua_call_names_the_file_its_module_lives_in() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("kong").join("pdk")).unwrap();
+    fs::write(
+        root.join("kong").join("globalpatches.lua"),
+        "local function patch(options)\n  if options.cli then\n    ngx.exit = function() end\n  end\nend\n\nreturn patch\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("kong").join("pdk").join("response.lua"),
+        "local _M = {}\n\nfunction _M.exit(status)\n  return status\nend\n\nreturn _M\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("kong").join("handler.lua"),
+        "local kong = kong\n\nlocal function access()\n  return kong.response.exit(200)\nend\n\nreturn access\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let patched = node_id(&graph, NodeKind::Function, "ngx.exit");
+    let access = node_id(&graph, NodeKind::Function, "access");
+    // kong patches `ngx.exit`, but `kong.response.exit(...)` is a different
+    // function; only a call written `ngx.exit(...)` means the patch.
+    assert!(
+        !graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls && edge.source == access && edge.target == patched
+        }),
+        "the call was answered by the patched global"
+    );
+    // The module the call names is the file that holds it.
+    let exit = node_id(&graph, NodeKind::Function, "_M.exit");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls && edge.source == access && edge.target == exit
+        }),
+        "the call did not reach the module the file holds"
+    );
+}
+
+#[test]
 fn a_builtin_namespace_call_is_not_a_project_function() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("lib")).unwrap();

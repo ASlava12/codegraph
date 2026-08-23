@@ -977,12 +977,64 @@ pub const RESOLUTION_BASES: &[&str] = &[
     "name",
 ];
 
-/// Whether a path is the file OCaml would hold `module` in: the module
-/// name lowercased, with an `.ml` or `.mli` extension.
-fn ocaml_module_file(path: &str, module: &str) -> bool {
+/// Whether this owner is a namespace the runtime provides rather than one
+/// the project declares. A project can add to it -- kong patches `ngx` --
+/// but a call means that definition only when it names the same global.
+fn patches_runtime_global(language: &str, owner: &str) -> bool {
+    match language {
+        "lua" => matches!(
+            owner,
+            "ngx"
+                | "os"
+                | "io"
+                | "string"
+                | "table"
+                | "math"
+                | "coroutine"
+                | "debug"
+                | "package"
+                | "jit"
+                | "bit"
+                | "utf8"
+                | "_G"
+        ),
+        "javascript" | "typescript" | "tsx" => matches!(
+            owner,
+            "window"
+                | "globalThis"
+                | "global"
+                | "document"
+                | "console"
+                | "Object"
+                | "Array"
+                | "String"
+                | "Number"
+                | "Math"
+                | "JSON"
+                | "Promise"
+                | "Reflect"
+                | "Symbol"
+                | "Date"
+        ),
+        "python" => matches!(owner, "os" | "sys" | "json" | "re" | "time" | "logging"),
+        _ => false,
+    }
+}
+
+/// Whether the file is the module the call names. OCaml, Lua and Python
+/// each name a module after the file that holds it, so `Json.assoc` is
+/// `assoc` in json.ml and `kong.response.exit` is written in
+/// kong/pdk/response.lua. That is the language's own rule rather than a
+/// guess about where a name might live.
+fn module_named_file(language: &str, path: &str, module: &str) -> bool {
     let file = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
     let module = module.to_ascii_lowercase();
-    file == format!("{module}.ml") || file == format!("{module}.mli")
+    match language {
+        "ocaml" => file == format!("{module}.ml") || file == format!("{module}.mli"),
+        "lua" => file == format!("{module}.lua"),
+        "python" => file == format!("{module}.py"),
+        _ => false,
+    }
 }
 
 /// Whether every candidate is the same method of the same type: a set of
@@ -1068,6 +1120,24 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 graph_node(&context.graph, *target)
                     .and_then(|node| node.metadata.get("language"))
                     .is_some_and(|language| language == &call.language)
+            })
+            .collect::<Vec<_>>();
+        // A definition that patches a runtime global answers only calls
+        // written through that global. kong replaces `ngx.exit` in
+        // globalpatches.lua, and `kong.response.exit(...)` -- a different
+        // function, built inside the PDK factory -- was answered by it on
+        // the shared tail alone.
+        let call_owner = split_qualified_call(&call.label).map(|(owner, _)| owner);
+        let language_targets = language_targets
+            .into_iter()
+            .filter(|target| {
+                let Some(owner) = graph_node(&context.graph, *target)
+                    .and_then(|node| split_qualified_call(&node.label))
+                    .map(|(owner, _)| owner.to_string())
+                else {
+                    return true;
+                };
+                !patches_runtime_global(&call.language, &owner) || call_owner == Some(&owner)
             })
             .collect::<Vec<_>>();
         // The program does not call its own tests. flask has exactly one
@@ -1457,8 +1527,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // That is the language's own rule rather than a guess about where
         // a name might live, and it settles 11214 of dune's ambiguous
         // calls on its own.
-        if call.language == "ocaml"
-            && targets.len() > 1
+        if targets.len() > 1
             && let Some((module, _)) = split_qualified_call(&call.label)
         {
             let in_module_file = targets
@@ -1467,10 +1536,13 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 .filter(|target| {
                     graph_node(&context.graph, *target)
                         .and_then(|node| node.span.as_ref())
-                        .is_some_and(|span| ocaml_module_file(&span.path, module))
+                        .is_some_and(|span| module_named_file(&call.language, &span.path, module))
                 })
                 .collect::<Vec<_>>();
-            if in_module_file.len() == 1 {
+            // Several definitions can sit in the named file -- kong writes
+            // `exit` twice in pdk/response.lua, once per subsystem -- and
+            // narrowing to them is still the answer to where the call goes.
+            if !in_module_file.is_empty() && in_module_file.len() < targets.len() {
                 targets = in_module_file;
                 basis = "module_file";
             }
