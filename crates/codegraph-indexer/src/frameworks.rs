@@ -699,11 +699,20 @@ pub(crate) fn handler_after_first_comma(line: &str) -> Option<String> {
                 .to_string()
         })
         .filter(|value| !value.is_empty())?;
-    if handler.starts_with('|') || handler.starts_with("function") || handler.starts_with("async") {
-        None
-    } else {
-        Some(handler)
-    }
+    names_a_handler(&handler).then_some(handler)
+}
+
+/// Whether what follows a route path is the name of a handler, or the
+/// start of one written in place. `func(w http.ResponseWriter`, `(req`,
+/// `|request|` and `multer(` open a function literal or a call that builds
+/// one: there is no name in them to look up, and the handler is already
+/// there at the route for anyone reading it.
+fn names_a_handler(handler: &str) -> bool {
+    !handler.starts_with(|character: char| character.is_ascii_digit())
+        && handler.chars().all(|character| {
+            character.is_alphanumeric()
+                || matches!(character, '_' | '.' | ':' | '$' | '#' | '@' | '\\')
+        })
 }
 
 pub(crate) fn method_from_php_route(line: &str) -> Option<&'static str> {

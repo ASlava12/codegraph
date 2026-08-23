@@ -910,6 +910,30 @@ fn scan_project_uses_persistent_parse_cache_records() {
 }
 
 #[test]
+fn a_handler_written_in_place_has_no_name_to_find() {
+    // `mux.HandleFunc("/x", func(w http.ResponseWriter, ...))` puts the
+    // handler right there. Reading `func(w http.ResponseWriter` as its
+    // name sent terraform looking for 32 functions that were never named.
+    assert_eq!(
+        handler_after_first_comma("mux.HandleFunc(\"/api\", handleManifest)"),
+        Some("handleManifest".to_string())
+    );
+    assert_eq!(
+        handler_after_first_comma("router.get('/users', UserController::index)"),
+        Some("UserController::index".to_string())
+    );
+    for line in [
+        "mux.HandleFunc(\"/api\", func(w http.ResponseWriter, r *http.Request) {",
+        "app.post('/upload', multer({ dest: 'x' }).single('f'), save)",
+        "app.get('/users', (req, res) => res.send(1))",
+        "app.get('/users', function (req, res) {})",
+        "router.get(\"/users\", |request| async { })",
+    ] {
+        assert_eq!(handler_after_first_comma(line), None, "{line}");
+    }
+}
+
+#[test]
 fn python_extras_are_not_a_version() {
     // `celery[redis]==5.2.7` asks for celery with its redis extra. Reading
     // the extras as the version pinned celery to `[redis]`.
