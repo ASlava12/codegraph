@@ -32,6 +32,9 @@ pub enum Language {
     Lua,
     Elixir,
     Zig,
+    Haskell,
+    OCaml,
+    Julia,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,7 +211,23 @@ static ZIG_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     file_names: &[],
 };
 
-static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 20] = [
+static HASKELL_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Haskell,
+    extensions: &["hs"],
+    file_names: &[],
+};
+static OCAML_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::OCaml,
+    extensions: &["ml"],
+    file_names: &[],
+};
+static JULIA_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Julia,
+    extensions: &["jl"],
+    file_names: &[],
+};
+
+static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 23] = [
     &RUST_ADAPTER,
     &PYTHON_ADAPTER,
     &JAVASCRIPT_ADAPTER,
@@ -229,6 +248,9 @@ static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 20] = [
     &LUA_ADAPTER,
     &ELIXIR_ADAPTER,
     &ZIG_ADAPTER,
+    &HASKELL_ADAPTER,
+    &OCAML_ADAPTER,
+    &JULIA_ADAPTER,
 ];
 
 pub fn language_adapters() -> &'static [&'static dyn LanguageAdapter] {
@@ -276,6 +298,9 @@ impl Language {
             Self::Lua => "lua",
             Self::Elixir => "elixir",
             Self::Zig => "zig",
+            Self::Haskell => "haskell",
+            Self::OCaml => "ocaml",
+            Self::Julia => "julia",
         }
     }
 
@@ -301,6 +326,9 @@ impl Language {
             Self::Lua => tree_sitter_lua::LANGUAGE.into(),
             Self::Elixir => tree_sitter_elixir::LANGUAGE.into(),
             Self::Zig => tree_sitter_zig::LANGUAGE.into(),
+            Self::Haskell => tree_sitter_haskell::LANGUAGE.into(),
+            Self::OCaml => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
+            Self::Julia => tree_sitter_julia::LANGUAGE.into(),
         }
     }
 }

@@ -12,7 +12,7 @@ fn language_registry_exposes_all_builtin_adapters() {
         .map(|adapter| adapter.info().language)
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(adapters.len(), 20);
+    assert_eq!(adapters.len(), 23);
     assert_eq!(
         languages,
         BTreeSet::from([
@@ -22,11 +22,14 @@ fn language_registry_exposes_all_builtin_adapters() {
             "csharp",
             "dart",
             "go",
+            "haskell",
             "elixir",
             "java",
             "javascript",
+            "julia",
             "kotlin",
             "lua",
+            "ocaml",
             "php",
             "python",
             "ruby",
@@ -1409,4 +1412,95 @@ fn dart_environment_reads_are_counted_once_per_access() {
             .any(|item| item.metadata.get("default_value").map(String::as_str) == Some("dev")),
         "fromEnvironment defaultValue is captured: {reads:?}"
     );
+}
+
+#[test]
+fn haskell_ocaml_julia_adapters_extract_core_facts() {
+    struct Case {
+        path: &'static str,
+        language: Language,
+        source: &'static str,
+        expected: Vec<(ParsedItemKind, &'static str)>,
+    }
+
+    let cases = vec![
+        Case {
+            path: "Main.hs",
+            language: Language::Haskell,
+            source: "module Main where\nimport Data.List\ndata Shape = Circle Double\nmain = run 1\nrun k = if k > 0 then error \"bad\" else getEnv \"HOME\"\n",
+            expected: vec![
+                (ParsedItemKind::Type, "Shape"),
+                (ParsedItemKind::Entrypoint, "main"),
+                (ParsedItemKind::Function, "run"),
+                (ParsedItemKind::Call, "run"),
+                (ParsedItemKind::Branch, "branch: if"),
+            ],
+        },
+        Case {
+            path: "main.ml",
+            language: Language::OCaml,
+            source: "open Printf\ntype shape = Circle of float\nlet run k =\n  if k > 0 then failwith \"bad\";\n  Sys.getenv \"HOME\"\n",
+            expected: vec![
+                (ParsedItemKind::Type, "shape"),
+                (ParsedItemKind::Function, "run"),
+                (ParsedItemKind::Branch, "branch: if"),
+            ],
+        },
+        Case {
+            path: "demo.jl",
+            language: Language::Julia,
+            source: "module Demo\nstruct Shape\n  r::Float64\nend\nfunction run(k)\n  h = ENV[\"HOME\"]\n  if k > 0\n    throw(ErrorException(\"bad\"))\n  end\n  for i in 1:3\n    println(i)\n  end\n  return h\nend\nend\n",
+            expected: vec![
+                (ParsedItemKind::Module, "Demo"),
+                (ParsedItemKind::Type, "Shape"),
+                (ParsedItemKind::Function, "run"),
+                (ParsedItemKind::Call, "println"),
+                (ParsedItemKind::Branch, "branch: if"),
+                (ParsedItemKind::Loop, "loop: for"),
+                (ParsedItemKind::Return, "return: return"),
+            ],
+        },
+    ];
+
+    for case in cases {
+        let Case {
+            path,
+            language,
+            source,
+            expected,
+        } = case;
+        let parsed = parse_source(path, source.as_bytes(), language).unwrap();
+        for (kind, label) in expected {
+            assert!(
+                parsed
+                    .items
+                    .iter()
+                    .any(|item| item.kind == kind && item.label == label),
+                "{language}: missing {kind:?} `{label}` in {:?}",
+                parsed
+                    .items
+                    .iter()
+                    .map(|item| (item.kind, item.label.as_str()))
+                    .collect::<Vec<_>>()
+            );
+        }
+        // Every language records the env read and the error construct.
+        assert_eq!(
+            parsed
+                .items
+                .iter()
+                .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+                .count(),
+            1,
+            "{language}: exactly one env read: {:?}",
+            parsed.items
+        );
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|item| item.kind == ParsedItemKind::Error),
+            "{language}: error construct recorded"
+        );
+    }
 }

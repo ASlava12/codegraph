@@ -284,6 +284,34 @@ pub(crate) fn classify_node(
             "builtin_function" if zig_import_builtin(node, source) => ParsedItemKind::Import,
             _ => return None,
         },
+        Language::Haskell => match kind {
+            // `function` has argument patterns; `bind` is a plain definition
+            // (`main = do ...`), which is still a top-level callable.
+            "function" | "bind" => ParsedItemKind::Function,
+            "data_type" | "newtype" | "type_synonym" | "class" => ParsedItemKind::Type,
+            "import" => ParsedItemKind::Import,
+            _ => return None,
+        },
+        Language::OCaml => match kind {
+            // A let binding is a function only when it takes parameters.
+            // `parameter` is a plain child node here, not a named field.
+            "let_binding" if ocaml_binding_has_parameter(node) => ParsedItemKind::Function,
+            "type_binding" => ParsedItemKind::Type,
+            "module_definition" => ParsedItemKind::Module,
+            "open_module" | "include_module" => ParsedItemKind::Import,
+            _ => return None,
+        },
+        Language::Julia => match kind {
+            "function_definition" | "short_function_definition" | "macro_definition" => {
+                ParsedItemKind::Function
+            }
+            "struct_definition" | "abstract_definition" | "primitive_definition" => {
+                ParsedItemKind::Type
+            }
+            "module_definition" => ParsedItemKind::Module,
+            "using_statement" | "import_statement" => ParsedItemKind::Import,
+            _ => return None,
+        },
     };
 
     let label = item_label(language, item_kind, node, source)?;
@@ -368,6 +396,14 @@ pub(crate) fn enclosing_type_label(
         current = candidate.parent();
     }
     None
+}
+
+/// Whether an OCaml `let_binding` declares parameters (making it a function)
+/// rather than binding a value.
+pub(crate) fn ocaml_binding_has_parameter(node: Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .any(|child| child.kind() == "parameter")
 }
 
 pub(crate) fn classify_call(
@@ -650,6 +686,28 @@ pub(crate) fn control_flow_fact(
             _ => None,
         },
         Language::Elixir => None, // handled below via elixir_control_flow
+        Language::Haskell => match kind {
+            "conditional" => Some((ParsedItemKind::Branch, "if")),
+            "case" => Some((ParsedItemKind::Branch, "case")),
+            _ => None,
+        },
+        Language::OCaml => match kind {
+            "if_expression" => Some((ParsedItemKind::Branch, "if")),
+            "match_expression" => Some((ParsedItemKind::Branch, "match")),
+            "try_expression" => Some((ParsedItemKind::Branch, "try")),
+            "for_expression" => Some((ParsedItemKind::Loop, "for")),
+            "while_expression" => Some((ParsedItemKind::Loop, "while")),
+            _ => None,
+        },
+        Language::Julia => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "try_statement" => Some((ParsedItemKind::Branch, "try")),
+            "catch_clause" => Some((ParsedItemKind::Branch, "catch")),
+            "for_statement" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "return_statement" => Some((ParsedItemKind::Return, "return")),
+            _ => None,
+        },
         Language::Zig => match kind {
             "if_statement" | "if_expression" => Some((ParsedItemKind::Branch, "if")),
             "switch_expression" => Some((ParsedItemKind::Branch, "switch")),
@@ -701,6 +759,16 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
                     .is_some_and(|target| !ELIXIR_SPECIAL_FORMS.contains(&target))
         }
         Language::Zig => node.kind() == "call_expression",
+        // `f a b` nests as apply(apply(f, a), b); only the outermost node is
+        // one call, so skip an apply whose callee is another apply.
+        Language::Haskell => {
+            node.kind() == "apply"
+                && !node
+                    .child_by_field_name("function")
+                    .is_some_and(|callee| callee.kind() == "apply")
+        }
+        Language::OCaml => node.kind() == "application_expression",
+        Language::Julia => node.kind() == "call_expression",
     }
 }
 
@@ -797,6 +865,26 @@ pub(crate) fn call_label(language: Language, node: Node<'_>, source: &[u8]) -> O
         return Some(clean_call_label(&target));
     }
 
+    // Haskell's callee is an expression tree whose leaf is a `variable` node,
+    // which is not one of the identifier kinds first_identifier knows; its
+    // text is the applied function's name.
+    if language == Language::Haskell
+        && let Some(callee) = node.child_by_field_name("function")
+    {
+        return node_text(callee, source)
+            .map(|name| clean_call_label(&name))
+            .filter(|name| !name.is_empty());
+    }
+
+    // Julia exposes no callee field; it is the first named child.
+    if language == Language::Julia
+        && let Some(callee) = node
+            .named_child(0)
+            .and_then(|child| node_text(child, source))
+    {
+        return Some(clean_call_label(&callee));
+    }
+
     if let Some(function) = named_child_text(node, "function", source) {
         return Some(clean_call_label(&function));
     }
@@ -861,6 +949,10 @@ pub(crate) fn item_label(
     }
 
     match language {
+        // OCaml names a binding through its `pattern` field.
+        Language::OCaml => named_child_text(node, "pattern", source)
+            .or_else(|| named_child_text(node, "name", source))
+            .or_else(|| first_identifier(node, source)),
         Language::Elixir => elixir_item_label(node, source),
         Language::C | Language::Cpp => first_identifier_in_field(node, "declarator", source)
             .or_else(|| first_identifier(node, source)),
@@ -902,6 +994,7 @@ pub(crate) fn is_entrypoint(language: Language, label: &str) -> bool {
         Language::CSharp => label.eq_ignore_ascii_case("main"),
         Language::Kotlin | Language::Swift | Language::Scala => label == "main",
         Language::Lua | Language::Elixir | Language::Zig => label == "main",
+        Language::Haskell | Language::OCaml | Language::Julia => label == "main",
     }
 }
 

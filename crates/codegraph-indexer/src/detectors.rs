@@ -174,7 +174,10 @@ pub(crate) fn framework_routes(language: Language, source: &str) -> Vec<Framewor
         | Language::Scala
         | Language::Lua
         | Language::Elixir
-        | Language::Zig => Vec::new(),
+        | Language::Zig
+        | Language::Haskell
+        | Language::OCaml
+        | Language::Julia => Vec::new(),
     }
 }
 
@@ -492,7 +495,10 @@ pub(crate) fn framework_configs(
             | Language::Scala
             | Language::Lua
             | Language::Elixir
-            | Language::Zig,
+            | Language::Zig
+            | Language::Haskell
+            | Language::OCaml
+            | Language::Julia,
         )
         | None => {}
     }

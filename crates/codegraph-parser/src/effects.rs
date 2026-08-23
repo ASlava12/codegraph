@@ -149,6 +149,39 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                     .as_deref()
                     .is_some_and(|value| simple_name(value) == "getenv")
         }
+        Language::Haskell => {
+            is_call_node(language, node, source)
+                && call
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "getEnv" | "lookupEnv"))
+        }
+        Language::OCaml => {
+            node.kind() == "application_expression"
+                && call
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "Sys.getenv" | "Sys.getenv_opt"))
+        }
+        Language::Julia => match node.kind() {
+            // `ENV["KEY"]`
+            "index_expression" => {
+                node.named_child(0)
+                    .and_then(|child| node_text(child, source))
+                    .as_deref()
+                    == Some("ENV")
+            }
+            // `get(ENV, "KEY", "default")`
+            "call_expression" => {
+                call.as_deref() == Some("get")
+                    && node
+                        .child_by_field_name("argument_list")
+                        .or_else(|| node.named_child(1))
+                        .and_then(|args| args.named_child(0))
+                        .and_then(|first| node_text(first, source))
+                        .as_deref()
+                        == Some("ENV")
+            }
+            _ => false,
+        },
     }
 }
 
@@ -241,6 +274,15 @@ pub(crate) fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) 
         Language::Elixir => call
             .as_deref()
             .is_some_and(|value| matches!(simple_name(value), "read" | "read!" | "load")),
+        Language::Haskell => call
+            .as_deref()
+            .is_some_and(|value| matches!(simple_name(value), "readFile" | "decodeFileStrict")),
+        Language::OCaml => call
+            .as_deref()
+            .is_some_and(|value| matches!(simple_name(value), "open_in" | "input_line")),
+        Language::Julia => call
+            .as_deref()
+            .is_some_and(|value| matches!(simple_name(value), "read" | "readlines" | "open")),
     }
 }
 
@@ -315,6 +357,31 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
                     .as_deref()
                     == Some("@panic")
         }
+        Language::Haskell => {
+            is_call_node(language, node, source)
+                && call_label(language, node, source)
+                    .as_deref()
+                    .is_some_and(|value| {
+                        matches!(
+                            value,
+                            "error" | "errorWithoutStackTrace" | "throwIO" | "throw"
+                        )
+                    })
+        }
+        Language::OCaml => {
+            node.kind() == "application_expression"
+                && call_label(language, node, source)
+                    .as_deref()
+                    .is_some_and(|value| {
+                        matches!(simple_name(value), "failwith" | "raise" | "invalid_arg")
+                    })
+        }
+        Language::Julia => {
+            node.kind() == "call_expression"
+                && call_label(language, node, source)
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "throw" | "error" | "rethrow"))
+        }
         Language::Swift => {
             is_call_node(language, node, source)
                 && call_label(language, node, source)
@@ -386,7 +453,10 @@ pub(crate) fn effect_metadata(
         | Language::Scala
         | Language::Lua
         | Language::Elixir
-        | Language::Zig => None,
+        | Language::Zig
+        | Language::Haskell
+        | Language::OCaml
+        | Language::Julia => None,
     };
 
     if let Some(default_value) = default_value {

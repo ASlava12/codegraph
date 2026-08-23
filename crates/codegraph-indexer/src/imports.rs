@@ -39,7 +39,10 @@ pub(crate) fn local_import_target(
         | Language::Scala
         | Language::Lua
         | Language::Elixir
-        | Language::Zig => None,
+        | Language::Zig
+        | Language::Haskell
+        | Language::OCaml
+        | Language::Julia => None,
     }
 }
 

@@ -299,7 +299,11 @@ pub(crate) fn rationale_comment_text(language: Option<Language>, line: &str) -> 
         Some(Language::Python | Language::Bash | Language::Ruby | Language::Elixir) => {
             trimmed.strip_prefix('#')
         }
-        Some(Language::Lua) => trimmed.strip_prefix("--"),
+        Some(Language::Lua | Language::Haskell) => trimmed.strip_prefix("--"),
+        Some(Language::Julia) => trimmed.strip_prefix('#'),
+        Some(Language::OCaml) => trimmed
+            .strip_prefix("(*")
+            .map(|text| text.trim_end_matches("*)").trim()),
         Some(
             Language::Rust
             | Language::JavaScript
