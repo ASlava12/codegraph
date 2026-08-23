@@ -749,7 +749,7 @@ pub(crate) fn visibility_label(
         }),
         Language::Swift | Language::Scala => Some(match modifier_visibility(node, source) {
             Some("public") => "public",
-            Some("private") | Some("protected") => "private",
+            Some("private") | Some("protected") | Some("fileprivate") => "private",
             _ if language == Language::Scala => "public",
             _ => "crate",
         }),
@@ -819,7 +819,10 @@ fn modifier_visibility(node: Node<'_>, source: &[u8]) -> Option<&'static str> {
         .filter_map(|child| node_text(child, source))
         .collect::<Vec<_>>()
         .join(" ");
-    ["public", "private", "protected", "internal"]
+    // `fileprivate` before `private`: Swift writes both, and a
+    // `fileprivate` definition is one another file cannot name, which is
+    // what `private` records here.
+    ["public", "fileprivate", "private", "protected", "internal"]
         .into_iter()
         .find(|keyword| {
             text.split(|character: char| !character.is_alphanumeric())

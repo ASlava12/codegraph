@@ -716,10 +716,21 @@ fn every_language_that_states_its_visibility_is_read() {
         visibility_of("a.cs", csharp, Language::CSharp, "Hidden"),
         "private"
     );
-    let swift = b"public func shared() {}\nfunc scoped() {}\n";
+    let swift =
+        b"public func shared() {}\nfunc scoped() {}\nfileprivate func lock() {}\nprivate func held() {}\n";
     assert_eq!(
         visibility_of("a.swift", swift, Language::Swift, "scoped"),
         "crate"
+    );
+    // `fileprivate` is a definition no other file can name, which is what
+    // `private` records here -- Alamofire writes 17 of them.
+    assert_eq!(
+        visibility_of("a.swift", swift, Language::Swift, "lock"),
+        "private"
+    );
+    assert_eq!(
+        visibility_of("a.swift", swift, Language::Swift, "held"),
+        "private"
     );
 }
 
