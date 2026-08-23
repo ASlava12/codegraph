@@ -1868,7 +1868,7 @@ pub(crate) fn add_entrypoint_coverage_insights(
         kind: "low_entrypoint_coverage".to_string(),
         severity: InsightSeverity::Warning,
         message: format!(
-            "entrypoints reach {reached} of {} functions ({coverage}%), and {resolution}% of calls resolve to a scanned function{exported_note} — treat `unreachable_*` findings as gaps in call resolution, or as a library reached through its API, before reading them as dead code",
+            "entrypoints reach {reached} of {} functions ({coverage}%), and {resolution}% of calls resolve to a scanned function — the rest name a dependency, the standard library, or a method the syntax cannot type{exported_note} — treat `unreachable_*` findings as gaps in call resolution, or as a library reached through its API, before reading them as dead code",
             functions.len()
         ),
         nodes: entrypoints.into_iter().take(8).collect(),
