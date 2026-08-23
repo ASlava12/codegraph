@@ -7266,3 +7266,46 @@ fn a_route_handler_is_not_every_function_of_that_name() {
         target.span
     );
 }
+
+#[test]
+fn a_route_handler_is_written_in_the_routes_own_language() {
+    // codegraph's own `GET /api/scan` names a Rust function, and the
+    // `scan` in its JavaScript bundle answered to the name too — two
+    // candidates where the language leaves one.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("main.rs"),
+        r#"fn main() {
+    let app = Router::new().route("/api/scan", get(scan));
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("handlers.rs"),
+        "pub async fn scan() -> String {\n    String::new()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("app.js"),
+        "export function scan() {\n  return 1;\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let handlers: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.metadata.get("resolution").map(String::as_str) == Some("framework_route_handler")
+        })
+        .filter_map(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+        .collect();
+    assert_eq!(handlers.len(), 1, "{handlers:?}");
+    assert_eq!(
+        handlers[0].metadata.get("language").map(String::as_str),
+        Some("rust"),
+        "the JavaScript function of the same name is not a candidate"
+    );
+}
