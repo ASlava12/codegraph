@@ -896,6 +896,8 @@ pub(crate) fn index_file(
                         span: item.span.clone(),
                         language: language.to_string(),
                         receiver_type: item.metadata.get("receiver_type").cloned(),
+                        callee_is_value: item.metadata.get("callee_form").map(String::as_str)
+                            == Some("value"),
                     });
                 }
 

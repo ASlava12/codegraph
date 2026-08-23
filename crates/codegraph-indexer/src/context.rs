@@ -149,6 +149,8 @@ pub(crate) struct PendingCall {
     /// `Backend`). Lets resolution pick the method of that type instead of
     /// every method sharing the name.
     pub(crate) receiver_type: Option<String>,
+    /// The call goes through a value the body binds, not to a definition.
+    pub(crate) callee_is_value: bool,
 }
 
 pub(crate) struct PendingTypeReference {

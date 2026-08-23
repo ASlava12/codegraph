@@ -4489,6 +4489,21 @@ pub(crate) fn add_unresolved_call_insights(graph: &CodeGraph, insights: &mut Vec
                     .copied()
             })
             .collect();
+        // A call through a value the body binds has nothing to find:
+        // terraform's `done()` comes from `runningCtx, done :=
+        // context.WithCancel(…)`. Reporting it as a call the resolver
+        // failed on made 1483 of its calls look like extraction gaps.
+        if !edges.is_empty()
+            && edges.iter().all(|edge_index| {
+                graph.edges.get(*edge_index).is_some_and(|edge| {
+                    edge.metadata.get("unresolved_reason").map(String::as_str)
+                        == Some("local_value")
+                })
+            })
+        {
+            continue;
+        }
+
         let message = if node_ids.len() > 1 {
             format!(
                 "Call target `{label}` could not be resolved syntactically ({} placeholder nodes)",

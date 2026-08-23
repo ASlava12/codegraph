@@ -1362,19 +1362,26 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 // edges alone could not say what was called or where, so a UI
                 // could not open the call site and the semantic pass could not ask
                 // about it.
+                let mut edge_metadata = BTreeMap::from([
+                    ("call_label".to_string(), call.label),
+                    ("resolution".to_string(), resolution.to_string()),
+                    ("language".to_string(), call.language),
+                    ("line".to_string(), call.span.start_line.to_string()),
+                    ("column".to_string(), call.span.start_column.to_string()),
+                ]);
+                // A call through a value the body binds has nothing to
+                // find, which is not the same as a resolver that failed.
+                if call.callee_is_value && resolution == "unresolved" {
+                    edge_metadata
+                        .insert("unresolved_reason".to_string(), "local_value".to_string());
+                }
                 add_edge_once_with_metadata(
                     context,
                     call.caller,
                     call_id,
                     EdgeKind::Calls,
                     Confidence::Heuristic,
-                    BTreeMap::from([
-                        ("call_label".to_string(), call.label),
-                        ("resolution".to_string(), resolution.to_string()),
-                        ("language".to_string(), call.language),
-                        ("line".to_string(), call.span.start_line.to_string()),
-                        ("column".to_string(), call.span.start_column.to_string()),
-                    ]),
+                    edge_metadata,
                 );
                 continue;
             }

@@ -37,7 +37,7 @@ pub fn parse_source(
         },
         root,
         None,
-        &BTreeMap::new(),
+        &DefinitionScope::default(),
         &mut facts,
         0,
         false,
@@ -137,7 +137,7 @@ pub(crate) fn collect_items(
     context: &WalkContext<'_>,
     node: Node<'_>,
     current_function: Option<String>,
-    scope: &BTreeMap<String, String>,
+    scope: &DefinitionScope,
     facts: &mut CollectedFacts,
     depth: usize,
     deferred: bool,
@@ -191,7 +191,7 @@ pub(crate) fn collect_items(
     }
 
     let mut next_function = current_function;
-    let mut next_scope: Option<BTreeMap<String, String>> = None;
+    let mut next_scope: Option<DefinitionScope> = None;
     if let Some(mut item) = classify_node(language, node, source, path) {
         if matches!(
             item.kind,
@@ -207,7 +207,7 @@ pub(crate) fn collect_items(
                     .insert("enclosing_function".to_string(), enclosing.to_string());
             }
             next_function = Some(item.label.clone());
-            next_scope = Some(declared_variable_types(language, node, source));
+            next_scope = Some(definition_scope(language, node, source));
         }
         facts.items.push(item);
     }
@@ -801,7 +801,7 @@ pub(crate) fn classify_call(
     source: &[u8],
     path: &str,
     function_name: Option<&str>,
-    scope: &BTreeMap<String, String>,
+    scope: &DefinitionScope,
 ) -> Option<ParsedItem> {
     if !is_call_node(language, node, source) {
         return None;
@@ -834,9 +834,16 @@ pub(crate) fn classify_call(
     let mut metadata = BTreeMap::new();
     if let Some((receiver, method)) = label.split_once('.')
         && !method.contains('.')
-        && let Some(receiver_type) = scope.get(receiver)
+        && let Some(receiver_type) = scope.variable_types.get(receiver)
     {
         metadata.insert("receiver_type".to_string(), receiver_type.clone());
+    }
+    // `done()` where the body wrote `runningCtx, done := context.WithCancel(…)`
+    // calls a value, not a definition. Saying so separates a call that has
+    // nothing to find from one the resolver failed on: 1499 of terraform's
+    // 3536 unresolved bare Go calls are of this kind.
+    if !label.contains('.') && scope.local_values.contains(&label) {
+        metadata.insert("callee_form".to_string(), "value".to_string());
     }
 
     Some(ParsedItem {
@@ -851,6 +858,33 @@ pub(crate) fn classify_call(
 /// Variables a definition's own signature declares with a type: a Go
 /// receiver and its parameters. Other languages return nothing yet, so the
 /// call sites simply carry no receiver type.
+/// What a definition's own body says about the names inside it: the types
+/// its signature and declarations give them, and the names it binds to
+/// values. A call to one of the latter goes through a value rather than to
+/// a definition, which is a different thing from a name nothing defines.
+#[derive(Default)]
+pub(crate) struct DefinitionScope {
+    pub(crate) variable_types: BTreeMap<String, String>,
+    pub(crate) local_values: BTreeSet<String>,
+}
+
+/// Everything a definition's body says about the names inside it. Only Go
+/// is read for now — the same extraction the receiver types already use.
+pub(crate) fn definition_scope(
+    language: Language,
+    node: Node<'_>,
+    source: &[u8],
+) -> DefinitionScope {
+    DefinitionScope {
+        variable_types: declared_variable_types(language, node, source),
+        local_values: if language == Language::Go {
+            go_shadowed_names(node, source)
+        } else {
+            BTreeSet::new()
+        },
+    }
+}
+
 pub(crate) fn declared_variable_types(
     language: Language,
     node: Node<'_>,

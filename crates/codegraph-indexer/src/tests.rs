@@ -7643,3 +7643,44 @@ fn an_ocaml_module_call_finds_the_file_that_is_that_module() {
         Some("ambiguous")
     );
 }
+
+#[test]
+fn a_call_through_a_bound_value_is_not_a_resolver_failure() {
+    // `runningCtx, done := context.WithCancel(…)` then `defer done()`:
+    // there is no definition named `done` to find, and terraform has 1483
+    // such calls filed as though the resolver had missed something.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("run.go"),
+        "package run\n\nfunc Work() {\n\t_, done := context.WithCancel(context.Background())\n\tdefer done()\n\tmissing()\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .unwrap_or_else(|| panic!("the call to {label} is recorded"))
+    };
+
+    assert_eq!(
+        call("done")
+            .metadata
+            .get("unresolved_reason")
+            .map(String::as_str),
+        Some("local_value"),
+        "the body binds `done` to a value"
+    );
+    // A name nothing in the file binds is still a resolver miss.
+    assert_eq!(
+        call("missing").metadata.get("unresolved_reason"),
+        None,
+        "nothing binds `missing`, so it stays a plain miss"
+    );
+}
