@@ -51,6 +51,9 @@ const state = {
   hoveredEdgeKey: null,
   pan: { x: 0, y: 0 },
   zoom: 1,
+  // Ratio the canvas backing stores are scaled by; all layout math stays in
+  // CSS pixels via cssWidth/cssHeight.
+  pixelRatio: 1,
   lastPointer: null,
   stageView: "graph",
   flow: {
@@ -196,4 +199,15 @@ function graphNodeById(nodeId) {
     graphNodeIndex = new Map((state.graph.nodes || []).map((node) => [node.id, node]));
   }
   return graphNodeIndex.get(nodeId);
+}
+
+// Canvas backing stores are sized in device pixels (see resizeCanvas) so text
+// and lines stay sharp on HiDPI displays; every layout calculation works in
+// CSS pixels, which these two helpers recover.
+function cssWidth(target) {
+  return target.width / (state.pixelRatio || 1);
+}
+
+function cssHeight(target) {
+  return target.height / (state.pixelRatio || 1);
 }

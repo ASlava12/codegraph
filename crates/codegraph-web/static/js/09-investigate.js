@@ -1009,14 +1009,14 @@ function initializeGraph(options = {}) {
 
   seedGraphLayout();
 
-  state.pan = preserveView ? previousPan : { x: canvas.width / 2, y: canvas.height / 2 };
+  state.pan = preserveView ? previousPan : { x: cssWidth(canvas) / 2, y: cssHeight(canvas) / 2 };
   state.zoom = preserveView ? previousZoom : 1;
   applyFilters();
   startAnimation();
 }
 
 function seedGraphLayout() {
-  const radius = Math.max(180, Math.min(canvas.width, canvas.height) * 0.28);
+  const radius = Math.max(180, Math.min(cssWidth(canvas), cssHeight(canvas)) * 0.28);
   state.graph.nodes.forEach((node, index) => {
     const angle = (Math.PI * 2 * index) / Math.max(1, state.graph.nodes.length);
     state.positions.set(node.id, {

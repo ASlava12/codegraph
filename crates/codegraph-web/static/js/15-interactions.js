@@ -176,8 +176,8 @@ function edgeSelectionKey(edge) {
 }
 
 function centerViewportOnWorld(point) {
-  state.pan.x = canvas.width / 2 - point.x * state.zoom;
-  state.pan.y = canvas.height / 2 - point.y * state.zoom;
+  state.pan.x = cssWidth(canvas) / 2 - point.x * state.zoom;
+  state.pan.y = cssHeight(canvas) / 2 - point.y * state.zoom;
   draw();
 }
 
@@ -381,16 +381,21 @@ function distanceToSegment(point, start, end) {
 }
 
 function resizeCanvas() {
-  const previousWidth = canvas.width;
-  const previousHeight = canvas.height;
+  const previousWidth = cssWidth(canvas);
+  const previousHeight = cssHeight(canvas);
   const rect = canvas.getBoundingClientRect();
-  canvas.width = Math.max(1, Math.floor(rect.width));
-  canvas.height = Math.max(1, Math.floor(rect.height));
+  state.pixelRatio = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  const width = Math.max(1, Math.floor(rect.width));
+  const height = Math.max(1, Math.floor(rect.height));
+  canvas.width = Math.floor(width * state.pixelRatio);
+  canvas.height = Math.floor(height * state.pixelRatio);
+  // Draw in CSS pixels; the backing store carries the extra resolution.
+  ctx.setTransform(state.pixelRatio, 0, 0, state.pixelRatio, 0, 0);
   if (previousWidth > 1 && previousHeight > 1) {
-    state.pan.x += (canvas.width - previousWidth) / 2;
-    state.pan.y += (canvas.height - previousHeight) / 2;
+    state.pan.x += (width - previousWidth) / 2;
+    state.pan.y += (height - previousHeight) / 2;
   } else {
-    state.pan = { x: canvas.width / 2, y: canvas.height / 2 };
+    state.pan = { x: width / 2, y: height / 2 };
   }
   draw();
 }
@@ -619,12 +624,16 @@ function layoutFlow() {
 
 function resizeFlowCanvas() {
   if (flowCanvas.hidden) return;
+  const ratio = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  state.pixelRatio = ratio;
   const rect = flowCanvas.getBoundingClientRect();
-  flowCanvas.width = Math.max(1, Math.floor(rect.width));
-  flowCanvas.height = Math.max(1, Math.floor(rect.height));
+  flowCanvas.width = Math.floor(Math.max(1, Math.floor(rect.width)) * ratio);
+  flowCanvas.height = Math.floor(Math.max(1, Math.floor(rect.height)) * ratio);
+  flowCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
   const minimapRect = flowMinimapCanvas.getBoundingClientRect();
-  flowMinimapCanvas.width = Math.max(1, Math.floor(minimapRect.width));
-  flowMinimapCanvas.height = Math.max(1, Math.floor(minimapRect.height));
+  flowMinimapCanvas.width = Math.floor(Math.max(1, Math.floor(minimapRect.width)) * ratio);
+  flowMinimapCanvas.height = Math.floor(Math.max(1, Math.floor(minimapRect.height)) * ratio);
+  flowMinimapCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
   drawFlow();
 }
 

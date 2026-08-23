@@ -24,12 +24,12 @@ function fitVisibleGraph() {
   const width = Math.max(1, maxX - minX);
   const height = Math.max(1, maxY - minY);
   const padding = 72;
-  const zoomX = (canvas.width - padding * 2) / width;
-  const zoomY = (canvas.height - padding * 2) / height;
+  const zoomX = (cssWidth(canvas) - padding * 2) / width;
+  const zoomY = (cssHeight(canvas) - padding * 2) / height;
   state.zoom = Math.max(0.18, Math.min(3.5, Math.min(zoomX, zoomY)));
   state.pan = {
-    x: canvas.width / 2 - ((minX + maxX) / 2) * state.zoom,
-    y: canvas.height / 2 - ((minY + maxY) / 2) * state.zoom,
+    x: cssWidth(canvas) / 2 - ((minX + maxX) / 2) * state.zoom,
+    y: cssHeight(canvas) / 2 - ((minY + maxY) / 2) * state.zoom,
   };
   renderGraphHud();
   draw();
@@ -40,7 +40,7 @@ function resetGraphLayout() {
   state.positions.clear();
   state.velocities.clear();
   seedGraphLayout();
-  state.pan = { x: canvas.width / 2, y: canvas.height / 2 };
+  state.pan = { x: cssWidth(canvas) / 2, y: cssHeight(canvas) / 2 };
   state.zoom = 1;
   state.layoutPaused = false;
   renderViewportControls();
@@ -126,7 +126,7 @@ function simulateLayout() {
 }
 
 function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0, 0, cssWidth(canvas), cssHeight(canvas));
   ctx.save();
   ctx.translate(state.pan.x, state.pan.y);
   ctx.scale(state.zoom, state.zoom);
@@ -269,9 +269,14 @@ function minimapTransform() {
   const bounds = graphWorldBounds(48);
   if (!bounds) return null;
 
-  if (minimapCanvas.width !== width || minimapCanvas.height !== height) {
-    minimapCanvas.width = width;
-    minimapCanvas.height = height;
+  // Backing store in device pixels, drawing in CSS pixels (see resizeCanvas).
+  const ratio = state.pixelRatio || 1;
+  const backingWidth = Math.floor(width * ratio);
+  const backingHeight = Math.floor(height * ratio);
+  if (minimapCanvas.width !== backingWidth || minimapCanvas.height !== backingHeight) {
+    minimapCanvas.width = backingWidth;
+    minimapCanvas.height = backingHeight;
+    minimapCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
   }
 
   const padding = 10;
@@ -343,7 +348,7 @@ function drawGraphMinimap() {
   });
 
   const topLeft = worldToMinimap(screenToWorld(0, 0), transform);
-  const bottomRight = worldToMinimap(screenToWorld(canvas.width, canvas.height), transform);
+  const bottomRight = worldToMinimap(screenToWorld(cssWidth(canvas), cssHeight(canvas)), transform);
   const viewX = Math.min(topLeft.x, bottomRight.x);
   const viewY = Math.min(topLeft.y, bottomRight.y);
   const viewWidth = Math.abs(bottomRight.x - topLeft.x);
@@ -573,8 +578,8 @@ function clampLabelGeometryToViewport(geometry) {
   const margin = 8 / zoom;
   const minX = (-state.pan.x / zoom) + margin;
   const minY = (-state.pan.y / zoom) + margin;
-  const maxX = ((canvas.width - state.pan.x) / zoom) - geometry.width - margin;
-  const maxY = ((canvas.height - state.pan.y) / zoom) - geometry.height - margin;
+  const maxX = ((cssWidth(canvas) - state.pan.x) / zoom) - geometry.width - margin;
+  const maxY = ((cssHeight(canvas) - state.pan.y) / zoom) - geometry.height - margin;
   if (maxX >= minX) geometry.x = Math.max(minX, Math.min(maxX, geometry.x));
   if (maxY >= minY) geometry.y = Math.max(minY, Math.min(maxY, geometry.y));
   geometry.textY = geometry.y + geometry.height / 2;
@@ -654,7 +659,7 @@ function boxIntersectsViewport(box) {
   const top = box.y * state.zoom + state.pan.y;
   const bottom = (box.y + box.height) * state.zoom + state.pan.y;
   const margin = 24;
-  return !(right < -margin || left > canvas.width + margin || bottom < -margin || top > canvas.height + margin);
+  return !(right < -margin || left > cssWidth(canvas) + margin || bottom < -margin || top > cssHeight(canvas) + margin);
 }
 
 function labelIntersectsScene(label, occupied, nodeBoxes, edgeBoxes) {

@@ -1032,7 +1032,7 @@ function renderStaticEdgePageInfo() {
 }
 
 function zoomAtCanvasCenter(scale) {
-  zoomAt(canvas.width / 2, canvas.height / 2, scale);
+  zoomAt(cssWidth(canvas) / 2, cssHeight(canvas) / 2, scale);
 }
 
 function zoomAt(screenX, screenY, scale) {

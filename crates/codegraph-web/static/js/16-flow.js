@@ -8,12 +8,12 @@ function fitFlowView() {
   const width = Math.max(1, bounds.maxX - bounds.minX);
   const height = Math.max(1, bounds.maxY - bounds.minY);
   const padding = 64;
-  const zoomX = (flowCanvas.width - padding * 2) / width;
-  const zoomY = (flowCanvas.height - padding * 2) / height;
+  const zoomX = (cssWidth(flowCanvas) - padding * 2) / width;
+  const zoomY = (cssHeight(flowCanvas) - padding * 2) / height;
   state.flow.zoom = Math.max(0.18, Math.min(1.6, Math.min(zoomX, zoomY)));
   state.flow.pan = {
-    x: flowCanvas.width / 2 - ((bounds.minX + bounds.maxX) / 2) * state.flow.zoom,
-    y: flowCanvas.height / 2 - ((bounds.minY + bounds.maxY) / 2) * state.flow.zoom,
+    x: cssWidth(flowCanvas) / 2 - ((bounds.minX + bounds.maxX) / 2) * state.flow.zoom,
+    y: cssHeight(flowCanvas) / 2 - ((bounds.minY + bounds.maxY) / 2) * state.flow.zoom,
   };
   drawFlow();
 }
@@ -28,7 +28,7 @@ function flowZoomAt(screenX, screenY, scale) {
 }
 
 function flowZoomAtCenter(scale) {
-  flowZoomAt(flowCanvas.width / 2, flowCanvas.height / 2, scale);
+  flowZoomAt(cssWidth(flowCanvas) / 2, cssHeight(flowCanvas) / 2, scale);
 }
 
 function flowBlockAt(world) {
@@ -385,7 +385,7 @@ function flowPathToBlock(blockId) {
 
 function drawFlow() {
   if (flowCanvas.hidden) return;
-  flowCtx.clearRect(0, 0, flowCanvas.width, flowCanvas.height);
+  flowCtx.clearRect(0, 0, cssWidth(flowCanvas), cssHeight(flowCanvas));
   const report = state.flow.report;
   renderFlowHud();
   if (!report) return;
@@ -572,9 +572,9 @@ function drawFlow() {
     flowCtx.textBaseline = "middle";
     flowCtx.fillText(
       t("flow.noOutgoing"),
-      flowCanvas.width / 2,
-      flowCanvas.height - 54,
-      flowCanvas.width - 40,
+      cssWidth(flowCanvas) / 2,
+      cssHeight(flowCanvas) - 54,
+      cssWidth(flowCanvas) - 40,
     );
     flowCtx.textAlign = "left";
     flowCtx.textBaseline = "alphabetic";
@@ -591,22 +591,22 @@ function flowMinimapTransform() {
   const height = Math.max(1, bounds.maxY - bounds.minY);
   const padding = 10;
   const scale = Math.min(
-    (flowMinimapCanvas.width - padding * 2) / width,
-    (flowMinimapCanvas.height - padding * 2) / height,
+    (cssWidth(flowMinimapCanvas) - padding * 2) / width,
+    (cssHeight(flowMinimapCanvas) - padding * 2) / height,
   );
   return {
     bounds,
     scale,
-    offsetX: (flowMinimapCanvas.width - width * scale) / 2 - bounds.minX * scale,
-    offsetY: (flowMinimapCanvas.height - height * scale) / 2 - bounds.minY * scale,
+    offsetX: (cssWidth(flowMinimapCanvas) - width * scale) / 2 - bounds.minX * scale,
+    offsetY: (cssHeight(flowMinimapCanvas) - height * scale) / 2 - bounds.minY * scale,
   };
 }
 
 function drawFlowMinimap() {
   if (flowMinimapCanvas.hidden) return;
-  flowMinimapCtx.clearRect(0, 0, flowMinimapCanvas.width, flowMinimapCanvas.height);
+  flowMinimapCtx.clearRect(0, 0, cssWidth(flowMinimapCanvas), cssHeight(flowMinimapCanvas));
   flowMinimapCtx.fillStyle = "rgba(16, 18, 20, 0.82)";
-  flowMinimapCtx.fillRect(0, 0, flowMinimapCanvas.width, flowMinimapCanvas.height);
+  flowMinimapCtx.fillRect(0, 0, cssWidth(flowMinimapCanvas), cssHeight(flowMinimapCanvas));
   const transform = flowMinimapTransform();
   if (!transform) return;
 
@@ -625,8 +625,8 @@ function drawFlowMinimap() {
 
   const viewMinX = (0 - state.flow.pan.x) / state.flow.zoom;
   const viewMinY = (0 - state.flow.pan.y) / state.flow.zoom;
-  const viewWidth = flowCanvas.width / state.flow.zoom;
-  const viewHeight = flowCanvas.height / state.flow.zoom;
+  const viewWidth = cssWidth(flowCanvas) / state.flow.zoom;
+  const viewHeight = cssHeight(flowCanvas) / state.flow.zoom;
   flowMinimapCtx.strokeStyle = "rgba(92, 200, 167, 0.85)";
   flowMinimapCtx.lineWidth = 1;
   flowMinimapCtx.strokeRect(
@@ -814,8 +814,8 @@ function selectAndCenterFlowBlock(block) {
   selectFlowBlock(block);
   const position = state.flow.positions.get(block.id);
   if (position) {
-    state.flow.pan.x = flowCanvas.width / 2 - (position.x + FLOW_BLOCK_WIDTH / 2) * state.flow.zoom;
-    state.flow.pan.y = flowCanvas.height / 2 - (position.y + FLOW_BLOCK_HEIGHT / 2) * state.flow.zoom;
+    state.flow.pan.x = cssWidth(flowCanvas) / 2 - (position.x + FLOW_BLOCK_WIDTH / 2) * state.flow.zoom;
+    state.flow.pan.y = cssHeight(flowCanvas) / 2 - (position.y + FLOW_BLOCK_HEIGHT / 2) * state.flow.zoom;
     drawFlow();
   }
 }
@@ -939,8 +939,8 @@ function recenterFlowFromMinimap(event) {
     x: (event.offsetX - transform.offsetX) / transform.scale,
     y: (event.offsetY - transform.offsetY) / transform.scale,
   };
-  state.flow.pan.x = flowCanvas.width / 2 - world.x * state.flow.zoom;
-  state.flow.pan.y = flowCanvas.height / 2 - world.y * state.flow.zoom;
+  state.flow.pan.x = cssWidth(flowCanvas) / 2 - world.x * state.flow.zoom;
+  state.flow.pan.y = cssHeight(flowCanvas) / 2 - world.y * state.flow.zoom;
   drawFlow();
 }
 
