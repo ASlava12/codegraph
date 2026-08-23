@@ -750,6 +750,28 @@ pub(crate) fn compact_file_summaries(
     let path_index = node_path_index(graph);
     let nodes_by_id = nodes_by_id_index(graph);
     let outgoing_edges = outgoing_edge_index(graph);
+    // Which insights touch which path, built in one pass. The per-file filter
+    // below used to walk every insight for every file — 5243 files by 32504
+    // insights on terraform, which was 63 of the report's 65 seconds.
+    let mut insights_by_path: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (index, insight) in insight_report.insights.iter().enumerate() {
+        let mut touched: BTreeSet<String> = BTreeSet::new();
+        for node_id in &insight.nodes {
+            if let Some(path) = path_index.get(node_id) {
+                touched.insert(path.clone());
+            }
+            if let Some(path) = nodes_by_id
+                .get(node_id)
+                .and_then(|node| node.span.as_ref())
+                .map(|span| normalize_graph_path(&span.path))
+            {
+                touched.insert(path);
+            }
+        }
+        for path in touched {
+            insights_by_path.entry(path).or_default().push(index);
+        }
+    }
     let mut files: Vec<ProjectCompactFileSummary> = graph
         .nodes
         .iter()
@@ -760,33 +782,33 @@ pub(crate) fn compact_file_summaries(
             // otherwise re-normalizes this same label for every insight/node
             // (114 files x 14k insights on this repository).
             let expected = normalize_path_prefix(&node.label);
-            let expected_slash = format!("{expected}/");
-            let related_insights: Vec<Insight> = insight_report
-                .insights
-                .iter()
-                .filter(|insight| {
-                    if insight.nodes.contains(&node.id) {
-                        return true;
-                    }
-                    if expected.is_empty() {
-                        return insight
-                            .nodes
-                            .iter()
-                            .any(|node_id| nodes_by_id.contains_key(node_id));
-                    }
-                    insight.nodes.iter().any(|node_id| {
-                        nodes_by_id.get(node_id).is_some_and(|candidate| {
-                            node_path_matches_prepared(
-                                candidate,
-                                &path_index,
-                                &expected,
-                                &expected_slash,
-                            )
-                        })
+            let related_insights: Vec<Insight> = if expected.is_empty() {
+                // A file with no path at all matches anything the graph knows;
+                // rare enough to keep the original scan.
+                insight_report
+                    .insights
+                    .iter()
+                    .filter(|insight| {
+                        insight.nodes.contains(&node.id)
+                            || insight
+                                .nodes
+                                .iter()
+                                .any(|node_id| nodes_by_id.contains_key(node_id))
                     })
-                })
-                .cloned()
-                .collect();
+                    .cloned()
+                    .collect()
+            } else {
+                insights_by_path
+                    .get(&expected)
+                    .map(|indexes| {
+                        indexes
+                            .iter()
+                            .filter_map(|index| insight_report.insights.get(*index))
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
             let insight_summary = node_insight_summary(&related_insights);
             let score = compact_file_summary_score(&summary, &insight_summary);
             Some(ProjectCompactFileSummary {
