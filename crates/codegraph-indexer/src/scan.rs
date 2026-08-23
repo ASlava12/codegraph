@@ -644,6 +644,11 @@ pub(crate) fn index_file(
                         }
                     }
 
+                    // An import the scan resolved inside the repository is
+                    // not an outside dependency, however it was found: a
+                    // workspace package like `@vue/runtime-test` lives in
+                    // packages/ and reaches here through the package map
+                    // rather than through a relative path.
                     if let Some(local_import) = local_import.as_ref() {
                         item_metadata.insert("import_scope".to_string(), "local".to_string());
                         item_metadata

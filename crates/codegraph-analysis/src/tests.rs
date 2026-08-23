@@ -10165,3 +10165,49 @@ fn a_common_crossing_is_the_architecture_and_a_rare_one_is_the_surprise() {
         "the everyday crossing must not outrank the one-off"
     );
 }
+
+#[test]
+fn the_standard_library_is_not_an_undeclared_dependency() {
+    // The list of Python's standard modules held 41 of the 194 names, so
+    // `import ssl`, `import struct` and `import weakref` each read as a
+    // dependency the project had failed to declare — 74 of flask's 155
+    // warnings were of that kind. A stub module that only type checkers
+    // read is not a dependency either.
+    for module in [
+        "ssl",
+        "struct",
+        "weakref",
+        "platform",
+        "decimal",
+        "types",
+        "traceback",
+        "contextvars",
+        "copy",
+        "textwrap",
+        "atexit",
+        "difflib",
+        "multiprocessing",
+        "ast",
+        "operator",
+    ] {
+        assert_eq!(
+            python_import_package(&format!("import {module}")),
+            None,
+            "`{module}` is part of Python"
+        );
+    }
+    assert_eq!(
+        python_import_package("from _typeshed.wsgi import StartResponse"),
+        None,
+        "a type-checker stub is installed by nothing"
+    );
+    // A real dependency still has to be declared.
+    assert_eq!(
+        python_import_package("import dotenv"),
+        Some("dotenv".to_string())
+    );
+    assert_eq!(
+        python_import_package("from pallets_sphinx_themes import get_version"),
+        Some("pallets-sphinx-themes".to_string())
+    );
+}

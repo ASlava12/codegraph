@@ -7684,3 +7684,88 @@ fn a_call_through_a_bound_value_is_not_a_resolver_failure() {
         "nothing binds `missing`, so it stays a plain miss"
     );
 }
+
+#[test]
+fn an_import_of_the_projects_own_package_is_not_an_outside_dependency() {
+    // Vue's `@vue/runtime-test` is one of its own packages and flask's
+    // tutorial imports `flaskr.db` from examples/tutorial/flaskr/db.py.
+    // Neither is a dependency to declare, yet both were recorded as
+    // imports of something outside the repository.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("packages").join("runtime-test").join("src")).unwrap();
+    fs::create_dir_all(root.join("packages").join("core").join("src")).unwrap();
+    fs::create_dir_all(root.join("examples").join("tutorial").join("flaskr")).unwrap();
+    fs::write(
+        root.join("packages")
+            .join("runtime-test")
+            .join("package.json"),
+        "{\n  \"name\": \"@vue/runtime-test\"\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("packages")
+            .join("runtime-test")
+            .join("src")
+            .join("index.ts"),
+        "export function nodeOps() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("packages").join("core").join("package.json"),
+        "{\n  \"name\": \"@vue/core\"\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("packages")
+            .join("core")
+            .join("src")
+            .join("app.ts"),
+        "import { nodeOps } from '@vue/runtime-test';\nimport { readFile } from 'node:fs';\n\nexport function run() {\n  return nodeOps() + readFile('x');\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("examples")
+            .join("tutorial")
+            .join("flaskr")
+            .join("db.py"),
+        "def get_db():\n    return 1\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("examples")
+            .join("tutorial")
+            .join("flaskr")
+            .join("blog.py"),
+        "from flaskr.db import get_db\n\n\ndef index():\n    return get_db()\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let scope_of = |needle: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata.get("item_kind").map(String::as_str) == Some("import")
+                    && node.label.contains(needle)
+            })
+            .and_then(|node| node.metadata.get("import_scope").cloned())
+            .unwrap_or_default()
+    };
+
+    assert_eq!(
+        scope_of("@vue/runtime-test"),
+        "workspace",
+        "a package the repository defines is inside it"
+    );
+    assert_eq!(
+        scope_of("flaskr.db"),
+        "local",
+        "the tutorial's own module is inside the repository too"
+    );
+    assert_eq!(
+        scope_of("node:fs"),
+        "",
+        "a runtime module is not a package of this repository"
+    );
+}

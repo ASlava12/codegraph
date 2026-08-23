@@ -1668,6 +1668,59 @@ pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
                 Confidence::Syntactic,
                 metadata,
             );
+        } else if let Some((candidate, directory_id)) = import
+            .candidates
+            .iter()
+            .filter_map(|candidate| {
+                let directory = candidate.strip_suffix('/')?;
+                context
+                    .directory_nodes
+                    .get(directory)
+                    .map(|id| (candidate.clone(), *id))
+            })
+            .next()
+        {
+            // A workspace package resolves to a directory rather than a
+            // file: Vue's `@vue/runtime-test` is packages/runtime-test, and
+            // without this the graph called an import of the project's own
+            // package an undeclared outside dependency.
+            add_node_metadata(
+                &mut context.graph,
+                import.import_node,
+                "import_scope",
+                "workspace",
+            );
+            add_node_metadata(
+                &mut context.graph,
+                import.import_node,
+                "import_target",
+                import.target.clone(),
+            );
+            add_node_metadata(
+                &mut context.graph,
+                import.import_node,
+                "resolution",
+                "resolved",
+            );
+            add_node_metadata(
+                &mut context.graph,
+                import.import_node,
+                "resolved_path",
+                candidate,
+            );
+            add_edge_once_with_metadata(
+                context,
+                import.import_node,
+                directory_id,
+                EdgeKind::References,
+                Confidence::Syntactic,
+                BTreeMap::from([
+                    ("relation".to_string(), "local_import_package".to_string()),
+                    ("source".to_string(), "syntax".to_string()),
+                    ("resolution".to_string(), "local_import_package".to_string()),
+                    ("target".to_string(), import.target),
+                ]),
+            );
         } else if import.mark_unresolved {
             add_node_metadata(
                 &mut context.graph,
@@ -1695,6 +1748,21 @@ pub(crate) fn resolve_local_import_candidate(
         }
         if let Some((path, file_id)) = resolve_directory_import_candidate(file_nodes, candidate) {
             return Some((path, file_id));
+        }
+    }
+    // A project's own package is often not at the root: flask's tutorial
+    // imports `flaskr.db` from examples/tutorial/flaskr/db.py. One path
+    // ending in the candidate is evidence; several are a coincidence, and
+    // the import stays unresolved rather than picking one.
+    for candidate in candidates {
+        let suffix = format!("/{candidate}");
+        let mut matches = file_nodes
+            .iter()
+            .filter(|(path, _)| path.ends_with(&suffix));
+        if let Some((path, file_id)) = matches.next()
+            && matches.next().is_none()
+        {
+            return Some((path.clone(), *file_id));
         }
     }
     None
