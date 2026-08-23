@@ -277,7 +277,7 @@ pub(crate) fn rationale_comments(
         .lines()
         .enumerate()
         .filter_map(|(index, line)| {
-            rationale_comment_text(language, line)
+            comment_text(label, language, line)
                 .and_then(|text| rationale_marker(text))
                 .map(|(kind, text)| {
                     let text = normalize_rationale_text(text);
@@ -291,6 +291,18 @@ pub(crate) fn rationale_comments(
         })
         .filter(|comment| !comment.text.is_empty() && comment.text != label)
         .collect()
+}
+
+/// `# Security Policy` heads a markdown file, it does not comment one, so
+/// markdown carries only its HTML comments into the rationale scan.
+fn comment_text<'a>(label: &str, language: Option<Language>, line: &'a str) -> Option<&'a str> {
+    if is_markdown_document(Path::new(label)) {
+        return line
+            .trim()
+            .strip_prefix("<!--")
+            .map(|text| text.trim_end_matches("-->").trim());
+    }
+    rationale_comment_text(language, line)
 }
 
 pub(crate) fn rationale_comment_text(language: Option<Language>, line: &str) -> Option<&str> {
@@ -347,21 +359,43 @@ pub(crate) fn rationale_comment_text(language: Option<Language>, line: &str) -> 
 
 pub(crate) fn rationale_marker(text: &str) -> Option<(&'static str, &str)> {
     let trimmed = text.trim_start();
-    let normalized = trimmed.to_ascii_uppercase();
     for marker in [
         "SECURITY", "FIXME", "TODO", "WHY", "NOTE", "HACK", "BUG", "XXX",
     ] {
-        if normalized == marker {
-            return Some((rationale_kind(marker), ""));
+        // A comment can open with any text at all, so the marker never gets
+        // to assume a character boundary where it wants to split.
+        let Some((head, rest)) = trimmed.split_at_checked(marker.len()) else {
+            continue;
+        };
+        if !head.eq_ignore_ascii_case(marker) {
+            continue;
         }
-        for separator in [":", "-", " "] {
-            let prefix = format!("{marker}{separator}");
-            if normalized.starts_with(&prefix) {
-                return Some((rationale_kind(marker), trimmed[prefix.len()..].trim()));
-            }
-        }
+        // `TODO(alice): rewrite this` attributes the marker to someone; the
+        // attribution belongs to the marker rather than to the note.
+        let rest = strip_marker_attribution(rest);
+        let note = match rest.chars().next() {
+            None => "",
+            Some(':') => rest[1..].trim(),
+            // Without a colon only the shouted form is a marker. `HACK we
+            // borrow the parser` is one; `Hack the key into an unknown value`
+            // and `bug in the caller but we ignore it` are sentences that
+            // happen to open with the word.
+            Some('-' | ' ' | '\t') if head == marker => rest[1..].trim(),
+            _ => continue,
+        };
+        return Some((rationale_kind(marker), note));
     }
     None
+}
+
+fn strip_marker_attribution(rest: &str) -> &str {
+    let Some(attributed) = rest.strip_prefix('(') else {
+        return rest;
+    };
+    match attributed.split_once(')') {
+        Some((_, tail)) => tail,
+        None => rest,
+    }
 }
 
 pub(crate) fn rationale_kind(marker: &str) -> &'static str {

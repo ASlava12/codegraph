@@ -3195,6 +3195,59 @@ def main():
 }
 
 #[test]
+fn a_marker_is_shouted_or_punctuated_but_never_prose() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("hook.go"),
+        r#"package hook
+
+func run() {
+    // We don't expect any other actions in here, so anything else is a
+    // bug in the caller but we'll ignore it in order to be robust.
+    // Hack: we borrow the sensitive-value treatment from the decoder.
+    // TODO(alice): drop this once the decoder lands.
+    // HACK we shell out because the library has no batch mode
+    // note that the caller already holds the lock
+    // — an em dash keeps the marker off a character boundary
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("SECURITY.md"),
+        "# Security Policy\n\nReport issues to the maintainers.\n<!-- FIXME: link the advisory page -->\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let mut found: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata
+                .get("item_kind")
+                .is_some_and(|value| value == "rationale_comment")
+        })
+        .map(|node| node.label.as_str())
+        .collect();
+    found.sort_unstable();
+
+    assert_eq!(
+        found,
+        vec![
+            "FIXME: link the advisory page",
+            "HACK: we borrow the sensitive-value treatment from the decoder.",
+            "HACK: we shell out because the library has no batch mode",
+            "TODO: drop this once the decoder lands.",
+        ],
+        "prose that opens with a marker word, and a markdown heading, are not markers"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scan_project_preserves_environment_default_values() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();
