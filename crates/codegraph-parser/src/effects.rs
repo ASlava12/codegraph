@@ -54,22 +54,28 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                     .as_deref()
                     .is_some_and(|value| matches!(simple_name(value), "getenv"))
         }
-        Language::Dart => {
-            matches!(
-                node.kind(),
-                "call_expression"
-                    | "member_expression"
-                    | "index_expression"
-                    | "null_aware_member_expression"
-                    | "null_aware_index_expression"
-            ) && text.as_deref().is_some_and(|value| {
-                value.contains("String.fromEnvironment")
-                    || value.contains("bool.fromEnvironment")
-                    || value.contains("int.fromEnvironment")
-                    || value.contains("double.fromEnvironment")
-                    || value.contains("Platform.environment")
-            })
-        }
+        // Match the exact access form, like the other languages: a
+        // `contains` test also fired on the inner member_expression and on
+        // any enclosing node, filing several facts for one physical read.
+        Language::Dart => match node.kind() {
+            // `String.fromEnvironment('K')` and its bool/int/double siblings.
+            "call_expression" => named_child_text(node, "function", source)
+                .as_deref()
+                .is_some_and(|callee| {
+                    matches!(
+                        callee,
+                        "String.fromEnvironment"
+                            | "bool.fromEnvironment"
+                            | "int.fromEnvironment"
+                            | "double.fromEnvironment"
+                    )
+                }),
+            // `Platform.environment['K']`
+            "index_expression" | "null_aware_index_expression" => {
+                named_child_text(node, "object", source).as_deref() == Some("Platform.environment")
+            }
+            _ => false,
+        },
         Language::Bash => {
             // Only expansions read a variable: `$VAR` / `${VAR:-default}`.
             // A bare variable_name is also the LHS of an assignment or a

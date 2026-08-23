@@ -1380,3 +1380,33 @@ fn calls_on_literals_are_labeled_by_method_not_by_the_literal() {
         "qualified paths are unchanged: {qualified_labels:?}"
     );
 }
+
+#[test]
+fn dart_environment_reads_are_counted_once_per_access() {
+    // Substring matching fired on the inner member_expression and on the
+    // enclosing call, filing several facts per physical read.
+    let source = r#"void main() {
+  const key = String.fromEnvironment('API_KEY', defaultValue: 'dev');
+  final home = Platform.environment['HOME'];
+  final port = int.fromEnvironment('PORT');
+  helper(key, home, port);
+}
+"#;
+    let parsed = parse_source("main.dart", source.as_bytes(), Language::Dart).unwrap();
+    let reads: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .collect();
+    assert_eq!(reads.len(), 3, "one fact per access: {reads:?}");
+    let labels: Vec<_> = reads.iter().map(|item| item.label.as_str()).collect();
+    assert!(labels.contains(&"API_KEY"), "{labels:?}");
+    assert!(labels.contains(&"HOME"), "{labels:?}");
+    assert!(labels.contains(&"PORT"), "{labels:?}");
+    assert!(
+        reads
+            .iter()
+            .any(|item| item.metadata.get("default_value").map(String::as_str) == Some("dev")),
+        "fromEnvironment defaultValue is captured: {reads:?}"
+    );
+}
