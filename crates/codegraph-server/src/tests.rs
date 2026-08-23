@@ -612,6 +612,50 @@ async fn entrypoints_api_honours_a_limit_and_leads_with_programs() {
 }
 
 #[tokio::test]
+async fn trace_apis_say_which_name_matched_nothing() {
+    let root = temp_server_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    let state = test_state(root.clone(), vec![], true);
+    let query = |label: Option<String>, node_id: Option<String>| TraceQuery {
+        path: Some(root.clone()),
+        label,
+        node_id,
+        depth: Some(2),
+    };
+
+    let error = trace_api(
+        State(state.clone()),
+        ApiQuery(query(Some("nosuchthing".to_string()), None)),
+    )
+    .await
+    .expect_err("expected an error for an unknown label");
+    assert_eq!(error.status, StatusCode::BAD_REQUEST);
+    assert!(
+        error.message.contains("trace start `nosuchthing`"),
+        "message: {}",
+        error.message
+    );
+
+    let error = dependents_api(
+        State(state.clone()),
+        ApiQuery(query(None, Some("n999999".to_string()))),
+    )
+    .await
+    .expect_err("expected an error for an unknown node id");
+    assert_eq!(error.status, StatusCode::NOT_FOUND);
+
+    // A start that resolves still answers.
+    let Json(result) = trace_api(
+        State(state),
+        ApiQuery(query(Some("main".to_string()), None)),
+    )
+    .await
+    .expect("trace response");
+    assert_eq!(result.expect("trace result").start.label, "main");
+}
+
+#[tokio::test]
 async fn workflow_api_says_which_name_matched_nothing() {
     let root = temp_server_root();
     fs::create_dir_all(root.join("src")).unwrap();

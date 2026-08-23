@@ -645,11 +645,25 @@ pub(crate) async fn explain_edge_api(
     Ok(Json(result))
 }
 
+/// The answer when a start resolved to nothing: which name failed, the
+/// way `impact` and `journey` say it, or a plain 404 for an id.
+fn missing_start_error(
+    graph: &codegraph_core::CodeGraph,
+    role: &str,
+    label: Option<String>,
+) -> ApiError {
+    match label {
+        Some(label) => ApiError::bad_request(missing_node_error(graph, role, &label).to_string()),
+        None => ApiError::not_found("node not found"),
+    }
+}
+
 pub(crate) async fn trace_api(
     State(state): State<AppState>,
     ApiQuery(query): ApiQuery<TraceQuery>,
 ) -> Result<Json<Option<codegraph_analysis::TraceResult>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let target = query.label.clone();
     let start = match (query.node_id, query.label) {
         (Some(id), _) => TraceStart::NodeId(parse_node_id_param(&id)?),
         (None, Some(label)) => TraceStart::Label(label),
@@ -659,13 +673,17 @@ pub(crate) async fn trace_api(
             ));
         }
     };
-    Ok(Json(trace(
+    let result = trace(
         &graph,
         TraceRequest {
             start,
             max_depth: query.depth.unwrap_or(2).clamp(1, 8),
         },
-    )))
+    );
+    let Some(result) = result else {
+        return Err(missing_start_error(&graph, "trace start", target));
+    };
+    Ok(Json(Some(result)))
 }
 
 pub(crate) async fn workflow_api(
@@ -703,12 +721,7 @@ pub(crate) async fn workflow_api(
     // `null` with a 200 cannot be told apart from an entrypoint that does
     // nothing. Every neighbouring endpoint says which name failed.
     let Some(report) = report else {
-        return Err(match target {
-            Some(label) => ApiError::bad_request(
-                missing_node_error(&graph, "workflow target", &label).to_string(),
-            ),
-            None => ApiError::not_found("node not found"),
-        });
+        return Err(missing_start_error(&graph, "workflow target", target));
     };
     Ok(Json(Some(report)))
 }
@@ -977,6 +990,7 @@ pub(crate) async fn dependents_api(
     ApiQuery(query): ApiQuery<TraceQuery>,
 ) -> Result<Json<Option<codegraph_analysis::TraceResult>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let target = query.label.clone();
     let start = match (query.node_id, query.label) {
         (Some(id), _) => TraceStart::NodeId(parse_node_id_param(&id)?),
         (None, Some(label)) => TraceStart::Label(label),
@@ -986,13 +1000,17 @@ pub(crate) async fn dependents_api(
             ));
         }
     };
-    Ok(Json(trace_dependents(
+    let result = trace_dependents(
         &graph,
         TraceRequest {
             start,
             max_depth: query.depth.unwrap_or(3).clamp(1, 16),
         },
-    )))
+    );
+    let Some(result) = result else {
+        return Err(missing_start_error(&graph, "trace start", target));
+    };
+    Ok(Json(Some(result)))
 }
 
 pub(crate) async fn trace_config_api(

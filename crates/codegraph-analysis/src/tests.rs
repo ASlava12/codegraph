@@ -8609,6 +8609,42 @@ fn insights_report_dependency_cycles() {
 }
 
 #[test]
+fn explain_edge_says_what_it_searched_for() {
+    let mut graph = CodeGraph::new("repo");
+    let main = graph.add_node(NodeKind::Function, "main");
+    let helper = graph.add_node(NodeKind::Function, "helper");
+    graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+
+    let error = explain_edge(
+        &graph,
+        ExplainEdgeRequest {
+            edge_index: None,
+            source: Some("nosuchthing".to_string()),
+            target: Some("alsonot".to_string()),
+            kind: None,
+        },
+    )
+    .expect_err("a filter that matches nothing is not an empty answer");
+    assert_eq!(
+        error.to_string(),
+        "no edge matched source `nosuchthing`, target `alsonot`"
+    );
+
+    // ...and a filter that matches still answers.
+    let found = explain_edge(
+        &graph,
+        ExplainEdgeRequest {
+            edge_index: None,
+            source: Some("main".to_string()),
+            target: None,
+            kind: None,
+        },
+    )
+    .expect("expected an explanation");
+    assert_eq!(found.expect("edge explanation").edge.target, helper);
+}
+
+#[test]
 fn a_name_means_the_definition_not_the_error_that_wraps_it() {
     let mut graph = CodeGraph::new("repo");
     // `scan_project(..).unwrap()` gives the error construct the name of

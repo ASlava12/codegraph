@@ -64,7 +64,12 @@ pub fn explain_edge(
 ) -> Result<Option<EdgeExplanation>, QueryError> {
     let matches = matching_edge_indexes(graph, &request)?;
     let Some(edge_index) = matches.first().copied() else {
-        return Ok(None);
+        // The filter found nothing, which is a different answer from an
+        // edge with nothing to explain. Say what was searched for.
+        return Err(QueryError::new(format!(
+            "no edge matched {}",
+            describe_edge_filter(&request)
+        )));
     };
     let edge = graph
         .edges
@@ -219,5 +224,28 @@ pub fn slice_graph(graph: &CodeGraph, request: GraphSliceRequest) -> GraphSlice 
         edge_limit,
         truncated_nodes: node_offset.saturating_add(node_limit) < total_nodes,
         truncated_edges: edge_offset.saturating_add(edge_limit) < total_edges,
+    }
+}
+
+/// What an `explain-edge` request asked for, for the message when nothing
+/// answered it.
+fn describe_edge_filter(request: &ExplainEdgeRequest) -> String {
+    let mut parts = Vec::new();
+    if let Some(index) = request.edge_index {
+        parts.push(format!("edge index {index}"));
+    }
+    for (name, value) in [
+        ("source", request.source.as_deref()),
+        ("target", request.target.as_deref()),
+        ("kind", request.kind.as_deref()),
+    ] {
+        if let Some(value) = value {
+            parts.push(format!("{name} `{value}`"));
+        }
+    }
+    if parts.is_empty() {
+        "that request".to_string()
+    } else {
+        parts.join(", ")
     }
 }

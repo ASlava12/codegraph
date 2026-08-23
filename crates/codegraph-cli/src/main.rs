@@ -30,9 +30,10 @@ use codegraph_analysis::{
     SourceSearchRequest, TraceRequest, TraceStart, architecture_map, check_insights, communities,
     compact_query_result, component_contract, component_dependencies, entrypoints, explain_edge,
     filter_insight_report, hotspots, impact, impact_fast, insights, journey, language_dependencies,
-    natural_query, project_report, project_report_markdown, query_graph, read_source_preview,
-    refactor_context, seams, search_source, summarize, surprising_links, trace, trace_config,
-    trace_dependents, trace_entrypoints, trace_errors, validate_query_expression,
+    missing_node_error, natural_query, project_report, project_report_markdown, query_graph,
+    read_source_preview, refactor_context, seams, search_source, summarize, surprising_links,
+    trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
+    validate_query_expression,
 };
 use codegraph_analysis::{
     DEFAULT_MERMAID_EDGE_LIMIT, DEFAULT_MERMAID_NODE_LIMIT, DEFAULT_SVG_EDGE_LIMIT,
@@ -829,6 +830,7 @@ fn main() -> Result<()> {
         } => {
             let graph =
                 scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
+            let target = label.clone();
             let result = trace(
                 &graph,
                 TraceRequest {
@@ -836,6 +838,10 @@ fn main() -> Result<()> {
                     max_depth: depth,
                 },
             );
+            // A name that matched nothing is not a trace with no steps.
+            let result = result.ok_or_else(|| {
+                anyhow::anyhow!("{}", missing_node_error(&graph, "trace start", &target))
+            })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Command::TraceDependents {
@@ -848,6 +854,7 @@ fn main() -> Result<()> {
         } => {
             let graph =
                 scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
+            let target = label.clone();
             let result = trace_dependents(
                 &graph,
                 TraceRequest {
@@ -855,6 +862,9 @@ fn main() -> Result<()> {
                     max_depth: depth,
                 },
             );
+            let result = result.ok_or_else(|| {
+                anyhow::anyhow!("{}", missing_node_error(&graph, "trace start", &target))
+            })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Command::TraceEntrypoints {
