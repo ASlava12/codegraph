@@ -3251,6 +3251,13 @@ pub(crate) fn makefile_target_line(line: &str) -> Option<(Vec<String>, Option<St
     if candidate[..colon].contains('=') {
         return None;
     }
+    // `uname_S := $(shell uname -s)` is a variable, not something to
+    // build. The colon of an assignment carries the `=` with it, and
+    // redis declared 138 of its 226 "targets" this way.
+    let from_colon = &candidate[colon..];
+    if from_colon.starts_with(":=") || from_colon.starts_with("::=") {
+        return None;
+    }
     let before = candidate[..colon].trim();
     if before.is_empty() || before.starts_with('.') {
         return None;

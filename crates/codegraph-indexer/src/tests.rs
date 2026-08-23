@@ -5736,6 +5736,14 @@ generated/output.txt:
     assert!(!graph.nodes.iter().any(|node| {
         node.kind == NodeKind::Entrypoint && node.label == "make target:generated/output.txt"
     }));
+    // `IMAGE := demo` is a variable; there is nothing to run.
+    assert!(
+        !graph
+            .nodes
+            .iter()
+            .any(|node| node.label == "make target:IMAGE"),
+        "a variable assignment was read as a target"
+    );
     assert!(
         !graph
             .nodes
