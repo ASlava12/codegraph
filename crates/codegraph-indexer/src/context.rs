@@ -36,6 +36,10 @@ pub(crate) struct IndexContext {
     /// package it names, so a qualified call can be answered by the import
     /// list instead of by every same-named declaration in the project.
     pub(crate) file_import_qualifiers: BTreeMap<String, BTreeMap<String, ImportedPackage>>,
+    /// Per file, the bare names an import binds and where they come from —
+    /// what `from flask import Blueprint` tells a later `Blueprint()` that
+    /// matching by name alone cannot.
+    pub(crate) file_imported_names: BTreeMap<String, BTreeMap<String, ImportedPackage>>,
     /// One placeholder node per (language, label) for unresolved call targets.
     pub(crate) unresolved_call_placeholders: BTreeMap<(String, String), NodeId>,
     pub(crate) cargo_workspace_dependencies: BTreeMap<String, Option<String>>,

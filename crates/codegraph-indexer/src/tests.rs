@@ -6880,3 +6880,94 @@ fn module_level_calls_belong_to_the_file_but_callback_bodies_do_not() {
         "a named function keeps its own calls"
     );
 }
+
+#[test]
+fn from_imported_names_say_where_a_bare_call_comes_from() {
+    // `OrderedDict()` carries no qualifier for the import map to match, so
+    // a standard-library call looked like a resolver failure. The names a
+    // `from module import ...` binds answer it: outside the repository the
+    // call is external, inside it the module narrows the candidates, and a
+    // definition the file makes itself still wins.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("pkg")).unwrap();
+    fs::write(root.join("pkg").join("__init__.py"), "").unwrap();
+    fs::write(
+        root.join("pkg").join("helpers.py"),
+        "def build():\n    return 1\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("pkg").join("other.py"),
+        "def build():\n    return 2\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("pkg").join("app.py"),
+        "from collections import OrderedDict\nfrom .helpers import build\n\n\ndef run():\n    store = OrderedDict()\n    return build(), store\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("pkg").join("shadow.py"),
+        "from .other import build\n\n\ndef build():\n    return 3\n\n\ndef run():\n    return build()\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = |path: &str, label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+                    && graph
+                        .nodes
+                        .iter()
+                        .find(|node| node.id == edge.source)
+                        .and_then(|node| node.span.as_ref())
+                        .is_some_and(|span| span.path.ends_with(path))
+            })
+            .unwrap_or_else(|| panic!("{path} calls {label}"))
+    };
+
+    assert_eq!(
+        call("app.py", "OrderedDict").metadata.get("resolution"),
+        Some(&"external".to_string()),
+        "a name imported from outside the repository is not a resolver miss"
+    );
+
+    let build_from_app = call("app.py", "build");
+    assert_eq!(
+        build_from_app.metadata.get("resolution"),
+        Some(&"resolved".to_string()),
+        "the import names which of the two `build`s is meant"
+    );
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == build_from_app.target)
+        .expect("the call has a target");
+    assert!(
+        target
+            .span
+            .as_ref()
+            .is_some_and(|span| span.path.ends_with("helpers.py")),
+        "the imported module decides, got {:?}",
+        target.span
+    );
+
+    let shadowed = call("shadow.py", "build");
+    let shadow_target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == shadowed.target)
+        .expect("the shadowed call has a target");
+    assert!(
+        shadow_target
+            .span
+            .as_ref()
+            .is_some_and(|span| span.path.ends_with("shadow.py")),
+        "the file's own definition wins over the import, got {:?}",
+        shadow_target.span
+    );
+}

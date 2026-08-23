@@ -509,6 +509,37 @@ pub(crate) fn go_import_qualifier(import_label: &str) -> Option<String> {
 /// np` binds `np`, and `from . import views` binds `views`. A `from x import y`
 /// binds `y` as a bare name, not a qualifier, so it is left alone — the call
 /// `y()` is unqualified and resolves like any other.
+/// The bare names a `from module import a, b as c` statement binds. The
+/// qualifier map cannot answer for these: the call site writes
+/// `OrderedDict()` with nothing before a dot to match on, so the name
+/// itself has to carry where it came from. `from . import views` is left
+/// out — that binds a module, which [`python_import_qualifier`] already
+/// records.
+pub(crate) fn python_imported_names(import_label: &str) -> Vec<String> {
+    let statement = import_label.trim();
+    let Some(rest) = statement.strip_prefix("from ") else {
+        return Vec::new();
+    };
+    let Some((module, imported)) = rest.split_once(" import ") else {
+        return Vec::new();
+    };
+    if module.trim().trim_matches('.').is_empty() {
+        return Vec::new();
+    }
+    imported
+        .split(',')
+        .filter_map(|name| {
+            let name = name
+                .trim()
+                .trim_start_matches('(')
+                .trim_end_matches(')')
+                .trim();
+            let name = name.rsplit(" as ").next().unwrap_or(name).trim();
+            (!name.is_empty() && name != "*").then(|| name.to_string())
+        })
+        .collect()
+}
+
 pub(crate) fn python_import_qualifier(import_label: &str) -> Option<String> {
     let statement = import_label.trim();
     if let Some(rest) = statement.strip_prefix("from ") {

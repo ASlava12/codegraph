@@ -619,26 +619,6 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     .is_some_and(|language| language == &call.language)
             })
             .collect::<Vec<_>>();
-        // A qualified call names where it comes from. When the calling file
-        // imports that qualifier, the import list answers the question that
-        // matching by name only guesses at: an in-repo package narrows the
-        // candidates to that package, and an external one rules every local
-        // declaration out — `strings.Contains` is not the repository's own
-        // `Contains`.
-        let imported_package = split_qualified_call(&call.label)
-            .and_then(|(owner, _)| {
-                context
-                    .file_import_qualifiers
-                    .get(call.span.path.as_str())
-                    .and_then(|qualifiers| qualifiers.get(owner))
-                    .cloned()
-            })
-            .map(|package| resolved_import_package(context, package));
-        if imported_package == Some(ImportedPackage::External) {
-            add_external_call_placeholder(context, call);
-            continue;
-        }
-
         let local_targets = caller_path
             .map(|path| {
                 language_targets
@@ -652,6 +632,35 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+
+        // A qualified call names where it comes from. When the calling file
+        // imports that qualifier, the import list answers the question that
+        // matching by name only guesses at: an in-repo package narrows the
+        // candidates to that package, and an external one rules every local
+        // declaration out — `strings.Contains` is not the repository's own
+        // `Contains`.
+        let imported_package = match split_qualified_call(&call.label) {
+            Some((owner, _)) => context
+                .file_import_qualifiers
+                .get(call.span.path.as_str())
+                .and_then(|qualifiers| qualifiers.get(owner))
+                .cloned(),
+            // `from collections import OrderedDict` binds a bare name, so
+            // the call site has no qualifier to look up — the name itself
+            // has to say where it came from. A definition the file makes
+            // itself wins over the import, which is Python's own rule.
+            None if local_targets.is_empty() => context
+                .file_imported_names
+                .get(call.span.path.as_str())
+                .and_then(|names| names.get(&call.label))
+                .cloned(),
+            None => None,
+        }
+        .map(|package| resolved_import_package(context, package));
+        if imported_package == Some(ImportedPackage::External) {
+            add_external_call_placeholder(context, call);
+            continue;
+        }
         let mut targets = match &imported_package {
             Some(ImportedPackage::Local(candidates)) => {
                 let in_module = language_targets

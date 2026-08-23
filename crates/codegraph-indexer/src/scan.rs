@@ -117,6 +117,7 @@ pub(crate) fn scan_project_with_scope(
         namespace_nodes: BTreeMap::new(),
         effect_entities: BTreeMap::new(),
         file_import_qualifiers: BTreeMap::new(),
+        file_imported_names: BTreeMap::new(),
         type_symbols: BTreeMap::new(),
         file_nodes: BTreeMap::new(),
         directory_nodes: BTreeMap::new(),
@@ -604,20 +605,29 @@ pub(crate) fn index_file(
                         Language::Python => python_import_qualifier(&item.label),
                         _ => None,
                     };
-                    if item.kind == ParsedItemKind::Import
-                        && let Some(qualifier) = import_qualifier
-                    {
+                    if item.kind == ParsedItemKind::Import {
                         let package = local_import
                             .as_ref()
                             .or(possible_local_import.as_ref())
                             .map(|target| target.candidates.clone())
                             .filter(|candidates| !candidates.is_empty())
                             .map_or(ImportedPackage::External, ImportedPackage::Local);
-                        context
-                            .file_import_qualifiers
-                            .entry(label.to_string())
-                            .or_default()
-                            .insert(qualifier, package);
+                        if let Some(qualifier) = import_qualifier {
+                            context
+                                .file_import_qualifiers
+                                .entry(label.to_string())
+                                .or_default()
+                                .insert(qualifier, package.clone());
+                        }
+                        if language == Language::Python {
+                            for name in python_imported_names(&item.label) {
+                                context
+                                    .file_imported_names
+                                    .entry(label.to_string())
+                                    .or_default()
+                                    .insert(name, package.clone());
+                            }
+                        }
                     }
 
                     if let Some(local_import) = local_import.as_ref() {
