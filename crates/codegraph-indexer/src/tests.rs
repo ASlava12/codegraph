@@ -1977,6 +1977,59 @@ fn scan_project_resolves_python_absolute_local_imports() {
 }
 
 #[test]
+fn elixir_kernel_calls_are_builtin() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(
+        root.join("lib").join("schema.ex"),
+        r#"defmodule Schema do
+  def cast(value) do
+    if is_list(value) do
+      length(value)
+    else
+      normalize(value)
+    end
+  end
+
+  def normalize(value), do: value
+end
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution_of = |call_label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge
+                        .metadata
+                        .get("call_label")
+                        .is_some_and(|label| label == call_label)
+            })
+            .and_then(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+            .map(|node| (node.kind.clone(), node.metadata.get("resolution").cloned()))
+            .unwrap_or_else(|| panic!("no call edge for {call_label}"))
+    };
+
+    // Kernel is imported into every module: `is_list` and `length` are the
+    // language, not something this project failed to declare.
+    assert_eq!(
+        resolution_of("is_list").1.as_deref(),
+        Some("builtin"),
+        "got {:?}",
+        resolution_of("is_list")
+    );
+    assert_eq!(resolution_of("length").1.as_deref(), Some("builtin"));
+    // ...but what the module declares is still the module's.
+    assert_eq!(resolution_of("normalize").0, NodeKind::Function);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn julia_base_calls_are_builtin_unless_the_project_declares_them() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();
