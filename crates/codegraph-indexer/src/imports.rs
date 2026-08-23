@@ -317,6 +317,11 @@ pub(crate) fn c_local_import_target(
             .iter()
             .map(|include_dir| join_path(Some(include_dir), &header)),
     );
+    // The header as written, so a project whose include path comes from a
+    // Makefile rather than CMake can still be matched by the unique-suffix
+    // rule: redis compiles with `-Ideps/jemalloc/include`, and 911 of its
+    // includes had nothing to resolve against.
+    candidates.push(header.clone());
     dedup_preserving_order(&mut candidates);
     Some(LocalImportTarget {
         target: header.clone(),

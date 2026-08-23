@@ -7769,3 +7769,64 @@ fn an_import_of_the_projects_own_package_is_not_an_outside_dependency() {
         "a runtime module is not a package of this repository"
     );
 }
+
+#[test]
+fn an_include_resolves_along_the_projects_own_header_tree() {
+    // redis compiles with `-Ideps/jemalloc/include` from a Makefile, and
+    // include directories were only read from CMake and
+    // compile_commands.json, so 911 of its includes had nothing to resolve
+    // against. The header as written is a candidate too, matched when
+    // exactly one file in the repository ends with it.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("deps").join("lib").join("include").join("pkg")).unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("deps")
+            .join("lib")
+            .join("include")
+            .join("pkg")
+            .join("util.h"),
+        "int helper(void);\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("main.c"),
+        "#include \"pkg/util.h\"\n#include \"missing/nowhere.h\"\n\nint main(void) { return helper(); }\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let import = |needle: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata.get("item_kind").map(String::as_str) == Some("import")
+                    && node.label.contains(needle)
+            })
+            .unwrap_or_else(|| panic!("the include of {needle} is recorded"))
+    };
+    assert_eq!(
+        import("pkg/util.h")
+            .metadata
+            .get("resolution")
+            .map(String::as_str),
+        Some("resolved")
+    );
+    assert!(
+        import("pkg/util.h")
+            .metadata
+            .get("resolved_path")
+            .is_some_and(|path| path.ends_with("deps/lib/include/pkg/util.h")),
+        "{:?}",
+        import("pkg/util.h").metadata.get("resolved_path")
+    );
+    assert_eq!(
+        import("missing/nowhere.h")
+            .metadata
+            .get("resolution")
+            .map(String::as_str),
+        Some("unresolved"),
+        "a header the repository does not contain stays unresolved"
+    );
+}
