@@ -537,6 +537,39 @@ fn parses_rust_environment_default_values() {
 }
 
 #[test]
+fn ruby_visibility_follows_the_class_body() {
+    // `private` on a line of its own changes what follows it, `private def
+    // foo` changes that one definition, and `private :foo` names a method
+    // written elsewhere. A nested class keeps its own answer.
+    let source = b"class A\n  def shown; end\n  private\n  def hidden; end\n  public\n  def shown_again; end\n  private def inline; end\n  def named_later; end\n  private :named_later\n\n  class Inner\n    private\n    def buried; end\n  end\n\n  def after_inner; end\nend\n";
+    let parsed = parse_source("a.rb", source, Language::Ruby).unwrap();
+    let visibility_of = |label: &str| -> String {
+        parsed
+            .items
+            .iter()
+            .find(|item| {
+                item.label == label
+                    && matches!(
+                        item.kind,
+                        ParsedItemKind::Function | ParsedItemKind::Entrypoint
+                    )
+            })
+            .and_then(|item| item.metadata.get("visibility").cloned())
+            .unwrap_or_else(|| format!("no `{label}`"))
+    };
+
+    assert_eq!(visibility_of("shown"), "public");
+    assert_eq!(visibility_of("hidden"), "private");
+    assert_eq!(visibility_of("shown_again"), "public");
+    assert_eq!(visibility_of("inline"), "private");
+    // `private :named_later` reaches a definition written above it.
+    assert_eq!(visibility_of("named_later"), "private");
+    assert_eq!(visibility_of("buried"), "private");
+    // The inner class's `private` says nothing about the outer one.
+    assert_eq!(visibility_of("after_inner"), "public");
+}
+
+#[test]
 fn erlang_and_haskell_export_lists_are_read() {
     // Both write the list at the top of the file, and what is not on it
     // cannot be called from another module. A module that gives no list at

@@ -763,6 +763,9 @@ pub(crate) fn visibility_label(
             Some("pub") => "public",
             _ => "private",
         }),
+        // Ruby says it with a keyword that changes what follows it, and
+        // sometimes about one definition or by name.
+        Language::Ruby => Some(ruby_visibility(node, source)),
         // Erlang and Haskell write the list at the top of the file: what is
         // not on it cannot be called from another module. A module that
         // gives no list at all gives everything.
@@ -808,6 +811,84 @@ fn modifier_visibility(node: Node<'_>, source: &[u8]) -> Option<&'static str> {
             text.split(|character: char| !character.is_alphanumeric())
                 .any(|word| word == *keyword)
         })
+}
+
+/// What a Ruby class body has said about a definition. `private` on a
+/// line of its own changes what follows it, `private def foo` changes that
+/// one definition, and `private :foo` names a method written elsewhere in
+/// the body -- before or after.
+fn ruby_visibility(node: Node<'_>, source: &[u8]) -> &'static str {
+    if let Some(argument_list) = node.parent()
+        && argument_list.kind() == "argument_list"
+        && let Some(call) = argument_list.parent()
+        && call.kind() == "call"
+        && let Some(level) = named_child_text(call, "method", source)
+            .as_deref()
+            .and_then(ruby_visibility_keyword)
+    {
+        return level;
+    }
+
+    let Some(body) = node
+        .parent()
+        .filter(|parent| parent.kind() == "body_statement")
+    else {
+        return "public";
+    };
+    let name = named_child_text(node, "name", source);
+    let mut level = "public";
+    let mut reached = false;
+    let mut cursor = body.walk();
+    for child in body.named_children(&mut cursor) {
+        if child.id() == node.id() {
+            reached = true;
+            continue;
+        }
+        match child.kind() {
+            // A bare `private` is an identifier, not a call.
+            "identifier" if !reached => {
+                if let Some(next) = node_text(child, source)
+                    .as_deref()
+                    .and_then(ruby_visibility_keyword)
+                {
+                    level = next;
+                }
+            }
+            // `private :foo, :bar` reaches a definition wherever it sits.
+            "call" => {
+                let Some(keyword) = named_child_text(child, "method", source)
+                    .as_deref()
+                    .and_then(ruby_visibility_keyword)
+                else {
+                    continue;
+                };
+                let Some(arguments) = child.child_by_field_name("arguments") else {
+                    continue;
+                };
+                let mut argument_cursor = arguments.walk();
+                let names = arguments
+                    .named_children(&mut argument_cursor)
+                    .filter(|argument| argument.kind() == "simple_symbol")
+                    .filter_map(|argument| node_text(argument, source))
+                    .any(|symbol| Some(symbol.trim_start_matches(':')) == name.as_deref());
+                if names {
+                    return keyword;
+                }
+            }
+            _ => {}
+        }
+    }
+    level
+}
+
+/// The visibility a Ruby keyword sets, if it is one.
+fn ruby_visibility_keyword(text: &str) -> Option<&'static str> {
+    match text.trim() {
+        "private" => Some("private"),
+        "protected" => Some("private"),
+        "public" => Some("public"),
+        _ => None,
+    }
 }
 
 /// The names an Erlang module lets out, or `None` when it lets out
