@@ -10439,3 +10439,54 @@ fn a_project_does_not_import_itself_from_outside() {
         undeclared[0]
     );
 }
+
+#[test]
+fn a_test_and_a_build_config_are_reached_by_their_own_runners() {
+    // "reads `X` but is not reachable from any entrypoint" describes the
+    // tooling when the reader is a test or a build config: a test runner
+    // runs one and a bundler the other. 65% of terraform's findings of
+    // this kind were tests, 81% of kong's, and Vue's were its vite and
+    // rollup configs.
+    let mut graph = CodeGraph::new("repo");
+    let main = graph.add_node(NodeKind::Function, "main");
+    graph.add_edge(graph.root, main, EdgeKind::Entrypoint, Confidence::Exact);
+    let setting = graph.add_node(NodeKind::Environment, "API_TOKEN");
+
+    let reader = |graph: &mut CodeGraph, label: &str, path: &str| {
+        let id = graph.add_node_with_span(
+            NodeKind::Function,
+            label,
+            SourceSpan {
+                path: path.to_string(),
+                start_line: 1,
+                start_column: 1,
+                end_line: 2,
+                end_column: 1,
+            },
+        );
+        graph.add_edge(
+            id,
+            setting,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Syntactic,
+        );
+        id
+    };
+    reader(&mut graph, "test_reads_token", "tests/test_client.py");
+    reader(&mut graph, "createConfig", "vite.config.ts");
+    reader(&mut graph, "load_settings", "src/settings.py");
+
+    let report = insights(&graph);
+    let messages: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "unreachable_config_read")
+        .map(|insight| insight.message.as_str())
+        .collect();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(
+        messages[0].contains("load_settings"),
+        "only the program's own unreachable reader: {}",
+        messages[0]
+    );
+}

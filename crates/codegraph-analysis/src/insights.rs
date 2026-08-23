@@ -1725,12 +1725,34 @@ pub(crate) fn add_unreachable_config_read_insights(
         return;
     }
 
+    let path_index = node_path_index(graph);
     for (index, edge) in graph.edges.iter().enumerate() {
         if !matches!(
             edge.kind,
             EdgeKind::ReadsConfig | EdgeKind::ReadsEnvironment
         ) || reachable.contains(&edge.source)
         {
+            continue;
+        }
+        // A test is run by a test runner and a build config by a build
+        // tool: neither is reachable from a program's entrypoint, and
+        // saying so describes the tooling rather than the code. 65% of
+        // terraform's findings of this kind were tests, 81% of kong's, and
+        // Vue's were its vite and rollup configs.
+        let reader_path = path_index
+            .get(&edge.source)
+            .map(String::as_str)
+            .or_else(|| {
+                graph
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == edge.source)
+                    .and_then(|node| node.span.as_ref())
+                    .map(|span| span.path.as_str())
+            });
+        if reader_path.is_some_and(|path| {
+            is_test_like_source_path(path) || is_tool_configuration_source_path(path)
+        }) {
             continue;
         }
 
