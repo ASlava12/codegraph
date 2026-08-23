@@ -899,6 +899,11 @@ pub(crate) fn compact_node_summaries(
         .nodes
         .iter()
         .filter(|node| compact_node_summary_candidate(&node.kind))
+        // A placeholder stands in for a name nothing resolved -- `to_string`,
+        // `map`, `Some` -- and its span is whichever call site came first.
+        // Ranked by incoming edges they took fourteen of the report's top
+        // twenty rows, none of which a reader can open.
+        .filter(|node| !is_call_placeholder(node))
         .filter_map(|node| {
             let dependency_summary = node_dependency_summary_indexed(
                 &nodes_by_id,

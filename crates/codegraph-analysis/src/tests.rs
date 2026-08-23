@@ -8609,6 +8609,59 @@ fn insights_report_dependency_cycles() {
 }
 
 #[test]
+fn the_report_summarizes_nodes_a_reader_can_open() {
+    let mut graph = CodeGraph::new("repo");
+    let caller = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "main",
+        Some(SourceSpan {
+            path: "src/main.rs".to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 9,
+            end_column: 2,
+        }),
+        BTreeMap::from([("item_kind".to_string(), "function".to_string())]),
+    );
+    // The stand-in for a name nothing resolved, with the span of a call site.
+    let placeholder = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "to_string",
+        Some(SourceSpan {
+            path: "src/main.rs".to_string(),
+            start_line: 4,
+            start_column: 9,
+            end_line: 4,
+            end_column: 20,
+        }),
+        BTreeMap::from([
+            ("item_kind".to_string(), "call".to_string()),
+            ("resolution".to_string(), "unresolved".to_string()),
+        ]),
+    );
+    for _ in 0..5 {
+        graph.add_edge(caller, placeholder, EdgeKind::Calls, Confidence::Heuristic);
+    }
+
+    let report = project_report(&graph, ProjectReportLimits::default());
+    assert!(
+        report
+            .node_summaries
+            .nodes
+            .iter()
+            .any(|summary| summary.node.id == caller)
+    );
+    assert!(
+        !report
+            .node_summaries
+            .nodes
+            .iter()
+            .any(|summary| summary.node.id == placeholder),
+        "an unresolved-call placeholder is not a node to open"
+    );
+}
+
+#[test]
 fn a_suggestion_is_a_name_a_reader_can_ask_about() {
     let mut graph = CodeGraph::new("repo");
     graph.add_node(NodeKind::Function, "scan_project");
