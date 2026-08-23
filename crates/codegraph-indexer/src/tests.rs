@@ -1877,6 +1877,32 @@ fn scan_project_indexes_dart_flutter_pubspec_and_imports() {
                 .is_some_and(|value| value == "any")
     }));
 
+    // `flutter:` with `sdk: flutter` written under it declares a
+    // dependency whose source, not whose version, is on the next line.
+    // Requiring a value on the same line dropped every dependency that
+    // comes from an SDK, a path, or a git remote, and then the imports of
+    // those packages read as undeclared.
+    let flutter = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "flutter"
+                && node
+                    .metadata
+                    .get("item_kind")
+                    .is_some_and(|kind| kind == "dependency")
+        })
+        .expect("flutter is declared, from the SDK");
+    assert!(graph.edges.iter().any(|edge| {
+        edge.kind == EdgeKind::DependsOn
+            && edge.target == flutter.id
+            && edge
+                .metadata
+                .get("dependency_kind")
+                .is_some_and(|value| value == "runtime")
+            && !edge.metadata.contains_key("dependency_version")
+    }));
+
     fs::remove_dir_all(root).unwrap();
 }
 

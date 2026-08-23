@@ -1448,12 +1448,21 @@ pub(crate) fn pubspec_dependencies(source: &str) -> Vec<ManifestDependency> {
         if indent != section_indent + 2 {
             continue;
         }
-        let Some((name, value)) = yaml_key_pair(trimmed) else {
-            continue;
+        // `flutter_test:` followed by an indented `sdk: flutter` declares a
+        // dependency whose source, not whose version, is written below it.
+        // Requiring a value on the same line dropped every dependency that
+        // comes from an SDK, a path, or a git remote.
+        let (name, value) = match yaml_key_pair(trimmed) {
+            Some((name, value)) => (name, Some(value)),
+            None => match yaml_key(trimmed) {
+                Some(name) => (name, None),
+                None => continue,
+            },
         };
         if name.is_empty() {
             continue;
         }
+        let value = value.unwrap_or_default();
         let kind = match section.as_str() {
             "dependencies" => "runtime",
             "dev_dependencies" => "dev",
