@@ -411,7 +411,13 @@ function buildClientInsights(graph) {
       insights.push({
         kind: "orphan_function",
         severity: "info",
-        message: `${node.label} has no incoming call edge`,
+        // Dead or the API: terraform has 11406 exported functions with no
+        // in-repo caller against 592 unexported ones, and the CLI says
+        // which is which.
+        message:
+          node.metadata?.visibility === "public"
+            ? `${node.label} has no incoming call edge; it is exported, so its callers may be outside this repository`
+            : `${node.label} has no incoming call edge`,
         nodeId: node.id,
       });
     }

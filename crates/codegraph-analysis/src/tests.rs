@@ -8960,6 +8960,48 @@ fn insights_report_conflicting_dependency_declarations() {
 }
 
 #[test]
+fn an_orphan_says_whether_it_is_dead_or_the_api() {
+    // A function nobody in the repository calls is either dead code or the
+    // API. Terraform has 11406 exported functions with no in-repo caller
+    // against 592 unexported ones, and one sentence for both says nothing
+    // a reader can act on.
+    let mut graph = CodeGraph::new("repo");
+    graph.add_node_with_metadata(
+        NodeKind::Function,
+        "ParseAddress",
+        None,
+        BTreeMap::from([("visibility".to_string(), "public".to_string())]),
+    );
+    graph.add_node_with_metadata(
+        NodeKind::Function,
+        "parseInternal",
+        None,
+        BTreeMap::from([("visibility".to_string(), "private".to_string())]),
+    );
+
+    let report = insights(&graph);
+    let orphans: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "orphan_function")
+        .map(|insight| insight.message.as_str())
+        .collect();
+    assert_eq!(orphans.len(), 2, "{orphans:?}");
+    assert!(
+        orphans
+            .iter()
+            .any(|message| message.contains("`ParseAddress`") && message.contains("exported")),
+        "{orphans:?}"
+    );
+    assert!(
+        orphans
+            .iter()
+            .any(|message| message.contains("`parseInternal`") && !message.contains("exported")),
+        "{orphans:?}"
+    );
+}
+
+#[test]
 fn a_catalogued_version_does_not_disagree_with_itself() {
     // `catalog:` says the version lives in the pnpm catalog. Read as a
     // constraint it disagrees with every real one, and vue core had five

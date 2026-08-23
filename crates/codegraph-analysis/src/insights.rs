@@ -663,10 +663,26 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
             && !entrypoints.contains(&node.id)
             && !called.contains(&node.id)
         {
+            // A function nobody in the repository calls is either dead or
+            // the API: terraform has 11406 exported functions with no
+            // in-repo caller against 592 unexported ones, and one number
+            // for both says nothing a reader can act on.
+            let exported = node
+                .metadata
+                .get("visibility")
+                .is_some_and(|visibility| visibility == "public");
+            let message = if exported {
+                format!(
+                    "Function `{}` has no incoming call edge; it is exported, so its callers may be outside this repository",
+                    node.label
+                )
+            } else {
+                format!("Function `{}` has no incoming call edge", node.label)
+            };
             insights.push(Insight {
                 kind: "orphan_function".to_string(),
                 severity: InsightSeverity::Info,
-                message: format!("Function `{}` has no incoming call edge", node.label),
+                message,
                 nodes: vec![node.id],
                 edges: Vec::new(),
             });
