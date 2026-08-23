@@ -2875,6 +2875,19 @@ pub(crate) fn add_duplicate_framework_route_insights(
         {
             continue;
         }
+        // A duplicate route is a conflict only within one application, and
+        // the graph does not model the application object. Tests build one
+        // per case — flask declares `GET /` eleven times across its suite
+        // and repeatedly inside a single file — so a route declared there
+        // says nothing about the routing table the program serves. 22 of
+        // flask's 25 duplicate groups lived entirely in tests.
+        if node
+            .span
+            .as_ref()
+            .is_some_and(|span| is_test_like_source_path(&span.path))
+        {
+            continue;
+        }
         let Some(path) = node
             .metadata
             .get("path")

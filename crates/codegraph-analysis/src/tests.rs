@@ -10211,3 +10211,49 @@ fn the_standard_library_is_not_an_undeclared_dependency() {
         Some("pallets-sphinx-themes".to_string())
     );
 }
+
+#[test]
+fn a_route_a_test_declares_is_not_a_duplicate_of_the_applications() {
+    // A duplicate route is a conflict only within one application, and the
+    // graph does not model the application object. flask's suite declares
+    // `GET /` eleven times — eleven applications, one per case, and
+    // repeatedly inside a single file — so 22 of its 25 duplicate groups
+    // described nothing.
+    let mut graph = CodeGraph::new("repo");
+    let route = |graph: &mut CodeGraph, path: &str, file: &str, line: u32| {
+        graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            format!("route GET {path}"),
+            Some(SourceSpan {
+                path: file.to_string(),
+                start_line: line,
+                start_column: 1,
+                end_line: line,
+                end_column: 1,
+            }),
+            BTreeMap::from([
+                ("item_kind".to_string(), "framework_route".to_string()),
+                ("path".to_string(), path.to_string()),
+                ("method".to_string(), "GET".to_string()),
+            ]),
+        )
+    };
+    route(&mut graph, "/", "tests/test_basic.py", 10);
+    route(&mut graph, "/", "tests/test_basic.py", 40);
+    route(&mut graph, "/", "tests/test_reqctx.py", 12);
+    route(&mut graph, "/health", "src/app/api.py", 20);
+    route(&mut graph, "/health", "src/app/legacy.py", 8);
+
+    let report = insights(&graph);
+    let duplicates: Vec<&Insight> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "duplicate_framework_route")
+        .collect();
+    assert_eq!(duplicates.len(), 1, "{duplicates:?}");
+    assert!(
+        duplicates[0].message.contains("/health"),
+        "only the application's own routes can collide: {}",
+        duplicates[0].message
+    );
+}
