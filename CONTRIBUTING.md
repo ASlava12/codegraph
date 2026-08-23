@@ -19,6 +19,18 @@ node crates/codegraph-web/static/views-smoke.mjs
 cargo run -p codegraph-cli -- scan . --format ndjson > /tmp/codegraph.ndjson
 ```
 
+The same tree must scan to the same bytes, from a cold walk or from the
+cache — the cache, the byte-stable wiki export and every report diff rest
+on it, so CI checks it too:
+
+```bash
+cache_dir="$(mktemp -d)"
+cargo run -p codegraph-cli -- scan . --no-semantic --no-cache > /tmp/scan-a.json
+cargo run -p codegraph-cli -- scan . --no-semantic --cache-dir "$cache_dir" > /tmp/scan-cold.json
+cargo run -p codegraph-cli -- scan . --no-semantic --cache-dir "$cache_dir" > /tmp/scan-warm.json
+cmp /tmp/scan-a.json /tmp/scan-cold.json && cmp /tmp/scan-cold.json /tmp/scan-warm.json
+```
+
 For server changes, also smoke-test the API:
 
 ```bash
