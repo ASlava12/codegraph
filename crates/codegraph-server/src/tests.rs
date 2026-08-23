@@ -1167,6 +1167,62 @@ async fn source_search_api_rejects_oversized_query_before_scan() {
 }
 
 #[test]
+fn capability_endpoints_cover_every_api_route() {
+    // The catalog is how a client discovers this server, and it is written by
+    // hand: a route added to the router without an entry here is invisible to
+    // every consumer. Take the router itself as the truth.
+    let router_source = include_str!("main.rs");
+    let listed: std::collections::BTreeSet<String> = capability_endpoints()
+        .into_iter()
+        .flat_map(|group| group.endpoints)
+        .map(str::to_string)
+        .collect();
+
+    fn mentions_method(chunk: &str, method: &str) -> bool {
+        let needle = format!("{method}(");
+        chunk.match_indices(&needle).any(|(index, _)| {
+            index == 0
+                || !chunk[..index]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|character| character.is_alphanumeric() || character == '_')
+        })
+    }
+
+    let mut missing = Vec::new();
+    for chunk in router_source.split(".route(").skip(1) {
+        let chunk = chunk
+            .split_once(".fallback(")
+            .map_or(chunk, |(head, _)| head)
+            .split_once(".with_state(")
+            .map_or(chunk, |(head, _)| head);
+        let Some(path) = chunk.split('"').nth(1) else {
+            continue;
+        };
+        if !path.starts_with("/api/") {
+            continue;
+        }
+        for method in ["get", "post", "put", "delete"] {
+            if mentions_method(chunk, method) {
+                let entry = format!("{} {path}", method.to_uppercase());
+                if !listed.contains(&entry) {
+                    missing.push(entry);
+                }
+            }
+        }
+    }
+
+    assert!(
+        !missing.is_empty() || router_source.contains(".route("),
+        "route extraction found nothing — the check would pass vacuously"
+    );
+    assert!(
+        missing.is_empty(),
+        "routes missing from the capability catalog: {missing:?}"
+    );
+}
+
+#[test]
 fn capability_endpoints_include_discovery_and_agent_routes() {
     let endpoints: Vec<_> = capability_endpoints()
         .into_iter()

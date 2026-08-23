@@ -358,6 +358,24 @@ mod tests {
     }
 
     #[test]
+    fn guidance_names_every_mcp_tool_the_server_exposes() {
+        let block = guidance_block();
+        let missing: Vec<String> = codegraph_analysis::mcp_tool_definitions()
+            .iter()
+            .filter_map(|tool| tool.get("name")?.as_str().map(str::to_string))
+            .filter(|name| !block.contains(&format!("`{name}`")))
+            .collect();
+
+        // The block is what an assistant reads before it decides whether to
+        // grep; a tool missing from it is a tool nobody calls. This drifts
+        // silently whenever a tool is added, so the test is the reminder.
+        assert!(
+            missing.is_empty(),
+            "guidance block does not mention: {missing:?}"
+        );
+    }
+
+    #[test]
     fn fresh_install_creates_all_artifacts() {
         let root = temp_root();
         let report = install_agent(&root, AgentPlatform::All, false, false).expect("install");
