@@ -65,6 +65,14 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
     let lower = question.to_lowercase();
     let candidates = natural_query_candidates(question);
     let term = candidates.first().cloned();
+    // Route on the question, not on the name being asked about. `load_config`
+    // contains "config", so "What calls `load_config`?" was answered with the
+    // config-flow query; the same hijack hit every symbol named after a
+    // keyword — `handleError`, `mainLoop`, `routeTable`.
+    let routing = term
+        .as_deref()
+        .map(|term| lower.replace(&term.to_lowercase(), " "))
+        .unwrap_or_else(|| lower.clone());
     let quoted_term = term.as_deref().map(quote_query_value);
     let fallback = natural_query_fallback_query(term.as_deref());
     let mut alternatives = vec![fallback.clone()];
@@ -79,7 +87,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
     }
 
     let (generated_query, rule, confidence) = if natural_query_mentions_any(
-        &lower,
+        &routing,
         &[
             "path",
             "between",
@@ -134,7 +142,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             "high".to_string(),
         )
     } else if natural_query_mentions_any(
-        &lower,
+        &routing,
         &[
             "config",
             "environment",
@@ -146,7 +154,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             "окружен",
         ],
     ) && !natural_query_mentions_any(
-        &lower,
+        &routing,
         &["call", "caller", "callee", "invoke", "вызов", "вызыва"],
     ) {
         if let Some(term) = quoted_term.as_deref() {
@@ -163,7 +171,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             )
         }
     } else if natural_query_mentions_any(
-        &lower,
+        &routing,
         &[
             "error",
             "exception",
@@ -190,7 +198,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             )
         }
     } else if natural_query_mentions_any(
-        &lower,
+        &routing,
         &[
             "entrypoint",
             "startup",
@@ -217,7 +225,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             )
         }
     } else if natural_query_mentions_any(
-        &lower,
+        &routing,
         &[
             "route",
             "endpoint",
@@ -248,17 +256,22 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             )
         }
     } else if natural_query_mentions_any(
-        &lower,
+        &routing,
         &[
             "dependent",
             "impact",
             "who uses",
             "used by",
+            "depends on",
+            "depend on",
             "кто использ",
             "кто завис",
+            "зависит от",
+            "зависят от",
             "влияни",
         ],
-    ) {
+    ) && !(routing.contains("does") && routing.contains("depend"))
+    {
         if let Some(term) = quoted_term.as_deref() {
             (
                 format!("dependents label:{term} depth:4"),
@@ -273,7 +286,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             )
         }
     } else if natural_query_mentions_any(
-        &lower,
+        &routing,
         &[
             "dependency",
             "dependencies",
@@ -299,18 +312,11 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             )
         }
     } else if natural_query_mentions_any(
-        &lower,
+        &routing,
         &["call", "caller", "callee", "invoke", "вызов", "вызыва"],
     ) {
         if let Some(term) = quoted_term.as_deref() {
-            let direction = if natural_query_mentions_any(
-                &lower,
-                &["who calls", "callers", "called by", "кто вызывает"],
-            ) {
-                "in"
-            } else {
-                "out"
-            };
+            let direction = natural_call_direction(&lower, Some(term));
             (
                 format!("neighbors label:{term} direction:{direction} depth:2 edge_kind:calls"),
                 "call_neighborhood".to_string(),
@@ -323,7 +329,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
                 "low".to_string(),
             )
         }
-    } else if natural_query_mentions_any(&lower, &["file", "source", "path", "файл", "исход"])
+    } else if natural_query_mentions_any(&routing, &["file", "source", "path", "файл", "исход"])
     {
         if let Some(raw_term) = term.as_deref() {
             let term = quote_query_value(raw_term);
@@ -345,7 +351,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             )
         }
     } else if natural_query_mentions_any(
-        &lower,
+        &routing,
         &[
             "symbol",
             "function",
@@ -372,7 +378,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             )
         }
     } else if natural_query_mentions_any(
-        &lower,
+        &routing,
         &[
             "unreachable",
             "dead",
@@ -397,7 +403,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             )
         }
     } else if natural_query_mentions_any(
-        &lower,
+        &routing,
         &[
             "hotspot",
             "hub",
@@ -422,7 +428,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
             )
         }
     } else if natural_query_mentions_any(
-        &lower,
+        &routing,
         &[
             "risk",
             "issue",
@@ -483,6 +489,52 @@ pub(crate) fn screaming_snake_token(token: &str) -> bool {
         && token
             .chars()
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Which way a question about calls points.
+///
+/// "What calls `X`?" asks for callers and "what does `X` call?" asks for
+/// callees, but only the phrase "who calls" was recognised, so every other
+/// caller phrasing was answered with the callee list — the opposite of the
+/// question. Explicit phrasings win; otherwise the verb's position settles it,
+/// since a caller question puts the verb before the subject and a callee
+/// question puts it after.
+pub(crate) fn natural_call_direction(lower: &str, term: Option<&str>) -> &'static str {
+    if natural_query_mentions_any(
+        lower,
+        &["called by", "invoked by", "callee", "кого вызывает"],
+    ) || (lower.contains("does") && lower.contains("call"))
+    {
+        return "out";
+    }
+    if natural_query_mentions_any(
+        lower,
+        &[
+            "who calls",
+            "what calls",
+            "which calls",
+            "that calls",
+            "callers",
+            "calls to",
+            "call sites",
+            "кто вызывает",
+            "вызывающие",
+        ],
+    ) {
+        return "in";
+    }
+
+    let verb = ["call", "invoke", "вызыва"]
+        .iter()
+        .filter_map(|verb| lower.find(verb))
+        .min();
+    let subject = term
+        .map(str::to_lowercase)
+        .and_then(|term| lower.find(&term));
+    match (verb, subject) {
+        (Some(verb), Some(subject)) if verb < subject => "in",
+        _ => "out",
+    }
 }
 
 pub(crate) fn natural_query_mentions_any(haystack: &str, needles: &[&str]) -> bool {

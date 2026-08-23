@@ -4856,6 +4856,62 @@ fn natural_query_routes_env_tokens_with_read_verbs_to_config_rule() {
 }
 
 #[test]
+fn a_symbol_named_after_a_keyword_does_not_hijack_the_question() {
+    let rule = |question: &str| natural_query_plan(question).expect("plan").rule;
+
+    // The keyword search ran over the whole question, so the name being asked
+    // about decided the route: `load_config` made every question a config
+    // question, `handleError` an error question, `mainLoop` a startup one.
+    assert_eq!(rule("What calls `load_config`?"), "call_neighborhood");
+    assert_eq!(rule("What calls `handleError`?"), "call_neighborhood");
+    assert_eq!(rule("Who uses `mainLoop`?"), "reverse_dependency_or_impact");
+    // The question's own words still route it.
+    assert_eq!(rule("Where is `PORT` read?"), "config_or_environment");
+}
+
+#[test]
+fn a_call_question_points_the_way_it_was_asked() {
+    let plan = |question: &str| natural_query_plan(question).expect("plan").generated_query;
+
+    // Only "who calls" was recognised, so every other caller phrasing was
+    // answered with the callee list — the opposite of the question.
+    assert!(
+        plan("What calls `load_config`?").contains("direction:in"),
+        "{}",
+        plan("What calls `load_config`?")
+    );
+    assert!(
+        plan("Which functions call `load_config`?").contains("direction:in"),
+        "{}",
+        plan("Which functions call `load_config`?")
+    );
+    assert!(
+        plan("What does `load_config` call?").contains("direction:out"),
+        "{}",
+        plan("What does `load_config` call?")
+    );
+    assert!(
+        plan("functions called by `load_config`").contains("direction:out"),
+        "{}",
+        plan("functions called by `load_config`")
+    );
+
+    // "depends on" is a reverse-dependency question and used to fall through
+    // to a plain text search.
+    assert!(
+        plan("What depends on `load_config`?").starts_with("dependents"),
+        "{}",
+        plan("What depends on `load_config`?")
+    );
+    // ...but the forward question must not be answered with the reverse.
+    assert!(
+        !plan("What does `load_config` depend on?").starts_with("dependents"),
+        "{}",
+        plan("What does `load_config` depend on?")
+    );
+}
+
+#[test]
 fn natural_query_supports_russian_call_questions() {
     let mut graph = CodeGraph::new("repo");
     let main = graph.add_node(NodeKind::Function, "main");
