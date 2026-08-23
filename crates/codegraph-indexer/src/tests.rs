@@ -3851,6 +3851,73 @@ fn scan_project_adds_environment_config_and_error_edges() {
 }
 
 #[test]
+fn a_call_belongs_to_the_method_that_makes_it() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    // Go writes String() once per type, so one file holds several of them.
+    fs::write(
+        root.join("main.go"),
+        r#"package main
+
+type A struct{}
+
+func (a A) String() string {
+	return helperA()
+}
+
+type B struct{}
+
+func (b B) String() string {
+	return helperB()
+}
+
+func helperA() string { return "a" }
+
+func helperB() string { return "b" }
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let caller_span = |callee: &str| {
+        let target = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == callee)
+            .unwrap_or_else(|| panic!("missing {callee}"));
+        let edge = graph
+            .edges
+            .iter()
+            .find(|edge| edge.kind == EdgeKind::Calls && edge.target == target.id)
+            .unwrap_or_else(|| panic!("nothing calls {callee}"));
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.id == edge.source)
+            .and_then(|node| node.span.clone())
+            .expect("caller has no span")
+    };
+    // The call to helperB is on line 12, inside the second String().
+    let second = caller_span("helperB");
+    assert!(
+        second.start_line <= 12 && 12 <= second.end_line,
+        "the call went to the String() at {}-{}",
+        second.start_line,
+        second.end_line
+    );
+    // ...and the call to helperA is on line 6, inside the first.
+    let first = caller_span("helperA");
+    assert!(
+        first.start_line <= 6 && 6 <= first.end_line,
+        "the call went to the String() at {}-{}",
+        first.start_line,
+        first.end_line
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_fact_belongs_to_the_definition_that_holds_it() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

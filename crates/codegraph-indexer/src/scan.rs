@@ -986,7 +986,10 @@ pub(crate) fn index_file(
                     let caller = item
                         .parent
                         .as_deref()
-                        .and_then(|parent| resolve_local_function(&local_functions, parent))
+                        .and_then(|parent| {
+                            enclosing_local_function(&local_function_spans, parent, &item.span)
+                                .or_else(|| resolve_local_function(&local_functions, parent))
+                        })
                         .unwrap_or(file_id);
                     context.pending_calls.push(PendingCall {
                         caller,
@@ -1003,7 +1006,10 @@ pub(crate) fn index_file(
                     let source = reference
                         .parent
                         .as_deref()
-                        .and_then(|parent| resolve_local_function(&local_functions, parent))
+                        .and_then(|parent| {
+                            enclosing_local_function(&local_function_spans, parent, &reference.span)
+                                .or_else(|| resolve_local_function(&local_functions, parent))
+                        })
                         .unwrap_or(file_id);
                     context.pending_type_references.push(PendingTypeReference {
                         source,
