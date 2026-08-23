@@ -1578,6 +1578,85 @@ fn trace_entrypoints_returns_filtered_entrypoint_flows() {
 }
 
 #[test]
+fn entrypoints_lead_with_programs_not_ci_jobs() {
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    let mut declare = |label: &str, metadata: BTreeMap<String, String>| {
+        let id = graph.add_node_with_metadata(NodeKind::Entrypoint, label, None, metadata);
+        graph.add_edge(graph.root, id, EdgeKind::Entrypoint, Confidence::Exact);
+        id
+    };
+    // Declared in graph order: CI first, exactly as the file walk produces it.
+    let ci_job = declare(
+        "github workflow:CI/test",
+        BTreeMap::from([
+            ("source".to_string(), "github-actions".to_string()),
+            ("entrypoint_kind".to_string(), "workflow_job".to_string()),
+        ]),
+    );
+    let test_binary = declare(
+        "cargo bin:harness",
+        BTreeMap::from([
+            ("source".to_string(), "manifest".to_string()),
+            ("entrypoint_kind".to_string(), "binary".to_string()),
+            ("target".to_string(), "tests/harness.rs".to_string()),
+        ]),
+    );
+    let script = declare(
+        "script:scripts/release.sh",
+        BTreeMap::from([
+            ("source".to_string(), "shebang".to_string()),
+            ("entrypoint_kind".to_string(), "script".to_string()),
+        ]),
+    );
+    let program = declare(
+        "cargo bin:app",
+        BTreeMap::from([
+            ("source".to_string(), "manifest".to_string()),
+            ("entrypoint_kind".to_string(), "binary".to_string()),
+        ]),
+    );
+    let route = declare(
+        "route GET /health",
+        BTreeMap::from([
+            ("source".to_string(), "framework".to_string()),
+            ("entrypoint_kind".to_string(), "route".to_string()),
+        ]),
+    );
+    let detected_main = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "main",
+        span("cmd/app/main.go"),
+        BTreeMap::new(),
+    );
+    graph.add_edge(
+        graph.root,
+        detected_main,
+        EdgeKind::Entrypoint,
+        Confidence::Exact,
+    );
+
+    let ordered: Vec<NodeId> = entrypoints(&graph)
+        .into_iter()
+        .map(|node| node.id)
+        .collect();
+
+    assert_eq!(
+        ordered,
+        vec![program, detected_main, route, script, ci_job, test_binary],
+        "a declared program comes first and a test binary last"
+    );
+}
+
+#[test]
 fn an_ambiguous_start_label_picks_the_declared_program() {
     let mut graph = CodeGraph::new("repo");
     let span = |path: &str| {

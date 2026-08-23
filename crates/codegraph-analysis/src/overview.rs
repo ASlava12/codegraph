@@ -827,10 +827,67 @@ pub fn entrypoints(graph: &CodeGraph) -> Vec<Node> {
         }
     }
 
-    graph
+    let mut matched: Vec<Node> = graph
         .nodes
         .iter()
         .filter(|node| ids.contains(&node.id))
         .cloned()
-        .collect()
+        .collect();
+    // Graph order is the file walk, so `.github/` sorted ahead of everything:
+    // on redis the first six entrypoints were CI jobs with identical flows,
+    // and on terraform they were CI shell scripts, not the program. Order by
+    // what a reader opens first instead, keeping graph order inside a tier so
+    // the result stays deterministic.
+    matched.sort_by_key(|node| {
+        (
+            entrypoint_rank(node),
+            // A program's own entry sits near the root; a helper `main` in
+            // `.github/scripts/` or `internal/.../testdata/` does not.
+            node.span
+                .as_ref()
+                .map_or(0, |span| span.path.matches('/').count()),
+            node.id,
+        )
+    });
+    matched
+}
+
+/// How likely an entrypoint is to be the one someone means: a declared program
+/// first, then the routes a server exposes, then scripts and build targets,
+/// then CI and container declarations — and tests last, whatever declares them.
+fn entrypoint_rank(node: &Node) -> u8 {
+    let kind = node
+        .metadata
+        .get("entrypoint_kind")
+        .map(String::as_str)
+        .unwrap_or_default();
+    let source = node
+        .metadata
+        .get("source")
+        .map(String::as_str)
+        .unwrap_or_default();
+    let test_like = kind == "test"
+        || node
+            .span
+            .as_ref()
+            .is_some_and(|span| is_test_like_source_path(&span.path))
+        || node
+            .metadata
+            .get("target")
+            .is_some_and(|target| is_test_like_source_path(target));
+    if test_like {
+        return 5;
+    }
+    // A detected program entry (`func main` and friends) carries no declaring
+    // manifest, but it is a program — below an explicitly declared binary,
+    // above the routes and scripts around it.
+    if node.kind == NodeKind::Function && source.is_empty() {
+        return 1;
+    }
+    match (source, kind) {
+        ("manifest", "binary" | "executable" | "app") => 0,
+        ("framework", _) => 2,
+        ("shebang", _) | ("manifest", _) | ("makefile", _) => 3,
+        _ => 4,
+    }
 }
