@@ -9492,10 +9492,17 @@ fn test_like_source_paths_cover_common_language_conventions() {
 #[test]
 fn insights_report_duplicate_framework_routes() {
     let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| SourceSpan {
+        path: path.to_string(),
+        start_line: 1,
+        start_column: 1,
+        end_line: 1,
+        end_column: 1,
+    };
     let first = graph.add_node_with_metadata(
         NodeKind::Entrypoint,
         "route GET /users",
-        None,
+        Some(span("src/routes.py")),
         BTreeMap::from([
             ("item_kind".to_string(), "framework_route".to_string()),
             ("method".to_string(), "GET".to_string()),
@@ -9506,7 +9513,7 @@ fn insights_report_duplicate_framework_routes() {
     let second = graph.add_node_with_metadata(
         NodeKind::Entrypoint,
         "route GET /users",
-        None,
+        Some(span("src/legacy.py")),
         BTreeMap::from([
             ("item_kind".to_string(), "framework_route".to_string()),
             ("method".to_string(), "GET".to_string()),
@@ -9551,6 +9558,15 @@ fn insights_report_duplicate_framework_routes() {
     assert!(duplicate.message.contains("GET /users"));
     assert!(duplicate.message.contains("list_users"));
     assert!(duplicate.message.contains("legacy_users"));
+    // Which files declare it is what tells a conflict from two programs:
+    // terraform's duplicates are separate mock servers, one per package.
+    assert!(
+        duplicate
+            .message
+            .contains("`src/legacy.py`, `src/routes.py`"),
+        "{}",
+        duplicate.message
+    );
     assert!(duplicate.nodes.contains(&first));
     assert!(duplicate.nodes.contains(&second));
     assert!(!duplicate.nodes.contains(&post));

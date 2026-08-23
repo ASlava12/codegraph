@@ -3493,12 +3493,24 @@ pub(crate) fn add_duplicate_framework_route_insights(
             .iter()
             .flat_map(|node| outgoing_edge_indexes(graph, *node, EdgeKind::References))
             .collect();
+        // Which files declare it is what tells a conflict from two
+        // programs: terraform's three findings are three separate mock
+        // servers, one per package, and nothing in the count says so.
+        let files = format_backtick_list(
+            nodes
+                .iter()
+                .filter_map(|id| graph.nodes.iter().find(|node| node.id == *id))
+                .filter_map(|node| node.span.as_ref().map(|span| span.path.as_str()))
+                .collect::<BTreeSet<_>>()
+                .into_iter(),
+            3,
+        );
 
         insights.push(Insight {
             kind: "duplicate_framework_route".to_string(),
             severity: InsightSeverity::Warning,
             message: format!(
-                "Route `{method} {path}` is declared {} times ({handler_text})",
+                "Route `{method} {path}` is declared {} times in {files} ({handler_text})",
                 nodes.len()
             ),
             nodes,
