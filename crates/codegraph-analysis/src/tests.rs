@@ -10799,6 +10799,52 @@ fn recursion_inside_a_file_is_not_the_coupling_a_cycle_warns_about() {
 }
 
 #[test]
+fn a_specifier_that_names_no_package_is_not_undeclared() {
+    // `node:fs` and `bun:test` say which runtime provides the module,
+    // `http2` is one Node ships, and `import type` from `trusted-types` is
+    // served by the `@types/trusted-types` that vue declares.
+    let mut graph = CodeGraph::new("repo");
+    let manifest = graph.add_node(NodeKind::File, "package.json");
+    let types = dependency_node(
+        &mut graph,
+        "@types/trusted-types",
+        "npm:@types/trusted-types",
+    );
+    graph.add_edge_with_metadata(
+        manifest,
+        types,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "dev".to_string())]),
+    );
+
+    let source = graph.add_node_with_metadata(
+        NodeKind::File,
+        "src/dom.ts",
+        None,
+        BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+    );
+    for label in [
+        "import http2 from \"http2\"",
+        "import { readFile } from \"fs/promises\"",
+        "import { test } from \"bun:test\"",
+        "import { assert } from \"jsr:@std/assert\"",
+        "import type { TrustedHTML } from \"trusted-types/lib\"",
+    ] {
+        let import = import_node(&mut graph, label, "typescript");
+        graph.add_edge(source, import, EdgeKind::Imports, Confidence::Syntactic);
+    }
+
+    let report = insights(&graph);
+    let found: Vec<&Insight> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "undeclared_external_import")
+        .collect();
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
 fn one_undeclared_package_is_one_finding() {
     // guzzle imports `psr/http` from 169 places, and 169 identical findings
     // say no more than one that counts them. A specifier built at runtime

@@ -255,8 +255,14 @@ pub(crate) fn commonjs_require_call(line: &str) -> Option<String> {
         let start = search_start + offset;
         let before = line[..start].chars().next_back();
         if before.is_none_or(|character| !is_identifier_or_member_character(character)) {
-            let rest = &line[start..];
-            let module = first_quoted_value_after(rest, "require(")?;
+            // `require(resolve(`package.json`))` asks for whatever that
+            // call returns. Reaching past it for the first quote inside
+            // reported vue as importing a package called `package.json`.
+            let argument = line[start + "require(".len()..].trim_start();
+            let module = argument
+                .starts_with(['"', '\'', '`'])
+                .then(|| first_quoted_value(argument))
+                .flatten()?;
             return Some(format!("require(\"{module}\")"));
         }
         search_start = start + "require(".len();

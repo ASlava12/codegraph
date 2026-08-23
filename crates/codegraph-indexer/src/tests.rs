@@ -952,6 +952,22 @@ fn python_extras_are_not_a_version() {
 }
 
 #[test]
+fn a_computed_require_names_no_module() {
+    // `require(resolve(`package.json`))` asks for whatever that call
+    // returns. Reaching past it for the first quoted string inside
+    // reported vue as importing a package called `package.json`.
+    assert_eq!(
+        commonjs_require_call("const pkg = require('./package.json')"),
+        Some("require(\"./package.json\")".to_string())
+    );
+    assert_eq!(
+        commonjs_require_call("const pkg = require(resolve(`package.json`))"),
+        None
+    );
+    assert_eq!(commonjs_require_call("const x = require(name)"), None);
+}
+
+#[test]
 fn a_command_names_the_path_the_shell_would_run() {
     // `(cd ..; ./runtest)` runs the script one directory up from the
     // Makefile that says so, not next to it.

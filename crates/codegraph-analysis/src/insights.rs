@@ -2637,6 +2637,20 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
         {
             continue;
         }
+        // `import type { TrustedHTML } from 'trusted-types/lib'` is served
+        // by `@types/trusted-types`, which is what vue declares. A type-only
+        // import needs the types package and nothing else at run time.
+        if import_node.label.trim_start().starts_with("import type ")
+            && imports.iter().any(|import| {
+                is_declared_package(
+                    &declared,
+                    &import.ecosystem,
+                    &types_package_name(&import.package),
+                )
+            })
+        {
+            continue;
+        }
 
         grouped
             .entry((import.ecosystem.clone(), import.package.clone()))
@@ -2652,18 +2666,14 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
     // `psr/http` from 169 places, and 169 identical findings say no more
     // than one that counts them.
     for ((ecosystem, package), group) in grouped {
+        // `format_backtick_list` counts what it leaves out, so counting it
+        // again here said "and 58 more and 58 more".
         let where_from = format_backtick_list(group.sources.iter().map(String::as_str), 3);
-        let extra = group.sources.len().saturating_sub(3);
-        let suffix = if extra > 0 {
-            format!(" and {extra} more")
-        } else {
-            String::new()
-        };
         insights.push(Insight {
             kind: "undeclared_external_import".to_string(),
             severity: InsightSeverity::Warning,
             message: format!(
-                "`{package}` is imported from {where_from}{suffix} but no matching {ecosystem} dependency was found"
+                "`{package}` is imported from {where_from} but no matching {ecosystem} dependency was found"
             ),
             nodes: group.nodes,
             edges: group.edges,
@@ -2917,6 +2927,19 @@ pub(crate) fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &
             nodes: nodes.into_iter().collect(),
             edges,
         });
+    }
+}
+
+/// The DefinitelyTyped package that carries types for another: `lodash`
+/// has `@types/lodash`, and a scoped `@vue/shared` has
+/// `@types/vue__shared`.
+fn types_package_name(package: &str) -> String {
+    match package
+        .strip_prefix('@')
+        .and_then(|rest| rest.split_once('/'))
+    {
+        Some((scope, name)) => format!("@types/{scope}__{name}"),
+        None => format!("@types/{package}"),
     }
 }
 
@@ -3862,9 +3885,15 @@ pub(crate) fn python_import_package(label: &str) -> Option<String> {
 
 pub(crate) fn js_import_package(label: &str) -> Option<String> {
     let module = first_quoted_string(label)?;
+    // `node:fs`, `bun:test`, `jsr:@std/assert`, `npm:chalk@5` and
+    // `https://deno.land/x/...` all say where the module comes from. None
+    // of them is a package that a manifest declares.
     if module.starts_with('.')
         || module.starts_with('/')
-        || module.starts_with("node:")
+        || module
+            .split('/')
+            .next()
+            .is_some_and(|head| head.contains(':'))
         || is_node_builtin_module(&module)
     {
         return None;
@@ -4259,35 +4288,68 @@ pub(crate) fn quoted_strings(value: &str) -> Vec<String> {
     strings
 }
 
+/// Whether a specifier names a module Node ships with, which no manifest
+/// declares. The list is `module.builtinModules` in full, subpaths
+/// included: a partial list is worse than none, because every name
+/// missing from it becomes a warning that the project forgot a
+/// dependency. Modules only reachable as `node:test` or `node:sqlite` are
+/// covered by the prefix itself.
 pub(crate) fn is_node_builtin_module(module: &str) -> bool {
     matches!(
         module,
         "assert"
+            | "assert/strict"
+            | "async_hooks"
             | "buffer"
             | "child_process"
             | "cluster"
+            | "console"
+            | "constants"
             | "crypto"
             | "dgram"
+            | "diagnostics_channel"
             | "dns"
+            | "dns/promises"
+            | "domain"
             | "events"
             | "fs"
+            | "fs/promises"
             | "http"
+            | "http2"
             | "https"
+            | "inspector"
+            | "inspector/promises"
             | "module"
             | "net"
             | "os"
             | "path"
+            | "path/posix"
+            | "path/win32"
+            | "perf_hooks"
             | "process"
+            | "punycode"
             | "querystring"
             | "readline"
+            | "readline/promises"
+            | "repl"
             | "stream"
+            | "stream/consumers"
+            | "stream/promises"
+            | "stream/web"
             | "string_decoder"
+            | "sys"
             | "timers"
+            | "timers/promises"
             | "tls"
+            | "trace_events"
             | "tty"
             | "url"
             | "util"
+            | "util/types"
+            | "v8"
             | "vm"
+            | "wasi"
+            | "worker_threads"
             | "zlib"
     )
 }
