@@ -116,6 +116,7 @@ pub(crate) fn scan_project_with_scope(
         function_symbols: BTreeMap::new(),
         namespace_nodes: BTreeMap::new(),
         effect_entities: BTreeMap::new(),
+        file_import_qualifiers: BTreeMap::new(),
         type_symbols: BTreeMap::new(),
         file_nodes: BTreeMap::new(),
         directory_nodes: BTreeMap::new(),
@@ -587,6 +588,25 @@ pub(crate) fn index_file(
                         } else {
                             None
                         };
+                    // Remember what each qualifier binds, so `states.NewState`
+                    // can be resolved inside the package the file imports
+                    // instead of against every `NewState` in the project.
+                    if language == Language::Go
+                        && item.kind == ParsedItemKind::Import
+                        && let Some(qualifier) = go_import_qualifier(&item.label)
+                    {
+                        let package = local_import
+                            .as_ref()
+                            .or(possible_local_import.as_ref())
+                            .and_then(|target| target.candidates.first().cloned())
+                            .map_or(ImportedPackage::External, ImportedPackage::Local);
+                        context
+                            .file_import_qualifiers
+                            .entry(label.to_string())
+                            .or_default()
+                            .insert(qualifier, package);
+                    }
+
                     if let Some(local_import) = local_import.as_ref() {
                         item_metadata.insert("import_scope".to_string(), "local".to_string());
                         item_metadata

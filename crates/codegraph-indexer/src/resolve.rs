@@ -266,6 +266,46 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
     }
 }
 
+/// Is this file directly inside the package directory? A Go package is exactly
+/// one directory, so `internal/states/statemgr/mgr.go` belongs to `statemgr`,
+/// not to the `internal/states/` package that imported it.
+fn declared_in_directory(path: &str, directory: &str) -> bool {
+    path.strip_prefix(directory)
+        .is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))
+}
+
+/// Record a call that an import proves leaves the repository. It still gets an
+/// edge — the dependency is real — but the target is marked `external`, not
+/// `ambiguous`, so the graph stops claiming an in-repo name collision that a
+/// resolver could one day settle.
+fn add_external_call_placeholder(context: &mut IndexContext, call: PendingCall) {
+    let key = (call.language.clone(), call.label.clone());
+    let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
+        *id
+    } else {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("language".to_string(), call.language);
+        metadata.insert("parser".to_string(), "tree-sitter".to_string());
+        metadata.insert("item_kind".to_string(), "call".to_string());
+        metadata.insert("resolution".to_string(), "external".to_string());
+        let id = context.graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            call.label,
+            Some(call.span),
+            metadata,
+        );
+        context.unresolved_call_placeholders.insert(key, id);
+        id
+    };
+    add_edge_once(
+        context,
+        call.caller,
+        call_id,
+        EdgeKind::Calls,
+        Confidence::Heuristic,
+    );
+}
+
 pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     let pending_calls = std::mem::take(&mut context.pending_calls);
 
@@ -282,6 +322,24 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     .is_some_and(|language| language == &call.language)
             })
             .collect::<Vec<_>>();
+        // A qualified call names where it comes from. When the calling file
+        // imports that qualifier, the import list answers the question that
+        // matching by name only guesses at: an in-repo package narrows the
+        // candidates to that package, and an external one rules every local
+        // declaration out — `strings.Contains` is not the repository's own
+        // `Contains`.
+        let imported_package = split_qualified_call(&call.label).and_then(|(owner, _)| {
+            context
+                .file_import_qualifiers
+                .get(call.span.path.as_str())
+                .and_then(|qualifiers| qualifiers.get(owner))
+                .cloned()
+        });
+        if imported_package == Some(ImportedPackage::External) {
+            add_external_call_placeholder(context, call);
+            continue;
+        }
+
         let local_targets = caller_path
             .map(|path| {
                 language_targets
@@ -295,10 +353,17 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let mut targets = if local_targets.is_empty() {
-            language_targets
-        } else {
-            local_targets
+        let mut targets = match &imported_package {
+            Some(ImportedPackage::Local(directory)) => language_targets
+                .into_iter()
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.span.as_ref())
+                        .is_some_and(|span| declared_in_directory(&span.path, directory))
+                })
+                .collect::<Vec<_>>(),
+            _ if !local_targets.is_empty() => local_targets,
+            _ => language_targets,
         };
         // A qualified call (`CodeGraph::new`, `Foo.bar`) matches many bare
         // `new`/`bar` declarations; keep only methods whose owning type is the

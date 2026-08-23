@@ -1977,6 +1977,74 @@ fn scan_project_resolves_python_absolute_local_imports() {
 }
 
 #[test]
+fn go_qualified_calls_resolve_through_the_import_list() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("internal").join("states")).unwrap();
+    fs::create_dir_all(root.join("internal").join("plans")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.23\n").unwrap();
+    fs::write(
+        root.join("internal").join("states").join("state.go"),
+        "package states\n\nfunc NewState() int { return 1 }\n",
+    )
+    .unwrap();
+    // A same-named function in another package: matching by name alone cannot
+    // tell the two apart.
+    fs::write(
+        root.join("internal").join("plans").join("plan.go"),
+        "package plans\n\nfunc NewState() int { return 2 }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("main.go"),
+        "package main\n\nimport (\n    \"strings\"\n    \"example.com/app/internal/states\"\n)\n\nfunc main() {\n    _ = states.NewState()\n    _ = strings.Contains(\"a\", \"b\")\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let main_id = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.kind == NodeKind::Function
+                && node.label == "main"
+                && node
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.path == "main.go")
+        })
+        .expect("missing main")
+        .id;
+    let called = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.source == main_id && edge.kind == EdgeKind::Calls)
+        .filter_map(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+        .collect::<Vec<_>>();
+
+    // The import says which package `states` is, so the call lands in that
+    // package and not in `internal/plans`.
+    let new_state = called
+        .iter()
+        .find(|node| node.kind == NodeKind::Function && node.label == "NewState")
+        .expect("states.NewState should resolve to a function");
+    assert_eq!(
+        new_state.span.as_ref().map(|span| span.path.as_str()),
+        Some("internal/states/state.go")
+    );
+
+    // `strings` is not in the repository, so the call is external rather than
+    // an unresolved or ambiguous in-repo name.
+    let contains = called
+        .iter()
+        .find(|node| node.label == "strings.Contains")
+        .expect("missing strings.Contains target");
+    assert_eq!(
+        contains.metadata.get("resolution").map(String::as_str),
+        Some("external")
+    );
+}
+
+#[test]
 fn scan_project_resolves_go_module_local_imports() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("internal").join("auth")).unwrap();

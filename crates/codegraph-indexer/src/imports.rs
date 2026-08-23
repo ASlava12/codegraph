@@ -487,3 +487,18 @@ pub(crate) fn normalize_path(path: &str) -> String {
     }
     parts.join("/")
 }
+
+/// The name a Go import binds: an explicit alias, else the last segment of the
+/// package path (`"net/http"` binds `http`). Blank (`_`) and dot imports bind
+/// no qualifier, and a package whose name differs from its last path segment
+/// simply does not match — the caller then falls back to the old behaviour
+/// rather than resolving to the wrong package.
+pub(crate) fn go_import_qualifier(import_label: &str) -> Option<String> {
+    let alias = import_label.split('"').next().unwrap_or_default().trim();
+    if !alias.is_empty() {
+        return (alias != "_" && alias != ".").then(|| alias.to_string());
+    }
+    let path = first_quoted_value(import_label)?;
+    let segment = path.rsplit('/').next().unwrap_or(path.as_str()).to_string();
+    (!segment.is_empty()).then_some(segment)
+}
