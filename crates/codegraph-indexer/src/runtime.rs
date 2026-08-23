@@ -269,29 +269,29 @@ pub(crate) fn index_compose_entrypoints(
             continue;
         };
         for environment in &service.environment {
-            let mut metadata = BTreeMap::new();
-            metadata.insert("item_kind".to_string(), "compose_environment".to_string());
-            metadata.insert("source".to_string(), "compose".to_string());
-            metadata.insert("ecosystem".to_string(), "docker-compose".to_string());
-            metadata.insert("service".to_string(), service.name.clone());
-            metadata.insert("line".to_string(), environment.line.to_string());
-            metadata.insert(
+            let environment_id = shared_effect_entity(
+                context,
+                "environment",
+                NodeKind::Environment,
+                &environment.name,
+                line_span(label, source, environment.line),
+                BTreeMap::from([("item_kind".to_string(), "environment_read".to_string())]),
+            );
+            let mut edge_metadata = BTreeMap::new();
+            edge_metadata.insert("item_kind".to_string(), "compose_environment".to_string());
+            edge_metadata.insert("source".to_string(), "compose".to_string());
+            edge_metadata.insert("ecosystem".to_string(), "docker-compose".to_string());
+            edge_metadata.insert("relation".to_string(), "compose_environment".to_string());
+            edge_metadata.insert("service".to_string(), service.name.clone());
+            edge_metadata.insert("file".to_string(), label.to_string());
+            edge_metadata.insert("line".to_string(), environment.line.to_string());
+            edge_metadata.insert(
                 "value_present".to_string(),
                 environment.value_present.to_string(),
             );
             if !environment.value_present {
-                metadata.insert("value_source".to_string(), "host".to_string());
+                edge_metadata.insert("value_source".to_string(), "host".to_string());
             }
-            let environment_id = context.graph.add_node_with_metadata(
-                NodeKind::Environment,
-                environment.name.clone(),
-                Some(line_span(label, source, environment.line)),
-                metadata,
-            );
-            let mut edge_metadata = BTreeMap::new();
-            edge_metadata.insert("source".to_string(), "compose".to_string());
-            edge_metadata.insert("relation".to_string(), "compose_environment".to_string());
-            edge_metadata.insert("service".to_string(), service.name.clone());
             add_edge_once_with_metadata(
                 context,
                 service_id,
@@ -969,32 +969,34 @@ pub(crate) fn index_ci_environment(
     job_name: &str,
     environment: &CiEnvironment,
 ) {
-    let mut metadata = BTreeMap::new();
-    metadata.insert("item_kind".to_string(), "ci_environment".to_string());
-    metadata.insert("source".to_string(), ci_source.to_string());
-    metadata.insert("ecosystem".to_string(), ci_source.to_string());
-    metadata.insert("job".to_string(), job_name.to_string());
-    metadata.insert("scope".to_string(), environment.scope.clone());
-    metadata.insert("line".to_string(), environment.line.to_string());
-    metadata.insert(
-        "value_present".to_string(),
-        environment.value_present.to_string(),
-    );
-    metadata.insert("value_kind".to_string(), environment.value_kind.clone());
-    if !environment.value_present {
-        metadata.insert("value_source".to_string(), "runner".to_string());
-    }
-    let environment_id = context.graph.add_node_with_metadata(
+    let environment_id = shared_effect_entity(
+        context,
+        "environment",
         NodeKind::Environment,
-        environment.name.clone(),
-        Some(line_span(label, source, environment.line)),
-        metadata,
+        &environment.name,
+        line_span(label, source, environment.line),
+        BTreeMap::from([("item_kind".to_string(), "environment_read".to_string())]),
     );
+    // What this workflow says about the variable belongs to the assignment,
+    // not to the variable: another job can set it to something else, and the
+    // code that reads it says nothing about a value at all.
     let mut edge_metadata = BTreeMap::new();
+    edge_metadata.insert("item_kind".to_string(), "ci_environment".to_string());
     edge_metadata.insert("source".to_string(), ci_source.to_string());
+    edge_metadata.insert("ecosystem".to_string(), ci_source.to_string());
     edge_metadata.insert("relation".to_string(), "ci_environment".to_string());
     edge_metadata.insert("job".to_string(), job_name.to_string());
     edge_metadata.insert("scope".to_string(), environment.scope.clone());
+    edge_metadata.insert("file".to_string(), label.to_string());
+    edge_metadata.insert("line".to_string(), environment.line.to_string());
+    edge_metadata.insert(
+        "value_present".to_string(),
+        environment.value_present.to_string(),
+    );
+    edge_metadata.insert("value_kind".to_string(), environment.value_kind.clone());
+    if !environment.value_present {
+        edge_metadata.insert("value_source".to_string(), "runner".to_string());
+    }
     add_edge_once_with_metadata(
         context,
         job_id,

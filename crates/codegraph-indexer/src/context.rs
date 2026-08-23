@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, SourceSpan};
+use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan};
 use codegraph_parser::{Language, ParsedFile};
 use serde::{Deserialize, Serialize};
 
@@ -612,4 +612,33 @@ pub(crate) struct NodeAnnotationRule {
     pub(crate) item_kind: Option<String>,
     pub(crate) metadata: BTreeMap<String, String>,
     pub(crate) set: BTreeMap<String, String>,
+}
+
+/// The one node an environment variable or config key gets, however many
+/// places name it. A workflow that sets `DATABASE_URL` and the function
+/// that reads it mean the same variable, so they must meet on one node --
+/// each site's own facts (its value, its line, the job that sets it)
+/// travel on the edge.
+pub(crate) fn shared_effect_entity(
+    context: &mut IndexContext,
+    entity_kind: &'static str,
+    node_kind: NodeKind,
+    label: &str,
+    span: SourceSpan,
+    metadata: BTreeMap<String, String>,
+) -> NodeId {
+    let key = (entity_kind, label.to_string());
+    if let Some(existing) = context.effect_entities.get(&key) {
+        return *existing;
+    }
+    let mut entity_metadata = metadata;
+    entity_metadata.insert("declaration_scope".to_string(), "shared".to_string());
+    let id = context.graph.add_node_with_metadata(
+        node_kind,
+        label.to_string(),
+        Some(span),
+        entity_metadata,
+    );
+    context.effect_entities.insert(key, id);
+    id
 }

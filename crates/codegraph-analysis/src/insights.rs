@@ -2525,31 +2525,35 @@ pub(crate) fn add_sensitive_ci_environment_literal_insights(
     insights: &mut Vec<Insight>,
 ) {
     for node in &graph.nodes {
-        if node.kind != NodeKind::Environment
-            || node
-                .metadata
-                .get("item_kind")
-                .is_none_or(|kind| kind != "ci_environment")
-            || node
-                .metadata
-                .get("value_kind")
-                .is_none_or(|kind| kind != "literal")
-            || !sensitive_config_label(&node.label)
-        {
+        if node.kind != NodeKind::Environment || !sensitive_config_label(&node.label) {
             continue;
         }
-        let edges = incoming_edge_indexes(graph, node.id, EdgeKind::ReadsEnvironment);
+        // One node holds the variable; what a workflow assigns to it is
+        // written on the edge from the job that sets it.
+        let edges: Vec<usize> = incoming_edge_indexes(graph, node.id, EdgeKind::ReadsEnvironment)
+            .into_iter()
+            .filter(|index| {
+                graph.edges.get(*index).is_some_and(|edge| {
+                    edge.metadata
+                        .get("item_kind")
+                        .is_some_and(|kind| kind == "ci_environment")
+                        && edge
+                            .metadata
+                            .get("value_kind")
+                            .is_some_and(|kind| kind == "literal")
+                })
+            })
+            .collect();
         if edges.is_empty() {
             continue;
         }
-        let source = node
-            .metadata
-            .get("source")
+        let assignment = edges.first().and_then(|index| graph.edges.get(*index));
+        let source = assignment
+            .and_then(|edge| edge.metadata.get("source"))
             .map(String::as_str)
             .unwrap_or("ci");
-        let scope = node
-            .metadata
-            .get("scope")
+        let scope = assignment
+            .and_then(|edge| edge.metadata.get("scope"))
             .map(String::as_str)
             .unwrap_or("job");
         insights.push(Insight {

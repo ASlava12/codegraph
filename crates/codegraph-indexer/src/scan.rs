@@ -939,28 +939,20 @@ pub(crate) fn index_file(
                         continue;
                     };
 
-                    let entity_key = (entity_kind, item.label.clone());
-                    let item_id = match context.effect_entities.get(&entity_key) {
-                        Some(existing) => *existing,
-                        None => {
-                            let mut entity_metadata = BTreeMap::new();
-                            entity_metadata.insert("parser".to_string(), "tree-sitter".to_string());
-                            entity_metadata.insert(
+                    let item_id = shared_effect_entity(
+                        context,
+                        entity_kind,
+                        node_kind,
+                        &item.label,
+                        item.span.clone(),
+                        BTreeMap::from([
+                            ("parser".to_string(), "tree-sitter".to_string()),
+                            (
                                 "item_kind".to_string(),
                                 parsed_item_kind_name(item.kind).to_string(),
-                            );
-                            entity_metadata
-                                .insert("declaration_scope".to_string(), "shared".to_string());
-                            let id = context.graph.add_node_with_metadata(
-                                node_kind,
-                                item.label.clone(),
-                                Some(item.span.clone()),
-                                entity_metadata,
-                            );
-                            context.effect_entities.insert(entity_key, id);
-                            id
-                        }
-                    };
+                            ),
+                        ]),
+                    );
                     let line = item.span.start_line;
                     if !effect_read_sites.insert((source_id, item_id, edge_kind, line)) {
                         continue;

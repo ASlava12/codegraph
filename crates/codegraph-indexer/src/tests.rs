@@ -5675,6 +5675,21 @@ fn scan_project_adds_dockerfile_entrypoints() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// What a declaring site says about an environment variable: the facts
+/// live on the edge from the job or service that sets it, because the
+/// variable itself is one node the whole project shares.
+fn environment_fact(graph: &CodeGraph, environment: NodeId, key: &str) -> Option<String> {
+    graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.target == environment
+                && edge.kind == EdgeKind::ReadsEnvironment
+                && edge.metadata.contains_key(key)
+        })
+        .and_then(|edge| edge.metadata.get(key).cloned())
+}
+
 #[test]
 fn a_declared_block_spans_the_lines_it_declares() {
     let root = temp_project_root();
@@ -6088,23 +6103,15 @@ fn scan_project_adds_compose_service_entrypoints() {
             .and_then(|node| node.metadata.get("local_source_path"))
             .is_none()
     );
+    // What a service assigns to a variable is a fact of the assignment,
+    // so it rides on the edge rather than on the shared variable node.
     assert_eq!(
-        graph
-            .nodes
-            .iter()
-            .find(|node| node.id == app_env)
-            .and_then(|node| node.metadata.get("value_present"))
-            .map(String::as_str),
-        Some("true")
+        environment_fact(&graph, app_env, "value_present"),
+        Some("true".to_string())
     );
     assert_eq!(
-        graph
-            .nodes
-            .iter()
-            .find(|node| node.id == worker_token)
-            .and_then(|node| node.metadata.get("value_source"))
-            .map(String::as_str),
-        Some("host")
+        environment_fact(&graph, worker_token, "value_source"),
+        Some("host".to_string())
     );
     let db_node = graph
         .nodes
@@ -6337,22 +6344,12 @@ jobs:
         }));
     }
     assert_eq!(
-        graph
-            .nodes
-            .iter()
-            .find(|node| node.id == global_token)
-            .and_then(|node| node.metadata.get("value_kind"))
-            .map(String::as_str),
-        Some("secret_reference")
+        environment_fact(&graph, global_token, "value_kind"),
+        Some("secret_reference".to_string())
     );
     assert_eq!(
-        graph
-            .nodes
-            .iter()
-            .find(|node| node.id == build_mode)
-            .and_then(|node| node.metadata.get("value_kind"))
-            .map(String::as_str),
-        Some("literal")
+        environment_fact(&graph, build_mode, "value_kind"),
+        Some("literal".to_string())
     );
     assert_eq!(
         graph
@@ -6523,14 +6520,11 @@ deploy:
                     .is_some_and(|value| value == "ci_environment")
         }));
     }
-    assert!(graph.nodes.iter().any(|node| {
-        node.kind == NodeKind::Environment
-            && node.label == "TEST_MODE"
-            && node
-                .metadata
-                .get("value_kind")
-                .is_some_and(|value| value == "literal")
-    }));
+    let test_mode = node_id(&graph, NodeKind::Environment, "TEST_MODE");
+    assert_eq!(
+        environment_fact(&graph, test_mode, "value_kind"),
+        Some("literal".to_string())
+    );
     assert_eq!(
         graph
             .nodes

@@ -8487,46 +8487,28 @@ fn insights_report_sensitive_ci_environment_literals_without_leaking_values() {
         None,
         BTreeMap::from([("item_kind".to_string(), "github_actions_job".to_string())]),
     );
-    let literal_secret = graph.add_node_with_metadata(
-        NodeKind::Environment,
-        "API_TOKEN",
-        None,
-        BTreeMap::from([
-            ("item_kind".to_string(), "ci_environment".to_string()),
-            ("source".to_string(), "github-actions".to_string()),
-            ("scope".to_string(), "job".to_string()),
-            ("value_kind".to_string(), "literal".to_string()),
-        ]),
-    );
-    let secret_reference = graph.add_node_with_metadata(
-        NodeKind::Environment,
-        "DEPLOY_TOKEN",
-        None,
-        BTreeMap::from([
-            ("item_kind".to_string(), "ci_environment".to_string()),
-            ("source".to_string(), "github-actions".to_string()),
-            ("scope".to_string(), "job".to_string()),
-            ("value_kind".to_string(), "secret_reference".to_string()),
-        ]),
-    );
-    let ordinary_literal = graph.add_node_with_metadata(
-        NodeKind::Environment,
-        "BUILD_MODE",
-        None,
-        BTreeMap::from([
-            ("item_kind".to_string(), "ci_environment".to_string()),
-            ("source".to_string(), "github-actions".to_string()),
-            ("scope".to_string(), "job".to_string()),
-            ("value_kind".to_string(), "literal".to_string()),
-        ]),
-    );
-    for environment in [literal_secret, secret_reference, ordinary_literal] {
+    // The variable is one node; what the workflow assigns to it rides on
+    // the edge from the job that sets it.
+    let literal_secret = graph.add_node(NodeKind::Environment, "API_TOKEN");
+    let secret_reference = graph.add_node(NodeKind::Environment, "DEPLOY_TOKEN");
+    let ordinary_literal = graph.add_node(NodeKind::Environment, "BUILD_MODE");
+    for (environment, value_kind) in [
+        (literal_secret, "literal"),
+        (secret_reference, "secret_reference"),
+        (ordinary_literal, "literal"),
+    ] {
         graph.add_edge_with_metadata(
             job,
             environment,
             EdgeKind::ReadsEnvironment,
             Confidence::Exact,
-            BTreeMap::from([("relation".to_string(), "ci_environment".to_string())]),
+            BTreeMap::from([
+                ("item_kind".to_string(), "ci_environment".to_string()),
+                ("relation".to_string(), "ci_environment".to_string()),
+                ("source".to_string(), "github-actions".to_string()),
+                ("scope".to_string(), "job".to_string()),
+                ("value_kind".to_string(), value_kind.to_string()),
+            ]),
         );
     }
 
@@ -8541,6 +8523,7 @@ fn insights_report_sensitive_ci_environment_literals_without_leaking_values() {
     assert!(insight.nodes.contains(&literal_secret));
     assert!(insight.nodes.contains(&job));
     assert!(insight.message.contains("API_TOKEN"));
+    assert!(insight.message.contains("github-actions job"));
     assert!(!insight.message.contains("dev-super-secret"));
     assert!(!report.insights.iter().any(|insight| {
         insight.kind == "sensitive_ci_environment_literal"
