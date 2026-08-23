@@ -504,6 +504,13 @@ pub(crate) fn index_file(
         }
     }
 
+    // `foo.mli` states what `foo.ml` offers; a module with no interface
+    // file offers everything, which is why this is `None` rather than an
+    // empty set.
+    let ocaml_interface_names = (language == Some(Language::OCaml))
+        .then(|| ocaml_interface_names(path))
+        .flatten();
+
     let parse_result = source_bytes.as_ref().and_then(|source| {
         let adapter = adapter.or_else(|| language.and_then(adapter_for_language))?;
         Some((
@@ -581,6 +588,25 @@ pub(crate) fn index_file(
                         "item_kind".to_string(),
                         parsed_item_kind_name(item.kind).to_string(),
                     );
+                    // What an OCaml module lets out is written in the file
+                    // beside it, which the parser never sees: `foo.mli`
+                    // lists what `foo.ml` offers, and a module with no
+                    // interface offers everything.
+                    if language == Language::OCaml
+                        && matches!(
+                            item.kind,
+                            ParsedItemKind::Function | ParsedItemKind::Entrypoint
+                        )
+                    {
+                        let visibility = match ocaml_interface_names.as_ref() {
+                            // A module with no interface file offers all of
+                            // itself.
+                            None => "public",
+                            Some(interface) if interface.contains(&item.label) => "public",
+                            Some(_) => "private",
+                        };
+                        item_metadata.insert("visibility".to_string(), visibility.to_string());
+                    }
                     // A `main` the parser recognised is an entrypoint like any
                     // other, and every other kind says what it is. Without this
                     // it was the only nameless one: the wiki filed programs
@@ -941,4 +967,40 @@ pub(crate) fn index_file(
             ),
         }
     }
+}
+
+/// The names an OCaml interface file states, when there is one beside the
+/// module: `val concat : string -> string -> string` in `filename.mli`
+/// says `concat` is what `filename.ml` offers. A module with no interface
+/// offers everything, and answers `None`.
+fn ocaml_interface_names(path: &Path) -> Option<BTreeSet<String>> {
+    let interface = path.with_extension("mli");
+    let text = fs::read_to_string(interface).ok()?;
+    let mut names = BTreeSet::new();
+    for line in text.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("val ") else {
+            continue;
+        };
+        // An operator is declared as `val (>>=) : ...` or `val ( let+ ) :
+        // ...` and defined the same way, parentheses, spaces and all, so
+        // the name runs to the closing bracket rather than to the first
+        // space.
+        let rest = rest.trim_start();
+        let name = match rest.strip_prefix('(') {
+            Some(after) => after
+                .split_once(')')
+                .map(|(inner, _)| format!("({inner})"))
+                .unwrap_or_default(),
+            None => rest
+                .split([':', ' ', '\t'])
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+        };
+        if !name.is_empty() {
+            names.insert(name);
+        }
+    }
+    Some(names)
 }

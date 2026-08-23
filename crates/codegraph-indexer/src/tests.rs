@@ -910,6 +910,43 @@ fn scan_project_uses_persistent_parse_cache_records() {
 }
 
 #[test]
+fn an_ocaml_module_offers_what_its_interface_states() {
+    // `filename.mli` lists what `filename.ml` offers, and the parser never
+    // sees the file beside the one it is reading. A module with no
+    // interface offers all of itself.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("filename.ml"),
+        "let concat a b = a ^ b\n\nlet helper x = x\n\nlet ( >>= ) x f = f x\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("filename.mli"),
+        "val concat : string -> string -> string\n\nval ( >>= ) : 'a -> ('a -> 'b) -> 'b\n",
+    )
+    .unwrap();
+    fs::write(root.join("src").join("bare.ml"), "let anything x = x\n").unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let visibility_of = |label: &str| -> String {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == label)
+            .and_then(|node| node.metadata.get("visibility").cloned())
+            .unwrap_or_else(|| format!("no `{label}`"))
+    };
+    assert_eq!(visibility_of("concat"), "public");
+    assert_eq!(visibility_of("helper"), "private");
+    // An operator is written the same way in both files, brackets and all.
+    assert_eq!(visibility_of("( >>= )"), "public");
+    assert_eq!(visibility_of("anything"), "public");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_module_keeps_what_it_does_not_export() {
     // `e.tag.toLowerCase()` in one vue package was answered by a `const
     // toLowerCase` in another. A module keeps what it does not export, so
