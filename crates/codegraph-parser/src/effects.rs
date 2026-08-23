@@ -609,12 +609,37 @@ pub(crate) fn effect_metadata(
     }
 
     if let Some(default_value) = default_value {
+        // `GOPATH=${GOPATH:-$(go env GOPATH)}` hands the variable a value
+        // for the rest of the script, so a bare `$GOPATH` further down is
+        // not a second, unguarded read of the environment.
+        if language == Language::Bash && bash_assigns_same_variable(node, source) {
+            metadata.insert("defaults_variable".to_string(), "true".to_string());
+        }
         metadata.insert(
             "default_value".to_string(),
             truncate_label(default_value, 120),
         );
     }
     metadata
+}
+
+/// Whether a bash expansion is the value assigned to the very variable it
+/// reads, as in `PORT=${PORT:-8080}` or `export DIR="${DIR:-/tmp}"`.
+fn bash_assigns_same_variable(node: Node<'_>, source: &[u8]) -> bool {
+    let Some(name) = node_text(node, source) else {
+        return false;
+    };
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        match parent.kind() {
+            "expansion" | "string" | "concatenation" => current = parent.parent(),
+            "variable_assignment" => {
+                return named_child_text(parent, "name", source).as_deref() == Some(name.as_str());
+            }
+            _ => return false,
+        }
+    }
+    false
 }
 
 pub(crate) fn python_env_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {

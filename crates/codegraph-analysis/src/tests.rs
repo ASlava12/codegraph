@@ -8022,6 +8022,64 @@ fn insights_report_conflicting_config_defaults() {
 }
 
 #[test]
+fn a_script_that_gave_the_variable_a_value_still_has_it() {
+    // `GOPATH=${GOPATH:-$(go env GOPATH)}` on line 65 hands the variable a
+    // value, so `$GOPATH` on line 68 reads what the script itself put
+    // there. A default merely printed guards nothing.
+    let mut graph = CodeGraph::new("repo");
+    let build = graph.add_node(NodeKind::Function, "build");
+    let gopath = graph.add_node(NodeKind::Environment, "GOPATH");
+    let editor = graph.add_node(NodeKind::Environment, "EDITOR");
+    let read = |graph: &mut CodeGraph, target, file: &str, line: u32, default, assigns| {
+        let mut metadata = BTreeMap::from([
+            ("file".to_string(), file.to_string()),
+            ("line".to_string(), line.to_string()),
+        ]);
+        if let Some(default) = default {
+            metadata.insert("default_value".to_string(), String::from(default));
+        }
+        if assigns {
+            metadata.insert("defaults_variable".to_string(), "true".to_string());
+        }
+        graph.add_edge_with_metadata(
+            build,
+            target,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+            metadata,
+        );
+    };
+    read(
+        &mut graph,
+        gopath,
+        "scripts/build.sh",
+        65,
+        Some("$(go env GOPATH)"),
+        true,
+    );
+    read(&mut graph, gopath, "scripts/build.sh", 68, None, false);
+    read(
+        &mut graph,
+        editor,
+        "scripts/release.sh",
+        4,
+        Some("vi"),
+        false,
+    );
+    read(&mut graph, editor, "scripts/release.sh", 20, None, false);
+
+    let report = insights(&graph);
+    let found: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "mixed_config_requirement")
+        .map(|insight| insight.message.as_str())
+        .collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("EDITOR"), "{}", found[0]);
+}
+
+#[test]
 fn insights_report_mixed_config_requirement_defaults() {
     let mut graph = CodeGraph::new("repo");
     let api = graph.add_node(NodeKind::Function, "api_server");

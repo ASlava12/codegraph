@@ -557,6 +557,33 @@ PORT="${PORT:-5000}"
         port.metadata.get("default_value").map(String::as_str),
         Some("5000")
     );
+    // The script assigns the default to the variable it read, which gives
+    // every later `$PORT` a value.
+    assert_eq!(
+        port.metadata.get("defaults_variable").map(String::as_str),
+        Some("true")
+    );
+
+    let parsed = parse_source(
+        "other.sh",
+        br#"#!/usr/bin/env bash
+echo "${PORT:-5000}"
+DIR="${OTHER:-/tmp}"
+"#,
+        Language::Bash,
+    )
+    .unwrap();
+    for (label, name) in [
+        ("PORT", "printing a default sets nothing"),
+        ("OTHER", "the assignment names another variable"),
+    ] {
+        let read = parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == label)
+            .unwrap_or_else(|| panic!("missing {label} env read"));
+        assert!(!read.metadata.contains_key("defaults_variable"), "{name}");
+    }
 }
 
 #[test]

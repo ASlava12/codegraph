@@ -2136,12 +2136,66 @@ pub(crate) fn add_conflicting_config_default_insights(
     }
 }
 
+/// The first line in each file where a script gives the key a default by
+/// assigning it to itself.
+fn defaulting_assignment_lines(graph: &CodeGraph, reads: &ConfigKeyReads) -> BTreeMap<String, u32> {
+    let mut guarded: BTreeMap<String, u32> = BTreeMap::new();
+    for index in reads.defaults.values().flat_map(|(_, edges)| edges.iter()) {
+        let Some(edge) = graph.edges.get(*index) else {
+            continue;
+        };
+        if edge.metadata.get("defaults_variable").map(String::as_str) != Some("true") {
+            continue;
+        }
+        let (Some(file), Some(line)) = (
+            edge.metadata.get("file"),
+            edge.metadata.get("line").and_then(|line| line.parse().ok()),
+        ) else {
+            continue;
+        };
+        let slot = guarded.entry(file.clone()).or_insert(line);
+        *slot = (*slot).min(line);
+    }
+    guarded
+}
+
+/// Whether a read comes after the line that gave the key a default in the
+/// same file.
+fn read_is_guarded(graph: &CodeGraph, index: usize, guarded: &BTreeMap<String, u32>) -> bool {
+    let Some(edge) = graph.edges.get(index) else {
+        return false;
+    };
+    let (Some(file), Some(line)) = (
+        edge.metadata.get("file"),
+        edge.metadata
+            .get("line")
+            .and_then(|line| line.parse::<u32>().ok()),
+    ) else {
+        return false;
+    };
+    guarded.get(file).is_some_and(|guard| line > *guard)
+}
+
 pub(crate) fn add_mixed_config_requirement_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
 ) {
     for ((kind, label), reads) in config_key_reads(graph) {
         if reads.required_edges.is_empty() || reads.defaults.is_empty() {
+            continue;
+        }
+        // A script that opens with `GOPATH=${GOPATH:-$(go env GOPATH)}`
+        // has given the variable a value, and every `$GOPATH` below that
+        // line reads what the script itself put there. 24 of the corpus's
+        // 25 same-file findings were this one shell idiom.
+        let guarded = defaulting_assignment_lines(graph, &reads);
+        let required_edges: BTreeSet<usize> = reads
+            .required_edges
+            .iter()
+            .copied()
+            .filter(|index| !read_is_guarded(graph, *index, &guarded))
+            .collect();
+        if required_edges.is_empty() {
             continue;
         }
 
@@ -2152,7 +2206,7 @@ pub(crate) fn add_mixed_config_requirement_insights(
                 .values()
                 .flat_map(|(default_nodes, _)| default_nodes.iter().copied()),
         );
-        let mut edges = reads.required_edges.clone();
+        let mut edges = required_edges.clone();
         edges.extend(
             reads
                 .defaults
