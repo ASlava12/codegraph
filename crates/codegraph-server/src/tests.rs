@@ -571,6 +571,47 @@ async fn query_api_rejects_oversized_query_before_scan() {
 }
 
 #[tokio::test]
+async fn entrypoints_api_honours_a_limit_and_leads_with_programs() {
+    let root = temp_server_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join(".github/workflows")).unwrap();
+    fs::write(
+        root.join(".github/workflows/ci.yml"),
+        "name: CI\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: cargo test\n",
+    )
+    .unwrap();
+    fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    let state = test_state(root.clone(), vec![], true);
+
+    let all = entrypoints_api(
+        State(state.clone()),
+        ApiQuery(ScanQuery {
+            path: None,
+            limit: None,
+        }),
+    )
+    .await
+    .expect("entrypoints");
+    assert!(all.0.len() > 1, "the fixture declares several entrypoints");
+
+    // Omitting the limit keeps the whole list, as it always has; asking for
+    // one returns the one worth opening first, since the list is ranked.
+    let capped = entrypoints_api(
+        State(state),
+        ApiQuery(ScanQuery {
+            path: None,
+            limit: Some(1),
+        }),
+    )
+    .await
+    .expect("entrypoints");
+    assert_eq!(capped.0.len(), 1);
+    assert_eq!(capped.0[0].id, all.0[0].id);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn workflow_api_returns_block_report_for_label() {
     let root = temp_server_root();
     fs::create_dir_all(root.join("src")).unwrap();

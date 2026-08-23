@@ -1385,11 +1385,20 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 .with_example("/api/communities?path=.&limit=10"),
                 api_get(
                     "/api/entrypoints",
-                    "List detected entrypoint candidate nodes.",
-                    vec![path_param()],
+                    "List detected entrypoint candidate nodes, ranked with programs first.",
+                    vec![
+                        path_param(),
+                        query_param(
+                            "limit",
+                            false,
+                            "usize",
+                            None,
+                            "Maximum entrypoints to return; omitted returns all of them.",
+                        ),
+                    ],
                     "Node[]",
                 )
-                .with_example("/api/entrypoints?path=."),
+                .with_example("/api/entrypoints?path=.&limit=20"),
                 api_get(
                     "/api/entrypoint-traces",
                     "Trace outgoing dependency flows from entrypoints.",

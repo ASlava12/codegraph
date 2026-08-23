@@ -502,7 +502,14 @@ pub(crate) async fn entrypoints_api(
     ApiQuery(query): ApiQuery<ScanQuery>,
 ) -> Result<Json<Vec<codegraph_core::Node>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
-    Ok(Json(entrypoints(&graph)))
+    let mut matched = entrypoints(&graph);
+    // Entrypoints come back ranked, so a caller that asks for a few gets the
+    // ones worth opening first. Without a limit this returned every one —
+    // 315 nodes and 149KB on Flask alone, and nothing but an agent reads it.
+    if let Some(limit) = query.limit {
+        matched.truncate(limit);
+    }
+    Ok(Json(matched))
 }
 
 pub(crate) async fn entrypoint_traces_api(

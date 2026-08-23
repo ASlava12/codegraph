@@ -142,6 +142,10 @@ impl ApiAuth {
 #[derive(Debug, Deserialize)]
 pub(crate) struct ScanQuery {
     pub(crate) path: Option<PathBuf>,
+    /// Optional cap for list responses. Omitted means the whole list, which is
+    /// what this endpoint has always returned; the sibling list endpoints
+    /// (`hotspots`, `communities`) have taken a limit all along.
+    pub(crate) limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
