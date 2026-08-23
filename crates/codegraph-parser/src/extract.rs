@@ -385,6 +385,19 @@ pub(crate) fn classify_node(
     })
 }
 
+/// The bare name of a Go type node, unwrapping the forms a receiver or
+/// parameter can take: `Backend`, `*Backend`, `pkg.Backend`, `[]Backend`.
+pub(crate) fn go_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "type_identifier" => node_text(node, source),
+        "qualified_type" => named_child_text(node, "name", source),
+        "pointer_type" | "slice_type" | "array_type" | "parenthesized_type" => node
+            .named_child(0)
+            .and_then(|inner| go_type_name(inner, source)),
+        _ => None,
+    }
+}
+
 /// The type a method belongs to: the nearest enclosing type declaration (or
 /// Rust `impl` block). Recorded as `owner_type` so a qualified call such as
 /// `CodeGraph::new` or `Foo.bar` can be matched against the method declared
@@ -394,6 +407,18 @@ pub(crate) fn enclosing_type_label(
     node: Node<'_>,
     source: &[u8],
 ) -> Option<String> {
+    // Go states the owner in the declaration itself, not in an enclosing
+    // block: `func (b *Backend) Configure(...)` is top level, and its receiver
+    // names the type. Walking ancestors found nothing, so no Go method knew
+    // which type it belonged to.
+    if language == Language::Go && node.kind() == "method_declaration" {
+        return node
+            .child_by_field_name("receiver")
+            .and_then(|receiver| receiver.named_child(0))
+            .and_then(|declaration| declaration.child_by_field_name("type"))
+            .and_then(|type_node| go_type_name(type_node, source));
+    }
+
     let mut current = node.parent();
     while let Some(candidate) = current {
         let kind = candidate.kind();

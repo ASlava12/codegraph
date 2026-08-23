@@ -606,6 +606,46 @@ echo "$arch $build_target $PORT $TOKEN $answer $HOME"
 }
 
 #[test]
+fn go_methods_know_the_type_they_belong_to() {
+    let parsed = parse_source(
+        "backend.go",
+        br#"package backend
+
+type Backend struct{}
+
+func (b *Backend) Configure() error {
+    return nil
+}
+
+func (b Backend) Name() string {
+    return "backend"
+}
+
+func Plain() {}
+"#,
+        Language::Go,
+    )
+    .unwrap();
+
+    let owner = |label: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::Function && item.label == label)
+            .unwrap_or_else(|| panic!("missing {label}"))
+            .metadata
+            .get("owner_type")
+            .map(String::as_str)
+    };
+
+    // Go names the owner in the receiver, not in an enclosing block, so
+    // walking ancestors found nothing and every Go method was ownerless.
+    assert_eq!(owner("Configure"), Some("Backend"));
+    assert_eq!(owner("Name"), Some("Backend"));
+    assert_eq!(owner("Plain"), None, "a plain function has no owner");
+}
+
+#[test]
 fn go_error_constructors_are_error_facts() {
     let parsed = parse_source(
         "backend.go",
