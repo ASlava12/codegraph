@@ -323,6 +323,20 @@ pub fn export_wiki(graph: &CodeGraph, output_dir: &Path, label: &str) -> Result<
     })
 }
 
+/// Whether this node is configuration a reader came to the page for. A
+/// workflow's `run:` step and a SQL statement are `config` nodes too, and
+/// on this repository the eleven CI steps pushed the environment
+/// variables off the page.
+fn is_configuration_node(node: &codegraph_core::Node) -> bool {
+    if !matches!(node.kind, NodeKind::Config | NodeKind::Environment) {
+        return false;
+    }
+    !matches!(
+        node.metadata.get("item_kind").map(String::as_str),
+        Some("github_actions_run_step" | "gitlab_ci_script" | "app_sql_query" | "sql_index")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,18 +506,4 @@ fn connect(_url: &str) {}
     fn markdown_labels_are_escaped() {
         assert_eq!(md_escape("a|b [c]"), "a\\|b \\[c\\]");
     }
-}
-
-/// Whether this node is configuration a reader came to the page for. A
-/// workflow's `run:` step and a SQL statement are `config` nodes too, and
-/// on this repository the eleven CI steps pushed the environment
-/// variables off the page.
-fn is_configuration_node(node: &codegraph_core::Node) -> bool {
-    if !matches!(node.kind, NodeKind::Config | NodeKind::Environment) {
-        return false;
-    }
-    !matches!(
-        node.metadata.get("item_kind").map(String::as_str),
-        Some("github_actions_run_step" | "gitlab_ci_script" | "app_sql_query" | "sql_index")
-    )
 }
