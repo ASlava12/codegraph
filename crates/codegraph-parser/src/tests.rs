@@ -1610,3 +1610,38 @@ fn erlang_nix_and_r_adapters_extract_core_facts() {
             .any(|item| item.kind == ParsedItemKind::Error)
     );
 }
+
+#[test]
+fn haskell_type_signatures_do_not_become_functions() {
+    // The `function` kind spells both a definition and a function *type*
+    // (`Token -> m ()`), and the type has no `name` field — so its first type
+    // identifier used to be recorded as a function (228 phantom functions on
+    // shellcheck, `Token` x108 among them).
+    let source = "module Demo where\n\
+                  analyze :: (Token -> m ()) -> Token -> m Token\n\
+                  analyze f t = f t\n\
+                  run :: String -> String\n\
+                  run s = s\n";
+    let parsed = parse_source("Demo.hs", source.as_bytes(), Language::Haskell).unwrap();
+    let functions: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.kind,
+                ParsedItemKind::Function | ParsedItemKind::Entrypoint
+            )
+        })
+        .map(|item| item.label.as_str())
+        .collect();
+    assert!(
+        functions.contains(&"analyze") && functions.contains(&"run"),
+        "real definitions are still extracted: {functions:?}"
+    );
+    for type_name in ["Token", "String", "m"] {
+        assert!(
+            !functions.contains(&type_name),
+            "type `{type_name}` must not be a function: {functions:?}"
+        );
+    }
+}

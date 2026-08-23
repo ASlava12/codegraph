@@ -286,8 +286,13 @@ pub(crate) fn classify_node(
         },
         Language::Haskell => match kind {
             // `function` has argument patterns; `bind` is a plain definition
-            // (`main = do ...`), which is still a top-level callable.
-            "function" | "bind" => ParsedItemKind::Function,
+            // (`main = do ...`), which is still a top-level callable. The same
+            // `function` kind also spells a function *type* (`Token -> m ()`)
+            // inside a signature — that node has no `name` field, and without
+            // this guard its first type identifier was recorded as a function.
+            "function" | "bind" if node.child_by_field_name("name").is_some() => {
+                ParsedItemKind::Function
+            }
             "data_type" | "newtype" | "type_synonym" | "class" => ParsedItemKind::Type,
             "import" => ParsedItemKind::Import,
             _ => return None,
