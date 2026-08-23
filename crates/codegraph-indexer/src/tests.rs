@@ -1977,6 +1977,47 @@ fn scan_project_resolves_python_absolute_local_imports() {
 }
 
 #[test]
+fn call_edges_carry_the_call_site() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("app.py"),
+        r#"def helper():
+    return 1
+
+
+def main():
+    return helper()
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let main_id = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Function && node.label == "main")
+        .expect("missing main")
+        .id;
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| edge.source == main_id && edge.kind == EdgeKind::Calls)
+        .expect("missing call edge");
+
+    // The call is on the last line, not where `main` is declared: a semantic
+    // pass asking "what is defined here?" has to ask at the call.
+    assert_eq!(call.metadata.get("line").map(String::as_str), Some("6"));
+    assert!(
+        call.metadata.contains_key("column"),
+        "call edges carry a column too: {:?}",
+        call.metadata
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn go_qualified_calls_resolve_through_the_import_list() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("internal").join("states")).unwrap();

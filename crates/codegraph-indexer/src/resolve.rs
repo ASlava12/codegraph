@@ -280,6 +280,10 @@ fn declared_in_directory(path: &str, directory: &str) -> bool {
 /// resolver could one day settle.
 fn add_external_call_placeholder(context: &mut IndexContext, call: PendingCall) {
     let key = (call.language.clone(), call.label.clone());
+    let label = call.label.clone();
+    let language = call.language.clone();
+    let line = call.span.start_line;
+    let column = call.span.start_column;
     let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
         *id
     } else {
@@ -297,12 +301,19 @@ fn add_external_call_placeholder(context: &mut IndexContext, call: PendingCall) 
         context.unresolved_call_placeholders.insert(key, id);
         id
     };
-    add_edge_once(
+    add_edge_once_with_metadata(
         context,
         call.caller,
         call_id,
         EdgeKind::Calls,
         Confidence::Heuristic,
+        BTreeMap::from([
+            ("call_label".to_string(), label),
+            ("resolution".to_string(), "external".to_string()),
+            ("language".to_string(), language),
+            ("line".to_string(), line.to_string()),
+            ("column".to_string(), column.to_string()),
+        ]),
     );
 }
 
@@ -490,15 +501,22 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     ("call_label".to_string(), call.label),
                     ("resolution".to_string(), "ambiguous".to_string()),
                     ("language".to_string(), call.language),
+                    ("line".to_string(), call.span.start_line.to_string()),
+                    ("column".to_string(), call.span.start_column.to_string()),
                 ]),
             );
             continue;
         }
 
+        // The call site, not the caller's declaration: a semantic pass asking
+        // "what is defined here?" has to ask at the call, and click-to-source
+        // on a call edge should land on the call.
         let mut metadata = BTreeMap::new();
         metadata.insert("call_label".to_string(), call.label.clone());
         metadata.insert("resolution".to_string(), "resolved".to_string());
         metadata.insert("language".to_string(), call.language);
+        metadata.insert("line".to_string(), call.span.start_line.to_string());
+        metadata.insert("column".to_string(), call.span.start_column.to_string());
 
         for target in targets {
             add_edge_once_with_metadata(
