@@ -4,8 +4,8 @@
 use anyhow::Result;
 use codegraph_analysis::{
     EntrypointWorkflowRequest, MermaidSection, TraceStart, WorkflowFilters, WorkflowQueryRequest,
-    WorkflowRequest, export_mermaid_html, workflow, workflow_entrypoints, workflow_mermaid,
-    workflow_query,
+    WorkflowRequest, export_mermaid_html, missing_node_error, workflow, workflow_entrypoints,
+    workflow_mermaid, workflow_query,
 };
 
 use crate::cli::{WorkflowArgs, WorkflowEntrypointsArgs, WorkflowFormat, WorkflowQueryArgs};
@@ -32,6 +32,7 @@ pub(crate) fn run_workflow(args: WorkflowArgs, max_file_size: Option<u64>) -> Re
     } = args;
 
     let graph = scan_with_options(path, include_hidden, include_ignored, max_file_size, &cache)?;
+    let target = label.clone();
     let report = workflow(
         &graph,
         WorkflowRequest {
@@ -49,6 +50,14 @@ pub(crate) fn run_workflow(args: WorkflowArgs, max_file_size: Option<u64>) -> Re
             max_fanout,
         },
     );
+    // A name that matched nothing is not an empty workflow: printing
+    // `null` and exiting 0 reads as "this entrypoint does nothing".
+    if report.is_none() {
+        return Err(anyhow::anyhow!(
+            "{}",
+            missing_node_error(&graph, "workflow target", &target)
+        ));
+    }
     match (format, report) {
         (WorkflowFormat::Json, report) => {
             println!("{}", serde_json::to_string_pretty(&report)?);

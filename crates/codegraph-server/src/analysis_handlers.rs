@@ -24,7 +24,7 @@ use codegraph_analysis::{
     entrypoints, explain_edge, export_cypher, export_dot, export_falkordb,
     export_graph_mermaid_html, export_graphml, export_ndjson, export_svg, filter_insight_report,
     focus_subgraph, hotspots, impact, impact_fast, insights, journey, language_dependencies,
-    natural_query, node_card, node_card_fast, node_context, project_report,
+    missing_node_error, natural_query, node_card, node_card_fast, node_context, project_report,
     project_report_markdown, query_graph, read_source_preview, refactor_context, seams,
     search_source, slice_graph, summarize, surprising_links, trace, trace_config, trace_dependents,
     trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_query,
@@ -673,6 +673,7 @@ pub(crate) async fn workflow_api(
     ApiQuery(query): ApiQuery<WorkflowQuery>,
 ) -> Result<Json<Option<WorkflowReport>>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let target = query.label.clone();
     let start = match (query.node_id, query.label) {
         (Some(id), _) => TraceStart::NodeId(parse_node_id_param(&id)?),
         (None, Some(label)) => TraceStart::Label(label),
@@ -682,7 +683,7 @@ pub(crate) async fn workflow_api(
             ));
         }
     };
-    Ok(Json(workflow(
+    let report = workflow(
         &graph,
         WorkflowRequest {
             start,
@@ -698,7 +699,18 @@ pub(crate) async fn workflow_api(
             compact: query.compact.unwrap_or(false),
             max_fanout: query.max_fanout.map(|value| value.clamp(1, 200)),
         },
-    )))
+    );
+    // `null` with a 200 cannot be told apart from an entrypoint that does
+    // nothing. Every neighbouring endpoint says which name failed.
+    let Some(report) = report else {
+        return Err(match target {
+            Some(label) => ApiError::bad_request(
+                missing_node_error(&graph, "workflow target", &label).to_string(),
+            ),
+            None => ApiError::not_found("node not found"),
+        });
+    };
+    Ok(Json(Some(report)))
 }
 
 pub(crate) async fn refactor_context_api(

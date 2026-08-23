@@ -3889,6 +3889,14 @@ fn nothing_matched_note(
     }
 }
 
+/// What a surface owes a reader when the name it was given matched
+/// nothing: the same sentence everywhere, with the nearest labels when
+/// there are any. Public because the CLI and the API answer for entries
+/// that return an `Option` rather than a `Result`.
+pub fn missing_node_error(graph: &CodeGraph, role: &str, value: &str) -> QueryError {
+    node_not_found_error(graph, role, value)
+}
+
 pub(crate) fn node_not_found_error(graph: &CodeGraph, role: &str, value: &str) -> QueryError {
     let suggestions = near_label_matches(graph, value, |_| true);
     if suggestions.is_empty() {

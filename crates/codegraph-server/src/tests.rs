@@ -612,6 +612,50 @@ async fn entrypoints_api_honours_a_limit_and_leads_with_programs() {
 }
 
 #[tokio::test]
+async fn workflow_api_says_which_name_matched_nothing() {
+    let root = temp_server_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    let state = test_state(root.clone(), vec![], true);
+    let query = |label: Option<String>, node_id: Option<String>| WorkflowQuery {
+        path: Some(root.clone()),
+        label,
+        node_id,
+        depth: Some(3),
+        block_limit: Some(20),
+        edge_kind: None,
+        confidence: None,
+        language: None,
+        risk_severity: None,
+        block_kind: None,
+        compact: None,
+        max_fanout: None,
+    };
+
+    // A name that matched nothing is not an empty workflow.
+    let error = workflow_api(
+        State(state.clone()),
+        ApiQuery(query(Some("nosuchthing".to_string()), None)),
+    )
+    .await
+    .expect_err("expected an error for an unknown label");
+    assert_eq!(error.status, StatusCode::BAD_REQUEST);
+    assert!(
+        error.message.contains("workflow target `nosuchthing`"),
+        "message: {}",
+        error.message
+    );
+
+    let error = workflow_api(
+        State(state),
+        ApiQuery(query(None, Some("n999999".to_string()))),
+    )
+    .await
+    .expect_err("expected an error for an unknown node id");
+    assert_eq!(error.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn workflow_api_returns_block_report_for_label() {
     let root = temp_server_root();
     fs::create_dir_all(root.join("src")).unwrap();
