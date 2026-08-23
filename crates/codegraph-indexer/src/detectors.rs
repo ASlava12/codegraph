@@ -527,6 +527,19 @@ pub(crate) fn framework_configs(
     configs.into_iter().collect()
 }
 
+/// The span from `start` through `end`, for a block written across lines --
+/// a workflow job holds its steps, and a reader asking to see the job wants
+/// all of them.
+pub(crate) fn block_span(path: &str, source: &str, start: u32, end: u32) -> SourceSpan {
+    let first = line_span(path, source, start);
+    let last = line_span(path, source, end.max(start));
+    SourceSpan {
+        end_line: last.start_line,
+        end_column: last.end_column,
+        ..first
+    }
+}
+
 pub(crate) fn line_span(path: &str, source: &str, line: u32) -> SourceSpan {
     let line = line.max(1);
     let line_text = source

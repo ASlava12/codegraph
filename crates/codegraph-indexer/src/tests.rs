@@ -5974,6 +5974,47 @@ fn scan_project_adds_compose_service_entrypoints() {
 }
 
 #[test]
+fn a_workflow_job_spans_the_steps_it_runs() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join(".github").join("workflows")).unwrap();
+    fs::write(
+        root.join(".github").join("workflows").join("ci.yml"),
+        r#"name: CI
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./build.sh
+      - run: ./test.sh
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./deploy.sh
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let span_of = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Entrypoint && node.label == label)
+            .and_then(|node| node.span.clone())
+            .unwrap_or_else(|| panic!("missing {label}"))
+    };
+    // The job is written on line 5 and its last step on line 9.
+    let build = span_of("github workflow:CI/build");
+    assert_eq!((build.start_line, build.end_line), (5, 9));
+    let deploy = span_of("github workflow:CI/deploy");
+    assert_eq!((deploy.start_line, deploy.end_line), (10, 13));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scan_project_adds_github_actions_workflow_entrypoints() {
     let root = temp_project_root();
     fs::create_dir_all(root.join(".github").join("workflows")).unwrap();

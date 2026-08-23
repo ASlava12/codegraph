@@ -357,6 +357,9 @@ pub(crate) struct GithubActionsJob {
     pub(crate) environment: Vec<CiEnvironment>,
     pub(crate) steps: Vec<GithubActionsStep>,
     pub(crate) line: u32,
+    /// The last line the job's block claims, so the job spans its steps
+    /// rather than only the line its name is written on.
+    pub(crate) end_line: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

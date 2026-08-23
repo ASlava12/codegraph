@@ -512,7 +512,7 @@ pub(crate) fn index_github_actions_workflow_entrypoints(
         let job_id = context.graph.add_node_with_metadata(
             NodeKind::Entrypoint,
             format!("github workflow:{}/{}", workflow.name, job.id),
-            Some(line_span(label, source, job.line)),
+            Some(block_span(label, source, job.line, job.end_line)),
             metadata,
         );
         job_nodes.insert(job.id.clone(), job_id);
@@ -2027,6 +2027,12 @@ pub(crate) fn github_actions_workflow(label: &str, source: &str) -> GithubAction
             break;
         }
 
+        if let Some(job) = active_job.as_mut()
+            && indent > jobs_indent + 2
+        {
+            job.end_line = index as u32 + 1;
+        }
+
         if indent == jobs_indent + 2 {
             flush_github_actions_step(&mut active_job, &mut active_step);
             flush_github_actions_job(&mut active_job, &mut jobs);
@@ -2042,6 +2048,7 @@ pub(crate) fn github_actions_workflow(label: &str, source: &str) -> GithubAction
                 environment: Vec::new(),
                 steps: Vec::new(),
                 line: index as u32 + 1,
+                end_line: index as u32 + 1,
             });
             continue;
         }
