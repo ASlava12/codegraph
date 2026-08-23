@@ -71,6 +71,7 @@ pub(crate) fn natural_query_plan(question: &str) -> Result<NaturalQueryPlan, Que
     // keyword — `handleError`, `mainLoop`, `routeTable`.
     let routing = term
         .as_deref()
+        .filter(|term| natural_query_token_looks_specific(term))
         .map(|term| lower.replace(&term.to_lowercase(), " "))
         .unwrap_or_else(|| lower.clone());
     let quoted_term = term.as_deref().map(quote_query_value);
@@ -622,7 +623,20 @@ pub(crate) fn natural_query_token_looks_specific(token: &str) -> bool {
 pub(crate) fn natural_query_stop_word(token: &str) -> bool {
     matches!(
         token,
-        "what"
+        // Words that open a question rather than name a thing. Without these
+        // `Show me the riskiest code` searched for a symbol called `Show`.
+        "show"
+            | "find"
+            | "list"
+            | "give"
+            | "tell"
+            | "explain"
+            | "describe"
+            | "покажи"
+            | "найди"
+            | "перечисли"
+            | "объясни"
+            | "what"
             | "where"
             | "when"
             | "who"

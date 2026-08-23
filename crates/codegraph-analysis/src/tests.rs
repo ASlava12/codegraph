@@ -4867,6 +4867,33 @@ fn a_symbol_named_after_a_keyword_does_not_hijack_the_question() {
     assert_eq!(rule("Who uses `mainLoop`?"), "reverse_dependency_or_impact");
     // The question's own words still route it.
     assert_eq!(rule("Where is `PORT` read?"), "config_or_environment");
+
+    // ...including when the word a rule looks for is also the anchor the
+    // question leaves behind: stripping it would route these nowhere.
+    assert_eq!(
+        rule("Where does the program start?"),
+        "entrypoint_or_startup"
+    );
+    assert_eq!(rule("Which code is unused?"), "unreachable_or_unused");
+    assert_eq!(rule("What are the hotspots?"), "hotspot_or_centrality");
+}
+
+#[test]
+fn an_imperative_opening_a_question_is_not_a_symbol() {
+    let query = |question: &str| natural_query_plan(question).expect("plan").generated_query;
+
+    // `Show`/`Find` start a request; they do not name anything, and searching
+    // for them returned nothing every time.
+    assert!(
+        !query("Show me the riskiest code").contains("Show"),
+        "{}",
+        query("Show me the riskiest code")
+    );
+    assert!(
+        query("Show functions named Eval").contains("Eval"),
+        "{}",
+        query("Show functions named Eval")
+    );
 }
 
 #[test]
