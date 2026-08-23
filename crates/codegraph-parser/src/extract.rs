@@ -325,9 +325,11 @@ pub(crate) fn classify_node(
             _ => return None,
         },
         Language::Julia => match kind {
-            "function_definition" | "short_function_definition" | "macro_definition" => {
-                ParsedItemKind::Function
-            }
+            "function_definition" | "macro_definition" => ParsedItemKind::Function,
+            // Short form: `square(x) = x * x` parses as an assignment whose
+            // left side is a call expression. Without this it was not a
+            // definition at all, and its left side counted as a call.
+            "assignment" if julia_short_function_definition(node) => ParsedItemKind::Function,
             "struct_definition" | "abstract_definition" | "primitive_definition" => {
                 ParsedItemKind::Type
             }
@@ -809,7 +811,9 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
                     .is_some_and(|callee| callee.kind() == "apply")
         }
         Language::OCaml => node.kind() == "application_expression",
-        Language::Julia => node.kind() == "call_expression",
+        Language::Julia => {
+            node.kind() == "call_expression" && !julia_is_short_definition_head(node)
+        }
         // A remote call (`os:getenv(..)`) wraps an inner `call`; count the
         // remote node and skip the inner one so one call is one fact.
         Language::Erlang => match node.kind() {
@@ -828,6 +832,24 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
         }
         Language::R => node.kind() == "call" && !r_library_call(node, source),
     }
+}
+
+/// `name(args) = body`: an assignment whose left side is a call expression is
+/// Julia's short function definition form.
+pub(crate) fn julia_short_function_definition(node: Node<'_>) -> bool {
+    node.kind() == "assignment"
+        && node
+            .named_child(0)
+            .is_some_and(|left| left.kind() == "call_expression")
+}
+
+/// The call-shaped left side of a short definition names the function being
+/// defined; it is not a call to it.
+pub(crate) fn julia_is_short_definition_head(node: Node<'_>) -> bool {
+    node.parent().is_some_and(|parent| {
+        julia_short_function_definition(parent)
+            && parent.named_child(0).is_some_and(|left| left == node)
+    })
 }
 
 /// A Nix binding whose value is a lambda, i.e. a named function.

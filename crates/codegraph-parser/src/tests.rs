@@ -1645,3 +1645,45 @@ fn haskell_type_signatures_do_not_become_functions() {
         );
     }
 }
+
+#[test]
+fn julia_short_function_definitions_are_definitions_not_calls() {
+    // `square(x) = x * x` parses as an assignment whose left side is a call
+    // expression. It used to be no definition at all, and its left side was
+    // recorded as a call to the function being defined.
+    let source = "square(x) = x * x\n\
+                  nrow(df::Frame) = size(df, 1)\n\
+                  function full(x)\n  square(x)\nend\n";
+    let parsed = parse_source("demo.jl", source.as_bytes(), Language::Julia).unwrap();
+    let functions: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Function)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert!(
+        functions.contains(&"square") && functions.contains(&"nrow") && functions.contains(&"full"),
+        "short and long definitions are both extracted: {functions:?}"
+    );
+
+    let calls: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Call)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert!(
+        calls.contains(&"size"),
+        "calls in a short definition's body are still extracted: {calls:?}"
+    );
+    assert_eq!(
+        calls.iter().filter(|label| **label == "nrow").count(),
+        0,
+        "the definition head is not a call to itself: {calls:?}"
+    );
+    assert_eq!(
+        calls.iter().filter(|label| **label == "square").count(),
+        1,
+        "only the real call inside `full` counts: {calls:?}"
+    );
+}
