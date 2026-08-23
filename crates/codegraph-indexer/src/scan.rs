@@ -7,6 +7,7 @@ use std::path::Path;
 
 use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind};
 use codegraph_parser::{Language, ParsedItemKind, adapter_for_language, adapter_for_path};
+use globset::GlobSet;
 use walkdir::WalkDir;
 
 #[allow(unused_imports)]
@@ -108,6 +109,8 @@ pub(crate) fn scan_project_with_scope(
     let npm_packages = npm_package_roots(root, options, &ignored_globs);
     let dart_packages = dart_package_roots(root, options, &ignored_globs);
     let c_include_dirs = c_include_dirs(root, options, &ignored_globs);
+    let julia_exports = julia_exported_names(root, options, &ignored_globs);
+    let r_exports = r_exported_names(root, options, &ignored_globs);
     let custom_rules = custom_rules(root);
     let annotations = graph_annotations(root);
     let mut context = IndexContext {
@@ -130,6 +133,8 @@ pub(crate) fn scan_project_with_scope(
         own_package_ids: BTreeSet::new(),
         dart_packages,
         c_include_dirs,
+        julia_exports,
+        r_exports,
         custom_rules,
         annotations,
         pending_calls: Vec::new(),
@@ -588,6 +593,30 @@ pub(crate) fn index_file(
                         "item_kind".to_string(),
                         parsed_item_kind_name(item.kind).to_string(),
                     );
+                    // Julia and R write their package's exports in one
+                    // place, away from the files that define the
+                    // functions: an `export` statement in the module file,
+                    // and the NAMESPACE beside the R package.
+                    if matches!(
+                        item.kind,
+                        ParsedItemKind::Function | ParsedItemKind::Entrypoint
+                    ) {
+                        let exports = match language {
+                            Language::Julia => Some(&context.julia_exports),
+                            Language::R => Some(&context.r_exports),
+                            _ => None,
+                        };
+                        if let Some(exports) = exports.filter(|exports| !exports.is_empty()) {
+                            item_metadata.insert(
+                                "visibility".to_string(),
+                                if exports.contains(&item.label) {
+                                    "public".to_string()
+                                } else {
+                                    "private".to_string()
+                                },
+                            );
+                        }
+                    }
                     // What an OCaml module lets out is written in the file
                     // beside it, which the parser never sees: `foo.mli`
                     // lists what `foo.ml` offers, and a module with no
@@ -1013,4 +1042,93 @@ fn ocaml_interface_names(path: &Path) -> Option<BTreeSet<String>> {
         }
     }
     Some(names)
+}
+
+/// The names a Julia package exports. `export` opens a list that runs
+/// until a line does not end in a comma, and the list sits in the module
+/// file while the functions live in the files it includes.
+fn julia_exported_names(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for entry in WalkDir::new(root)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+    {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("jl") {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        let mut collecting = false;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            let body = if collecting {
+                trimmed
+            } else if let Some(rest) = trimmed.strip_prefix("export ") {
+                rest
+            } else {
+                continue;
+            };
+            for name in body.split(',') {
+                let name = name.trim();
+                if !name.is_empty() {
+                    names.insert(name.to_string());
+                }
+            }
+            collecting = body.ends_with(',');
+        }
+    }
+    names
+}
+
+/// The names an R package's NAMESPACE lists: `export(mutate)` and the
+/// generics behind `S3method("[", grouped_df)`.
+fn r_exported_names(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for entry in WalkDir::new(root)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+    {
+        let path = entry.path();
+        if path.file_name().and_then(|name| name.to_str()) != Some("NAMESPACE") {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        for line in text.lines() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed
+                .strip_prefix("export(")
+                .or_else(|| trimmed.strip_prefix("exportMethods("))
+            else {
+                continue;
+            };
+            let Some((inside, _)) = rest.split_once(')') else {
+                continue;
+            };
+            for name in inside.split(',') {
+                let name = name.trim().trim_matches('"').trim_matches('\'');
+                if !name.is_empty() {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+    }
+    names
 }

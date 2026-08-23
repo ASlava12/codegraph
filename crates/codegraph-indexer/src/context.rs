@@ -50,6 +50,11 @@ pub(crate) struct IndexContext {
     /// a dependency on itself.
     pub(crate) own_package_ids: BTreeSet<String>,
     pub(crate) c_include_dirs: Vec<String>,
+    /// The names a Julia package exports and the names an R package's
+    /// NAMESPACE lists. Both are written in one place for the whole
+    /// package, away from the files that define them.
+    pub(crate) julia_exports: BTreeSet<String>,
+    pub(crate) r_exports: BTreeSet<String>,
     pub(crate) custom_rules: CustomRules,
     pub(crate) annotations: GraphAnnotations,
     pub(crate) pending_calls: Vec<PendingCall>,
