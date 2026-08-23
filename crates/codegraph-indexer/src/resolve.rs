@@ -295,11 +295,30 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let targets = if local_targets.is_empty() {
+        let mut targets = if local_targets.is_empty() {
             language_targets
         } else {
             local_targets
         };
+        // A qualified call (`CodeGraph::new`, `Foo.bar`) matches many bare
+        // `new`/`bar` declarations; keep only methods whose owning type is the
+        // one named in the call, which turns an ambiguous set into one edge.
+        if let Some((owner, _)) = split_qualified_call(&call.label)
+            && targets.len() > 1
+        {
+            let owned = targets
+                .iter()
+                .copied()
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.metadata.get("owner_type"))
+                        .is_some_and(|declared| declared == owner)
+                })
+                .collect::<Vec<_>>();
+            if !owned.is_empty() {
+                targets = owned;
+            }
+        }
         if targets.is_empty() {
             let type_targets = resolve_function_targets(&context.type_symbols, &call.label)
                 .into_iter()
@@ -1914,6 +1933,23 @@ pub(crate) fn resolve_local_function(
     symbol_keys(label)
         .into_iter()
         .find_map(|key| symbols.get(&key).copied())
+}
+
+/// Split `Type::method` / `Type.method` into its owner and method name. Only
+/// the last separator matters, so `a::b::Type::method` yields (`Type`,
+/// `method`).
+pub(crate) fn split_qualified_call(label: &str) -> Option<(&str, &str)> {
+    let label = label.trim().trim_end_matches('!');
+    let (owner, method) = label.rsplit_once("::").or_else(|| label.rsplit_once('.'))?;
+    // Keep only the final path segment of the owner: `a::b::Type` -> `Type`.
+    let owner = owner
+        .rsplit("::")
+        .next()
+        .unwrap_or(owner)
+        .rsplit('.')
+        .next()
+        .unwrap_or(owner);
+    (!owner.is_empty() && !method.is_empty()).then_some((owner, method))
 }
 
 pub(crate) fn resolve_function_targets(

@@ -6033,3 +6033,66 @@ fn a_canceled_scan_aborts_instead_of_finishing() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn qualified_calls_resolve_to_the_named_types_method() {
+    // `Alpha::make` used to match every bare `make` declaration equally, so an
+    // ambiguous set was reported instead of one edge. The method's owner_type
+    // disambiguates it.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("alpha.rs"),
+        "pub struct Alpha;\nimpl Alpha {\n    pub fn make() -> Alpha { Alpha }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("beta.rs"),
+        "pub struct Beta;\nimpl Beta {\n    pub fn make() -> Beta { Beta }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("main.rs"),
+        "fn main() { let _ = Alpha::make(); }\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let alpha_make = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.kind == NodeKind::Function
+                && node.label == "make"
+                && node.metadata.get("owner_type").map(String::as_str) == Some("Alpha")
+        })
+        .expect("Alpha::make is recorded with its owner type");
+    let beta_make = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.kind == NodeKind::Function
+                && node.label == "make"
+                && node.metadata.get("owner_type").map(String::as_str) == Some("Beta")
+        })
+        .expect("Beta::make is recorded with its owner type");
+
+    let calls: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Calls && edge.target == alpha_make.id)
+        .collect();
+    assert!(
+        !calls.is_empty(),
+        "the qualified call resolves to Alpha's method"
+    );
+    assert!(
+        !graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Calls && edge.target == beta_make.id),
+        "and not to the same-named method on Beta"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

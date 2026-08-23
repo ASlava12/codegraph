@@ -293,13 +293,81 @@ pub(crate) fn classify_node(
         item_kind
     };
 
+    let mut metadata = BTreeMap::new();
+    if matches!(
+        item_kind,
+        ParsedItemKind::Function | ParsedItemKind::Entrypoint
+    ) && let Some(owner) = enclosing_type_label(language, node, source)
+    {
+        metadata.insert("owner_type".to_string(), owner);
+    }
+
     Some(ParsedItem {
         kind: item_kind,
         label,
         span: span_for(path, node),
         parent: None,
-        metadata: BTreeMap::new(),
+        metadata,
     })
+}
+
+/// The type a method belongs to: the nearest enclosing type declaration (or
+/// Rust `impl` block). Recorded as `owner_type` so a qualified call such as
+/// `CodeGraph::new` or `Foo.bar` can be matched against the method declared
+/// inside that type, which a bare `new` label could never satisfy.
+pub(crate) fn enclosing_type_label(
+    language: Language,
+    node: Node<'_>,
+    source: &[u8],
+) -> Option<String> {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        let kind = candidate.kind();
+        let owner = match language {
+            // An impl block is not a type declaration of its own; its `type`
+            // field names the type being implemented.
+            Language::Rust if kind == "impl_item" => named_child_text(candidate, "type", source),
+            Language::Rust if kind == "trait_item" => named_child_text(candidate, "name", source),
+            Language::Python if kind == "class_definition" => {
+                named_child_text(candidate, "name", source)
+            }
+            Language::Ruby if matches!(kind, "class" | "module") => {
+                named_child_text(candidate, "name", source)
+            }
+            Language::Java | Language::CSharp | Language::Kotlin | Language::Scala
+                if kind.ends_with("_declaration") || kind.ends_with("_definition") =>
+            {
+                matches!(
+                    kind,
+                    "class_declaration"
+                        | "interface_declaration"
+                        | "enum_declaration"
+                        | "record_declaration"
+                        | "struct_declaration"
+                        | "object_declaration"
+                        | "class_definition"
+                        | "object_definition"
+                        | "trait_definition"
+                )
+                .then(|| named_child_text(candidate, "name", source))
+                .flatten()
+            }
+            Language::Swift if kind == "class_declaration" || kind == "protocol_declaration" => {
+                named_child_text(candidate, "name", source)
+            }
+            Language::Php | Language::JavaScript | Language::TypeScript | Language::Tsx
+                if matches!(kind, "class_declaration" | "interface_declaration") =>
+            {
+                named_child_text(candidate, "name", source)
+            }
+            _ => None,
+        };
+        if let Some(owner) = owner {
+            return Some(owner);
+        }
+        current = candidate.parent();
+    }
+    None
 }
 
 pub(crate) fn classify_call(
