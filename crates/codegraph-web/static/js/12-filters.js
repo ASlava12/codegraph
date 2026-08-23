@@ -448,8 +448,8 @@ function buildClientInsights(graph) {
     if (nodes.length > 1) {
       insights.push({
         kind: "duplicate_entrypoint_label",
-        severity: "warning",
-        message: `${label} appears ${nodes.length} times and may make label-based traces ambiguous`,
+        severity: "info",
+        message: `${label} appears ${nodes.length} times, so a trace by that label has to say which one`,
         nodeId: nodes[0].id,
       });
     }

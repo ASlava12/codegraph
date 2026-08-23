@@ -527,10 +527,15 @@ pub(crate) fn add_duplicate_entrypoint_insights(graph: &CodeGraph, insights: &mu
             .collect();
 
         insights.push(Insight {
+            // A C project gives nine of its Makefiles an `all` target and
+            // eleven test files a `/` route, which is how those projects
+            // are built rather than something wrong with them. A query for
+            // an ambiguous label already comes back saying which nodes
+            // matched, so this is a note about the labels, not a defect.
             kind: "duplicate_entrypoint_label".to_string(),
-            severity: InsightSeverity::Warning,
+            severity: InsightSeverity::Info,
             message: format!(
-                "Entrypoint label `{label}` appears {} times and may make label-based traces ambiguous",
+                "Entrypoint label `{label}` appears {} times, so a trace by that label has to say which one",
                 nodes.len()
             ),
             nodes,

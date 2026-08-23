@@ -6198,7 +6198,9 @@ fn insights_report_duplicate_entrypoints() {
         .find(|insight| insight.kind == "duplicate_entrypoint_label")
         .expect("expected duplicate entrypoint insight");
 
-    assert_eq!(duplicate.severity, InsightSeverity::Warning);
+    // A note about the labels rather than a defect: nine Makefiles with an
+    // `all` target is how a C project is built.
+    assert_eq!(duplicate.severity, InsightSeverity::Info);
     assert_eq!(duplicate.nodes, vec![left, right]);
     assert!(duplicate.message.contains("npm script:start"));
     assert_eq!(duplicate.edges.len(), 2);
