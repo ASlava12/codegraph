@@ -1536,7 +1536,12 @@ fn embedded_web_overview_uses_report_snapshot() {
     assert!(app.contains("\"SQL-ссылка на неизвестную таблицу\""));
     assert!(app.contains("phpImportPackage"));
     assert!(app.contains("phpNonComposerNamespaceRoots"));
-    assert!(app.contains("target?.metadata?.import_scope === \"local\""));
+    assert!(app.contains("scope === \"local\" || scope === \"workspace\""));
+    // The browser's own copy of the undeclared-import rule has to skip what
+    // the CLI skips: a Node built-in, a specifier that names its source,
+    // and a type-only import the `@types` package answers for.
+    assert!(app.contains("\"http2\""));
+    assert!(app.contains("typesPackageName"));
     assert!(app.contains("Symfony"));
     assert!(app.contains("composer"));
     assert!(app.contains("\"check.running\""));

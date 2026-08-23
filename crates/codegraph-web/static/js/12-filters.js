@@ -578,24 +578,60 @@ function addUndeclaredImportInsights(graph, insights) {
   if (declaredEcosystems.size === 0) return;
 
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  // One finding per package, as the CLI reports it: a package imported from
+  // sixty files is one fact about the manifest, not sixty.
+  const grouped = new Map();
   graph.edges
     .filter((edge) => edge.kind === "imports")
     .forEach((edge) => {
       const source = nodeById.get(edge.source);
       const target = nodeById.get(edge.target);
-      if (target?.metadata?.import_scope === "local") return;
-      const candidate = importPackageCandidate(target?.metadata?.language, target?.label || "");
+      const scope = target?.metadata?.import_scope;
+      if (scope === "local" || scope === "workspace") return;
+      const label = target?.label || "";
+      // `import(`${pkgDir}/package.json`)` names no package: the specifier
+      // is built when it runs.
+      if (label.includes("${")) return;
+      const candidate = importPackageCandidate(target?.metadata?.language, label);
       if (!candidate) return;
       if (!declaredEcosystems.has(candidate.ecosystem)) return;
       if (isDeclaredPackage(declared, candidate.ecosystem, candidate.package)) return;
+      // `import type { X } from 'trusted-types/lib'` is served by
+      // `@types/trusted-types`, and needs nothing at run time.
+      if (
+        label.trimStart().startsWith("import type ") &&
+        isDeclaredPackage(declared, candidate.ecosystem, typesPackageName(candidate.package))
+      ) {
+        return;
+      }
 
-      insights.push({
-        kind: "undeclared_external_import",
-        severity: "warning",
-        message: `${source?.label || edge.source} imports ${candidate.package} without a matching ${candidate.ecosystem} dependency`,
-        nodeId: target?.id || source?.id,
-      });
+      const key = `${candidate.ecosystem}:${candidate.package}`;
+      const group = grouped.get(key) || { candidate, sources: [], nodeId: target?.id || source?.id };
+      const sourceLabel = source?.label || String(edge.source);
+      if (!group.sources.includes(sourceLabel)) group.sources.push(sourceLabel);
+      grouped.set(key, group);
     });
+
+  grouped.forEach((group) => {
+    const shown = group.sources.slice(0, 3).join(", ");
+    const rest = group.sources.length - 3;
+    const from = rest > 0 ? `${shown}, and ${rest} more` : shown;
+    insights.push({
+      kind: "undeclared_external_import",
+      severity: "warning",
+      message: `${group.candidate.package} is imported from ${from} without a matching ${group.candidate.ecosystem} dependency`,
+      nodeId: group.nodeId,
+    });
+  });
+}
+
+// The DefinitelyTyped package that carries types for another.
+function typesPackageName(packageName) {
+  if (packageName.startsWith("@")) {
+    const [scope, name] = packageName.slice(1).split("/");
+    if (scope && name) return `@types/${scope}__${name}`;
+  }
+  return `@types/${packageName}`;
 }
 
 function importPackageCandidate(language, label) {
@@ -638,10 +674,12 @@ function pythonImportPackage(label) {
 function jsImportPackage(label) {
   const moduleName = firstQuotedString(label);
   if (!moduleName) return null;
+  // `node:fs`, `bun:test`, `jsr:@std/assert` and `https://deno.land/x/...`
+  // say where the module comes from, not which package declares it.
   if (
     moduleName.startsWith(".") ||
     moduleName.startsWith("/") ||
-    moduleName.startsWith("node:") ||
+    moduleName.split("/")[0].includes(":") ||
     nodeBuiltinModules.has(moduleName)
   ) {
     return null;
@@ -772,33 +810,63 @@ function quotedStrings(value) {
   return matches;
 }
 
+// `module.builtinModules` in full, subpaths included, and the same list the
+// CLI keeps: a name missing here becomes a warning that the project forgot
+// a dependency.
 const nodeBuiltinModules = new Set([
   "assert",
+  "assert/strict",
+  "async_hooks",
   "buffer",
   "child_process",
   "cluster",
+  "console",
+  "constants",
   "crypto",
   "dgram",
+  "diagnostics_channel",
   "dns",
+  "dns/promises",
+  "domain",
   "events",
   "fs",
+  "fs/promises",
   "http",
+  "http2",
   "https",
+  "inspector",
+  "inspector/promises",
   "module",
   "net",
   "os",
   "path",
+  "path/posix",
+  "path/win32",
+  "perf_hooks",
   "process",
+  "punycode",
   "querystring",
   "readline",
+  "readline/promises",
+  "repl",
   "stream",
+  "stream/consumers",
+  "stream/promises",
+  "stream/web",
   "string_decoder",
+  "sys",
   "timers",
+  "timers/promises",
   "tls",
+  "trace_events",
   "tty",
   "url",
   "util",
+  "util/types",
+  "v8",
   "vm",
+  "wasi",
+  "worker_threads",
   "zlib",
 ]);
 

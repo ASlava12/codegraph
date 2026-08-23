@@ -13,6 +13,7 @@ import { loadBundle } from "./smoke-harness.mjs";
 const VIEW_EXPORTS = [
   "state", "renderOverview", "renderQueryResult", "renderInsights",
   "renderJourneyReport", "renderCheckReport", "clientEntrypointReachableIds",
+  "buildClientInsights",
 ];
 const api = loadBundle("__views", VIEW_EXPORTS);
 const fail = (label, error) => {
@@ -144,5 +145,59 @@ drive("check that passed", () => api.renderCheckReport({
 }));
 
 if (!process.exitCode) console.log("edge cases: ok");
+
+// The browser recomputes a handful of findings itself when the server has
+// not sent a report, so those rules have to say what the CLI says. A name
+// missing from the built-in module list, or a specifier the CLI skips,
+// shows the reader a dependency the project never forgot.
+drive("client insights agree with the CLI on undeclared imports", () => {
+  const dependency = (id, label, packageId) => ({
+    id, kind: "external_dependency", label,
+    metadata: { item_kind: "dependency", package_id: packageId },
+  });
+  const importNode = (id, label) => ({
+    id, kind: "external_dependency", label,
+    metadata: { item_kind: "import", language: "typescript" },
+  });
+  const graph = {
+    nodes: [
+      { id: 1, kind: "file", label: "package.json" },
+      dependency(2, "@types/trusted-types", "npm:@types/trusted-types"),
+      { id: 3, kind: "file", label: "src/a.ts" },
+      { id: 4, kind: "file", label: "src/b.ts" },
+      { id: 5, kind: "file", label: "src/c.ts" },
+      { id: 6, kind: "file", label: "src/d.ts" },
+      importNode(10, 'import http2 from "http2"'),
+      importNode(11, 'import { test } from "bun:test"'),
+      importNode(12, 'import type { TrustedHTML } from "trusted-types/lib"'),
+      importNode(13, 'import { z } from "zod"'),
+      importNode(14, 'import { z } from "zod"'),
+      importNode(15, 'import { z } from "zod"'),
+      importNode(16, 'import { z } from "zod"'),
+    ],
+    edges: [
+      { kind: "imports", source: 3, target: 10 },
+      { kind: "imports", source: 3, target: 11 },
+      { kind: "imports", source: 3, target: 12 },
+      { kind: "imports", source: 3, target: 13 },
+      { kind: "imports", source: 4, target: 14 },
+      { kind: "imports", source: 5, target: 15 },
+      { kind: "imports", source: 6, target: 16 },
+    ],
+  };
+  const undeclared = api
+    .buildClientInsights(graph)
+    .filter((insight) => insight.kind === "undeclared_external_import");
+  if (undeclared.length !== 1) {
+    throw new Error(`expected one finding, got ${JSON.stringify(undeclared)}`);
+  }
+  const [finding] = undeclared;
+  if (!finding.message.startsWith("zod is imported from")) {
+    throw new Error(`finding names the package first: ${finding.message}`);
+  }
+  if (!finding.message.includes("and 1 more")) {
+    throw new Error(`finding counts the sources it leaves out: ${finding.message}`);
+  }
+});
 
 if (!process.exitCode) console.log("views-smoke: ok (" + ok.join(", ") + ")");
