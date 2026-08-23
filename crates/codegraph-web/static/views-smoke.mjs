@@ -12,7 +12,7 @@ import { loadBundle } from "./smoke-harness.mjs";
 
 const VIEW_EXPORTS = [
   "state", "renderOverview", "renderQueryResult", "renderInsights",
-  "renderJourneyReport", "renderCheckReport",
+  "renderJourneyReport", "renderCheckReport", "clientEntrypointReachableIds",
 ];
 const api = loadBundle("__views", VIEW_EXPORTS);
 const fail = (label, error) => {
@@ -52,6 +52,32 @@ drive("query result with a note", () => {
   if (!html.includes("query-note") || !html.includes("2 definitions are named")) {
     throw new Error("the note is missing from the rendered result");
   }
+});
+
+// The browser recomputes reachability when no server report is available.
+// It must follow `contains` out of a file exactly as the server does, or
+// everything an entrypoint file holds reads as unreachable.
+drive("client reachability walks into an entrypoint file", () => {
+  const graph = {
+    nodes: [
+      { id: 1, kind: "file", label: "src/main.rs", metadata: {} },
+      { id: 2, kind: "function", label: "main", metadata: {} },
+      { id: 3, kind: "function", label: "helper", metadata: {} },
+      { id: 4, kind: "directory", label: "src", metadata: {} },
+      { id: 5, kind: "function", label: "elsewhere", metadata: {} },
+    ],
+    edges: [
+      { source: 1, target: 2, kind: "contains", confidence: "syntactic", metadata: {} },
+      { source: 2, target: 3, kind: "calls", confidence: "syntactic", metadata: {} },
+      { source: 4, target: 5, kind: "contains", confidence: "syntactic", metadata: {} },
+    ],
+  };
+  const reachable = api.clientEntrypointReachableIds(graph, new Set([1]));
+  for (const id of [1, 2, 3]) {
+    if (!reachable.has(id)) throw new Error(`node ${id} must be reachable from its file`);
+  }
+  // Containment out of a directory would make the whole tree reachable.
+  if (reachable.has(5)) throw new Error("a directory must not reach through containment");
 });
 
 drive("renderInsights", () => api.renderInsights());

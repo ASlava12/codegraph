@@ -514,9 +514,18 @@ function clientEntrypointReachableIds(graph, entrypointIds) {
   const reachable = new Set();
   const queue = [];
   const outgoing = new Map();
+  // Most entrypoints name a file, and a file holds its symbols through
+  // `contains`; without that step the walk stops at the file and calls
+  // everything inside it unreachable. `contains` is followed only out of a
+  // file, so the repository root does not reach the whole project by
+  // containment alone. Kept in step with `entrypoint_reachable_nodes_from`
+  // on the server.
+  const fileIds = new Set(
+    (graph.nodes || []).filter((node) => node.kind === "file").map((node) => node.id),
+  );
 
   (graph.edges || []).forEach((edge) => {
-    if (!clientTraceEdge(edge)) return;
+    if (!clientTraceEdge(edge) && !(edge?.kind === "contains" && fileIds.has(edge.source))) return;
     const list = outgoing.get(edge.source) || [];
     list.push(edge.target);
     outgoing.set(edge.source, list);
