@@ -1578,6 +1578,98 @@ fn trace_entrypoints_returns_filtered_entrypoint_flows() {
 }
 
 #[test]
+fn an_ambiguous_start_label_picks_the_declared_program() {
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    // Graph order is the file walk, so the build script comes first — which is
+    // exactly what used to be picked.
+    let build_script = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "main",
+        span("build.rs"),
+        BTreeMap::new(),
+    );
+    let test_main = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "main",
+        span("tests/harness/main.rs"),
+        BTreeMap::new(),
+    );
+    let program = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "main",
+        span("crates/app/src/main.rs"),
+        BTreeMap::new(),
+    );
+    let declaration = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "cargo bin:app",
+        None,
+        BTreeMap::from([("source".to_string(), "manifest".to_string())]),
+    );
+    graph.add_edge(
+        graph.root,
+        declaration,
+        EdgeKind::Entrypoint,
+        Confidence::Exact,
+    );
+    graph.add_edge(
+        declaration,
+        program,
+        EdgeKind::References,
+        Confidence::Exact,
+    );
+    // The test binary is declared too, so being declared cannot be the only
+    // thing that counts.
+    let test_declaration = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "cargo bin:harness",
+        None,
+        BTreeMap::from([("source".to_string(), "manifest".to_string())]),
+    );
+    graph.add_edge(
+        graph.root,
+        test_declaration,
+        EdgeKind::Entrypoint,
+        Confidence::Exact,
+    );
+    graph.add_edge(
+        test_declaration,
+        test_main,
+        EdgeKind::References,
+        Confidence::Exact,
+    );
+
+    let report = workflow(
+        &graph,
+        WorkflowRequest {
+            start: TraceStart::Label("main".to_string()),
+            max_depth: 3,
+            block_limit: 20,
+            filters: WorkflowFilters::default(),
+            compact: false,
+            max_fanout: None,
+        },
+    )
+    .expect("workflow report");
+
+    assert_eq!(
+        report.start.id, program,
+        "a manifest-declared, non-test `main` is what the label means"
+    );
+    assert_ne!(report.start.id, build_script);
+    assert_ne!(report.start.id, test_main);
+}
+
+#[test]
 fn workflow_builds_block_steps_with_risk_context() {
     let mut graph = CodeGraph::new("repo");
     let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:api");

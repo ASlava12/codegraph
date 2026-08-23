@@ -23,11 +23,7 @@ pub(crate) fn trace_with_direction(
     // Same depth contract as workflow/journey/impact; the public trace entry
     // was the only one accepting an unclamped depth.
     let max_depth = request.max_depth.clamp(1, 32);
-    let start = match &request.start {
-        TraceStart::NodeId(id) => graph.nodes.iter().find(|node| node.id == *id)?,
-        TraceStart::Label(label) => graph.nodes.iter().find(|node| node.label == *label)?,
-    }
-    .clone();
+    let start = resolve_trace_start(graph, &request.start)?.clone();
 
     let adjacency = TraceAdjacency::build(graph);
     let mut visited = BTreeSet::new();

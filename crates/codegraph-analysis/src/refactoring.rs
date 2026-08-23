@@ -1100,11 +1100,7 @@ pub(crate) fn workflow_with_insight_report(
     // not "unbounded", and the cap never exceeds 200. `None` stays unbounded.
     let max_fanout = request.max_fanout.map(|value| value.clamp(1, 200));
     let filters = normalize_workflow_filters(request.filters);
-    let start = match &request.start {
-        TraceStart::NodeId(id) => graph.nodes.iter().find(|node| node.id == *id)?,
-        TraceStart::Label(label) => graph.nodes.iter().find(|node| node.label == *label)?,
-    }
-    .clone();
+    let start = resolve_trace_start(graph, &request.start)?.clone();
     let nodes_by_id: BTreeMap<NodeId, &Node> =
         graph.nodes.iter().map(|node| (node.id, node)).collect();
     let adjacency = TraceAdjacency::build(graph);

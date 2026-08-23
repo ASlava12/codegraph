@@ -13,6 +13,79 @@ use crate::*;
 /// Ids are handed out densely, but a sliced graph keeps the original ids with
 /// fewer nodes, so this indexes what is actually there rather than assuming
 /// the id is the position.
+/// Resolve the node a trace, flow, or journey starts from.
+///
+/// Labels repeat, and `main` is the worst case: it names 15 nodes on
+/// terraform — two shell functions in CI scripts and thirteen Go programs, all
+/// of them entrypoints. Taking the first match takes the alphabetically first
+/// file, which is how `.github/scripts/equivalence-test.sh` came to start a Go
+/// project's flow. When a label is ambiguous, rank the candidates by what a
+/// reader means by it: an entrypoint over a plain node, production code over
+/// tests and fixtures, and the shallowest path — a program's own `main.go`
+/// sits at the repository root, its helpers do not. Ties keep graph order, so
+/// the choice is deterministic, and the caller reports which node it used.
+pub(crate) fn resolve_trace_start<'a>(
+    graph: &'a CodeGraph,
+    start: &TraceStart,
+) -> Option<&'a Node> {
+    match start {
+        TraceStart::NodeId(id) => graph.nodes.iter().find(|node| node.id == *id),
+        TraceStart::Label(label) => {
+            let mut matches = graph.nodes.iter().filter(|node| &node.label == label);
+            let first = matches.next()?;
+            if matches.next().is_none() {
+                return Some(first);
+            }
+
+            let entrypoint_ids: BTreeSet<NodeId> = graph
+                .edges
+                .iter()
+                .filter(|edge| edge.kind == EdgeKind::Entrypoint)
+                .map(|edge| edge.target)
+                .collect();
+            // Declared programs: a node that a manifest-declared entrypoint
+            // points at, such as the `main` behind `cargo bin:codegraph-cli`.
+            // A build script's `main` has no declaration behind it, and a
+            // shebang script is a weaker claim than a manifest binary — a
+            // vendored `gen_travis.py` should not outrank a project's own
+            // program.
+            let entrypoint_nodes: BTreeSet<NodeId> = graph
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.kind == NodeKind::Entrypoint
+                        && node
+                            .metadata
+                            .get("source")
+                            .is_some_and(|source| source == "manifest")
+                })
+                .map(|node| node.id)
+                .collect();
+            let declared_ids: BTreeSet<NodeId> = graph
+                .edges
+                .iter()
+                .filter(|edge| entrypoint_nodes.contains(&edge.source))
+                .map(|edge| edge.target)
+                .collect();
+            graph
+                .nodes
+                .iter()
+                .filter(|node| &node.label == label)
+                .min_by_key(|node| {
+                    let path = node.span.as_ref().map(|span| span.path.as_str());
+                    (
+                        u8::from(path.is_some_and(is_test_like_source_path)),
+                        u8::from(!declared_ids.contains(&node.id)),
+                        u8::from(!entrypoint_ids.contains(&node.id)),
+                        path.map_or(usize::MAX, |path| path.matches('/').count()),
+                        node.id,
+                    )
+                })
+                .or(Some(first))
+        }
+    }
+}
+
 pub(crate) fn node_index(graph: &CodeGraph) -> BTreeMap<NodeId, &Node> {
     graph.nodes.iter().map(|node| (node.id, node)).collect()
 }
