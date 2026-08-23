@@ -28,6 +28,13 @@ pub fn scan_project_paths(
     scan_project_with_scope(root.as_ref(), options, Some(&scope))
 }
 
+/// Whether a `Module` declaration in this language reopens a single shared
+/// entity (so every declaring file should point at one node) rather than
+/// declaring a distinct module per site (Rust `mod`, Elixir `defmodule`).
+pub(crate) fn namespace_declaration_is_reopenable(language: Language) -> bool {
+    matches!(language, Language::CSharp | Language::Php | Language::Ruby)
+}
+
 pub(crate) fn scan_project_with_scope(
     root: &Path,
     options: &IndexOptions,
@@ -49,6 +56,7 @@ pub(crate) fn scan_project_with_scope(
         edge_keys: BTreeSet::new(),
         edge_keys_synced: 0,
         function_symbols: BTreeMap::new(),
+        namespace_nodes: BTreeMap::new(),
         type_symbols: BTreeMap::new(),
         file_nodes: BTreeMap::new(),
         directory_nodes: BTreeMap::new(),
@@ -526,12 +534,36 @@ pub(crate) fn index_file(
                         }
                     }
 
-                    let item_id = context.graph.add_node_with_metadata(
-                        node_kind,
-                        item.label.clone(),
-                        Some(item.span.clone()),
-                        item_metadata,
-                    );
+                    // A namespace declaration names one entity that many files
+                    // reopen (C# `namespace`, PHP `namespace`, Ruby `module`).
+                    // Reuse one canonical node instead of emitting a duplicate
+                    // per declaring file, which split the namespace's edges
+                    // across hundreds of look-alike nodes.
+                    let namespace_key = (item.kind == ParsedItemKind::Module
+                        && namespace_declaration_is_reopenable(language))
+                    .then(|| (language.name(), item.label.clone()));
+                    let existing_namespace = namespace_key
+                        .as_ref()
+                        .and_then(|key| context.namespace_nodes.get(key).copied());
+                    let item_id = match existing_namespace {
+                        Some(existing) => existing,
+                        None => {
+                            if namespace_key.is_some() {
+                                item_metadata
+                                    .insert("declaration_scope".to_string(), "shared".to_string());
+                            }
+                            let id = context.graph.add_node_with_metadata(
+                                node_kind,
+                                item.label.clone(),
+                                Some(item.span.clone()),
+                                item_metadata,
+                            );
+                            if let Some(key) = namespace_key {
+                                context.namespace_nodes.insert(key, id);
+                            }
+                            id
+                        }
+                    };
                     let edge_kind = match item.kind {
                         ParsedItemKind::Import => EdgeKind::Imports,
                         _ => EdgeKind::Contains,

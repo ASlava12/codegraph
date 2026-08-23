@@ -5941,3 +5941,64 @@ fn scan_is_deterministic_across_runs() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn reopened_namespaces_share_one_node_but_distinct_modules_do_not() {
+    // C#/PHP/Ruby namespace declarations reopen one entity: every declaring
+    // file must point at the same node instead of minting a look-alike (a
+    // real C# repository had 335 nodes for one namespace). Rust `mod` blocks
+    // are distinct modules per site and must stay separate.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("a.cs"),
+        "namespace Shared.Core { class A { } }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("b.cs"),
+        "namespace Shared.Core { class B { } }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("one.rs"),
+        "mod helpers { pub fn one() {} }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("two.rs"),
+        "mod helpers { pub fn two() {} }\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let namespaces: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Module && node.label == "Shared.Core")
+        .collect();
+    assert_eq!(
+        namespaces.len(),
+        1,
+        "both C# files share one namespace node: {namespaces:?}"
+    );
+    let namespace_id = namespaces[0].id;
+    let declaring_files = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.target == namespace_id && edge.kind == EdgeKind::Contains)
+        .count();
+    assert_eq!(
+        declaring_files, 2,
+        "each declaring file contains the namespace"
+    );
+
+    let rust_modules = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Module && node.label == "helpers")
+        .count();
+    assert_eq!(rust_modules, 2, "Rust mod blocks stay distinct per file");
+
+    fs::remove_dir_all(root).unwrap();
+}

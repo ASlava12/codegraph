@@ -21,6 +21,9 @@ pub(crate) struct IndexContext {
     pub(crate) edge_keys: BTreeSet<(NodeId, NodeId, EdgeKind)>,
     pub(crate) edge_keys_synced: usize,
     pub(crate) function_symbols: BTreeMap<String, Vec<NodeId>>,
+    /// Canonical node per (language, namespace label) for languages whose
+    /// namespace declaration reopens one entity across many files.
+    pub(crate) namespace_nodes: BTreeMap<(&'static str, String), NodeId>,
     pub(crate) type_symbols: BTreeMap<String, Vec<NodeId>>,
     pub(crate) file_nodes: BTreeMap<String, NodeId>,
     pub(crate) directory_nodes: BTreeMap<String, NodeId>,
