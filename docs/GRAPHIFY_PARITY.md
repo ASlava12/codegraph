@@ -130,7 +130,14 @@ The biggest remaining work is not architectural feasibility; it is product compl
 
 ## Compatibility Principles
 
-- Code-only scans must remain fully local and deterministic.
+- Code-only scans stay fully local. They are deterministic by default in the
+  sense that matters for CI: the syntactic graph depends only on the sources.
+  Since 2026-08 a scan additionally runs a semantic pass when a matching
+  language server is installed, which trades bit-for-bit reproducibility across
+  machines for accuracy. That pass is always labeled on the root node
+  (`semantic_enrichment`, `semantic_servers`), its edges carry
+  `confidence: semantic`, and `--no-semantic` (CLI) / `--no-semantic` (server)
+  restores a machine-independent graph — which is what CI must use.
 - Optional model-backed extraction must be explicit, isolated, and provenance-marked.
 - Every generated report claim must reference graph node ids, edge indexes, source spans, or insight ids.
 - Agent workflows should prefer bounded graph slices over reading whole repositories.

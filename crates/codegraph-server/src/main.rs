@@ -84,6 +84,7 @@ async fn main() -> Result<()> {
         access_log_enabled: !args.quiet_access_log,
         scan_permits: Arc::new(Semaphore::new(max_scan_concurrency)),
         semantic_permits: Arc::new(Semaphore::new(max_semantic_concurrency)),
+        semantic_auto: !args.no_semantic,
         next_job_id: Arc::new(AtomicU64::new(1)),
         scan_cancellations: Arc::new(RwLock::new(BTreeMap::new())),
     };

@@ -90,7 +90,9 @@ jobs:
 
       - name: Smoke scan CLI
         run: |
-          cargo run -p codegraph-cli -- scan . --format ndjson > /tmp/codegraph.ndjson
+          # --no-semantic keeps CI reproducible: the automatic semantic pass
+          # depends on which language servers the runner happens to have.
+          cargo run -p codegraph-cli -- scan . --no-semantic --format ndjson > /tmp/codegraph.ndjson
           test -s /tmp/codegraph.ndjson
           grep '"record_type":"graph"' /tmp/codegraph.ndjson
 

@@ -9,6 +9,7 @@ use axum::response::{IntoResponse, Response};
 use codegraph_analysis::{InsightFilter, InsightSeverity, ProjectReportLimits, WorkflowFilters};
 use codegraph_core::CodeGraph;
 use codegraph_indexer::{IndexOptions, configured_index_options};
+use codegraph_lsp::{AutoEnrichmentOptions, SemanticLspCache, auto_enrich_graph};
 use codegraph_storage::scan_project_cached;
 use std::path::{Path, PathBuf};
 
@@ -22,11 +23,21 @@ pub(crate) async fn scan_graph(
     let root = resolve_scan_root(state, requested)?;
     let options = scan_options(state, &root)?;
     let cache = state.cache.clone();
-    tokio::task::spawn_blocking(move || scan_project_cached(root, &options, cache.as_ref()))
-        .await
-        .map_err(|error| ApiError::internal(format!("scanner task failed: {error}")))?
-        .map(|output| output.graph)
-        .map_err(|error| ApiError::internal(error.to_string()))
+    let semantic_cache = cache
+        .as_ref()
+        .map(|cache| SemanticLspCache::new(cache.dir().join("semantic-lsp")));
+    let enrichment = AutoEnrichmentOptions {
+        enabled: state.semantic_auto,
+        ..AutoEnrichmentOptions::default()
+    };
+    tokio::task::spawn_blocking(move || {
+        let graph = scan_project_cached(&root, &options, cache.as_ref())?.graph;
+        let (graph, _) = auto_enrich_graph(&root, graph, semantic_cache.as_ref(), &enrichment);
+        Ok::<_, codegraph_storage::CacheError>(graph)
+    })
+    .await
+    .map_err(|error| ApiError::internal(format!("scanner task failed: {error}")))?
+    .map_err(|error| ApiError::internal(error.to_string()))
 }
 
 pub(crate) fn scan_options(state: &AppState, root: &Path) -> Result<IndexOptions, ApiError> {

@@ -3930,3 +3930,215 @@ mod tests {
         ))
     }
 }
+
+/// Settings for the automatic semantic pass that runs after a scan when the
+/// matching language servers happen to be installed.
+#[derive(Debug, Clone)]
+pub struct AutoEnrichmentOptions {
+    pub enabled: bool,
+    pub work_item_limit: usize,
+    pub request_timeout: Duration,
+}
+
+impl Default for AutoEnrichmentOptions {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            work_item_limit: DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+            request_timeout: Duration::from_millis(DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS),
+        }
+    }
+}
+
+/// What the automatic pass actually did, so callers (and the graph itself) can
+/// report whether a result is syntax-only or semantically enriched.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AutoEnrichmentReport {
+    pub applied: bool,
+    pub servers: Vec<String>,
+    pub semantic_edges: usize,
+    pub replaced_edges: usize,
+    pub skipped_reason: Option<String>,
+}
+
+impl AutoEnrichmentReport {
+    fn skipped(reason: &str) -> Self {
+        Self {
+            applied: false,
+            servers: Vec::new(),
+            semantic_edges: 0,
+            replaced_edges: 0,
+            skipped_reason: Some(reason.to_string()),
+        }
+    }
+}
+
+/// Languages that actually appear in the graph, by node metadata.
+fn graph_languages(graph: &CodeGraph) -> BTreeSet<String> {
+    graph
+        .nodes
+        .iter()
+        .filter_map(|node| node.metadata.get("language").cloned())
+        .collect()
+}
+
+/// Enrich a freshly scanned graph with language-server facts when servers for
+/// its languages are installed, and record on the root node what happened.
+///
+/// This deliberately trades reproducibility for accuracy: the same sources can
+/// produce different graphs on machines with different servers installed, so
+/// the result is always labeled (`semantic_enrichment` on the root node) and
+/// callers that need a reproducible graph — CI gates above all — must disable
+/// it. Server responses are cached, so only the first run pays for the server.
+pub fn auto_enrich_graph(
+    root: &Path,
+    graph: CodeGraph,
+    cache: Option<&SemanticLspCache>,
+    options: &AutoEnrichmentOptions,
+) -> (CodeGraph, AutoEnrichmentReport) {
+    if !options.enabled {
+        return (graph, AutoEnrichmentReport::skipped("disabled"));
+    }
+
+    let languages = graph_languages(&graph);
+    if languages.is_empty() {
+        return (
+            graph,
+            AutoEnrichmentReport::skipped("no languages in graph"),
+        );
+    }
+
+    let discovery = discover_lsp_servers();
+    let servers: Vec<String> = discovery
+        .servers
+        .iter()
+        .filter(|server| {
+            server.installed
+                && server
+                    .languages
+                    .iter()
+                    .any(|language| languages.contains(*language))
+        })
+        .map(|server| server.id.to_string())
+        .collect();
+    if servers.is_empty() {
+        return (
+            graph,
+            AutoEnrichmentReport::skipped("no language server installed for these languages"),
+        );
+    }
+
+    let batch = semantic_execution_batch(
+        root,
+        &graph,
+        options.work_item_limit,
+        SemanticWorkItemFilter::default(),
+    );
+    let run = match run_semantic_execution_batch_cached(
+        cache,
+        &batch,
+        &SemanticLspRunOptions {
+            request_timeout: options.request_timeout,
+        },
+    ) {
+        Ok(run) => run,
+        // A failing server must never fail the scan: fall back to the
+        // syntactic graph and say why.
+        Err(error) => {
+            return (graph, AutoEnrichmentReport::skipped(&error.to_string()));
+        }
+    };
+
+    let patch = semantic_graph_patch_from_responses(root, &graph, &batch, &run.responses);
+    let applied = apply_semantic_graph_patch(&graph, &patch);
+    let mut enriched = applied.graph;
+    let report = AutoEnrichmentReport {
+        applied: true,
+        servers: servers.clone(),
+        semantic_edges: applied.report.added_edges,
+        replaced_edges: applied.report.replaced_edges,
+        skipped_reason: None,
+    };
+    let root_id = enriched.root;
+    if let Some(node) = enriched.nodes.iter_mut().find(|node| node.id == root_id) {
+        node.metadata
+            .insert("semantic_enrichment".to_string(), "applied".to_string());
+        node.metadata
+            .insert("semantic_servers".to_string(), servers.join(","));
+    }
+    (enriched, report)
+}
+
+#[cfg(test)]
+mod auto_enrichment_tests {
+    use super::*;
+    use codegraph_core::NodeKind;
+
+    #[test]
+    fn disabled_enrichment_returns_the_graph_untouched() {
+        let mut graph = CodeGraph::new("repo");
+        graph.add_node(NodeKind::Function, "main");
+        let before = graph.clone();
+        let (after, report) = auto_enrich_graph(
+            Path::new("."),
+            graph,
+            None,
+            &AutoEnrichmentOptions {
+                enabled: false,
+                ..AutoEnrichmentOptions::default()
+            },
+        );
+        assert_eq!(after, before, "a disabled pass must not touch the graph");
+        assert!(!report.applied);
+        assert_eq!(report.skipped_reason.as_deref(), Some("disabled"));
+    }
+
+    #[test]
+    fn a_graph_without_languages_is_skipped_not_enriched() {
+        // Nodes carry no language metadata, so no server could apply.
+        let mut graph = CodeGraph::new("repo");
+        graph.add_node(NodeKind::File, "notes.txt");
+        let before = graph.clone();
+        let (after, report) = auto_enrich_graph(
+            Path::new("."),
+            graph,
+            None,
+            &AutoEnrichmentOptions::default(),
+        );
+        assert_eq!(after, before);
+        assert!(!report.applied);
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some("no languages in graph")
+        );
+    }
+
+    #[test]
+    fn enrichment_is_skipped_when_no_server_matches_the_languages() {
+        // A language no bundled server covers can never be enriched, whatever
+        // is installed on the machine — so this stays deterministic in CI.
+        let mut graph = CodeGraph::new("repo");
+        let id = graph.add_node(NodeKind::Function, "handler");
+        if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == id) {
+            node.metadata
+                .insert("language".to_string(), "cobol".to_string());
+        }
+        let before = graph.clone();
+        let (after, report) = auto_enrich_graph(
+            Path::new("."),
+            graph,
+            None,
+            &AutoEnrichmentOptions::default(),
+        );
+        assert_eq!(after, before);
+        assert!(!report.applied);
+        assert!(
+            report
+                .skipped_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("no language server")),
+            "unexpected reason: {:?}",
+            report.skipped_reason
+        );
+    }
+}

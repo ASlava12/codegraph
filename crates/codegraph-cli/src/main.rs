@@ -45,12 +45,12 @@ use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
 };
 use codegraph_lsp::{
-    DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS, DEFAULT_SEMANTIC_WORK_ITEM_LIMIT, SemanticLspCache,
-    SemanticLspResponse, SemanticLspRunOptions, SemanticWorkItemFilter, apply_semantic_graph_patch,
-    discover_lsp_servers, normalize_semantic_request_timeout_ms,
-    normalize_semantic_work_item_limit, run_semantic_execution_batch_cached,
-    semantic_enrichment_plan_with_filter, semantic_execution_batch,
-    semantic_graph_patch_from_responses, semantic_readiness,
+    AutoEnrichmentOptions, DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS, DEFAULT_SEMANTIC_WORK_ITEM_LIMIT,
+    SemanticLspCache, SemanticLspResponse, SemanticLspRunOptions, SemanticWorkItemFilter,
+    apply_semantic_graph_patch, auto_enrich_graph, discover_lsp_servers,
+    normalize_semantic_request_timeout_ms, normalize_semantic_work_item_limit,
+    run_semantic_execution_batch_cached, semantic_enrichment_plan_with_filter,
+    semantic_execution_batch, semantic_graph_patch_from_responses, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
@@ -1354,6 +1354,13 @@ struct CacheArgs {
     /// Directory for persistent graph cache records.
     #[arg(long)]
     cache_dir: Option<PathBuf>,
+
+    /// Skip the automatic semantic pass and keep the scan syntax-only.
+    /// Use this whenever the graph must be reproducible — CI gates above all —
+    /// since the automatic pass depends on which language servers are
+    /// installed on the machine.
+    #[arg(long)]
+    no_semantic: bool,
 }
 
 #[derive(Debug, Args)]
@@ -3138,7 +3145,17 @@ fn scan_with_options(
                 .unwrap_or_else(default_cache_dir),
         )
     });
-    Ok(scan_project_cached(path, &options, cache.as_ref())?.graph)
+    let graph = scan_project_cached(&path, &options, cache.as_ref())?.graph;
+    let (graph, _) = auto_enrich_graph(
+        &path,
+        graph,
+        semantic_cache_from_args(cache_args).as_ref(),
+        &AutoEnrichmentOptions {
+            enabled: !cache_args.no_semantic,
+            ..AutoEnrichmentOptions::default()
+        },
+    );
+    Ok(graph)
 }
 
 fn semantic_cache_from_args(cache_args: &CacheArgs) -> Option<SemanticLspCache> {

@@ -3345,6 +3345,7 @@ fn test_state(root: PathBuf, additional: Vec<PathBuf>, allow_any_path: bool) -> 
         access_log_enabled: true,
         scan_permits: Arc::new(Semaphore::new(DEFAULT_MAX_SCAN_CONCURRENCY)),
         semantic_permits: Arc::new(Semaphore::new(DEFAULT_MAX_SEMANTIC_CONCURRENCY)),
+        semantic_auto: false,
         next_job_id: Arc::new(AtomicU64::new(1)),
         scan_cancellations: Arc::new(RwLock::new(BTreeMap::new())),
     }

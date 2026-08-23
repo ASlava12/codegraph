@@ -23,6 +23,11 @@ use crate::*;
 #[command(about = "Serve the CodeGraph API and web interface")]
 #[command(version)]
 pub(crate) struct Args {
+    /// Skip the automatic semantic pass, keeping every scan syntax-only and
+    /// reproducible regardless of which language servers are installed.
+    #[arg(long)]
+    pub(crate) no_semantic: bool,
+
     /// Project root exposed to the scanner.
     #[arg(long, default_value = ".")]
     pub(crate) root: PathBuf,
@@ -110,6 +115,7 @@ pub(crate) struct AppState {
     pub(crate) access_log_enabled: bool,
     pub(crate) scan_permits: Arc<Semaphore>,
     pub(crate) semantic_permits: Arc<Semaphore>,
+    pub(crate) semantic_auto: bool,
     pub(crate) next_job_id: Arc<AtomicU64>,
     /// Cancellation tokens for scans currently running, keyed by job id, so
     /// canceling a job actually stops the work instead of only relabeling it.

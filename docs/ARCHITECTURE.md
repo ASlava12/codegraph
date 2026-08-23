@@ -181,6 +181,27 @@ Responsibilities:
 native WebView window (tao/wry), killing the child server when the window
 closes. The UI visualizes the graph without owning analysis logic.
 
+## Semantic Enrichment
+
+A scan runs the syntactic pass first, then — when a language server for one of
+the graph's languages is installed — asks that server to resolve what syntax
+cannot: call targets behind type inference above all. The result is applied as
+a patch over the syntactic graph, so the base facts never change; only new
+`confidence: semantic` edges are added or ambiguous ones replaced.
+
+This is a deliberate trade: two machines with different servers installed
+produce different graphs. It is contained by three rules:
+
+- the root node records `semantic_enrichment` and `semantic_servers`, so any
+  consumer can tell an enriched graph from a syntax-only one;
+- a failing or missing server never fails the scan — it degrades to the
+  syntactic graph and reports why;
+- `--no-semantic` disables the pass, which is mandatory for CI gates and any
+  workflow comparing graphs across machines.
+
+Server responses are cached and keyed on file stamps, so only the first scan
+after a change pays for the server.
+
 ## Confidence Model
 
 Graph facts should declare how they were discovered:
