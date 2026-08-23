@@ -16,6 +16,7 @@
 use anyhow::Result;
 use codegraph_analysis::{ProjectReportLimits, project_report, query_graph};
 use codegraph_core::{CodeGraph, NodeKind};
+use codegraph_parser::adapter_for_path;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -54,6 +55,10 @@ pub struct RecallTask {
     pub recall_basis_points: u64,
     /// Up to ten oracle items the graph missed, for direct follow-up.
     pub sample_misses: Vec<String>,
+    /// Misses that live only in files no language adapter parses — code
+    /// samples inside documentation, HTML templates. The graph never claims
+    /// those, so they measure the corpus difference rather than extraction.
+    pub misses_outside_parsed_source: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -168,14 +173,32 @@ fn inside_string_literal(line: &str, column: usize) -> bool {
 
 /// Oracle 1: function definition names from plain header scanning,
 /// independent of the Tree-sitter pipeline.
-fn oracle_function_names(files: &[CorpusFile]) -> BTreeSet<String> {
+/// Oracle names, plus the subset that only ever appears in files no language
+/// adapter parses.
+fn oracle_function_names_by_origin(files: &[CorpusFile]) -> (BTreeSet<String>, BTreeSet<String>) {
     const HEADS: &[&str] = &["fn ", "def ", "func ", "function "];
     let mut names = BTreeSet::new();
+    let mut parsed_source_names = BTreeSet::new();
     for file in files {
         let Some(text) = oracle_text(file) else {
             continue;
         };
+        // A `def` inside a docstring is a code sample, not a definition: the
+        // single-line guard below already refuses matches inside a string
+        // literal, and a triple-quoted block is the same thing spread over
+        // lines. Flask's `ctx.py` and `sansio/app.py` document themselves with
+        // `.. code-block:: python`, and every one of those samples counted
+        // against extraction.
+        let mut inside_block_string = false;
         for line in text.lines() {
+            let fences = line.matches("\"\"\"").count() + line.matches("'''").count();
+            let opened_here = inside_block_string;
+            if fences % 2 == 1 {
+                inside_block_string = !inside_block_string;
+            }
+            if opened_here {
+                continue;
+            }
             let trimmed = line.trim_start();
             let stripped = trimmed
                 .strip_prefix("pub ")
@@ -193,12 +216,16 @@ fn oracle_function_names(files: &[CorpusFile]) -> BTreeSet<String> {
                     && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
                     && rest[name.len()..].trim_start().starts_with('(')
                 {
+                    if adapter_for_path(Path::new(&file.path)).is_some() {
+                        parsed_source_names.insert(name.clone());
+                    }
                     names.insert(name);
                 }
             }
         }
     }
-    names
+    let documentation_only = names.difference(&parsed_source_names).cloned().collect();
+    (names, documentation_only)
 }
 
 /// Oracle 2: environment keys from common read patterns in source text.
@@ -287,13 +314,21 @@ pub fn run_benchmark(graph: &CodeGraph, root: &Path, samples: usize) -> Result<B
 
     // Recall against text-scan oracles.
     let mut recall = Vec::new();
-    let oracle_functions = oracle_function_names(&files);
+    let (oracle_functions, documentation_only_functions) = oracle_function_names_by_origin(&files);
     let missing_functions: Vec<String> = oracle_functions
         .iter()
         .filter(|name| !function_labels.contains(name.as_str()))
         .cloned()
         .collect();
+    // A `def` inside an .rst tutorial or an .html template is a text-scan hit
+    // the graph never claimed; counting it silently made extraction look worse
+    // than it is (101 of Flask's 457 oracle names live only in prose).
+    let misses_outside_parsed_source = missing_functions
+        .iter()
+        .filter(|name| documentation_only_functions.contains(name.as_str()))
+        .count();
     recall.push(RecallTask {
+        misses_outside_parsed_source,
         task: "function_definitions".to_string(),
         expected: oracle_functions.len(),
         found: oracle_functions.len() - missing_functions.len(),
@@ -318,6 +353,8 @@ pub fn run_benchmark(graph: &CodeGraph, root: &Path, samples: usize) -> Result<B
         .cloned()
         .collect();
     recall.push(RecallTask {
+        // Environment keys are read from source, never from prose samples.
+        misses_outside_parsed_source: 0,
         task: "environment_reads".to_string(),
         expected: oracle_keys.len(),
         found: oracle_keys.len() - missing_keys.len(),
@@ -470,6 +507,53 @@ mod tests {
     }
 
     #[test]
+    fn a_sample_in_prose_is_not_a_missing_definition() {
+        let root = temp_dir();
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(
+            root.join("app.py"),
+            "def real_function():\n    \"\"\"Usage:\n\n    def docstring_sample():\n        pass\n    \"\"\"\n    return 1\n",
+        )
+        .unwrap();
+        // A tutorial is not source: the scanner never claims what it shows.
+        fs::write(
+            root.join("docs").join("guide.rst"),
+            "Guide\n=====\n\n.. code-block:: python\n\n    def tutorial_sample():\n        pass\n",
+        )
+        .unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).expect("scan");
+        let report = run_benchmark(&graph, &root, 10).expect("benchmark");
+        let functions = report
+            .recall
+            .iter()
+            .find(|task| task.task == "function_definitions")
+            .expect("function recall task");
+
+        // The docstring sample is not counted at all; the tutorial one is
+        // counted but attributed to prose rather than to extraction.
+        assert!(
+            !functions
+                .sample_misses
+                .iter()
+                .any(|name| name == "docstring_sample"),
+            "a definition inside a string is not a definition: {:?}",
+            functions.sample_misses
+        );
+        assert!(
+            functions
+                .sample_misses
+                .iter()
+                .any(|name| name == "tutorial_sample"),
+            "{:?}",
+            functions.sample_misses
+        );
+        assert_eq!(functions.misses_outside_parsed_source, 1);
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn benchmark_measures_recall_and_savings_on_mixed_corpus() {
         let root = temp_dir();
         fs::create_dir_all(root.join("src")).unwrap();
@@ -569,7 +653,7 @@ mod tests {
                     .to_string(),
             ),
         }];
-        let names = oracle_function_names(&files);
+        let (names, _) = oracle_function_names_by_origin(&files);
         assert!(names.contains("alpha"));
         assert!(names.contains("beta"));
         assert!(!names.contains("9bad"), "digit-leading names rejected");
@@ -622,7 +706,7 @@ mod tests {
             "test-path files are excluded: {keys:?}"
         );
 
-        let names = oracle_function_names(&files);
+        let (names, _) = oracle_function_names_by_origin(&files);
         assert!(names.contains("real_reader"));
         assert!(
             !names.contains("test_only_helper"),
