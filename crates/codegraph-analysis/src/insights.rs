@@ -3256,10 +3256,34 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
             .collect::<Vec<_>>()
             .join(" -> ");
         let suffix = if component.len() > 5 { " -> ..." } else { "" };
+        // A cycle inside one file is mutual recursion — a parser calling
+        // itself down a tree — and every one of terraform's 50 cycles and
+        // dune's 50 is of that kind. A cycle that crosses files is the
+        // coupling the finding exists to surface, so only that one is a
+        // warning.
+        let placed: Vec<&str> = component
+            .iter()
+            .filter_map(|id| graph.nodes.iter().find(|node| node.id == *id))
+            .filter_map(|node| node.span.as_ref().map(|span| span.path.as_str()))
+            .collect();
+        let files: BTreeSet<&str> = placed.iter().copied().collect();
+        // Unknown is not the same as confined: a cycle is only local when
+        // every node in it is known to sit in the one file.
+        let crosses_files = !(files.len() == 1 && placed.len() == component.len());
+        let severity = if crosses_files {
+            InsightSeverity::Warning
+        } else {
+            InsightSeverity::Info
+        };
+        let scope = if crosses_files {
+            "across files"
+        } else {
+            "inside one file"
+        };
         insights.push(Insight {
             kind: "dependency_cycle".to_string(),
-            severity: InsightSeverity::Warning,
-            message: format!("Directed dependency cycle involving {labels}{suffix}"),
+            severity,
+            message: format!("Directed dependency cycle {scope} involving {labels}{suffix}"),
             nodes: component,
             edges: component_edges,
         });

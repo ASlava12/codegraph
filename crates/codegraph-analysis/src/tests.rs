@@ -10490,3 +10490,54 @@ fn a_test_and_a_build_config_are_reached_by_their_own_runners() {
         messages[0]
     );
 }
+
+#[test]
+fn recursion_inside_a_file_is_not_the_coupling_a_cycle_warns_about() {
+    // `ProposedNew -> proposedNew -> proposedNewBlockOrObject -> …` is a
+    // parser walking a tree, and every one of terraform's 50 cycles and
+    // dune's 50 is of that kind. A cycle that crosses files is the
+    // coupling the finding exists to surface.
+    let mut graph = CodeGraph::new("repo");
+    let at = |graph: &mut CodeGraph, label: &str, path: &str| {
+        graph.add_node_with_span(
+            NodeKind::Function,
+            label,
+            SourceSpan {
+                path: path.to_string(),
+                start_line: 1,
+                start_column: 1,
+                end_line: 2,
+                end_column: 1,
+            },
+        )
+    };
+    let walk = at(&mut graph, "walk", "src/parse.rs");
+    let walk_block = at(&mut graph, "walk_block", "src/parse.rs");
+    graph.add_edge(walk, walk_block, EdgeKind::Calls, Confidence::Syntactic);
+    graph.add_edge(walk_block, walk, EdgeKind::Calls, Confidence::Syntactic);
+
+    let store = at(&mut graph, "store_write", "src/store.rs");
+    let cache = at(&mut graph, "cache_fill", "src/cache.rs");
+    graph.add_edge(store, cache, EdgeKind::Calls, Confidence::Syntactic);
+    graph.add_edge(cache, store, EdgeKind::Calls, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    let cycles: Vec<&Insight> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "dependency_cycle")
+        .collect();
+    assert_eq!(cycles.len(), 2, "both cycles are still reported");
+
+    let inside = cycles
+        .iter()
+        .find(|insight| insight.message.contains("inside one file"))
+        .expect("the recursion is reported");
+    assert_eq!(inside.severity, InsightSeverity::Info);
+
+    let across = cycles
+        .iter()
+        .find(|insight| insight.message.contains("across files"))
+        .expect("the coupling is reported");
+    assert_eq!(across.severity, InsightSeverity::Warning);
+}
