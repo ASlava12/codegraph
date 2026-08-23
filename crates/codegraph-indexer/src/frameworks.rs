@@ -574,14 +574,19 @@ pub(crate) fn route_from_call_line(
     framework: &str,
     allowed_receivers: &[&str],
 ) -> Option<FrameworkRoute> {
+    // Every line of every file reaches this, so the cheap facts come
+    // first: a route calls something and names its path with a string
+    // literal, and a line with neither cannot be one.
+    if !line.contains('(') || !line.contains(['"', '\'', '`']) {
+        return None;
+    }
     let lower = line.to_ascii_lowercase();
-    let method = route_methods()
+    let method = route_method_needles()
         .iter()
-        .find(|method| {
-            let method = method.to_ascii_lowercase();
-            route_receiver_matches(&lower, &method, allowed_receivers)
+        .find(|(_, dotted, arrowed)| {
+            route_receiver_matches(&lower, dotted, arrowed, allowed_receivers)
         })
-        .copied()?;
+        .map(|(method, _, _)| *method)?;
     let path = first_quoted_value(line)?;
     let handler = handler_after_first_comma(line);
     Some(FrameworkRoute {
@@ -593,11 +598,29 @@ pub(crate) fn route_from_call_line(
     })
 }
 
-pub(crate) fn route_receiver_matches(line: &str, method: &str, allowed_receivers: &[&str]) -> bool {
-    let Some(method_index) = line
-        .find(&format!(".{method}("))
-        .or_else(|| line.find(&format!("->{method}(")))
-    else {
+/// The two shapes a route call takes, lowercased once rather than built
+/// afresh for every method on every line of every file.
+fn route_method_needles() -> &'static [(&'static str, String, String)] {
+    static NEEDLES: std::sync::OnceLock<Vec<(&'static str, String, String)>> =
+        std::sync::OnceLock::new();
+    NEEDLES.get_or_init(|| {
+        route_methods()
+            .iter()
+            .map(|method| {
+                let lowered = method.to_ascii_lowercase();
+                (*method, format!(".{lowered}("), format!("->{lowered}("))
+            })
+            .collect()
+    })
+}
+
+pub(crate) fn route_receiver_matches(
+    line: &str,
+    dotted: &str,
+    arrowed: &str,
+    allowed_receivers: &[&str],
+) -> bool {
+    let Some(method_index) = line.find(dotted).or_else(|| line.find(arrowed)) else {
         return false;
     };
     let receiver = line[..method_index]
