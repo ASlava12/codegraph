@@ -1818,8 +1818,10 @@ pub(crate) fn validate_node_terms(spec: &QuerySpec) -> Result<(), QueryError> {
         if is_node_term(key) {
             continue;
         }
+        // Name what is accepted: the unknown-command error does, and an agent
+        // that gets only "unsupported" has to go read the docs to recover.
         return Err(QueryError::new(format!(
-            "unsupported node query term `{key}`"
+            "unsupported node query term `{key}`; expected id, stable_id, kind, label, search, language, item_kind, package_id, or metadata.<key>"
         )));
     }
     Ok(())
@@ -1831,7 +1833,7 @@ pub(crate) fn validate_edge_terms(spec: &QuerySpec) -> Result<(), QueryError> {
             continue;
         }
         return Err(QueryError::new(format!(
-            "unsupported edge query term `{key}`"
+            "unsupported edge query term `{key}`; expected kind, source, target, confidence, edge, edge_index, or metadata.<key>"
         )));
     }
     Ok(())
@@ -3811,7 +3813,9 @@ pub(crate) fn resolve_node_reference(graph: &CodeGraph, value: &str) -> Option<N
                 .get("stable_id")
                 .is_some_and(|stable_id| stable_id == value)
         })
-        .or_else(|| graph.nodes.iter().find(|node| node.label == value))
+        // An exact label can name many nodes (`main` names 15 on terraform);
+        // rank them instead of taking whichever the file walk reached first.
+        .or_else(|| best_labelled_node(graph, value))
         .or_else(|| {
             // Substring fallback only when it is unambiguous: with several
             // candidates the winner would be whichever node happens to come

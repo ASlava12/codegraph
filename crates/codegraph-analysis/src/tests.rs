@@ -4856,6 +4856,46 @@ fn natural_query_routes_env_tokens_with_read_verbs_to_config_rule() {
 }
 
 #[test]
+fn an_ambiguous_query_anchor_resolves_to_the_program() {
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    // Graph order puts the CI script first, which is what `path:` and
+    // `neighbors label:` used to bind to.
+    let script_main = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "main",
+        span(".github/scripts/release.sh"),
+        BTreeMap::new(),
+    );
+    let program_main =
+        graph.add_node_with_metadata(NodeKind::Function, "main", span("main.go"), BTreeMap::new());
+    let helper = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "helper",
+        span("main.go"),
+        BTreeMap::new(),
+    );
+    graph.add_edge(program_main, helper, EdgeKind::Calls, Confidence::Heuristic);
+
+    let result = query_graph(&graph, "path from:main to:helper").expect("path query");
+    let ids: Vec<_> = result.nodes.iter().map(|node| node.id).collect();
+    assert_eq!(
+        ids,
+        vec![program_main, helper],
+        "the path must start at the program, not at the CI script"
+    );
+    assert!(!ids.contains(&script_main));
+}
+
+#[test]
 fn a_symbol_named_after_a_keyword_does_not_hijack_the_question() {
     let rule = |question: &str| natural_query_plan(question).expect("plan").rule;
 

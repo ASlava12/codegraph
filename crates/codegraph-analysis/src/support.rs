@@ -30,60 +30,64 @@ pub(crate) fn resolve_trace_start<'a>(
 ) -> Option<&'a Node> {
     match start {
         TraceStart::NodeId(id) => graph.nodes.iter().find(|node| node.id == *id),
-        TraceStart::Label(label) => {
-            let mut matches = graph.nodes.iter().filter(|node| &node.label == label);
-            let first = matches.next()?;
-            if matches.next().is_none() {
-                return Some(first);
-            }
-
-            let entrypoint_ids: BTreeSet<NodeId> = graph
-                .edges
-                .iter()
-                .filter(|edge| edge.kind == EdgeKind::Entrypoint)
-                .map(|edge| edge.target)
-                .collect();
-            // Declared programs: a node that a manifest-declared entrypoint
-            // points at, such as the `main` behind `cargo bin:codegraph-cli`.
-            // A build script's `main` has no declaration behind it, and a
-            // shebang script is a weaker claim than a manifest binary — a
-            // vendored `gen_travis.py` should not outrank a project's own
-            // program.
-            let entrypoint_nodes: BTreeSet<NodeId> = graph
-                .nodes
-                .iter()
-                .filter(|node| {
-                    node.kind == NodeKind::Entrypoint
-                        && node
-                            .metadata
-                            .get("source")
-                            .is_some_and(|source| source == "manifest")
-                })
-                .map(|node| node.id)
-                .collect();
-            let declared_ids: BTreeSet<NodeId> = graph
-                .edges
-                .iter()
-                .filter(|edge| entrypoint_nodes.contains(&edge.source))
-                .map(|edge| edge.target)
-                .collect();
-            graph
-                .nodes
-                .iter()
-                .filter(|node| &node.label == label)
-                .min_by_key(|node| {
-                    let path = node.span.as_ref().map(|span| span.path.as_str());
-                    (
-                        u8::from(path.is_some_and(is_test_like_source_path)),
-                        u8::from(!declared_ids.contains(&node.id)),
-                        u8::from(!entrypoint_ids.contains(&node.id)),
-                        path.map_or(usize::MAX, |path| path.matches('/').count()),
-                        node.id,
-                    )
-                })
-                .or(Some(first))
-        }
+        TraceStart::Label(label) => best_labelled_node(graph, label),
     }
+}
+
+/// The node a label most likely means, ranked as described on
+/// [`resolve_trace_start`].
+pub(crate) fn best_labelled_node<'a>(graph: &'a CodeGraph, label: &str) -> Option<&'a Node> {
+    let mut matches = graph.nodes.iter().filter(|node| node.label == label);
+    let first = matches.next()?;
+    if matches.next().is_none() {
+        return Some(first);
+    }
+
+    let entrypoint_ids: BTreeSet<NodeId> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Entrypoint)
+        .map(|edge| edge.target)
+        .collect();
+    // Declared programs: a node that a manifest-declared entrypoint
+    // points at, such as the `main` behind `cargo bin:codegraph-cli`.
+    // A build script's `main` has no declaration behind it, and a
+    // shebang script is a weaker claim than a manifest binary — a
+    // vendored `gen_travis.py` should not outrank a project's own
+    // program.
+    let entrypoint_nodes: BTreeSet<NodeId> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == NodeKind::Entrypoint
+                && node
+                    .metadata
+                    .get("source")
+                    .is_some_and(|source| source == "manifest")
+        })
+        .map(|node| node.id)
+        .collect();
+    let declared_ids: BTreeSet<NodeId> = graph
+        .edges
+        .iter()
+        .filter(|edge| entrypoint_nodes.contains(&edge.source))
+        .map(|edge| edge.target)
+        .collect();
+    graph
+        .nodes
+        .iter()
+        .filter(|node| node.label == label)
+        .min_by_key(|node| {
+            let path = node.span.as_ref().map(|span| span.path.as_str());
+            (
+                u8::from(path.is_some_and(is_test_like_source_path)),
+                u8::from(!declared_ids.contains(&node.id)),
+                u8::from(!entrypoint_ids.contains(&node.id)),
+                path.map_or(usize::MAX, |path| path.matches('/').count()),
+                node.id,
+            )
+        })
+        .or(Some(first))
 }
 
 pub(crate) fn node_index(graph: &CodeGraph) -> BTreeMap<NodeId, &Node> {
