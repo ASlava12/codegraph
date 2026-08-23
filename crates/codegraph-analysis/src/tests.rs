@@ -7114,6 +7114,81 @@ fn insights_report_unreachable_config_reads() {
 }
 
 #[test]
+fn insights_report_low_entrypoint_coverage() {
+    let mut graph = CodeGraph::new("repo");
+    let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+    let main = graph.add_node(NodeKind::Function, "main");
+    graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+    graph.add_edge(entry, main, EdgeKind::References, Confidence::Exact);
+    // Every function is called from main and the calls resolve, so coverage is
+    // high and the diagnostic stays quiet.
+    for index in 0..40 {
+        let orphan = graph.add_node(NodeKind::Function, format!("worker_{index}"));
+        graph.add_edge(main, orphan, EdgeKind::Calls, Confidence::Heuristic);
+    }
+
+    let report = insights(&graph);
+    let insight = report
+        .insights
+        .iter()
+        .find(|insight| insight.kind == "low_entrypoint_coverage");
+    assert!(
+        insight.is_none(),
+        "resolved calls keep coverage high: {insight:?}"
+    );
+
+    let mut sparse = CodeGraph::new("repo");
+    let sparse_entry = sparse.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+    let sparse_main = sparse.add_node(NodeKind::Function, "main");
+    sparse.add_edge(
+        sparse.root,
+        sparse_entry,
+        EdgeKind::Entrypoint,
+        Confidence::Exact,
+    );
+    sparse.add_edge(
+        sparse_entry,
+        sparse_main,
+        EdgeKind::References,
+        Confidence::Exact,
+    );
+    let placeholder = sparse.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "client.Do",
+        None,
+        BTreeMap::from([("resolution".to_string(), "ambiguous".to_string())]),
+    );
+    sparse.add_edge(
+        sparse_main,
+        placeholder,
+        EdgeKind::Calls,
+        Confidence::Heuristic,
+    );
+    for index in 0..40 {
+        sparse.add_node(NodeKind::Function, format!("worker_{index}"));
+    }
+
+    let report = insights(&sparse);
+    let insight = report
+        .insights
+        .iter()
+        .find(|insight| insight.kind == "low_entrypoint_coverage")
+        .expect("expected a coverage diagnostic");
+    assert_eq!(insight.severity, InsightSeverity::Warning);
+    assert!(
+        insight.message.contains("1 of 41 functions"),
+        "{}",
+        insight.message
+    );
+    assert!(
+        insight.message.contains("0% of calls"),
+        "{}",
+        insight.message
+    );
+    assert!(insight.nodes.contains(&sparse_main) || insight.nodes.contains(&sparse_entry));
+}
+
+#[test]
 fn entrypoint_reachability_descends_from_a_file_into_its_symbols() {
     let mut graph = CodeGraph::new("repo");
     let entry = graph.add_node(NodeKind::Entrypoint, "script:scripts/release.sh");

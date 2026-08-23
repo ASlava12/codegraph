@@ -38,6 +38,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_unresolved_dockerfile_command_path_insights(graph, &mut insights);
     add_unresolved_makefile_command_path_insights(graph, &mut insights);
     add_entrypoint_dead_end_insights(graph, &mut insights);
+    add_entrypoint_coverage_insights(graph, &mut insights);
     add_unreachable_config_read_insights(graph, &mut insights);
     add_unreachable_error_flow_insights(graph, &mut insights);
     add_unreachable_source_file_insights(graph, &mut insights);
@@ -1562,6 +1563,86 @@ pub(crate) fn unresolved_framework_route_handler_target(graph: &CodeGraph, node:
                 .get("resolution")
                 .is_some_and(|resolution| resolution == "framework_route_handler")
     })
+}
+
+/// Below this share of functions reachable from an entrypoint, the
+/// `unreachable_*` findings describe the call graph's blind spots rather than
+/// dead code, and the reader deserves to be told which one they are looking at.
+const LOW_ENTRYPOINT_COVERAGE_NUMERATOR: usize = 1;
+const LOW_ENTRYPOINT_COVERAGE_DENOMINATOR: usize = 2;
+
+/// How many functions a project needs before its coverage is worth judging;
+/// a handful of functions says nothing either way.
+const MIN_FUNCTIONS_FOR_COVERAGE: usize = 20;
+
+/// State plainly how much of the project the entrypoints actually reach.
+///
+/// Reachability walks resolved calls, so a project whose calls mostly go
+/// through values (`client.Do(...)`) or outside the repository has few
+/// reachable functions no matter how alive its code is. Without this line the
+/// thousands of `unreachable_*` findings read as "this code is dead".
+pub(crate) fn add_entrypoint_coverage_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let reachable = entrypoint_reachable_nodes(graph);
+    if reachable.is_empty() {
+        return;
+    }
+
+    let functions: Vec<&Node> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Function)
+        .collect();
+    if functions.len() < MIN_FUNCTIONS_FOR_COVERAGE {
+        return;
+    }
+    let reached = functions
+        .iter()
+        .filter(|function| reachable.contains(&function.id))
+        .count();
+    if reached * LOW_ENTRYPOINT_COVERAGE_DENOMINATOR
+        >= functions.len() * LOW_ENTRYPOINT_COVERAGE_NUMERATOR
+    {
+        return;
+    }
+
+    let function_ids: BTreeSet<NodeId> = functions.iter().map(|function| function.id).collect();
+    let (calls, resolved_calls) = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Calls)
+        .fold((0usize, 0usize), |(total, resolved), edge| {
+            (
+                total + 1,
+                resolved + usize::from(function_ids.contains(&edge.target)),
+            )
+        });
+
+    let entrypoints: Vec<NodeId> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Entrypoint)
+        .map(|edge| edge.target)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    let coverage = percentage(reached, functions.len());
+    let resolution = percentage(resolved_calls, calls);
+    insights.push(Insight {
+        kind: "low_entrypoint_coverage".to_string(),
+        severity: InsightSeverity::Warning,
+        message: format!(
+            "entrypoints reach {reached} of {} functions ({coverage}%), and {resolution}% of calls resolve to a scanned function — treat `unreachable_*` findings as gaps in call resolution before reading them as dead code",
+            functions.len()
+        ),
+        nodes: entrypoints.into_iter().take(8).collect(),
+        edges: Vec::new(),
+    });
+}
+
+/// Whole-percent share, reported as 0 when there is nothing to divide.
+fn percentage(part: usize, whole: usize) -> usize {
+    (part * 100).checked_div(whole).unwrap_or_default()
 }
 
 pub(crate) fn add_unreachable_config_read_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
