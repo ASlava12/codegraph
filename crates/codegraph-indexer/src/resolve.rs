@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind};
+use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, is_test_like_source_path};
 
 #[allow(unused_imports)]
 use crate::*;
@@ -977,6 +977,25 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     .is_some_and(|language| language == &call.language)
             })
             .collect::<Vec<_>>();
+        // The program does not call its own tests. flask has exactly one
+        // function named `close` — a helper in tests/test_helpers.py — so
+        // `builder.close()` in src/flask/app.py resolved to it with full
+        // confidence, and 1143 such links existed across the corpora. A
+        // caller outside tests, examples and fixtures cannot mean one.
+        let caller_is_test = caller_path.is_some_and(is_test_like_source_path);
+        let language_targets = if caller_is_test {
+            language_targets
+        } else {
+            language_targets
+                .iter()
+                .copied()
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.span.as_ref())
+                        .is_none_or(|span| !is_test_like_source_path(&span.path))
+                })
+                .collect::<Vec<_>>()
+        };
         let local_targets = caller_path
             .map(|path| {
                 language_targets

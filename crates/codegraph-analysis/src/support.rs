@@ -1,6 +1,7 @@
 //! Shared graph helpers: edge indexes, workflow filters, path/area
 //! classification, and confidence naming.
 
+pub(crate) use codegraph_core::is_test_like_source_path;
 use codegraph_core::{CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -598,59 +599,6 @@ pub(crate) fn is_code_symbol(kind: &NodeKind) -> bool {
         kind,
         NodeKind::Function | NodeKind::Type | NodeKind::Module | NodeKind::Entrypoint
     )
-}
-
-pub(crate) fn is_test_like_source_path(path: &str) -> bool {
-    let normalized_original = path.replace('\\', "/");
-    let normalized = normalized_original.to_ascii_lowercase();
-    let file_name = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
-    let original_file_name = normalized_original
-        .rsplit('/')
-        .next()
-        .unwrap_or(normalized_original.as_str());
-    let stem = file_name
-        .rsplit_once('.')
-        .map(|(stem, _)| stem)
-        .unwrap_or(file_name);
-    normalized.split('/').any(|part| {
-        matches!(
-            part,
-            "test"
-                | "tests"
-                | "__test__"
-                | "__tests__"
-                | "spec"
-                | "specs"
-                | "testdata"
-                | "testing"
-                | "fixture"
-                | "fixtures"
-                | "example"
-                | "examples"
-                | "sample"
-                | "samples"
-                | "mock"
-                | "mocks"
-        )
-    }) || stem == "test"
-        || stem == "tests"
-        || stem.starts_with("test_")
-        || stem.ends_with("_test")
-        || stem.ends_with("_tests")
-        || stem.ends_with("_spec")
-        || stem.ends_with("_specs")
-        || file_name.contains(".test.")
-        || file_name.contains(".spec.")
-        || file_name.ends_with(".bats")
-        || original_file_name.ends_with("Test.php")
-        || original_file_name.ends_with("Spec.php")
-        || file_name.ends_with("_test.dart")
-        || file_name.ends_with(".g.dart")
-        || file_name.ends_with(".freezed.dart")
-        || file_name.ends_with(".mocks.dart")
-        || file_name.ends_with(".gen.dart")
-        || normalized.contains("/.dart_tool/")
-        || normalized.contains("/generated/")
 }
 
 pub(crate) fn is_dependency_manifest_source_path(path: &str) -> bool {

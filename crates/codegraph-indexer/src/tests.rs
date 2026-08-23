@@ -7380,3 +7380,54 @@ fn a_route_written_in_a_docstring_is_not_a_route() {
         "only the routes the program actually serves"
     );
 }
+
+#[test]
+fn code_outside_the_tests_does_not_call_into_them() {
+    // flask has exactly one function named `close` — a helper in
+    // tests/test_helpers.py — so `builder.close()` in src/flask/app.py
+    // resolved to it with full confidence. A unique name is not evidence
+    // when the only definition wearing it belongs to the tests, and 1143
+    // such links existed across the corpora.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("tests")).unwrap();
+    fs::write(
+        root.join("src").join("app.py"),
+        "def run(builder):\n    return builder.close()\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tests").join("test_helpers.py"),
+        "class Wrapper:\n    def close(self):\n        return 1\n\n\ndef exercise(builder):\n    return builder.close()\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call_from = |path: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some("builder.close")
+                    && graph
+                        .nodes
+                        .iter()
+                        .find(|node| node.id == edge.source)
+                        .and_then(|node| node.span.as_ref())
+                        .is_some_and(|span| span.path.ends_with(path))
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        call_from("app.py"),
+        "unresolved",
+        "the only `close` in the project is a test helper, so the call has no target here"
+    );
+    assert_eq!(
+        call_from("test_helpers.py"),
+        "resolved",
+        "a test may of course call its own helper"
+    );
+}

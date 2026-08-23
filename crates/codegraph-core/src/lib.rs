@@ -22,6 +22,90 @@ pub const CODEGRAPH_SCHEMA_VERSION: u32 = 1;
 /// cache that is too willing to be reused beats no cache at all, and the
 /// schema version still guards the record's shape. Computed once, because
 /// the per-file parse cache consults it for every file.
+/// Whether a name has "test" or "spec" among its words. Splitting is what
+/// makes it safe: `blackbox-tests`, `jvmTest`, `Newtonsoft.Json.Tests` and
+/// `BufferedSourceTest` all name tests, while `latest` and `manifest` do
+/// not, and a rule matching bare substrings cannot tell them apart.
+fn names_tests(part: &str) -> bool {
+    let mut word = String::new();
+    let mut found = false;
+    let mut previous_lowercase = false;
+    for character in part.chars() {
+        let boundary =
+            !character.is_alphanumeric() || (character.is_ascii_uppercase() && previous_lowercase);
+        if boundary {
+            found |= is_test_word(&word);
+            word.clear();
+        }
+        if character.is_alphanumeric() {
+            word.push(character.to_ascii_lowercase());
+        }
+        previous_lowercase = character.is_lowercase() || character.is_ascii_digit();
+    }
+    found | is_test_word(&word)
+}
+
+fn is_test_word(word: &str) -> bool {
+    matches!(word, "test" | "tests" | "spec" | "specs")
+}
+
+/// Whether a path belongs to tests, examples, fixtures or generated
+/// code rather than to the program itself. Shared because both the
+/// resolver and the ranking need the same answer: a call in `src/`
+/// resolving to a helper in `tests/` is not a dependency the program
+/// has, and 1143 such links existed across the corpora.
+pub fn is_test_like_source_path(path: &str) -> bool {
+    let normalized_original = path.replace('\\', "/");
+    let normalized = normalized_original.to_ascii_lowercase();
+    let file_name = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
+    let original_file_name = normalized_original
+        .rsplit('/')
+        .next()
+        .unwrap_or(normalized_original.as_str());
+    let stem = file_name
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(file_name);
+    normalized.split('/').any(|part| {
+        matches!(
+            part,
+            "testdata"
+                | "testing"
+                | "testthat"
+                | "fixture"
+                | "fixtures"
+                | "example"
+                | "examples"
+                | "sample"
+                | "samples"
+                | "mock"
+                | "mocks"
+        )
+    })
+        // Case matters for this one: `jvmTest` and `BufferedSourceTest`
+        // only give up their words before they are lowercased.
+        || normalized_original.split('/').any(names_tests)
+        || stem == "test"
+        || stem == "tests"
+        || stem.starts_with("test_")
+        || stem.ends_with("_test")
+        || stem.ends_with("_tests")
+        || stem.ends_with("_spec")
+        || stem.ends_with("_specs")
+        || file_name.contains(".test.")
+        || file_name.contains(".spec.")
+        || file_name.ends_with(".bats")
+        || original_file_name.ends_with("Test.php")
+        || original_file_name.ends_with("Spec.php")
+        || file_name.ends_with("_test.dart")
+        || file_name.ends_with(".g.dart")
+        || file_name.ends_with(".freezed.dart")
+        || file_name.ends_with(".mocks.dart")
+        || file_name.ends_with(".gen.dart")
+        || normalized.contains("/.dart_tool/")
+        || normalized.contains("/generated/")
+}
+
 pub fn build_identity() -> &'static str {
     static IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     IDENTITY.get_or_init(|| {
@@ -223,6 +307,36 @@ mod tests {
             let decoded: Confidence =
                 serde_json::from_value(encoded).expect("deserialize confidence");
             assert_eq!(decoded, confidence);
+        }
+    }
+}
+
+#[cfg(test)]
+mod test_path_words {
+    use super::is_test_like_source_path;
+
+    #[test]
+    fn recognises_test_conventions_without_swallowing_ordinary_names() {
+        for path in [
+            "okio/src/jvmTest/kotlin/okio/BufferedSourceTest.kt",
+            "test/blackbox-tests/expect-tests/foo.ml",
+            "Src/Newtonsoft.Json.Tests/JsonTextReaderTest.cs",
+            "packages/core/__tests__/index.spec.ts",
+            "tests/test_basic.py",
+            "src/foo_test.go",
+            "web/browser.test.js",
+        ] {
+            assert!(is_test_like_source_path(path), "{path}");
+        }
+        for path in [
+            "src/latest.rs",
+            "src/manifest.py",
+            "lib/contest/rules.rb",
+            "src/protest.go",
+            "crates/codegraph-core/src/lib.rs",
+            "src/specify_options.ts",
+        ] {
+            assert!(!is_test_like_source_path(path), "{path}");
         }
     }
 }
