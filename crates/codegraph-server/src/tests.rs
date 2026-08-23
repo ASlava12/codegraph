@@ -1155,7 +1155,9 @@ fn helper() {}
             block_limit: Some(20),
             limit: Some(10),
             edge_kind: Some("calls".to_string()),
-            confidence: Some("heuristic".to_string()),
+            // `main` and `helper` share a file, so the call carries the
+            // confidence the syntax earns rather than a name match's.
+            confidence: Some("syntactic".to_string()),
             language: None,
             risk_severity: None,
             block_kind: Some("call".to_string()),

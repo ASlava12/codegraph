@@ -1038,6 +1038,12 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             add_external_call_placeholder(context, call);
             continue;
         }
+        // What narrowed the candidates down. A call kept by the syntax —
+        // the file it sits in, the import that named the module, the
+        // receiver's declared type — is a different kind of fact from one
+        // that matched a name and nothing else, and every call edge used to
+        // claim the same `heuristic` confidence regardless.
+        let mut basis = "name";
         let mut targets = match &imported_package {
             Some(ImportedPackage::Local(candidates)) => {
                 let in_module = language_targets
@@ -1059,10 +1065,14 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 if in_module.is_empty() {
                     language_targets
                 } else {
+                    basis = "import";
                     in_module
                 }
             }
-            _ if !local_targets.is_empty() => local_targets,
+            _ if !local_targets.is_empty() => {
+                basis = "same_file";
+                local_targets
+            }
             _ => language_targets,
         };
 
@@ -1090,6 +1100,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 .collect::<Vec<_>>();
             if !same_package.is_empty() {
                 targets = same_package;
+                basis = "package";
             }
         }
         // A definition nested in another one is only visible inside it, so a
@@ -1123,6 +1134,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 .collect::<Vec<_>>();
             if !visible.is_empty() && visible.len() < targets.len() {
                 targets = visible;
+                basis = "lexical_scope";
             }
         }
 
@@ -1193,6 +1205,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 })
                 .collect::<Vec<_>>();
             if !owned.is_empty() {
+                basis = "receiver_type";
                 targets = owned;
             }
         }
@@ -1213,6 +1226,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 })
                 .collect::<Vec<_>>();
             if !owned.is_empty() {
+                basis = "owner_type";
                 targets = owned;
             }
         }
@@ -1372,6 +1386,14 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         metadata.insert("language".to_string(), call.language);
         metadata.insert("line".to_string(), call.span.start_line.to_string());
         metadata.insert("column".to_string(), call.span.start_column.to_string());
+        metadata.insert("resolution_basis".to_string(), basis.to_string());
+        // Matching a name across the repository is a guess; everything else
+        // here followed something the syntax states outright.
+        let confidence = if basis == "name" {
+            Confidence::Heuristic
+        } else {
+            Confidence::Syntactic
+        };
 
         for target in targets {
             add_edge_once_with_metadata(
@@ -1379,7 +1401,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 call.caller,
                 target,
                 EdgeKind::Calls,
-                Confidence::Heuristic,
+                confidence,
                 metadata.clone(),
             );
         }

@@ -2701,7 +2701,10 @@ fn scan_project_adds_approximate_call_edges() {
         edge.source == main_id
             && edge.target == helper_id
             && edge.kind == EdgeKind::Calls
-            && edge.confidence == Confidence::Heuristic
+            // Both sit in one file, so the syntax settles it rather than a
+            // name match across the repository.
+            && edge.confidence == Confidence::Syntactic
+            && edge.metadata.get("resolution_basis").map(String::as_str) == Some("same_file")
             && edge.metadata.get("call_label").map(String::as_str) == Some("helper")
             && edge.metadata.get("resolution").map(String::as_str) == Some("resolved")
     }));
@@ -7430,4 +7433,73 @@ fn code_outside_the_tests_does_not_call_into_them() {
         "resolved",
         "a test may of course call its own helper"
     );
+}
+
+#[test]
+fn a_call_edge_says_what_settled_it() {
+    // Every call edge claimed `heuristic` confidence, so a link the syntax
+    // settles read exactly like a name matched across the repository —
+    // 411374 edges carrying one constant instead of a fact.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("pkg")).unwrap();
+    fs::write(root.join("pkg").join("__init__.py"), "").unwrap();
+    fs::write(
+        root.join("pkg").join("helpers.py"),
+        "def build():\n    return 1\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("pkg").join("other.py"),
+        "def build():\n    return 2\n\n\ndef lonely():\n    return 3\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("pkg").join("app.py"),
+        "from .helpers import build\n\n\ndef near():\n    return 4\n\n\ndef run():\n    return build() + near() + lonely()\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+                    && graph
+                        .nodes
+                        .iter()
+                        .find(|node| node.id == edge.source)
+                        .and_then(|node| node.span.as_ref())
+                        .is_some_and(|span| span.path.ends_with("app.py"))
+            })
+            .unwrap_or_else(|| panic!("the call to {label} is recorded"))
+    };
+
+    let by_import = call("build");
+    assert_eq!(
+        by_import
+            .metadata
+            .get("resolution_basis")
+            .map(String::as_str),
+        Some("import"),
+        "the import named the module this one comes from"
+    );
+    assert_eq!(by_import.confidence, Confidence::Syntactic);
+
+    let by_file = call("near");
+    assert_eq!(
+        by_file.metadata.get("resolution_basis").map(String::as_str),
+        Some("same_file")
+    );
+    assert_eq!(by_file.confidence, Confidence::Syntactic);
+
+    // Nothing in `app.py` says where `lonely` lives; only its name matched.
+    let by_name = call("lonely");
+    assert_eq!(
+        by_name.metadata.get("resolution_basis").map(String::as_str),
+        Some("name")
+    );
+    assert_eq!(by_name.confidence, Confidence::Heuristic);
 }

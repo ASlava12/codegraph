@@ -36,7 +36,10 @@ Implemented now:
 - Framework route entrypoints for common Python, JavaScript/TypeScript, Rust, Go, and PHP web route declarations.
 - Rust/Axum route entrypoints handle multiline `.route(...)` calls and ignore string literal route markers.
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
-- Approximate `calls` edges between functions when syntax-level names can be resolved. A call that sits outside
+- Approximate `calls` edges between functions when syntax-level names can be resolved. Each edge records
+  what settled it in `resolution_basis` — the file it sits in, the import that named the module, the
+  package, the enclosing scope, the receiver's declared type, or the name alone — and carries
+  `syntactic` confidence for everything but the last. A call that sits outside
   any definition — a module initialiser, `bp.route(...)`, `if __name__ == "__main__": main()` — is attributed
   to the file that runs it; a call inside an unnamed callback is not, because it runs on invocation rather
   than on load.
