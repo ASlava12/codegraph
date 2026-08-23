@@ -7,6 +7,14 @@ use tree_sitter::Node;
 
 use crate::*;
 
+/// A shell positional parameter or one of the special parameters the
+/// shell itself sets: `$1`, `$0`, `$#`, `$@`, `$?`. They are the script's
+/// own arguments and state, not variables the environment provides.
+fn bash_positional_parameter(name: &str) -> bool {
+    name.chars().all(|character| character.is_ascii_digit())
+        || matches!(name, "@" | "*" | "#" | "?" | "$" | "!" | "-" | "_")
+}
+
 pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[u8]) -> bool {
     let text = short_node_text(node, source);
     let call = call_label(language, node, source);
@@ -85,6 +93,10 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                 && node
                     .parent()
                     .is_some_and(|parent| matches!(parent.kind(), "expansion" | "simple_expansion"))
+                // `"${1:-}"` and `"$0"` read the script's own arguments,
+                // not the environment. Recording them claimed terraform
+                // and redis read variables named `1` and `0`.
+                && !node_text(node, source).is_some_and(|name| bash_positional_parameter(&name))
         }
         Language::Ruby => match node.kind() {
             // `ENV['KEY']`
@@ -509,11 +521,44 @@ pub(crate) fn effect_label(
     // `read("")` produced nodes labelled with nothing at all, and a key or
     // path is exactly what an effect fact is named by. Fall through to the
     // expression instead, and file no fact when even that is empty.
-    first_string_literal(node, source)
+    let label = first_string_literal(node, source)
         .filter(|value| !value.trim().is_empty())
         .or_else(|| node_text(node, source).map(compact_label))
         .filter(|value| !value.trim().is_empty())
-        .map(|value| truncate_label(value, 120))
+        .map(|value| truncate_label(value, 120))?;
+
+    // A variable's name IS its identity, so an environment read whose key
+    // is computed has none to give. Falling through to the expression put
+    // `os.Getenv(envLogFile)` in the graph as though a variable were
+    // called that. Say what is known instead, and keep the expression on
+    // the fact as `key_expression`.
+    //
+    // The test is what came out, not how it was found: a shell reads
+    // `$HOME` with no string literal anywhere, and calling that computed
+    // would erase every environment read in every script.
+    if kind == ParsedItemKind::EnvironmentRead && !looks_like_environment_key(&label) {
+        return Some(COMPUTED_ENVIRONMENT_KEY.to_string());
+    }
+    Some(label)
+}
+
+/// What an environment read is called when its key is computed. The angle
+/// brackets are deliberate: no variable is named this, so it cannot be
+/// mistaken for one.
+pub const COMPUTED_ENVIRONMENT_KEY: &str = "<computed name>";
+
+/// Whether a label could be the name of an environment variable: letters,
+/// digits, underscores, and the dots and dashes some systems allow, not
+/// opening with a digit. Anything else — a call, an index, a template —
+/// is an expression that produced the name rather than the name itself.
+fn looks_like_environment_key(label: &str) -> bool {
+    let mut characters = label.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && characters.all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '-')
+        })
 }
 
 pub(crate) fn effect_metadata(
@@ -553,6 +598,19 @@ pub(crate) fn effect_metadata(
         | Language::Nix
         | Language::R => None,
     };
+
+    // The expression the name comes from, kept on the fact because the
+    // node can no longer carry it.
+    if effect_label(language, kind, node, source)
+        .is_some_and(|label| label == COMPUTED_ENVIRONMENT_KEY)
+        && let Some(expression) = node_text(node, source).map(compact_label)
+        && !expression.trim().is_empty()
+    {
+        metadata.insert(
+            "key_expression".to_string(),
+            truncate_label(expression, 120),
+        );
+    }
 
     if let Some(default_value) = default_value {
         metadata.insert(

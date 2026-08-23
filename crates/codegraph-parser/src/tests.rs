@@ -2313,3 +2313,60 @@ build i = T_Literal i "x"
         );
     }
 }
+
+#[test]
+fn an_environment_read_is_named_only_when_the_name_is_known() {
+    // A shell's `"${1:-}"` reads the script's own arguments: terraform and
+    // redis were recorded as reading variables called `1` and `0`, 581
+    // reads in all. And a key that is computed has no name to give, so
+    // `os.Getenv(envLogFile)` went into the graph as though a variable
+    // were called that.
+    let shell = parse_source(
+        "run.sh",
+        b"VERSION=\"${1:-}\"\nHOME_DIR=\"$HOME\"\nTOKEN=\"${API_TOKEN:-none}\"\necho \"$0 $# $@\"\n",
+        Language::Bash,
+    )
+    .unwrap();
+    let read_labels = |parsed: &ParsedFile| -> Vec<String> {
+        parsed
+            .items
+            .iter()
+            .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+            .map(|item| item.label.clone())
+            .collect()
+    };
+    let shell_reads = read_labels(&shell);
+    assert!(
+        shell_reads.contains(&"HOME".to_string()) && shell_reads.contains(&"API_TOKEN".to_string()),
+        "real variables are still read, got {shell_reads:?}"
+    );
+    for argument in ["1", "0", "#", "@"] {
+        assert!(
+            !shell_reads.contains(&argument.to_string()),
+            "`${argument}` is an argument, not the environment: {shell_reads:?}"
+        );
+    }
+
+    let go = parse_source(
+        "main.go",
+        b"package main\n\nimport \"os\"\n\nfunc read() (string, string) {\n\treturn os.Getenv(\"TF_LOG\"), os.Getenv(envLogFile)\n}\n",
+        Language::Go,
+    )
+    .unwrap();
+    let go_reads = read_labels(&go);
+    assert!(go_reads.contains(&"TF_LOG".to_string()), "{go_reads:?}");
+    assert!(
+        go_reads.contains(&"<computed name>".to_string()),
+        "a computed key has no name to give: {go_reads:?}"
+    );
+    let computed = go
+        .items
+        .iter()
+        .find(|item| item.label == "<computed name>")
+        .expect("the computed read is recorded");
+    assert_eq!(
+        computed.metadata.get("key_expression").map(String::as_str),
+        Some("os.Getenv(envLogFile)"),
+        "the expression is kept on the fact"
+    );
+}
