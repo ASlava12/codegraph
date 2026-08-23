@@ -1977,6 +1977,50 @@ fn scan_project_resolves_python_absolute_local_imports() {
 }
 
 #[test]
+fn base_r_is_builtin_but_a_dependency_is_not() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("R")).unwrap();
+    fs::write(
+        root.join("R").join("summarise.R"),
+        r#"summarise <- function(.data, ...) {
+  cols <- names(.data)
+  if (is.null(cols)) {
+    abort("no columns")
+  }
+  UseMethod("summarise")
+}
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution_of = |call_label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge
+                        .metadata
+                        .get("call_label")
+                        .is_some_and(|label| label == call_label)
+            })
+            .and_then(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+            .and_then(|node| node.metadata.get("resolution").cloned())
+            .unwrap_or_else(|| panic!("no call edge for {call_label}"))
+    };
+
+    // base is attached in every R session.
+    assert_eq!(resolution_of("names"), "builtin");
+    assert_eq!(resolution_of("UseMethod"), "builtin");
+    // `abort` reads as just as fundamental in modern R, but it comes from
+    // rlang — a dependency, and calling it builtin would be a lie.
+    assert_eq!(resolution_of("abort"), "unresolved");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn elixir_kernel_calls_are_builtin() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("lib")).unwrap();
