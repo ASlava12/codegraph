@@ -1968,9 +1968,15 @@ pub(crate) fn resolve_pending_document_symbol_refs(context: &mut IndexContext) {
 
     for pending in pending_refs {
         let targets = resolve_function_targets(&context.function_symbols, &pending.symbol);
-        if targets.is_empty() {
+        // A prose mention carries no scope: nothing in `render` written in
+        // a README says which of vue core's 699 functions of that name it
+        // means, and linking to all of them said the document referenced
+        // every one. Across the corpora that manufactured 76000 edges out
+        // of 3600 ambiguous mentions. Link only when the name leaves no
+        // choice — the same rule type references already follow.
+        let [target] = targets[..] else {
             continue;
-        }
+        };
 
         let mut metadata = BTreeMap::new();
         metadata.insert("relation".to_string(), pending.relation.to_string());
@@ -1979,16 +1985,14 @@ pub(crate) fn resolve_pending_document_symbol_refs(context: &mut IndexContext) {
         metadata.insert("symbol".to_string(), pending.symbol);
         metadata.insert("line".to_string(), pending.line.to_string());
 
-        for target in targets {
-            add_edge_once_with_metadata(
-                context,
-                pending.source,
-                target,
-                EdgeKind::References,
-                Confidence::Heuristic,
-                metadata.clone(),
-            );
-        }
+        add_edge_once_with_metadata(
+            context,
+            pending.source,
+            target,
+            EdgeKind::References,
+            Confidence::Heuristic,
+            metadata,
+        );
     }
 }
 

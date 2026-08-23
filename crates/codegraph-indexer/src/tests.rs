@@ -7309,3 +7309,39 @@ fn a_route_handler_is_written_in_the_routes_own_language() {
         "the JavaScript function of the same name is not a candidate"
     );
 }
+
+#[test]
+fn a_document_mention_links_only_when_the_name_leaves_no_choice() {
+    // Prose carries no scope. A README saying `render` says nothing about
+    // which of vue core's 699 functions of that name it means, and linking
+    // to all of them claimed the document referenced every one — 76000
+    // invented edges across the corpora, 7% of the whole graph.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("alpha.rs"),
+        "pub fn render() {}\npub fn unique_helper() {}\n",
+    )
+    .unwrap();
+    fs::write(root.join("src").join("beta.rs"), "pub fn render() {}\n").unwrap();
+    fs::write(
+        root.join("README.md"),
+        "# Guide\n\nCall `render` to draw, and `unique_helper` for the rest.\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let mentions: Vec<&str> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.metadata.get("resolution").map(String::as_str) == Some("document_symbol")
+        })
+        .filter_map(|edge| edge.metadata.get("symbol").map(String::as_str))
+        .collect();
+    assert_eq!(
+        mentions,
+        vec!["unique_helper"],
+        "only the name with one definition is linked"
+    );
+}
