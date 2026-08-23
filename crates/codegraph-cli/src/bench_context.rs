@@ -254,7 +254,11 @@ fn oracle_function_names_by_origin(files: &[CorpusFile]) -> (BTreeSet<String>, B
 }
 
 /// Oracle 2: environment keys from common read patterns in source text.
-fn oracle_env_keys(files: &[CorpusFile]) -> BTreeSet<String> {
+/// Environment keys the text scan finds, and the subset that appears only
+/// in files no adapter parses. Vue core reads `process.env.COMMENT` inside
+/// a GitHub workflow's inline script: a real read for the workflow, but
+/// not one any language adapter was ever given the chance to see.
+fn oracle_env_keys_by_origin(files: &[CorpusFile]) -> (BTreeSet<String>, BTreeSet<String>) {
     const PATTERNS: &[&str] = &[
         "env::var(\"",
         "getenv(\"",
@@ -263,10 +267,12 @@ fn oracle_env_keys(files: &[CorpusFile]) -> BTreeSet<String> {
         "process.env.",
     ];
     let mut keys = BTreeSet::new();
+    let mut parsed_source_keys = BTreeSet::new();
     for file in files {
         let Some(text) = oracle_text(file) else {
             continue;
         };
+        let parsed_language = adapter_for_path(Path::new(&file.path)).is_some();
         let quoted = quoted_lines(file, text);
         for pattern in PATTERNS {
             let mut cursor = 0;
@@ -293,13 +299,17 @@ fn oracle_env_keys(files: &[CorpusFile]) -> BTreeSet<String> {
                     .take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_')
                     .collect();
                 if key.len() >= 3 {
+                    if parsed_language {
+                        parsed_source_keys.insert(key.clone());
+                    }
                     keys.insert(key);
                 }
                 cursor = start;
             }
         }
     }
-    keys
+    let outside_parsed_source = keys.difference(&parsed_source_keys).cloned().collect();
+    (keys, outside_parsed_source)
 }
 
 fn json_bytes<T: Serialize>(value: &T) -> u64 {
@@ -370,7 +380,7 @@ pub fn run_benchmark(graph: &CodeGraph, root: &Path, samples: usize) -> Result<B
         sample_misses: missing_functions.into_iter().take(10).collect(),
     });
 
-    let oracle_keys = oracle_env_keys(&files);
+    let (oracle_keys, keys_outside_parsed_source) = oracle_env_keys_by_origin(&files);
     let missing_keys: Vec<String> = oracle_keys
         .iter()
         .filter(|key| {
@@ -382,8 +392,12 @@ pub fn run_benchmark(graph: &CodeGraph, root: &Path, samples: usize) -> Result<B
         .cloned()
         .collect();
     recall.push(RecallTask {
-        // Environment keys are read from source, never from prose samples.
-        misses_outside_parsed_source: 0,
+        // A key read by a workflow's inline script sits in a file no
+        // adapter parses, so the graph never had the chance to claim it.
+        misses_outside_parsed_source: missing_keys
+            .iter()
+            .filter(|key| keys_outside_parsed_source.contains(key.as_str()))
+            .count(),
         task: "environment_reads".to_string(),
         expected: oracle_keys.len(),
         found: oracle_keys.len() - missing_keys.len(),
@@ -600,7 +614,7 @@ mod tests {
             &scan_project(&root, &IndexOptions::default()).unwrap(),
             &root,
         );
-        let keys = oracle_env_keys(&files);
+        let keys = oracle_env_keys_by_origin(&files).0;
         assert!(keys.contains("REAL_KEY"), "{keys:?}");
         assert!(
             !keys.contains("FIXTURE_KEY"),
@@ -721,7 +735,7 @@ mod tests {
         assert!(names.contains("alpha"));
         assert!(names.contains("beta"));
         assert!(!names.contains("9bad"), "digit-leading names rejected");
-        let keys = oracle_env_keys(&files);
+        let keys = oracle_env_keys_by_origin(&files).0;
         assert!(keys.contains("MY_KEY"));
         assert!(keys.contains("NODE_ENV"));
     }
@@ -755,7 +769,7 @@ mod tests {
             },
         ];
 
-        let keys = oracle_env_keys(&files);
+        let keys = oracle_env_keys_by_origin(&files).0;
         assert!(keys.contains("REAL_KEY"), "real reads still count");
         assert!(
             !keys.contains("FAKE_KEY"),
