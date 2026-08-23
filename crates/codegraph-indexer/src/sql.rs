@@ -188,6 +188,9 @@ pub(crate) fn sql_migration_sequence(label: &str) -> Option<(String, u128, Strin
 pub(crate) struct SqlStatement {
     sql: String,
     line: u32,
+    /// The line the statement ends on. A CREATE TABLE is written across
+    /// its columns, and a reader asking to see the table wants them.
+    end_line: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -360,7 +363,12 @@ pub(crate) fn index_sql_create_table(
     let table_id = context.graph.add_node_with_metadata(
         NodeKind::Type,
         format!("sql table:{}", table.name),
-        Some(line_span(label, source, statement.line)),
+        Some(block_span(
+            label,
+            source,
+            statement.line,
+            statement.end_line,
+        )),
         metadata,
     );
     context.sql_tables.insert(table_key.clone(), table_id);
@@ -458,7 +466,12 @@ pub(crate) fn index_sql_create_view(
     let view_id = context.graph.add_node_with_metadata(
         NodeKind::Type,
         format!("sql view:{name}"),
-        Some(line_span(label, source, statement.line)),
+        Some(block_span(
+            label,
+            source,
+            statement.line,
+            statement.end_line,
+        )),
         metadata,
     );
     add_edge_once_with_metadata(
@@ -496,7 +509,12 @@ pub(crate) fn index_sql_create_index(
     let index_id = context.graph.add_node_with_metadata(
         NodeKind::Config,
         format!("sql index:{index_name}"),
-        Some(line_span(label, source, statement.line)),
+        Some(block_span(
+            label,
+            source,
+            statement.line,
+            statement.end_line,
+        )),
         metadata,
     );
     add_edge_once_with_metadata(
@@ -957,6 +975,7 @@ pub(crate) fn sql_statements(source: &str) -> Vec<SqlStatement> {
                     statements.push(SqlStatement {
                         sql,
                         line: statement_line,
+                        end_line: line,
                     });
                 }
                 current.clear();
@@ -974,6 +993,7 @@ pub(crate) fn sql_statements(source: &str) -> Vec<SqlStatement> {
         statements.push(SqlStatement {
             sql,
             line: statement_line,
+            end_line: line,
         });
     }
 

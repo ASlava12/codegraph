@@ -293,6 +293,9 @@ pub(crate) struct ComposeService {
     pub(crate) ports: Vec<ComposePort>,
     pub(crate) volumes: Vec<ComposeVolume>,
     pub(crate) line: u32,
+    /// The last line of the service's block, so the node covers the ports
+    /// and volumes written under it.
+    pub(crate) end_line: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -381,6 +384,8 @@ pub(crate) struct GitlabCiJob {
     pub(crate) variables: Vec<CiEnvironment>,
     pub(crate) scripts: Vec<GitlabCiScript>,
     pub(crate) line: u32,
+    /// The last line of the job's block, so the node covers its scripts.
+    pub(crate) end_line: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -406,6 +411,8 @@ pub(crate) struct KubernetesDocument {
     pub(crate) name: String,
     pub(crate) namespace: String,
     pub(crate) line: u32,
+    /// The last line of the document, which is a whole resource.
+    pub(crate) end_line: u32,
     pub(crate) labels: BTreeMap<String, String>,
     pub(crate) pod_labels: BTreeMap<String, String>,
     pub(crate) selector_labels: BTreeMap<String, String>,

@@ -5609,6 +5609,89 @@ fn scan_project_adds_dockerfile_entrypoints() {
 }
 
 #[test]
+fn a_declared_block_spans_the_lines_it_declares() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("docker-compose.yml"),
+        r#"services:
+  web:
+    image: demo/web
+    ports:
+      - "8080:80"
+  db:
+    image: postgres:16
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join(".gitlab-ci.yml"),
+        r#"build:
+  stage: build
+  script:
+    - make build
+test:
+  stage: test
+  script:
+    - make test
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("deploy.yaml"),
+        r#"apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      containers:
+        - name: web
+          image: demo/web
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  ports:
+    - port: 80
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("schema.sql"),
+        "CREATE TABLE user (
+  id INTEGER,
+  name TEXT
+);
+",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let span_of = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.label == label)
+            .and_then(|node| node.span.clone())
+            .map(|span| (span.start_line, span.end_line))
+            .unwrap_or_else(|| panic!("missing {label}"))
+    };
+    assert_eq!(span_of("compose service:web"), (2, 5));
+    assert_eq!(span_of("compose service:db"), (6, 7));
+    assert_eq!(span_of("gitlab job:build"), (1, 4));
+    assert_eq!(span_of("gitlab job:test"), (5, 8));
+    assert_eq!(span_of("k8s deployment:default/web"), (1, 10));
+    assert_eq!(span_of("k8s service:default/web"), (12, 18));
+    assert_eq!(span_of("sql table:user"), (1, 4));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scan_project_adds_compose_service_entrypoints() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("scripts")).unwrap();

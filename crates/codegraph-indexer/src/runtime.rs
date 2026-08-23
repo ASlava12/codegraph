@@ -212,7 +212,7 @@ pub(crate) fn index_compose_entrypoints(
         let entrypoint_id = context.graph.add_node_with_metadata(
             NodeKind::Entrypoint,
             format!("compose service:{}", service.name),
-            Some(line_span(label, source, service.line)),
+            Some(block_span(label, source, service.line, service.end_line)),
             metadata,
         );
         service_nodes.insert(service.name.clone(), entrypoint_id);
@@ -832,7 +832,7 @@ pub(crate) fn index_gitlab_ci_entrypoints(
         let job_id = context.graph.add_node_with_metadata(
             NodeKind::Entrypoint,
             format!("gitlab job:{}", job.name),
-            Some(line_span(label, source, job.line)),
+            Some(block_span(label, source, job.line, job.end_line)),
             metadata,
         );
         job_nodes.insert(job.name.clone(), job_id);
@@ -1067,7 +1067,7 @@ pub(crate) fn index_kubernetes_manifest_facts(
             let config_id = context.graph.add_node_with_metadata(
                 NodeKind::Config,
                 kubernetes_resource_label(config_kind, &document.namespace, &document.name),
-                Some(line_span(label, source, document.line)),
+                Some(block_span(label, source, document.line, document.end_line)),
                 metadata,
             );
             context.kubernetes_configs.insert(key, config_id);
@@ -1136,7 +1136,7 @@ pub(crate) fn index_kubernetes_service(
     let service_id = context.graph.add_node_with_metadata(
         NodeKind::Config,
         kubernetes_resource_label("service", &document.namespace, &document.name),
-        Some(line_span(label, source, document.line)),
+        Some(block_span(label, source, document.line, document.end_line)),
         metadata,
     );
     add_edge_once(
@@ -1215,7 +1215,7 @@ pub(crate) fn index_kubernetes_ingress(
     let ingress_id = context.graph.add_node_with_metadata(
         NodeKind::Entrypoint,
         kubernetes_resource_label("ingress", &document.namespace, &document.name),
-        Some(line_span(label, source, document.line)),
+        Some(block_span(label, source, document.line, document.end_line)),
         metadata,
     );
     add_edge_once(
@@ -1349,7 +1349,7 @@ pub(crate) fn index_kubernetes_workload(
     let workload_id = context.graph.add_node_with_metadata(
         NodeKind::Entrypoint,
         kubernetes_resource_label(&kind_slug, &document.namespace, &document.name),
-        Some(line_span(label, source, document.line)),
+        Some(block_span(label, source, document.line, document.end_line)),
         metadata,
     );
     add_edge_once(
@@ -1574,6 +1574,10 @@ pub(crate) fn kubernetes_document_from_lines(
     lines: &[String],
     start_line: u32,
 ) -> Option<KubernetesDocument> {
+    let last_written = lines
+        .iter()
+        .rposition(|line| !line.trim().is_empty())
+        .unwrap_or(0) as u32;
     let mut has_api_version = false;
     let mut kind = None;
     let mut metadata_indent = None;
@@ -1870,6 +1874,7 @@ pub(crate) fn kubernetes_document_from_lines(
         name,
         namespace: namespace.unwrap_or_else(|| "default".to_string()),
         line: start_line,
+        end_line: start_line + last_written,
         labels,
         pod_labels,
         selector_labels,
@@ -2251,6 +2256,7 @@ pub(crate) fn gitlab_ci_jobs(source: &str) -> Vec<GitlabCiJob> {
                 variables: global_variables.clone(),
                 scripts: Vec::new(),
                 line: index as u32 + 1,
+                end_line: index as u32 + 1,
             });
             continue;
         }
@@ -2258,6 +2264,7 @@ pub(crate) fn gitlab_ci_jobs(source: &str) -> Vec<GitlabCiJob> {
         let Some(job) = active_job.as_mut() else {
             continue;
         };
+        job.end_line = index as u32 + 1;
 
         if indent == 2 {
             active_section = None;
@@ -2576,6 +2583,7 @@ pub(crate) fn compose_services(source: &str) -> Vec<ComposeService> {
                 ports: Vec::new(),
                 volumes: Vec::new(),
                 line: index as u32 + 1,
+                end_line: index as u32 + 1,
             });
             continue;
         }
@@ -2583,6 +2591,7 @@ pub(crate) fn compose_services(source: &str) -> Vec<ComposeService> {
         let Some(service) = active_service.as_mut() else {
             continue;
         };
+        service.end_line = index as u32 + 1;
 
         if indent == services_indent + 4 {
             if active_section
