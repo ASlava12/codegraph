@@ -30,11 +30,14 @@ pub fn parse_source(
     let root = tree.root_node();
     let mut facts = CollectedFacts::default();
     collect_items(
-        language,
+        &WalkContext {
+            language,
+            source: source_text.as_bytes(),
+            path: &path.to_string_lossy(),
+        },
         root,
-        source_text.as_bytes(),
-        &path.to_string_lossy(),
         None,
+        &BTreeMap::new(),
         &mut facts,
         0,
     );
@@ -64,15 +67,27 @@ pub(crate) struct CollectedFacts {
     type_references: Vec<ParsedTypeReference>,
 }
 
+/// What stays fixed for a whole file walk, so the recursion carries only what
+/// actually changes per node.
+pub(crate) struct WalkContext<'a> {
+    pub(crate) language: Language,
+    pub(crate) source: &'a [u8],
+    pub(crate) path: &'a str,
+}
+
 pub(crate) fn collect_items(
-    language: Language,
+    context: &WalkContext<'_>,
     node: Node<'_>,
-    source: &[u8],
-    path: &str,
     current_function: Option<String>,
+    scope: &BTreeMap<String, String>,
     facts: &mut CollectedFacts,
     depth: usize,
 ) {
+    let WalkContext {
+        language,
+        source,
+        path,
+    } = *context;
     if depth >= MAX_TREE_DEPTH {
         return;
     }
@@ -87,7 +102,7 @@ pub(crate) fn collect_items(
     }
 
     if let Some(function_name) = current_function.as_deref()
-        && let Some(call) = classify_call(language, node, source, path, function_name)
+        && let Some(call) = classify_call(language, node, source, path, function_name, scope)
     {
         facts.items.push(call);
     }
@@ -105,6 +120,7 @@ pub(crate) fn collect_items(
     }
 
     let mut next_function = current_function;
+    let mut next_scope: Option<BTreeMap<String, String>> = None;
     if let Some(mut item) = classify_node(language, node, source, path) {
         if matches!(
             item.kind,
@@ -120,18 +136,19 @@ pub(crate) fn collect_items(
                     .insert("enclosing_function".to_string(), enclosing.to_string());
             }
             next_function = Some(item.label.clone());
+            next_scope = Some(declared_variable_types(language, node, source));
         }
         facts.items.push(item);
     }
 
+    let next_scope = next_scope.as_ref().unwrap_or(scope);
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         collect_items(
-            language,
+            context,
             child,
-            source,
-            path,
             next_function.clone(),
+            next_scope,
             facts,
             depth + 1,
         );
@@ -483,6 +500,7 @@ pub(crate) fn classify_call(
     source: &[u8],
     path: &str,
     function_name: &str,
+    scope: &BTreeMap<String, String>,
 ) -> Option<ParsedItem> {
     if !is_call_node(language, node, source) {
         return None;
@@ -493,13 +511,66 @@ pub(crate) fn classify_call(
         return None;
     }
 
+    // `b.Configure()` says nothing about which `Configure` it means, but the
+    // enclosing signature does: `b` is declared there with a type. Only a
+    // single receiver counts — in `b.client.Do()` the method belongs to the
+    // field's type, which the signature does not name.
+    let mut metadata = BTreeMap::new();
+    if let Some((receiver, method)) = label.split_once('.')
+        && !method.contains('.')
+        && let Some(receiver_type) = scope.get(receiver)
+    {
+        metadata.insert("receiver_type".to_string(), receiver_type.clone());
+    }
+
     Some(ParsedItem {
         kind: ParsedItemKind::Call,
         label,
         span: span_for(path, node),
         parent: Some(function_name.to_string()),
-        metadata: BTreeMap::new(),
+        metadata,
     })
+}
+
+/// Variables a definition's own signature declares with a type: a Go
+/// receiver and its parameters. Other languages return nothing yet, so the
+/// call sites simply carry no receiver type.
+pub(crate) fn declared_variable_types(
+    language: Language,
+    node: Node<'_>,
+    source: &[u8],
+) -> BTreeMap<String, String> {
+    let mut declared = BTreeMap::new();
+    if language != Language::Go {
+        return declared;
+    }
+    for field in ["receiver", "parameters"] {
+        let Some(list) = node.child_by_field_name(field) else {
+            continue;
+        };
+        let mut cursor = list.walk();
+        for declaration in list.named_children(&mut cursor) {
+            if declaration.kind() != "parameter_declaration" {
+                continue;
+            }
+            let Some(type_name) = declaration
+                .child_by_field_name("type")
+                .and_then(|type_node| go_type_name(type_node, source))
+            else {
+                continue;
+            };
+            // `func f(a, b *Thing)` declares both names with one type.
+            let mut names = declaration.walk();
+            for child in declaration.named_children(&mut names) {
+                if child.kind() == "identifier"
+                    && let Some(name) = node_text(child, source)
+                {
+                    declared.insert(name, type_name.clone());
+                }
+            }
+        }
+    }
+    declared
 }
 
 pub(crate) fn classify_effect(

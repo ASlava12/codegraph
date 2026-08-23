@@ -864,6 +864,7 @@ pub(crate) fn index_file(
                         label: item.label.clone(),
                         span: item.span.clone(),
                         language: language.to_string(),
+                        receiver_type: item.metadata.get("receiver_type").cloned(),
                     });
                 }
 

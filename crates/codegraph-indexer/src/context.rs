@@ -139,6 +139,11 @@ pub(crate) struct PendingCall {
     pub(crate) label: String,
     pub(crate) span: SourceSpan,
     pub(crate) language: String,
+    /// The declared type of the call's receiver, when the enclosing
+    /// signature names it (`func (b *Backend)` makes `b.Configure()` a call on
+    /// `Backend`). Lets resolution pick the method of that type instead of
+    /// every method sharing the name.
+    pub(crate) receiver_type: Option<String>,
 }
 
 pub(crate) struct PendingTypeReference {

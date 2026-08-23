@@ -1977,6 +1977,66 @@ fn scan_project_resolves_python_absolute_local_imports() {
 }
 
 #[test]
+fn a_declared_receiver_type_picks_the_method_it_owns() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.23\n").unwrap();
+    fs::write(
+        root.join("store.go"),
+        r#"package app
+
+type Reader struct{}
+
+func (r *Reader) Load() string { return "read" }
+
+type Writer struct{}
+
+func (w *Writer) Load() string { return "write" }
+
+func run(w *Writer) string {
+    return w.Load()
+}
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let node_at = |line: u32| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == NodeKind::Function
+                    && node
+                        .span
+                        .as_ref()
+                        .is_some_and(|span| span.start_line == line)
+            })
+            .unwrap_or_else(|| panic!("no function starting on line {line}"))
+    };
+    let reader_load = node_at(5);
+    let writer_load = node_at(9);
+    let run = node_at(11);
+    assert_eq!(
+        writer_load.metadata.get("owner_type").map(String::as_str),
+        Some("Writer")
+    );
+
+    // Both methods are called `Load`; only the parameter's declared type says
+    // which one `w.Load()` means.
+    let called: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.source == run.id && edge.kind == EdgeKind::Calls)
+        .map(|edge| edge.target)
+        .collect();
+    assert!(called.contains(&writer_load.id), "w is a *Writer");
+    assert!(!called.contains(&reader_load.id), "w is not a *Reader");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_nested_helper_is_only_visible_inside_its_own_function() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

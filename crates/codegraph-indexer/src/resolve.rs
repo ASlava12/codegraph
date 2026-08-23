@@ -410,6 +410,26 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             }
         }
 
+        // The receiver's declared type names the method's owner directly, so
+        // it settles the choice that the label alone cannot: `b.Configure()`
+        // inside `func (b *Backend)` is `Backend.Configure`.
+        if let Some(receiver_type) = call.receiver_type.as_deref()
+            && targets.len() > 1
+        {
+            let owned = targets
+                .iter()
+                .copied()
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.metadata.get("owner_type"))
+                        .is_some_and(|declared| declared == receiver_type)
+                })
+                .collect::<Vec<_>>();
+            if !owned.is_empty() {
+                targets = owned;
+            }
+        }
+
         // A qualified call (`CodeGraph::new`, `Foo.bar`) matches many bare
         // `new`/`bar` declarations; keep only methods whose owning type is the
         // one named in the call, which turns an ambiguous set into one edge.
