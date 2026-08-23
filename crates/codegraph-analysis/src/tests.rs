@@ -9852,3 +9852,48 @@ fn a_word_from_the_question_is_not_used_as_a_name_it_cannot_be() {
     assert_eq!(rule("who calls route"), "call_neighborhood");
     assert_eq!(rule("does main call init"), "call_neighborhood");
 }
+
+#[test]
+fn a_trace_says_which_definition_it_started_from() {
+    // A trace has one start. When several definitions answer to the name,
+    // "nothing depends on Blueprint" means nothing depends on the one that
+    // happened to be picked — a claim the reader could not check.
+    let mut graph = CodeGraph::new("repo");
+    let first = graph.add_node_with_span(
+        NodeKind::Type,
+        "Blueprint",
+        SourceSpan {
+            path: "src/blueprints.rs".to_string(),
+            start_line: 18,
+            start_column: 1,
+            end_line: 40,
+            end_column: 1,
+        },
+    );
+    graph.add_node_with_span(
+        NodeKind::Type,
+        "Blueprint",
+        SourceSpan {
+            path: "src/sansio/blueprints.rs".to_string(),
+            start_line: 7,
+            start_column: 1,
+            end_line: 20,
+            end_column: 1,
+        },
+    );
+    let caller = graph.add_node(NodeKind::Function, "register");
+    graph.add_edge(caller, first, EdgeKind::References, Confidence::Syntactic);
+
+    let result = query_graph(&graph, "dependents label:Blueprint depth:3").expect("query");
+    assert_eq!(result.notes.len(), 1, "{:?}", result.notes);
+    assert!(
+        result.notes[0].contains("2 definitions are named `Blueprint`")
+            && result.notes[0].contains("src/blueprints.rs:18"),
+        "{:?}",
+        result.notes
+    );
+
+    // One definition needs no such warning.
+    let single = query_graph(&graph, "dependents label:register depth:3").expect("query");
+    assert!(single.notes.is_empty(), "{:?}", single.notes);
+}

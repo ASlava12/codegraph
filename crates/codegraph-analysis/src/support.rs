@@ -34,6 +34,29 @@ pub(crate) fn resolve_trace_start<'a>(
     }
 }
 
+/// How many definitions answer to a label. A trace has one start, so when
+/// this is more than one the answer is about a choice the query did not
+/// state — flask has two `Blueprint`s, and "nothing depends on Blueprint"
+/// means nothing depends on *the one that was picked*.
+pub(crate) fn labelled_node_count(graph: &CodeGraph, label: &str) -> usize {
+    graph
+        .nodes
+        .iter()
+        .filter(|node| node.label == label && !is_call_placeholder(node))
+        .count()
+}
+
+/// The stand-in node an unresolved or ambiguous call points at. It carries
+/// the call's label but defines nothing, so it must not be counted among
+/// the definitions that answer to that name.
+pub(crate) fn is_call_placeholder(node: &Node) -> bool {
+    node.kind == NodeKind::ExternalDependency
+        && node
+            .metadata
+            .get("item_kind")
+            .is_some_and(|kind| kind == "call")
+}
+
 /// The node a label most likely means, ranked as described on
 /// [`resolve_trace_start`].
 pub(crate) fn best_labelled_node<'a>(graph: &'a CodeGraph, label: &str) -> Option<&'a Node> {

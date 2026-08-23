@@ -767,6 +767,12 @@ pub struct QueryResult {
     pub truncated: bool,
     #[serde(default)]
     pub facets: QueryFacets,
+    /// What the answer had to decide for itself. A query that names a
+    /// label several definitions answer to has to pick one, and saying
+    /// which — and that there were others — is the difference between an
+    /// answer and a claim.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -828,7 +834,13 @@ impl QueryResult {
             returned_edges,
             truncated,
             facets,
+            notes: Vec::new(),
         }
+    }
+
+    pub(crate) fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.notes.push(note.into());
+        self
     }
 }
 

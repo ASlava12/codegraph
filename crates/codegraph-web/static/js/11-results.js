@@ -817,6 +817,11 @@ function renderQueryResult(result, options = {}) {
   const truncated = result.truncated
     ? `<p class="empty">${escapeHtml(t("query.truncated"))}</p>`
     : "";
+  // What the answer had to decide for itself, such as which of several
+  // same-named definitions a trace started from.
+  const notes = Array.isArray(result.notes)
+    ? result.notes.map((note) => `<p class="query-note">${escapeHtml(String(note))}</p>`).join("")
+    : "";
   const hasResults = result.nodes.length > 0 || result.edges.length > 0;
   const resultLabel = options.label ? `<span>${escapeHtml(options.label)}</span>` : "";
   const expression = result.query
@@ -834,6 +839,7 @@ function renderQueryResult(result, options = {}) {
       <span>${formatReturnedCount(shownEdges, edgeTotal)} edges</span>
       ${expression}
     </div>
+    ${notes}
     ${renderQueryFacets(result.facets)}
     <div class="query-actions">
       <button data-focus-result type="button" ${hasResults ? "" : "disabled"}>${escapeHtml(t("query.focusResult"))}</button>

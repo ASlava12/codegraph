@@ -734,6 +734,7 @@ pub(crate) fn query_trace_with(
         ));
     };
 
+    let start_for_note = start.clone();
     let Some(result) = trace_fn(
         graph,
         TraceRequest {
@@ -755,7 +756,7 @@ pub(crate) fn query_trace_with(
     let total_nodes = result.nodes.len();
     let total_edges = result.edges.len();
     let nodes = result.nodes.into_iter().map(|node| node.node).collect();
-    Ok(QueryResult::new(
+    let answer = QueryResult::new(
         graph,
         spec.original,
         nodes,
@@ -763,5 +764,30 @@ pub(crate) fn query_trace_with(
         total_nodes,
         total_edges,
         result.truncated,
+    );
+    Ok(match ambiguous_start_note(graph, &start_for_note) {
+        Some(note) => answer.with_note(note),
+        None => answer,
+    })
+}
+
+/// Says which definition a trace started from when the label named more
+/// than one, so the reader knows the answer covers that one alone.
+fn ambiguous_start_note(graph: &CodeGraph, start: &TraceStart) -> Option<String> {
+    let TraceStart::Label(label) = start else {
+        return None;
+    };
+    let matches = labelled_node_count(graph, label);
+    if matches < 2 {
+        return None;
+    }
+    let chosen = resolve_trace_start(graph, start)?;
+    let where_it_is = chosen
+        .span
+        .as_ref()
+        .map(|span| format!("{}:{}", span.path, span.start_line))
+        .unwrap_or_else(|| format!("node {}", chosen.id));
+    Some(format!(
+        "{matches} definitions are named `{label}`; this answer traces the one at {where_it_is}"
     ))
 }

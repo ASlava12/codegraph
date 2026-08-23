@@ -38,6 +38,22 @@ drive("renderQueryResult", () => api.renderQueryResult({
   facets: { node_kinds: { function: 1 }, edge_kinds: { calls: 1 } },
 }));
 
+// A result whose answer had to choose between same-named definitions
+// carries a note; the view must show it rather than drop it.
+drive("query result with a note", () => {
+  const html = api.renderQueryResult({
+    query: "dependents label:Blueprint depth:4",
+    nodes: [{ id: 1, kind: "type", label: "Blueprint", span: { path: "src/blueprints.py", start_line: 18 }, metadata: {} }],
+    edges: [],
+    total_nodes: 1, total_edges: 0,
+    facets: { node_kinds: { type: 1 }, edge_kinds: {} },
+    notes: ["2 definitions are named `Blueprint`; this answer traces the one at src/blueprints.py:18"],
+  });
+  if (!html.includes("query-note") || !html.includes("2 definitions are named")) {
+    throw new Error("the note is missing from the rendered result");
+  }
+});
+
 drive("renderInsights", () => api.renderInsights());
 
 drive("renderJourneyReport", () => api.renderJourneyReport({

@@ -1212,6 +1212,17 @@ button.cancel-action:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+/* What an answer had to decide for itself: which of several same-named
+   definitions a trace started from, and the like. */
+.query-note {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--accent, #6a8bad);
+  background: var(--surface-muted, rgba(127, 127, 127, 0.08));
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .query-facets {
   display: grid;
   gap: 6px;

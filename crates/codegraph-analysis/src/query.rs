@@ -258,6 +258,7 @@ pub fn compact_query_result(result: QueryResult) -> QueryResult {
         facets,
         nodes,
         edges,
+        notes: result.notes,
     }
 }
 
