@@ -63,7 +63,7 @@ pub(crate) fn labelled_node_count(graph: &CodeGraph, label: &str) -> usize {
     graph
         .nodes
         .iter()
-        .filter(|node| node.label == label && !is_call_placeholder(node))
+        .filter(|node| node.label == label && declares_its_name(node))
         .count()
 }
 
@@ -76,6 +76,18 @@ pub(crate) fn is_call_placeholder(node: &Node) -> bool {
             .metadata
             .get("item_kind")
             .is_some_and(|kind| kind == "call")
+}
+
+/// Whether this node declares the thing it is named after. An error
+/// construct takes the name of the call it wraps, so this repository holds
+/// 104 nodes labelled `scan_project` for `scan_project(..).unwrap()` and
+/// one for the function; a reader who names it means the function.
+pub(crate) fn declares_its_name(node: &Node) -> bool {
+    !is_call_placeholder(node)
+        && !matches!(
+            node.kind,
+            NodeKind::ControlFlow | NodeKind::Environment | NodeKind::Config
+        )
 }
 
 /// The node a label most likely means, ranked as described on
@@ -124,6 +136,7 @@ pub(crate) fn best_labelled_node<'a>(graph: &'a CodeGraph, label: &str) -> Optio
         .min_by_key(|node| {
             let path = node.span.as_ref().map(|span| span.path.as_str());
             (
+                u8::from(!declares_its_name(node)),
                 u8::from(path.is_some_and(is_test_like_source_path)),
                 u8::from(!declared_ids.contains(&node.id)),
                 u8::from(!entrypoint_ids.contains(&node.id)),

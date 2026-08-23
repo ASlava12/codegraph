@@ -8609,6 +8609,46 @@ fn insights_report_dependency_cycles() {
 }
 
 #[test]
+fn a_name_means_the_definition_not_the_error_that_wraps_it() {
+    let mut graph = CodeGraph::new("repo");
+    // `scan_project(..).unwrap()` gives the error construct the name of
+    // the call it wraps, and a repository holds many of them.
+    let error = graph.add_node_with_metadata(
+        NodeKind::ControlFlow,
+        "scan_project",
+        Some(SourceSpan {
+            path: "crates/cli/src/bench.rs".to_string(),
+            start_line: 657,
+            start_column: 1,
+            end_line: 657,
+            end_column: 40,
+        }),
+        BTreeMap::from([("item_kind".to_string(), "error".to_string())]),
+    );
+    let function = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "scan_project",
+        Some(SourceSpan {
+            path: "crates/indexer/src/scan.rs".to_string(),
+            start_line: 57,
+            start_column: 1,
+            end_line: 90,
+            end_column: 2,
+        }),
+        BTreeMap::from([("item_kind".to_string(), "function".to_string())]),
+    );
+
+    let chosen = best_labelled_node(&graph, "scan_project").expect("nothing matched");
+    assert_eq!(
+        chosen.id, function,
+        "the error construct outranked the function"
+    );
+    assert_ne!(chosen.id, error);
+    // ...and one definition answers to the name, so there is nothing to warn about.
+    assert_eq!(labelled_node_count(&graph, "scan_project"), 1);
+}
+
+#[test]
 fn one_methods_overloads_are_not_a_cycle() {
     let mut graph = CodeGraph::new("repo");
     let owner = BTreeMap::from([("owner_type".to_string(), "Buffer".to_string())]);
