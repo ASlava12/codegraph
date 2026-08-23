@@ -10090,3 +10090,78 @@ fn a_container_directory_is_not_an_architecture_area() {
     let flat_areas = ProjectAreas::from_graph(&flat);
     assert_eq!(flat_areas.group_for_path("src/helpers/util.py").0, "src");
 }
+
+#[test]
+fn a_common_crossing_is_the_architecture_and_a_rare_one_is_the_surprise() {
+    // Two subsystems that exchange a thousand calls are how the project is
+    // built. terraform crosses an area 58566 times across 874 pairs, so
+    // scoring every crossing alike left 163872 candidates that no ranking
+    // could tell apart. A markdown file mentioning a symbol is not a
+    // dependency at all, yet it crossed an area, crossed a language and was
+    // rare by construction — it outscored every real link.
+    let mut graph = CodeGraph::new("repo");
+    let busy_source = graph.add_node(NodeKind::File, "src/engine/run.rs");
+    let busy_target = graph.add_node(NodeKind::File, "src/state/store.rs");
+    let odd_source = graph.add_node(NodeKind::File, "src/cli/main.rs");
+    let odd_target = graph.add_node(NodeKind::File, "src/vendor/patch.rs");
+    let doc = graph.add_node_with_metadata(
+        NodeKind::File,
+        "docs/guide.md",
+        None,
+        BTreeMap::from([("language".to_string(), "markdown".to_string())]),
+    );
+    for _ in 0..12 {
+        graph.add_edge(
+            busy_source,
+            busy_target,
+            EdgeKind::Calls,
+            Confidence::Heuristic,
+        );
+        graph.add_edge(
+            busy_target,
+            busy_source,
+            EdgeKind::Calls,
+            Confidence::Heuristic,
+        );
+    }
+    graph.add_edge(
+        odd_source,
+        odd_target,
+        EdgeKind::Calls,
+        Confidence::Heuristic,
+    );
+    graph.add_edge(
+        doc,
+        busy_target,
+        EdgeKind::References,
+        Confidence::Heuristic,
+    );
+
+    let report = surprising_links(&graph, 20);
+    assert!(
+        report
+            .links
+            .iter()
+            .all(|link| link.source.label != "docs/guide.md"),
+        "a document mention is not a dependency: {:?}",
+        report
+            .links
+            .iter()
+            .map(|l| &l.source.label)
+            .collect::<Vec<_>>()
+    );
+    let rare = report
+        .links
+        .iter()
+        .find(|link| link.source.label == "src/cli/main.rs")
+        .expect("the one-off crossing is reported");
+    assert!(rare.reasons.iter().any(|reason| reason == "rare_crossing"));
+    let common = report
+        .links
+        .iter()
+        .find(|link| link.source.label == "src/engine/run.rs");
+    assert!(
+        common.is_none_or(|link| link.score < rare.score),
+        "the everyday crossing must not outrank the one-off"
+    );
+}

@@ -299,12 +299,38 @@ pub fn language_dependencies(graph: &CodeGraph, limit: usize) -> LanguageDepende
     }
 }
 
+/// How few edges an ordered pair of areas may exchange and still count as a
+/// one-off. A median would not do: with three pairs half of them are below
+/// it by definition, and this must mean the same thing in a small project
+/// as in terraform, where 36% of the 874 pairs touch three times or fewer
+/// and account for 546 of the 58566 crossings.
+const MAX_RARE_CROSSING_EDGES: usize = 3;
+
 pub fn surprising_links(graph: &CodeGraph, limit: usize) -> SurprisingLinkReport {
     let limit = limit.clamp(1, MAX_REPORT_ARCHITECTURE_EDGE_LIMIT);
     let nodes_by_id: BTreeMap<NodeId, &Node> =
         graph.nodes.iter().map(|node| (node.id, node)).collect();
     let node_areas = node_architecture_areas(graph, &nodes_by_id);
     let mut links = Vec::new();
+
+    // How often each ordered pair of areas exchanges an edge, so the score
+    // can tell a one-off crossing from the project's own structure.
+    let mut crossing_counts: BTreeMap<(String, String), usize> = BTreeMap::new();
+    for edge in &graph.edges {
+        if !is_architecture_dependency_edge(&edge.kind) {
+            continue;
+        }
+        let (Some(source_area), Some(target_area)) =
+            (node_areas.get(&edge.source), node_areas.get(&edge.target))
+        else {
+            continue;
+        };
+        if source_area != target_area {
+            *crossing_counts
+                .entry((source_area.clone(), target_area.clone()))
+                .or_default() += 1;
+        }
+    }
 
     for (edge_index, edge) in graph.edges.iter().enumerate() {
         if !is_architecture_dependency_edge(&edge.kind) {
@@ -316,6 +342,12 @@ pub fn surprising_links(graph: &CodeGraph, limit: usize) -> SurprisingLinkReport
         let Some(target) = nodes_by_id.get(&edge.target) else {
             continue;
         };
+        // A markdown file that mentions a symbol is not a dependency the
+        // system has. Such a link crosses an area, crosses a language and
+        // is rare by construction, so it scored above every real one.
+        if is_document_query_node(source) {
+            continue;
+        }
         let source_area = node_areas
             .get(&edge.source)
             .cloned()
@@ -332,6 +364,18 @@ pub fn surprising_links(graph: &CodeGraph, limit: usize) -> SurprisingLinkReport
         if source_area != "unknown" && target_area != "unknown" && source_area != target_area {
             score += 5;
             reasons.push("cross_area".to_string());
+            // Two subsystems that exchange a thousand calls are the
+            // architecture, not a surprise. One that talks to another once
+            // is the link worth looking at, and without this the score
+            // could not tell them apart: terraform crosses an area 58566
+            // times across 874 pairs, so every edge scored the same.
+            if crossing_counts
+                .get(&(source_area.clone(), target_area.clone()))
+                .is_some_and(|count| *count <= MAX_RARE_CROSSING_EDGES)
+            {
+                score += 3;
+                reasons.push("rare_crossing".to_string());
+            }
         }
         if source_language != "unknown"
             && target_language != "unknown"
