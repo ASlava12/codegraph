@@ -362,9 +362,18 @@ function showFocusedGraph(result, label, selectedId = null, options = {}) {
   }
 }
 
+// What the server calls `heuristic_scan_severity`: on a syntax-only scan an
+// unresolved or ambiguous call is the expected default and reads as info,
+// and only becomes a warning once semantic enrichment has run and the
+// target still cannot be found.
+function clientHeuristicSeverity(graph) {
+  return (graph.edges || []).some((edge) => edge.confidence === "semantic") ? "warning" : "info";
+}
+
 function buildClientInsights(graph) {
   const nodesById = new Map((graph.nodes || []).map((node) => [node.id, node]));
   const insights = [];
+  const heuristicSeverity = clientHeuristicSeverity(graph);
   const entrypointIds = new Set(
     graph.edges.filter((edge) => edge.kind === "entrypoint").map((edge) => edge.target),
   );
@@ -398,15 +407,6 @@ function buildClientInsights(graph) {
       });
     }
 
-    if (node.metadata?.item_kind === "call" && node.metadata?.resolution === "unresolved") {
-      insights.push({
-        kind: "unresolved_call",
-        severity: "warning",
-        message: `Call target ${node.label} could not be resolved`,
-        nodeId: node.id,
-      });
-    }
-
     if (node.kind === "function" && !entrypointIds.has(node.id) && !calledIds.has(node.id)) {
       insights.push({
         kind: "orphan_function",
@@ -415,6 +415,47 @@ function buildClientInsights(graph) {
         nodeId: node.id,
       });
     }
+  });
+
+  // A call through a value the body binds has nothing to find, so it is not
+  // a gap in the extraction: terraform's `done()` comes from `runningCtx,
+  // done := context.WithCancel(...)`.
+  const unresolvedCallers = new Map();
+  graph.edges
+    .filter((edge) => edge.kind === "calls")
+    .forEach((edge) => {
+      const list = unresolvedCallers.get(edge.target) || [];
+      list.push(edge);
+      unresolvedCallers.set(edge.target, list);
+    });
+  const unresolvedByLabel = new Map();
+  graph.nodes
+    .filter(
+      (node) =>
+        node.metadata?.item_kind === "call" && node.metadata?.resolution === "unresolved",
+    )
+    .forEach((node) => {
+      const list = unresolvedByLabel.get(node.label) || [];
+      list.push(node);
+      unresolvedByLabel.set(node.label, list);
+    });
+  unresolvedByLabel.forEach((nodes, label) => {
+    const edges = nodes.flatMap((node) => unresolvedCallers.get(node.id) || []);
+    if (
+      edges.length > 0 &&
+      edges.every((edge) => edge.metadata?.unresolved_reason === "local_value")
+    ) {
+      return;
+    }
+    insights.push({
+      kind: "unresolved_call",
+      severity: heuristicSeverity,
+      message:
+        nodes.length > 1
+          ? `Call target ${label} could not be resolved syntactically, in ${nodes.length} placeholder nodes`
+          : `Call target ${label} could not be resolved syntactically`,
+      nodeId: nodes[0].id,
+    });
   });
 
   const functionLabels = new Map();
@@ -455,30 +496,28 @@ function buildClientInsights(graph) {
     }
   });
 
-  const callsByLabel = new Map();
-  graph.edges
-    .filter((edge) => edge.kind === "calls" && edge.metadata?.call_label)
-    .forEach((edge) => {
-      const key = `${edge.source}:${edge.metadata.call_label}`;
-      const list = callsByLabel.get(key) || [];
-      list.push(edge);
-      callsByLabel.set(key, list);
+  // Ambiguity is a placeholder node the resolver left behind, not two
+  // edges from one caller: it stopped writing those the day it started
+  // bounding the uncertainty in one node, and this rule went quiet with
+  // them.
+  graph.nodes
+    .filter(
+      (node) => node.metadata?.item_kind === "call" && node.metadata?.resolution === "ambiguous",
+    )
+    .forEach((node) => {
+      const count = node.metadata?.candidate_count || "multiple";
+      const sample = node.metadata?.candidate_sample;
+      const callers = (unresolvedCallers.get(node.id) || [])
+        .map((edge) => nodesById.get(edge.source)?.label)
+        .filter(Boolean);
+      const from = callers.length > 0 ? ` called from ${callers.slice(0, 3).join(", ")}` : "";
+      insights.push({
+        kind: "ambiguous_call_resolution",
+        severity: heuristicSeverity,
+        message: `Call ${node.label}${from} matches ${count} definitions${sample ? `; sample: ${sample}` : ""}`,
+        nodeId: node.id,
+      });
     });
-  callsByLabel.forEach((edges) => {
-    const targets = Array.from(new Set(edges.map((edge) => edge.target)));
-    if (targets.length < 2) return;
-    const source = nodesById.get(edges[0].source);
-    const targetLabels = targets
-      .map((id) => nodesById.get(id)?.label || id)
-      .slice(0, 5)
-      .join(", ");
-    insights.push({
-      kind: "ambiguous_call_resolution",
-      severity: "warning",
-      message: `${source?.label || edges[0].source} calls ${edges[0].metadata.call_label} but it resolves to multiple targets: ${targetLabels}`,
-      nodeId: source?.id || targets[0],
-    });
-  });
 
   graph.edges
     .filter((edge) => edge.kind === "may_error")

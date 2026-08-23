@@ -200,4 +200,46 @@ drive("client insights agree with the CLI on undeclared imports", () => {
   }
 });
 
+// An unresolved or ambiguous call is the expected default on a syntax-only
+// scan, and the CLI reads it as info; the browser used to call both a
+// warning, and looked for ambiguity in a shape the resolver stopped
+// writing when it started bounding uncertainty in one placeholder node.
+drive("client insights read unresolved and ambiguous calls as the CLI does", () => {
+  const placeholder = (id, label, resolution, extra = {}) => ({
+    id, kind: "function", label,
+    metadata: { item_kind: "call", resolution, ...extra },
+  });
+  const graph = {
+    nodes: [
+      { id: 1, kind: "function", label: "run" },
+      placeholder(2, "helper", "unresolved"),
+      placeholder(3, "done", "unresolved"),
+      placeholder(4, "build", "ambiguous", { candidate_count: "3", candidate_sample: "a.rs:build" }),
+    ],
+    edges: [
+      { kind: "calls", source: 1, target: 2, metadata: { call_label: "helper" } },
+      { kind: "calls", source: 1, target: 3, metadata: { call_label: "done", unresolved_reason: "local_value" } },
+      { kind: "calls", source: 1, target: 4, metadata: { call_label: "build" } },
+    ],
+  };
+  const insights = api.buildClientInsights(graph);
+  const unresolved = insights.filter((insight) => insight.kind === "unresolved_call");
+  const ambiguous = insights.filter((insight) => insight.kind === "ambiguous_call_resolution");
+  if (unresolved.length !== 1 || !unresolved[0].message.includes("helper")) {
+    throw new Error(`a call through a bound value has nothing to find: ${JSON.stringify(unresolved)}`);
+  }
+  if (unresolved[0].severity !== "info" || ambiguous[0]?.severity !== "info") {
+    throw new Error("a syntax-only scan reads both as info");
+  }
+  if (ambiguous.length !== 1 || !ambiguous[0].message.includes("3 definitions")) {
+    throw new Error(`ambiguity is a placeholder node: ${JSON.stringify(ambiguous)}`);
+  }
+
+  const enriched = { ...graph, edges: graph.edges.map((edge) => ({ ...edge, confidence: "semantic" })) };
+  const after = api.buildClientInsights(enriched).filter((insight) => insight.kind === "unresolved_call");
+  if (after[0]?.severity !== "warning") {
+    throw new Error("after semantic enrichment an unresolved target is a warning");
+  }
+});
+
 if (!process.exitCode) console.log("views-smoke: ok (" + ok.join(", ") + ")");
