@@ -30,6 +30,12 @@ Implemented now:
 - Automatic semantic enrichment: when a language server for a scanned language is installed, the scan asks it to resolve what syntax cannot and applies the result as `confidence: semantic` edges over the syntactic graph. The root node records the outcome either way (`semantic_enrichment=applied` with `semantic_servers`, or `semantic_enrichment=skipped` with `semantic_skip_reason`), a missing or failing server degrades to the syntactic graph instead of failing the scan, and `--no-semantic` restores a machine-independent scan (use it in CI).
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, Dart, PHP, Bash, Ruby, Java, C#, Kotlin, Swift, Scala, Lua, Elixir, Zig, Haskell, OCaml, Julia, Erlang, Nix, and R.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
+- What a definition lets others see, recorded as `visibility` wherever the language states it: a
+  keyword (`pub`, `static`, `local`, `private`, `defp`), a name (`_helper` in Python and Dart, a
+  capital in Go), an export list at the top of an Erlang or Haskell module, or the `.mli` beside an
+  OCaml one. A library's coverage finding counts what it exports as starting points, an uncalled
+  function says whether it is dead or the API, and a call from another file is not answered by a
+  definition that file cannot name.
 - Manifest-defined entrypoints from Cargo, npm, Go, Python, setup.py/setup.cfg, Composer, and CMake project metadata.
 - Shebang-defined script entrypoints for Bash, Python, Node.js, and PHP scripts, including extensionless CLI files.
 - Dockerfile, Docker Compose, GitHub Actions, GitLab CI, and Kubernetes runtime entrypoints, including Compose service dependencies, workflow/pipeline job dependencies, CI environment inputs with secret-safe value classification, CI job-reference and script-path checks, runtime config inputs, published ports, local bind volumes, Kubernetes workloads, Ingresses, services, Service selector links, and ConfigMap/Secret references.
