@@ -45,6 +45,7 @@ pub(crate) struct IndexContext {
     pub(crate) cargo_workspace_dependencies: BTreeMap<String, Option<String>>,
     pub(crate) go_modules: Vec<GoModuleRoot>,
     pub(crate) dart_packages: Vec<DartPackageRoot>,
+    pub(crate) npm_packages: Vec<NpmPackageRoot>,
     pub(crate) c_include_dirs: Vec<String>,
     pub(crate) custom_rules: CustomRules,
     pub(crate) annotations: GraphAnnotations,
@@ -495,6 +496,16 @@ pub(crate) struct FrameworkConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GoModuleRoot {
     pub(crate) module: String,
+    pub(crate) dir: Option<String>,
+}
+
+/// A package.json inside the repository and where it sits. A workspace
+/// import like `@vue/shared` names one of these, not a dependency that
+/// left the repository — without the distinction every monorepo package
+/// would be reported as external.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NpmPackageRoot {
+    pub(crate) name: String,
     pub(crate) dir: Option<String>,
 }
 

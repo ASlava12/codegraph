@@ -2078,6 +2078,61 @@ pub(crate) fn go_module_roots(
     modules
 }
 
+/// Every package.json in the repository that names a package, so a
+/// workspace import can be told from a dependency. Longest name first, so
+/// `@scope/a-b` wins over `@scope/a` when both could prefix-match.
+pub(crate) fn npm_package_roots(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Vec<NpmPackageRoot> {
+    let mut packages = Vec::new();
+    for entry in WalkDir::new(root)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path == root || !entry.file_type().is_file() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) != Some("package.json")
+            || !is_probably_source_file(path, options.max_file_size)
+        {
+            continue;
+        }
+
+        let Ok(source) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Some(name) = package_json_name(&source) else {
+            continue;
+        };
+        let dir = path
+            .parent()
+            .and_then(|parent| parent.strip_prefix(root).ok())
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map(|relative| normalize_path(&relative))
+            .filter(|relative| !relative.is_empty());
+        packages.push(NpmPackageRoot { name, dir });
+    }
+    packages.sort_by(|left, right| {
+        right
+            .name
+            .len()
+            .cmp(&left.name.len())
+            .then_with(|| left.dir.cmp(&right.dir))
+    });
+    packages
+}
+
+fn package_json_name(source: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(source).ok()?;
+    let name = value.get("name")?.as_str()?.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 pub(crate) fn dart_package_roots(
     root: &Path,
     options: &IndexOptions,

@@ -55,13 +55,126 @@ pub(crate) fn possible_local_import_target(
     import_label: &str,
     go_modules: &[GoModuleRoot],
     dart_packages: &[DartPackageRoot],
+    npm_packages: &[NpmPackageRoot],
 ) -> Option<LocalImportTarget> {
     match language {
         Language::Python => python_absolute_local_import_target(source_label, import_label),
         Language::Go => go_module_import_target(import_label, go_modules),
         Language::Dart => dart_package_import_target(import_label, dart_packages),
+        Language::JavaScript | Language::TypeScript | Language::Tsx => {
+            npm_package_import_target(import_label, npm_packages)
+        }
         _ => None,
     }
+}
+
+/// A workspace import: `@vue/shared` resolves to the directory whose
+/// package.json claims that name. A specifier that matches no package in
+/// the repository is left alone — that one really did leave.
+pub(crate) fn npm_package_import_target(
+    import_label: &str,
+    npm_packages: &[NpmPackageRoot],
+) -> Option<LocalImportTarget> {
+    let specifier = first_quoted_value(import_label)?;
+    if specifier.starts_with("./")
+        || specifier.starts_with("../")
+        || specifier.starts_with('/')
+        || specifier.starts_with("node:")
+    {
+        return None;
+    }
+    let package = npm_packages.iter().find(|package| {
+        specifier == package.name || specifier.starts_with(&format!("{}/", package.name))
+    })?;
+    let suffix = specifier
+        .strip_prefix(&package.name)
+        .unwrap_or("")
+        .trim_start_matches('/');
+    let package_dir = join_path(package.dir.as_deref(), suffix);
+    Some(LocalImportTarget {
+        target: specifier,
+        candidates: vec![directory_candidate(&package_dir)],
+    })
+}
+
+/// What a JavaScript or TypeScript import statement binds: a namespace
+/// (`import * as fs`) that later calls qualify with, and the bare names
+/// (`import { readFile }`, `import fetch from`) that they do not. Only
+/// `import` counts — `export { x } from "mod"` re-exports without binding
+/// anything the file can call.
+pub(crate) struct JsImportBindings {
+    pub(crate) qualifier: Option<String>,
+    pub(crate) names: Vec<String>,
+}
+
+pub(crate) fn js_import_bindings(import_label: &str) -> JsImportBindings {
+    let mut bindings = JsImportBindings {
+        qualifier: None,
+        names: Vec::new(),
+    };
+    let statement = import_label.trim();
+    let Some(rest) = statement.strip_prefix("import ") else {
+        return bindings;
+    };
+    // `import type { Foo } from` brings in types, which are never called.
+    let rest = rest.trim_start().strip_prefix("type ").unwrap_or(rest);
+    // `import "./styles.css"` binds nothing.
+    let Some((clause, _)) = rest.split_once(" from ") else {
+        return bindings;
+    };
+
+    for part in split_import_clause(clause) {
+        let part = part.trim();
+        if let Some(namespace) = part.strip_prefix("* as ") {
+            let namespace = namespace.trim();
+            if !namespace.is_empty() {
+                bindings.qualifier = Some(namespace.to_string());
+            }
+            continue;
+        }
+        if let Some(named) = part.strip_prefix('{') {
+            for name in named.trim_end_matches('}').split(',') {
+                let name = name.trim();
+                let name = name.strip_prefix("type ").unwrap_or(name).trim();
+                let name = name.rsplit(" as ").next().unwrap_or(name).trim();
+                if !name.is_empty() && name != "default" {
+                    bindings.names.push(name.to_string());
+                }
+            }
+            continue;
+        }
+        // A default import: `import fetch from "node-fetch"`.
+        if !part.is_empty() {
+            bindings.names.push(part.to_string());
+        }
+    }
+    bindings
+}
+
+/// Split `fetch, { readFile, writeFile }` into its clauses without cutting
+/// the commas that separate names inside the braces.
+fn split_import_clause(clause: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    for character in clause.chars() {
+        match character {
+            '{' => {
+                depth += 1;
+                current.push(character);
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                current.push(character);
+            }
+            ',' if depth == 0 => {
+                parts.push(std::mem::take(&mut current));
+            }
+            _ => current.push(character),
+        }
+    }
+    parts.push(current);
+    parts
 }
 
 pub(crate) fn js_local_import_target(

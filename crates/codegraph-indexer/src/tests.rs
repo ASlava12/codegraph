@@ -6971,3 +6971,82 @@ fn from_imported_names_say_where_a_bare_call_comes_from() {
         shadow_target.span
     );
 }
+
+#[test]
+fn javascript_imports_name_which_module_a_call_means() {
+    // `import { build } from './lib/helpers.js'` says exactly which of two
+    // same-named exports is meant, `import * as helpers` qualifies the
+    // rest, and a package the repository does not contain is external —
+    // while a workspace package it does contain is not.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app").join("lib")).unwrap();
+    fs::create_dir_all(root.join("packages").join("shared")).unwrap();
+    fs::write(
+        root.join("packages").join("shared").join("package.json"),
+        "{\n  \"name\": \"@acme/shared\"\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("packages").join("shared").join("index.js"),
+        "export function extend(target) { return target; }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("lib").join("helpers.js"),
+        "export function build() { return 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("lib").join("other.js"),
+        "export function build() { return 2; }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("main.js"),
+        "import { build } from './lib/helpers.js';\nimport * as other from './lib/other.js';\nimport { extend } from '@acme/shared';\nimport { createServer } from 'node:http';\n\nexport function run() {\n  return build() + other.build() + extend({}) + createServer();\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .unwrap_or_else(|| panic!("the call to {label} is recorded"))
+    };
+    let target_path = |label: &str| {
+        let edge = call(label);
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.id == edge.target)
+            .and_then(|node| node.span.as_ref())
+            .map(|span| span.path.clone())
+            .unwrap_or_default()
+    };
+
+    assert!(
+        target_path("build").ends_with("helpers.js"),
+        "the named import picks helpers.js, got {}",
+        target_path("build")
+    );
+    assert!(
+        target_path("other.build").ends_with("other.js"),
+        "the namespace import picks other.js, got {}",
+        target_path("other.build")
+    );
+    assert!(
+        target_path("extend").ends_with("index.js"),
+        "a workspace package stays inside the repository, got {}",
+        target_path("extend")
+    );
+    assert_eq!(
+        call("createServer").metadata.get("resolution"),
+        Some(&"external".to_string()),
+        "a package the repository does not contain is external"
+    );
+}

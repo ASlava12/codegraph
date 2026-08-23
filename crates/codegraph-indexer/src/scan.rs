@@ -105,6 +105,7 @@ pub(crate) fn scan_project_with_scope(
         .unwrap_or(".");
     let cargo_workspace_dependencies = cargo_workspace_dependencies(root);
     let go_modules = go_module_roots(root, options, &ignored_globs);
+    let npm_packages = npm_package_roots(root, options, &ignored_globs);
     let dart_packages = dart_package_roots(root, options, &ignored_globs);
     let c_include_dirs = c_include_dirs(root, options, &ignored_globs);
     let custom_rules = custom_rules(root);
@@ -125,6 +126,7 @@ pub(crate) fn scan_project_with_scope(
         unresolved_call_placeholders: BTreeMap::new(),
         cargo_workspace_dependencies,
         go_modules,
+        npm_packages,
         dart_packages,
         c_include_dirs,
         custom_rules,
@@ -593,6 +595,7 @@ pub(crate) fn index_file(
                                 &item.label,
                                 &context.go_modules,
                                 &context.dart_packages,
+                                &context.npm_packages,
                             )
                         } else {
                             None
@@ -600,10 +603,17 @@ pub(crate) fn index_file(
                     // Remember what each qualifier binds, so `states.NewState`
                     // can be resolved inside the package the file imports
                     // instead of against every `NewState` in the project.
+                    let js_bindings = matches!(
+                        language,
+                        Language::JavaScript | Language::TypeScript | Language::Tsx
+                    )
+                    .then(|| js_import_bindings(&item.label));
                     let import_qualifier = match language {
                         Language::Go => go_import_qualifier(&item.label),
                         Language::Python => python_import_qualifier(&item.label),
-                        _ => None,
+                        _ => js_bindings
+                            .as_ref()
+                            .and_then(|bindings| bindings.qualifier.clone()),
                     };
                     if item.kind == ParsedItemKind::Import {
                         let package = local_import
@@ -619,14 +629,18 @@ pub(crate) fn index_file(
                                 .or_default()
                                 .insert(qualifier, package.clone());
                         }
-                        if language == Language::Python {
-                            for name in python_imported_names(&item.label) {
-                                context
-                                    .file_imported_names
-                                    .entry(label.to_string())
-                                    .or_default()
-                                    .insert(name, package.clone());
-                            }
+                        let bound_names = match language {
+                            Language::Python => python_imported_names(&item.label),
+                            _ => js_bindings
+                                .map(|bindings| bindings.names)
+                                .unwrap_or_default(),
+                        };
+                        for name in bound_names {
+                            context
+                                .file_imported_names
+                                .entry(label.to_string())
+                                .or_default()
+                                .insert(name, package.clone());
                         }
                     }
 
