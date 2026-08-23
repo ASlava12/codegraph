@@ -7114,6 +7114,33 @@ fn insights_report_unreachable_config_reads() {
 }
 
 #[test]
+fn entrypoint_reachability_descends_from_a_file_into_its_symbols() {
+    let mut graph = CodeGraph::new("repo");
+    let entry = graph.add_node(NodeKind::Entrypoint, "script:scripts/release.sh");
+    let file = graph.add_node(NodeKind::File, "scripts/release.sh");
+    let publish = graph.add_node(NodeKind::Function, "publish");
+    let failure = graph.add_node_with_metadata(
+        NodeKind::Unknown,
+        "exit 1",
+        None,
+        BTreeMap::from([("item_kind".to_string(), "error".to_string())]),
+    );
+    graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+    // The entrypoint names the script file, not the function inside it.
+    graph.add_edge(entry, file, EdgeKind::References, Confidence::Exact);
+    graph.add_edge(file, publish, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(publish, failure, EdgeKind::MayError, Confidence::Heuristic);
+
+    let report = insights(&graph);
+    assert!(
+        !report.insights.iter().any(|insight| {
+            insight.kind == "unreachable_error_flow" && insight.nodes.contains(&publish)
+        }),
+        "a function inside an entrypoint script is reachable"
+    );
+}
+
+#[test]
 fn insights_report_unreachable_error_flows() {
     let mut graph = CodeGraph::new("repo");
     let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");

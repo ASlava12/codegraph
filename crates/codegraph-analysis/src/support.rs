@@ -378,6 +378,20 @@ pub(crate) fn entrypoint_reachable_nodes(graph: &CodeGraph) -> BTreeSet<NodeId> 
     let mut reachable = BTreeSet::new();
     let mut queue = VecDeque::new();
 
+    // Most entrypoints name a file (`script:scripts/build.sh`), not a
+    // function, and a file holds its symbols through `contains`. Without that
+    // step the walk stops at the file and calls everything inside it
+    // unreachable — on terraform only 5% of functions came out reachable, on a
+    // TypeScript repository 1%. `contains` is followed only out of a file, so
+    // the repository root and its directories still do not reach the whole
+    // project by containment alone.
+    let file_nodes: BTreeSet<NodeId> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::File)
+        .map(|node| node.id)
+        .collect();
+
     // One adjacency pass keeps the BFS O(V + E) instead of rescanning every
     // edge per visited node (audit F11).
     let mut outgoing: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
@@ -385,7 +399,9 @@ pub(crate) fn entrypoint_reachable_nodes(graph: &CodeGraph) -> BTreeSet<NodeId> 
         if edge.kind == EdgeKind::Entrypoint && reachable.insert(edge.target) {
             queue.push_back(edge.target);
         }
-        if is_trace_edge(&edge.kind) {
+        if is_trace_edge(&edge.kind)
+            || (edge.kind == EdgeKind::Contains && file_nodes.contains(&edge.source))
+        {
             outgoing.entry(edge.source).or_default().push(edge.target);
         }
     }
