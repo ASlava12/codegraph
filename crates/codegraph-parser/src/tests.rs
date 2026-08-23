@@ -537,6 +537,31 @@ fn parses_rust_environment_default_values() {
 }
 
 #[test]
+fn a_named_function_expression_keeps_its_own_name() {
+    // `new Promise(function dispatchXhrRequest(resolve) {...})` is a
+    // function with a name of its own and nothing to bind it to. Axios
+    // writes six of its own that way, and the benchmark oracle counted
+    // every one as missing.
+    let source = "new Promise(function dispatchXhrRequest(resolve) { send(resolve); });\n\
+                  request.on('error', function handleError(err) { fail(err); });\n\
+                  let plain = function inner(x) { return x; };\n\
+                  items.map(function (x) { return x * 2; });\n";
+    let parsed = parse_source("app.js", source.as_bytes(), Language::JavaScript).unwrap();
+    let mut functions: Vec<&str> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Function)
+        .map(|item| item.label.as_str())
+        .collect();
+    functions.sort_unstable();
+    assert_eq!(
+        functions,
+        vec!["dispatchXhrRequest", "handleError", "plain"],
+        "a binding still wins over the function's own name, and an anonymous callback stays anonymous"
+    );
+}
+
+#[test]
 fn parses_kotlin_native_environment_reads() {
     // okio reads TMPDIR through `platform.posix.getenv` and TEMP through
     // the Windows `_wgetenv`, and only `System.getenv` was recognised: the

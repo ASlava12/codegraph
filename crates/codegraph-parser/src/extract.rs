@@ -1713,13 +1713,17 @@ pub(crate) fn lua_bound_function_name(node: Node<'_>, source: &[u8]) -> Option<S
 }
 
 pub(crate) fn js_bound_function_name(node: Node<'_>, source: &[u8]) -> Option<String> {
-    let parent = node.parent()?;
-    match parent.kind() {
+    let bound = node.parent().and_then(|parent| match parent.kind() {
         "variable_declarator" => named_child_text(parent, "name", source),
         "pair" => named_child_text(parent, "key", source),
         "assignment_expression" => named_child_text(parent, "left", source),
         _ => None,
-    }
+    });
+    // `.then(function onAdapterResolution(response) {...})` and
+    // `new Promise(function dispatchXhrRequest(resolve) {...})` are
+    // functions with names of their own and nothing to bind them to. A
+    // binding still wins, since that is the name callers use.
+    bound.or_else(|| named_child_text(node, "name", source))
 }
 
 pub(crate) fn item_label(
@@ -1728,7 +1732,8 @@ pub(crate) fn item_label(
     node: Node<'_>,
     source: &[u8],
 ) -> Option<String> {
-    // A function expression has no name of its own; it borrows the binding's.
+    // A function expression takes the name it is bound to, or the one it
+    // was given.
     if matches!(
         language,
         Language::JavaScript | Language::TypeScript | Language::Tsx
