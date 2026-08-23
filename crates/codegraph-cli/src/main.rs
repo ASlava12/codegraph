@@ -10,7 +10,9 @@ mod mcp;
 use codegraph_analysis::memory;
 mod merge;
 use codegraph_analysis::pr_impact;
+mod query_commands;
 mod query_log;
+mod refactor_commands;
 mod registry;
 mod watch;
 mod wiki;
@@ -581,41 +583,7 @@ fn main() -> Result<()> {
             let report = bench_context::run_benchmark(&graph, &path, samples)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
-        Command::PrImpact {
-            path,
-            base,
-            files,
-            ci_state,
-            review_state,
-            include_hidden,
-            include_ignored,
-            cache,
-        } => {
-            let graph = scan_with_options(
-                path.clone(),
-                include_hidden,
-                include_ignored,
-                max_file_size,
-                &cache,
-            )?;
-            let (changed, base_used) = if files.is_empty() {
-                (pr_impact::git_changed_files(&path, &base)?, Some(base))
-            } else {
-                (files, None)
-            };
-            let branch = pr_impact::git_current_branch(&path);
-            let report = pr_impact::pr_impact(
-                &graph,
-                &changed,
-                pr_impact::PrImpactContext {
-                    base: base_used,
-                    branch,
-                    ci_state,
-                    review_state,
-                },
-            );
-            println!("{}", serde_json::to_string_pretty(&report)?);
-        }
+        Command::PrImpact(args) => refactor_commands::run_pr_impact(args, max_file_size)?,
         Command::ExportWiki {
             path,
             output,
@@ -736,115 +704,8 @@ fn main() -> Result<()> {
                 std::process::exit(2);
             }
         }
-        Command::Query {
-            expression,
-            path,
-            include_hidden,
-            include_ignored,
-            compact,
-            cache,
-        } => {
-            validate_query_expression(&expression)?;
-            let graph = scan_with_options(
-                path.clone(),
-                include_hidden,
-                include_ignored,
-                max_file_size,
-                &cache,
-            )?;
-            let started = Instant::now();
-            let result = query_graph(&graph, &expression);
-            let duration_ms = started.elapsed().as_millis() as u64;
-            match result {
-                Ok(result) => {
-                    let result = if compact {
-                        compact_query_result(result)
-                    } else {
-                        result
-                    };
-                    let output = serde_json::to_string_pretty(&result)?;
-                    log_cli_query(
-                        &path,
-                        log_queries,
-                        "query",
-                        &expression,
-                        "ok",
-                        duration_ms,
-                        Some(&output),
-                    );
-                    println!("{output}");
-                }
-                Err(error) => {
-                    log_cli_query(
-                        &path,
-                        log_queries,
-                        "query",
-                        &expression,
-                        "error",
-                        duration_ms,
-                        None,
-                    );
-                    return Err(error.into());
-                }
-            }
-        }
-        Command::Journey {
-            from,
-            to,
-            path,
-            depth,
-            paths,
-            include_hidden,
-            include_ignored,
-            cache,
-        } => {
-            let graph = scan_with_options(
-                path.clone(),
-                include_hidden,
-                include_ignored,
-                max_file_size,
-                &cache,
-            )?;
-            let query_text = format!("--from {from} --to {to}");
-            let started = Instant::now();
-            let result = journey(
-                &graph,
-                JourneyRequest {
-                    from,
-                    to,
-                    max_depth: depth,
-                    path_limit: paths,
-                },
-            );
-            let duration_ms = started.elapsed().as_millis() as u64;
-            match result {
-                Ok(report) => {
-                    let output = serde_json::to_string_pretty(&report)?;
-                    log_cli_query(
-                        &path,
-                        log_queries,
-                        "journey",
-                        &query_text,
-                        "ok",
-                        duration_ms,
-                        Some(&output),
-                    );
-                    println!("{output}");
-                }
-                Err(error) => {
-                    log_cli_query(
-                        &path,
-                        log_queries,
-                        "journey",
-                        &query_text,
-                        "error",
-                        duration_ms,
-                        None,
-                    );
-                    return Err(error.into());
-                }
-            }
-        }
+        Command::Query(args) => query_commands::run_query(args, max_file_size, log_queries)?,
+        Command::Journey(args) => refactor_commands::run_journey(args, max_file_size, log_queries)?,
         Command::InstallAgent {
             path,
             platform,
@@ -943,48 +804,8 @@ fn main() -> Result<()> {
             let report = query_log::list_query_log(&path, action.as_deref(), limit)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
-        Command::RefactorContext {
-            target,
-            path,
-            from,
-            depth,
-            paths,
-            dependent_limit,
-            risk_limit,
-            source_context,
-            include_hidden,
-            include_ignored,
-            cache,
-        } => {
-            let graph = scan_with_options(
-                path.clone(),
-                include_hidden,
-                include_ignored,
-                max_file_size,
-                &cache,
-            )?;
-            let mut bundle = refactor_context(
-                &graph,
-                RefactorContextRequest {
-                    target,
-                    from,
-                    max_depth: depth,
-                    path_limit: paths,
-                    dependent_limit,
-                    risk_limit,
-                },
-            )?;
-            if let Some(span) = bundle.target.span.clone() {
-                bundle.target_source = read_source_preview(
-                    &path,
-                    Path::new(&span.path),
-                    span.start_line,
-                    span.end_line,
-                    source_context,
-                )
-                .ok();
-            }
-            println!("{}", serde_json::to_string_pretty(&bundle)?);
+        Command::RefactorContext(args) => {
+            refactor_commands::run_refactor_context(args, max_file_size)?
         }
         Command::Seams {
             path,
@@ -1064,53 +885,7 @@ fn main() -> Result<()> {
             )?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
-        Command::Ask {
-            question,
-            path,
-            include_hidden,
-            include_ignored,
-            compact,
-            cache,
-        } => {
-            let graph = scan_with_options(
-                path.clone(),
-                include_hidden,
-                include_ignored,
-                max_file_size,
-                &cache,
-            )?;
-            let query_text = question.clone();
-            let started = Instant::now();
-            let result = natural_query(&graph, NaturalQueryRequest { question, compact });
-            let duration_ms = started.elapsed().as_millis() as u64;
-            match result {
-                Ok(report) => {
-                    let output = serde_json::to_string_pretty(&report)?;
-                    log_cli_query(
-                        &path,
-                        log_queries,
-                        "ask",
-                        &query_text,
-                        "ok",
-                        duration_ms,
-                        Some(&output),
-                    );
-                    println!("{output}");
-                }
-                Err(error) => {
-                    log_cli_query(
-                        &path,
-                        log_queries,
-                        "ask",
-                        &query_text,
-                        "error",
-                        duration_ms,
-                        None,
-                    );
-                    return Err(error.into());
-                }
-            }
-        }
+        Command::Ask(args) => query_commands::run_ask(args, max_file_size, log_queries)?,
         Command::NodeCard(args) => {
             let graph = scan_with_options(
                 args.scan.path.clone(),

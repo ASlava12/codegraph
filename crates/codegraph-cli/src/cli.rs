@@ -235,38 +235,7 @@ pub(crate) enum Command {
     #[command(
         after_help = "Examples:\n  codegraph pr-impact . --base origin/main --ci-state passing\n  codegraph pr-impact . --file src/util.rs --file src/main.rs"
     )]
-    PrImpact {
-        /// Project root to scan.
-        #[arg(default_value = ".")]
-        path: PathBuf,
-
-        /// Git base ref to diff against for the changed-file list (default: working tree changes).
-        #[arg(long, default_value = "HEAD")]
-        base: String,
-
-        /// Explicit changed file overrides (repeatable); skips git entirely.
-        #[arg(long = "file")]
-        files: Vec<String>,
-
-        /// CI state string recorded verbatim in the report, for example: passing or pending.
-        #[arg(long)]
-        ci_state: Option<String>,
-
-        /// Review state string recorded verbatim in the report, for example: approved.
-        #[arg(long)]
-        review_state: Option<String>,
-
-        /// Include hidden files and directories.
-        #[arg(long)]
-        include_hidden: bool,
-
-        /// Include default ignored directories such as target and node_modules.
-        #[arg(long)]
-        include_ignored: bool,
-
-        #[command(flatten)]
-        cache: CacheArgs,
-    },
+    PrImpact(PrImpactArgs),
 
     /// Export an Obsidian-compatible Markdown wiki: communities, entrypoints, hotspots, config flows, and risks.
     ExportWiki {
@@ -350,66 +319,13 @@ pub(crate) enum Command {
     #[command(
         after_help = "Examples:\n  codegraph query 'nodes kind:function label:main' .\n  codegraph query 'path from:main to:load_config depth:6' .\n  codegraph query 'docs owner:platform-team' .\n  codegraph query 'edges confidence:heuristic limit:20' ."
     )]
-    Query {
-        /// Query expression, for example: nodes kind:function label:main or path from:main to:init.
-        expression: String,
-
-        /// Project root to scan.
-        #[arg(default_value = ".")]
-        path: PathBuf,
-
-        /// Include hidden files and directories.
-        #[arg(long)]
-        include_hidden: bool,
-
-        /// Include default ignored directories such as target and node_modules.
-        #[arg(long)]
-        include_ignored: bool,
-
-        /// Collapse repeated low-signal nodes in the query result.
-        #[arg(long)]
-        compact: bool,
-
-        #[command(flatten)]
-        cache: CacheArgs,
-    },
+    Query(QueryArgs),
 
     /// Emit a step-numbered execution journey between two graph labels or node ids.
     #[command(
         after_help = "Examples:\n  codegraph journey --from main --to load_config .\n  codegraph journey --from 'cargo bin:api' --to n42 . --depth 8 --paths 5"
     )]
-    Journey {
-        /// Journey start label or node id, for example: main or n12.
-        #[arg(long)]
-        from: String,
-
-        /// Journey target label or node id, for example: load_config or n42.
-        #[arg(long)]
-        to: String,
-
-        /// Project root to scan.
-        #[arg(default_value = ".")]
-        path: PathBuf,
-
-        /// Maximum path search depth between the endpoints.
-        #[arg(long, default_value_t = 8)]
-        depth: usize,
-
-        /// Maximum ranked alternative paths to return.
-        #[arg(long, default_value_t = 3)]
-        paths: usize,
-
-        /// Include hidden files and directories.
-        #[arg(long)]
-        include_hidden: bool,
-
-        /// Include default ignored directories such as target and node_modules.
-        #[arg(long)]
-        include_ignored: bool,
-
-        #[command(flatten)]
-        cache: CacheArgs,
-    },
+    Journey(JourneyArgs),
 
     /// Install project-scoped agent guidance: .mcp.json entry plus CLAUDE.md/AGENTS.md snippets.
     InstallAgent {
@@ -547,49 +463,7 @@ pub(crate) enum Command {
     #[command(
         after_help = "Examples:\n  codegraph refactor-context load_config .\n  codegraph refactor-context scan_project . --from main --depth 6"
     )]
-    RefactorContext {
-        /// Refactor target label or node id, for example: load_config or n42.
-        target: String,
-
-        /// Project root to scan.
-        #[arg(default_value = ".")]
-        path: PathBuf,
-
-        /// Optional journey start label or node id, for example an entrypoint.
-        #[arg(long)]
-        from: Option<String>,
-
-        /// Maximum traversal depth for impact and journey.
-        #[arg(long, default_value_t = 8)]
-        depth: usize,
-
-        /// Maximum ranked journey paths.
-        #[arg(long, default_value_t = 3)]
-        paths: usize,
-
-        /// Maximum listed dependents.
-        #[arg(long, default_value_t = 100)]
-        dependent_limit: usize,
-
-        /// Maximum bundled risks.
-        #[arg(long, default_value_t = 50)]
-        risk_limit: usize,
-
-        /// Source preview context lines around the target span.
-        #[arg(long, default_value_t = 6)]
-        source_context: u32,
-
-        /// Include hidden files and directories.
-        #[arg(long)]
-        include_hidden: bool,
-
-        /// Include default ignored directories such as target and node_modules.
-        #[arg(long)]
-        include_ignored: bool,
-
-        #[command(flatten)]
-        cache: CacheArgs,
-    },
+    RefactorContext(RefactorContextArgs),
 
     /// Rank cross-area boundaries by coupling friction: safest seams to extract and most tangled ones.
     Seams {
@@ -718,29 +592,7 @@ pub(crate) enum Command {
     #[command(
         after_help = "Examples:\n  codegraph ask \"Where is DATABASE_URL read?\" .\n  codegraph ask \"Who calls load_config?\" .\n  codegraph ask \"Какие точки входа есть в проекте?\" ."
     )]
-    Ask {
-        /// Question, for example: "Where is DATABASE_URL read?".
-        question: String,
-
-        /// Project root to scan.
-        #[arg(default_value = ".")]
-        path: PathBuf,
-
-        /// Include hidden files and directories.
-        #[arg(long)]
-        include_hidden: bool,
-
-        /// Include default ignored directories such as target and node_modules.
-        #[arg(long)]
-        include_ignored: bool,
-
-        /// Collapse repeated low-signal nodes in the query result.
-        #[arg(long)]
-        compact: bool,
-
-        #[command(flatten)]
-        cache: CacheArgs,
-    },
+    Ask(AskArgs),
 
     /// Emit an investigation card for one graph node as JSON.
     NodeCard(NodeCardArgs),
@@ -1512,6 +1364,169 @@ pub(crate) struct WorkflowQueryArgs {
     /// Include default ignored directories such as target and node_modules.
     #[arg(long)]
     pub(crate) include_ignored: bool,
+
+    #[command(flatten)]
+    pub(crate) cache: CacheArgs,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct JourneyArgs {
+    /// Journey start label or node id, for example: main or n12.
+    #[arg(long)]
+    pub(crate) from: String,
+
+    /// Journey target label or node id, for example: load_config or n42.
+    #[arg(long)]
+    pub(crate) to: String,
+
+    /// Project root to scan.
+    #[arg(default_value = ".")]
+    pub(crate) path: PathBuf,
+
+    /// Maximum path search depth between the endpoints.
+    #[arg(long, default_value_t = 8)]
+    pub(crate) depth: usize,
+
+    /// Maximum ranked alternative paths to return.
+    #[arg(long, default_value_t = 3)]
+    pub(crate) paths: usize,
+
+    /// Include hidden files and directories.
+    #[arg(long)]
+    pub(crate) include_hidden: bool,
+
+    /// Include default ignored directories such as target and node_modules.
+    #[arg(long)]
+    pub(crate) include_ignored: bool,
+
+    #[command(flatten)]
+    pub(crate) cache: CacheArgs,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct RefactorContextArgs {
+    /// Refactor target label or node id, for example: load_config or n42.
+    pub(crate) target: String,
+
+    /// Project root to scan.
+    #[arg(default_value = ".")]
+    pub(crate) path: PathBuf,
+
+    /// Optional journey start label or node id, for example an entrypoint.
+    #[arg(long)]
+    pub(crate) from: Option<String>,
+
+    /// Maximum traversal depth for impact and journey.
+    #[arg(long, default_value_t = 8)]
+    pub(crate) depth: usize,
+
+    /// Maximum ranked journey paths.
+    #[arg(long, default_value_t = 3)]
+    pub(crate) paths: usize,
+
+    /// Maximum listed dependents.
+    #[arg(long, default_value_t = 100)]
+    pub(crate) dependent_limit: usize,
+
+    /// Maximum bundled risks.
+    #[arg(long, default_value_t = 50)]
+    pub(crate) risk_limit: usize,
+
+    /// Source preview context lines around the target span.
+    #[arg(long, default_value_t = 6)]
+    pub(crate) source_context: u32,
+
+    /// Include hidden files and directories.
+    #[arg(long)]
+    pub(crate) include_hidden: bool,
+
+    /// Include default ignored directories such as target and node_modules.
+    #[arg(long)]
+    pub(crate) include_ignored: bool,
+
+    #[command(flatten)]
+    pub(crate) cache: CacheArgs,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct PrImpactArgs {
+    /// Project root to scan.
+    #[arg(default_value = ".")]
+    pub(crate) path: PathBuf,
+
+    /// Git base ref to diff against for the changed-file list (default: working tree changes).
+    #[arg(long, default_value = "HEAD")]
+    pub(crate) base: String,
+
+    /// Explicit changed file overrides (repeatable); skips git entirely.
+    #[arg(long = "file")]
+    pub(crate) files: Vec<String>,
+
+    /// CI state string recorded verbatim in the report, for example: passing or pending.
+    #[arg(long)]
+    pub(crate) ci_state: Option<String>,
+
+    /// Review state string recorded verbatim in the report, for example: approved.
+    #[arg(long)]
+    pub(crate) review_state: Option<String>,
+
+    /// Include hidden files and directories.
+    #[arg(long)]
+    pub(crate) include_hidden: bool,
+
+    /// Include default ignored directories such as target and node_modules.
+    #[arg(long)]
+    pub(crate) include_ignored: bool,
+
+    #[command(flatten)]
+    pub(crate) cache: CacheArgs,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct QueryArgs {
+    /// Query expression, for example: nodes kind:function label:main or path from:main to:init.
+    pub(crate) expression: String,
+
+    /// Project root to scan.
+    #[arg(default_value = ".")]
+    pub(crate) path: PathBuf,
+
+    /// Include hidden files and directories.
+    #[arg(long)]
+    pub(crate) include_hidden: bool,
+
+    /// Include default ignored directories such as target and node_modules.
+    #[arg(long)]
+    pub(crate) include_ignored: bool,
+
+    /// Collapse repeated low-signal nodes in the query result.
+    #[arg(long)]
+    pub(crate) compact: bool,
+
+    #[command(flatten)]
+    pub(crate) cache: CacheArgs,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AskArgs {
+    /// Question, for example: "Where is DATABASE_URL read?".
+    pub(crate) question: String,
+
+    /// Project root to scan.
+    #[arg(default_value = ".")]
+    pub(crate) path: PathBuf,
+
+    /// Include hidden files and directories.
+    #[arg(long)]
+    pub(crate) include_hidden: bool,
+
+    /// Include default ignored directories such as target and node_modules.
+    #[arg(long)]
+    pub(crate) include_ignored: bool,
+
+    /// Collapse repeated low-signal nodes in the query result.
+    #[arg(long)]
+    pub(crate) compact: bool,
 
     #[command(flatten)]
     pub(crate) cache: CacheArgs,
