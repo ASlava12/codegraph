@@ -266,12 +266,52 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
     }
 }
 
-/// Is this file directly inside the package directory? A Go package is exactly
-/// one directory, so `internal/states/statemgr/mgr.go` belongs to `statemgr`,
-/// not to the `internal/states/` package that imported it.
-fn declared_in_directory(path: &str, directory: &str) -> bool {
-    path.strip_prefix(directory)
-        .is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))
+/// Does this file belong to the imported module?
+///
+/// What "the module" means depends on the language, and the import target says
+/// which: a Go package is a directory (recorded with a trailing slash), so
+/// `internal/states/statemgr/mgr.go` belongs to `statemgr` and not to the
+/// `internal/states/` that imported it; a Python module is one file.
+/// Decide whether an import really points inside the repository.
+///
+/// A Python absolute import cannot be judged while walking files — `import
+/// pytest` and `import myapp.utils` look identical until the walk is over — so
+/// the parser records the candidate paths and the answer is settled here,
+/// against the files and directories the scan actually found.
+fn resolved_import_package(context: &IndexContext, package: ImportedPackage) -> ImportedPackage {
+    let ImportedPackage::Local(candidates) = &package else {
+        return package;
+    };
+    let scanned = candidates.iter().any(|candidate| {
+        match candidate.strip_suffix('/') {
+            Some(directory) => context.directory_nodes.contains_key(directory),
+            None => {
+                context.file_nodes.contains_key(candidate.as_str())
+                    // A project's own package is often not at the root:
+                    // Flask's `import flask` names `src/flask/__init__.py`.
+                    // Calling that external would be a false claim, and a
+                    // false claim is worse than an unresolved one.
+                    || context
+                        .file_nodes
+                        .keys()
+                        .any(|path| path.ends_with(&format!("/{candidate}")))
+            }
+        }
+    });
+    if scanned {
+        package
+    } else {
+        ImportedPackage::External
+    }
+}
+
+fn declared_in_module(path: &str, target: &str) -> bool {
+    match target.strip_suffix('/') {
+        Some(_) => path
+            .strip_prefix(target)
+            .is_some_and(|rest| !rest.is_empty() && !rest.contains('/')),
+        None => path == target,
+    }
 }
 
 /// Record a call that an import proves leaves the repository. It still gets an
@@ -339,13 +379,15 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // candidates to that package, and an external one rules every local
         // declaration out — `strings.Contains` is not the repository's own
         // `Contains`.
-        let imported_package = split_qualified_call(&call.label).and_then(|(owner, _)| {
-            context
-                .file_import_qualifiers
-                .get(call.span.path.as_str())
-                .and_then(|qualifiers| qualifiers.get(owner))
-                .cloned()
-        });
+        let imported_package = split_qualified_call(&call.label)
+            .and_then(|(owner, _)| {
+                context
+                    .file_import_qualifiers
+                    .get(call.span.path.as_str())
+                    .and_then(|qualifiers| qualifiers.get(owner))
+                    .cloned()
+            })
+            .map(|package| resolved_import_package(context, package));
         if imported_package == Some(ImportedPackage::External) {
             add_external_call_placeholder(context, call);
             continue;
@@ -365,14 +407,29 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             })
             .unwrap_or_default();
         let mut targets = match &imported_package {
-            Some(ImportedPackage::Local(directory)) => language_targets
-                .into_iter()
-                .filter(|target| {
-                    graph_node(&context.graph, *target)
-                        .and_then(|node| node.span.as_ref())
-                        .is_some_and(|span| declared_in_directory(&span.path, directory))
-                })
-                .collect::<Vec<_>>(),
+            Some(ImportedPackage::Local(candidates)) => {
+                let in_module = language_targets
+                    .iter()
+                    .copied()
+                    .filter(|target| {
+                        graph_node(&context.graph, *target)
+                            .and_then(|node| node.span.as_ref())
+                            .is_some_and(|span| {
+                                candidates
+                                    .iter()
+                                    .any(|candidate| declared_in_module(&span.path, candidate))
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                // Narrow only when the import actually names something the
+                // scan found: an import whose module was never scanned must
+                // not erase the candidates matched by name.
+                if in_module.is_empty() {
+                    language_targets
+                } else {
+                    in_module
+                }
+            }
             _ if !local_targets.is_empty() => local_targets,
             _ => language_targets,
         };
@@ -468,13 +525,15 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 Some((package, owner)) => (Some(package), owner),
                 None => (None, receiver_type),
             };
-            let package_directory = package.and_then(|package| {
+            let package_candidates = package.and_then(|package| {
                 match context
                     .file_import_qualifiers
                     .get(call.span.path.as_str())
                     .and_then(|qualifiers| qualifiers.get(package))
+                    .cloned()
+                    .map(|package| resolved_import_package(context, package))
                 {
-                    Some(ImportedPackage::Local(directory)) => Some(directory.clone()),
+                    Some(ImportedPackage::Local(candidates)) => Some(candidates),
                     _ => None,
                 }
             });
@@ -492,10 +551,12 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     {
                         return false;
                     }
-                    package_directory.as_deref().is_none_or(|directory| {
-                        node.span
-                            .as_ref()
-                            .is_some_and(|span| declared_in_directory(&span.path, directory))
+                    package_candidates.as_deref().is_none_or(|candidates| {
+                        node.span.as_ref().is_some_and(|span| {
+                            candidates
+                                .iter()
+                                .any(|candidate| declared_in_module(&span.path, candidate))
+                        })
                     })
                 })
                 .collect::<Vec<_>>();

@@ -1977,6 +1977,70 @@ fn scan_project_resolves_python_absolute_local_imports() {
 }
 
 #[test]
+fn a_python_module_qualifier_says_where_a_call_goes() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app")).unwrap();
+    fs::write(
+        root.join("app").join("views.py"),
+        "def render():\n    return 1\n",
+    )
+    .unwrap();
+    // A local helper with the same name as the external one being called.
+    fs::write(
+        root.join("app").join("helpers.py"),
+        "def echo(message):\n    return message\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("cli.py"),
+        r#"import click
+
+from . import views
+
+
+def run():
+    click.echo("hello")
+    return views.render()
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let target_of = |call_label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge
+                        .metadata
+                        .get("call_label")
+                        .is_some_and(|label| label == call_label)
+            })
+            .and_then(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+            .unwrap_or_else(|| panic!("no call edge for {call_label}"))
+    };
+
+    // `click` is not in this project, so the call leaves it — matching the
+    // name against a local `echo` would be a false link, not a resolution.
+    let echo = target_of("click.echo");
+    assert_eq!(
+        echo.metadata.get("resolution").map(String::as_str),
+        Some("external")
+    );
+
+    // `from . import views` names a module, and a Python module is a file.
+    let render = target_of("views.render");
+    assert_eq!(render.kind, NodeKind::Function);
+    assert_eq!(
+        render.span.as_ref().map(|span| span.path.as_str()),
+        Some("app/views.py")
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_unqualified_go_call_stays_in_its_own_package() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("alpha")).unwrap();

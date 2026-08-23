@@ -599,14 +599,19 @@ pub(crate) fn index_file(
                     // Remember what each qualifier binds, so `states.NewState`
                     // can be resolved inside the package the file imports
                     // instead of against every `NewState` in the project.
-                    if language == Language::Go
-                        && item.kind == ParsedItemKind::Import
-                        && let Some(qualifier) = go_import_qualifier(&item.label)
+                    let import_qualifier = match language {
+                        Language::Go => go_import_qualifier(&item.label),
+                        Language::Python => python_import_qualifier(&item.label),
+                        _ => None,
+                    };
+                    if item.kind == ParsedItemKind::Import
+                        && let Some(qualifier) = import_qualifier
                     {
                         let package = local_import
                             .as_ref()
                             .or(possible_local_import.as_ref())
-                            .and_then(|target| target.candidates.first().cloned())
+                            .map(|target| target.candidates.clone())
+                            .filter(|candidates| !candidates.is_empty())
                             .map_or(ImportedPackage::External, ImportedPackage::Local);
                         context
                             .file_import_qualifiers

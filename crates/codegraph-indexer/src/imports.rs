@@ -502,3 +502,35 @@ pub(crate) fn go_import_qualifier(import_label: &str) -> Option<String> {
     let segment = path.rsplit('/').next().unwrap_or(path.as_str()).to_string();
     (!segment.is_empty()).then_some(segment)
 }
+
+/// The name a Python import binds as a call qualifier.
+///
+/// `import flask` binds `flask`, `import os.path` binds `os`, `import numpy as
+/// np` binds `np`, and `from . import views` binds `views`. A `from x import y`
+/// binds `y` as a bare name, not a qualifier, so it is left alone — the call
+/// `y()` is unqualified and resolves like any other.
+pub(crate) fn python_import_qualifier(import_label: &str) -> Option<String> {
+    let statement = import_label.trim();
+    if let Some(rest) = statement.strip_prefix("from ") {
+        let (module, imported) = rest.split_once(" import ")?;
+        // `from . import views` names a module, so `views.load()` is qualified
+        // by it. `from .globals import _cv_app` names a value: `_cv_app.get()`
+        // is a method call on it, and reading `_cv_app` as a module sent the
+        // call looking inside `globals.py`.
+        if !module.trim().trim_matches('.').is_empty() {
+            return None;
+        }
+        let name = imported.split(',').next()?.trim();
+        let name = name.rsplit(" as ").next().unwrap_or(name).trim();
+        return (!name.is_empty() && name != "*").then(|| name.to_string());
+    }
+
+    let rest = statement.strip_prefix("import ")?;
+    let first = rest.split(',').next()?.trim();
+    if let Some((_, alias)) = first.rsplit_once(" as ") {
+        let alias = alias.trim();
+        return (!alias.is_empty()).then(|| alias.to_string());
+    }
+    let head = first.split('.').next()?.trim();
+    (!head.is_empty()).then(|| head.to_string())
+}

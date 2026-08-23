@@ -505,9 +505,10 @@ pub(crate) struct DartPackageRoot {
 /// Where an import qualifier points.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ImportedPackage {
-    /// A package inside the repository, rooted at this directory prefix
-    /// (`internal/states/`).
-    Local(String),
+    /// A module inside the repository: a Go package directory (recorded with
+    /// a trailing slash) or the file candidates a Python module can live in
+    /// (`pkg/views.py`, `pkg/views/__init__.py`).
+    Local(Vec<String>),
     /// A package outside the repository: no local declaration can be the
     /// target of a call through this qualifier.
     External,
