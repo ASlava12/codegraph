@@ -2573,6 +2573,83 @@ func run(w *Writer) string {
 }
 
 #[test]
+fn a_value_built_in_place_carries_the_type_it_was_built_from() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.23\n").unwrap();
+    fs::write(
+        root.join("build.go"),
+        r#"package app
+
+type Action struct{ Name string }
+
+func (a Action) Describe() string { return a.Name }
+
+type Resource struct{ Name string }
+
+func (r *Resource) Describe() string { return r.Name }
+
+func run() {
+    action := Action{Name: "x"}
+    res := &Resource{Name: "y"}
+    counts := map[string]int{}
+    _ = counts
+    println(action.Describe())
+    println(res.Describe())
+}
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let node_at = |line: u32| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == NodeKind::Function
+                    && node
+                        .span
+                        .as_ref()
+                        .is_some_and(|span| span.start_line == line)
+            })
+            .unwrap_or_else(|| panic!("no function starting on line {line}"))
+    };
+    let action_describe = node_at(5);
+    let resource_describe = node_at(9);
+    let run = node_at(11);
+
+    // `action := Action{...}` writes the type at the assignment, and
+    // `&Resource{...}` is a pointer to one, which carries the same methods.
+    // `map[string]int{}` states a shape rather than a name and has no
+    // methods to confuse them with.
+    let called: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.source == run.id && edge.kind == EdgeKind::Calls)
+        .map(|edge| edge.target)
+        .collect();
+    assert!(called.contains(&action_describe.id), "action is an Action");
+    assert!(called.contains(&resource_describe.id), "res is a *Resource");
+    assert_eq!(
+        graph
+            .edges
+            .iter()
+            .filter(|edge| edge.source == run.id
+                && edge.kind == EdgeKind::Calls
+                && edge
+                    .metadata
+                    .get("call_label")
+                    .is_some_and(|label| label.ends_with("Describe")))
+            .count(),
+        2,
+        "each call goes to one method, not to both"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_nested_helper_is_only_visible_inside_its_own_function() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

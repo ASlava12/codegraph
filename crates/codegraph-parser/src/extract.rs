@@ -932,7 +932,80 @@ pub(crate) fn declared_variable_types(
     // are the most ambiguous calls in the repository. A declaration that names
     // its type is worth more than the signature it shadows.
     declared.extend(go_declared_var_types(node, source));
+    declared.extend(go_composite_literal_types(node, source));
     declared
+}
+
+/// Types stated by `name := Type{...}` inside a body. The type is written
+/// at the assignment, so the value's methods are that type's methods --
+/// 372 of terraform's ambiguous calls have a receiver bound this way.
+///
+/// `m := map[string]int{}` and `s := []Item{}` state a shape rather than a
+/// name, and a value of either has no methods of its own, so only a named
+/// type is recorded. A name bound twice to different types is left out
+/// rather than guessed at.
+fn go_composite_literal_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    let mut declared: BTreeMap<String, String> = BTreeMap::new();
+    let mut conflicting = BTreeSet::new();
+    let Some(body) = node.child_by_field_name("body") else {
+        return declared;
+    };
+    let mut stack = vec![body];
+    while let Some(current) = stack.pop() {
+        if current.kind() == "short_var_declaration"
+            && let Some(left) = current.child_by_field_name("left")
+            && let Some(right) = current.child_by_field_name("right")
+        {
+            let mut left_cursor = left.walk();
+            let names: Vec<Node<'_>> = left.named_children(&mut left_cursor).collect();
+            let mut right_cursor = right.walk();
+            let values: Vec<Node<'_>> = right.named_children(&mut right_cursor).collect();
+            // `a, b := X{}, Y{}` pairs each name with its own value, and
+            // `a, b := f()` pairs none of them with anything written down.
+            if names.len() == values.len() {
+                for (name, value) in names.iter().zip(values.iter()) {
+                    if name.kind() != "identifier" {
+                        continue;
+                    }
+                    let (Some(name), Some(type_name)) = (
+                        node_text(*name, source),
+                        go_composite_literal_type(*value, source),
+                    ) else {
+                        continue;
+                    };
+                    if declared
+                        .insert(name.clone(), type_name.clone())
+                        .is_some_and(|previous| previous != type_name)
+                    {
+                        conflicting.insert(name);
+                    }
+                }
+            }
+        }
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    for name in conflicting {
+        declared.remove(&name);
+    }
+    declared
+}
+
+/// The named type of `Type{...}` or of `&Type{...}`, which is a pointer to
+/// the same type and carries the same methods.
+fn go_composite_literal_type(value: Node<'_>, source: &[u8]) -> Option<String> {
+    let literal = match value.kind() {
+        "composite_literal" => value,
+        "unary_expression" => value
+            .child_by_field_name("operand")
+            .filter(|operand| operand.kind() == "composite_literal")?,
+        _ => return None,
+    };
+    let type_node = literal.child_by_field_name("type")?;
+    if !matches!(type_node.kind(), "type_identifier" | "qualified_type") {
+        return None;
+    }
+    go_qualified_type_name(type_node, source)
 }
 
 /// Types stated by `var name Type` inside a body.
