@@ -10257,3 +10257,90 @@ fn a_route_a_test_declares_is_not_a_duplicate_of_the_applications() {
         duplicates[0].message
     );
 }
+
+#[test]
+fn a_type_import_and_a_tool_config_do_not_ship_a_dev_dependency() {
+    // `import type { Program } from '@babel/types'` is erased before
+    // anything runs, and `eslint.config.js` exists to configure a tool
+    // rather than to ship. 44 of Vue core's 74 findings were one or the
+    // other.
+    let mut graph = CodeGraph::new("repo");
+    let manifest = graph.add_node(NodeKind::File, "package.json");
+    let source = graph.add_node_with_metadata(
+        NodeKind::File,
+        "packages/compiler/src/ast.ts",
+        None,
+        BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+    );
+    let config = graph.add_node_with_metadata(
+        NodeKind::File,
+        "eslint.config.js",
+        None,
+        BTreeMap::from([("language".to_string(), "javascript".to_string())]),
+    );
+    let babel = dependency_node(&mut graph, "@babel/types", "npm:@babel/types");
+    let eslint = dependency_node(&mut graph, "eslint", "npm:eslint");
+    for package in [babel, eslint] {
+        graph.add_edge_with_metadata(
+            manifest,
+            package,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "dev".to_string())]),
+        );
+    }
+
+    let type_import = import_node(
+        &mut graph,
+        "import type { Program } from \"@babel/types\";",
+        "typescript",
+    );
+    let value_import = import_node(
+        &mut graph,
+        "import { parse } from \"@babel/types\";",
+        "typescript",
+    );
+    let config_import = import_node(&mut graph, "import eslint from \"eslint\";", "javascript");
+    graph.add_edge(
+        source,
+        type_import,
+        EdgeKind::Imports,
+        Confidence::Syntactic,
+    );
+    graph.add_edge(
+        config,
+        config_import,
+        EdgeKind::Imports,
+        Confidence::Syntactic,
+    );
+
+    let quiet = insights(&graph);
+    assert!(
+        !quiet
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "non_runtime_dependency_import"),
+        "{:?}",
+        quiet
+            .insights
+            .iter()
+            .filter(|insight| insight.kind == "non_runtime_dependency_import")
+            .map(|insight| &insight.message)
+            .collect::<Vec<_>>()
+    );
+
+    // The same package imported for its value is a real finding.
+    graph.add_edge(
+        source,
+        value_import,
+        EdgeKind::Imports,
+        Confidence::Syntactic,
+    );
+    let loud = insights(&graph);
+    assert!(
+        loud.insights
+            .iter()
+            .any(|insight| insight.kind == "non_runtime_dependency_import"),
+        "a value import of a dev dependency still ships it"
+    );
+}

@@ -2606,6 +2606,26 @@ pub(crate) fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &
     }
 }
 
+/// Whether a path is a build tool's own configuration — `eslint.config.js`,
+/// `vite.config.ts`, `.eslintrc.js`, `babel.config.cjs`. Such a file
+/// exists to configure a development tool, so importing one is not
+/// shipping it.
+pub(crate) fn is_tool_configuration_source_path(path: &str) -> bool {
+    let file = path
+        .replace('\\', "/")
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let Some((stem, extension)) = file.rsplit_once('.') else {
+        return false;
+    };
+    if !matches!(extension, "js" | "cjs" | "mjs" | "ts" | "cts" | "mts") {
+        return false;
+    }
+    stem.ends_with(".config") || stem.starts_with('.') && stem.ends_with("rc")
+}
+
 pub(crate) fn add_non_runtime_dependency_import_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
@@ -2637,15 +2657,31 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
         {
             continue;
         }
-
+        // `eslint.config.js` importing `eslint`, `vite.config.js`
+        // importing `vite`: a build tool's own configuration is not the
+        // code that ships, and 23 of Vue's 74 findings were that.
+        if path_index
+            .get(&source.id)
+            .map(String::as_str)
+            .map(is_tool_configuration_source_path)
+            .unwrap_or_else(|| is_tool_configuration_source_path(&source.label))
+        {
+            continue;
+        }
         let Some(import_node) = nodes_by_id.get(&edge.target).copied() else {
             continue;
         };
         if import_node
             .metadata
             .get("import_scope")
-            .is_some_and(|scope| scope == "local")
+            .is_some_and(|scope| scope == "local" || scope == "workspace")
         {
+            continue;
+        }
+        // `import type { Program } from '@babel/types'` is erased before
+        // anything runs, so it cannot make a dev dependency a runtime one.
+        // Vue writes 651 such imports, and 33 of its findings were them.
+        if import_node.label.trim_start().starts_with("import type ") {
             continue;
         }
         let Some(language) = import_node.metadata.get("language").map(String::as_str) else {
