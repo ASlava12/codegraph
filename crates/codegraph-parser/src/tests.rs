@@ -492,6 +492,52 @@ PORT="${PORT:-5000}"
 }
 
 #[test]
+fn bash_local_variables_are_not_environment_reads() {
+    let parsed = parse_source(
+        "release.sh",
+        br#"#!/usr/bin/env bash
+arch="amd64"
+readonly build_target=wasm32
+PORT="${PORT:-8080}"
+export TOKEN="$GITHUB_TOKEN"
+read answer
+for file in a b; do
+    echo "$file"
+done
+echo "$arch $build_target $PORT $TOKEN $answer $HOME"
+"#,
+        Language::Bash,
+    )
+    .unwrap();
+
+    let keys = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .map(|item| item.label.as_str())
+        .collect::<BTreeSet<_>>();
+
+    // `PORT` keeps its read because the script only falls back to a default;
+    // `GITHUB_TOKEN` and `HOME` are never assigned here.
+    assert_eq!(
+        keys,
+        BTreeSet::from(["GITHUB_TOKEN", "HOME", "PORT"]),
+        "locals leaked into environment reads"
+    );
+
+    // The surviving PORT read still carries its fallback.
+    let port = parsed
+        .items
+        .iter()
+        .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "PORT")
+        .expect("missing PORT env read");
+    assert_eq!(
+        port.metadata.get("default_value").map(String::as_str),
+        Some("8080")
+    );
+}
+
+#[test]
 fn parses_go_environment_default_values() {
     let parsed = parse_source(
         "main.go",

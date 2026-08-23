@@ -38,6 +38,9 @@ pub fn parse_source(
         &mut facts,
         0,
     );
+    if language == Language::Bash {
+        drop_bash_local_variable_reads(&mut facts.items, root, source_text.as_bytes());
+    }
     dedupe_items(&mut facts.items);
     dedupe_type_references(&mut facts.type_references);
 

@@ -1,7 +1,7 @@
 //! Effect-fact detection: environment reads, config reads, and error
 //! constructs, with per-language key and fallback-default extraction.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tree_sitter::Node;
 
@@ -653,4 +653,114 @@ pub(crate) fn bash_parameter_default(expression: &str, key: &str) -> Option<Stri
     } else {
         Some(strip_quotes(value.to_string()))
     }
+}
+
+/// Drop Bash "environment reads" that are really reads of a variable the same
+/// script sets. `$VAR` alone cannot tell the two apart, so a script like
+/// terraform's release helpers flooded the graph with keys such as `arch`,
+/// `os`, and `version` — locals, not process environment.
+///
+/// A name counts as local when the file assigns it (`name=…`, `local name=…`,
+/// a `for` variable, a `read` target). The exception is the pass-through
+/// idiom `PORT="${PORT:-8080}"`, where the assignment's own value expands the
+/// name: that read does come from the environment, so the name stays.
+///
+/// This is deliberately position-blind — a read before the assignment that
+/// sets it (`echo "$X"; X=1`) is dropped too. Telling those apart needs flow
+/// analysis, and the scanner stays syntactic.
+pub(crate) fn drop_bash_local_variable_reads(
+    items: &mut Vec<ParsedItem>,
+    root: Node<'_>,
+    source: &[u8],
+) {
+    let mut assigned: BTreeSet<String> = BTreeSet::new();
+    let mut environment_backed: BTreeSet<String> = BTreeSet::new();
+
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            "variable_assignment" => {
+                if let Some(name) = node
+                    .child_by_field_name("name")
+                    .and_then(|name| node_text(name, source))
+                    .map(|name| bash_variable_base_name(&name).to_string())
+                    .filter(|name| !name.is_empty())
+                {
+                    if let Some(value) = node.child_by_field_name("value")
+                        && subtree_expands_variable(value, source, &name)
+                    {
+                        environment_backed.insert(name.clone());
+                    }
+                    assigned.insert(name);
+                }
+            }
+            "for_statement" => {
+                if let Some(name) = node
+                    .child_by_field_name("variable")
+                    .and_then(|name| node_text(name, source))
+                    .filter(|name| !name.is_empty())
+                {
+                    assigned.insert(name);
+                }
+            }
+            // `read answer` names its target as a plain word, so the variable
+            // never appears as a `variable_name` node.
+            "command"
+                if node
+                    .child_by_field_name("name")
+                    .and_then(|name| node_text(name, source))
+                    .as_deref()
+                    == Some("read") =>
+            {
+                let mut cursor = node.walk();
+                for argument in node.children_by_field_name("argument", &mut cursor) {
+                    if let Some(name) = node_text(argument, source)
+                        && !name.is_empty()
+                        && !name.starts_with('-')
+                        && name
+                            .chars()
+                            .all(|character| character.is_alphanumeric() || character == '_')
+                    {
+                        assigned.insert(name);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+    }
+
+    items.retain(|item| {
+        item.kind != ParsedItemKind::EnvironmentRead
+            || !assigned.contains(&item.label)
+            || environment_backed.contains(&item.label)
+    });
+}
+
+/// The plain name behind an assignment target, dropping an array subscript
+/// (`cache[key]=…` sets `cache`).
+fn bash_variable_base_name(name: &str) -> &str {
+    name.split(['[', '=']).next().unwrap_or(name).trim()
+}
+
+/// Does this subtree expand `name` (`${name:-x}` / `$name`)?
+fn subtree_expands_variable(node: Node<'_>, source: &[u8], name: &str) -> bool {
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        if matches!(current.kind(), "expansion" | "simple_expansion") {
+            let mut cursor = current.walk();
+            for child in current.named_children(&mut cursor) {
+                if child.kind() == "variable_name"
+                    && node_text(child, source).as_deref() == Some(name)
+                {
+                    return true;
+                }
+            }
+        }
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    false
 }
