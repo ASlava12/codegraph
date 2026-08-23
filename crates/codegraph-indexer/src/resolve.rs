@@ -262,6 +262,94 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
                 | "false"
         ),
         "dart" => matches!(base, "print" | "identical" | "assert"),
+        // Julia's Base is in scope in every file without an import, so its
+        // functions are the most-called names in a Julia project and none of
+        // them is declared anywhere the scan can see: on DataFrames.jl they
+        // are 2315 calls filed as "unresolved", which reads as a resolver
+        // that failed. This list is checked only when the project declares
+        // nothing by that name, so a package that defines its own `eachcol`
+        // still wins.
+        "julia" => matches!(
+            base,
+            "length"
+                | "throw"
+                | "ArgumentError"
+                | "BoundsError"
+                | "ErrorException"
+                | "isempty"
+                | "typeof"
+                | "eltype"
+                | "enumerate"
+                | "Vector"
+                | "Matrix"
+                | "Array"
+                | "Set"
+                | "Dict"
+                | "Pair"
+                | "Symbol"
+                | "String"
+                | "Int"
+                | "Bool"
+                | "Float64"
+                | "Ref"
+                | "push"
+                | "pop"
+                | "append"
+                | "copy"
+                | "copyto"
+                | "deepcopy"
+                | "similar"
+                | "collect"
+                | "map"
+                | "filter"
+                | "reduce"
+                | "foreach"
+                | "zip"
+                | "all"
+                | "any"
+                | "first"
+                | "last"
+                | "fill"
+                | "get"
+                | "getfield"
+                | "setfield"
+                | "getproperty"
+                | "propertynames"
+                | "size"
+                | "axes"
+                | "view"
+                | "isequal"
+                | "isnothing"
+                | "ismissing"
+                | "eachindex"
+                | "firstindex"
+                | "lastindex"
+                | "findfirst"
+                | "findall"
+                | "sort"
+                | "reverse"
+                | "join"
+                | "split"
+                | "string"
+                | "print"
+                | "println"
+                | "error"
+                | "zeros"
+                | "ones"
+                | "min"
+                | "max"
+                | "minimum"
+                | "maximum"
+                | "sum"
+                | "count"
+                | "haskey"
+                | "keys"
+                | "values"
+                | "convert"
+                | "promote"
+                | "hash"
+                | "show"
+        ),
         _ => false,
     }
 }
@@ -610,34 +698,45 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 continue;
             }
             let key = (call.language.clone(), call.label.clone());
+            let resolution = if builtin_call_target(&call.language, &call.label) {
+                "builtin"
+            } else {
+                "unresolved"
+            };
             let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
                 *id
             } else {
-                let resolution = if builtin_call_target(&call.language, &call.label) {
-                    "builtin"
-                } else {
-                    "unresolved"
-                };
                 let mut metadata = BTreeMap::new();
-                metadata.insert("language".to_string(), call.language);
+                metadata.insert("language".to_string(), call.language.clone());
                 metadata.insert("parser".to_string(), "tree-sitter".to_string());
                 metadata.insert("item_kind".to_string(), "call".to_string());
                 metadata.insert("resolution".to_string(), resolution.to_string());
                 let id = context.graph.add_node_with_metadata(
                     NodeKind::ExternalDependency,
-                    call.label,
-                    Some(call.span),
+                    call.label.clone(),
+                    Some(call.span.clone()),
                     metadata,
                 );
                 context.unresolved_call_placeholders.insert(key, id);
                 id
             };
-            add_edge_once(
+            // The same provenance the other branches record: without it these
+            // edges alone could not say what was called or where, so a UI
+            // could not open the call site and the semantic pass could not ask
+            // about it.
+            add_edge_once_with_metadata(
                 context,
                 call.caller,
                 call_id,
                 EdgeKind::Calls,
                 Confidence::Heuristic,
+                BTreeMap::from([
+                    ("call_label".to_string(), call.label),
+                    ("resolution".to_string(), resolution.to_string()),
+                    ("language".to_string(), call.language),
+                    ("line".to_string(), call.span.start_line.to_string()),
+                    ("column".to_string(), call.span.start_column.to_string()),
+                ]),
             );
             continue;
         }

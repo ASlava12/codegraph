@@ -1977,6 +1977,55 @@ fn scan_project_resolves_python_absolute_local_imports() {
 }
 
 #[test]
+fn julia_base_calls_are_builtin_unless_the_project_declares_them() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("frame.jl"),
+        r#"function nrow(df)
+    return 1
+end
+
+function describe(df)
+    n = nrow(df)
+    return length(df) + n
+end
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let target_of = |call_label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge
+                        .metadata
+                        .get("call_label")
+                        .is_some_and(|label| label == call_label)
+            })
+            .and_then(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+            .unwrap_or_else(|| panic!("no call edge for {call_label}"))
+    };
+
+    // `length` is in scope in every Julia file and declared nowhere the scan
+    // can see; calling that unresolved reads as a resolver that failed.
+    assert_eq!(
+        target_of("length")
+            .metadata
+            .get("resolution")
+            .map(String::as_str),
+        Some("builtin")
+    );
+    // ...but a name the project declares is still the project's.
+    assert_eq!(target_of("nrow").kind, NodeKind::Function);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_python_module_qualifier_says_where_a_call_goes() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("app")).unwrap();
