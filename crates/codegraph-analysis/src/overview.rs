@@ -878,14 +878,13 @@ fn entrypoint_rank(node: &Node) -> u8 {
     if test_like {
         return 5;
     }
-    // A detected program entry (`func main` and friends) carries no declaring
-    // manifest, but it is a program — below an explicitly declared binary,
-    // above the routes and scripts around it.
-    if node.kind == NodeKind::Function && source.is_empty() {
-        return 1;
-    }
     match (source, kind) {
         ("manifest", "binary" | "executable" | "app") => 0,
+        // A program the parser recognised: below an explicitly declared
+        // binary, above the routes and scripts around it. Graphs scanned
+        // before programs were labelled fall back to the node kind.
+        ("code", "program") => 1,
+        ("", _) if node.kind == NodeKind::Function => 1,
         ("framework", _) => 2,
         ("shebang", _) | ("manifest", _) | ("makefile", _) => 3,
         _ => 4,

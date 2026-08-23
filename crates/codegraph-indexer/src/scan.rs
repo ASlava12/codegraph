@@ -565,6 +565,14 @@ pub(crate) fn index_file(
                         "item_kind".to_string(),
                         parsed_item_kind_name(item.kind).to_string(),
                     );
+                    // A `main` the parser recognised is an entrypoint like any
+                    // other, and every other kind says what it is. Without this
+                    // it was the only nameless one: the wiki filed programs
+                    // under "other" and no surface could filter for them.
+                    if item.kind == ParsedItemKind::Entrypoint {
+                        item_metadata.insert("entrypoint_kind".to_string(), "program".to_string());
+                        item_metadata.insert("source".to_string(), "code".to_string());
+                    }
                     let local_import = if item.kind == ParsedItemKind::Import {
                         local_import_target(
                             language,

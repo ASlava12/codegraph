@@ -115,7 +115,10 @@ pub fn export_wiki(graph: &CodeGraph, output_dir: &Path, label: &str) -> Result<
     let mut entrypoints_md = String::from(
         "[[Home]]\n\n# Entrypoints\n\nWhere execution starts: binaries, routes, CI jobs, containers.\n\n",
     );
-    let mut entrypoints_by_kind: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // `entrypoints` already ranks programs above CI jobs, so group by first
+    // appearance instead of alphabetically — sorting by kind name put
+    // `entrypoint` (a Dockerfile) and `make_target` ahead of the program.
+    let mut entrypoints_by_kind: Vec<(String, Vec<String>)> = Vec::new();
     for node in entrypoint_nodes.iter().take(ENTRYPOINT_LIMIT) {
         let kind = node
             .metadata
@@ -126,7 +129,13 @@ pub fn export_wiki(graph: &CodeGraph, output_dir: &Path, label: &str) -> Result<
         if let Some(location) = node_location(node) {
             line.push_str(&format!(" — {}", md_escape(&location)));
         }
-        entrypoints_by_kind.entry(kind).or_default().push(line);
+        match entrypoints_by_kind
+            .iter_mut()
+            .find(|(existing, _)| existing == &kind)
+        {
+            Some((_, lines)) => lines.push(line),
+            None => entrypoints_by_kind.push((kind, vec![line])),
+        }
     }
     for (kind, lines) in &entrypoints_by_kind {
         entrypoints_md.push_str(&format!("## {kind}\n\n"));
@@ -336,6 +345,34 @@ mod tests {
         ));
         fs::create_dir_all(&dir).expect("temp dir");
         dir
+    }
+
+    #[test]
+    fn the_entrypoints_page_leads_with_programs() {
+        let root = temp_dir("order");
+        fs::create_dir_all(root.join(".github/workflows")).unwrap();
+        fs::write(
+            root.join(".github/workflows/ci.yml"),
+            "name: CI\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: cargo test\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+
+        let graph = scan_project(&root, &IndexOptions::default()).expect("scan");
+        let out = temp_dir("vault");
+        export_wiki(&graph, &out, "demo").expect("export");
+        let page = fs::read_to_string(out.join("Entrypoints.md")).expect("page");
+
+        let program = page.find("## program").expect("program section");
+        // A CI job is where execution starts too, but never the first thing a
+        // reader wants to see.
+        if let Some(workflow) = page.find("## workflow_job") {
+            assert!(program < workflow, "programs come before CI jobs:\n{page}");
+        }
+
+        fs::remove_dir_all(root).ok();
+        fs::remove_dir_all(out).ok();
     }
 
     #[test]
