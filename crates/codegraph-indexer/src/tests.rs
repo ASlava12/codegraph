@@ -3979,6 +3979,44 @@ fn scan_project_indexes_control_flow_facts() {
 }
 
 #[test]
+fn a_csharp_call_on_an_instance_is_not_the_projects_static_method() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    // Newtonsoft declares `JsonConvert.ToString`, called 720 times, and its
+    // `value.ToString()` calls are the one every object inherits.
+    fs::write(
+        root.join("src").join("convert.cs"),
+        "namespace Demo {\n    public class JsonConvert {\n        public static string ToString(int value) { return \"\"; }\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("writer.cs"),
+        "namespace Demo {\n    public class Writer {\n        public string Render(object value) { return JsonConvert.ToString(1) + value.ToString(); }\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let declared = node_id(&graph, NodeKind::Function, "ToString");
+    let reaches = |label: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.target == declared
+                && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+        })
+    };
+    assert!(
+        reaches("JsonConvert.ToString"),
+        "a static call on the project's own type is the project's method"
+    );
+    assert!(
+        !reaches("value.ToString"),
+        "an instance's `ToString` belongs to a type the syntax cannot name"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_minified_file_is_recorded_but_not_read_for_facts() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();
@@ -10014,7 +10052,10 @@ fn overloads_of_one_method_are_not_a_choice() {
     // signatures share the name instead.
     assert_eq!(written.len(), 1);
     assert_eq!(
-        written[0].metadata.get("overload_count").map(String::as_str),
+        written[0]
+            .metadata
+            .get("overload_count")
+            .map(String::as_str),
         Some("2")
     );
 

@@ -13,12 +13,75 @@ use crate::*;
 /// Language builtins and std macros that read as call sites but are not
 /// external dependencies: constructors of core enums, print/assert/format
 /// macro families, and std namespaces.
-/// Whether a Rust method call names something the standard library gives
-/// every type. A project may declare `fn map` or `fn parse` of its own, but
-/// `option.map(..)` and `text.parse::<u64>()` are not calls to it, and the
-/// syntax alone cannot say which type the receiver has.
-pub(crate) fn rust_receiver_method_is_std(label: &str) -> bool {
-    let method = label.rsplit('.').next().unwrap_or(label).trim();
+/// Whether a call written through a receiver names a member the language
+/// gives every value. A project may declare `fn map` or `ToString` of its
+/// own, but `option.map(..)` and `value.ToString()` are not calls to it, and
+/// the syntax alone cannot say what type the receiver has.
+pub(crate) fn receiver_call_is_universal(language: &str, label: &str) -> bool {
+    let (receiver, method) = match label.rsplit_once('.') {
+        Some((receiver, method)) => (receiver.trim(), method.trim()),
+        None => return false,
+    };
+    match language {
+        "rust" => rust_method_is_std(method),
+        // C# writes a static call the same way as an instance call, and only
+        // the receiver's spelling tells them apart: `JsonConvert.ToString` is
+        // Newtonsoft's own API, called 720 times, while `value.ToString` is
+        // the one every object inherits.
+        "csharp" => !receiver_names_a_csharp_type(receiver) && csharp_member_of_every_value(method),
+        _ => false,
+    }
+}
+
+/// Whether a C# receiver is spelled the way the language spells a type: a
+/// static call names one, an instance call names a local, field or property.
+fn receiver_names_a_csharp_type(receiver: &str) -> bool {
+    let last = receiver.rsplit('.').next().unwrap_or(receiver);
+    last.chars().next().is_some_and(char::is_uppercase)
+}
+
+/// Members of `object`, `IDisposable`, `IEnumerable`, `Task` and LINQ: every
+/// value in the language has them, whatever its type. Names a project defines
+/// as readily as the framework does — `Add`, `Contains`, `Format` — are left
+/// out, because there the project's own method is the likelier answer.
+fn csharp_member_of_every_value(method: &str) -> bool {
+    let method = method.split('<').next().unwrap_or(method);
+    matches!(
+        method,
+        "ToString"
+            | "Equals"
+            | "GetHashCode"
+            | "GetType"
+            | "Dispose"
+            | "DisposeAsync"
+            | "MemberwiseClone"
+            | "ReferenceEquals"
+            | "GetEnumerator"
+            | "MoveNext"
+            | "ConfigureAwait"
+            | "GetAwaiter"
+            | "GetResult"
+            | "ToArray"
+            | "ToList"
+            | "AsEnumerable"
+            | "Cast"
+            | "OfType"
+            | "Select"
+            | "SelectMany"
+            | "Where"
+            | "OrderBy"
+            | "OrderByDescending"
+            | "ThenBy"
+            | "FirstOrDefault"
+            | "LastOrDefault"
+            | "SingleOrDefault"
+            | "Distinct"
+            | "Aggregate"
+    )
+}
+
+/// Methods the Rust standard library gives every type.
+fn rust_method_is_std(method: &str) -> bool {
     matches!(
         method,
         "unwrap"
@@ -1190,18 +1253,16 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // calls found its private `fn unwrap`. A Rust call written through a
         // receiver is answered by a method, and by no method at all when the
         // name is one every type already has.
-        let language_targets = if call.language == "rust" && call.label.contains('.') {
-            if rust_receiver_method_is_std(&call.label) {
-                Vec::new()
-            } else {
-                language_targets
-                    .into_iter()
-                    .filter(|target| {
-                        graph_node(&context.graph, *target)
-                            .is_some_and(|node| node.metadata.contains_key("owner_type"))
-                    })
-                    .collect::<Vec<_>>()
-            }
+        let language_targets = if receiver_call_is_universal(&call.language, &call.label) {
+            Vec::new()
+        } else if call.language == "rust" && call.label.contains('.') {
+            language_targets
+                .into_iter()
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .is_some_and(|node| node.metadata.contains_key("owner_type"))
+                })
+                .collect::<Vec<_>>()
         } else {
             language_targets
         };
