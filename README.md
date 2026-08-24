@@ -35,9 +35,9 @@ Implemented now:
 - Files are read into facts on every core, one round ahead of the walk that assembles the graph, so reading and assembling overlap; the graph is assembled in one order and is byte-identical run to run. Terraform's 49 MB first scan takes 3.6s and 0.58 GB on an 18-core machine, and 0.4s from a warm cache.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
 - What a definition lets others see, recorded as `visibility` wherever the language states it: a
-  keyword (`pub`, `static`, `local`, `private`, `defp`), a name (`_helper` in Python and Dart, a
-  capital in Go), an export list at the top of an Erlang or Haskell module, or the `.mli` beside an
-  OCaml one. A library's coverage finding counts what it exports as starting points, an uncalled
+  keyword (`pub`, `static`, `local`, `private`, `defp`, Solidity's `external`/`public`/`internal`/
+  `private`), a name (`_helper` in Python and Dart, a capital in Go), an export list at the top of an
+  Erlang or Haskell module, or the `.mli` beside an OCaml one. A library's coverage finding counts what it exports as starting points, an uncalled
   function says whether it is dead or the API, and a call from another file is not answered by a
   definition that file cannot name.
 - Every call and every fact belongs to the definition whose body contains it. One file can write
@@ -57,6 +57,16 @@ Implemented now:
   any definition — a module initialiser, `bp.route(...)`, `if __name__ == "__main__": main()` — is attributed
   to the file that runs it; a call inside an unnamed callback is not, because it runs on invocation rather
   than on load.
+- What a package publishes, read from npm's `files` field and kept as `published_paths` on the
+  manifest: code a package states it does not ship cannot turn a dev dependency into a runtime one,
+  and a dead import there reads as a note. The nearest manifest answers for a file, and a package
+  that publishes only a build product the scan never held (`files: ["dist"]` over sources in `src/`)
+  says nothing about its sources.
+- Objective-C resolves through the frameworks it calls: NSObject's universal methods and the XCTest
+  API by name, a bare function whose prefix belongs to a framework (`dispatch_`, `objc_`, a
+  capitalised `NS`/`CF`/`CG`/`Sec`) as that framework's, and a message whose receiver names a
+  framework class (`[NSURL URLWithString:]`) as Foundation's rather than as a selector nothing
+  declares.
 - Unresolved call targets share one placeholder node per language and label (every call site keeps its own `calls` edge), and language builtins/std macros (`Some`, `format!`, `println!`, `len`, `console.log`, `make`, …) are classified as `resolution: builtin` instead of counting as external dependencies or unresolved-call findings. A definition that patches a runtime namespace — kong replaces `ngx.exit` — answers only calls written through that namespace, and a qualified builtin (`Object.create`) is never answered by a project function that shares its tail. `unresolved_call` findings are grouped per call label and read as `info` on syntactic-only scans — they escalate to `warning` only after semantic (LSP) enrichment has run and the target still cannot be resolved.
 - Source rationale comments such as `WHY`, `NOTE`, `TODO`, `FIXME`, `HACK`, `BUG`, `XXX`, and `SECURITY` are indexed as linked graph facts with source spans for human and agent review.
 - Common branch, loop, async/concurrency, and return/exit constructs are indexed as source-spanned graph facts for workflow diagrams and node-card investigation, and workflow blocks classify them as branch, loop, async, and return steps. These facts carry the dedicated `control_flow` node kind, so kind facets, summaries, and web filters show them by name instead of `unknown`.
