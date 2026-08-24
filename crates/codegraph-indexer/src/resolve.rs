@@ -1771,12 +1771,31 @@ fn definition_is_reachable(
         "ocaml" | "lua" | "erlang" | "haskell" | "php" | "java" | "kotlin" | "scala" | "zig" => {
             false
         }
+        // A Rust item without `pub` belongs to its module, which its child
+        // modules can see and nothing else can: ripgrep declares a private
+        // `fn unwrap` in one crate, and 374 `.unwrap()` calls from every
+        // other crate resolved to it, making it the project's top hotspot.
+        "rust" => caller_path.is_some_and(|caller| {
+            rust_module_children(path).is_some_and(|dir| caller.starts_with(&dir))
+        }),
         // Go's lowercase reaches its whole package, Python's and Dart's
         // underscore is a convention, Ruby's `private` only refuses an
         // explicit receiver, and C# and Swift spread a type across files
         // with partial classes and extensions.
         _ => true,
     }
+}
+
+/// The directory holding the child modules of a Rust file: `src/foo.rs` and
+/// `src/foo/mod.rs` both own `src/foo/`.
+fn rust_module_children(path: &str) -> Option<String> {
+    let (directory, file) = path.rsplit_once('/')?;
+    let stem = file.strip_suffix(".rs")?;
+    Some(if stem == "mod" || stem == "lib" || stem == "main" {
+        format!("{directory}/")
+    } else {
+        format!("{directory}/{stem}/")
+    })
 }
 
 /// [`graph_node`] for a caller that means to change what it finds.

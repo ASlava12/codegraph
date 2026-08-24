@@ -3979,12 +3979,38 @@ fn scan_project_indexes_control_flow_facts() {
 }
 
 #[test]
+fn a_private_rust_function_answers_only_its_own_module() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("main.rs"),
+        "fn main() { helper(); }\n",
+    )
+    .unwrap();
+    fs::write(root.join("src").join("other.rs"), "fn helper() {}\n").unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let helper = node_id(&graph, NodeKind::Function, "helper");
+    assert!(
+        !graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Calls && edge.target == helper),
+        "a private `fn helper` is not visible from a sibling file"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scan_project_marks_ambiguous_call_edges() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src").join("main.rs"), "fn main() { parse(); }\n").unwrap();
-    fs::write(root.join("src").join("left.rs"), "fn parse() {}\n").unwrap();
-    fs::write(root.join("src").join("right.rs"), "fn parse() {}\n").unwrap();
+    // Both are `pub`: a private `fn parse` in a sibling file is not something
+    // `main.rs` could be calling, so only public ones make the call ambiguous.
+    fs::write(root.join("src").join("left.rs"), "pub fn parse() {}\n").unwrap();
+    fs::write(root.join("src").join("right.rs"), "pub fn parse() {}\n").unwrap();
 
     let graph = scan_project(&root, &IndexOptions::default()).unwrap();
     let main_id = node_id(&graph, NodeKind::Function, "main");
