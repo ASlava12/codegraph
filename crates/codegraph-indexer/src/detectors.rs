@@ -329,6 +329,11 @@ pub(crate) fn index_framework_routes(
         if route.expanded {
             metadata.insert("route_form".to_string(), "resource".to_string());
         }
+        // A route that states a condition the request has to meet shares a
+        // path with the route that serves everything else, by design.
+        if route.constrained {
+            metadata.insert("route_constraint".to_string(), "declared".to_string());
+        }
 
         let entrypoint_id = context.graph.add_node_with_metadata(
             NodeKind::Entrypoint,

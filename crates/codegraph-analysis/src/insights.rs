@@ -4707,6 +4707,15 @@ pub(crate) fn add_duplicate_framework_route_insights(
         }) {
             continue;
         }
+        // A route that states a condition the request has to meet is meant
+        // to share its path: mastodon serves `/invite/:invite_code` as JSON
+        // from the API `constraints: ->(req) { req.format == :json }` and
+        // as HTML from the registration form beneath it. Which of the two
+        // answers a request is what the constraint decides, and the graph
+        // does not hold what a lambda tests.
+        if node.metadata.contains_key("route_constraint") {
+            continue;
+        }
         let Some(path) = node
             .metadata
             .get("path")

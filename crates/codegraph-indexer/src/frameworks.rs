@@ -455,6 +455,7 @@ fn django_url_routes(source: &str) -> Vec<FrameworkRoute> {
             handler_qualifier: django_route_handler(&handler_source)
                 .and_then(|(_, qualifier)| qualifier),
             expanded: false,
+            constrained: false,
             line: index as u32 + 1,
         });
     }
@@ -563,6 +564,7 @@ pub(crate) fn route_from_python_decorator(
         handler: None,
         handler_qualifier: None,
         expanded: false,
+        constrained: false,
         line: line_number,
     })
 }
@@ -623,6 +625,7 @@ pub(crate) fn rust_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                 handler,
                 handler_qualifier: None,
                 expanded: false,
+                constrained: false,
                 line: line_number,
             })
         })
@@ -646,6 +649,7 @@ pub(crate) fn go_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                     handler,
                     handler_qualifier: None,
                     expanded: false,
+                    constrained: false,
                     line: line_number,
                 });
             }
@@ -681,6 +685,9 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
     let mut modules: Vec<String> = Vec::new();
     // The depth a `concern` block opened at, while one is open.
     let mut concern_depth: Option<usize> = None;
+    // How deep the innermost `constraints .. do` block sits, when one is
+    // open: every route inside it states a condition of its own.
+    let mut constraint_depth: Option<usize> = None;
 
     for (index, line) in source.lines().enumerate() {
         let line_number = index as u32 + 1;
@@ -704,6 +711,9 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                 if concern_depth.is_some_and(|depth| depth >= prefixes.len()) {
                     concern_depth = None;
                 }
+                if constraint_depth.is_some_and(|depth| depth >= prefixes.len()) {
+                    constraint_depth = None;
+                }
                 continue;
             }
             let prefix = joined_route_prefix(&prefixes);
@@ -721,6 +731,7 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                         .and_then(|(_, controller)| controller)
                         .and_then(|controller| qualified_rails_controller(&modules, &controller)),
                     expanded: false,
+                    constrained: false,
                     line: line_number,
                 });
                 continue;
@@ -791,6 +802,9 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
         // namespaces, and the stack drained until `/api/v1/accounts` read
         // as `/accounts`.
         if rails && opens_a_ruby_block(trimmed) {
+            if constraint_depth.is_none() && trimmed.starts_with("constraints") {
+                constraint_depth = Some(prefixes.len());
+            }
             prefixes.push(rails_block_prefix(trimmed));
             modules.push(rails_block_module(trimmed));
         }
@@ -801,7 +815,9 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
         else {
             continue;
         };
-        if !rest.starts_with(char::is_whitespace) {
+        // `get '/x' do` and `get('/x') do` declare the same route: a call
+        // is written with or without parentheses.
+        if !rest.starts_with(char::is_whitespace) && !rest.starts_with('(') {
             continue;
         }
         // Rails names the path with a symbol as often as with a string:
@@ -821,10 +837,16 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
         // Sinatra declares a route with the block that serves it: `get
         // '/' do .. end`. A request spec writes `get '/accounts'` with no
         // block at all, and mastodon's suite made 469 of those read as
-        // routes the program serves.
-        if !rails
-            && !(trimmed.ends_with(" do") || trimmed.contains(" { ") || trimmed.ends_with('{'))
-        {
+        // routes the program serves. A brace is a block only where ruby
+        // lets it be one -- after a closed argument list, `get('/') {` --
+        // and never on `params: {`, which opens the hash a spec passes:
+        // taking any brace on the line let 148 of mastodon's specs back in
+        // as routes the program does not serve.
+        let opens_a_block = trimmed.ends_with(" do")
+            || trimmed
+                .strip_suffix('{')
+                .is_some_and(|head| head.trim_end().ends_with(')'));
+        if !rails && !opens_a_block {
             continue;
         }
         let prefix = joined_route_prefix(&prefixes);
@@ -837,6 +859,11 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                 .and_then(|(_, controller)| controller)
                 .and_then(|controller| qualified_rails_controller(&modules, &controller)),
             expanded: false,
+            // `constraints:` states a condition the request has to meet, so
+            // the same path can be declared beside itself: mastodon serves
+            // `/invite/:invite_code` as JSON from the API and as HTML from
+            // the registration form.
+            constrained: rest.contains("constraints:") || constraint_depth.is_some(),
             line: line_number,
         });
     }
@@ -878,24 +905,36 @@ fn rails_route_target(rest: &str) -> Option<(String, Option<String>)> {
 }
 
 /// The class Rails looks for: `follower_accounts` is
-/// `FollowerAccountsController`, and `api/v1/accounts` is
-/// `AccountsController` inside a module of its own.
+/// `FollowerAccountsController`, and `auth/registrations` is
+/// `Auth::RegistrationsController` -- the path states the modules the
+/// class sits in, exactly as a `namespace` block does. Mastodon declares
+/// both `Auth::RegistrationsController` and
+/// `Admin::Fasp::RegistrationsController`, and the name alone chose
+/// neither.
 fn rails_controller_class(controller: &str) -> Option<String> {
-    let name = controller.rsplit('/').next()?.trim();
-    if name.is_empty() {
+    let controller = controller.trim();
+    if controller.is_empty() {
         return None;
     }
-    let camel: String = name
-        .split('_')
+    let camelize = |name: &str| -> String {
+        name.split('_')
+            .filter(|part| !part.is_empty())
+            .map(|part| {
+                let mut characters = part.chars();
+                match characters.next() {
+                    Some(first) => format!("{}{}", first.to_ascii_uppercase(), characters.as_str()),
+                    None => String::new(),
+                }
+            })
+            .collect()
+    };
+    let camel: String = controller
+        .split('/')
+        .map(str::trim)
         .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut characters = part.chars();
-            match characters.next() {
-                Some(first) => format!("{}{}", first.to_ascii_uppercase(), characters.as_str()),
-                None => String::new(),
-            }
-        })
-        .collect();
+        .map(camelize)
+        .collect::<Vec<_>>()
+        .join("::");
     // The name may already be a class: `rails_route_target` classifies
     // what `to:` names before the namespaces are joined onto it.
     (!camel.is_empty()).then(|| {
@@ -1016,12 +1055,29 @@ fn rails_singular(name: &str) -> String {
 
 /// The path the open blocks state, skipping the ones that add nothing:
 /// every block pushes an entry so that every `end` pops one.
+/// The stack entry a `collection do` block pushes. It is not a path
+/// segment; `joined_route_prefix` reads it as "the routes inside are the
+/// set's, not one member's".
+const RAILS_COLLECTION_BLOCK: &str = "\u{1}collection";
+
 fn joined_route_prefix(prefixes: &[String]) -> String {
-    let parts: Vec<&str> = prefixes
-        .iter()
-        .map(String::as_str)
-        .filter(|part| !part.is_empty())
-        .collect();
+    let mut parts: Vec<&str> = Vec::new();
+    for prefix in prefixes.iter().map(String::as_str) {
+        // A `collection do` block holds routes for the set, not for one of
+        // its members: `post :accept` there is
+        // `/notifications/requests/accept`. The enclosing `resources` block
+        // hands down its member path, which is right for a nested resource
+        // and for `member do`, so a collection block takes the id back off.
+        if prefix == RAILS_COLLECTION_BLOCK {
+            if let Some(member) = parts.pop() {
+                parts.push(member.split("/:").next().unwrap_or(member));
+            }
+            continue;
+        }
+        if !prefix.is_empty() {
+            parts.push(prefix);
+        }
+    }
     if parts.is_empty() {
         String::new()
     } else {
@@ -1045,7 +1101,11 @@ fn opens_a_ruby_block(line: &str) -> bool {
 /// 'ap' do` prefix what they hold; `member do` and `collection do` do
 /// not.
 fn rails_block_prefix(line: &str) -> String {
-    let Some(rest) = line.trim().strip_prefix("scope ") else {
+    let trimmed = line.trim();
+    if trimmed == "collection do" {
+        return RAILS_COLLECTION_BLOCK.to_string();
+    }
+    let Some(rest) = trimmed.strip_prefix("scope ") else {
         return String::new();
     };
     rails_option_value(rest, "path")
@@ -1107,6 +1167,7 @@ fn rails_resource_routes(
             handler: Some(action.to_string()),
             handler_qualifier: controller.clone(),
             expanded: true,
+            constrained: false,
             line,
         })
         .collect()
@@ -1130,6 +1191,7 @@ pub(crate) fn php_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                     handler: None,
                     handler_qualifier: None,
                     expanded: false,
+                    constrained: false,
                     line: line_number,
                 });
             }
@@ -1214,6 +1276,7 @@ fn laravel_routes(source: &str) -> Vec<FrameworkRoute> {
                         handler: handler.as_ref().map(|(handler, _)| handler.clone()),
                         handler_qualifier: handler.map(|(_, owner)| owner),
                         expanded: false,
+                        constrained: false,
                         line: line_number,
                     }),
                 }
@@ -1366,6 +1429,7 @@ fn laravel_resource_routes(
             handler: Some(action.to_string()),
             handler_qualifier: controller.map(str::to_string),
             expanded: true,
+            constrained: false,
             line,
         })
         .collect()
@@ -1455,6 +1519,7 @@ pub(crate) fn csharp_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                     handler: None,
                     handler_qualifier: None,
                     expanded: false,
+                    constrained: false,
                     line: line_number,
                 });
             }
@@ -1562,6 +1627,7 @@ pub(crate) fn jvm_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                     handler: None,
                     handler_qualifier: None,
                     expanded: false,
+                    constrained: false,
                     line: line_number,
                 });
             }
@@ -1684,6 +1750,7 @@ pub(crate) fn route_from_call_line(
         handler,
         handler_qualifier: None,
         expanded: false,
+        constrained: false,
         line: line_number,
     })
 }

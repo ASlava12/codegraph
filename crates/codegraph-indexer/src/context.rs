@@ -569,6 +569,11 @@ pub(crate) struct FrameworkRoute {
     /// that implements three of them is the ordinary case rather than a
     /// hole in the program.
     pub(crate) expanded: bool,
+    /// Whether the declaration states a condition the request has to meet.
+    /// Rails serves `get '/invite/:invite_code', constraints: ->(req) {
+    /// req.format == :json }` and a second route on the same path for
+    /// every other format: two routes, not one declared twice.
+    pub(crate) constrained: bool,
     pub(crate) line: u32,
 }
 

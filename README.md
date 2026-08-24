@@ -67,6 +67,17 @@ Implemented now:
   capitalised `NS`/`CF`/`CG`/`Sec`) as that framework's, and a message whose receiver names a
   framework class (`[NSURL URLWithString:]`) as Foundation's rather than as a selector nothing
   declares.
+- A ruby route is a declaration, not a call: sinatra states the block that serves the route on the
+  line that opens it (`get '/x' do`, `get('/x') {`), so a request spec's `post '/accounts', params:
+  { id: 1 }` is a call to a route rather than one of the program's own. 148 of mastodon's specs read
+  as routes it serves, and 51 of sinatra's own test fixtures did.
+- Rails routes are read the way Rails reads them: a `collection do` block holds the set's routes and
+  takes back the id the enclosing `resources` hands down (`POST /notifications/requests/accept`, not
+  `/requests/:request_id/accept`), a controller path states the modules its class sits in
+  (`auth/registrations#new` is `Auth::RegistrationsController#new`, which mastodon declares beside
+  `Admin::Fasp::RegistrationsController`), a route matches a class whose acronyms are capitalised the
+  project's way (`oembed#show` is `Api::OEmbedController#show`), and a route that states
+  `constraints:` shares its path by design rather than colliding with the route beneath it.
 - A qualified call's import qualifier is read from the front of the name, not from the segment
   before the method: `protoimpl.X.MessageStateOf` comes from `protoimpl`, so terraform's generated
   protobuf code no longer reports 3234 calls as unresolved, and `providers.SchemaCache.Set` reaches

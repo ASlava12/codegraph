@@ -3003,6 +3003,14 @@ fn imported_class_file(graph: &CodeGraph, file: &str, name: &str) -> Option<Stri
         })
 }
 
+/// How closely a declared class has to match the class a route names.
+#[derive(Clone, Copy)]
+enum OwnerMatch {
+    Exact,
+    Tail,
+    TailIgnoringCase,
+}
+
 pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
     let pending = std::mem::take(&mut context.pending_route_handlers);
     for reference in pending {
@@ -3031,32 +3039,47 @@ pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
             // `ActivityPub::LikesController` -- and a Rails route names
             // the controller path, which the inflector turns into that
             // name. Comparing what the two end with settles the method
-            // without knowing the project's acronym rules.
+            // without knowing the project's namespaces.
             let owner_tail = owner.rsplit("::").next().unwrap_or(owner);
-            let owner_is = |target: &NodeId, exact: bool| {
+            let owner_is = |target: &NodeId, match_kind: OwnerMatch| {
                 graph_node(&context.graph, *target)
                     .and_then(|node| node.metadata.get("owner_type"))
                     .is_some_and(|declared| {
-                        if exact {
-                            declared == owner
-                        } else {
-                            declared.rsplit("::").next().unwrap_or(declared) == owner_tail
+                        let declared_tail = declared.rsplit("::").next().unwrap_or(declared);
+                        match match_kind {
+                            OwnerMatch::Exact => declared == owner,
+                            OwnerMatch::Tail => declared_tail == owner_tail,
+                            // An acronym rule only changes which letters a
+                            // name capitalises: mastodon states
+                            // `inflect.acronym 'OEmbed'`, so `oembed#show`
+                            // is `Api::OEmbedController#show` and
+                            // `oauth_metadata#show` under `module:
+                            // :well_known` is
+                            // `WellKnown::OAuthMetadataController#show`.
+                            // Camelising a route's controller cannot know
+                            // that, and the letters are the same either way.
+                            OwnerMatch::TailIgnoringCase => {
+                                declared_tail.eq_ignore_ascii_case(owner_tail)
+                            }
                         }
                     })
             };
             // The name as written wins: mastodon declares both
             // `PrivacyController` and `Settings::PrivacyController`, and
             // a route naming the first means the first.
-            let mut owned: Vec<NodeId> = targets
-                .iter()
-                .copied()
-                .filter(|target| owner_is(target, true))
-                .collect();
-            if owned.is_empty() {
+            let mut owned: Vec<NodeId> = Vec::new();
+            for match_kind in [
+                OwnerMatch::Exact,
+                OwnerMatch::Tail,
+                OwnerMatch::TailIgnoringCase,
+            ] {
+                if !owned.is_empty() {
+                    break;
+                }
                 owned = targets
                     .iter()
                     .copied()
-                    .filter(|target| owner_is(target, false))
+                    .filter(|target| owner_is(target, match_kind))
                     .collect();
             }
             if !owned.is_empty() {

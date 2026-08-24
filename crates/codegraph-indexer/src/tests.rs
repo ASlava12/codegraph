@@ -5692,6 +5692,114 @@ fn a_go_call_through_a_package_qualifier_reads_past_the_type() {
 }
 
 #[test]
+fn a_spec_that_calls_a_route_is_not_a_route() {
+    // `post '/accounts', params: { id: 1 }` in a request spec calls a route;
+    // it does not declare one. Sinatra declares a route with the block that
+    // serves it, and reading a brace anywhere on the line as that block made
+    // 148 of mastodon's specs read as routes the program serves.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("spec")).unwrap();
+    fs::write(
+        root.join("app.rb"),
+        "require 'sinatra'\n\nget '/health' do\n  'ok'\nend\n\nget('/ready') {\n  'ok'\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("spec").join("app_spec.rb"),
+        "describe 'the app' do\n  it 'answers' do\n    get '/health', params: { id: 1 }\n    post :batch, params: {\n      id: 1,\n    }\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let routes: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == NodeKind::Entrypoint
+                && node.metadata.get("item_kind").map(String::as_str) == Some("framework_route")
+        })
+        .map(|node| node.label.as_str())
+        .collect();
+    assert_eq!(
+        routes,
+        ["route GET /health", "route GET /ready"],
+        "only the declarations that carry a block are routes"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rails_reads_a_collection_block_and_a_namespaced_controller() {
+    // A `collection do` block holds the set's routes, which have no id, and
+    // `to: 'auth/registrations#new'` names a class inside a module. Mastodon
+    // declares both `Auth::RegistrationsController` and
+    // `Admin::Fasp::RegistrationsController`, so the last path segment alone
+    // chose neither and the handler read as missing.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::create_dir_all(root.join("app").join("controllers").join("auth")).unwrap();
+    fs::write(
+        root.join("config").join("routes.rb"),
+        "Rails.application.routes.draw do\n  resources :requests, only: [:index] do\n    collection do\n      post :accept, to: 'requests#accept_bulk'\n    end\n\n    member do\n      post :dismiss\n    end\n  end\n\n  get '/invite/:code', to: 'auth/registrations#new'\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app")
+            .join("controllers")
+            .join("auth")
+            .join("registrations_controller.rb"),
+        "class Auth::RegistrationsController < Devise::RegistrationsController\n  def new\n    super\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let route = |label: &str| {
+        graph.nodes.iter().find(|node| {
+            node.kind == NodeKind::Entrypoint && node.label == format!("route {label}")
+        })
+    };
+    assert!(
+        route("POST /requests/accept").is_some(),
+        "a collection route has no id of its own: {:?}",
+        graph
+            .nodes
+            .iter()
+            .filter(|node| node.kind == NodeKind::Entrypoint)
+            .map(|node| node.label.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        route("POST /requests/:request_id/dismiss").is_some(),
+        "a member route keeps it"
+    );
+    let invite = route("GET /invite/:code").expect("the invite route");
+    assert_eq!(
+        invite.metadata.get("handler_qualifier").map(String::as_str),
+        Some("Auth::RegistrationsController"),
+        "the controller path states the modules the class sits in"
+    );
+    let handler = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "new" && node.kind == NodeKind::Function)
+        .expect("the handler");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.source == invite.id
+                && edge.target == handler.id
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|resolution| resolution == "framework_route_handler")
+        }),
+        "and the route reaches it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_ruby_call_through_a_gems_constant_is_not_this_projects_method() {
     // A ruby call's label keeps only the method name, so
     // `Addressable::URI.parse(href).normalize` and the project's own
