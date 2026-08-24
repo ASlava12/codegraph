@@ -11814,6 +11814,59 @@ fn one_missing_env_file_is_one_finding() {
 }
 
 #[test]
+fn a_fixture_pinning_its_own_version_is_not_the_project_disagreeing() {
+    // axios keeps typescript 4.9.5 under `tests/module/cjs` to prove it
+    // still compiles there, and gqlgen's examples each pin their own
+    // graphql. That is a fixture disagreeing with the project, not the
+    // project disagreeing with itself, so the project's own manifests have
+    // to differ for the finding to be a warning.
+    let mut graph = CodeGraph::new("repo");
+    let root = graph.add_node(NodeKind::File, "package.json");
+    let fixture = graph.add_node(NodeKind::File, "tests/module/cjs/package.json");
+    let web = graph.add_node(NodeKind::File, "packages/web/package.json");
+    let typescript = dependency_node(&mut graph, "typescript", "npm:typescript");
+    let vite = dependency_node(&mut graph, "vite", "npm:vite");
+    let declare = |graph: &mut CodeGraph, manifest, package, version: &str| {
+        graph.add_edge_with_metadata(
+            manifest,
+            package,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "dev".to_string()),
+                ("dependency_version".to_string(), version.to_string()),
+            ]),
+        );
+    };
+    declare(&mut graph, root, typescript, "^5.9.3");
+    declare(&mut graph, fixture, typescript, "4.9.5");
+    declare(&mut graph, root, vite, "^5.8.2");
+    declare(&mut graph, web, vite, "~5.5.4");
+
+    let report = insights(&graph);
+    let finding = |package: &str| {
+        report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "conflicting_dependency_declaration"
+                    && insight.message.contains(package)
+            })
+            .unwrap_or_else(|| panic!("expected a finding about {package}"))
+    };
+    assert_eq!(
+        finding("typescript").severity,
+        InsightSeverity::Info,
+        "only the fixture disagrees"
+    );
+    assert_eq!(
+        finding("vite").severity,
+        InsightSeverity::Warning,
+        "two of the project's own manifests disagree"
+    );
+}
+
+#[test]
 fn insights_report_conflicting_dependency_declarations() {
     let mut graph = CodeGraph::new("repo");
     let root_manifest = graph.add_node(NodeKind::File, "Cargo.toml");

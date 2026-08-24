@@ -117,6 +117,11 @@ Implemented now:
   `executable shellcheck` with `main-is: shellcheck.hs` is the program, a `test-suite` states a test
   program under its own `hs-source-dirs`, and a `library` states none. shellcheck's coverage finding
   is gone -- its entrypoints were its shell scripts and CI jobs.
+- A version a test fixture pins is not the project disagreeing with itself: axios keeps typescript
+  4.9.5 under `tests/module/cjs` to prove it still compiles there. The versions outside the tests
+  are what have to disagree, and an example app still counts against the project -- an example that
+  pins an older version of the library it shows off has gone stale -- while two examples disagreeing
+  with each other stays the examples' business.
 - A file contains what its own lines hold. A namespace many files reopen (C# `namespace`, PHP
   `namespace`, Ruby `module`) is one node, and every declaring file said it *contained* that node --
   putting one file's span inside another 1020 times in koel and 122 in mastodon. The file the

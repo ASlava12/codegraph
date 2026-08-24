@@ -3604,6 +3604,19 @@ pub(crate) fn add_unused_dependency_insights(graph: &CodeGraph, insights: &mut V
 /// a test fixture or something the project vendored. A dart workspace's
 /// `pkgs/ok_http/example/pubspec.yaml` pinning its own version of a package
 /// is the example's business.
+/// Whether a manifest belongs to an example app: code the project ships to
+/// show itself off, which is expected to track the project's own versions
+/// the way a test fixture is not.
+fn manifest_shows_the_project_off(label: &str) -> bool {
+    let normalized = label.replace('\\', "/").to_ascii_lowercase();
+    normalized.split('/').rev().skip(1).any(|part| {
+        matches!(
+            part.trim_matches('_'),
+            "example" | "examples" | "sample" | "samples" | "demo" | "demos"
+        )
+    })
+}
+
 fn manifest_is_the_projects_own(label: &str) -> bool {
     !is_test_like_source_path(label)
         && !is_vendored_source_path(label)
@@ -3932,11 +3945,35 @@ pub(crate) fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &
                 .into_iter(),
             3,
         );
-        let declared_by_the_project = declarations
-            .iter()
-            .filter_map(|(index, _)| graph.edges.get(*index))
-            .filter_map(|edge| node_label(graph, edge.source))
-            .any(manifest_is_the_projects_own);
+        // A test fixture pins a version on purpose: axios keeps typescript
+        // 4.9.5 under `tests/module/cjs` to prove it still compiles there,
+        // and gqlgen's `_examples/chat` its own graphql. What a test states
+        // is not what the project asks for, so the versions outside its
+        // tests have to disagree for this to be a warning -- an example app
+        // still counts, because an example that pins an older version of
+        // the library it shows off has gone stale.
+        let versions_from = |wanted: fn(&str) -> bool| -> BTreeSet<&str> {
+            declarations
+                .iter()
+                .filter_map(|(index, version)| {
+                    let edge = graph.edges.get(*index)?;
+                    let label = node_label(graph, edge.source)?;
+                    wanted(label).then_some(version.as_str())
+                })
+                .collect()
+        };
+        let disagree = |versions: &BTreeSet<&str>| {
+            versions.len() > 1
+                && !constraints_can_agree(ecosystem, &versions.iter().copied().collect::<Vec<_>>())
+        };
+        let own = versions_from(manifest_is_the_projects_own);
+        let mut with_examples = own.clone();
+        with_examples.extend(versions_from(manifest_shows_the_project_off));
+        // The project disagrees with itself, or with an example that has
+        // gone stale against it. Two examples disagreeing is the examples'
+        // business, and a test fixture states nothing the project asks for.
+        let declared_by_the_project =
+            disagree(&own) || (!own.is_empty() && disagree(&with_examples));
         insights.push(Insight {
             kind: "conflicting_dependency_declaration".to_string(),
             severity: if declared_by_the_project {
