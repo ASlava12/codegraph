@@ -451,7 +451,9 @@ fn django_url_routes(source: &str) -> Vec<FrameworkRoute> {
             // the view is where that is written.
             method: "ROUTE".to_string(),
             path: normalize_django_route_path(&path),
-            handler: django_route_handler(&handler_source),
+            handler: django_route_handler(&handler_source).map(|(name, _)| name),
+            handler_qualifier: django_route_handler(&handler_source)
+                .and_then(|(_, qualifier)| qualifier),
             line: index as u32 + 1,
         });
     }
@@ -462,9 +464,16 @@ fn django_url_routes(source: &str) -> Vec<FrameworkRoute> {
 /// `detail_view`, `views.IndexView.as_view()` is `IndexView`, and
 /// `include("oscar.apps.basket.urls")` names another URLconf rather than a
 /// view.
-fn django_route_handler(rest: &str) -> Option<String> {
+fn django_route_handler(rest: &str) -> Option<(String, Option<String>)> {
     let after_path = rest.split_once(',')?.1;
-    let candidate = after_path.split(',').next()?.trim();
+    let mut candidate = after_path.split(',').next()?.trim();
+    // `path("sitemap.xml", views.index)` closes the call on the handler,
+    // so the parenthesis the route opened comes back with it.
+    while candidate.ends_with(')')
+        && candidate.matches(')').count() > candidate.matches('(').count()
+    {
+        candidate = candidate[..candidate.len() - 1].trim_end();
+    }
     // `self.detail_view.as_view()` names an attribute of the app config,
     // whose value is assigned somewhere else entirely: django-oscar writes
     // 124 of them, and claiming a function called `detail_view` is a guess
@@ -472,17 +481,26 @@ fn django_route_handler(rest: &str) -> Option<String> {
     if candidate.is_empty() || candidate.starts_with("include(") || candidate.starts_with("self.") {
         return None;
     }
-    let name = candidate
+    let written = candidate
         .trim_end_matches("()")
-        .trim_end_matches(".as_view")
-        .rsplit('.')
-        .next()?
-        .trim();
+        .trim_end_matches(".as_view");
+    let name = written.rsplit('.').next()?.trim();
+    // `views.index` is `index` written under `views`, and what `views` is
+    // depends on what the file imports.
+    let qualifier = written
+        .rsplit_once('.')
+        .map(|(qualifier, _)| qualifier.trim().to_string())
+        .filter(|qualifier| {
+            !qualifier.is_empty()
+                && qualifier
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || character == '_')
+        });
     (!name.is_empty()
         && name
             .chars()
             .all(|character| character.is_alphanumeric() || character == '_'))
-    .then(|| name.to_string())
+    .then(|| (name.to_string(), qualifier))
 }
 
 /// What a reader would call the path a URLconf states: Django writes it
@@ -542,6 +560,7 @@ pub(crate) fn route_from_python_decorator(
         method,
         path,
         handler: None,
+        handler_qualifier: None,
         line: line_number,
     })
 }
@@ -600,6 +619,7 @@ pub(crate) fn rust_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                 method,
                 path,
                 handler,
+                handler_qualifier: None,
                 line: line_number,
             })
         })
@@ -621,6 +641,7 @@ pub(crate) fn go_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                     method: "ROUTE".to_string(),
                     path,
                     handler,
+                    handler_qualifier: None,
                     line: line_number,
                 });
             }
@@ -679,6 +700,7 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                         prefix.clone()
                     },
                     handler: rails_route_handler(rest),
+                    handler_qualifier: None,
                     line: line_number,
                 });
                 continue;
@@ -720,6 +742,7 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
             method: method.to_ascii_uppercase(),
             path: format!("{prefix}/{}", path.trim_start_matches('/')),
             handler: rails_route_handler(rest),
+            handler_qualifier: None,
             line: line_number,
         });
     }
@@ -781,6 +804,7 @@ fn rails_resource_routes(
             method: method.to_string(),
             path,
             handler: Some(action.to_string()),
+            handler_qualifier: None,
             line,
         })
         .collect()
@@ -802,6 +826,7 @@ pub(crate) fn php_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                         .to_string(),
                     path,
                     handler: None,
+                    handler_qualifier: None,
                     line: line_number,
                 });
             }
@@ -866,6 +891,7 @@ pub(crate) fn csharp_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                     method: method.to_string(),
                     path,
                     handler: None,
+                    handler_qualifier: None,
                     line: line_number,
                 });
             }
@@ -971,6 +997,7 @@ pub(crate) fn jvm_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                     method: method.to_string(),
                     path,
                     handler: None,
+                    handler_qualifier: None,
                     line: line_number,
                 });
             }
@@ -1091,6 +1118,7 @@ pub(crate) fn route_from_call_line(
         method: method.to_string(),
         path,
         handler,
+        handler_qualifier: None,
         line: line_number,
     })
 }

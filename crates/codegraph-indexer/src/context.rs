@@ -548,6 +548,11 @@ pub(crate) struct FrameworkRoute {
     pub(crate) method: String,
     pub(crate) path: String,
     pub(crate) handler: Option<String>,
+    /// What the handler was written under, when it was written qualified:
+    /// django-oscar's sandbox routes name `views.index`, and `views` is
+    /// `django.contrib.sitemaps.views` rather than anything the project
+    /// declares.
+    pub(crate) handler_qualifier: Option<String>,
     pub(crate) line: u32,
 }
 

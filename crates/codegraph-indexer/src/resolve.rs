@@ -2906,6 +2906,35 @@ pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
         // leaves no choice, and otherwise leave the handler unresolved,
         // which `unresolved_framework_route_handler` already reports.
         let [handler_id] = targets[..] else {
+            // Nothing in the project answers. When the route wrote the
+            // handler under a name the file imports -- `views.index`,
+            // where `views` is `django.contrib.sitemaps.views` -- the
+            // handler belongs to that package and the project was never
+            // going to declare it.
+            let imported = graph_node(&context.graph, reference.entrypoint)
+                .and_then(|node| {
+                    let qualifier = node.metadata.get("handler_qualifier")?.clone();
+                    let file = node.span.as_ref().map(|span| span.path.clone())?;
+                    Some((qualifier, file))
+                })
+                .is_some_and(|(qualifier, file)| {
+                    context
+                        .file_import_qualifiers
+                        .get(&file)
+                        .is_some_and(|names| names.contains_key(&qualifier))
+                        || context
+                            .file_imported_names
+                            .get(&file)
+                            .is_some_and(|names| names.contains_key(&qualifier))
+                });
+            if imported {
+                add_node_metadata(
+                    &mut context.graph,
+                    reference.entrypoint,
+                    "handler_scope",
+                    "external",
+                );
+            }
             continue;
         };
         add_entrypoint_reference(

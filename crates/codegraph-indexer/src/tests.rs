@@ -9337,6 +9337,53 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn a_route_handler_the_file_imports_belongs_to_the_package() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    // django-oscar's sandbox mounts Django's own sitemap views, and the
+    // project was reported as failing to declare `index` and `sitemap`.
+    fs::write(
+        root.join("urls.py"),
+        "from django.contrib.sitemaps import views\nfrom django.urls import path\n\nfrom . import shop\n\nurlpatterns = [\n    path('sitemap.xml', views.index),\n    path('catalogue/', shop.catalogue),\n]\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("shop.py"),
+        "def catalogue(request):\n    return request\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let scope_of = |path: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata.get("item_kind").map(String::as_str) == Some("framework_route")
+                    && node.metadata.get("path").map(String::as_str) == Some(path)
+            })
+            .map(|node| {
+                (
+                    node.metadata.get("handler").cloned(),
+                    node.metadata.get("handler_scope").cloned(),
+                )
+            })
+    };
+
+    assert_eq!(
+        scope_of("/sitemap.xml"),
+        Some((Some("index".to_string()), Some("external".to_string())))
+    );
+    // A handler the project does declare says nothing of the kind.
+    assert_eq!(
+        scope_of("/catalogue/"),
+        Some((Some("catalogue".to_string()), None))
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_call_into_the_global_namespace_is_not_a_member() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();

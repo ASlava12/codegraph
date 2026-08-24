@@ -316,6 +316,12 @@ pub(crate) fn index_framework_routes(
         if let Some(handler) = route.handler.as_deref() {
             metadata.insert("handler".to_string(), handler.to_string());
         }
+        // What the handler was written under, so the import list can say
+        // later whether the project declares it at all: django-oscar's
+        // sandbox routes name `views.index`, which is Django's.
+        if let Some(qualifier) = route.handler_qualifier.as_deref() {
+            metadata.insert("handler_qualifier".to_string(), qualifier.to_string());
+        }
 
         let entrypoint_id = context.graph.add_node_with_metadata(
             NodeKind::Entrypoint,

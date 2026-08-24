@@ -4745,6 +4745,12 @@ pub(crate) fn add_unresolved_framework_route_handler_insights(
         edges.sort_unstable();
         edges.dedup();
 
+        // A handler written under a name the file imports from a package
+        // is that package's: django-oscar's sandbox routes name
+        // `views.index`, where `views` is `django.contrib.sitemaps.views`.
+        if node.metadata.get("handler_scope").map(String::as_str) == Some("external") {
+            continue;
+        }
         // A framework's own tests declare routes to exercise the router:
         // every one of gin's 15 and eleven of express's live in a test file,
         // where the handler is a local closure rather than a definition.
