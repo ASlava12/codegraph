@@ -1882,6 +1882,77 @@ fn entrypoints_lead_with_programs_not_ci_jobs() {
 }
 
 #[test]
+fn the_report_summarises_the_project_before_the_packages_it_uses() {
+    let mut graph = CodeGraph::new("repo");
+    let manifest = graph.add_node(NodeKind::File, "package.json");
+    // koel's report opened with `vite-plus` at 417 incoming edges, above
+    // every function the project declares.
+    let package = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "vite-plus",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "dependency".to_string()),
+            ("package_id".to_string(), "npm:vite-plus".to_string()),
+        ]),
+    );
+    graph.add_edge_with_metadata(
+        manifest,
+        package,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "dev".to_string())]),
+    );
+    let own = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "playSong",
+        Some(SourceSpan {
+            path: "resources/js/player.ts".to_string(),
+            start_line: 10,
+            start_column: 1,
+            end_line: 20,
+            end_column: 1,
+        }),
+        BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+    );
+    // The package is imported far more often than the function is called.
+    for index in 0..30 {
+        let file = graph.add_node_with_metadata(
+            NodeKind::File,
+            format!("resources/js/view{index}.ts"),
+            None,
+            BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+        );
+        graph.add_edge(file, package, EdgeKind::DependsOn, Confidence::Exact);
+    }
+    let caller = graph.add_node(NodeKind::Function, "start");
+    graph.add_edge(caller, own, EdgeKind::Calls, Confidence::Exact);
+
+    let report = project_report(&graph, ProjectReportLimits::default());
+    let order: Vec<NodeId> = report
+        .node_summaries
+        .nodes
+        .iter()
+        .map(|summary| summary.node.id)
+        .collect();
+    let position = |id: NodeId| order.iter().position(|candidate| *candidate == id);
+
+    // The project's own code comes first, however many files import the
+    // package.
+    assert!(
+        position(own) < position(package),
+        "{:?}",
+        report
+            .node_summaries
+            .nodes
+            .iter()
+            .map(|summary| summary.node.label.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_ne!(order.first(), Some(&package));
+}
+
+#[test]
 fn a_question_the_graph_cannot_answer_says_what_it_answers_instead() {
     // The graph holds no history, so which files change together is not
     // something it knows; searching the project for `together` answered

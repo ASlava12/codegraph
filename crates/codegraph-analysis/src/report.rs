@@ -795,6 +795,14 @@ pub(crate) fn normalize_project_report_limits(limits: ProjectReportLimits) -> Pr
 /// `CtxTests:log`. Both lists answer "where is the weight of this project",
 /// so the project's own code comes first and the rest keeps its place below.
 fn summary_is_the_projects_own(node: &Node) -> bool {
+    // A package is not this project's code however many files import it:
+    // koel's report opened with `vite-plus` at 417 incoming edges and
+    // `@testing-library/vue` at 242, above every function it declares.
+    // The label of such a node is a package name, so the path check below
+    // reads it as an ordinary file and answered yes.
+    if node.kind == NodeKind::ExternalDependency && node.span.is_none() {
+        return false;
+    }
     let path = node
         .span
         .as_ref()
