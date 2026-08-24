@@ -97,6 +97,20 @@ jobs:
           test -s /tmp/codegraph.ndjson
           grep '"record_type":"graph"' /tmp/codegraph.ndjson
 
+      - name: Check the browser and the CLI agree on findings
+        run: |
+          # The browser recomputes some findings itself when no report has
+          # been sent, and those copies drift: flask's ten client warnings
+          # against the CLI's one warning and eight notes went unnoticed
+          # until someone drove both over a real graph. The fixtures in
+          # views-smoke.mjs pin each rule; this compares the counts on this
+          # repository's own graph.
+          cargo run -p codegraph-cli -- scan . --no-semantic --no-cache > /tmp/parity-graph.json
+          cargo run -p codegraph-cli -- insights . --no-semantic --no-cache --limit 1 > /tmp/parity-kinds.json
+          cargo run -p codegraph-cli -- insights . --no-semantic --no-cache --severity warning --limit 500 > /tmp/parity-warnings.json
+          node crates/codegraph-web/static/insight-parity.mjs \
+            /tmp/parity-graph.json /tmp/parity-kinds.json /tmp/parity-warnings.json
+
       - name: Check scan determinism
         run: |
           # The cache, the byte-stable wiki export and every diff of two

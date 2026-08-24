@@ -91,7 +91,12 @@ ambiguity rule. Repeat it with `loadBundle` from `smoke-harness.mjs` and
 `buildClientInsights(graph)`; the fixtures in `views-smoke.mjs` pin each
 case, and `check-defs.mjs` now fails when the three lists the bundle
 copies from the analysis crate drift (the Python standard-library set
-lives in `codegraph-core`, which the indexer reads too).
+lives in `codegraph-core`, which the indexer reads too), and
+`insight-parity.mjs` re-runs the whole comparison on a scanned graph:
+CI drives it over this repository, and pointing it at a corpus project is
+one scan plus two insight listings. It caught the next drift after the
+first three — flask's ten client warnings against the CLI's one warning
+and eight notes, and a `dotenv` the CLI knew python-dotenv ships.
 
 **The schema against the responses.** Every documented endpoint carries an
 example; calling each one and comparing the response with its
