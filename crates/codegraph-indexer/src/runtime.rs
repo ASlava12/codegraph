@@ -10,6 +10,16 @@ use codegraph_core::{Confidence, EdgeKind, NodeId, NodeKind};
 #[allow(unused_imports)]
 use crate::*;
 
+/// Record a command path, and say when the command writes it: a target that
+/// deletes or copies to a path still touches it, but nothing is missing when
+/// the path is not there yet.
+fn insert_command_path(metadata: &mut BTreeMap<String, String>, candidate: CommandPath) {
+    metadata.insert("command_path".to_string(), candidate.path);
+    if candidate.written {
+        metadata.insert("command_path_role".to_string(), "written".to_string());
+    }
+}
+
 pub(crate) fn index_makefile_entrypoints(
     context: &mut IndexContext,
     file_id: NodeId,
@@ -31,8 +41,8 @@ pub(crate) fn index_makefile_entrypoints(
         metadata.insert("line".to_string(), target.line.to_string());
         if let Some(command) = target.command.as_deref() {
             metadata.insert("command".to_string(), command.to_string());
-            if let Some(command_path) = normalized_command_path_candidate(label, command) {
-                metadata.insert("command_path".to_string(), command_path);
+            if let Some(candidate) = normalized_command_path_candidate(label, command) {
+                insert_command_path(&mut metadata, candidate);
             }
         }
 
@@ -102,8 +112,8 @@ pub(crate) fn index_dockerfile_entrypoints(
         metadata.insert("instruction".to_string(), entrypoint.instruction.clone());
         metadata.insert("command".to_string(), entrypoint.command.clone());
         metadata.insert("line".to_string(), entrypoint.line.to_string());
-        if let Some(command_path) = normalized_command_path_candidate(label, &entrypoint.command) {
-            metadata.insert("command_path".to_string(), command_path);
+        if let Some(candidate) = normalized_command_path_candidate(label, &entrypoint.command) {
+            insert_command_path(&mut metadata, candidate);
         }
 
         let entrypoint_id = context.graph.add_node_with_metadata(
@@ -177,8 +187,8 @@ pub(crate) fn index_compose_entrypoints(
             if let Some(kind) = service.command_kind.as_deref() {
                 metadata.insert("command_kind".to_string(), kind.to_string());
             }
-            if let Some(command_path) = normalized_command_path_candidate(label, command) {
-                metadata.insert("command_path".to_string(), command_path);
+            if let Some(candidate) = normalized_command_path_candidate(label, command) {
+                insert_command_path(&mut metadata, candidate);
             }
         }
         if let Some(context_path) = service.build_context.as_deref() {
@@ -687,8 +697,8 @@ pub(crate) fn index_github_actions_run_step(
     metadata.insert("job".to_string(), job.id.clone());
     metadata.insert("line".to_string(), step.line.to_string());
     metadata.insert("command".to_string(), command.to_string());
-    if let Some(command_path) = root_relative_command_path_candidate(command) {
-        metadata.insert("command_path".to_string(), command_path);
+    if let Some(candidate) = root_relative_command_path_candidate(command) {
+        insert_command_path(&mut metadata, candidate);
     }
     if let Some(name) = step.name.as_deref() {
         metadata.insert("name".to_string(), name.to_string());
@@ -924,8 +934,8 @@ pub(crate) fn index_gitlab_ci_script(
     if let Some(stage) = job.stage.as_deref() {
         metadata.insert("stage".to_string(), stage.to_string());
     }
-    if let Some(command_path) = root_relative_command_path_candidate(&script.command) {
-        metadata.insert("command_path".to_string(), command_path);
+    if let Some(candidate) = root_relative_command_path_candidate(&script.command) {
+        insert_command_path(&mut metadata, candidate);
     }
     let script_id = context.graph.add_node_with_metadata(
         NodeKind::Config,

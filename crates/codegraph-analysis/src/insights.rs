@@ -1171,6 +1171,7 @@ pub(crate) fn add_unresolved_github_actions_run_path_insights(
         };
         if scanned_directory_labels(graph).contains(command_path)
             || command_path_is_installed_or_unscanned(command_path)
+            || command_writes_its_path(node)
         {
             continue;
         }
@@ -1329,6 +1330,7 @@ pub(crate) fn add_unresolved_gitlab_ci_script_path_insights(
         };
         if scanned_directory_labels(graph).contains(command_path)
             || command_path_is_installed_or_unscanned(command_path)
+            || command_writes_its_path(node)
         {
             continue;
         }
@@ -1659,6 +1661,14 @@ pub(crate) fn scanned_directory_labels(graph: &CodeGraph) -> BTreeSet<&str> {
 /// hold what a build wrote. A repository is not missing them; whoever runs
 /// the job installs or builds them first. Hidden directories are skipped by
 /// every default scan, so their contents were never looked for either.
+/// A command that writes or deletes a path names it all the same, so the node
+/// keeps the path; nothing is missing when the path is not there yet.
+pub(crate) fn command_writes_its_path(node: &Node) -> bool {
+    node.metadata
+        .get("command_path_role")
+        .is_some_and(|role| role == "written")
+}
+
 pub(crate) fn command_path_is_installed_or_unscanned(command_path: &str) -> bool {
     command_path.split('/').any(|segment| {
         matches!(
@@ -1713,6 +1723,7 @@ pub(crate) fn add_unresolved_workflow_command_path_insights(
         }
         if directories.contains(command_path)
             || command_path_is_installed_or_unscanned(command_path)
+            || command_writes_its_path(node)
         {
             continue;
         }

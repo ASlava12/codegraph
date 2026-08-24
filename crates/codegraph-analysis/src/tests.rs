@@ -7193,13 +7193,38 @@ fn insights_keep_quiet_about_installed_and_unscanned_command_paths() {
         );
     }
 
+    // `rm -f build.log` names the file it deletes, not one that must exist.
+    let written_step = graph.add_node_with_metadata(
+        NodeKind::Config,
+        "github run:CI/build/10",
+        None,
+        BTreeMap::from([
+            (
+                "item_kind".to_string(),
+                "github_actions_run_step".to_string(),
+            ),
+            ("workflow".to_string(), "CI".to_string()),
+            ("job".to_string(), "build".to_string()),
+            ("command".to_string(), "rm -f logs/build.log".to_string()),
+            ("command_path".to_string(), "logs/build.log".to_string()),
+            ("command_path_role".to_string(), "written".to_string()),
+        ]),
+    );
+    graph.add_edge_with_metadata(
+        build,
+        written_step,
+        EdgeKind::References,
+        Confidence::Exact,
+        BTreeMap::from([("relation".to_string(), "github_actions_run".to_string())]),
+    );
+
     let report = insights(&graph);
     assert!(
         !report
             .insights
             .iter()
             .any(|insight| insight.kind == "unresolved_github_actions_run_path"),
-        "installed, unscanned and directory paths are not missing files: {:?}",
+        "installed, unscanned, written and directory paths are not missing files: {:?}",
         report
             .insights
             .iter()

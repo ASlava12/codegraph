@@ -2945,8 +2945,8 @@ pub(crate) fn entrypoint_target_candidates(
             .into_iter()
             .collect(),
         "gitlab-ci" => root_relative_command_path_candidate(&pending.target)
-            .map(|path| EntrypointTargetCandidate {
-                path,
+            .map(|candidate| EntrypointTargetCandidate {
+                path: candidate.path,
                 symbol: None,
                 file_confidence: Confidence::Heuristic,
                 function_confidence: Confidence::Heuristic,
@@ -3010,62 +3010,128 @@ pub(crate) fn python_entrypoint_candidates(
 
 pub(crate) fn command_path_candidate(pending: &PendingEntrypointTarget) -> Option<String> {
     normalized_command_path_candidate(&pending.manifest_label, &pending.target)
+        .map(|candidate| candidate.path)
 }
 
 pub(crate) fn normalized_command_path_candidate(
     manifest_label: &str,
     command: &str,
-) -> Option<String> {
-    command_paths(command)
-        .into_iter()
-        .find_map(|path| normalize_manifest_relative_path(manifest_label, &path))
+) -> Option<CommandPath> {
+    command_paths(command).into_iter().find_map(|candidate| {
+        normalize_manifest_relative_path(manifest_label, &candidate.path).map(|path| CommandPath {
+            path,
+            written: candidate.written,
+        })
+    })
+}
+
+/// A path a command names, and whether the command writes it.
+pub(crate) struct CommandPath {
+    pub(crate) path: String,
+    /// `rm -f build.log` and `cp x public/` name a path the command writes or
+    /// deletes. The project does not have to hold it already, but the command
+    /// still touches it, so it stays a path with a note on it.
+    pub(crate) written: bool,
 }
 
 /// The paths a command names, in the order it names them.
 ///
-/// `(cd ..; ./runtest)` runs `runtest` one directory up, so a leading `cd`
-/// moves what everything after it is relative to. `echo "see <repo>/src"`
-/// names nothing: what follows `echo` is text for a person to read.
-fn command_paths(command: &str) -> Vec<String> {
-    let mut tokens = split_command_tokens(command);
+/// `(cd ..; ./runtest)` runs `runtest` one directory up, so a `cd` moves what
+/// everything after it is relative to. `echo "see <repo>/src"` names nothing:
+/// what follows `echo` is text for a person to read. Chained commands are
+/// read one at a time, because each one has its own program.
+fn command_paths(command: &str) -> Vec<CommandPath> {
     let mut base = None;
-    if tokens.first().is_some_and(|token| token == "cd") && tokens.len() > 1 {
-        base = Some(tokens.remove(1));
-        tokens.remove(0);
-    }
-    if tokens.first().is_some_and(|token| token == "echo") {
-        return Vec::new();
-    }
     let mut paths = Vec::new();
-    let mut redirected = false;
-    for token in tokens {
-        // `> /dev/null` says where the output goes, not what runs.
-        if token
-            .chars()
-            .all(|character| matches!(character, '>' | '<' | '&' | '0'..='9'))
+    for segment in command.split([';', '&', '|']) {
+        let mut tokens = split_command_tokens(segment);
+        while tokens
+            .first()
+            .is_some_and(|token| matches!(token.as_str(), "sudo" | "env" | "exec" | "nohup"))
         {
-            redirected = true;
+            tokens.remove(0);
+        }
+        let Some(program) = tokens.first().cloned() else {
+            continue;
+        };
+        if program == "cd" && tokens.len() > 1 {
+            base = Some(tokens[1].clone());
             continue;
         }
-        if std::mem::take(&mut redirected) || !is_command_path_candidate(&token) {
+        if program == "echo" || names_packages_or_targets(&program) {
             continue;
         }
-        paths.push(match base.as_deref() {
-            Some(base) => format!("{base}/{token}"),
-            None => token,
-        });
+
+        let written = writes_its_paths(&program);
+        let mut segment_paths = Vec::new();
+        let mut redirected = false;
+        for token in tokens {
+            // `> /dev/null` says where the output goes, not what runs.
+            if token
+                .chars()
+                .all(|character| matches!(character, '>' | '<' | '&' | '0'..='9'))
+            {
+                redirected = true;
+                continue;
+            }
+            if std::mem::take(&mut redirected) || !is_command_path_candidate(&token) {
+                continue;
+            }
+            segment_paths.push(CommandPath {
+                path: match base.as_deref() {
+                    Some(base) => format!("{base}/{token}"),
+                    None => token,
+                },
+                written,
+            });
+        }
+        if last_path_is_a_destination(&program)
+            && let Some(destination) = segment_paths.last_mut()
+        {
+            destination.written = true;
+        }
+        paths.append(&mut segment_paths);
     }
     paths
 }
 
-pub(crate) fn github_actions_run_command_path_candidate(command: &str) -> Option<String> {
-    root_relative_command_path_candidate(command)
+/// Programs whose arguments name packages or build targets rather than files:
+/// `brew install alamofire/alamofire/firewalk` names a tap and a formula, and
+/// `sbt docs/tlSite` names a project and the task to run in it.
+fn names_packages_or_targets(program: &str) -> bool {
+    matches!(
+        program,
+        "brew" | "sbt" | "gradle" | "mvn" | "gem" | "apt-get"
+    )
 }
 
-pub(crate) fn root_relative_command_path_candidate(command: &str) -> Option<String> {
-    command_paths(command)
-        .into_iter()
-        .find_map(|path| normalize_relative_path(Path::new(&path)))
+/// Programs whose path arguments are what the command writes rather than what
+/// it reads: `rm -f t/phase_checks.stats` deletes a file a test run left, and
+/// `tail -F servroot/logs/error.log` follows a log the server writes.
+fn writes_its_paths(program: &str) -> bool {
+    matches!(
+        program,
+        "rm" | "rmdir" | "mkdir" | "touch" | "tail" | "unzip" | "tar"
+    )
+}
+
+/// `cp a b` and `mv a b` end with where the copy goes; only what comes before
+/// names a file the project has to hold already.
+fn last_path_is_a_destination(program: &str) -> bool {
+    matches!(program, "cp" | "mv" | "ln" | "install")
+}
+
+pub(crate) fn github_actions_run_command_path_candidate(command: &str) -> Option<String> {
+    root_relative_command_path_candidate(command).map(|candidate| candidate.path)
+}
+
+pub(crate) fn root_relative_command_path_candidate(command: &str) -> Option<CommandPath> {
+    command_paths(command).into_iter().find_map(|candidate| {
+        normalize_relative_path(Path::new(&candidate.path)).map(|path| CommandPath {
+            path,
+            written: candidate.written,
+        })
+    })
 }
 
 pub(crate) fn cmake_command_bodies(source: &str, command_name: &str) -> Vec<String> {

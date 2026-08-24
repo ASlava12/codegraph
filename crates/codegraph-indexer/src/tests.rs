@@ -1495,14 +1495,17 @@ fn a_computed_require_names_no_module() {
 
 #[test]
 fn a_command_names_the_path_the_shell_would_run() {
+    let path_of = |label: &str, command: &str| {
+        normalized_command_path_candidate(label, command).map(|candidate| candidate.path)
+    };
     // `(cd ..; ./runtest)` runs the script one directory up from the
     // Makefile that says so, not next to it.
     assert_eq!(
-        normalized_command_path_candidate("src/Makefile", "(cd ..; ./runtest)"),
+        path_of("src/Makefile", "(cd ..; ./runtest)"),
         Some("runtest".to_string())
     );
     assert_eq!(
-        normalized_command_path_candidate("src/Makefile", "./redis-server test all"),
+        path_of("src/Makefile", "./redis-server test all"),
         Some("src/redis-server".to_string())
     );
 
@@ -1513,13 +1516,35 @@ fn a_command_names_the_path_the_shell_would_run() {
         "go generate ./...",
         "echo \"Please specify AE_DIR (e.g. <redis repository>/src)\"",
         "(cd hiredis && $(MAKE) clean) > /dev/null || true",
+        // A tap and a formula, a project and its task, a build alias.
+        "brew install alamofire/alamofire/firewalk",
+        "sbt docs/tlSite",
+        "dune build @doc/runtest --auto-promote",
     ] {
-        assert_eq!(
-            normalized_command_path_candidate("deps/hiredis/Makefile", command),
-            None,
-            "{command}"
-        );
+        assert_eq!(path_of("deps/hiredis/Makefile", command), None, "{command}");
     }
+
+    // A command that deletes or copies to a path still names it, with a note
+    // that the path is written rather than read.
+    let removed = normalized_command_path_candidate("Makefile", "rm -f include/hedley.hpp")
+        .expect("rm names the file it deletes");
+    assert_eq!(removed.path, "include/hedley.hpp");
+    assert!(removed.written);
+
+    let copied = normalized_command_path_candidate("Makefile", "cp -r doc/index.html public/out")
+        .expect("cp names what it copies");
+    assert_eq!(copied.path, "doc/index.html");
+    assert!(!copied.written);
+
+    // Every command in a chain is read with its own program, so the script
+    // after a package install is still a path.
+    let chained = normalized_command_path_candidate(
+        "Makefile",
+        "brew install alamofire/firewalk && ./scripts/check.sh",
+    )
+    .expect("the second command names a script");
+    assert_eq!(chained.path, "scripts/check.sh");
+    assert!(!chained.written);
 }
 
 #[test]
