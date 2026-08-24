@@ -684,6 +684,53 @@ fn hotspots_rank_nodes_by_dependency_degree() {
 }
 
 #[test]
+fn a_test_helper_hub_comes_after_the_programs_own() {
+    let mut graph = CodeGraph::new("repo");
+    let placed = |graph: &mut CodeGraph, label: &str, path: &str| {
+        graph.add_node_with_span(
+            NodeKind::Function,
+            label,
+            SourceSpan {
+                path: path.to_string(),
+                start_line: 1,
+                start_column: 1,
+                end_line: 2,
+                end_column: 1,
+            },
+        )
+    };
+    // kong's biggest hub is `spec/helpers.lua`, referenced by 372 spec
+    // files; its own `load` has fewer callers and is what a reader wants.
+    let helper = placed(&mut graph, "helpers", "spec/helpers.lua");
+    let load = placed(&mut graph, "load", "kong/init.lua");
+    for index in 0..6 {
+        let spec = placed(
+            &mut graph,
+            &format!("spec_{index}"),
+            "spec/01-unit/x_spec.lua",
+        );
+        graph.add_edge(spec, helper, EdgeKind::Calls, Confidence::Heuristic);
+    }
+    for index in 0..2 {
+        let caller = placed(&mut graph, &format!("caller_{index}"), "kong/router.lua");
+        graph.add_edge(caller, load, EdgeKind::Calls, Confidence::Heuristic);
+    }
+
+    let report = hotspots(&graph, 10);
+    assert_eq!(report.hotspots[0].node.label, "load");
+    let ranks: Vec<_> = report
+        .hotspots
+        .iter()
+        .map(|hotspot| hotspot.node.label.as_str())
+        .collect();
+    let helper_rank = ranks.iter().position(|label| *label == "helpers");
+    assert!(
+        helper_rank.is_some_and(|rank| rank > 0),
+        "the test helper is still reported, after the program's own hubs: {ranks:?}"
+    );
+}
+
+#[test]
 fn hotspots_separate_architectural_hubs_from_utility_hubs() {
     let mut graph = CodeGraph::new("repo");
     let main = graph.add_node(NodeKind::Entrypoint, "server main");

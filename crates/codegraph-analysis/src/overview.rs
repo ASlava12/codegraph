@@ -1,7 +1,9 @@
 //! Project overview reports: summary, architecture map, language
 //! dependencies, surprising links, hotspots, communities, entrypoints.
 
-use codegraph_core::{CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind};
+use codegraph_core::{
+    CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind, is_vendored_source_path,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[allow(unused_imports)]
@@ -790,14 +792,32 @@ where
         hotspot.hub_kind = hotspot_kind(hotspot).to_string();
     }
     hotspots.sort_by(|left, right| {
-        right
-            .score
-            .cmp(&left.score)
+        hotspot_is_the_projects_own(right)
+            .cmp(&hotspot_is_the_projects_own(left))
+            .then_with(|| right.score.cmp(&left.score))
             .then_with(|| right.incoming.cmp(&left.incoming))
             .then_with(|| right.outgoing.cmp(&left.outgoing))
             .then_with(|| left.node.label.cmp(&right.node.label))
     });
     hotspots
+}
+
+/// Whether a hub sits in the program rather than in its tests, examples or
+/// vendored code.
+///
+/// kong's biggest hub is `spec/helpers.lua`, which 372 spec files reference,
+/// and redis's is jemalloc's generated `configure`. Both are true and
+/// neither answers "what is central here": they filled seven of the ten
+/// slots a reader looks at first, so they now come after the project's own
+/// hubs rather than instead of them.
+fn hotspot_is_the_projects_own(hotspot: &Hotspot) -> bool {
+    let path = hotspot
+        .node
+        .span
+        .as_ref()
+        .map(|span| span.path.as_str())
+        .unwrap_or(hotspot.node.label.as_str());
+    !is_test_like_source_path(path) && !is_vendored_source_path(path)
 }
 
 pub(crate) fn hotspot_kind(hotspot: &Hotspot) -> &'static str {
