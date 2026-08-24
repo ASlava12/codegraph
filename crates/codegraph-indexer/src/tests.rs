@@ -9348,7 +9348,7 @@ fn a_rails_resource_declares_what_it_says_it_declares() {
     // whole set of seven invented routes it does not serve.
     fs::write(
         root.join("config").join("routes.rb"),
-        "Rails.application.routes.draw do\n  resources :accounts, path: 'users', only: [:show]\n  resources :followers, only: [:index], controller: :follower_accounts\n  get '/about', to: 'about#show'\nend\n",
+        "Rails.application.routes.draw do\n  concern :actor do\n    resource :outbox, only: [:show]\n  end\n\n  resources :accounts, path: 'users', only: [:show] do\n    resources :statuses, only: [:show]\n  end\n  resources :followers, only: [:index], controller: :follower_accounts\n  get '/about', to: 'about#show'\nend\n",
     )
     .unwrap();
     fs::write(
@@ -9392,6 +9392,20 @@ fn a_rails_resource_declares_what_it_says_it_declares() {
     );
     assert!(
         routes.contains(&("GET".to_string(), "/followers".to_string())),
+        "{routes:?}"
+    );
+
+    // A nested resource lives under its parent's member path, and a
+    // concern states routes to be mounted elsewhere.
+    assert!(
+        routes.contains(&(
+            "GET".to_string(),
+            "/users/:account_id/statuses/:id".to_string()
+        )),
+        "{routes:?}"
+    );
+    assert!(
+        !routes.iter().any(|(_, path)| path == "/outbox"),
         "{routes:?}"
     );
 

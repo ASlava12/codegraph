@@ -669,6 +669,8 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
     let rails = source.contains("routes.draw");
     let mut routes = Vec::new();
     let mut prefixes: Vec<String> = Vec::new();
+    // The depth a `concern` block opened at, while one is open.
+    let mut concern_depth: Option<usize> = None;
 
     for (index, line) in source.lines().enumerate() {
         let line_number = index as u32 + 1;
@@ -687,12 +689,22 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
             }
             if trimmed == "end" {
                 prefixes.pop();
+                if concern_depth.is_some_and(|depth| depth >= prefixes.len()) {
+                    concern_depth = None;
+                }
                 continue;
             }
-            let prefix = if prefixes.is_empty() {
-                String::new()
-            } else {
-                format!("/{}", prefixes.join("/"))
+            let prefix = {
+                let parts: Vec<&str> = prefixes
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|part| !part.is_empty())
+                    .collect();
+                if parts.is_empty() {
+                    String::new()
+                } else {
+                    format!("/{}", parts.join("/"))
+                }
             };
             if let Some(rest) = trimmed.strip_prefix("root ") {
                 routes.push(FrameworkRoute {
@@ -711,6 +723,18 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                 });
                 continue;
             }
+            // `concern :account_resources do .. end` states routes to be
+            // mounted elsewhere, by whoever writes `concerns:`. Reading
+            // them where they are written put mastodon's `/inbox` and
+            // `/outbox` at the root of the site.
+            if let Some(rest) = trimmed.strip_prefix("concern ")
+                && trimmed.ends_with(" do")
+                && ruby_symbol_name(rest).is_some()
+            {
+                concern_depth = Some(prefixes.len());
+                prefixes.push(String::new());
+                continue;
+            }
             if let Some(rest) = trimmed
                 .strip_prefix("resources ")
                 .or_else(|| trimmed.strip_prefix("resource "))
@@ -725,14 +749,30 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                     let segment = rails_option_value(rest, "path").unwrap_or_else(|| name.clone());
                     let controller =
                         rails_option_value(rest, "controller").unwrap_or_else(|| name.clone());
-                    routes.extend(rails_resource_routes(
-                        &prefix,
-                        &segment,
-                        rails_controller_class(&controller),
-                        singular,
-                        &rails_resource_actions(rest),
-                        line_number,
-                    ));
+                    if concern_depth.is_none() {
+                        routes.extend(rails_resource_routes(
+                            &prefix,
+                            &segment,
+                            rails_controller_class(&controller),
+                            singular,
+                            &rails_resource_actions(rest),
+                            line_number,
+                        ));
+                    }
+                    // `resources :accounts do resources :statuses end`
+                    // nests: the inner routes live under the outer one's
+                    // member path.
+                    if trimmed.ends_with(" do") {
+                        let member = if singular {
+                            segment.clone()
+                        } else {
+                            let key = rails_option_value(rest, "param")
+                                .unwrap_or_else(|| "id".to_string());
+                            let parent = name.trim_end_matches('s');
+                            format!("{segment}/:{parent}_{key}")
+                        };
+                        prefixes.push(member);
+                    }
                 }
                 continue;
             }
