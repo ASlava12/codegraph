@@ -10009,7 +10009,14 @@ fn overloads_of_one_method_are_not_a_choice() {
                 && edge.metadata.get("call_label").map(String::as_str) == Some("writer.Write")
         })
         .collect();
-    assert_eq!(written.len(), 2, "the call reaches both signatures");
+    // One call site is one call: an edge per signature multiplied every
+    // count downstream by the number of overloads. The edge says how many
+    // signatures share the name instead.
+    assert_eq!(written.len(), 1);
+    assert_eq!(
+        written[0].metadata.get("overload_count").map(String::as_str),
+        Some("2")
+    );
 
     // Two packages, two types of one name: not overloads.
     assert_eq!(resolution("d.HasErrors").0, "ambiguous");

@@ -1684,6 +1684,20 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             continue;
         }
 
+        // One method's overloads are one method, and one call site is one
+        // call: linking it to each declaration turned Newtonsoft's 838
+        // `DeserializeObject` call sites into 6704 edges and filled that
+        // project's hotspot list with six copies of the same name.
+        let overload_count = targets.len();
+        if overloads && overload_count > 1 {
+            targets.sort_by_key(|target| {
+                graph_node(&context.graph, *target)
+                    .and_then(|node| node.span.as_ref())
+                    .map(|span| (span.path.clone(), span.start_line))
+            });
+            targets.truncate(1);
+        }
+
         // The call site, not the caller's declaration: a semantic pass asking
         // "what is defined here?" has to ask at the call, and click-to-source
         // on a call edge should land on the call.
@@ -1694,6 +1708,9 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         metadata.insert("line".to_string(), call.span.start_line.to_string());
         metadata.insert("column".to_string(), call.span.start_column.to_string());
         metadata.insert("resolution_basis".to_string(), basis.to_string());
+        if overloads && overload_count > 1 {
+            metadata.insert("overload_count".to_string(), overload_count.to_string());
+        }
         // Matching a name across the repository is a guess; everything else
         // here followed something the syntax states outright.
         let confidence = if basis == "name" {
