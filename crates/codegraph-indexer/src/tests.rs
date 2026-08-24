@@ -9173,6 +9173,62 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn spring_states_its_routes_above_the_method_that_serves_them() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("OwnerController.java"),
+        "package clinic;\n\nimport org.springframework.web.bind.annotation.GetMapping;\n\n@Controller\n@RequestMapping(\"/owners/{ownerId}\")\nclass OwnerController {\n\n\t@GetMapping(\"/pets/new\")\n\tpublic String initCreationForm(Owner owner) {\n\t\treturn \"pets/createOrUpdatePetForm\";\n\t}\n\n\t@PostMapping(\"/pets/new\")\n\tpublic String processCreationForm(Pet pet) {\n\t\treturn \"redirect:/owners/{ownerId}\";\n\t}\n\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("VetController.java"),
+        "package clinic;\n\nimport org.springframework.web.bind.annotation.GetMapping;\n\n@Controller\nclass VetController {\n\n\t@GetMapping({ \"/vets\" })\n\tpublic String showVetList(int page) {\n\t\treturn \"vets/vetList\";\n\t}\n\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let routes = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata.get("item_kind").map(String::as_str) == Some("framework_route")
+        })
+        .map(|node| {
+            (
+                node.label.clone(),
+                node.metadata.get("handler").cloned().unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    // The class states where its methods live, and the method its own path.
+    assert!(
+        routes.contains(&(
+            "route GET /owners/{ownerId}/pets/new".to_string(),
+            "initCreationForm".to_string()
+        )),
+        "{routes:?}"
+    );
+    assert!(
+        routes.contains(&(
+            "route POST /owners/{ownerId}/pets/new".to_string(),
+            "processCreationForm".to_string()
+        )),
+        "{routes:?}"
+    );
+    // A mapping can state its path as a list of one.
+    assert!(
+        routes.contains(&("route GET /vets".to_string(), "showVetList".to_string())),
+        "{routes:?}"
+    );
+    // The class annotation is where its methods live, not a route of its own.
+    assert_eq!(routes.len(), 3, "{routes:?}");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn django_states_its_routes_in_a_urlconf() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("shop")).unwrap();

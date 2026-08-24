@@ -703,6 +703,134 @@ pub(crate) fn php_framework_routes(source: &str) -> Vec<FrameworkRoute> {
     routes
 }
 
+/// Spring and JAX-RS write a route as an annotation above the method that
+/// serves it, with the class stating a prefix of its own:
+/// `@RequestMapping("/owners")` on the class and `@GetMapping("/{id}")` on
+/// the method. spring-petclinic declares 21 that way.
+pub(crate) fn jvm_framework_routes(source: &str) -> Vec<FrameworkRoute> {
+    if !(source.contains("Mapping") || source.contains("@Path")) {
+        return Vec::new();
+    }
+    let mut routes = Vec::new();
+    let mut pending: Vec<FrameworkRoute> = Vec::new();
+    let mut class_prefix = String::new();
+    let mut prefix_for_next_class: Option<String> = None;
+
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let trimmed = line.trim();
+        if trimmed.starts_with("//") || trimmed.starts_with('*') || trimmed.starts_with("/*") {
+            continue;
+        }
+        if trimmed.starts_with('@') {
+            if let Some((method, framework)) = jvm_route_annotation(trimmed) {
+                let path = first_quoted_value(trimmed).unwrap_or_default();
+                // An annotation on the class states where its methods live.
+                if trimmed.starts_with("@RequestMapping")
+                    && !line.starts_with('\t')
+                    && !path.is_empty()
+                {
+                    prefix_for_next_class = Some(path.clone());
+                }
+                pending.push(FrameworkRoute {
+                    framework: framework.to_string(),
+                    method: method.to_string(),
+                    path,
+                    handler: None,
+                    line: line_number,
+                });
+            }
+            continue;
+        }
+        if trimmed.contains("class ") && trimmed.contains('{') {
+            class_prefix = prefix_for_next_class.take().unwrap_or_default();
+            // The annotation that stated the prefix is the class's own, not
+            // a route of its own.
+            pending.retain(|route| route.path != class_prefix);
+            continue;
+        }
+        if let Some(name) = jvm_method_name(trimmed) {
+            for mut route in pending.drain(..) {
+                route.path = join_jvm_route_path(&class_prefix, &route.path);
+                route.handler = Some(name.clone());
+                routes.push(route);
+            }
+            continue;
+        }
+        if !trimmed.is_empty() && !trimmed.starts_with('}') {
+            pending.clear();
+        }
+    }
+
+    routes
+}
+
+/// The method and framework a JVM route annotation states.
+fn jvm_route_annotation(line: &str) -> Option<(&'static str, &'static str)> {
+    let name = line.trim_start_matches('@');
+    for (annotation, method) in [
+        ("GetMapping", "GET"),
+        ("PostMapping", "POST"),
+        ("PutMapping", "PUT"),
+        ("DeleteMapping", "DELETE"),
+        ("PatchMapping", "PATCH"),
+    ] {
+        if name.starts_with(annotation) {
+            return Some((method, "spring"));
+        }
+    }
+    if name.starts_with("RequestMapping") {
+        let method = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+            .into_iter()
+            .find(|method| line.contains(&format!("RequestMethod.{method}")))
+            .unwrap_or("ROUTE");
+        return Some((method, "spring"));
+    }
+    // Retrofit writes `@Path("id")` on a parameter to name a URL segment,
+    // and JAX-RS writes `@Path("/users")` on the resource: a path starts
+    // with a slash, and a parameter name does not.
+    if name.starts_with("Path(")
+        && first_quoted_value(line).is_some_and(|value| value.starts_with('/'))
+    {
+        return Some(("ROUTE", "jax-rs"));
+    }
+    None
+}
+
+/// The name of the method a JVM route annotation sits above.
+fn jvm_method_name(line: &str) -> Option<String> {
+    let (head, _) = line.split_once('(')?;
+    let name = head.split_whitespace().next_back()?;
+    let name = name.trim_start_matches('*');
+    (!name.is_empty()
+        && name
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_')
+        && name.chars().next().is_some_and(char::is_alphabetic)
+        && !matches!(
+            name,
+            "if" | "for" | "while" | "switch" | "catch" | "return" | "new" | "class"
+        ))
+    .then(|| name.to_string())
+}
+
+/// The path a route serves: the class's prefix and the method's own.
+fn join_jvm_route_path(prefix: &str, path: &str) -> String {
+    let prefix = prefix.trim_end_matches('/');
+    let path = path.trim();
+    let joined = match (prefix.is_empty(), path.is_empty()) {
+        (true, true) => "/".to_string(),
+        (true, false) => path.to_string(),
+        (false, true) => prefix.to_string(),
+        (false, false) => format!("{prefix}/{}", path.trim_start_matches('/')),
+    };
+    if joined.starts_with('/') {
+        joined
+    } else {
+        format!("/{joined}")
+    }
+}
+
 pub(crate) fn route_from_call_line(
     line: &str,
     line_number: u32,
