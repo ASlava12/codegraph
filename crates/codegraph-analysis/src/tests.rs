@@ -8070,6 +8070,44 @@ fn a_report_cites_a_node_by_the_id_that_survives_an_edit() {
 }
 
 #[test]
+fn a_local_helper_is_reached_through_the_function_that_holds_it() {
+    let mut graph = CodeGraph::new("repo");
+    let trim = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "trim",
+        None,
+        BTreeMap::from([("item_kind".to_string(), "function".to_string())]),
+    );
+    // shellcheck names 167 `where` bindings `f`; each is called by the
+    // function it is written in.
+    let helper = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "f",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "function".to_string()),
+            ("enclosing_function".to_string(), "trim".to_string()),
+        ]),
+    );
+    graph.add_edge(trim, helper, EdgeKind::Contains, Confidence::Exact);
+
+    let orphans: Vec<_> = insights(&graph)
+        .insights
+        .into_iter()
+        .filter(|insight| insight.kind == "orphan_function")
+        .map(|insight| insight.message)
+        .collect();
+    assert!(
+        orphans.iter().any(|message| message.contains("`trim`")),
+        "the definition nothing calls is still reported: {orphans:?}"
+    );
+    assert!(
+        !orphans.iter().any(|message| message.contains("`f`")),
+        "the local helper is not an orphan: {orphans:?}"
+    );
+}
+
+#[test]
 fn a_class_split_across_files_is_one_unit() {
     let mut graph = CodeGraph::new("repo");
     let function = |graph: &mut CodeGraph, label: &str, path: &str, owner: Option<&str>| {

@@ -668,6 +668,12 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
         .collect();
 
     for node in &graph.nodes {
+        // A definition written inside another is reached through the one
+        // that holds it: shellcheck names 167 `where` bindings `f`, and
+        // "nothing calls f" is not news about a local helper.
+        if node.metadata.contains_key("enclosing_function") {
+            continue;
+        }
         if node.kind == NodeKind::Function
             && !entrypoints.contains(&node.id)
             && !called.contains(&node.id)
