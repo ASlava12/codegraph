@@ -861,6 +861,20 @@ pub(crate) fn index_file(
                     {
                         item_metadata.insert("type_only".to_string(), "true".to_string());
                     }
+                    // TypeScript writes the same thing in the import
+                    // itself. `import type { PropsExpression } from
+                    // './transforms/transformElement'` is erased before
+                    // anything runs, and six of vue's ten cycles were
+                    // closed by one of these.
+                    if item.kind == ParsedItemKind::Import
+                        && matches!(
+                            language,
+                            Language::TypeScript | Language::Tsx | Language::JavaScript
+                        )
+                        && item.label.trim_start().starts_with("import type ")
+                    {
+                        item_metadata.insert("type_only".to_string(), "true".to_string());
+                    }
                     // `try: import cryptography / except ImportError:` says
                     // the program runs without the package, which is what an
                     // optional dependency is.

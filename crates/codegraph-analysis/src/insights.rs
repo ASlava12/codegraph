@@ -4808,6 +4808,54 @@ pub(crate) fn insight_severity_from_str(value: &str) -> InsightSeverity {
 /// across - C# splits `PolicyBuilder` over `PolicyBuilder.cs` and
 /// `PolicyBuilder.OrSyntax.cs` - so the walk between them is not coupling
 /// between components.
+/// Whether a ring survives inside the component once some of its nodes
+/// are taken out. Removing a link can leave a shorter ring: six of vue's
+/// cycles hold a type-only import and still cycle without it.
+fn component_still_cycles_without(
+    component: &BTreeSet<NodeId>,
+    adjacency: &BTreeMap<NodeId, Vec<(NodeId, usize)>>,
+    removed: &BTreeSet<NodeId>,
+) -> bool {
+    let remaining: BTreeSet<NodeId> = component.difference(removed).copied().collect();
+    let mut visited = BTreeSet::new();
+    let mut on_path = BTreeSet::new();
+    for node in &remaining {
+        if visited.contains(node) {
+            continue;
+        }
+        if walk_finds_a_cycle(*node, adjacency, &remaining, &mut visited, &mut on_path) {
+            return true;
+        }
+    }
+    false
+}
+
+fn walk_finds_a_cycle(
+    node: NodeId,
+    adjacency: &BTreeMap<NodeId, Vec<(NodeId, usize)>>,
+    remaining: &BTreeSet<NodeId>,
+    visited: &mut BTreeSet<NodeId>,
+    on_path: &mut BTreeSet<NodeId>,
+) -> bool {
+    visited.insert(node);
+    on_path.insert(node);
+    for (next, _) in adjacency.get(&node).into_iter().flatten() {
+        if !remaining.contains(next) {
+            continue;
+        }
+        if on_path.contains(next) {
+            return true;
+        }
+        if !visited.contains(next)
+            && walk_finds_a_cycle(*next, adjacency, remaining, visited, on_path)
+        {
+            return true;
+        }
+    }
+    on_path.remove(&node);
+    false
+}
+
 fn component_is_one_type(nodes_by_id: &BTreeMap<NodeId, &Node>, component: &[NodeId]) -> bool {
     let mut owner: Option<&str> = None;
     for id in component {
@@ -4963,14 +5011,22 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
         // files is the harness's: kong's `spec/helpers/perf.lua` and the
         // `spec/helpers/perf/git.lua` beside it require each other, and
         // that is the suite's shape rather than the program's.
-        // A ring needs every one of its links, so a cycle one of whose
-        // imports is written under `#[cfg(test)]` exists only in the test
-        // build: ripgrep's searcher imports its own `testutil` there.
-        let closed_by_a_test = component.iter().any(|id| {
-            nodes_by_id.get(id).is_some_and(|node| {
-                node.metadata.get("test_context").map(String::as_str) == Some("true")
+        // A ring needs every one of its links, so a cycle that falls apart
+        // once the imports written under `#[cfg(test)]` are taken out
+        // exists only in the test build: ripgrep's searcher imports its
+        // own `testutil` there. A component that still has a ring without
+        // them is the program's, however many test imports it also holds.
+        let written_for_tests: BTreeSet<NodeId> = component
+            .iter()
+            .copied()
+            .filter(|id| {
+                nodes_by_id.get(id).is_some_and(|node| {
+                    node.metadata.get("test_context").map(String::as_str) == Some("true")
+                })
             })
-        });
+            .collect();
+        let closed_by_a_test = !written_for_tests.is_empty()
+            && !component_still_cycles_without(&component_nodes, &adjacency, &written_for_tests);
         let outside_the_program = closed_by_a_test
             || (!files.is_empty()
                 && files

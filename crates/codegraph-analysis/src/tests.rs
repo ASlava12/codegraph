@@ -10274,6 +10274,20 @@ fn a_cycle_among_test_files_is_the_suite_shape() {
         .find(|insight| insight.kind == "dependency_cycle" && insight.nodes.contains(&searcher))
         .map(|insight| insight.severity);
     assert_eq!(severity, Some(InsightSeverity::Info));
+
+    // But a component that still rings without the test import is the
+    // program's, however many test imports it also holds.
+    let sink = placed(&mut graph, "sink", "crates/searcher/src/sink.rs");
+    graph.add_edge(searcher, sink, EdgeKind::Imports, Confidence::Syntactic);
+    graph.add_edge(sink, searcher, EdgeKind::Imports, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    let severity = report
+        .insights
+        .iter()
+        .find(|insight| insight.kind == "dependency_cycle" && insight.nodes.contains(&sink))
+        .map(|insight| insight.severity);
+    assert_eq!(severity, Some(InsightSeverity::Warning));
 }
 
 #[test]

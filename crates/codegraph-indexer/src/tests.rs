@@ -9335,6 +9335,47 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn a_type_only_import_closes_no_cycle() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    // vue and zod both write rings like this: the value flows one way and
+    // only the type comes back.
+    fs::write(
+        root.join("src").join("ast.ts"),
+        "import type { PropsExpression } from './transform';\n\nexport interface Node {\n  props: PropsExpression;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("transform.ts"),
+        "import { Node } from './ast';\n\nexport type PropsExpression = string;\n\nexport function transform(node: Node) {\n  return node;\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let import = graph
+        .nodes
+        .iter()
+        .find(|node| node.label.starts_with("import type { PropsExpression }"))
+        .expect("the type import is in the graph");
+    assert_eq!(
+        import.metadata.get("type_only").map(String::as_str),
+        Some("true"),
+        "{:?}",
+        import.metadata
+    );
+
+    // And the edge it resolves to carries the same, which is what keeps
+    // it out of cycle detection.
+    let erased = graph.edges.iter().any(|edge| {
+        edge.source == import.id
+            && edge.metadata.get("type_only").map(String::as_str) == Some("true")
+    });
+    assert!(erased, "the resolved reference is erased too");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_import_written_for_the_test_build_says_so() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();
