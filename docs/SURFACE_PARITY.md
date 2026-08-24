@@ -75,3 +75,36 @@ the audit matrix in `FEATURE_AUDIT.md`. The previously unintentional gaps
 dashboard (F6), and the missing MCP tools (F7) — were closed by their
 audit follow-ups; everything remaining in the lists above is intentional
 and recorded here.
+
+## Agreement between surfaces (2026-08-24)
+
+Reachability is one half; the other is whether two surfaces answering the
+same question say the same thing. Three checks, each repeatable:
+
+**The browser against the CLI.** The web view recomputes eight findings on
+the graph it holds rather than asking for them again. Driving the bundle
+over a real scanned graph and diffing the per-kind counts against
+`codegraph insights` found three disagreements: the view's Python
+standard-library list had 41 names against the CLI's 193, it never learned
+that a project does not depend on itself, and it saw only half the
+ambiguity rule. Repeat it with `loadBundle` from `smoke-harness.mjs` and
+`buildClientInsights(graph)`; the fixtures in `views-smoke.mjs` pin each
+case, and `check-defs.mjs` now fails when the three lists the bundle
+copies from `insights.rs` drift.
+
+**The schema against the responses.** Every documented endpoint carries an
+example; calling each one and comparing the response with its
+`response_fields` found seven examples that did not run at all, four
+responses that described none of their fields, and three published
+defaults that were not the ones the handlers applied. A test in
+`codegraph-server` serializes five responses and fails on a field
+described and not returned, or returned and described nowhere, and pins
+one published default against the limit the handler reports applying.
+
+**One scan path per surface.** A handler that scans on its own skips the
+automatic semantic pass its neighbours run, and then answers from a
+different graph: `/api/node-card`, `/api/scan`, `/api/report` and the CLI
+`report` all did. `scan_graph_with_cache` and `scan_with_cache_status` are
+the single paths, returning the cache status those callers reached past
+them for. Scan jobs stay syntactic on purpose — cancellable, with the
+semantic jobs beside them — and the schema says so at both ends.
