@@ -185,6 +185,84 @@ fn rust_method_is_std(method: &str) -> bool {
     )
 }
 
+/// A C function one of Apple's frameworks provides. Objective-C calls
+/// them by bare name -- `dispatch_async`, `NSStringFromSelector`,
+/// `SecCertificateCopyData`, `objc_setAssociatedObject` -- and every
+/// framework prefixes its own. A project that defines the name itself
+/// never reaches here: this answers only for calls nothing resolved.
+fn objc_platform_function(name: &str) -> bool {
+    if name.contains(':') {
+        return false;
+    }
+    let lowercase_prefixes = [
+        "dispatch_",
+        "objc_",
+        "os_",
+        "sel_",
+        "class_",
+        "method_",
+        "imp_",
+    ];
+    if lowercase_prefixes
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+    {
+        return true;
+    }
+    // `NSStringFromClass` is Foundation's and `AFQueryStringFromParameters`
+    // is AFNetworking's: the capital that follows the prefix is what tells
+    // a framework function from a name that merely begins with those
+    // letters.
+    [
+        "NS",
+        "CF",
+        "CG",
+        "CA",
+        "CM",
+        "CV",
+        "CT",
+        "AV",
+        "UI",
+        "WK",
+        "Sec",
+        "SC",
+        "AudioObject",
+    ]
+    .iter()
+    .any(|prefix| {
+        name.starts_with(prefix)
+            && name[prefix.len()..]
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_uppercase())
+    })
+}
+
+/// Whether an Objective-C message goes to a class one of Apple's
+/// frameworks provides. `[NSURL URLWithString:]` and `[NSSet
+/// setWithObject:]` are Foundation's, and the selector alone reads like
+/// any other method. A project's own method never reaches here: this
+/// answers only for calls that resolved to nothing.
+fn objc_platform_receiver(language: &str, receiver: Option<&str>) -> bool {
+    if language != "objc" {
+        return false;
+    }
+    let Some(receiver) = receiver else {
+        return false;
+    };
+    [
+        "NS", "UI", "CF", "CG", "CA", "CM", "AV", "WK", "SC", "SK", "MK", "CL", "PH", "Sec", "XCT",
+    ]
+    .iter()
+    .any(|prefix| {
+        receiver.starts_with(prefix)
+            && receiver[prefix.len()..]
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_uppercase())
+    })
+}
+
 pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
     // PHP writes `\count(..)` to mean the global function rather than one
     // the current namespace might define, and monolog writes 273 of its
@@ -567,6 +645,84 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
                 | "NSError"
                 | "IndexPath"
         ),
+        // Objective-C sends every message through the runtime, so the
+        // names NSObject and the frameworks answer to look exactly like a
+        // project's own methods. AFNetworking's 2136 unresolved calls are
+        // led by `alloc`, `class`, XCTest's assertions and Foundation's
+        // free functions.
+        "objc" => {
+            matches!(
+                base,
+                // What every object answers, whatever it is.
+                "alloc"
+                    | "new"
+                    | "init"
+                    | "self"
+                    | "class"
+                    | "superclass"
+                    | "copy"
+                    | "mutableCopy"
+                    | "retain"
+                    | "release"
+                    | "autorelease"
+                    | "dealloc"
+                    | "hash"
+                    | "description"
+                    | "debugDescription"
+                    | "load"
+                    | "initialize"
+                    | "isEqual:"
+                    | "isKindOfClass:"
+                    | "isMemberOfClass:"
+                    | "respondsToSelector:"
+                    | "conformsToProtocol:"
+                    | "performSelector:"
+                    | "performSelector:withObject:"
+                    | "performSelector:withObject:afterDelay:"
+                    | "methodSignatureForSelector:"
+                    | "forwardInvocation:"
+                    | "valueForKey:"
+                    | "setValue:forKey:"
+                    | "valueForKeyPath:"
+                    | "setValue:forKeyPath:"
+                    // The test framework, which a test file calls as
+                    // often as it calls the code under test.
+                    | "XCTAssert"
+                    | "XCTAssertTrue"
+                    | "XCTAssertFalse"
+                    | "XCTAssertNil"
+                    | "XCTAssertNotNil"
+                    | "XCTAssertEqual"
+                    | "XCTAssertNotEqual"
+                    | "XCTAssertEqualObjects"
+                    | "XCTAssertNotEqualObjects"
+                    | "XCTAssertEqualWithAccuracy"
+                    | "XCTAssertGreaterThan"
+                    | "XCTAssertGreaterThanOrEqual"
+                    | "XCTAssertLessThan"
+                    | "XCTAssertLessThanOrEqual"
+                    | "XCTAssertThrows"
+                    | "XCTAssertThrowsSpecific"
+                    | "XCTAssertNoThrow"
+                    | "XCTFail"
+                    | "XCTSkip"
+                    | "XCTSkipIf"
+                    | "XCTSkipUnless"
+                    | "expectationWithDescription:"
+                    | "expectationForNotification:object:handler:"
+                    | "expectationForPredicate:evaluatedWithObject:handler:"
+                    | "waitForExpectationsWithTimeout:handler:"
+                    | "keyValueObservingExpectationForObject:keyPath:handler:"
+                    | "measureBlock:"
+                    | "fulfill"
+                    // Assertion macros Foundation defines.
+                    | "NSAssert"
+                    | "NSCAssert"
+                    | "NSParameterAssert"
+                    | "NSCParameterAssert"
+                    | "NSLog"
+            ) || objc_platform_function(base)
+        }
         "ruby" => matches!(
             base,
             "super"
@@ -1791,16 +1947,14 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             // several project declarations sharing it is not: cats is
             // cross-built, so its `compat/Seq.scala` exists once per Scala
             // version, yet a bare `Seq(...)` is the standard library's.
-            if type_targets.len() > 1 && !builtin_call_target(&call.language, &call.label) {
+            let is_builtin = builtin_call_target(&call.language, &call.label)
+                || objc_platform_receiver(&call.language, call.receiver.as_deref());
+            if type_targets.len() > 1 && !is_builtin {
                 targets = type_targets;
                 ambiguous_candidates_are_types = true;
             } else {
                 let key = (call.language.clone(), call.label.clone());
-                let resolution = if builtin_call_target(&call.language, &call.label) {
-                    "builtin"
-                } else {
-                    "unresolved"
-                };
+                let resolution = if is_builtin { "builtin" } else { "unresolved" };
                 let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
                     *id
                 } else {

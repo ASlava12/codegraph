@@ -1478,6 +1478,20 @@ pub(crate) fn classify_call(
     {
         metadata.insert("receiver_type".to_string(), receiver_type.clone());
     }
+    // `[NSURL URLWithString:url]` names the class it messages, and the
+    // receiver is the only thing that tells Foundation's `URLWithString:`
+    // from a method a project declares under the same selector.
+    if language == Language::ObjectiveC
+        && node.kind() == "message_expression"
+        && let Some(receiver) = node
+            .child_by_field_name("receiver")
+            .and_then(|receiver| node_text(receiver, source))
+        && receiver
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        metadata.insert("receiver".to_string(), receiver);
+    }
     // `done()` where the body wrote `runningCtx, done := context.WithCancel(…)`
     // calls a value, not a definition. Saying so separates a call that has
     // nothing to find from one the resolver failed on: 1499 of terraform's

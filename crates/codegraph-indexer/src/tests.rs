@@ -9287,6 +9287,58 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn objective_c_calls_the_frameworks_by_name() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("Client.m"),
+        r#"#import <Foundation/Foundation.h>
+
+@implementation AFClient
+
+- (void)start {
+    NSURL *url = [NSURL URLWithString:@"https://example.com"];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSLog(@"%@", NSStringFromClass([self class]));
+    });
+    [self send:url];
+}
+
+- (void)send:(NSURL *)url {
+}
+
+@end
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution_of = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && graph
+                        .nodes
+                        .iter()
+                        .any(|node| node.id == edge.target && node.label == label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+
+    // A message to a Foundation class, a free function of one of the
+    // frameworks, and what every object answers.
+    assert_eq!(resolution_of("URLWithString:"), Some("builtin".to_string()));
+    assert_eq!(resolution_of("dispatch_async"), Some("builtin".to_string()));
+    assert_eq!(resolution_of("class"), Some("builtin".to_string()));
+    // The project's own method still wins.
+    assert_eq!(resolution_of("send:"), Some("resolved".to_string()));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_restructured_text_document_states_its_sections() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("docs")).unwrap();

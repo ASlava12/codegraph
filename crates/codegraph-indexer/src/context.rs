@@ -171,6 +171,10 @@ pub(crate) struct PendingCall {
     /// `Backend`). Lets resolution pick the method of that type instead of
     /// every method sharing the name.
     pub(crate) receiver_type: Option<String>,
+    /// What the call names as its receiver, when the source writes one:
+    /// `[NSURL URLWithString:url]` messages a class Foundation provides,
+    /// and the selector alone cannot say so.
+    pub(crate) receiver: Option<String>,
     /// The call goes through a value the body binds, not to a definition.
     pub(crate) callee_is_value: bool,
 }
