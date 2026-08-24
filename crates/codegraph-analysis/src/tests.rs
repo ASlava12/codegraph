@@ -8004,6 +8004,49 @@ fn insights_report_duplicate_compose_published_ports() {
 }
 
 #[test]
+fn a_dead_end_in_a_test_manifest_is_a_note() {
+    let mut graph = CodeGraph::new("repo");
+    // json declares a fuzzer target in `tests/thirdparty/Fuzzer` and a CUDA
+    // example in `tests/cuda_example`; neither is the program.
+    let manifest = graph.add_node(NodeKind::File, "tests/cuda_example/CMakeLists.txt");
+    let own_manifest = graph.add_node(NodeKind::File, "CMakeLists.txt");
+    let theirs = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "cmake executable:json_cuda",
+        None,
+        BTreeMap::from([("item_kind".to_string(), "manifest_entrypoint".to_string())]),
+    );
+    let ours = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "cmake executable:json_cli",
+        None,
+        BTreeMap::from([("item_kind".to_string(), "manifest_entrypoint".to_string())]),
+    );
+    for (file, entrypoint) in [(manifest, theirs), (own_manifest, ours)] {
+        graph.add_edge(file, entrypoint, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(
+            graph.root,
+            entrypoint,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+    }
+
+    let report = insights(&graph);
+    let severity_of = |needle: &str| {
+        report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "entrypoint_dead_end" && insight.message.contains(needle)
+            })
+            .map(|insight| insight.severity)
+    };
+    assert_eq!(severity_of("json_cli"), Some(InsightSeverity::Warning));
+    assert_eq!(severity_of("json_cuda"), Some(InsightSeverity::Info));
+}
+
+#[test]
 fn insights_report_entrypoint_dead_ends() {
     let mut graph = CodeGraph::new("repo");
     let dead = graph.add_node(NodeKind::Entrypoint, "npm script:preview");

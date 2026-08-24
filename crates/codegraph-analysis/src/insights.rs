@@ -1765,9 +1765,26 @@ pub(crate) fn add_entrypoint_dead_end_insights(graph: &CodeGraph, insights: &mut
             continue;
         }
 
+        // A fuzzer target in `tests/thirdparty/Fuzzer` and a CUDA example
+        // under `tests/cuda_example` are declared where the project keeps
+        // what it does not ship, so a dead end there is a note. A manifest
+        // entrypoint carries no span, so the file that contains it is the
+        // one to ask about.
+        let declared_in = node
+            .span
+            .as_ref()
+            .map(|span| span.path.clone())
+            .or_else(|| declaring_file_label(graph, node.id));
+        let declared_by_the_project = declared_in
+            .as_deref()
+            .is_none_or(manifest_is_the_projects_own);
         insights.push(Insight {
             kind: "entrypoint_dead_end".to_string(),
-            severity: InsightSeverity::Warning,
+            severity: if declared_by_the_project {
+                InsightSeverity::Warning
+            } else {
+                InsightSeverity::Info
+            },
             message: format!(
                 "Entrypoint `{}` has no outgoing code, config, dependency, or error flow",
                 node.label
@@ -1776,6 +1793,22 @@ pub(crate) fn add_entrypoint_dead_end_insights(graph: &CodeGraph, insights: &mut
             edges: incoming_edge_indexes(graph, node.id, EdgeKind::Entrypoint),
         });
     }
+}
+
+/// The file that declares a node, for the facts that carry no span of their
+/// own: a manifest entrypoint is contained by the manifest that declares it.
+fn declaring_file_label(graph: &CodeGraph, node: NodeId) -> Option<String> {
+    graph
+        .edges
+        .iter()
+        .filter(|edge| edge.target == node && edge.kind == EdgeKind::Contains)
+        .find_map(|edge| {
+            graph
+                .nodes
+                .iter()
+                .find(|source| source.id == edge.source && source.kind == NodeKind::File)
+                .map(|source| source.label.clone())
+        })
 }
 
 pub(crate) fn entrypoint_has_outgoing_trace_edge(graph: &CodeGraph, node_id: NodeId) -> bool {
