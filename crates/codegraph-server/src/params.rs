@@ -20,6 +20,19 @@ pub(crate) async fn scan_graph(
     state: &AppState,
     requested: Option<&Path>,
 ) -> Result<CodeGraph, ApiError> {
+    scan_graph_with_cache(state, requested)
+        .await
+        .map(|(graph, _)| graph)
+}
+
+/// The graph every answer is built from, with the cache status the scan
+/// reported. One path, so a card and a report describe the same graph the
+/// queries do: a handler that scanned on its own answered from a
+/// syntax-only graph while its neighbours answered from the enriched one.
+pub(crate) async fn scan_graph_with_cache(
+    state: &AppState,
+    requested: Option<&Path>,
+) -> Result<(CodeGraph, codegraph_storage::CacheInfo), ApiError> {
     let root = resolve_scan_root(state, requested)?;
     let options = scan_options(state, &root)?;
     let cache = state.cache.clone();
@@ -31,9 +44,10 @@ pub(crate) async fn scan_graph(
         ..AutoEnrichmentOptions::default()
     };
     tokio::task::spawn_blocking(move || {
-        let graph = scan_project_cached(&root, &options, cache.as_ref())?.graph;
-        let (graph, _) = auto_enrich_graph(&root, graph, semantic_cache.as_ref(), &enrichment);
-        Ok::<_, codegraph_storage::CacheError>(graph)
+        let scanned = scan_project_cached(&root, &options, cache.as_ref())?;
+        let (graph, _) =
+            auto_enrich_graph(&root, scanned.graph, semantic_cache.as_ref(), &enrichment);
+        Ok::<_, codegraph_storage::CacheError>((graph, scanned.cache))
     })
     .await
     .map_err(|error| ApiError::internal(format!("scanner task failed: {error}")))?

@@ -30,7 +30,7 @@ use codegraph_analysis::{
     trace_entrypoints, trace_errors, workflow, workflow_entrypoints, workflow_query,
 };
 use codegraph_indexer::scan_coverage;
-use codegraph_storage::{GraphCache, scan_project_cached};
+use codegraph_storage::GraphCache;
 
 #[allow(unused_imports)]
 use crate::*;
@@ -64,19 +64,13 @@ pub(crate) async fn scan(
     ApiQuery(query): ApiQuery<ScanQuery>,
 ) -> Result<Json<ScanResponse>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
-    let options = scan_options(&state, &root)?;
-    let cache = state.cache.clone();
     let root_label = root.display().to_string();
-    let output =
-        tokio::task::spawn_blocking(move || scan_project_cached(root, &options, cache.as_ref()))
-            .await
-            .map_err(|error| ApiError::internal(format!("scanner task failed: {error}")))?
-            .map_err(|error| ApiError::internal(error.to_string()))?;
+    let (graph, cache) = scan_graph_with_cache(&state, query.path.as_deref()).await?;
 
     Ok(Json(ScanResponse {
         root: root_label,
-        cache: output.cache,
-        graph: output.graph,
+        cache,
+        graph,
     }))
 }
 
@@ -312,8 +306,6 @@ pub(crate) async fn node_card_api(
     ApiQuery(query): ApiQuery<NodeCardQuery>,
 ) -> Result<Json<NodeCard>, ApiError> {
     let root = resolve_scan_root(&state, query.path.as_deref())?;
-    let options = scan_options(&state, &root)?;
-    let cache = state.cache.clone();
     let edge_limit = query.edge_limit.unwrap_or(DEFAULT_NODE_CONTEXT_EDGE_LIMIT);
     let source_context = query
         .source_context
@@ -324,16 +316,15 @@ pub(crate) async fn node_card_api(
         .unwrap_or(DEFAULT_NODE_CARD_INSIGHT_LIMIT);
     let include_insights = query.include_insights.unwrap_or(false);
     let node_id = parse_node_id_param(&query.node_id)?;
+    let graph = scan_graph(&state, query.path.as_deref()).await?;
     let card = tokio::task::spawn_blocking(move || {
-        let output = scan_project_cached(root.clone(), &options, cache.as_ref())
-            .map_err(|error| error.to_string())?;
         let card_builder = if include_insights {
             node_card
         } else {
             node_card_fast
         };
         card_builder(
-            &output.graph,
+            &graph,
             Some(&root),
             NodeCardRequest {
                 node_id,
@@ -382,17 +373,15 @@ pub(crate) async fn report_api(
     let root = resolve_scan_root(&state, query.path.as_deref())?;
     let root_label = root.display().to_string();
     let options = scan_options(&state, &root)?;
-    let cache = state.cache.clone();
+    let (graph, cache) = scan_graph_with_cache(&state, query.path.as_deref()).await?;
     let response = tokio::task::spawn_blocking(move || -> Result<ProjectReportResponse, String> {
-        let output = scan_project_cached(root.clone(), &options, cache.as_ref())
-            .map_err(|error| error.to_string())?;
         let coverage = scan_coverage(&root, &options).map_err(|error| error.to_string())?;
-        let report = project_report(&output.graph, limits);
+        let report = project_report(&graph, limits);
 
         Ok(ProjectReportResponse {
             root: root_label,
             generated_at_unix: unix_seconds(),
-            cache: output.cache,
+            cache,
             coverage,
             report,
         })

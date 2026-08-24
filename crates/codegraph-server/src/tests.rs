@@ -612,6 +612,59 @@ async fn entrypoints_api_honours_a_limit_and_leads_with_programs() {
 }
 
 #[tokio::test]
+async fn every_answer_is_built_from_the_same_graph() {
+    // `/api/node-card`, `/api/scan` and `/api/report` scanned on their own
+    // and skipped the automatic semantic pass their neighbours run, so a
+    // card described a syntax-only graph while a query beside it described
+    // the enriched one. The root node's own record of that pass is the
+    // visible half of the difference.
+    let root = temp_server_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    let state = test_state(root.clone(), vec![], true);
+
+    let graph = scan_graph(&state, Some(root.as_path()))
+        .await
+        .expect("graph");
+    let repository = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == codegraph_core::NodeKind::Repository)
+        .expect("repository node");
+    let expected: Vec<&String> = repository
+        .metadata
+        .keys()
+        .filter(|key| key.starts_with("semantic_"))
+        .collect();
+    assert!(
+        !expected.is_empty(),
+        "the scan records what the semantic pass did"
+    );
+
+    let Json(card) = node_card_api(
+        State(state),
+        ApiQuery(NodeCardQuery {
+            path: Some(root.clone()),
+            node_id: format!("n{}", repository.id.0),
+            edge_limit: None,
+            source_context: None,
+            insight_limit: None,
+            include_insights: None,
+        }),
+    )
+    .await
+    .expect("node card");
+    for key in expected {
+        assert!(
+            card.context.node.metadata.contains_key(key),
+            "the card lost `{key}`, so it was built from another graph"
+        );
+    }
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[tokio::test]
 async fn trace_apis_say_which_name_matched_nothing() {
     let root = temp_server_root();
     fs::create_dir_all(root.join("src")).unwrap();
