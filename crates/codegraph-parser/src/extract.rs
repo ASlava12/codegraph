@@ -185,6 +185,20 @@ fn collect_reference_facts(
         });
     }
 
+    // What one contract states of another: the contract it inherits, the
+    // library it uses, the type it holds.
+    if language == Language::Solidity
+        && node.kind() == "user_defined_type"
+        && let Some(label) = node_text(node, source)
+        && !label.is_empty()
+    {
+        facts.type_references.push(ParsedTypeReference {
+            label: simple_name(&label).to_string(),
+            span: span_for(path, node),
+            parent: current_function.clone(),
+        });
+    }
+
     // A schema is a graph of its own: a field states the message or the
     // type it carries, and following that name is following the schema.
     if matches!(language, Language::Proto | Language::GraphQl)
@@ -287,7 +301,7 @@ pub(crate) fn collect_items(
         // `Address address = 3;` belongs to the message.
         if matches!(
             language,
-            Language::Hcl | Language::Proto | Language::GraphQl
+            Language::Hcl | Language::Proto | Language::GraphQl | Language::Solidity
         ) && matches!(item.kind, ParsedItemKind::Type | ParsedItemKind::Module)
         {
             next_function = Some(item.label.clone());
@@ -781,6 +795,25 @@ pub(crate) fn classify_node(
             "rpc" => ParsedItemKind::Function,
             "import" => ParsedItemKind::Import,
             "package" => ParsedItemKind::Module,
+            _ => return None,
+        },
+        // A contract states what anyone can call and what it will emit or
+        // refuse with; inheritance and libraries are how one reaches
+        // another.
+        Language::Solidity => match kind {
+            "contract_declaration"
+            | "interface_declaration"
+            | "library_declaration"
+            | "struct_declaration"
+            | "enum_declaration"
+            | "user_defined_type_definition"
+            | "event_definition"
+            | "error_declaration" => ParsedItemKind::Type,
+            "function_definition"
+            | "constructor_definition"
+            | "modifier_definition"
+            | "fallback_receive_definition" => ParsedItemKind::Function,
+            "import_directive" => ParsedItemKind::Import,
             _ => return None,
         },
         // A GraphQL schema states types and the fields that reach them; a
@@ -1328,6 +1361,16 @@ pub(crate) fn enclosing_type_label(
             }
             Language::Php | Language::JavaScript | Language::TypeScript | Language::Tsx
                 if matches!(kind, "class_declaration" | "interface_declaration") =>
+            {
+                named_child_text(candidate, "name", source)
+            }
+            // A Solidity function belongs to the contract, interface or
+            // library that declares it.
+            Language::Solidity
+                if matches!(
+                    kind,
+                    "contract_declaration" | "interface_declaration" | "library_declaration"
+                ) =>
             {
                 named_child_text(candidate, "name", source)
             }
@@ -1919,6 +1962,15 @@ pub(crate) fn control_flow_fact(
             _ => None,
         },
         Language::Proto | Language::GraphQl => None,
+        Language::Solidity => match kind {
+            "if_statement" => Some((ParsedItemKind::Branch, "if")),
+            "try_statement" => Some((ParsedItemKind::Branch, "try")),
+            "catch_clause" => Some((ParsedItemKind::Branch, "catch")),
+            "for_statement" => Some((ParsedItemKind::Loop, "for")),
+            "while_statement" | "do_while_statement" => Some((ParsedItemKind::Loop, "while")),
+            "return_statement" => Some((ParsedItemKind::Return, "return")),
+            _ => None,
+        },
         // HCL writes its branch as `cond ? a : b` and its loop as a `for`
         // expression over a collection.
         Language::Hcl => match kind {
@@ -2180,6 +2232,7 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
         Language::Hcl => node.kind() == "function_call",
         // A schema declares; nothing in it runs.
         Language::Proto | Language::GraphQl => false,
+        Language::Solidity => node.kind() == "call_expression",
     }
 }
 
@@ -2686,6 +2739,16 @@ pub(crate) fn item_label(
         return nix_option_path(node, source);
     }
 
+    // `import {Ownable} from "../access/Ownable.sol";` names a file; the
+    // names it brings in are that file's, not this one's.
+    if language == Language::Solidity && kind == ParsedItemKind::Import {
+        return node
+            .child_by_field_name("source")
+            .and_then(|path| node_text(path, source))
+            .map(|path| path.trim_matches(['"', '\'']).to_string())
+            .filter(|path| !path.is_empty());
+    }
+
     if language == Language::Proto {
         return proto_item_label(node, source);
     }
@@ -2797,8 +2860,8 @@ pub(crate) fn is_entrypoint(language: Language, label: &str) -> bool {
         Language::Haskell | Language::OCaml | Language::Julia => label == "main",
         Language::Erlang | Language::Nix | Language::R => label == "main",
         // A configuration or a schema has no entrypoint: nothing in it
-        // starts running.
-        Language::Hcl | Language::Proto | Language::GraphQl => false,
+        // starts running, and a contract is started by whoever calls it.
+        Language::Hcl | Language::Proto | Language::GraphQl | Language::Solidity => false,
     }
 }
 

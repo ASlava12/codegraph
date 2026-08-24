@@ -12,7 +12,7 @@ fn language_registry_exposes_all_builtin_adapters() {
         .map(|adapter| adapter.info().language)
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(adapters.len(), 29);
+    assert_eq!(adapters.len(), 30);
     assert_eq!(
         languages,
         BTreeSet::from([
@@ -41,6 +41,7 @@ fn language_registry_exposes_all_builtin_adapters() {
             "ruby",
             "rust",
             "scala",
+            "solidity",
             "swift",
             "tsx",
             "typescript",
@@ -69,6 +70,7 @@ fn detects_target_languages_by_extension() {
         ("deploy.sh", Language::Bash),
         ("main.tf", Language::Hcl),
         ("user.proto", Language::Proto),
+        ("Token.sol", Language::Solidity),
         ("schema.graphql", Language::GraphQl),
     ];
 
@@ -79,6 +81,86 @@ fn detects_target_languages_by_extension() {
             Some(language)
         );
     }
+}
+
+#[test]
+fn a_contract_states_what_anyone_can_call_and_what_it_refuses_with() {
+    let adapter = adapter_for_language(Language::Solidity).unwrap();
+    let source = br#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {Ownable} from "./Ownable.sol";
+
+interface IToken {
+    function transfer(address to, uint256 amount) external returns (bool);
+}
+
+contract Token is Ownable, IToken {
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    error InsufficientBalance(uint256 available);
+
+    modifier onlyPositive(uint256 amount) {
+        require(amount > 0, "zero");
+        _;
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        if (amount == 0) {
+            revert InsufficientBalance(0);
+        }
+        return true;
+    }
+}
+"#;
+    let parsed = adapter.parse(Path::new("Token.sol"), source).unwrap();
+    let of_kind = |kind: ParsedItemKind| {
+        parsed
+            .items
+            .iter()
+            .filter(|item| item.kind == kind)
+            .map(|item| item.label.clone())
+            .collect::<Vec<_>>()
+    };
+
+    let declared = of_kind(ParsedItemKind::Type);
+    assert!(declared.contains(&"Token".to_string()));
+    assert!(declared.contains(&"IToken".to_string()));
+    // What a contract emits and what it refuses with are declarations too.
+    assert!(declared.contains(&"Transfer".to_string()));
+    assert!(declared.contains(&"InsufficientBalance".to_string()));
+
+    let callable = of_kind(ParsedItemKind::Function);
+    assert!(callable.contains(&"transfer".to_string()));
+    assert!(callable.contains(&"onlyPositive".to_string()));
+
+    // The import names the file, not the names it brings in.
+    assert_eq!(of_kind(ParsedItemKind::Import), vec!["./Ownable.sol"]);
+
+    let function = parsed
+        .items
+        .iter()
+        .find(|item| item.kind == ParsedItemKind::Function && item.label == "onlyPositive")
+        .expect("a modifier is called like anything else");
+    assert_eq!(
+        function.metadata.get("owner_type").map(String::as_str),
+        Some("Token")
+    );
+
+    // `revert` and the `require` that reverts are where a contract refuses.
+    assert!(
+        parsed
+            .items
+            .iter()
+            .filter(|item| item.kind == ParsedItemKind::Error)
+            .count()
+            >= 2
+    );
+    assert!(
+        parsed
+            .type_references
+            .iter()
+            .any(|reference| reference.label == "Ownable")
+    );
 }
 
 #[test]

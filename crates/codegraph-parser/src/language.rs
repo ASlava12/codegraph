@@ -41,6 +41,7 @@ pub enum Language {
     Hcl,
     Proto,
     GraphQl,
+    Solidity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,13 +263,21 @@ static GRAPHQL_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     extensions: &["graphql", "gql", "graphqls"],
     file_names: &[],
 };
+// A contract is a program that holds money, and what it declares — its
+// functions, its events, the contracts it inherits — is the whole of what
+// anyone can call.
+static SOLIDITY_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Solidity,
+    extensions: &["sol"],
+    file_names: &[],
+};
 static R_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     language: Language::R,
     extensions: &["r", "R"],
     file_names: &[],
 };
 
-static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 29] = [
+static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 30] = [
     &RUST_ADAPTER,
     &PYTHON_ADAPTER,
     &JAVASCRIPT_ADAPTER,
@@ -298,6 +307,7 @@ static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 29] = [
     &HCL_ADAPTER,
     &PROTO_ADAPTER,
     &GRAPHQL_ADAPTER,
+    &SOLIDITY_ADAPTER,
 ];
 
 pub fn language_adapters() -> &'static [&'static dyn LanguageAdapter] {
@@ -354,6 +364,7 @@ impl Language {
             Self::Hcl => "hcl",
             Self::Proto => "proto",
             Self::GraphQl => "graphql",
+            Self::Solidity => "solidity",
         }
     }
 
@@ -388,6 +399,7 @@ impl Language {
             Self::Hcl => tree_sitter_hcl::LANGUAGE.into(),
             Self::Proto => tree_sitter_proto::LANGUAGE.into(),
             Self::GraphQl => tree_sitter_graphql::LANGUAGE.into(),
+            Self::Solidity => tree_sitter_solidity::LANGUAGE.into(),
         }
     }
 }

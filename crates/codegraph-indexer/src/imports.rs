@@ -25,6 +25,7 @@ pub(crate) fn local_import_target(
         }
         Language::Php => php_local_import_target(source_label, import_label),
         Language::Hcl => hcl_local_import_target(source_label, import_label),
+        Language::Solidity => solidity_local_import_target(source_label, import_label),
         Language::Proto => proto_local_import_target(source_label, import_label),
         // A GraphQL schema states its types in one document; nothing in the
         // language names another file.
@@ -77,6 +78,24 @@ pub(crate) fn haskell_local_import_target(import_label: &str) -> Option<LocalImp
             format!("lib/{path}.hs"),
             format!("{path}.hs"),
         ],
+    })
+}
+
+/// `import "./Ownable.sol";` names a file beside this one; a path that
+/// starts with a package name — `@openzeppelin/contracts/...` — names a
+/// dependency the project installed.
+pub(crate) fn solidity_local_import_target(
+    source_label: &str,
+    import_label: &str,
+) -> Option<LocalImportTarget> {
+    let path = import_label.trim();
+    if !(path.starts_with("./") || path.starts_with("../")) {
+        return None;
+    }
+    let joined = join_path(path_dir(source_label).as_deref(), path);
+    Some(LocalImportTarget {
+        target: path.to_string(),
+        candidates: vec![joined],
     })
 }
 

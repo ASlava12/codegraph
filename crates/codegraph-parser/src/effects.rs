@@ -193,8 +193,9 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                     .is_some_and(|value| matches!(value, "builtins.getEnv" | "getEnv"))
         }
         // A configuration takes its inputs as variables; nothing in the
-        // language reads the environment, and a schema states shapes.
-        Language::Hcl | Language::Proto | Language::GraphQl => false,
+        // language reads the environment, and a schema states shapes. A
+        // contract runs on a chain, which has no environment to read.
+        Language::Hcl | Language::Proto | Language::GraphQl | Language::Solidity => false,
         Language::R => {
             node.kind() == "call"
                 && call
@@ -341,8 +342,9 @@ pub(crate) fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) 
         Language::Nix => call
             .as_deref()
             .is_some_and(|value| matches!(value, "builtins.readFile" | "builtins.fromJSON")),
-        // A schema reads nothing: it states what other code then reads.
-        Language::Proto | Language::GraphQl => false,
+        // A schema reads nothing: it states what other code then reads,
+        // and a contract reads only the chain's own state.
+        Language::Proto | Language::GraphQl | Language::Solidity => false,
         // `file(..)` and `templatefile(..)` are how a configuration reads
         // what sits beside it.
         Language::Hcl => call.as_deref().is_some_and(|value| {
@@ -526,6 +528,15 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
         }
         // A schema has no error path of its own.
         Language::Proto | Language::GraphQl => false,
+        // A contract refuses by reverting: `revert`, and the `require` and
+        // `assert` that revert when their condition fails.
+        Language::Solidity => {
+            node.kind() == "revert_statement"
+                || (is_call_node(language, node, source)
+                    && call_label(language, node, source)
+                        .as_deref()
+                        .is_some_and(|value| matches!(value, "require" | "assert" | "revert")))
+        }
         // A configuration states its checks as blocks: a `validation` on a
         // variable, a `precondition` or `postcondition` on a resource. They
         // are where it refuses to apply, which is what an error path is.
@@ -753,6 +764,7 @@ pub(crate) fn effect_metadata(
         | Language::Hcl
         | Language::Proto
         | Language::GraphQl
+        | Language::Solidity
         | Language::R => None,
     };
 

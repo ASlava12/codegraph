@@ -2006,7 +2006,7 @@ pub(crate) fn resolve_pending_type_references(context: &mut IndexContext) {
                 // reference is the dependency a reader is looking for.
                 let within_a_file_is_a_fact = matches!(
                     reference.language.as_str(),
-                    "hcl" | "nix" | "proto" | "graphql"
+                    "hcl" | "nix" | "proto" | "graphql" | "solidity"
                 );
                 same_language && (within_a_file_is_a_fact || !same_file)
             })

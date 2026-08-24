@@ -1057,7 +1057,7 @@ pub(crate) fn index_file(
                     // functions and types are in a programming language.
                     if matches!(
                         language,
-                        Language::Hcl | Language::Proto | Language::GraphQl
+                        Language::Hcl | Language::Proto | Language::GraphQl | Language::Solidity
                     ) && matches!(item.kind, ParsedItemKind::Type | ParsedItemKind::Module)
                     {
                         register_local_function(&mut local_functions, &item.label, item_id);

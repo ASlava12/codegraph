@@ -4084,6 +4084,58 @@ fn reading_files_ahead_of_the_walk_changes_nothing_it_finds() {
 }
 
 #[test]
+fn a_contract_reaches_the_contract_it_inherits() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("contracts")).unwrap();
+    fs::write(
+        root.join("contracts").join("Ownable.sol"),
+        "pragma solidity ^0.8.20;\n\ncontract Ownable {\n    address public owner;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("contracts").join("Token.sol"),
+        "pragma solidity ^0.8.20;\n\nimport {Ownable} from \"./Ownable.sol\";\n\ncontract Token is Ownable {\n    function transfer(address to) external returns (bool) { return true; }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let label = |id: NodeId| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.id == id)
+            .map(|node| node.label.clone())
+            .unwrap_or_default()
+    };
+    let references = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == EdgeKind::References
+                && edge.metadata.get("relation").map(String::as_str) == Some("type_reference")
+        })
+        .map(|edge| (label(edge.source), label(edge.target)))
+        .collect::<Vec<_>>();
+    assert!(
+        references.contains(&("Token".to_string(), "Ownable".to_string())),
+        "what a contract inherits is what it is made of: {references:?}"
+    );
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == NodeKind::ExternalDependency && node.label == "./Ownable.sol"
+            })
+            .and_then(|node| node.metadata.get("resolved_path"))
+            .map(String::as_str),
+        Some("contracts/Ownable.sol")
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_proto_import_of_the_compilers_own_types_is_a_dependency() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("api")).unwrap();
