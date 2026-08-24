@@ -826,7 +826,7 @@ cargo run -p codegraph-cli -- memory-reflect .
 
 The `codegraph.reflection.v1` report groups records into per-node lessons (resolving node ids to current graph labels and flagging ids that no longer exist), separates dead-end queries to avoid repeating and corrections that override earlier conclusions, counts outcomes, and emits explicit stale-source warnings for every record whose fingerprint no longer matches the source tree.
 
-Memory records live in repository-owned `.codegraph/memory.jsonl` with outcome (`useful`, `dead-end`, `corrected`), a free-text lesson, linked graph node ids, and the project fingerprint hash at save time. Listings compare each record against the current fingerprint and mark records from a changed source tree as `stale`, so outdated conclusions are flagged instead of silently trusted.
+Memory records live in repository-owned `.codegraph/memory.jsonl` with outcome (`useful`, `dead-end`, `corrected`), a free-text lesson, linked graph node ids, and the project fingerprint hash at save time. A record stores the reference as it was given, so the durable `cg-*` id still names the same definition when the memory is read back after an edit; records written earlier with numeric ids read as `n42`, and `memory-reflect` resolves either form to the node it names. Listings compare each record against the current fingerprint and mark records from a changed source tree as `stale`, so outdated conclusions are flagged instead of silently trusted.
 
 Install agent guidance into a repository in one command:
 

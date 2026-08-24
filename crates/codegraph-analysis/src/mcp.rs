@@ -414,10 +414,21 @@ impl McpEngine<'_> {
         let root = self.memory_root()?;
         let fingerprint = self.memory_fingerprint()?;
         let outcome: memory::MemoryOutcome = required_str(args, "outcome")?.parse()?;
+        // A durable `cg-*` id is the reference worth storing, and older
+        // callers send numbers.
         let node_ids = args
             .get("node_ids")
             .and_then(Value::as_array)
-            .map(|values| values.iter().filter_map(Value::as_u64).collect())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| match value {
+                        Value::String(text) => Some(text.clone()),
+                        Value::Number(number) => number.as_u64().map(|id| format!("n{id}")),
+                        _ => None,
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
         let recorded_at_unix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -461,11 +472,20 @@ impl McpEngine<'_> {
     fn tool_memory_reflect(&self, _args: &Value) -> Result<Value, String> {
         let root = self.memory_root()?;
         let fingerprint = self.memory_fingerprint()?;
+        // A memory may hold either form, so both answer to the same node.
         let node_labels = self
             .graph
             .nodes
             .iter()
-            .map(|node| (node.id.0, node.label.clone()))
+            .flat_map(|node| {
+                let label = node.label.clone();
+                let durable = node
+                    .metadata
+                    .get("stable_id")
+                    .map(|stable_id| (stable_id.clone(), label.clone()));
+                [Some((node.id.to_string(), label)), durable]
+            })
+            .flatten()
             .collect();
         let report =
             memory::reflect(root, fingerprint, &node_labels).map_err(|error| error.to_string())?;
@@ -673,7 +693,7 @@ pub fn mcp_tool_definitions() -> Vec<Value> {
                     "query": {"type": "string", "description": "The query, question, or journey that was investigated."},
                     "outcome": {"type": "string", "enum": ["useful", "dead_end", "corrected"], "description": "Investigation outcome."},
                     "note": {"type": "string", "description": "Free-text lesson or correction."},
-                    "node_ids": {"type": "array", "items": {"type": "integer"}, "description": "Linked graph node ids."}
+                    "node_ids": {"type": "array", "items": {"type": ["string", "integer"]}, "description": "Linked graph node ids: the durable cg-* id the scan stamps, or a numeric/n-prefixed id."}
                 },
                 "required": ["query", "outcome"]
             }

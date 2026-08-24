@@ -633,10 +633,19 @@ fn main() -> Result<()> {
                 max_file_size,
                 &cache,
             )?;
+            // A memory may hold either form, so both answer to the same node.
             let node_labels = graph
                 .nodes
                 .iter()
-                .map(|node| (node.id.0, node.label.clone()))
+                .flat_map(|node| {
+                    let label = node.label.clone();
+                    let durable = node
+                        .metadata
+                        .get("stable_id")
+                        .map(|stable_id| (stable_id.clone(), label.clone()));
+                    [Some((node.id.to_string(), label)), durable]
+                })
+                .flatten()
                 .collect::<std::collections::BTreeMap<_, _>>();
             let report = memory::reflect(&path, &fingerprint, &node_labels)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
@@ -1080,10 +1089,19 @@ fn resolve_node_id(graph: &codegraph_core::CodeGraph, value: &str) -> Result<Nod
     Ok(id)
 }
 
-pub(crate) fn parse_cli_node_id(value: &str) -> Result<u64, String> {
-    codegraph_analysis::parse_node_id(value)
-        .map(|id| id.0)
-        .map_err(|error| error.to_string())
+/// A node reference to store: the durable `cg-*` id the scan stamps, or the
+/// positional form. Kept as written, because a memory outlives the scan and
+/// only the durable id still points at the same definition.
+pub(crate) fn parse_cli_node_reference(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if codegraph_analysis::parse_node_id(value).is_ok()
+        || (value.starts_with("cg-") && value.len() > 3)
+    {
+        return Ok(value.to_string());
+    }
+    Err(format!(
+        "invalid node id `{value}`; expected a durable cg-* id, `n42`, or `42`"
+    ))
 }
 
 fn project_fingerprint_hash(

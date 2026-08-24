@@ -37,9 +37,34 @@ pub struct MemoryRecord {
     pub outcome: MemoryOutcome,
     #[serde(default)]
     pub note: Option<String>,
-    #[serde(default)]
-    pub node_ids: Vec<u64>,
+    /// The nodes the investigation was about, as the caller named them: a
+    /// durable `cg-*` id, or the positional `n42`/`42` form. A memory
+    /// outlives the scan that produced it, and only the durable id still
+    /// points at the same definition after an edit above it.
+    #[serde(default, deserialize_with = "node_references")]
+    pub node_ids: Vec<String>,
     pub fingerprint: String,
+}
+
+/// Node references from a record, accepting the numbers older records wrote.
+fn node_references<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Reference {
+        Text(String),
+        Number(u64),
+    }
+
+    Ok(Vec::<Reference>::deserialize(deserializer)?
+        .into_iter()
+        .map(|reference| match reference {
+            Reference::Text(value) => value,
+            Reference::Number(value) => format!("n{value}"),
+        })
+        .collect())
 }
 
 #[derive(Debug, Serialize)]
@@ -84,7 +109,7 @@ pub struct MemorySaveRequest {
     pub query: String,
     pub outcome: MemoryOutcome,
     pub note: Option<String>,
-    pub node_ids: Vec<u64>,
+    pub node_ids: Vec<String>,
     pub fingerprint: String,
     pub recorded_at_unix: u64,
 }
@@ -189,7 +214,8 @@ pub struct LessonRecord {
 
 #[derive(Debug, Serialize)]
 pub struct NodeLesson {
-    pub node_id: u64,
+    /// The reference the memory stored, durable or positional.
+    pub node_id: String,
     #[serde(default)]
     pub label: Option<String>,
     pub missing: bool,
@@ -222,13 +248,13 @@ fn outcome_name(outcome: MemoryOutcome) -> &'static str {
 pub fn reflect(
     root: &Path,
     current_fingerprint: &str,
-    node_labels: &std::collections::BTreeMap<u64, String>,
+    node_labels: &std::collections::BTreeMap<String, String>,
 ) -> Result<ReflectionReport> {
     let (records, malformed_lines) = load_records(root)?;
     let mut outcome_counts = std::collections::BTreeMap::new();
     let mut dead_ends = Vec::new();
     let mut corrections = Vec::new();
-    let mut node_records: std::collections::BTreeMap<u64, Vec<LessonRecord>> =
+    let mut node_records: std::collections::BTreeMap<String, Vec<LessonRecord>> =
         std::collections::BTreeMap::new();
     let mut general_lessons = Vec::new();
     let mut stale_warnings = Vec::new();
@@ -266,7 +292,7 @@ pub fn reflect(
         } else {
             for node_id in &record.node_ids {
                 node_records
-                    .entry(*node_id)
+                    .entry(node_id.clone())
                     .or_default()
                     .push(lesson.clone());
             }
@@ -332,7 +358,7 @@ mod tests {
                 query: "configs target:DATABASE_URL".to_string(),
                 outcome: MemoryOutcome::Useful,
                 note: Some("readers live in server config module".to_string()),
-                node_ids: vec![12, 40],
+                node_ids: vec!["n12".to_string(), "cg-1234".to_string()],
                 fingerprint: "fp-old".to_string(),
                 recorded_at_unix: 1_000,
             },
@@ -395,7 +421,7 @@ mod tests {
                 query: "q2".to_string(),
                 outcome: MemoryOutcome::Corrected,
                 note: Some("actual reader is load_config".to_string()),
-                node_ids: vec![7],
+                node_ids: vec!["cg-abcd".to_string()],
                 fingerprint: "fp-stale".to_string(),
                 recorded_at_unix: 2,
             },
@@ -421,7 +447,7 @@ mod tests {
                 query: "configs target:DATABASE_URL".to_string(),
                 outcome: MemoryOutcome::Useful,
                 note: Some("reader lives in load_config".to_string()),
-                node_ids: vec![7],
+                node_ids: vec!["cg-abcd".to_string()],
                 fingerprint: "fp-current".to_string(),
                 recorded_at_unix: 10,
             },
@@ -445,7 +471,7 @@ mod tests {
                 query: "configs target:API_KEY".to_string(),
                 outcome: MemoryOutcome::Corrected,
                 note: Some("actual reader is auth module, not server".to_string()),
-                node_ids: vec![7, 999],
+                node_ids: vec!["cg-abcd".to_string(), "n999".to_string()],
                 fingerprint: "fp-current".to_string(),
                 recorded_at_unix: 30,
             },
@@ -453,7 +479,7 @@ mod tests {
         .unwrap();
 
         let mut labels = std::collections::BTreeMap::new();
-        labels.insert(7u64, "load_config".to_string());
+        labels.insert("cg-abcd".to_string(), "load_config".to_string());
         let report = reflect(&root, "fp-current", &labels).expect("reflection report");
 
         assert_eq!(report.schema, REFLECTION_SCHEMA);
@@ -472,19 +498,42 @@ mod tests {
         let known = report
             .node_lessons
             .iter()
-            .find(|lesson| lesson.node_id == 7)
-            .expect("node lesson for 7");
+            .find(|lesson| lesson.node_id == "cg-abcd")
+            .expect("node lesson for the durable id");
         assert_eq!(known.label.as_deref(), Some("load_config"));
         assert!(!known.missing);
         assert_eq!(known.records.len(), 2);
         let missing = report
             .node_lessons
             .iter()
-            .find(|lesson| lesson.node_id == 999)
-            .expect("node lesson for 999");
+            .find(|lesson| lesson.node_id == "n999")
+            .expect("node lesson for a node that is gone");
         assert!(missing.missing, "unknown node id should be flagged missing");
         assert_eq!(report.general_lessons.len(), 1);
         assert_eq!(report.general_lessons[0].id, "mem-2");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn a_record_written_with_numeric_ids_still_reads() {
+        let root = temp_root();
+        let path = memory_path(&root);
+        fs::create_dir_all(path.parent().expect("parent")).expect("memory dir");
+        // What older builds wrote: the positional id as a number.
+        fs::write(
+            &path,
+            "{\"id\":\"mem-old\",\"recorded_at_unix\":1000,\"query\":\"old\",\"outcome\":\"useful\",\"node_ids\":[12,40],\"fingerprint\":\"fp-old\"}\n",
+        )
+        .expect("write record");
+
+        let report = list_memory(&root, "fp-old", None, false).expect("list");
+        assert_eq!(report.malformed_lines, 0);
+        assert_eq!(report.total, 1);
+        assert_eq!(
+            report.records[0].record.node_ids,
+            vec!["n12".to_string(), "n40".to_string()],
+            "a number reads as the positional reference it was"
+        );
         fs::remove_dir_all(root).ok();
     }
 

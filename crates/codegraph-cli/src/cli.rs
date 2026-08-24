@@ -14,7 +14,7 @@ use codegraph_lsp::{DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS, DEFAULT_SEMANTIC_WORK_I
 use std::path::PathBuf;
 
 use crate::install;
-use crate::parse_cli_node_id;
+use crate::parse_cli_node_reference;
 
 #[derive(Debug, Parser)]
 #[command(name = "codegraph")]
@@ -386,8 +386,8 @@ pub(crate) enum Command {
 
         /// Linked graph node ids: the durable `cg-*` id the scan stamps,
         /// or numeric/n-prefixed (42, n42); repeat for multiple nodes.
-        #[arg(long = "node-id", value_parser = parse_cli_node_id)]
-        node_ids: Vec<u64>,
+        #[arg(long = "node-id", value_parser = parse_cli_node_reference)]
+        node_ids: Vec<String>,
 
         /// Include hidden files and directories in the fingerprint.
         #[arg(long)]
