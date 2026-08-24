@@ -2205,6 +2205,48 @@ fn an_r_package_raises_with_abort() {
 }
 
 #[test]
+fn a_swift_function_throws_and_a_caller_tries() {
+    // Alamofire writes 62 `throw`s and 206 `try`s; only the fatalError
+    // family was recorded. `try?` turns the failure into nil, so it ends
+    // the error path rather than continuing it.
+    let source = r#"func load(_ path: String) throws -> Int {
+    if path.isEmpty { throw LoadError.empty }
+    let value = try parse(path)
+    let ignored = try? parse(path)
+    _ = ignored
+    return value
+}
+"#;
+    let parsed = parse_source("load.swift", source.as_bytes(), Language::Swift).unwrap();
+    let errors = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Error)
+        .count();
+    assert_eq!(errors, 2, "items: {:?}", parsed.items);
+}
+
+#[test]
+fn a_haskell_computation_gives_up_with_fail() {
+    // shellcheck raises with `fail` 43 times and `error` five; only
+    // `error` was recorded.
+    let source = r#"parse :: String -> IO Int
+parse s = do
+  fail "bad input"
+
+check :: Int -> Int
+check x = error "negative"
+"#;
+    let parsed = parse_source("parse.hs", source.as_bytes(), Language::Haskell).unwrap();
+    let errors = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Error)
+        .count();
+    assert_eq!(errors, 2, "items: {:?}", parsed.items);
+}
+
+#[test]
 fn calls_on_literals_are_labeled_by_method_not_by_the_literal() {
     // `"x".to_string()` used to produce a call target carrying the whole
     // literal, so each distinct literal minted its own placeholder node

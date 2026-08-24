@@ -441,7 +441,17 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
                     .is_some_and(|value| {
                         matches!(
                             value,
-                            "error" | "errorWithoutStackTrace" | "throwIO" | "throw"
+                            "error"
+                                | "errorWithoutStackTrace"
+                                | "throwIO"
+                                | "throw"
+                                // A computation that gives up: `fail` in
+                                // MonadFail, `throwError` in mtl, and
+                                // `ioError` -- shellcheck writes 43 `fail`s
+                                // and no other kind.
+                                | "fail"
+                                | "throwError"
+                                | "ioError"
                         )
                     })
         }
@@ -491,15 +501,22 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
                     })
         }
         Language::Swift => {
-            is_call_node(language, node, source)
-                && call_label(language, node, source)
-                    .as_deref()
-                    .is_some_and(|value| {
-                        matches!(
-                            value,
-                            "fatalError" | "preconditionFailure" | "assertionFailure"
-                        )
-                    })
+            // `throw` is how a Swift function fails and `try` is how a
+            // caller lets that failure through -- the same pair as Rust's
+            // `panic!` and `?`, and Alamofire writes 62 and 206 of them.
+            // `try?` is the one that swallows the error, so it is not a
+            // failure path.
+            swift_throw_statement(node, source)
+                || swift_propagating_try(node, source)
+                || (is_call_node(language, node, source)
+                    && call_label(language, node, source)
+                        .as_deref()
+                        .is_some_and(|value| {
+                            matches!(
+                                value,
+                                "fatalError" | "preconditionFailure" | "assertionFailure"
+                            )
+                        }))
         }
     }
 }
@@ -1017,4 +1034,26 @@ fn subtree_expands_variable(node: Node<'_>, source: &[u8], name: &str) -> bool {
         stack.extend(current.named_children(&mut cursor));
     }
     false
+}
+
+/// `throw` in Swift: the grammar spells a throw and a return with the same
+/// node and tells them apart by the keyword.
+fn swift_throw_statement(node: Node<'_>, source: &[u8]) -> bool {
+    node.kind() == "control_transfer_statement"
+        && node
+            .child(0)
+            .and_then(|child| node_text(child, source))
+            .as_deref()
+            == Some("throw")
+}
+
+/// `try` and `try!` let a failure through; `try?` turns it into `nil`, which
+/// is the one form that ends the error path rather than continuing it.
+fn swift_propagating_try(node: Node<'_>, source: &[u8]) -> bool {
+    node.kind() == "try_expression"
+        && node
+            .child(0)
+            .and_then(|child| node_text(child, source))
+            .as_deref()
+            .is_some_and(|operator| operator == "try" || operator == "try!")
 }
