@@ -1553,6 +1553,18 @@ fn one_methods_overloads(graph: &CodeGraph, targets: &[NodeId]) -> bool {
     owner.is_some()
 }
 
+/// Whether the project declares the constant a ruby call is written through.
+/// A nested declaration answers a call written from inside its namespace:
+/// `Namespace.new` inside `module UserSettings` means the
+/// `UserSettings::Namespace` the project declares.
+fn declares_ruby_constant(declared: &BTreeSet<String>, receiver: &str) -> bool {
+    if declared.contains(receiver) {
+        return true;
+    }
+    let suffix = format!("::{receiver}");
+    declared.iter().any(|constant| constant.ends_with(&suffix))
+}
+
 pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     let pending_calls = std::mem::take(&mut context.pending_calls);
     // What the scan holds does not change while calls are resolved, so each
@@ -1575,8 +1587,49 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         })
         .filter_map(|node| node.span.as_ref().map(|span| span.path.clone()))
         .collect();
+    // Every constant this project declares. A ruby call names its receiver
+    // and the label drops it, so the constant is the evidence that says
+    // whose method is meant -- and a constant the project never declares
+    // belongs to a gem.
+    let ruby_constants: BTreeSet<String> = context
+        .graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata.get("language").map(String::as_str) == Some("ruby")
+                && matches!(node.kind, NodeKind::Type | NodeKind::Module)
+        })
+        .map(|node| node.label.clone())
+        .chain(
+            context
+                .graph
+                .nodes
+                .iter()
+                .filter(|node| node.metadata.get("language").map(String::as_str) == Some("ruby"))
+                .filter_map(|node| node.metadata.get("owner_type").cloned()),
+        )
+        .collect();
 
     for call in pending_calls {
+        // `Rails.application.configure` and mastodon's own
+        // `UserSettings::Namespace#configure` share a name and nothing else,
+        // and a ruby call's label keeps only the name. The constant the call
+        // is written through says which is meant: one the project never
+        // declares belongs to a gem, and a gem's method is not among this
+        // project's own. `Addressable::URI.parse(href).normalize` was
+        // answered by `HashtagNormalizer#normalize`, `FastImage.size` by a
+        // connection pool's, and `Chewy::Stash::Specification.reset!` by a
+        // delivery tracker's.
+        if call.language == "ruby"
+            && !builtin_call_target(&call.language, &call.label)
+            && call
+                .receiver
+                .as_deref()
+                .is_some_and(|receiver| !declares_ruby_constant(&ruby_constants, receiver))
+        {
+            add_external_call_placeholder(context, call);
+            continue;
+        }
         // A qualified name the language itself provides is answered by the
         // language. `Object.create(...)` in axios shares only its tail with
         // the repository's `instance.create`, and matching on that tail

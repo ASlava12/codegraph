@@ -1530,6 +1530,15 @@ pub(crate) fn classify_call(
     {
         metadata.insert("receiver".to_string(), receiver);
     }
+    // Ruby drops the receiver from the name being called -- the label of
+    // `Rails.application.configure` is `configure` -- so the constant the
+    // call is written through is the only thing left that says whose method
+    // it means.
+    if language == Language::Ruby
+        && let Some(receiver) = ruby_constant_receiver(node, source)
+    {
+        metadata.insert("receiver".to_string(), receiver);
+    }
     // `done()` where the body wrote `runningCtx, done := context.WithCancel(…)`
     // calls a value, not a definition. Saying so separates a call that has
     // nothing to find from one the resolver failed on: 1499 of terraform's
@@ -2650,6 +2659,30 @@ pub(crate) fn zig_import_builtin(node: Node<'_>, source: &[u8]) -> bool {
 }
 
 /// A Ruby `require`/`require_relative` call: an import fact, not a call fact.
+/// The constant a ruby call is written through: the leading `Foo::Bar` of its
+/// receiver, whatever follows. `Rails.application.configure` is written
+/// through `Rails`, and `UserSettings::Namespace.new(key).configure` through
+/// `UserSettings::Namespace`. A receiver that begins with a value --
+/// `account.each`, `@definitions.keys`, `base.extend` -- names no constant.
+fn ruby_constant_receiver(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let receiver = node.child_by_field_name("receiver")?;
+    let text = node_text(receiver, source)?;
+    let head: String = text
+        .chars()
+        .take_while(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | ':'))
+        .collect();
+    // `::Foo` names the same constant as `Foo`, from the top level out.
+    let head = head.trim_start_matches("::").trim_end_matches(':');
+    let names_a_constant = !head.is_empty()
+        && head.split("::").all(|segment| {
+            segment
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_ascii_uppercase())
+        });
+    names_a_constant.then(|| head.to_string())
+}
+
 pub(crate) fn ruby_require_call(node: Node<'_>, source: &[u8]) -> bool {
     node.kind() == "call"
         && named_child_text(node, "method", source)

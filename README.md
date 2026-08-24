@@ -67,6 +67,13 @@ Implemented now:
   capitalised `NS`/`CF`/`CG`/`Sec`) as that framework's, and a message whose receiver names a
   framework class (`[NSURL URLWithString:]`) as Foundation's rather than as a selector nothing
   declares.
+- Ruby resolves through the constant a call is written through. A ruby call's label keeps only the
+  method name, so `Addressable::URI.parse(href).normalize` and a project's own
+  `HashtagNormalizer#normalize` looked like one call; the receiver's leading constant says which is
+  meant, and one the project never declares belongs to a gem. On mastodon that is 145 methods no
+  longer called by code that never calls them (`FastImage.size` answered by a connection pool's
+  `size`, `Chewy::Stash::Specification.reset!` by a delivery tracker's), each recorded as a call that
+  leaves the project rather than as one the resolver failed on.
 - Single-file components are read as the programs they hold: a `.vue` or `.svelte` file states a
   template, a script and a style together, and the `<script>` block (TypeScript when it says `lang="ts"`)
   is parsed with every other line blanked, so a fact keeps the line of the component that holds it.

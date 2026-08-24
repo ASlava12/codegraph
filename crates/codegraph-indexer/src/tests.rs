@@ -5632,6 +5632,67 @@ fn a_julia_include_and_a_ruby_require_relative_reach_their_file() {
 }
 
 #[test]
+fn a_ruby_call_through_a_gems_constant_is_not_this_projects_method() {
+    // A ruby call's label keeps only the method name, so
+    // `Addressable::URI.parse(href).normalize` and the project's own
+    // `HashtagNormalizer#normalize` looked like the same call. The constant
+    // the call is written through is the evidence: one the project never
+    // declares belongs to a gem.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app").join("lib")).unwrap();
+    fs::write(
+        root.join("app").join("lib").join("hashtag_normalizer.rb"),
+        "class HashtagNormalizer\n  def normalize(tag)\n    tag\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("lib").join("parser.rb"),
+        "class Parser\n  def run(href)\n    Addressable::URI.parse(href).normalize\n  end\n\n  def own(tag)\n    HashtagNormalizer.new.normalize(tag)\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let normalize = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "normalize"
+                && node
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.path.ends_with("hashtag_normalizer.rb"))
+        })
+        .expect("the project's own normalize");
+    let callers: Vec<u32> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Calls && edge.target == normalize.id)
+        .filter_map(|edge| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == edge.source)
+                .and_then(|node| node.span.as_ref())
+                .map(|span| span.start_line)
+        })
+        .collect();
+    assert_eq!(
+        callers.len(),
+        1,
+        "only the call written through the project's own constant reaches it: {callers:?}"
+    );
+    // The gem call is not a resolver failure -- it left the project.
+    let external = graph.nodes.iter().any(|node| {
+        node.kind == NodeKind::ExternalDependency
+            && node.label == "normalize"
+            && node.metadata.get("resolution").map(String::as_str) == Some("external")
+    });
+    assert!(external, "the gem call is recorded as leaving the project");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_elixir_alias_reaches_the_module_file() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("lib").join("ecto")).unwrap();
