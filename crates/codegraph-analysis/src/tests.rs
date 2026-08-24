@@ -7031,6 +7031,11 @@ fn a_name_the_query_fills_in_is_not_a_missing_table() {
     let configure = graph.add_node(NodeKind::Function, "Configure");
     for (label, unresolved) in [
         ("sql query:backend.go:108", "information_schema.schemata"),
+        // Postgres names its catalogs `pg_*`: mastodon asks `pg_class` how
+        // large a table is before importing into it, and no project
+        // declares that table.
+        ("sql query:importer.rb:37", "pg_class"),
+        ("sql query:cache.rb:8", "sqlite_sequence"),
         ("sql query:client.go:64", "%s.%s"),
         ("sql query:state.go:12", "%s, audit_log"),
     ] {

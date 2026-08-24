@@ -439,15 +439,21 @@ pub(crate) fn add_unresolved_sql_table_reference_insights(
 /// belong to the database rather than to anybody's migrations.
 fn names_a_project_table(table: &str) -> bool {
     let lowered = table.to_ascii_lowercase();
+    // A catalog the database itself provides is not a table the project
+    // failed to declare: mastodon asks `pg_class` how large a table is
+    // before importing into it, and every postgres catalog is named that
+    // way. MySQL and SQLite name theirs just as plainly.
+    let is_a_database_catalog = lowered.starts_with("pg_")
+        || lowered.starts_with("sqlite_")
+        || lowered.starts_with("information_schema.")
+        || lowered.starts_with("pg_catalog.")
+        || lowered.starts_with("mysql.")
+        || lowered.starts_with("performance_schema.")
+        || lowered.starts_with("sys.");
     !table.contains('%')
         && !table.contains('$')
-        && !lowered.starts_with("information_schema.")
-        && !lowered.starts_with("pg_catalog.")
-        && !lowered.starts_with("sys.")
-        && !matches!(
-            lowered.as_str(),
-            "sqlite_master" | "sqlite_sequence" | "current_timestamp" | "dual"
-        )
+        && !is_a_database_catalog
+        && !matches!(lowered.as_str(), "current_timestamp" | "dual")
 }
 
 pub(crate) fn add_cross_language_heuristic_edge_insights(

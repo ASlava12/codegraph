@@ -117,6 +117,10 @@ Implemented now:
   `executable shellcheck` with `main-is: shellcheck.hs` is the program, a `test-suite` states a test
   program under its own `hs-source-dirs`, and a `library` states none. shellcheck's coverage finding
   is gone -- its entrypoints were its shell scripts and CI jobs.
+- A catalog the database itself provides is not a table the project forgot to declare: mastodon asks
+  `pg_class` how large a table is before importing into it, and postgres, MySQL and SQLite all name
+  their catalogs plainly (`pg_*`, `sqlite_*`, `information_schema.*`, `mysql.*`,
+  `performance_schema.*`).
 - A library has no program for a configuration read to be reachable from, so "not reachable from
   any entrypoint" describes the project's shape rather than the read: spdlog's `is_color_terminal`
   reads `TERM` and gin's `resolveAddress` reads `PORT`, and neither project ever starts itself.
