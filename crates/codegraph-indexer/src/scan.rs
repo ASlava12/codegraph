@@ -790,6 +790,7 @@ pub(crate) fn index_file(
         script_entrypoint = index_script_entrypoint(context, file_id, label, source);
         index_manifest_facts(context, file_id, path, label, source);
         index_markdown_document(context, file_id, path, label, source);
+        index_rst_document(context, file_id, path, label, source);
         index_plain_text_document(context, file_id, path, label, source);
         index_sql_schema(context, file_id, path, label, source);
         index_framework_configs(context, file_id, label, language, source);

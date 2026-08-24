@@ -183,7 +183,7 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
     if Language::detect(path).is_some() {
         return true;
     }
-    if is_markdown_document(path) {
+    if is_markdown_document(path) || is_rst_document(path) {
         return true;
     }
     if is_plain_text_document(path) {

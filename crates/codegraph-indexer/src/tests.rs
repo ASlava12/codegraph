@@ -9237,6 +9237,50 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn a_restructured_text_document_states_its_sections() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("docs")).unwrap();
+    fs::write(root.join("setup.py"), "from setuptools import setup\n").unwrap();
+    fs::write(
+        root.join("docs").join("guide.rst"),
+        "=========\nOverview\n=========\n\nSome prose.\n\nInstalling\n----------\n\nRun ``setup.py`` to install.\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let sections = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata.get("item_kind").map(String::as_str) == Some("document_section")
+        })
+        .map(|node| node.label.clone())
+        .collect::<Vec<_>>();
+
+    // A section is a line with a rule under it, and a rule above as well is
+    // the same section rather than another.
+    assert!(
+        sections.contains(&"docs/guide.rst#Overview".to_string()),
+        "{sections:?}"
+    );
+    assert!(
+        sections.contains(&"docs/guide.rst#Installing".to_string()),
+        "{sections:?}"
+    );
+    assert_eq!(sections.len(), 2, "{sections:?}");
+
+    // A path in double backticks is a mention of the file it names.
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.metadata.get("relation").map(String::as_str) == Some("rst_literal_path")
+        }),
+        "the guide mentions setup.py"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_notebook_holds_the_program_someone_wrote_in_cells() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

@@ -546,6 +546,128 @@ pub(crate) fn index_plain_text_document(
     }
 }
 
+/// reStructuredText is Python's documentation format, and django-oscar
+/// writes 137 files of it. A section is a line with a rule under it, and a
+/// path in double backticks is the same mention a Markdown code span is.
+pub(crate) fn index_rst_document(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if !is_rst_document(path) {
+        return;
+    }
+    let doc_kind = document_kind(path, label);
+    add_file_metadata(&mut context.graph, file_id, "item_kind", "document");
+    add_file_metadata(&mut context.graph, file_id, "source", "rst");
+    add_file_metadata(
+        &mut context.graph,
+        file_id,
+        "document_kind",
+        doc_kind.clone(),
+    );
+
+    let lines: Vec<&str> = source.lines().collect();
+    let mut current_section = None;
+    for (index, line) in lines.iter().enumerate() {
+        let line_number = index as u32 + 1;
+        if let Some(heading) = rst_heading(&lines, index) {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("item_kind".to_string(), "document_section".to_string());
+            metadata.insert("source".to_string(), "rst".to_string());
+            metadata.insert("language".to_string(), "rst".to_string());
+            metadata.insert("document_kind".to_string(), doc_kind.clone());
+            metadata.insert("heading".to_string(), heading.clone());
+            metadata.insert("line".to_string(), line_number.to_string());
+            let section_id = context.graph.add_node_with_metadata(
+                NodeKind::Module,
+                format!("{label}#{heading}"),
+                Some(line_span(label, source, line_number)),
+                metadata,
+            );
+            add_edge_once(
+                context,
+                file_id,
+                section_id,
+                EdgeKind::Contains,
+                Confidence::Exact,
+            );
+            current_section = Some(section_id);
+            continue;
+        }
+
+        let source_id = current_section.unwrap_or(file_id);
+        for code in rst_literals(line) {
+            if let Some(candidates) = markdown_path_candidates(label, &code) {
+                context
+                    .pending_document_path_refs
+                    .push(PendingDocumentPathRef {
+                        source: source_id,
+                        target: code,
+                        candidates,
+                        relation: "rst_literal_path",
+                        line: line_number,
+                        text: None,
+                        line_ref: None,
+                    });
+            }
+        }
+    }
+}
+
+/// The heading a line states, when the line under it is a rule of one
+/// punctuation character at least as long: that is how reStructuredText
+/// writes a section. A title with a rule over it as well is one section,
+/// because an overline is never itself a title -- the line under an
+/// overline is prose, not a rule.
+fn rst_heading(lines: &[&str], index: usize) -> Option<String> {
+    let title = lines.get(index)?.trim_end();
+    if title.trim().is_empty() {
+        return None;
+    }
+    let rule = lines.get(index + 1)?.trim_end();
+    if rule.len() < title.trim_end().chars().count().min(3) || rule.trim().is_empty() {
+        return None;
+    }
+    let mut characters = rule.chars();
+    let first = characters.next()?;
+    if !matches!(
+        first,
+        '=' | '-' | '~' | '^' | '"' | '#' | '*' | '+' | '`' | ':' | '.' | '\''
+    ) || !characters.all(|character| character == first)
+    {
+        return None;
+    }
+    let heading = title.trim().to_string();
+    (!heading.is_empty() && !heading.starts_with("..")).then_some(heading)
+}
+
+/// The literals a line marks up: ``path/to/file.py`` in reStructuredText.
+fn rst_literals(line: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut rest = line;
+    while let Some(start) = rest.find("``") {
+        rest = &rest[start + 2..];
+        let Some(end) = rest.find("``") else {
+            break;
+        };
+        let value = rest[..end].trim().to_string();
+        rest = &rest[end + 2..];
+        if !value.is_empty() {
+            values.push(value);
+        }
+    }
+    values
+}
+
+pub(crate) fn is_rst_document(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("rst"))
+}
+
 pub(crate) fn is_markdown_document(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
