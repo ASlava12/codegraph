@@ -5734,6 +5734,20 @@ fn a_module_calls_what_it_imports_or_declares() {
         !reaches("render"),
         "a name the body binds is not the module's export of the same name"
     );
+    // And the edge says why it found nothing: the module cannot reach a
+    // name it never imports, which is not a resolver that failed.
+    assert_eq!(
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some("render")
+            })
+            .and_then(|edge| edge.metadata.get("unresolved_reason"))
+            .map(String::as_str),
+        Some("not_imported")
+    );
 
     fs::remove_dir_all(root).unwrap();
 }

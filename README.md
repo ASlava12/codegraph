@@ -103,6 +103,9 @@ Implemented now:
   protobuf code no longer reports 3234 calls as unresolved, and `providers.SchemaCache.Set` reaches
   the in-repo package that declares it. Go's predeclared types count as the language's own when they
   are written as conversions -- `string(b)`, `int64(n)` -- rather than as functions nothing declares.
+- A call the resolver refuses says why: an edge to an unresolved placeholder carries
+  `unresolved_reason=not_imported` when the module cannot reach the name at all, beside the
+  `local_value` a call through a bound value already carried. 1445 of koel's calls say it.
 - A Python module calls what it declares or imports too, and a bare name never means a method --
   pytudes writes a `print` method on its grid class, and 58 notebook calls to the builtin were
   answered by it. `%run other.ipynb` is an import written in IPython's dialect: it runs the other

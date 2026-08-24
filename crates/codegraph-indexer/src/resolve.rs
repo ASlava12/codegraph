@@ -1794,6 +1794,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // anywhere, so the rule asks only files that state an import -- and
         // never one whose imports cannot be listed, `from x import *` or a
         // notebook's `%run other.ipynb`.
+        let mut name_is_not_imported = false;
         if matches!(
             call.language.as_str(),
             "javascript" | "typescript" | "tsx" | "python"
@@ -1806,6 +1807,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             && !imported.contains_key(&call.label)
         {
             language_targets.clear();
+            name_is_not_imported = true;
         }
         // A python method is reached through an object -- `grid.print()` --
         // never by its bare name, whatever the file imports. pytudes writes
@@ -2166,6 +2168,12 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 if call.callee_is_value && resolution == "unresolved" {
                     edge_metadata
                         .insert("unresolved_reason".to_string(), "local_value".to_string());
+                } else if name_is_not_imported && resolution == "unresolved" {
+                    // Nor is a name the file never imports: the module
+                    // cannot reach it, so it is a value the body binds or
+                    // something the runtime provides.
+                    edge_metadata
+                        .insert("unresolved_reason".to_string(), "not_imported".to_string());
                 }
                 add_edge_once_with_metadata(
                     context,
