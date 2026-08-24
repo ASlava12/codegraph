@@ -7075,6 +7075,83 @@ jobs:
 }
 
 #[test]
+fn a_workflow_step_runs_where_the_workflow_says() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join(".github").join("workflows")).unwrap();
+    fs::create_dir_all(root.join("pkgs").join("http").join("test")).unwrap();
+    fs::write(
+        root.join("pkgs")
+            .join("http")
+            .join("test")
+            .join("client_test.dart"),
+        "void main() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".github").join("workflows").join("dart.yml"),
+        r#"name: Dart CI
+on: [push]
+
+jobs:
+  unit_test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: run the tests
+        run: dart test test/client_test.dart
+        working-directory: pkgs/http
+  generate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pkgs/http
+    steps:
+      - name: check the generated file
+        run: git diff --exit-code test/client_test.dart
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let steps: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata
+                .get("item_kind")
+                .is_some_and(|kind| kind == "github_actions_run_step")
+        })
+        .filter_map(|node| node.metadata.get("command_path").map(String::as_str))
+        .collect();
+    assert_eq!(
+        steps,
+        vec![
+            "pkgs/http/test/client_test.dart",
+            "pkgs/http/test/client_test.dart"
+        ],
+        "a step's own working-directory and the job's defaults both move the path"
+    );
+    let test_file = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "pkgs/http/test/client_test.dart")
+        .expect("the test file is scanned");
+    assert_eq!(
+        graph
+            .edges
+            .iter()
+            .filter(|edge| edge.target == test_file.id
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|value| value == "github_actions_run_command_path"))
+            .count(),
+        2,
+        "both jobs reach the file they run"
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn scan_project_adds_github_actions_workflow_entrypoints() {
     let root = temp_project_root();
     fs::create_dir_all(root.join(".github").join("workflows")).unwrap();

@@ -84,6 +84,7 @@ pub(crate) fn index_makefile_entrypoints(
                     entrypoint: entrypoint_id,
                     manifest_label: label.to_string(),
                     target: command,
+                    base_dir: None,
                     ecosystem: "make".to_string(),
                     entrypoint_kind: "make_target".to_string(),
                 });
@@ -152,6 +153,7 @@ pub(crate) fn index_dockerfile_entrypoints(
                 entrypoint: entrypoint_id,
                 manifest_label: label.to_string(),
                 target: entrypoint.command,
+                base_dir: None,
                 ecosystem: "docker".to_string(),
                 entrypoint_kind: instruction,
             });
@@ -257,6 +259,7 @@ pub(crate) fn index_compose_entrypoints(
                     entrypoint: entrypoint_id,
                     manifest_label: label.to_string(),
                     target: command,
+                    base_dir: None,
                     ecosystem: "compose".to_string(),
                     entrypoint_kind: "service".to_string(),
                 });
@@ -268,6 +271,7 @@ pub(crate) fn index_compose_entrypoints(
                     entrypoint: entrypoint_id,
                     manifest_label: label.to_string(),
                     target: dockerfile,
+                    base_dir: None,
                     ecosystem: "compose-dockerfile".to_string(),
                     entrypoint_kind: "service".to_string(),
                 });
@@ -697,7 +701,12 @@ pub(crate) fn index_github_actions_run_step(
     metadata.insert("job".to_string(), job.id.clone());
     metadata.insert("line".to_string(), step.line.to_string());
     metadata.insert("command".to_string(), command.to_string());
-    if let Some(candidate) = root_relative_command_path_candidate(command) {
+    // A step runs where it says, or where the job's defaults say.
+    let working_directory = step
+        .working_directory
+        .as_deref()
+        .or(job.working_directory.as_deref());
+    if let Some(candidate) = command_path_in_directory(command, working_directory) {
         insert_command_path(&mut metadata, candidate);
     }
     if let Some(name) = step.name.as_deref() {
@@ -728,6 +737,7 @@ pub(crate) fn index_github_actions_run_step(
             entrypoint: job_id,
             manifest_label: label.to_string(),
             target: command.to_string(),
+            base_dir: working_directory.map(ToString::to_string),
             ecosystem: "github-actions".to_string(),
             entrypoint_kind: "workflow_job".to_string(),
         });
@@ -965,6 +975,7 @@ pub(crate) fn index_gitlab_ci_script(
             entrypoint: job_id,
             manifest_label: label.to_string(),
             target: script.command.clone(),
+            base_dir: None,
             ecosystem: "gitlab-ci".to_string(),
             entrypoint_kind: "pipeline_job".to_string(),
         });
@@ -2060,6 +2071,7 @@ pub(crate) fn github_actions_workflow(label: &str, source: &str) -> GithubAction
             active_job = Some(GithubActionsJob {
                 id,
                 display_name: None,
+                working_directory: None,
                 runs_on: None,
                 needs: Vec::new(),
                 environment: Vec::new(),
@@ -2088,6 +2100,8 @@ pub(crate) fn github_actions_workflow(label: &str, source: &str) -> GithubAction
                 active_section = Some(("env".to_string(), indent));
             } else if yaml_key(trimmed).is_some_and(|key| key == "steps") {
                 active_section = Some(("steps".to_string(), indent));
+            } else if yaml_key(trimmed).is_some_and(|key| key == "defaults") {
+                active_section = Some(("defaults".to_string(), indent));
             }
             continue;
         }
@@ -2120,6 +2134,16 @@ pub(crate) fn github_actions_workflow(label: &str, source: &str) -> GithubAction
                     job.environment.push(environment);
                 }
             }
+            // `defaults: run: working-directory: pkgs/cronet_http` moves
+            // every step in the job, and only that key inside the block
+            // says anything about paths.
+            "defaults" => {
+                if let Some(value) = yaml_key_value(trimmed, "working-directory")
+                    && let Some(job) = active_job.as_mut()
+                {
+                    job.working_directory = Some(value);
+                }
+            }
             "steps" => {
                 if let Some(value) = trimmed.strip_prefix("- ") {
                     flush_github_actions_step(&mut active_job, &mut active_step);
@@ -2127,6 +2151,7 @@ pub(crate) fn github_actions_workflow(label: &str, source: &str) -> GithubAction
                         name: None,
                         uses: None,
                         run: None,
+                        working_directory: None,
                         line: index as u32 + 1,
                     };
                     apply_github_actions_step_field(&mut step, value);
@@ -2183,6 +2208,8 @@ pub(crate) fn apply_github_actions_step_field(step: &mut GithubActionsStep, fiel
         step.uses = Some(value);
     } else if let Some(value) = yaml_key_value(field, "run") {
         step.run = Some(value);
+    } else if let Some(value) = yaml_key_value(field, "working-directory") {
+        step.working_directory = Some(value);
     }
 }
 

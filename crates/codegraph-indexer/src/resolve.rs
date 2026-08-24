@@ -2954,9 +2954,9 @@ pub(crate) fn entrypoint_target_candidates(
         )
         .into_iter()
         .collect(),
-        "github-actions" => github_actions_run_command_path_candidate(&pending.target)
-            .map(|path| EntrypointTargetCandidate {
-                path,
+        "github-actions" => command_path_in_directory(&pending.target, pending.base_dir.as_deref())
+            .map(|candidate| EntrypointTargetCandidate {
+                path: candidate.path,
                 symbol: None,
                 file_confidence: Confidence::Heuristic,
                 function_confidence: Confidence::Heuristic,
@@ -2964,7 +2964,7 @@ pub(crate) fn entrypoint_target_candidates(
             })
             .into_iter()
             .collect(),
-        "gitlab-ci" => root_relative_command_path_candidate(&pending.target)
+        "gitlab-ci" => command_path_in_directory(&pending.target, pending.base_dir.as_deref())
             .map(|candidate| EntrypointTargetCandidate {
                 path: candidate.path,
                 symbol: None,
@@ -3141,8 +3141,22 @@ fn last_path_is_a_destination(program: &str) -> bool {
     matches!(program, "cp" | "mv" | "ln" | "install")
 }
 
-pub(crate) fn github_actions_run_command_path_candidate(command: &str) -> Option<String> {
-    root_relative_command_path_candidate(command).map(|candidate| candidate.path)
+/// The path a command names, read from the directory the file says it runs
+/// in: a GitHub Actions step with `working-directory: pkgs/http` runs
+/// `dart run test/x_test.dart` on `pkgs/http/test/x_test.dart`.
+pub(crate) fn command_path_in_directory(
+    command: &str,
+    directory: Option<&str>,
+) -> Option<CommandPath> {
+    let candidate = root_relative_command_path_candidate(command)?;
+    let Some(directory) = directory.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Some(candidate);
+    };
+    let joined = format!("{}/{}", directory.trim_end_matches('/'), candidate.path);
+    normalize_relative_path(Path::new(&joined)).map(|path| CommandPath {
+        path,
+        written: candidate.written,
+    })
 }
 
 pub(crate) fn root_relative_command_path_candidate(command: &str) -> Option<CommandPath> {

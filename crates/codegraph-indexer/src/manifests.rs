@@ -160,6 +160,7 @@ pub(crate) fn index_manifest_entrypoints(
                     entrypoint: entrypoint_id,
                     manifest_label: label.to_string(),
                     target,
+                    base_dir: None,
                     ecosystem: entrypoint.ecosystem,
                     entrypoint_kind: entrypoint.kind,
                 });

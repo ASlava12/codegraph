@@ -184,6 +184,8 @@ pub(crate) struct PendingEntrypointTarget {
     pub(crate) entrypoint: NodeId,
     pub(crate) manifest_label: String,
     pub(crate) target: String,
+    /// The directory the command runs in, when the file says so.
+    pub(crate) base_dir: Option<String>,
     pub(crate) ecosystem: String,
     pub(crate) entrypoint_kind: String,
 }
@@ -363,6 +365,8 @@ pub(crate) struct GithubActionsJob {
     /// The last line the job's block claims, so the job spans its steps
     /// rather than only the line its name is written on.
     pub(crate) end_line: u32,
+    /// `defaults: run: working-directory:` moves every step in the job.
+    pub(crate) working_directory: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -370,6 +374,9 @@ pub(crate) struct GithubActionsStep {
     pub(crate) name: Option<String>,
     pub(crate) uses: Option<String>,
     pub(crate) run: Option<String>,
+    /// `working-directory: pkgs/http` moves what the step's command paths
+    /// are relative to, the way a leading `cd` does inside one.
+    pub(crate) working_directory: Option<String>,
     pub(crate) line: u32,
 }
 
