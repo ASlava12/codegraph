@@ -41,7 +41,7 @@ function syncFlowUrl(rootNodeId) {
     const url = new URL(window.location.href);
     writePathUrlParam(url);
     if (rootNodeId != null) {
-      url.searchParams.set("flow", String(rootNodeId));
+      url.searchParams.set("flow", durableNodeReference(rootNodeId));
     } else {
       url.searchParams.delete("flow");
     }
@@ -55,7 +55,7 @@ function flowShareUrl() {
   const url = new URL(window.location.href);
   writePathUrlParam(url);
   if (state.flow.rootNodeId != null) {
-    url.searchParams.set("flow", String(state.flow.rootNodeId));
+    url.searchParams.set("flow", durableNodeReference(state.flow.rootNodeId));
   }
   return url.toString();
 }
@@ -74,8 +74,11 @@ async function copyFlowLink(button) {
 }
 
 async function restorePendingFlowLink() {
-  const nodeId = state.pendingFlowLink;
-  if (nodeId == null) return;
+  const nodeId = resolveNodeReference(state.pendingFlowLink);
+  if (nodeId == null) {
+    state.pendingFlowLink = null;
+    return;
+  }
   const node = (state.graph?.nodes || []).find((candidate) => candidate.id === nodeId) || {
     id: nodeId,
     label: "",
@@ -90,9 +93,9 @@ function readSelectionLinkFromUrl() {
     const params = new URLSearchParams(window.location.search);
     return {
       path: params.get("path") || "",
-      nodeId: parseUrlInteger(params.get("node")),
+      nodeId: parseUrlNodeReference(params.get("node")),
       edgeIndex: parseUrlInteger(params.get("edge")),
-      flowNodeId: parseUrlInteger(params.get("flow")),
+      flowNodeId: parseUrlNodeReference(params.get("flow")),
       query: params.get("query") || "",
       queryFocus: params.get("query_focus") === "1",
       graphPage: readGraphPageLink(params),
@@ -148,6 +151,34 @@ function applyGraphPageLink(link) {
   serverEdgeSourceInput.value = link.edgeSource || "";
 }
 
+// A shared link outlives the scan that produced it, so it carries the
+// durable `cg-*` id the scan stamped when the node has one; the positional
+// id names a different node once a file above it is edited.
+function parseUrlNodeReference(value) {
+  if (value == null || value === "") return null;
+  if (String(value).startsWith("cg-")) return String(value);
+  return parseUrlInteger(value);
+}
+
+// The node a link names, whichever form it used.
+function resolveNodeReference(reference) {
+  if (reference == null) return null;
+  if (typeof reference === "string" && reference.startsWith("cg-")) {
+    const node = (state.graph?.nodes || []).find(
+      (candidate) => candidate.metadata?.stable_id === reference,
+    );
+    return node ? node.id : null;
+  }
+  const id = Number(reference);
+  return Number.isInteger(id) && id >= 0 ? id : null;
+}
+
+// The durable id of a node, for a link somebody keeps.
+function durableNodeReference(nodeId) {
+  const node = (state.graph?.nodes || []).find((candidate) => candidate.id === nodeId);
+  return node?.metadata?.stable_id || String(nodeId);
+}
+
 function parseUrlInteger(value) {
   if (value == null || value === "") return null;
   const number = Number(value);
@@ -173,7 +204,7 @@ function buildSelectionUrl({ nodeId = null, edgeIndex = null, absolute = true } 
   writePathUrlParam(url);
 
   if (nodeId != null) {
-    url.searchParams.set("node", String(nodeId));
+    url.searchParams.set("node", durableNodeReference(nodeId));
     url.searchParams.delete("edge");
     url.searchParams.delete("query");
     url.searchParams.delete("query_focus");
@@ -379,8 +410,8 @@ async function copyGraphPageLink(button) {
 }
 
 function selectNodeById(nodeId, options = {}) {
-  const id = Number(nodeId);
-  if (!Number.isInteger(id) || id < 0) return;
+  const id = resolveNodeReference(nodeId);
+  if (id == null) return;
   const syncUrl = options.syncUrl !== false;
   state.selectedEdgeKey = null;
   state.hoveredEdgeKey = null;

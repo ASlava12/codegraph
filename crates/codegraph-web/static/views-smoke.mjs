@@ -13,7 +13,7 @@ import { loadBundle } from "./smoke-harness.mjs";
 const VIEW_EXPORTS = [
   "state", "renderOverview", "renderQueryResult", "renderInsights",
   "renderJourneyReport", "renderCheckReport", "clientEntrypointReachableIds",
-  "buildClientInsights",
+  "buildClientInsights", "buildSelectionUrl", "parseUrlNodeReference", "resolveNodeReference",
 ];
 const api = loadBundle("__views", VIEW_EXPORTS);
 const fail = (label, error) => {
@@ -22,6 +22,36 @@ const fail = (label, error) => {
 };
 const ok = [];
 const drive = (label, run) => { try { run(); ok.push(label); } catch (error) { fail(label, error); } };
+
+// A link somebody keeps outlives the scan that produced it: the positional
+// id names a different node once a file above it is edited, and every
+// surface takes the durable one.
+drive("a shared link carries the durable node id", () => {
+  api.state.graph = {
+    nodes: [
+      { id: 7, kind: "function", label: "load", metadata: { stable_id: "cg-1234567890abcdef" } },
+      { id: 8, kind: "function", label: "helper", metadata: {} },
+    ],
+    edges: [],
+  };
+  const link = api.buildSelectionUrl({ nodeId: 7 });
+  if (!link.includes("node=cg-1234567890abcdef")) {
+    throw new Error(`link names the durable id: ${link}`);
+  }
+  // A node the scan stamped nothing on keeps the positional form.
+  const fallback = api.buildSelectionUrl({ nodeId: 8 });
+  if (!fallback.includes("node=8")) throw new Error(`fallback link: ${fallback}`);
+  // And both forms read back to the same node.
+  if (api.resolveNodeReference(api.parseUrlNodeReference("cg-1234567890abcdef")) !== 7) {
+    throw new Error("a durable id in a link resolves to its node");
+  }
+  if (api.resolveNodeReference(api.parseUrlNodeReference("8")) !== 8) {
+    throw new Error("a positional id still resolves");
+  }
+  if (api.resolveNodeReference(api.parseUrlNodeReference("cg-gone")) !== null) {
+    throw new Error("an id from another project resolves to nothing");
+  }
+});
 
 drive("renderOverview", () => {
   api.state.summary = { nodes: 12, edges: 20, node_kinds: { function: 8, file: 4 }, edge_kinds: { calls: 12 }, languages: { rust: 4 } };

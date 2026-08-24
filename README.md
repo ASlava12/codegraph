@@ -140,7 +140,7 @@ Implemented now:
 - Edge explanations include related risk summaries and capped edge-scoped findings for dependency-level triage.
 - Dependency cards can be opened from graph edges, query results, traces, and node neighbor lists.
 - Dependency cards can focus or query their exact `edge_index` for fast canvas narrowing and agent handoff.
-- Web node and dependency-card selections are reflected in shareable `node` and `edge` URL parameters with copy-link actions for exact human/agent handoff.
+- Web node and dependency-card selections are reflected in shareable `node` and `edge` URL parameters with copy-link actions for exact human/agent handoff. A node link carries the durable `cg-*` id the scan stamped, so a link somebody keeps still opens the same definition after the file is edited above it; a positional id in an older link still resolves.
 - Web node and dependency cards can be downloaded as JSON with source, dependency, and risk context for portable agent handoff.
 - Web query presets include ambiguous calls, ambiguous entrypoints, dependency-scope/version/runtime-import/test-only issues, sensitive defaults, SQL query cards, and missing SQL table references for fast logical inconsistency triage.
 - Selected external dependency cards can open focused package graph slices that connect declarations and import sites.
