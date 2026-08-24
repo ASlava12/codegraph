@@ -2292,6 +2292,13 @@ fn api_schema_lists_agent_contracts() {
                     ]
             })
     );
+    // The CLI spells that one `mermaid-html`, so a value copied from the
+    // published enum has to work here and the other way round.
+    assert!(
+        serde_json::from_str::<ExportFormat>("\"mermaid-html\"").is_ok(),
+        "the API must take the CLI's spelling"
+    );
+    assert!(serde_json::from_str::<ExportFormat>("\"mermaid_html\"").is_ok());
     assert!(
         schema
             .enum_values

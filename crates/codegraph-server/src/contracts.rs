@@ -555,6 +555,9 @@ pub(crate) enum ExportFormat {
     Dot,
     Ndjson,
     Graphml,
+    /// The CLI spells this one `mermaid-html`; take either spelling so a
+    /// value that works there works here.
+    #[serde(alias = "mermaid-html")]
     MermaidHtml,
     Cypher,
     Falkordb,

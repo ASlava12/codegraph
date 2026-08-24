@@ -1146,6 +1146,9 @@ pub(crate) enum OutputFormat {
     Dot,
     Ndjson,
     Graphml,
+    /// The API publishes this one as `mermaid_html`; take either spelling
+    /// so a value read from `/api/schema` works here too.
+    #[value(alias = "mermaid_html")]
     MermaidHtml,
     Cypher,
     Falkordb,
