@@ -4547,7 +4547,6 @@ pub(crate) fn php_namespace_package_candidates(namespace: &str) -> Vec<String> {
         return Vec::new();
     }
 
-    let vendor = composer_package_part(parts[0]);
     let mut packages = Vec::new();
     match parts.as_slice() {
         ["Monolog", ..] => packages.push("monolog/monolog".to_string()),
@@ -4572,10 +4571,18 @@ pub(crate) fn php_namespace_package_candidates(namespace: &str) -> Vec<String> {
         _ => {}
     }
 
-    if let Some(component) = parts.get(1) {
-        packages.push(format!("{vendor}/{}", composer_package_part(component)));
+    // A capital run is a word boundary in one package name and part of the
+    // word in the next - `Doctrine\CouchDB` is doctrine/couchdb, `MongoDB`
+    // is the vendor mongodb - so both spellings are offered and the
+    // declared set decides.
+    for vendor in composer_package_spellings(parts[0]) {
+        if let Some(component) = parts.get(1) {
+            for component in composer_package_spellings(component) {
+                packages.push(format!("{vendor}/{component}"));
+            }
+        }
+        packages.push(format!("{vendor}/{vendor}"));
     }
-    packages.push(format!("{vendor}/{vendor}"));
     packages.retain(|package| package.split('/').all(|part| !part.is_empty()));
     packages.dedup();
     packages
@@ -4609,10 +4616,31 @@ pub(crate) fn is_php_non_composer_namespace_root(root: &str) -> bool {
     )
 }
 
+/// The spellings a namespace segment can take in a package name: the
+/// word-separated one, and the one that keeps a capital run glued to the
+/// word before it.
+pub(crate) fn composer_package_spellings(value: &str) -> Vec<String> {
+    let separated = composer_package_part(value);
+    let glued = value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .map(|character| character.to_ascii_lowercase())
+        .collect::<String>();
+    let mut spellings = vec![separated];
+    if !glued.is_empty() && !spellings.contains(&glued) {
+        spellings.push(glued);
+    }
+    spellings
+}
+
+/// A namespace segment as composer writes it in a package name. A run of
+/// capitals is one word - `CouchDB` is `couchdb`, the way doctrine publishes
+/// it - while a single capital opens a new one: `DynamoDb` is `dynamo-db`.
 pub(crate) fn composer_package_part(value: &str) -> String {
+    let characters: Vec<char> = value.trim().chars().collect();
     let mut normalized = String::new();
     let mut previous_separator = false;
-    for character in value.trim().chars() {
+    for (index, character) in characters.iter().copied().enumerate() {
         if matches!(character, '_' | '-' | '.') {
             if !previous_separator && !normalized.is_empty() {
                 normalized.push('-');
@@ -4621,7 +4649,13 @@ pub(crate) fn composer_package_part(value: &str) -> String {
             continue;
         }
         if character.is_ascii_uppercase() {
-            if !normalized.is_empty() && !previous_separator {
+            // Inside a run of capitals the word has not ended; it ends where
+            // the next lowercase letter starts a new one.
+            let follows_capital = index
+                .checked_sub(1)
+                .and_then(|previous| characters.get(previous))
+                .is_some_and(|previous| previous.is_ascii_uppercase());
+            if !normalized.is_empty() && !previous_separator && !follows_capital {
                 normalized.push('-');
             }
             normalized.push(character.to_ascii_lowercase());

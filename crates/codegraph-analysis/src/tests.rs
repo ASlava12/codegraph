@@ -8070,6 +8070,34 @@ fn a_report_cites_a_node_by_the_id_that_survives_an_edit() {
 }
 
 #[test]
+fn a_php_namespace_offers_the_spellings_composer_publishes() {
+    // `Doctrine\CouchDB` is doctrine/couchdb and `MongoDB\Collection` is
+    // mongodb/collection: a run of capitals is one word in the published
+    // name, while a single capital opens the next one.
+    let candidates = |namespace: &str| php_namespace_package_candidates(namespace);
+    assert!(
+        candidates("Doctrine\\CouchDB\\Client").contains(&"doctrine/couchdb".to_string()),
+        "{:?}",
+        candidates("Doctrine\\CouchDB\\Client")
+    );
+    assert!(
+        candidates("MongoDB\\Collection").contains(&"mongodb/collection".to_string()),
+        "{:?}",
+        candidates("MongoDB\\Collection")
+    );
+    // The word-separated spelling stays on offer for names published that
+    // way, and the vendor-only guess remains the last resort.
+    let dynamo = candidates("Aws\\DynamoDb\\DynamoDbClient");
+    assert!(dynamo.contains(&"aws/dynamo-db".to_string()), "{dynamo:?}");
+    assert!(dynamo.contains(&"aws/aws".to_string()), "{dynamo:?}");
+    assert!(
+        dynamo.iter().position(|c| c == "aws/aws")
+            > dynamo.iter().position(|c| c == "aws/dynamo-db"),
+        "the vendor-only guess comes last: {dynamo:?}"
+    );
+}
+
+#[test]
 fn a_route_declared_by_a_test_is_a_fixture() {
     let mut graph = CodeGraph::new("repo");
     let route = |graph: &mut CodeGraph, path: &str, file: &str| {
