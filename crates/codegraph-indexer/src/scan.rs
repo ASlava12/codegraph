@@ -567,7 +567,7 @@ fn parse_ahead(
     let threads = std::thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(1)
-        .clamp(1, 8)
+        .clamp(1, 16)
         .min(round.len());
     if threads < 2 {
         context.parsed_ahead.extend(
