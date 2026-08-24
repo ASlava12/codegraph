@@ -4084,6 +4084,39 @@ fn reading_files_ahead_of_the_walk_changes_nothing_it_finds() {
 }
 
 #[test]
+fn a_typescript_import_names_the_compiled_file_and_finds_the_source() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    // TypeScript requires the compiled name in an ESM specifier, and the
+    // file on disk is the source: zod writes 61 imports this way.
+    fs::write(
+        root.join("src").join("index.ts"),
+        "import { snapshot } from \"./snapshot.js\";\n\nexport const run = () => snapshot();\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("snapshot.ts"),
+        "export function snapshot() { return 1; }\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let import = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.kind == NodeKind::ExternalDependency && node.label.contains("./snapshot.js")
+        })
+        .expect("the import is recorded");
+    assert_eq!(
+        import.metadata.get("resolved_path").map(String::as_str),
+        Some("src/snapshot.ts")
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_path_built_as_the_program_runs_is_not_one_file() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src").join("commands")).unwrap();

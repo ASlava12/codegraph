@@ -575,6 +575,18 @@ fn split_import_clause(clause: &str) -> Vec<String> {
     parts
 }
 
+/// The name a TypeScript file has on disk when an ESM import names the
+/// compiled one: `./snapshot.js` is written for `snapshot.ts`, and the
+/// same holds for `.mjs`/`.cjs`.
+fn typescript_source_of_compiled_import(path: &str) -> Option<String> {
+    for extension in [".js", ".mjs", ".cjs", ".jsx"] {
+        if let Some(stem) = path.strip_suffix(extension) {
+            return Some(stem.to_string());
+        }
+    }
+    None
+}
+
 pub(crate) fn js_local_import_target(
     source_label: &str,
     import_label: &str,
@@ -587,13 +599,17 @@ pub(crate) fn js_local_import_target(
     // in a particular way. The question mark and everything after it say
     // how to load the file, not which one.
     let path = module.split('?').next().unwrap_or(&module);
+    let extensions = ["js", "ts", "tsx", "jsx", "mjs", "cjs", "mts", "cts", "d.ts"];
+    let mut candidates = module_file_candidates(source_label, path, &extensions);
+    // TypeScript writes the compiled name in an ESM import — `import ..
+    // from "./snapshot.js"` next to `snapshot.ts` — which is the
+    // convention the language requires, and zod writes 61 of them.
+    if let Some(stem) = typescript_source_of_compiled_import(path) {
+        candidates.extend(module_file_candidates(source_label, &stem, &extensions));
+    }
     Some(LocalImportTarget {
         target: module.clone(),
-        candidates: module_file_candidates(
-            source_label,
-            path,
-            &["js", "ts", "tsx", "jsx", "mjs", "cjs", "mts", "cts", "d.ts"],
-        ),
+        candidates,
     })
 }
 
