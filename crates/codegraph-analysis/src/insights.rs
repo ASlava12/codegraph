@@ -772,6 +772,12 @@ fn path_like_tokens(target: &str) -> impl Iterator<Item = &str> {
         {
             return None;
         }
+        // `@zod/source` is a package specifier, not a directory: zod runs
+        // `tsx --conditions @zod/source` and the graph went looking for a
+        // file.
+        if token.starts_with('@') && token.matches('/').count() == 1 {
+            return None;
+        }
         if token.contains('/') {
             return Some(token);
         }
@@ -845,12 +851,30 @@ pub(crate) fn add_unresolved_entrypoint_insights(graph: &CodeGraph, insights: &m
         // there, and `conventional-changelog -i CHANGELOG.md` a file the
         // scan holds. None of them failed to resolve; the entrypoint
         // simply points at something other than a function.
+        // An npm script runs where its manifest is: zod declares
+        // `tsc -p tsconfig.bench.json` in `packages/tsc/package.json`, and
+        // that file sits beside it rather than at the repository root.
+        let declared_in = node
+            .span
+            .as_ref()
+            .map(|span| span.path.clone())
+            .or_else(|| declaring_file_label(graph, node.id));
+        let base_dir = declared_in
+            .as_deref()
+            .and_then(|path| path.rsplit_once('/'))
+            .map(|(directory, _)| directory.to_string());
         if path_like_tokens(target).any(|token| {
             let token = token
                 .trim_start_matches("./")
                 .trim_end_matches('/')
                 .trim_end_matches('\\');
+            let beside_the_manifest = base_dir
+                .as_deref()
+                .map(|directory| format!("{directory}/{token}"));
             scanned_paths.contains(token)
+                || beside_the_manifest
+                    .as_deref()
+                    .is_some_and(|path| scanned_paths.contains(path))
                 || is_unscanned_hidden_path(&scanned_paths, token)
                 // `@php vendor/bin/phpunit` runs what composer installs, as
                 // monolog's `composer script:test` does.

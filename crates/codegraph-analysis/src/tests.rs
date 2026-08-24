@@ -10216,6 +10216,68 @@ fn build_tooling_may_import_a_dev_dependency() {
 }
 
 #[test]
+fn a_workspace_script_runs_where_its_manifest_is() {
+    let mut graph = CodeGraph::new("repo");
+    graph.add_node(NodeKind::File, "packages/tsc/package.json");
+    graph.add_node(NodeKind::File, "packages/tsc/tsconfig.bench.json");
+    let entry = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "npm script:build:bench",
+        Some(SourceSpan {
+            path: "packages/tsc/package.json".to_string(),
+            start_line: 12,
+            start_column: 0,
+            end_line: 12,
+            end_column: 0,
+        }),
+        BTreeMap::from([
+            ("item_kind".to_string(), "manifest_entrypoint".to_string()),
+            ("ecosystem".to_string(), "npm".to_string()),
+            (
+                "target".to_string(),
+                "tsc -p tsconfig.bench.json".to_string(),
+            ),
+        ]),
+    );
+    let conditions = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "npm script:dev",
+        Some(SourceSpan {
+            path: "package.json".to_string(),
+            start_line: 4,
+            start_column: 0,
+            end_line: 4,
+            end_column: 0,
+        }),
+        BTreeMap::from([
+            ("item_kind".to_string(), "manifest_entrypoint".to_string()),
+            ("ecosystem".to_string(), "npm".to_string()),
+            (
+                "target".to_string(),
+                "tsx --conditions @zod/source".to_string(),
+            ),
+        ]),
+    );
+    graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+    graph.add_edge(
+        graph.root,
+        conditions,
+        EdgeKind::Entrypoint,
+        Confidence::Exact,
+    );
+
+    let unresolved = insights(&graph)
+        .insights
+        .into_iter()
+        .filter(|insight| insight.kind == "unresolved_entrypoint_target")
+        .map(|insight| insight.message)
+        .collect::<Vec<_>>();
+    // The config sits beside the manifest that runs it, and `@zod/source`
+    // is a package specifier rather than a directory.
+    assert!(unresolved.is_empty(), "{unresolved:?}");
+}
+
+#[test]
 fn a_quoted_include_of_an_installed_library_is_a_note() {
     let mut graph = CodeGraph::new("repo");
     graph.add_node(NodeKind::Directory, "src");
