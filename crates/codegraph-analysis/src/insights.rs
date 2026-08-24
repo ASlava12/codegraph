@@ -4812,9 +4812,15 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
         let one_type = component_is_one_type(&nodes_by_id, &component);
         let crosses_files = !(one_type || (files.len() == 1 && placed.len() == component.len()));
         // A cycle among vendored files is upstream's shape: redis carries
-        // jemalloc's and lua's, and dune carries re's.
-        let vendored = !files.is_empty() && files.iter().all(|file| is_vendored_source_path(file));
-        let severity = if crosses_files && !vendored {
+        // jemalloc's and lua's, and dune carries re's. A cycle among test
+        // files is the harness's: kong's `spec/helpers/perf.lua` and the
+        // `spec/helpers/perf/git.lua` beside it require each other, and
+        // that is the suite's shape rather than the program's.
+        let outside_the_program = !files.is_empty()
+            && files
+                .iter()
+                .all(|file| is_vendored_source_path(file) || is_test_like_source_path(file));
+        let severity = if crosses_files && !outside_the_program {
             InsightSeverity::Warning
         } else {
             InsightSeverity::Info

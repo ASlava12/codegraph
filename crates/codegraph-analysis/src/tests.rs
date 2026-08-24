@@ -10040,6 +10040,48 @@ fn insights_report_sensitive_ci_environment_literals_without_leaking_values() {
 }
 
 #[test]
+fn a_cycle_among_test_files_is_the_suite_shape() {
+    let mut graph = CodeGraph::new("repo");
+    let placed = |graph: &mut CodeGraph, label: &str, path: &str| {
+        graph.add_node_with_metadata(
+            NodeKind::Function,
+            label,
+            Some(SourceSpan {
+                path: path.to_string(),
+                start_line: 1,
+                start_column: 1,
+                end_line: 9,
+                end_column: 2,
+            }),
+            BTreeMap::new(),
+        )
+    };
+    // kong's `spec/helpers/perf.lua` and the `spec/helpers/perf/git.lua`
+    // beside it require each other.
+    let helper = placed(&mut graph, "perf", "spec/helpers/perf.lua");
+    let git = placed(&mut graph, "git", "spec/helpers/perf/git.lua");
+    graph.add_edge(helper, git, EdgeKind::Calls, Confidence::Heuristic);
+    graph.add_edge(git, helper, EdgeKind::Calls, Confidence::Heuristic);
+    // And a cycle in the program itself, for contrast.
+    let application = placed(&mut graph, "application", "src/oscar/core/application.py");
+    let loading = placed(&mut graph, "loading", "src/oscar/core/loading.py");
+    graph.add_edge(application, loading, EdgeKind::Calls, Confidence::Heuristic);
+    graph.add_edge(loading, application, EdgeKind::Calls, Confidence::Heuristic);
+
+    let report = insights(&graph);
+    let severity_of = |node: NodeId| {
+        report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "dependency_cycle" && insight.nodes.contains(&node))
+            .map(|insight| insight.severity)
+    };
+
+    assert_eq!(severity_of(helper), Some(InsightSeverity::Info));
+    assert_eq!(severity_of(application), Some(InsightSeverity::Warning));
+}
+
+#[test]
 fn insights_report_dependency_cycles() {
     let mut graph = CodeGraph::new("repo");
     let main = graph.add_node(NodeKind::Function, "main");
