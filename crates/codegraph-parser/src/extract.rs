@@ -2017,12 +2017,34 @@ pub(crate) fn elixir_control_flow_fact(
 /// Labels for Elixir definition calls: the module alias or the function-head
 /// target inside the arguments (`defmodule Billing.Invoice`, `def total(..)`).
 pub(crate) fn elixir_item_label(node: Node<'_>, source: &[u8]) -> Option<String> {
+    // `defstruct [:name, :age]` names nothing: the struct is the module
+    // that declares it, which is how Elixir refers to it (`%Ecto.Query{}`).
+    // Ecto writes 25 of them and every one was dropped for want of a name.
+    if elixir_call_target(node, source).as_deref() == Some("defstruct") {
+        return elixir_enclosing_module(node, source);
+    }
     let mut cursor = node.walk();
     let arguments = node
         .named_children(&mut cursor)
         .find(|child| child.kind() == "arguments")?;
     let first = arguments.named_child(0)?;
     elixir_definition_head(first, source)
+}
+
+/// The module a node is written inside, by the name it is declared with.
+fn elixir_enclosing_module(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        if elixir_call_target(parent, source).as_deref() == Some("defmodule") {
+            let mut cursor = parent.walk();
+            let arguments = parent
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "arguments")?;
+            return elixir_definition_head(arguments.named_child(0)?, source);
+        }
+        current = parent.parent();
+    }
+    None
 }
 
 /// The name inside a definition's first argument. `def foo(x) when guard` puts

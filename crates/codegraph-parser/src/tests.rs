@@ -2347,6 +2347,27 @@ fn an_erlang_record_and_type_are_types() {
 }
 
 #[test]
+fn an_elixir_struct_is_named_by_its_module() {
+    // `defstruct` names nothing; the struct is the module that declares
+    // it, which is how Elixir refers to it (`%Ecto.Changeset{}`). Ecto
+    // writes 25 and every one was dropped for want of a name.
+    let source = r#"defmodule Ecto.Changeset do
+  defstruct [:data, :changes]
+
+  def new, do: %__MODULE__{}
+end
+"#;
+    let parsed = parse_source("changeset.ex", source.as_bytes(), Language::Elixir).unwrap();
+    let types: Vec<&str> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Type)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(types, vec!["Ecto.Changeset"], "items: {:?}", parsed.items);
+}
+
+#[test]
 fn calls_on_literals_are_labeled_by_method_not_by_the_literal() {
     // `"x".to_string()` used to produce a call target carrying the whole
     // literal, so each distinct literal minted its own placeholder node
