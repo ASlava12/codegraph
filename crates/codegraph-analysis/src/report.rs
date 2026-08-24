@@ -1,7 +1,7 @@
 //! The bounded project report snapshot: risk summary, quality gate,
 //! topology, compact file/node summaries, and Markdown rendering.
 
-use codegraph_core::{CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind};
+use codegraph_core::{CodeGraph, Edge, EdgeKind, Node, NodeId, NodeKind, is_vendored_source_path};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
@@ -739,6 +739,22 @@ pub(crate) fn normalize_project_report_limits(limits: ProjectReportLimits) -> Pr
     }
 }
 
+/// Whether a summarised node or file is the program rather than its tests,
+/// examples or vendored code.
+///
+/// kong's two highest-scoring files were test fixture plugins, ahead of
+/// `kong/db/schema/init.lua`, and its highest-scoring symbol was a fixture's
+/// `CtxTests:log`. Both lists answer "where is the weight of this project",
+/// so the project's own code comes first and the rest keeps its place below.
+fn summary_is_the_projects_own(node: &Node) -> bool {
+    let path = node
+        .span
+        .as_ref()
+        .map(|span| span.path.as_str())
+        .unwrap_or(node.label.as_str());
+    !is_test_like_source_path(path) && !is_vendored_source_path(path)
+}
+
 pub(crate) fn compact_file_summaries(
     graph: &CodeGraph,
     insight_report: &InsightReport,
@@ -818,9 +834,9 @@ pub(crate) fn compact_file_summaries(
         .collect();
 
     files.sort_by(|left, right| {
-        right
-            .score
-            .cmp(&left.score)
+        summary_is_the_projects_own(&right.node)
+            .cmp(&summary_is_the_projects_own(&left.node))
+            .then_with(|| right.score.cmp(&left.score))
             .then_with(|| left.node.label.cmp(&right.node.label))
             .then_with(|| left.node.id.cmp(&right.node.id))
     });
@@ -930,9 +946,9 @@ pub(crate) fn compact_node_summaries(
         .collect();
 
     nodes.sort_by(|left, right| {
-        right
-            .score
-            .cmp(&left.score)
+        summary_is_the_projects_own(&right.node)
+            .cmp(&summary_is_the_projects_own(&left.node))
+            .then_with(|| right.score.cmp(&left.score))
             .then_with(|| node_rank(&left.node.kind).cmp(&node_rank(&right.node.kind)))
             .then_with(|| left.node.label.cmp(&right.node.label))
             .then_with(|| left.node.id.cmp(&right.node.id))

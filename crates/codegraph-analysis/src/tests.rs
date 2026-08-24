@@ -684,6 +684,92 @@ fn hotspots_rank_nodes_by_dependency_degree() {
 }
 
 #[test]
+fn a_fixtures_weight_comes_after_the_programs_own() {
+    let mut graph = CodeGraph::new("repo");
+    let placed = |graph: &mut CodeGraph, kind: NodeKind, label: &str, path: &str| {
+        graph.add_node_with_span(
+            kind,
+            label,
+            SourceSpan {
+                path: path.to_string(),
+                start_line: 1,
+                start_column: 1,
+                end_line: 4,
+                end_column: 1,
+            },
+        )
+    };
+    // kong's two highest-scoring files were fixture plugins, and its
+    // highest-scoring symbol a fixture's `CtxTests:log`.
+    let fixture = graph.add_node(NodeKind::File, "spec/fixtures/plugins/handler.lua");
+    let own = graph.add_node(NodeKind::File, "kong/db/schema/init.lua");
+    for index in 0..8 {
+        let symbol = placed(
+            &mut graph,
+            NodeKind::Function,
+            &format!("CtxTests:log_{index}"),
+            "spec/fixtures/plugins/handler.lua",
+        );
+        graph.add_edge(fixture, symbol, EdgeKind::Contains, Confidence::Exact);
+        let target = placed(
+            &mut graph,
+            NodeKind::Function,
+            &format!("fixture_target_{index}"),
+            "spec/fixtures/plugins/handler.lua",
+        );
+        graph.add_edge(symbol, target, EdgeKind::Calls, Confidence::Heuristic);
+    }
+    for index in 0..3 {
+        let symbol = placed(
+            &mut graph,
+            NodeKind::Function,
+            &format!("validate_{index}"),
+            "kong/db/schema/init.lua",
+        );
+        graph.add_edge(own, symbol, EdgeKind::Contains, Confidence::Exact);
+        let target = placed(
+            &mut graph,
+            NodeKind::Function,
+            &format!("own_target_{index}"),
+            "kong/db/schema/init.lua",
+        );
+        graph.add_edge(symbol, target, EdgeKind::Calls, Confidence::Heuristic);
+    }
+
+    let report = project_report(
+        &graph,
+        ProjectReportLimits {
+            architecture_group_limit: 5,
+            architecture_edge_limit: 5,
+            language_link_limit: 5,
+            hotspot_limit: 5,
+            community_limit: 5,
+            insight_limit: 10,
+            file_summary_limit: 4,
+            node_summary_limit: 4,
+            fail_on: InsightSeverity::Error,
+        },
+    );
+    assert_eq!(
+        report.file_summaries.files[0].node.label,
+        "kong/db/schema/init.lua"
+    );
+    assert!(
+        report.node_summaries.nodes[0]
+            .node
+            .label
+            .starts_with("validate_"),
+        "{:?}",
+        report
+            .node_summaries
+            .nodes
+            .iter()
+            .map(|entry| entry.node.label.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn a_test_helper_hub_comes_after_the_programs_own() {
     let mut graph = CodeGraph::new("repo");
     let placed = |graph: &mut CodeGraph, label: &str, path: &str| {
