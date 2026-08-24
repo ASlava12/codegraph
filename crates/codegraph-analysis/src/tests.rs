@@ -10010,6 +10010,36 @@ fn build_tooling_may_import_a_dev_dependency() {
 }
 
 #[test]
+fn a_rust_use_names_a_crate_only_when_it_is_one() {
+    let mut graph = CodeGraph::new("repo");
+    let source = graph.add_node(NodeKind::File, "crates/searcher/src/core.rs");
+    // ripgrep declares `memmap = { package = "memmap2" }`, and the key is
+    // what the code writes.
+    let declared = dependency_node(&mut graph, "memmap", "cargo:memmap");
+    graph.add_edge(source, declared, EdgeKind::DependsOn, Confidence::Exact);
+    for label in [
+        "use memmap::Mmap;",
+        // An enum's variants brought into scope, not a crate.
+        "use FastMatchResult::*;",
+        // Handed to a procedural-macro crate the way `std` is to every
+        // other.
+        "use proc_macro::TokenStream;",
+    ] {
+        let import = import_node(&mut graph, label, "rust");
+        graph.add_edge(source, import, EdgeKind::Imports, Confidence::Syntactic);
+    }
+
+    let report = insights(&graph);
+    let undeclared = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "undeclared_external_import")
+        .map(|insight| insight.message.as_str())
+        .collect::<Vec<_>>();
+    assert!(undeclared.is_empty(), "{undeclared:?}");
+}
+
+#[test]
 fn an_undeclared_import_names_the_package_that_ships_the_module() {
     let mut graph = CodeGraph::new("repo");
     let source = graph.add_node(NodeKind::File, "src/app.py");

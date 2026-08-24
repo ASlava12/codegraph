@@ -4084,6 +4084,33 @@ fn reading_files_ahead_of_the_walk_changes_nothing_it_finds() {
 }
 
 #[test]
+fn a_renamed_cargo_dependency_is_declared_under_both_names() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"searcher\"\nversion = \"0.1.0\"\n\n[dependencies]\nmemmap = { package = \"memmap2\", version = \"0.9.0\" }\n",
+    )
+    .unwrap();
+    fs::write(root.join("src").join("lib.rs"), "use memmap::Mmap;\n").unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let declared = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::ExternalDependency)
+        .filter(|node| node.metadata.get("ecosystem").map(String::as_str) == Some("cargo"))
+        .map(|node| node.label.as_str())
+        .collect::<Vec<_>>();
+    // The key is the name the code writes; the registry name travels beside
+    // it.
+    assert!(declared.contains(&"memmap"), "{declared:?}");
+    assert!(declared.contains(&"memmap2"), "{declared:?}");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_entrypoint_points_at_the_line_that_declares_it() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

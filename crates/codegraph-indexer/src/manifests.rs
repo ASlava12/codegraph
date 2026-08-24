@@ -2063,24 +2063,35 @@ pub(crate) fn collect_toml_table_keys(
         return;
     };
     for (name, value) in table {
-        let package_name = value
-            .as_table()
-            .and_then(|table| table.get("package"))
-            .and_then(|value| value.as_str())
-            .unwrap_or(name)
-            .to_string();
         let version = dependency_version_from_toml_value(
             name,
             value,
             ecosystem,
             cargo_workspace_dependencies,
         );
+        // The key is the name the code writes: ripgrep declares `memmap =
+        // { package = "memmap2" }` and its searcher writes `use
+        // memmap::Mmap`, which read as a dependency the project never
+        // declared. The registry name travels beside it.
+        let renamed = value
+            .as_table()
+            .and_then(|table| table.get("package"))
+            .and_then(|value| value.as_str())
+            .filter(|package| *package != name);
         dependencies.push(manifest_dependency(
-            package_name,
+            name.to_string(),
             dependency_kind,
             ecosystem,
-            version,
+            version.clone(),
         ));
+        if let Some(package) = renamed {
+            dependencies.push(manifest_dependency(
+                package.to_string(),
+                dependency_kind,
+                ecosystem,
+                version,
+            ));
+        }
     }
 }
 

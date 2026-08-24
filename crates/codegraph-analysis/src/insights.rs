@@ -4678,11 +4678,28 @@ pub(crate) fn rust_import_package(label: &str) -> Option<String> {
         .trim_start_matches("::")
         .split([':', ';', ',', '{', ' ', '\n', '\t'])
         .find(|part| !part.is_empty())?;
-    if matches!(first, "std" | "core" | "alloc" | "crate" | "self" | "super") {
-        None
-    } else {
-        Some(first.to_ascii_lowercase())
+    if names_the_language_itself(first) {
+        return None;
     }
+    // `use FastMatchResult::*;` brings an enum's variants into scope; a
+    // crate is named in lower case, and ripgrep's own enum read as a
+    // dependency it never declared.
+    if first.starts_with(char::is_uppercase) {
+        return None;
+    }
+    Some(first.to_ascii_lowercase())
+}
+
+/// Whether a Rust path starts at something the compiler itself provides
+/// rather than at a crate the project declares. `proc_macro` is handed to a
+/// procedural-macro crate the way `std` is handed to every other, and
+/// serde_derive's `use proc_macro::TokenStream` read as an undeclared
+/// dependency.
+fn names_the_language_itself(first: &str) -> bool {
+    matches!(
+        first,
+        "std" | "core" | "alloc" | "proc_macro" | "test" | "crate" | "self" | "super"
+    )
 }
 
 pub(crate) fn rust_path_package(label: &str) -> Option<String> {
@@ -4693,8 +4710,7 @@ pub(crate) fn rust_path_package(label: &str) -> Option<String> {
         .next()
         .map(str::trim)
         .filter(|part| !part.is_empty())?;
-    if first.contains('.') || matches!(first, "std" | "core" | "alloc" | "crate" | "self" | "super")
-    {
+    if first.contains('.') || names_the_language_itself(first) {
         None
     } else {
         Some(first.to_ascii_lowercase())
