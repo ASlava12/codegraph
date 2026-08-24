@@ -2272,8 +2272,12 @@ pub(crate) fn add_unreachable_config_read_insights(
 
     // When entrypoints reach less than half the code, the coverage finding
     // has already said so, and repeating it once per configuration read
-    // states the gap rather than anything about the read.
-    let severity = if entrypoint_coverage_is_low(graph, reachable) {
+    // states the gap rather than anything about the read. A library has no
+    // program of its own to be reached from at all: spdlog's
+    // `is_color_terminal` reads `TERM` and gin's `resolveAddress` reads
+    // `PORT`, and neither project ever starts itself.
+    let severity = if entrypoint_coverage_is_low(graph, reachable) || !starts_in_its_own_code(graph)
+    {
         InsightSeverity::Info
     } else {
         InsightSeverity::Warning

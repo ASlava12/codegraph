@@ -117,6 +117,10 @@ Implemented now:
   `executable shellcheck` with `main-is: shellcheck.hs` is the program, a `test-suite` states a test
   program under its own `hs-source-dirs`, and a `library` states none. shellcheck's coverage finding
   is gone -- its entrypoints were its shell scripts and CI jobs.
+- A library has no program for a configuration read to be reachable from, so "not reachable from
+  any entrypoint" describes the project's shape rather than the read: spdlog's `is_color_terminal`
+  reads `TERM` and gin's `resolveAddress` reads `PORT`, and neither project ever starts itself.
+  Those read as notes now, the way the coverage finding already does for a library.
 - A version a test fixture pins is not the project disagreeing with itself: axios keeps typescript
   4.9.5 under `tests/module/cjs` to prove it still compiles there. The versions outside the tests
   are what have to disagree, and an example app still counts against the project -- an example that

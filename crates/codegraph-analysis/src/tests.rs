@@ -9029,7 +9029,16 @@ fn insights_report_unreachable_config_reads() {
     let unused_loader = graph.add_node(NodeKind::Function, "unused_loader");
     let unused_config = graph.add_node(NodeKind::Config, "config/legacy.toml");
     graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
-    graph.add_edge(entry, main, EdgeKind::References, Confidence::Exact);
+    // The relation a scan writes when a manifest's program reaches the
+    // function that starts it: without it this project starts nowhere, and
+    // a project that never starts cannot report what it fails to reach.
+    graph.add_edge_with_metadata(
+        entry,
+        main,
+        EdgeKind::References,
+        Confidence::Exact,
+        BTreeMap::from([("relation".to_string(), "entrypoint_function".to_string())]),
+    );
     graph.add_edge(
         main,
         live_config,
@@ -9056,6 +9065,63 @@ fn insights_report_unreachable_config_reads() {
     assert!(!report.insights.iter().any(|insight| {
         insight.kind == "unreachable_config_read" && insight.nodes.contains(&main)
     }));
+}
+
+#[test]
+fn a_library_cannot_fail_to_reach_its_own_reads() {
+    // spdlog's `is_color_terminal` reads `TERM` and gin's `resolveAddress`
+    // reads `PORT`, and neither project ever starts itself: a library has
+    // no program for a read to be reachable from, so "not reachable from
+    // any entrypoint" describes the project's shape rather than the read.
+    let mut graph = CodeGraph::new("repo");
+    let reader = graph.add_node(NodeKind::Function, "is_color_terminal");
+    let term = graph.add_node(NodeKind::Environment, "TERM");
+    // The only program is a demonstration of the library, which is what
+    // `starts_in_its_own_code` already refuses to read as the project
+    // starting -- and it is what makes the walk reach anything at all.
+    let entry = graph.add_node(NodeKind::Entrypoint, "cmake executable:example");
+    let demo = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "main",
+        Some(SourceSpan {
+            path: "example/demo.cpp".to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 3,
+            end_column: 1,
+        }),
+        BTreeMap::from([("entrypoint_kind".to_string(), "program".to_string())]),
+    );
+    graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+    graph.add_edge_with_metadata(
+        entry,
+        demo,
+        EdgeKind::References,
+        Confidence::Exact,
+        BTreeMap::from([("relation".to_string(), "entrypoint_function".to_string())]),
+    );
+    graph.add_edge(
+        reader,
+        term,
+        EdgeKind::ReadsEnvironment,
+        Confidence::Heuristic,
+    );
+
+    let report = insights(&graph);
+    let insight = report
+        .insights
+        .iter()
+        .find(|insight| insight.kind == "unreachable_config_read");
+    assert_eq!(
+        insight.map(|insight| insight.severity),
+        Some(InsightSeverity::Info),
+        "{:?}",
+        report
+            .insights
+            .iter()
+            .map(|insight| (insight.kind.as_str(), insight.severity))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
