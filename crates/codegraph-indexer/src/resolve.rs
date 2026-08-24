@@ -13,6 +13,51 @@ use crate::*;
 /// Language builtins and std macros that read as call sites but are not
 /// external dependencies: constructors of core enums, print/assert/format
 /// macro families, and std namespaces.
+/// Whether a Rust method call names something the standard library gives
+/// every type. A project may declare `fn map` or `fn parse` of its own, but
+/// `option.map(..)` and `text.parse::<u64>()` are not calls to it, and the
+/// syntax alone cannot say which type the receiver has.
+pub(crate) fn rust_receiver_method_is_std(label: &str) -> bool {
+    let method = label.rsplit('.').next().unwrap_or(label).trim();
+    matches!(
+        method,
+        "unwrap"
+            | "expect"
+            | "parse"
+            | "map"
+            | "map_err"
+            | "and_then"
+            | "or_else"
+            | "ok_or"
+            | "ok_or_else"
+            | "unwrap_or"
+            | "unwrap_or_default"
+            | "unwrap_or_else"
+            | "clone"
+            | "cloned"
+            | "copied"
+            | "into"
+            | "to_string"
+            | "to_owned"
+            | "as_str"
+            | "as_ref"
+            | "as_deref"
+            | "as_slice"
+            | "iter"
+            | "into_iter"
+            | "iter_mut"
+            | "collect"
+            | "next"
+            | "is_empty"
+            | "is_some"
+            | "is_none"
+            | "is_ok"
+            | "is_err"
+            | "is_some_and"
+            | "is_none_or"
+    )
+}
+
 pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
     let base = label.trim_end_matches('!');
     match language {
@@ -1140,6 +1185,26 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 !patches_runtime_global(&call.language, &owner) || call_owner == Some(&owner)
             })
             .collect::<Vec<_>>();
+        // `value.parse::<usize>()` is `str::parse`, and this repository has
+        // a `pub(crate) fn parse` of its own; ripgrep's 374 `.unwrap()`
+        // calls found its private `fn unwrap`. A Rust call written through a
+        // receiver is answered by a method, and by no method at all when the
+        // name is one every type already has.
+        let language_targets = if call.language == "rust" && call.label.contains('.') {
+            if rust_receiver_method_is_std(&call.label) {
+                Vec::new()
+            } else {
+                language_targets
+                    .into_iter()
+                    .filter(|target| {
+                        graph_node(&context.graph, *target)
+                            .is_some_and(|node| node.metadata.contains_key("owner_type"))
+                    })
+                    .collect::<Vec<_>>()
+            }
+        } else {
+            language_targets
+        };
         // The program does not call its own tests. flask has exactly one
         // function named `close` — a helper in tests/test_helpers.py — so
         // `builder.close()` in src/flask/app.py resolved to it with full

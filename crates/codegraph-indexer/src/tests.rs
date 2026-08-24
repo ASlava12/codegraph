@@ -4003,6 +4003,29 @@ fn a_private_rust_function_answers_only_its_own_module() {
 }
 
 #[test]
+fn a_rust_method_every_type_has_is_not_the_projects_own() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("query.rs"),
+        "pub struct Query;\n\nimpl Query {\n    pub fn parse(text: &str) -> Query { Query }\n}\n\npub fn limit(text: &str) -> usize {\n    text.parse::<usize>().unwrap_or(0)\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let parse = node_id(&graph, NodeKind::Function, "parse");
+    assert!(
+        !graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Calls && edge.target == parse),
+        "`text.parse::<usize>()` is `str::parse`, not `Query::parse`"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scan_project_marks_ambiguous_call_edges() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();
