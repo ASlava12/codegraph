@@ -543,6 +543,16 @@ pub(crate) fn python_absolute_local_import_target(
     if module.is_empty() || module.starts_with('.') {
         return None;
     }
+    // `import typing as t` inside `src/flask/typing.py` names the standard
+    // library, not the file it is written in. Without this the module
+    // resolved onto itself and read as a dependency cycle.
+    if module
+        .split('.')
+        .next()
+        .is_some_and(codegraph_core::is_python_stdlib_package)
+    {
+        return None;
+    }
 
     let relative = module.replace('.', "/");
     let mut candidates = Vec::new();

@@ -1494,6 +1494,48 @@ fn a_computed_require_names_no_module() {
 }
 
 #[test]
+fn a_file_does_not_import_itself() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src").join("flask")).unwrap();
+    // `import typing as t` inside `typing.py` names the standard library,
+    // and a fixture named `flask.py` importing flask names the package.
+    fs::write(
+        root.join("src").join("flask").join("typing.py"),
+        "import typing as t
+
+
+def ensure(value):
+    return t.cast(str, value)
+",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("flask").join("__init__.py"),
+        "from .typing import ensure
+",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let self_edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::References)
+        .filter_map(|edge| {
+            let source = graph.nodes.iter().find(|node| node.id == edge.source)?;
+            let target = graph.nodes.iter().find(|node| node.id == edge.target)?;
+            let path = source.span.as_ref()?.path.as_str();
+            (path == target.label).then(|| format!("{path} -> {}", target.label))
+        })
+        .collect();
+    assert!(
+        self_edges.is_empty(),
+        "no import resolves onto the file it is written in: {self_edges:?}"
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn pyproject_dependency_groups_are_declared_dependencies() {
     // PEP 735 groups, which uv writes and pip installs with `--group`.
     // flask keeps `cryptography` and `python-dotenv` only here.

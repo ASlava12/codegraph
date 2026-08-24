@@ -116,20 +116,21 @@ if (missing.length > 0) {
 // list it keeps its own copy of drifts silently: the Python standard
 // library set held 41 names against the CLI's 193, so the view called
 // `ast` and `code` dependencies flask forgot to declare.
-const insightsRs = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  "codegraph-analysis",
-  "src",
-  "insights.rs",
-);
-const rustSource = readFileSync(insightsRs, "utf8");
+const crateFile = (crate, ...parts) =>
+  join(dirname(fileURLToPath(import.meta.url)), "..", "..", crate, "src", ...parts);
+// The lists live where the code that needs them does: the Python standard
+// library set is shared with the indexer, so it sits in the core crate.
+const rustSources = [
+  ["codegraph-analysis/insights.rs", readFileSync(crateFile("codegraph-analysis", "insights.rs"), "utf8")],
+  ["codegraph-core/lib.rs", readFileSync(crateFile("codegraph-core", "lib.rs"), "utf8")],
+];
 const namesIn = (text) => new Set([...text.matchAll(/"([A-Za-z_][A-Za-z_0-9.\\-]*)"/g)].map((m) => m[1]));
 const rustNamesOf = (signature) => {
-  const start = rustSource.indexOf(signature);
-  if (start < 0) throw new Error(`check-defs: ${signature} is gone from insights.rs`);
-  return namesIn(rustSource.slice(start, rustSource.indexOf("\n}", start)));
+  for (const [, source] of rustSources) {
+    const start = source.indexOf(signature);
+    if (start >= 0) return namesIn(source.slice(start, source.indexOf("\n}", start)));
+  }
+  throw new Error(`check-defs: ${signature} is gone from ${rustSources.map(([name]) => name).join(" and ")}`);
 };
 const jsNamesOf = (constant) => {
   const block = raw.match(new RegExp(`const ${constant} = new Set\\(\\[([\\s\\S]*?)\\]\\);`));
@@ -150,7 +151,7 @@ for (const [constant, signature] of SHARED_LISTS) {
   const onlyJs = [...jsNames].filter((name) => !rustNames.has(name));
   if (onlyRust.length > 0 || onlyJs.length > 0) {
     console.error(`check-defs: ${constant} and ${signature} disagree`);
-    if (onlyRust.length > 0) console.error(`  only in insights.rs: ${onlyRust.join(", ")}`);
+    if (onlyRust.length > 0) console.error(`  only in the Rust list: ${onlyRust.join(", ")}`);
     if (onlyJs.length > 0) console.error(`  only in the bundle: ${onlyJs.join(", ")}`);
     process.exit(1);
   }

@@ -1850,7 +1850,18 @@ pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
     let pending_imports = std::mem::take(&mut context.pending_local_imports);
 
     for import in pending_imports {
-        let resolved = resolve_local_import_candidate(&context.file_nodes, &import.candidates);
+        let source_path = context
+            .graph
+            .nodes
+            .iter()
+            .find(|node| node.id == import.import_node)
+            .and_then(|node| node.span.as_ref())
+            .map(|span| span.path.clone());
+        let resolved = resolve_local_import_candidate(
+            &context.file_nodes,
+            &import.candidates,
+            source_path.as_deref(),
+        );
 
         if let Some((candidate, file_id)) = resolved {
             add_node_metadata(
@@ -1989,12 +2000,21 @@ pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
 pub(crate) fn resolve_local_import_candidate(
     file_nodes: &BTreeMap<String, NodeId>,
     candidates: &[String],
+    source_path: Option<&str>,
 ) -> Option<(String, NodeId)> {
+    // No file imports itself. `from flask import Flask` written in a fixture
+    // named `flask.py` matched that fixture, and the graph read the match as
+    // a dependency cycle.
+    let is_the_source = |path: &str| source_path == Some(path);
     for candidate in candidates {
-        if let Some(file_id) = file_nodes.get(candidate).copied() {
+        if let Some(file_id) = file_nodes.get(candidate).copied()
+            && !is_the_source(candidate)
+        {
             return Some((candidate.clone(), file_id));
         }
-        if let Some((path, file_id)) = resolve_directory_import_candidate(file_nodes, candidate) {
+        if let Some((path, file_id)) = resolve_directory_import_candidate(file_nodes, candidate)
+            && !is_the_source(&path)
+        {
             return Some((path, file_id));
         }
     }
@@ -2006,7 +2026,7 @@ pub(crate) fn resolve_local_import_candidate(
         let suffix = format!("/{candidate}");
         let mut matches = file_nodes
             .iter()
-            .filter(|(path, _)| path.ends_with(&suffix));
+            .filter(|(path, _)| path.ends_with(&suffix) && !is_the_source(path));
         if let Some((path, file_id)) = matches.next()
             && matches.next().is_none()
         {

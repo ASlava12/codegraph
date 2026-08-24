@@ -8053,6 +8053,40 @@ fn insights_report_low_entrypoint_coverage() {
 }
 
 #[test]
+fn documents_that_link_to_each_other_are_not_a_dependency_cycle() {
+    let mut graph = CodeGraph::new("repo");
+    let recipes = graph.add_node(NodeKind::File, "docs/recipes.md");
+    let java_io = graph.add_node(NodeKind::File, "docs/java_io_recipes.md");
+    for (source, target) in [(recipes, java_io), (java_io, recipes)] {
+        graph.add_edge_with_metadata(
+            source,
+            target,
+            EdgeKind::References,
+            Confidence::Syntactic,
+            BTreeMap::from([
+                ("relation".to_string(), "markdown_link".to_string()),
+                ("source".to_string(), "markdown".to_string()),
+            ]),
+        );
+    }
+    // Two source files that import each other still are one.
+    let app = graph.add_node(NodeKind::File, "src/app.rs");
+    let db = graph.add_node(NodeKind::File, "src/db.rs");
+    graph.add_edge(app, db, EdgeKind::Imports, Confidence::Syntactic);
+    graph.add_edge(db, app, EdgeKind::Imports, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    let cycles = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "dependency_cycle")
+        .map(|insight| insight.message.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(cycles.len(), 1, "{cycles:?}");
+    assert!(cycles[0].contains("src/"), "{cycles:?}");
+}
+
+#[test]
 fn a_library_with_no_program_reads_its_coverage_as_context() {
     // Alamofire, dplyr and ecto have no `main` and no route into their own
     // code, so "entrypoints reach 0%" describes a library rather than a gap.
