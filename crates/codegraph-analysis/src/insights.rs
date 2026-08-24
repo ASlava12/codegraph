@@ -2736,11 +2736,53 @@ fn read_is_guarded(
     inside_a_function || line > *guard
 }
 
+/// The directories a program is rooted at: wherever a manifest sits.
+/// mastodon keeps its streaming service in `streaming/` with a
+/// `package.json` of its own, so the `NODE_ENV` it defaults is not the
+/// `NODE_ENV` the bundled frontend reads.
+fn program_roots(graph: &CodeGraph) -> Vec<String> {
+    const MANIFESTS: [&str; 7] = [
+        "package.json",
+        "Gemfile",
+        "go.mod",
+        "pyproject.toml",
+        "composer.json",
+        "Cargo.toml",
+        "pubspec.yaml",
+    ];
+    let mut roots: Vec<String> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::File)
+        .filter_map(|node| {
+            let (directory, name) = match node.label.rsplit_once('/') {
+                Some((directory, name)) => (directory.to_string(), name),
+                None => (String::new(), node.label.as_str()),
+            };
+            MANIFESTS.contains(&name).then_some(directory)
+        })
+        .collect();
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+/// The program a file belongs to: the nearest root above it.
+fn program_root_of<'a>(roots: &'a [String], path: &str) -> &'a str {
+    roots
+        .iter()
+        .filter(|root| root.is_empty() || path.starts_with(&format!("{root}/")))
+        .max_by_key(|root| root.len())
+        .map(String::as_str)
+        .unwrap_or_default()
+}
+
 pub(crate) fn add_mixed_config_requirement_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
 ) {
     let sourced = sourced_shell_files(graph);
+    let roots = program_roots(graph);
     let nodes_by_id = node_index(graph);
     for ((kind, label), reads) in config_key_reads(graph) {
         if reads.required_edges.is_empty() || reads.defaults.is_empty() {
@@ -2758,6 +2800,30 @@ pub(crate) fn add_mixed_config_requirement_insights(
             .filter(|index| !read_is_guarded(graph, *index, &guarded, &sourced, &nodes_by_id))
             .collect();
         if required_edges.is_empty() {
+            continue;
+        }
+        // A key read both ways in one program is the finding; read one
+        // way in one program and another way in the program beside it is
+        // two programs sharing a name.
+        let root_of_edge = |index: &usize| {
+            graph
+                .edges
+                .get(*index)
+                .and_then(|edge| edge.metadata.get("file"))
+                .map(|file| program_root_of(&roots, file).to_string())
+        };
+        let required_roots: BTreeSet<String> =
+            required_edges.iter().filter_map(root_of_edge).collect();
+        let defaulted_roots: BTreeSet<String> = reads
+            .defaults
+            .values()
+            .flat_map(|(_, edges)| edges.iter())
+            .filter_map(root_of_edge)
+            .collect();
+        if !required_roots.is_empty()
+            && !defaulted_roots.is_empty()
+            && required_roots.is_disjoint(&defaulted_roots)
+        {
             continue;
         }
 

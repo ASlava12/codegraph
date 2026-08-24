@@ -9719,6 +9719,67 @@ fn a_workflow_that_sets_a_variable_is_not_asking_for_one() {
 }
 
 #[test]
+fn two_programs_sharing_a_variable_name_are_not_one_program() {
+    let mut graph = CodeGraph::new("repo");
+    // mastodon keeps its streaming service in `streaming/` with a
+    // package.json of its own: the `NODE_ENV` it defaults is not the one
+    // the bundled frontend reads.
+    graph.add_node(NodeKind::File, "package.json");
+    graph.add_node(NodeKind::File, "streaming/package.json");
+    let frontend = graph.add_node_with_metadata(
+        NodeKind::File,
+        "app/javascript/environment.ts",
+        None,
+        BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+    );
+    let service = graph.add_node_with_metadata(
+        NodeKind::File,
+        "streaming/index.js",
+        None,
+        BTreeMap::from([("language".to_string(), "javascript".to_string())]),
+    );
+    let node_env = graph.add_node(NodeKind::Environment, "NODE_ENV");
+    graph.add_edge_with_metadata(
+        frontend,
+        node_env,
+        EdgeKind::ReadsEnvironment,
+        Confidence::Heuristic,
+        BTreeMap::from([
+            (
+                "file".to_string(),
+                "app/javascript/environment.ts".to_string(),
+            ),
+            ("line".to_string(), "5".to_string()),
+        ]),
+    );
+    graph.add_edge_with_metadata(
+        service,
+        node_env,
+        EdgeKind::ReadsEnvironment,
+        Confidence::Heuristic,
+        BTreeMap::from([
+            ("file".to_string(), "streaming/index.js".to_string()),
+            ("line".to_string(), "12".to_string()),
+            ("default_value".to_string(), "development".to_string()),
+        ]),
+    );
+
+    let report = insights(&graph);
+    assert!(
+        !report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "mixed_config_requirement"),
+        "{:?}",
+        report
+            .insights
+            .iter()
+            .map(|insight| insight.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn a_shell_answers_for_a_variable_wherever_the_read_is_written() {
     let mut graph = CodeGraph::new("repo");
     // dune declares `confirm ()` above the assignments and calls it below;
