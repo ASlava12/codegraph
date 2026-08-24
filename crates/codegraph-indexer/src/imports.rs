@@ -30,11 +30,12 @@ pub(crate) fn local_import_target(
         Language::Dart => dart_local_import_target(source_label, import_label, dart_packages),
         Language::Nix => nix_local_import_target(source_label, import_label),
         Language::Erlang => erlang_local_import_target(source_label, import_label),
+        Language::Julia => julia_local_import_target(source_label, import_label),
+        Language::Ruby => ruby_local_import_target(source_label, import_label),
         // No deterministic local-file resolution for these import systems yet
         // (classpaths / gem load paths / assembly references); imports still
         // land as facts and can join package hubs.
-        Language::Ruby
-        | Language::Java
+        Language::Java
         | Language::CSharp
         | Language::Kotlin
         | Language::Swift
@@ -44,7 +45,6 @@ pub(crate) fn local_import_target(
         | Language::Zig
         | Language::Haskell
         | Language::OCaml
-        | Language::Julia
         | Language::R => None,
     }
 }
@@ -159,6 +159,47 @@ pub(crate) fn possible_local_import_target(
         Language::OCaml => ocaml_local_import_target(import_label),
         _ => None,
     }
+}
+
+/// `include("abstractdataframe.jl")` splices in a file beside this one --
+/// the only Julia import that names a path rather than a package.
+pub(crate) fn julia_local_import_target(
+    source_label: &str,
+    import_label: &str,
+) -> Option<LocalImportTarget> {
+    if !import_label.trim_start().starts_with("include") {
+        return None;
+    }
+    let path = first_quoted_value(import_label)?;
+    if path.is_empty() || path.starts_with('/') {
+        return None;
+    }
+    Some(LocalImportTarget {
+        target: path.clone(),
+        candidates: vec![join_path(path_dir(source_label).as_deref(), &path)],
+    })
+}
+
+/// `require_relative "helpers"` names the file beside this one; sinatra
+/// writes 45 of them.
+pub(crate) fn ruby_local_import_target(
+    source_label: &str,
+    import_label: &str,
+) -> Option<LocalImportTarget> {
+    let rest = import_label.trim().strip_prefix("require_relative")?;
+    let path = first_quoted_value(rest)?;
+    if path.is_empty() {
+        return None;
+    }
+    let joined = join_path(path_dir(source_label).as_deref(), &path);
+    let mut candidates = vec![format!("{joined}.rb")];
+    if joined.ends_with(".rb") {
+        candidates.insert(0, joined.clone());
+    }
+    Some(LocalImportTarget {
+        target: path,
+        candidates,
+    })
 }
 
 /// `alias Ecto.Query` names the module Elixir compiles from

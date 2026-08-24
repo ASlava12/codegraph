@@ -4037,6 +4037,54 @@ func helperB() string { return "b" }
 }
 
 #[test]
+fn a_julia_include_and_a_ruby_require_relative_reach_their_file() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src").join("other")).unwrap();
+    fs::write(
+        root.join("src").join("DataFrames.jl"),
+        "module DataFrames\ninclude(\"other/utils.jl\")\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("other").join("utils.jl"),
+        "function helper(x)\n    x\nend\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("lib").join("sinatra")).unwrap();
+    fs::write(
+        root.join("lib").join("sinatra.rb"),
+        "require_relative 'sinatra/logger'\nrequire 'json'\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib").join("sinatra").join("logger.rb"),
+        "module Sinatra\n  class Logger\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reaches = |path: &str| {
+        let file = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::File && node.label == path)
+            .unwrap_or_else(|| panic!("missing {path}"));
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::References
+                && edge.target == file.id
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "local_import_file")
+        })
+    };
+    assert!(reaches("src/other/utils.jl"), "include(\"other/utils.jl\")");
+    assert!(reaches("lib/sinatra/logger.rb"), "require_relative");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_elixir_alias_reaches_the_module_file() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("lib").join("ecto")).unwrap();

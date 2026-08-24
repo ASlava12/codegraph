@@ -594,6 +594,9 @@ pub(crate) fn classify_node(
             }
             "module_definition" => ParsedItemKind::Module,
             "using_statement" | "import_statement" => ParsedItemKind::Import,
+            // `include("abstractdataframe.jl")` splices a file into the
+            // module; DataFrames.jl builds itself from 35 of them.
+            "call_expression" if julia_include_call(node, source) => ParsedItemKind::Import,
             _ => return None,
         },
     };
@@ -2312,4 +2315,13 @@ fn zig_container_declaration(node: Node<'_>) -> bool {
                 | "opaque_declaration"
         )
     })
+}
+
+/// `include("file.jl")`: the Julia call that splices another file in.
+fn julia_include_call(node: Node<'_>, source: &[u8]) -> bool {
+    node.child(0)
+        .and_then(|callee| node_text(callee, source))
+        .as_deref()
+        .map(str::trim)
+        == Some("include")
 }
