@@ -781,7 +781,9 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Show effective scan policy for a project root.",
                     vec![path_param()],
                     "ScanOptionsResponse",
-                ),
+                )
+                .with_response_fields(scan_options_response_fields())
+                .with_example("/api/scan-options?path=."),
             ],
         },
         ApiSchemaGroup {
@@ -798,7 +800,9 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Explain scan coverage, indexed files, skip counts, and language counts.",
                     vec![path_param()],
                     "ScanCoverageReport",
-                ),
+                )
+                .with_response_fields(scan_coverage_response_fields())
+                .with_example("/api/coverage?path=."),
                 api_get(
                     "/api/cache-diff",
                     "Explain cache fingerprint changes and reusable file/byte estimates without a full graph scan.",
@@ -1205,6 +1209,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     vec![path_param()],
                     "GraphSummary",
                 )
+                .with_response_fields(graph_summary_response_fields())
                 .with_example("/api/summary?path=."),
                 api_get(
                     "/api/query",
@@ -2575,6 +2580,215 @@ pub(crate) fn semantic_enrich_body_fields() -> Vec<ApiParameterSpec> {
     fields
 }
 
+/// The scan policy in force for a project root: the same knobs
+/// `/api/coverage` reports having applied.
+pub(crate) fn scan_options_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("root", true, "path", "Resolved project root."),
+        response_field(
+            "config_path",
+            false,
+            "path",
+            "Repository scan policy that was applied, when one exists.",
+        ),
+        response_field(
+            "include_hidden",
+            true,
+            "bool",
+            "Whether hidden entries are walked.",
+        ),
+        response_field(
+            "include_ignored",
+            true,
+            "bool",
+            "Whether default ignored directories are walked.",
+        ),
+        response_field(
+            "max_file_size",
+            true,
+            "u64",
+            "Byte cap above which a file is recorded but not read.",
+        ),
+        response_field(
+            "ignored_names",
+            true,
+            "string[]",
+            "Directory names skipped by default.",
+        ),
+        response_field(
+            "ignored_globs",
+            true,
+            "string[]",
+            "Globs skipped by repository policy.",
+        ),
+    ]
+}
+
+/// What `/api/summary` answers with. Documented here because an agent
+/// reads the schema before the response.
+pub(crate) fn graph_summary_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("nodes", true, "usize", "Total nodes in the graph."),
+        response_field("edges", true, "usize", "Total edges in the graph."),
+        response_field(
+            "entrypoints",
+            true,
+            "usize",
+            "Nodes a manifest, script, or runtime surface starts from.",
+        ),
+        response_field(
+            "skipped_files",
+            true,
+            "usize",
+            "Files left unread, such as those above the size cap.",
+        ),
+        response_field(
+            "node_kinds",
+            true,
+            "map<string,usize>",
+            "Node count per kind.",
+        ),
+        response_field(
+            "edge_kinds",
+            true,
+            "map<string,usize>",
+            "Edge count per kind.",
+        ),
+        response_field(
+            "edge_confidences",
+            true,
+            "map<string,usize>",
+            "Edge count per confidence level.",
+        ),
+        response_field(
+            "edge_relations",
+            true,
+            "map<string,usize>",
+            "Edge count per `relation` metadata value.",
+        ),
+        response_field(
+            "edge_sources",
+            true,
+            "map<string,usize>",
+            "Edge count per `source` metadata value.",
+        ),
+        response_field(
+            "languages",
+            true,
+            "map<string,usize>",
+            "Node count per detected language.",
+        ),
+        response_field(
+            "annotation_facets",
+            true,
+            "map<string,map<string,usize>>",
+            "Counts per annotation facet declared in `.codegraph/config.toml`.",
+        ),
+    ]
+}
+
+/// What `/api/coverage` answers with: which files the scan read, and what
+/// it left out.
+pub(crate) fn scan_coverage_response_fields() -> Vec<ApiParameterSpec> {
+    vec![
+        response_field("root", true, "path", "Scanned project root."),
+        response_field(
+            "include_hidden",
+            true,
+            "bool",
+            "Whether hidden entries were walked.",
+        ),
+        response_field(
+            "include_ignored",
+            true,
+            "bool",
+            "Whether default ignored directories were walked.",
+        ),
+        response_field(
+            "max_file_size",
+            true,
+            "u64",
+            "Byte cap above which a file is recorded but not read.",
+        ),
+        response_field(
+            "config_path",
+            false,
+            "path",
+            "Repository scan policy that was applied, when one exists.",
+        ),
+        response_field(
+            "ignored_names",
+            true,
+            "string[]",
+            "Directory names skipped by default.",
+        ),
+        response_field(
+            "ignored_globs",
+            true,
+            "string[]",
+            "Globs skipped by repository policy.",
+        ),
+        response_field(
+            "directories_seen",
+            true,
+            "usize",
+            "Directories the walk entered.",
+        ),
+        response_field("files_seen", true, "usize", "Files the walk met."),
+        response_field("indexed_files", true, "usize", "Files read into the graph."),
+        response_field(
+            "skipped_large_files",
+            true,
+            "usize",
+            "Files above `max_file_size`.",
+        ),
+        response_field(
+            "skipped_policy_entries",
+            true,
+            "usize",
+            "Entries skipped by repository policy.",
+        ),
+        response_field(
+            "skipped_hidden_entries",
+            true,
+            "usize",
+            "Hidden entries skipped.",
+        ),
+        response_field(
+            "skipped_ignored_name_entries",
+            true,
+            "usize",
+            "Entries skipped by ignored directory name.",
+        ),
+        response_field(
+            "skipped_ignored_glob_entries",
+            true,
+            "usize",
+            "Entries skipped by ignored glob.",
+        ),
+        response_field(
+            "non_index_files",
+            true,
+            "usize",
+            "Files the indexer has no adapter or rule for.",
+        ),
+        response_field("seen_bytes", true, "u64", "Bytes across every file met."),
+        response_field("indexed_bytes", true, "u64", "Bytes actually read."),
+        response_field(
+            "skipped_large_bytes",
+            true,
+            "u64",
+            "Bytes left unread above the size cap.",
+        ),
+        response_field(
+            "languages",
+            true,
+            "map<string,usize>",
+            "Indexed file count per language.",
+        ),
+    ]
+}
+
 pub(crate) fn capabilities_response_fields() -> Vec<ApiParameterSpec> {
     vec![
         response_field("name", true, "string", "Product name."),
@@ -2627,6 +2841,18 @@ pub(crate) fn capabilities_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "CacheCapabilityResponse",
             "Persistent graph cache status.",
+        ),
+        response_field(
+            "export_formats",
+            true,
+            "string[]",
+            "Graph export formats `/api/export` accepts.",
+        ),
+        response_field(
+            "scan",
+            true,
+            "ScanCapabilityResponse",
+            "Scan policy in force: file size cap, ignore rules, and job limits.",
         ),
     ]
 }
@@ -3649,6 +3875,12 @@ pub(crate) fn impact_response_fields() -> Vec<ApiParameterSpec> {
             "Copy-paste-ready CLI follow-ups: inspect the target node card, then read or bundle the path from the nearest affected entrypoint.",
         ),
         response_field("target", true, "Node", "Resolved impact target node."),
+        response_field(
+            "max_depth",
+            true,
+            "usize",
+            "How far the dependent walk was allowed to go.",
+        ),
         response_field(
             "area",
             false,

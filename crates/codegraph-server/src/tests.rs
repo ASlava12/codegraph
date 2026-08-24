@@ -2039,6 +2039,89 @@ fn embedded_web_assets_support_keyboard_graph_navigation() {
     assert!(styles.contains("#graphCanvas:focus-visible"));
 }
 
+#[tokio::test]
+async fn the_schema_describes_the_fields_the_responses_carry() {
+    // An agent reads the schema before the response. A field that is
+    // returned and not described, or described and not returned, is a
+    // contract that drifted: `/api/capabilities` grew `export_formats`
+    // and `scan`, `/api/impact` grew `max_depth`, and `/api/summary` and
+    // `/api/coverage` described nothing at all.
+    let root = temp_server_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("main.rs"),
+        "fn main() {\n    helper();\n}\n\nfn helper() {}\n",
+    )
+    .unwrap();
+    let state = test_state(root.clone(), vec![], true);
+    let query = || ScanQuery {
+        path: Some(root.clone()),
+        limit: None,
+    };
+
+    let Json(summary_body) = summary(State(state.clone()), ApiQuery(query()))
+        .await
+        .expect("summary");
+    let Json(coverage_body) = coverage_api(State(state.clone()), ApiQuery(query()))
+        .await
+        .expect("coverage");
+    let Json(capabilities_body) = capabilities_api(State(state)).await.expect("capabilities");
+
+    let schema = api_schema_response();
+    let fields_of = |path: &str| -> Vec<(&'static str, &'static str, bool)> {
+        schema
+            .groups
+            .iter()
+            .flat_map(|group| group.endpoints.iter())
+            .find(|endpoint| endpoint.path == path)
+            .map(|endpoint| {
+                endpoint
+                    .response_fields
+                    .iter()
+                    .map(|field| (field.name, field.location, field.required))
+                    .collect()
+            })
+            .unwrap_or_else(|| panic!("{path} is not in the schema"))
+    };
+    let checks: Vec<(&str, serde_json::Value)> = vec![
+        ("/api/summary", serde_json::to_value(summary_body).unwrap()),
+        (
+            "/api/coverage",
+            serde_json::to_value(coverage_body).unwrap(),
+        ),
+        (
+            "/api/capabilities",
+            serde_json::to_value(capabilities_body).unwrap(),
+        ),
+    ];
+    for (path, body) in checks {
+        let body = body.as_object().expect("an object response");
+        let documented = fields_of(path);
+        assert!(
+            !documented.is_empty(),
+            "{path} describes none of its response fields"
+        );
+        for (name, location, required) in &documented {
+            if *location == "response" && *required {
+                assert!(
+                    body.contains_key(*name),
+                    "{path} describes `{name}` and did not return it"
+                );
+            }
+        }
+        for key in body.keys() {
+            assert!(
+                documented
+                    .iter()
+                    .any(|(name, location, _)| *location == "response" && name == key),
+                "{path} returned `{key}` and describes it nowhere"
+            );
+        }
+    }
+
+    fs::remove_dir_all(root).ok();
+}
+
 #[test]
 fn api_schema_lists_agent_contracts() {
     let schema = api_schema_response();
