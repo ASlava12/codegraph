@@ -27,6 +27,160 @@ pub(crate) fn index_manifest_facts(
     index_github_actions_workflow_entrypoints(context, file_id, path, label, source);
     index_gitlab_ci_entrypoints(context, file_id, path, label, source);
     index_kubernetes_manifest_facts(context, file_id, path, label, source);
+    index_properties_settings(context, file_id, label, source);
+}
+
+/// A `.properties` file states settings the program reads by name:
+/// spring-petclinic writes `spring.sql.init.schema-locations=classpath*:db/
+/// ${database}/schema.sql`, which declares one setting and reads another.
+/// Fifty such files across the corpus held 702 of them and the graph held
+/// none.
+pub(crate) fn index_properties_settings(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+) {
+    if !label.ends_with(".properties") || names_a_resource_bundle(label) {
+        return;
+    }
+    for (index, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('!') {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() || key.contains(char::is_whitespace) {
+            continue;
+        }
+        let line_number = index as u32 + 1;
+        let span = SourceSpan {
+            path: label.to_string(),
+            start_line: line_number,
+            start_column: 0,
+            end_line: line_number,
+            end_column: line.chars().count() as u32,
+        };
+        let setting = shared_effect_entity(
+            context,
+            "config",
+            NodeKind::Config,
+            key,
+            span.clone(),
+            BTreeMap::from([
+                ("item_kind".to_string(), "setting".to_string()),
+                ("source".to_string(), "properties".to_string()),
+            ]),
+        );
+        let value = value.trim();
+        let mut metadata = BTreeMap::from([
+            ("item_kind".to_string(), "setting".to_string()),
+            ("source".to_string(), "properties".to_string()),
+            ("file".to_string(), label.to_string()),
+            ("line".to_string(), line_number.to_string()),
+        ]);
+        if !value.is_empty() {
+            metadata.insert(
+                "value".to_string(),
+                value.chars().take(120).collect::<String>(),
+            );
+        }
+        context.graph.add_edge_with_metadata(
+            file_id,
+            setting,
+            EdgeKind::Defines,
+            Confidence::Exact,
+            metadata,
+        );
+        // `${database}` in a value is this file reading another setting.
+        for referenced in placeholder_names(value) {
+            if referenced == key {
+                continue;
+            }
+            let read = shared_effect_entity(
+                context,
+                "config",
+                NodeKind::Config,
+                &referenced,
+                span.clone(),
+                BTreeMap::from([
+                    ("item_kind".to_string(), "setting".to_string()),
+                    ("source".to_string(), "properties".to_string()),
+                ]),
+            );
+            add_edge_once_with_metadata(
+                context,
+                file_id,
+                read,
+                EdgeKind::ReadsConfig,
+                Confidence::Exact,
+                BTreeMap::from([
+                    ("item_kind".to_string(), "config_read".to_string()),
+                    ("source".to_string(), "properties".to_string()),
+                    ("file".to_string(), label.to_string()),
+                    ("line".to_string(), line_number.to_string()),
+                ]),
+            );
+        }
+    }
+}
+
+/// Whether a `.properties` file holds translations rather than settings.
+/// Java writes a resource bundle as one file per locale —
+/// `messages_de.properties` beside `messages.properties` — usually under a
+/// directory that says so, and its keys are a program's words rather than
+/// its configuration.
+fn names_a_resource_bundle(label: &str) -> bool {
+    let normalized = label.to_ascii_lowercase();
+    if normalized.split('/').any(|segment| {
+        matches!(
+            segment,
+            "messages" | "i18n" | "locale" | "locales" | "translations" | "lang"
+        )
+    }) {
+        return true;
+    }
+    let stem = normalized
+        .rsplit('/')
+        .next()
+        .unwrap_or(&normalized)
+        .trim_end_matches(".properties");
+    // `_de`, `_pt_br`: a locale suffix is two letters, and a country adds
+    // two more.
+    let mut parts = stem.rsplit('_');
+    let last = parts.next().unwrap_or_default();
+    let previous = parts.next().unwrap_or_default();
+    let looks_like_locale = |part: &str| {
+        part.len() == 2
+            && part
+                .chars()
+                .all(|character| character.is_ascii_alphabetic())
+    };
+    stem.contains('_')
+        && (looks_like_locale(last) || (looks_like_locale(previous) && last.len() <= 3))
+}
+
+/// The names a value asks to be filled in: `${database}` and
+/// `${DB_HOST:localhost}`, whose default is not part of the name.
+fn placeholder_names(value: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut rest = value;
+    while let Some(start) = rest.find("${") {
+        rest = &rest[start + 2..];
+        let Some(end) = rest.find('}') else {
+            break;
+        };
+        let inner = &rest[..end];
+        rest = &rest[end + 1..];
+        let name = inner.split(':').next().unwrap_or(inner).trim();
+        if !name.is_empty() && !name.contains(char::is_whitespace) {
+            names.push(name.to_string());
+        }
+    }
+    names
 }
 
 pub(crate) fn index_script_entrypoint(

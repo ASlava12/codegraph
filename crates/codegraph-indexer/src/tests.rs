@@ -9376,6 +9376,74 @@ fn aspnet_fills_in_the_route_template_it_writes() {
 }
 
 #[test]
+fn a_properties_file_states_settings_and_reads_them() {
+    let root = temp_project_root();
+    fs::create_dir_all(
+        root.join("src")
+            .join("main")
+            .join("resources")
+            .join("messages"),
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("main").join("resources").join("application.properties"),
+        "# database\ndatabase=h2\nspring.sql.init.schema-locations=classpath*:db/${database}/schema.sql\nspring.datasource.url=${MYSQL_URL:jdbc:mysql://localhost/petclinic}\n",
+    )
+    .unwrap();
+    // A resource bundle holds a program's words rather than its settings.
+    fs::write(
+        root.join("src")
+            .join("main")
+            .join("resources")
+            .join("messages")
+            .join("messages_de.properties"),
+        "welcome=Willkommen\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let label_of = |id: NodeId| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.id == id)
+            .map(|node| node.label.clone())
+            .unwrap_or_default()
+    };
+    let declared = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == EdgeKind::Defines
+                && edge.metadata.get("source").map(String::as_str) == Some("properties")
+        })
+        .map(|edge| label_of(edge.target))
+        .collect::<Vec<_>>();
+    assert!(declared.contains(&"database".to_string()), "{declared:?}");
+    assert!(
+        declared.contains(&"spring.datasource.url".to_string()),
+        "{declared:?}"
+    );
+    assert!(!declared.contains(&"welcome".to_string()), "{declared:?}");
+
+    // `${database}` in a value is this file reading another setting, and a
+    // default after the colon is not part of the name.
+    let read = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == EdgeKind::ReadsConfig
+                && edge.metadata.get("source").map(String::as_str) == Some("properties")
+        })
+        .map(|edge| label_of(edge.target))
+        .collect::<Vec<_>>();
+    assert!(read.contains(&"database".to_string()), "{read:?}");
+    assert!(read.contains(&"MYSQL_URL".to_string()), "{read:?}");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn spring_states_its_routes_above_the_method_that_serves_them() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();
