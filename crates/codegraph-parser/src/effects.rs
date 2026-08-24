@@ -344,6 +344,25 @@ pub(crate) fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) 
     }
 }
 
+/// Whether a call names a macro or helper that throws: json writes
+/// `JSON_THROW(...)`, spdlog `SPDLOG_THROW(...)`, and the OCaml runtime
+/// `caml_raise_not_found(...)`. The look-alikes are a test framework's
+/// assertions *about* throwing, and they all announce themselves in the
+/// prefix.
+fn names_a_throw_helper(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    if [
+        "CHECK", "REQUIRE", "EXPECT", "ASSERT", "DOCTEST", "BOOST", "TEST", "WARN", "CATCH",
+        "GTEST",
+    ]
+    .iter()
+    .any(|prefix| upper.starts_with(prefix))
+    {
+        return false;
+    }
+    upper.contains("THROW") || upper.contains("RAISE")
+}
+
 pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u8]) -> bool {
     match language {
         Language::Rust => {
@@ -383,20 +402,25 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
             is_call_node(language, node, source)
                 && call_label(language, node, source)
                     .as_deref()
-                    .is_some_and(|value| matches!(simple_name(value), "abort" | "exit"))
+                    .is_some_and(|value| {
+                        matches!(simple_name(value), "abort" | "exit")
+                            || names_a_throw_helper(simple_name(value))
+                    })
         }
         Language::Cpp => {
-            // The `throw` keyword only. C and C++ often wrap a throw in a
-            // macro -- nlohmann/json writes `JSON_THROW(...)` 155 times --
-            // but the names that look like one are mostly a test
-            // framework's (`CHECK_THROWS_AS`, `DOCTEST_WARN_THROWS_WITH`),
-            // and reading those as failure paths would fill a report with
-            // assertions about throwing rather than code that throws.
+            // The `throw` keyword, and the macros that wrap one: json writes
+            // `JSON_THROW(...)` and spdlog `SPDLOG_THROW(...)` rather than
+            // the keyword. A test framework's assertion *about* throwing
+            // (`CHECK_THROWS_AS`, `DOCTEST_WARN_THROWS_WITH`) reads the same
+            // way and is not a failure path, so those names are named.
             node.kind() == "throw_statement"
                 || (is_call_node(language, node, source)
                     && call_label(language, node, source)
                         .as_deref()
-                        .is_some_and(|value| matches!(simple_name(value), "abort" | "exit")))
+                        .is_some_and(|value| {
+                            matches!(simple_name(value), "abort" | "exit")
+                                || names_a_throw_helper(simple_name(value))
+                        }))
         }
         Language::Php => node.kind() == "throw_expression",
         Language::Dart => {

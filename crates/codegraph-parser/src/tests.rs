@@ -2674,6 +2674,35 @@ fn haskell_type_signatures_do_not_become_functions() {
 }
 
 #[test]
+fn a_cpp_throw_macro_is_a_failure_path_and_an_assertion_is_not() {
+    // json writes `JSON_THROW(...)` rather than the keyword, and spdlog
+    // `SPDLOG_THROW(...)`; a test framework's assertion about throwing is
+    // not a failure path in the code under test.
+    let source = "void parse(int value) {\n  if (value < 0) {\n    JSON_THROW(out_of_range::create(401, \"bad value\"));\n  }\n  if (value == 0) {\n    throw std::runtime_error(\"zero\");\n  }\n}\n\nvoid check() {\n  CHECK_THROWS_AS(parse(-1), out_of_range);\n  REQUIRE_THROWS(parse(0));\n}\n";
+    let parsed = parse_source("demo.cpp", source.as_bytes(), Language::Cpp).unwrap();
+    let errors: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Error)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert!(
+        errors.iter().any(|label| label.contains("bad value")),
+        "the macro throws: {errors:?}"
+    );
+    assert!(
+        errors.iter().any(|label| label.contains("zero")),
+        "the keyword still throws: {errors:?}"
+    );
+    assert!(
+        !errors
+            .iter()
+            .any(|label| label.contains("CHECK_THROWS") || label.contains("REQUIRE_THROWS")),
+        "an assertion about throwing is not one: {errors:?}"
+    );
+}
+
+#[test]
 fn julia_methods_keep_the_module_they_extend() {
     // `function Base.names(df)` defines a method of Base.names, not of Base.
     // DataFrames.jl labelled 536 of its methods `Base` before this.
