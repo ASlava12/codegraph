@@ -132,6 +132,7 @@ pub(crate) fn scan_project_with_scope(
         edge_keys_synced: 0,
         function_symbols: BTreeMap::new(),
         namespace_nodes: BTreeMap::new(),
+        build_products: build_product_globs(root),
         pending_namespace_imports: Vec::new(),
         effect_entities: BTreeMap::new(),
         file_import_qualifiers: BTreeMap::new(),

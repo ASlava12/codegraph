@@ -2613,12 +2613,29 @@ pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
                 );
                 continue;
             }
+            // The project may have said outright that it builds this
+            // file: redis lists `src/release.h` in its own `.gitignore`.
+            let built = context.build_products.as_ref().is_some_and(|products| {
+                import
+                    .candidates
+                    .iter()
+                    .chain(std::iter::once(&import.target))
+                    .any(|candidate| products.builds(candidate))
+            });
             add_node_metadata(
                 &mut context.graph,
                 import.import_node,
                 "resolution",
                 "unresolved",
             );
+            if built {
+                add_node_metadata(
+                    &mut context.graph,
+                    import.import_node,
+                    "target_is_a_build_product",
+                    "true",
+                );
+            }
             add_node_metadata(
                 &mut context.graph,
                 import.import_node,

@@ -31,6 +31,11 @@ pub(crate) struct IndexContext {
     /// Canonical node per (language, namespace label) for languages whose
     /// namespace declaration reopens one entity across many files.
     pub(crate) namespace_nodes: BTreeMap<(&'static str, String), NodeId>,
+    /// What the repository's own `.gitignore` says it builds rather than
+    /// keeps. An import of `release.h` finds nothing because `make`
+    /// writes that file, and the project has written down which paths
+    /// those are.
+    pub(crate) build_products: Option<BuildProducts>,
     /// Canonical node per (`environment`|`config`, key) read from source, so a
     /// key that many files read stays one entity; the reading edge carries the
     /// per-read facts (default value, language, file, line).

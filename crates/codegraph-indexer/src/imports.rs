@@ -747,6 +747,18 @@ pub(crate) fn c_local_import_target(
         return None;
     }
     let mut candidates = vec![join_path(path_dir(source_label).as_deref(), &header)];
+    // A build gives the compiler its own directories with `-I`: the
+    // Flutter runner includes `flutter/generated_plugin_registrant.h`
+    // from `windows/runner/`, and the header sits in `windows/flutter/`
+    // because CMake puts `windows/` on the include path. Walking out
+    // through the directories the file itself sits in finds it, nearest
+    // first, without knowing which flags the build passes.
+    let mut directory = path_dir(source_label);
+    while let Some(current) = directory {
+        let parent = path_dir(&current);
+        candidates.push(join_path(parent.as_deref(), &header));
+        directory = parent;
+    }
     candidates.extend(
         cmake_include_dirs
             .iter()

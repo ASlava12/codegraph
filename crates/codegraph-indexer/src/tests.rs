@@ -9337,6 +9337,93 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn an_include_reaches_the_directory_the_build_puts_on_its_path() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("windows").join("runner")).unwrap();
+    fs::create_dir_all(root.join("windows").join("flutter")).unwrap();
+    // CMake puts `windows/` on the include path, so the runner's include
+    // of `flutter/generated_plugin_registrant.h` reaches the header one
+    // directory out from the file that includes it.
+    fs::write(
+        root.join("windows")
+            .join("flutter")
+            .join("generated_plugin_registrant.h"),
+        "#pragma once\nvoid RegisterPlugins(void);\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("windows").join("runner").join("flutter_window.cpp"),
+        "#include \"flutter/generated_plugin_registrant.h\"\n\nint main(void) {\n  RegisterPlugins();\n  return 0;\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let include = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label.contains("generated_plugin_registrant.h")
+                && node.label.starts_with("#include")
+        })
+        .expect("the include is in the graph");
+    assert_eq!(
+        include.metadata.get("resolved_path").map(String::as_str),
+        Some("windows/flutter/generated_plugin_registrant.h"),
+        "{:?}",
+        include.metadata
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_import_of_a_file_the_build_writes_is_not_a_dead_link() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    // redis lists `src/release.h` in its own `.gitignore` because a script
+    // writes it before every build.
+    fs::write(
+        root.join(".gitignore"),
+        "# build products\nsrc/release.h\n*.o\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("version.c"),
+        "#include \"release.h\"\n#include \"missing.h\"\n\nint version(void) {\n  return 1;\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let built = graph
+        .nodes
+        .iter()
+        .find(|node| node.label.contains("release.h"))
+        .expect("the include is in the graph");
+    assert_eq!(
+        built
+            .metadata
+            .get("target_is_a_build_product")
+            .map(String::as_str),
+        Some("true"),
+        "{:?}",
+        built.metadata
+    );
+    // A header nothing generates says nothing of the kind.
+    let missing = graph
+        .nodes
+        .iter()
+        .find(|node| node.label.contains("missing.h"))
+        .expect("the second include is in the graph");
+    assert!(
+        !missing.metadata.contains_key("target_is_a_build_product"),
+        "{:?}",
+        missing.metadata
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_type_only_import_closes_no_cycle() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();

@@ -2,10 +2,11 @@
 //! and index-relevance checks.
 
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::Path;
 
 use codegraph_parser::{Language, ParsedItemKind};
-use globset::GlobSet;
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use walkdir::DirEntry;
 
 #[allow(unused_imports)]
@@ -282,4 +283,74 @@ pub(crate) fn is_notebook_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("ipynb"))
+}
+
+/// The paths a repository states it builds rather than keeps, read from
+/// its own `.gitignore`. redis writes `src/release.h` there because a
+/// script generates it, and the Flutter example writes
+/// `**/windows/flutter/generated_plugin_registrant.h`: an import of
+/// either finds nothing in a fresh checkout, and that is the build
+/// working as designed rather than a dead link.
+pub(crate) struct BuildProducts {
+    globs: GlobSet,
+    /// The literal paths among the patterns, for the includes that name a
+    /// file from an include directory rather than from the repository
+    /// root: `#include "flutter/generated_plugin_registrant.h"` names the
+    /// tail of a path the `.gitignore` spells out in full.
+    literal_paths: Vec<String>,
+}
+
+impl BuildProducts {
+    pub(crate) fn builds(&self, candidate: &str) -> bool {
+        let candidate = candidate.trim_start_matches("./");
+        if self.globs.is_match(candidate) {
+            return true;
+        }
+        self.literal_paths
+            .iter()
+            .any(|path| path.ends_with(&format!("/{candidate}")))
+    }
+}
+
+pub(crate) fn build_product_globs(root: &Path) -> Option<BuildProducts> {
+    let source = fs::read_to_string(root.join(".gitignore")).ok()?;
+    let mut builder = GlobSetBuilder::new();
+    let mut literal_paths = Vec::new();
+    let mut any = false;
+    for line in source.lines() {
+        let pattern = line.trim();
+        // A comment, a blank line, and a re-included path say nothing
+        // about what the build writes.
+        if pattern.is_empty() || pattern.starts_with('#') || pattern.starts_with('!') {
+            continue;
+        }
+        let pattern = pattern.trim_end_matches('/');
+        // gitignore anchors a pattern that holds a slash to the directory
+        // its file sits in, and matches one without a slash at any depth.
+        let anchored = pattern.trim_start_matches('/');
+        let candidates = if pattern.contains('/') {
+            vec![anchored.to_string(), format!("{anchored}/**")]
+        } else {
+            vec![
+                anchored.to_string(),
+                format!("**/{anchored}"),
+                format!("**/{anchored}/**"),
+            ]
+        };
+        if !anchored.contains(['*', '?', '[']) && anchored.contains('/') {
+            literal_paths.push(anchored.to_string());
+        }
+        for candidate in candidates {
+            if let Ok(glob) = Glob::new(&candidate) {
+                builder.add(glob);
+                any = true;
+            }
+        }
+    }
+    any.then(|| builder.build().ok())
+        .flatten()
+        .map(|globs| BuildProducts {
+            globs,
+            literal_paths,
+        })
 }

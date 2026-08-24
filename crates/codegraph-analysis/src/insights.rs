@@ -212,6 +212,13 @@ pub(crate) fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: 
         if target.contains('$')
             || (target.starts_with('@') && target.ends_with('@'))
             || command_path_is_installed_or_unscanned(target)
+            // The project's own `.gitignore` says it builds this file:
+            // redis generates `src/release.h` and the Flutter example
+            // generates its plugin registrant.
+            || node
+                .metadata
+                .get("target_is_a_build_product")
+                .is_some_and(|value| value == "true")
         {
             continue;
         }
