@@ -2000,9 +2000,42 @@ pub(crate) fn resolve_pending_type_references(context: &mut IndexContext) {
                     .is_some_and(|language| language == &reference.language);
                 let same_file = source_path
                     .is_some_and(|path| node.span.as_ref().is_some_and(|span| span.path == path));
-                same_language && !same_file
+                // A configuration's declarations refer to each other inside
+                // one file as a matter of course — `subnet_id =
+                // module.vpc.id` sits beside the module it names — and that
+                // reference is the dependency a reader is looking for.
+                let within_a_file_is_a_fact = reference.language == "hcl";
+                same_language && (within_a_file_is_a_fact || !same_file)
             })
             .collect::<Vec<_>>();
+
+        // A Terraform module is a directory, and a name written inside one
+        // means what that directory declares: terraform's fixtures declare
+        // `var.input` in 40 directories, and only the one next door is the
+        // variable this expression reads.
+        let targets = if reference.language == "hcl" && targets.len() > 1 {
+            let directory = source_path
+                .and_then(|path| path.rsplit_once('/'))
+                .map(|(dir, _)| dir);
+            let neighbours = targets
+                .iter()
+                .copied()
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.span.as_ref())
+                        .is_some_and(|span| {
+                            span.path.rsplit_once('/').map(|(dir, _)| dir) == directory
+                        })
+                })
+                .collect::<Vec<_>>();
+            if neighbours.is_empty() {
+                targets
+            } else {
+                neighbours
+            }
+        } else {
+            targets
+        };
 
         // Type labels are exact only when one declaration exists in the
         // scanned language. Multiple declarations remain unresolved instead
@@ -2011,6 +2044,11 @@ pub(crate) fn resolve_pending_type_references(context: &mut IndexContext) {
             continue;
         }
         let target = targets[0];
+        // A variable's own `validation` block reads the variable; that is
+        // the declaration stating its rule, not a dependency on itself.
+        if target == reference.source {
+            continue;
+        }
         if !seen.insert((reference.source, target)) {
             continue;
         }

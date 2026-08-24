@@ -898,6 +898,22 @@ pub(crate) fn index_file(
                     if item.kind == ParsedItemKind::Type {
                         register_function_symbol(&mut context.type_symbols, &item.label, item_id);
                     }
+                    // A configuration's declarations are what its facts sit
+                    // inside and what its expressions refer to, the way
+                    // functions and types are in a programming language.
+                    if language == Language::Hcl
+                        && matches!(item.kind, ParsedItemKind::Type | ParsedItemKind::Module)
+                    {
+                        register_local_function(&mut local_functions, &item.label, item_id);
+                        local_function_spans.push((item.label.clone(), item_id, item.span.clone()));
+                        if item.kind == ParsedItemKind::Module {
+                            register_function_symbol(
+                                &mut context.type_symbols,
+                                &item.label,
+                                item_id,
+                            );
+                        }
+                    }
                 }
 
                 if let Some(entrypoint_id) = script_entrypoint

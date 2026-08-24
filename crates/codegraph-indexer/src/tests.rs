@@ -3979,6 +3979,63 @@ fn scan_project_indexes_control_flow_facts() {
 }
 
 #[test]
+fn a_configurations_declarations_refer_to_each_other() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("env").join("prod")).unwrap();
+    fs::write(
+        root.join("env").join("prod").join("main.tf"),
+        "variable \"region\" {\n  type = string\n\n  validation {\n    condition = length(var.region) > 0\n  }\n}\n\nresource \"aws_instance\" \"web\" {\n  region = var.region\n}\n\noutput \"id\" {\n  value = aws_instance.web.id\n}\n",
+    )
+    .unwrap();
+    // A second module declaring the same name: a reference means what its
+    // own directory declares.
+    fs::create_dir_all(root.join("env").join("dev")).unwrap();
+    fs::write(
+        root.join("env").join("dev").join("main.tf"),
+        "variable \"region\" {\n  type = string\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let label = |id: NodeId| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.id == id)
+            .map(|node| node.label.clone())
+            .unwrap_or_default()
+    };
+    let references = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == EdgeKind::References
+                && edge.metadata.get("relation").map(String::as_str) == Some("type_reference")
+        })
+        .map(|edge| (label(edge.source), label(edge.target)))
+        .collect::<Vec<_>>();
+
+    assert!(references.contains(&("aws_instance.web".to_string(), "var.region".to_string())));
+    assert!(references.contains(&("output.id".to_string(), "aws_instance.web".to_string())));
+    assert!(
+        !references.iter().any(|(source, target)| source == target),
+        "a variable's own validation reads the variable it states a rule for"
+    );
+    let declaring_file = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.label == label && node.kind == NodeKind::Type)
+            .and_then(|node| node.span.as_ref())
+            .map(|span| span.path.clone())
+            .unwrap_or_default()
+    };
+    assert!(declaring_file("aws_instance.web").starts_with("env/prod/"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_terraform_module_reaches_the_configuration_it_names() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("modules").join("vpc")).unwrap();

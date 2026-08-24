@@ -202,9 +202,31 @@ pub(crate) fn collect_items(
         });
     }
 
+    // A configuration is a graph because its declarations name each other:
+    // `subnet_id = module.vpc.id` is what ties a resource to a module, and
+    // `var.region` is what ties it to an input.
+    if language == Language::Hcl
+        && node.kind() == "expression"
+        && let Some(label) = hcl_reference_address(node, source)
+    {
+        facts.type_references.push(ParsedTypeReference {
+            label,
+            span: span_for(path, node),
+            parent: current_function.clone(),
+        });
+    }
+
     let mut next_function = current_function;
     let mut next_scope: Option<DefinitionScope> = None;
     if let Some(mut item) = classify_node(language, node, source, path) {
+        // HCL has no functions: what a fact sits inside is the block that
+        // declares it, and `file(..)` in a resource belongs to that
+        // resource rather than to the file.
+        if language == Language::Hcl
+            && matches!(item.kind, ParsedItemKind::Type | ParsedItemKind::Module)
+        {
+            next_function = Some(item.label.clone());
+        }
         if matches!(
             item.kind,
             ParsedItemKind::Function | ParsedItemKind::Entrypoint
@@ -1893,6 +1915,35 @@ fn hcl_declaration_label(node: Node<'_>, source: &[u8]) -> Option<String> {
         _ if joined.is_empty() => block_type,
         _ => format!("{block_type}.{joined}"),
     })
+}
+
+/// The declaration an expression refers to, written the way Terraform
+/// addresses it: `module.vpc.id` refers to `module.vpc`, `var.region` to
+/// `var.region`, `aws_instance.web.id` to `aws_instance.web`.
+fn hcl_reference_address(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    let mut children = node.named_children(&mut cursor);
+    let head = children
+        .next()
+        .filter(|child| child.kind() == "variable_expr")?;
+    let head = node_text(head.named_child(0)?, source)?;
+    let attributes = children
+        .filter(|child| child.kind() == "get_attr")
+        .filter_map(|child| {
+            child
+                .named_child(0)
+                .and_then(|name| node_text(name, source))
+        })
+        .collect::<Vec<_>>();
+    match head.as_str() {
+        // These name the run rather than anything the configuration
+        // declares: the current instance, its index, the module's own path.
+        "each" | "count" | "self" | "path" | "terraform" => None,
+        "data" => {
+            (attributes.len() >= 2).then(|| format!("data.{}.{}", attributes[0], attributes[1]))
+        }
+        _ => attributes.first().map(|name| format!("{head}.{name}")),
+    }
 }
 
 /// The configuration a `module` block pulls in: the path or registry name
