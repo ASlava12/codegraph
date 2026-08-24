@@ -3979,6 +3979,46 @@ fn scan_project_indexes_control_flow_facts() {
 }
 
 #[test]
+fn a_protected_method_answers_a_subclass_in_another_file() {
+    // monolog declares `protected function getRecord` in its test base
+    // class; 332 calls from the test files that extend it read as calls to
+    // nothing while `protected` was recorded as `private`.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("base.php"),
+        "<?php\nclass TestCase {\n    protected function getRecord() { return 1; }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("logger_test.php"),
+        "<?php\nclass LoggerTest extends TestCase {\n    public function testWrites() { return $this->getRecord(); }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let declared = node_id(&graph, NodeKind::Function, "getRecord");
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.id == declared)
+            .and_then(|node| node.metadata.get("visibility"))
+            .map(String::as_str),
+        Some("protected")
+    );
+    assert!(
+        graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Calls && edge.target == declared),
+        "a subclass in another file is exactly who `protected` is for"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_csharp_call_on_an_instance_is_not_the_projects_static_method() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();

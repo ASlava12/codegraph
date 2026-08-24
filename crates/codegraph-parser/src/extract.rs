@@ -807,11 +807,13 @@ pub(crate) fn visibility_label(
         // okio and gson offer outwards.
         Language::Java => Some(match modifier_visibility(node, source) {
             Some("public") => "public",
-            Some("private") | Some("protected") => "private",
+            Some("protected") => "protected",
+            Some("private") => "private",
             _ => "package",
         }),
         Language::Kotlin => Some(match modifier_visibility(node, source) {
-            Some("private") | Some("protected") => "private",
+            Some("protected") => "protected",
+            Some("private") => "private",
             Some("internal") => "crate",
             _ => "public",
         }),
@@ -820,16 +822,19 @@ pub(crate) fn visibility_label(
         // says here.
         Language::CSharp => Some(match modifier_visibility(node, source) {
             Some("public") => "public",
+            Some("protected") => "protected",
             Some("internal") => "crate",
             _ => "private",
         }),
         Language::Php => Some(match modifier_visibility(node, source) {
-            Some("private") | Some("protected") => "private",
+            Some("protected") => "protected",
+            Some("private") => "private",
             _ => "public",
         }),
         Language::Swift | Language::Scala => Some(match modifier_visibility(node, source) {
             Some("public") => "public",
-            Some("private") | Some("protected") | Some("fileprivate") => "private",
+            Some("protected") => "protected",
+            Some("private") | Some("fileprivate") => "private",
             _ if language == Language::Scala => "public",
             _ => "crate",
         }),
@@ -982,7 +987,9 @@ fn ruby_visibility(node: Node<'_>, source: &[u8]) -> &'static str {
 fn ruby_visibility_keyword(text: &str) -> Option<&'static str> {
     match text.trim() {
         "private" => Some("private"),
-        "protected" => Some("private"),
+        // Ruby's `protected` refuses an outside caller, not a sibling in
+        // the hierarchy, and a subclass is written in another file.
+        "protected" => Some("protected"),
         "public" => Some("public"),
         _ => None,
     }
