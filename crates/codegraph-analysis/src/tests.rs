@@ -8602,6 +8602,68 @@ fn one_missing_file_is_one_finding() {
 }
 
 #[test]
+fn a_demonstration_program_is_not_the_library_being_started() {
+    // gson's five `main`s sit in `extras/.../examples` and `metrics/`, and
+    // serde's three are `build.rs`: none of them is the library running, so
+    // "entrypoints reach 0% of its functions" is the shape of a library
+    // rather than something to fix.
+    let build_a_graph = |main_path: &str| {
+        let mut graph = CodeGraph::new("repo");
+        let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");
+        let main = graph.add_node_with_metadata(
+            NodeKind::Function,
+            "main",
+            Some(SourceSpan {
+                path: main_path.to_string(),
+                start_line: 1,
+                start_column: 0,
+                end_line: 3,
+                end_column: 1,
+            }),
+            BTreeMap::from([("entrypoint_kind".to_string(), "program".to_string())]),
+        );
+        graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+        graph.add_edge(entry, main, EdgeKind::References, Confidence::Exact);
+        for index in 0..60 {
+            graph.add_node_with_metadata(
+                NodeKind::Function,
+                format!("api_{index}"),
+                Some(SourceSpan {
+                    path: format!("src/api_{index}.rs"),
+                    start_line: 1,
+                    start_column: 0,
+                    end_line: 2,
+                    end_column: 1,
+                }),
+                BTreeMap::new(),
+            );
+        }
+        graph
+    };
+    let severity_of = |graph: &CodeGraph| {
+        insights(graph)
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "low_entrypoint_coverage")
+            .map(|insight| insight.severity)
+    };
+
+    assert_eq!(
+        severity_of(&build_a_graph("metrics/src/Benchmark.java")),
+        Some(InsightSeverity::Info)
+    );
+    assert_eq!(
+        severity_of(&build_a_graph("build.rs")),
+        Some(InsightSeverity::Info)
+    );
+    // A program the project actually ships still says so.
+    assert_eq!(
+        severity_of(&build_a_graph("src/main.rs")),
+        Some(InsightSeverity::Warning)
+    );
+}
+
+#[test]
 fn insights_report_low_entrypoint_coverage() {
     let mut graph = CodeGraph::new("repo");
     let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");

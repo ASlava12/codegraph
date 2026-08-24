@@ -2055,16 +2055,35 @@ pub(crate) fn add_entrypoint_coverage_insights(
 /// recognised, or an entrypoint a manifest, framework or CI file resolved
 /// onto a function.
 fn starts_in_its_own_code(graph: &CodeGraph) -> bool {
+    let nodes_by_id = nodes_by_id_index(graph);
+    // A `main` in `extras/`, `metrics/` or `Snippets/Docs` is a demonstration
+    // of the library, not the library being started: gson has five such,
+    // Polly one, and reading them as programs made every library in the
+    // corpus report that its own code is unreachable.
+    let is_the_projects_own_program = |node: &codegraph_core::Node| {
+        node.span.as_ref().is_none_or(|span| {
+            !is_test_like_source_path(&span.path)
+                && !is_vendored_source_path(&span.path)
+                && !is_repository_tooling_source_path(&span.path)
+                // A Cargo build script builds the crate; it is not the
+                // crate running. serde has three.
+                && !span.path.ends_with("build.rs")
+        })
+    };
     graph.nodes.iter().any(|node| {
         node.kind == NodeKind::Function
             && node
                 .metadata
                 .get("entrypoint_kind")
                 .is_some_and(|kind| kind == "program")
+            && is_the_projects_own_program(node)
     }) || graph.edges.iter().any(|edge| {
         edge.metadata
             .get("relation")
             .is_some_and(|relation| relation == "entrypoint_function")
+            && nodes_by_id
+                .get(&edge.target)
+                .is_some_and(|node| is_the_projects_own_program(node))
     })
 }
 
@@ -3702,7 +3721,17 @@ pub(crate) fn is_repository_tooling_source_path(path: &str) -> bool {
     normalized.split('/').any(|segment| {
         matches!(
             segment,
-            "scripts" | "tools" | "bench" | "benchmarks" | "__benchmarks__" | "doc" | "docs"
+            "scripts"
+                | "tools"
+                | "bench"
+                | "benchmarks"
+                | "__benchmarks__"
+                // gson keeps its benchmarks in `metrics/`, and a project's
+                // CMake probes sit beside its build rather than in it.
+                | "metrics"
+                | "cmake"
+                | "doc"
+                | "docs"
         )
     })
 }
