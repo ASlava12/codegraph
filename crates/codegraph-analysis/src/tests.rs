@@ -10916,6 +10916,144 @@ fn insights_match_c_family_package_manager_includes() {
 }
 
 #[test]
+fn a_go_import_answers_to_the_module_that_provides_it() {
+    let mut graph = CodeGraph::new("repo");
+    let manifest = graph.add_node(NodeKind::File, "go.mod");
+    let source = graph.add_node_with_metadata(
+        NodeKind::File,
+        "internal/backend/gcs/client.go",
+        None,
+        BTreeMap::from([("language".to_string(), "go".to_string())]),
+    );
+    // terraform declares both, and only the longer one provides the
+    // package the file imports.
+    let parent = dependency_node(&mut graph, "cloud.google.com/go", "go:cloud.google.com/go");
+    let storage = dependency_node(
+        &mut graph,
+        "cloud.google.com/go/storage",
+        "go:cloud.google.com/go/storage",
+    );
+    graph.add_edge_with_metadata(
+        manifest,
+        parent,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "dev".to_string())]),
+    );
+    graph.add_edge_with_metadata(
+        manifest,
+        storage,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+    );
+    let import = import_node(&mut graph, "\"cloud.google.com/go/storage\"", "go");
+    graph.add_edge(source, import, EdgeKind::Imports, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    assert!(
+        !report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "non_runtime_dependency_import"),
+        "the storage module is a runtime requirement"
+    );
+}
+
+#[test]
+fn a_go_file_is_answered_by_its_own_module() {
+    let mut graph = CodeGraph::new("repo");
+    // terraform's GCS backend is a module of its own: its go.mod requires
+    // the storage module outright, while the root manifest beside it marks
+    // the same module indirect.
+    let root_manifest = graph.add_node(NodeKind::File, "go.mod");
+    let backend_manifest =
+        graph.add_node(NodeKind::File, "internal/backend/remote-state/gcs/go.mod");
+    let source = graph.add_node_with_metadata(
+        NodeKind::File,
+        "internal/backend/remote-state/gcs/client.go",
+        None,
+        BTreeMap::from([("language".to_string(), "go".to_string())]),
+    );
+    let storage = dependency_node(
+        &mut graph,
+        "cloud.google.com/go/storage",
+        "go:cloud.google.com/go/storage",
+    );
+    graph.add_edge_with_metadata(
+        root_manifest,
+        storage,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "indirect".to_string())]),
+    );
+    graph.add_edge_with_metadata(
+        backend_manifest,
+        storage,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+    );
+    let import = import_node(&mut graph, "\"cloud.google.com/go/storage\"", "go");
+    graph.add_edge(source, import, EdgeKind::Imports, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    assert!(
+        !report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "non_runtime_dependency_import"),
+        "the module that builds this file requires the package outright"
+    );
+}
+
+#[test]
+fn go_scaffolding_that_serves_tests_declares_no_routes_of_the_program() {
+    let mut graph = CodeGraph::new("repo");
+    // terraform stands up two `httptest` servers in files Go does not name
+    // as tests; both register `/api/v2/ping`, and neither is the program.
+    for path in [
+        "internal/command/cloud_mock.go",
+        "internal/backend/remote/testing.go",
+    ] {
+        let file = graph.add_node_with_metadata(
+            NodeKind::File,
+            path,
+            None,
+            BTreeMap::from([("language".to_string(), "go".to_string())]),
+        );
+        let import = import_node(&mut graph, "\"testing\"", "go");
+        graph.add_edge(file, import, EdgeKind::Imports, Confidence::Syntactic);
+        let route = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            format!("route:{path}"),
+            Some(SourceSpan {
+                path: path.to_string(),
+                start_line: 30,
+                start_column: 0,
+                end_line: 30,
+                end_column: 0,
+            }),
+            BTreeMap::from([
+                ("item_kind".to_string(), "framework_route".to_string()),
+                ("path".to_string(), "/api/v2/ping".to_string()),
+                ("method".to_string(), "get".to_string()),
+            ]),
+        );
+        graph.add_edge(graph.root, route, EdgeKind::Entrypoint, Confidence::Exact);
+    }
+
+    let report = insights(&graph);
+    assert!(
+        !report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "duplicate_framework_route"),
+        "two mock servers are not one routing table"
+    );
+}
+
+#[test]
 fn two_go_modules_do_not_disagree_with_each_other() {
     let mut graph = CodeGraph::new("repo");
     // gqlgen keeps a module per example, and each pins its own versions.

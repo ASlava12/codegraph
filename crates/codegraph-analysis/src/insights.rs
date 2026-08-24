@@ -3886,6 +3886,20 @@ pub(crate) fn is_repository_tooling_source_path(path: &str) -> bool {
     })
 }
 
+/// The go.mod whose module a file belongs to: the nearest one above it.
+/// Nothing else answers for that file, because a Go build reads exactly
+/// one manifest.
+fn go_module_manifest<'a>(manifests: &[&'a str], path: &str) -> Option<&'a str> {
+    manifests
+        .iter()
+        .filter(|manifest| {
+            let directory = manifest.strip_suffix("go.mod").unwrap_or_default();
+            directory.is_empty() || path.starts_with(directory)
+        })
+        .max_by_key(|manifest| manifest.len())
+        .copied()
+}
+
 /// What the packages in a repository ship, read from the `files` field
 /// each manifest states. openzeppelin publishes `/contracts/**/*.sol` and
 /// keeps its hardhat plugins and its formal-verification runner outside
@@ -4011,6 +4025,12 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
 
     let path_index = node_path_index(graph);
     let published = published_paths(graph);
+    let go_manifests: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::File && node.label.ends_with("go.mod"))
+        .map(|node| node.label.as_str())
+        .collect();
     let mut reported = BTreeSet::new();
     let mut grouped: BTreeMap<String, NonRuntimeImport> = BTreeMap::new();
     for (import_edge_index, edge) in graph.edges.iter().enumerate() {
@@ -4082,10 +4102,28 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
             continue;
         };
         let imports = import_package_candidates(language, &import_node.label, &declared_ecosystems);
+        // A Go import resolves to the most specific module that provides
+        // it: terraform imports `cloud.google.com/go/storage`, which its
+        // go.mod declares, and reading it as the `cloud.google.com/go`
+        // beside it answers for the wrong requirement.
+        let governing = go_module_manifest(&go_manifests, source_path);
         let Some((package_id, package_declarations)) = imports.iter().find_map(|import| {
             declarations
                 .iter()
-                .find(|(package_id, _)| import_matches_package_id(package_id, import))
+                .filter(|(package_id, _)| import_matches_package_id(package_id, import))
+                // A Go build reads one go.mod: terraform's GCS backend is
+                // its own module, requiring `cloud.google.com/go/storage`
+                // outright, and the root manifest beside it -- which marks
+                // the same module indirect -- says nothing about that file.
+                .filter(|(_, package_declarations)| {
+                    let Some(governing) = governing else {
+                        return true;
+                    };
+                    package_declarations
+                        .iter()
+                        .any(|declaration| node_label(graph, declaration.source) == Some(governing))
+                })
+                .max_by_key(|(package_id, _)| package_id.len())
         }) else {
             continue;
         };
@@ -4330,10 +4368,46 @@ pub(crate) fn dependency_import_usages_by_package(
     usages
 }
 
+/// Files that serve tests without being named as tests. Go says it in
+/// the imports: a file that is not `_test.go` and still imports
+/// `testing` compiles the test framework into the package, which is what
+/// terraform's `cloud_mock.go` and `remote/testing.go` do to stand up
+/// `httptest` servers.
+fn test_scaffolding_paths(graph: &CodeGraph) -> BTreeSet<String> {
+    let mut paths = BTreeSet::new();
+    for edge in &graph.edges {
+        if edge.kind != EdgeKind::Imports {
+            continue;
+        }
+        let Some(import) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+            continue;
+        };
+        if import.metadata.get("language").map(String::as_str) != Some("go") {
+            continue;
+        }
+        let target = import
+            .metadata
+            .get("import_target")
+            .map(String::as_str)
+            .unwrap_or(import.label.as_str())
+            .trim_matches(['"', ' ']);
+        if !matches!(target, "testing" | "testing/quick" | "net/http/httptest") {
+            continue;
+        }
+        if let Some(source) = graph.nodes.iter().find(|node| node.id == edge.source)
+            && source.kind == NodeKind::File
+        {
+            paths.insert(source.label.clone());
+        }
+    }
+    paths
+}
+
 pub(crate) fn add_duplicate_framework_route_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
 ) {
+    let scaffolding = test_scaffolding_paths(graph);
     let mut groups: BTreeMap<(String, String), Vec<NodeId>> = BTreeMap::new();
     for node in &graph.nodes {
         if node.kind != NodeKind::Entrypoint
@@ -4350,11 +4424,9 @@ pub(crate) fn add_duplicate_framework_route_insights(
         // and repeatedly inside a single file — so a route declared there
         // says nothing about the routing table the program serves. 22 of
         // flask's 25 duplicate groups lived entirely in tests.
-        if node
-            .span
-            .as_ref()
-            .is_some_and(|span| is_test_like_source_path(&span.path))
-        {
+        if node.span.as_ref().is_some_and(|span| {
+            is_test_like_source_path(&span.path) || scaffolding.contains(&span.path)
+        }) {
             continue;
         }
         let Some(path) = node
