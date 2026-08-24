@@ -1686,7 +1686,17 @@ pub(crate) fn command_path_is_installed_or_unscanned(command_path: &str) -> bool
     command_path.split('/').any(|segment| {
         matches!(
             segment,
-            "vendor" | "node_modules" | "venv" | "target" | "build" | "dist" | "_build"
+            "vendor"
+                | "node_modules"
+                | "venv"
+                | "target"
+                | "build"
+                | "dist"
+                | "_build"
+                // What a test run wrote: express's CI reads `./coverage`
+                // for the lcov file its own tests produced.
+                | "coverage"
+                | "htmlcov"
         ) || (segment.starts_with('.') && segment != "." && segment != "..")
     })
 }

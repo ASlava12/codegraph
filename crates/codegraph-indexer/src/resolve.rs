@@ -3126,7 +3126,9 @@ fn command_paths(command: &str) -> Vec<CommandPath> {
 fn names_packages_or_targets(program: &str) -> bool {
     matches!(
         program,
-        "brew" | "sbt" | "gradle" | "mvn" | "gem" | "apt-get"
+        // `composer require mongodb/mongodb --dev` names a package, and
+        // monolog's CI installs three that way.
+        "brew" | "sbt" | "gradle" | "mvn" | "gem" | "apt-get" | "composer"
     )
 }
 
