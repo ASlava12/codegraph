@@ -10422,6 +10422,45 @@ fn a_rust_use_names_a_crate_only_when_it_is_one() {
 }
 
 #[test]
+fn a_django_distribution_carries_the_module_it_installs() {
+    let mut graph = CodeGraph::new("repo");
+    let source = graph.add_node(NodeKind::File, "src/oscar/apps/catalogue/models.py");
+    // Django's ecosystem publishes `django-treebeard` for `treebeard` and
+    // `sorl-thumbnail` for `sorl`: django-oscar declares six such and the
+    // graph called every one of them undeclared.
+    for (label, package_id) in [
+        ("django-treebeard", "python:django-treebeard"),
+        ("sorl-thumbnail", "python:sorl-thumbnail"),
+        (
+            "django-phonenumber-field",
+            "python:django-phonenumber-field",
+        ),
+    ] {
+        let declared = dependency_node(&mut graph, label, package_id);
+        graph.add_edge(source, declared, EdgeKind::DependsOn, Confidence::Exact);
+    }
+    for label in [
+        "from treebeard.mp_tree import MP_Node",
+        "from sorl.thumbnail import get_thumbnail",
+        "from phonenumber_field.modelfields import PhoneNumberField",
+        // Nothing declares this one.
+        "import unicodecsv",
+    ] {
+        let import = import_node(&mut graph, label, "python");
+        graph.add_edge(source, import, EdgeKind::Imports, Confidence::Syntactic);
+    }
+
+    let undeclared = insights(&graph)
+        .insights
+        .into_iter()
+        .filter(|insight| insight.kind == "undeclared_external_import")
+        .map(|insight| insight.message)
+        .collect::<Vec<_>>();
+    assert_eq!(undeclared.len(), 1, "{undeclared:?}");
+    assert!(undeclared[0].contains("unicodecsv"), "{undeclared:?}");
+}
+
+#[test]
 fn an_undeclared_import_names_the_package_that_ships_the_module() {
     let mut graph = CodeGraph::new("repo");
     let source = graph.add_node(NodeKind::File, "src/app.py");

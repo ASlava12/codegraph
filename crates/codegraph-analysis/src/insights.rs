@@ -3773,8 +3773,12 @@ pub(crate) fn is_tool_configuration_source_path(path: &str) -> bool {
 /// dependency is exactly where what it imports belongs.
 pub(crate) fn is_repository_tooling_source_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/").to_ascii_lowercase();
-    let file = normalized.rsplit('/').next().unwrap_or_default();
-    if file.starts_with("gulpfile.") || file.starts_with("gruntfile.") {
+    // `gulpfile.js` is a file in most projects and a directory in some:
+    // django-oscar keeps `gulpfile.js/index.js` and its subtasks there.
+    if normalized
+        .split('/')
+        .any(|segment| segment.starts_with("gulpfile.") || segment.starts_with("gruntfile."))
+    {
         return true;
     }
     normalized.split('/').any(|segment| {
@@ -4824,7 +4828,10 @@ pub(crate) fn import_matches_package_id(package_id: &str, import: &ImportPackage
             let underscored = canonical.replace('-', "_");
             package == canonical || package == hyphenated || package == underscored
         }
-        "python" => package == canonical_python_package_name(&import.package),
+        "python" => {
+            let canonical = canonical_python_package_name(&import.package);
+            package == canonical || python_distribution_carries_module(package, &canonical)
+        }
         "npm" | "dart" => package == import.package.to_ascii_lowercase(),
         // A composer package's vendor is whoever publishes it, and the
         // namespace a class sits in says nothing about that: `Elastica\\`
@@ -5309,6 +5316,23 @@ pub(crate) fn declared_ecosystems_from_package_ids<'a>(
         .collect()
 }
 
+/// Whether a declared Python distribution is the one that installs a
+/// module: Django's ecosystem publishes `django-treebeard` for `treebeard`,
+/// `sorl-thumbnail` for `sorl`, `django-phonenumber-field` for
+/// `phonenumber_field`. The module's name is a run of the distribution's
+/// own words, which is what these conventions have in common.
+fn python_distribution_carries_module(declared: &str, module: &str) -> bool {
+    if module.len() < 4 {
+        return false;
+    }
+    let words: Vec<&str> = declared.split(['-', '_', '.']).collect();
+    let wanted: Vec<&str> = module.split(['-', '_', '.']).collect();
+    if wanted.is_empty() || words.len() <= wanted.len() {
+        return false;
+    }
+    words.windows(wanted.len()).any(|window| window == wanted)
+}
+
 pub(crate) fn is_declared_package(
     declared: &BTreeSet<String>,
     ecosystem: &str,
@@ -5328,10 +5352,15 @@ pub(crate) fn is_declared_package(
                 || declared.contains(&format!("cargo:{hyphenated}"))
                 || declared.contains(&format!("cargo:{underscored}"))
         }
-        "python" => declared.contains(&format!(
-            "python:{}",
-            canonical_python_package_name(package)
-        )),
+        "python" => {
+            let canonical = canonical_python_package_name(package);
+            declared.contains(&format!("python:{canonical}"))
+                || declared.iter().any(|package_id| {
+                    package_id.strip_prefix("python:").is_some_and(|declared| {
+                        python_distribution_carries_module(declared, &canonical)
+                    })
+                })
+        }
         "npm" => declared.contains(&format!("npm:{}", package.to_ascii_lowercase())),
         "composer" => {
             let imported = package.to_ascii_lowercase();
