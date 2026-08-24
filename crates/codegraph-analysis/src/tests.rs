@@ -11885,6 +11885,70 @@ fn one_missing_env_file_is_one_finding() {
 }
 
 #[test]
+fn a_tools_configuration_is_not_what_the_project_ships() {
+    // openzeppelin's `eslint.config.mjs` imports `@eslint/js`, mastodon's
+    // `vite.config.mts` imports `browserslist`, and neither package.json
+    // declares them. That is a note about the lint and build setup, not a
+    // warning about what the project ships -- the same reading a script
+    // under `scripts/` already gets.
+    let mut graph = CodeGraph::new("repo");
+    graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "eslint",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "dependency".to_string()),
+            ("package_id".to_string(), "npm:eslint".to_string()),
+        ]),
+    );
+    let config = graph.add_node(NodeKind::File, "eslint.config.mjs");
+    let source = graph.add_node(NodeKind::File, "src/index.js");
+    let lint_import = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "import js from '@eslint/js'",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "import".to_string()),
+            ("language".to_string(), "javascript".to_string()),
+        ]),
+    );
+    let shipped_import = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "import chalk from 'chalk'",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "import".to_string()),
+            ("language".to_string(), "javascript".to_string()),
+        ]),
+    );
+    graph.add_edge(
+        config,
+        lint_import,
+        EdgeKind::Imports,
+        Confidence::Syntactic,
+    );
+    graph.add_edge(
+        source,
+        shipped_import,
+        EdgeKind::Imports,
+        Confidence::Syntactic,
+    );
+
+    let report = insights(&graph);
+    let severity = |package: &str| {
+        report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "undeclared_external_import" && insight.message.contains(package)
+            })
+            .map(|insight| insight.severity)
+    };
+    assert_eq!(severity("@eslint/js"), Some(InsightSeverity::Info));
+    assert_eq!(severity("chalk"), Some(InsightSeverity::Warning));
+}
+
+#[test]
 fn a_fixture_pinning_its_own_version_is_not_the_project_disagreeing() {
     // axios keeps typescript 4.9.5 under `tests/module/cjs` to prove it
     // still compiles there, and gqlgen's examples each pin their own

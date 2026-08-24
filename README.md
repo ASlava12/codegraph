@@ -117,6 +117,10 @@ Implemented now:
   `executable shellcheck` with `main-is: shellcheck.hs` is the program, a `test-suite` states a test
   program under its own `hs-source-dirs`, and a `library` states none. shellcheck's coverage finding
   is gone -- its entrypoints were its shell scripts and CI jobs.
+- A tool's own configuration is not what the project ships, wherever it sits: openzeppelin's
+  `eslint.config.mjs` imports `@eslint/js` and mastodon's `vite.config.mts` imports `browserslist`,
+  neither of which their package.json declares. Both read as notes now, the way a script under
+  `scripts/` already did -- on the CLI and in the browser alike.
 - A catalog the database itself provides is not a table the project forgot to declare: mastodon asks
   `pg_class` how large a table is before importing into it, and postgres, MySQL and SQLite all name
   their catalogs plainly (`pg_*`, `sqlite_*`, `information_schema.*`, `mysql.*`,

@@ -298,6 +298,49 @@ drive("client insights read undeclared imports the way the CLI does", () => {
   }
 });
 
+// A tool's configuration is not what the project ships: openzeppelin's
+// `eslint.config.mjs` imports `@eslint/js` and mastodon's `vite.config.mts`
+// imports `browserslist`, neither of which their package.json declares.
+drive("client insights read a tool's configuration as tooling", () => {
+  const graph = {
+    nodes: [
+      { id: 1, kind: "file", label: "package.json" },
+      {
+        id: 2,
+        kind: "external_dependency",
+        label: "eslint",
+        metadata: { item_kind: "dependency", package_id: "npm:eslint" },
+      },
+      { id: 3, kind: "file", label: "eslint.config.mjs" },
+      { id: 4, kind: "file", label: "src/index.js" },
+      {
+        id: 10,
+        kind: "external_dependency",
+        label: "import js from '@eslint/js'",
+        metadata: { item_kind: "import", language: "javascript" },
+      },
+      {
+        id: 11,
+        kind: "external_dependency",
+        label: "import chalk from 'chalk'",
+        metadata: { item_kind: "import", language: "javascript" },
+      },
+    ],
+    edges: [
+      { kind: "imports", source: 3, target: 10 },
+      { kind: "imports", source: 4, target: 11 },
+    ],
+  };
+  const findings = api
+    .buildClientInsights(graph)
+    .filter((insight) => insight.kind === "undeclared_external_import");
+  const severity = (name) =>
+    findings.find((finding) => finding.message.includes(name))?.severity;
+  if (severity("@eslint/js") !== "info" || severity("chalk") !== "warning") {
+    throw new Error(`the config is tooling, the source is not: ${JSON.stringify(findings)}`);
+  }
+});
+
 // A PHP namespace states neither how its package hyphenates nor which of
 // two libraries publishes it, and a composer lockfile states the
 // namespaces a package autoloads. Reading only the first spelling made the

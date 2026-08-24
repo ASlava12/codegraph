@@ -801,6 +801,22 @@ function phpImportedClass(label) {
 // Whether a path is the program itself rather than its tests, examples,
 // docs, build scripts or vendored code. The CLI asks the same question
 // before deciding whether a finding is a warning or a note.
+// Whether a file name is a tool's configuration: `eslint.config.mjs`,
+// `jest.config.base.ts`, `.eslintrc.js`. The CLI keeps the same list.
+function isToolConfigurationFile(file) {
+  const name = String(file || "").toLowerCase();
+  const cut = name.lastIndexOf(".");
+  if (cut < 0) return false;
+  const stem = name.slice(0, cut);
+  const extension = name.slice(cut + 1);
+  if (!["js", "cjs", "mjs", "ts", "cts", "mts"].includes(extension)) return false;
+  return (
+    stem.endsWith(".config") ||
+    stem.split(".").slice(1).includes("config") ||
+    (stem.startsWith(".") && stem.endsWith("rc"))
+  );
+}
+
 function isProductionSourcePath(path) {
   const normalized = String(path).replace(/\\/g, "/").toLowerCase();
   const file = normalized.split("/").pop() || "";
@@ -814,8 +830,11 @@ function isProductionSourcePath(path) {
   const tooling =
     file.startsWith("gulpfile.") ||
     file.startsWith("gruntfile.") ||
+    // A tool's own configuration, wherever it sits: `eslint.config.mjs`,
+    // `vite.config.sw.ts`, `.eslintrc.js`. The CLI asks the same.
+    isToolConfigurationFile(file) ||
     segments.some((segment) =>
-      ["scripts", "tools", "bench", "benchmarks", "__benchmarks__", "doc", "docs"].includes(segment),
+      ["scripts", "tools", "ci", ".github", "metrics", "cmake", "bench", "benchmarks", "__benchmarks__", "doc", "docs"].includes(segment),
     );
   const tests =
     segments.slice(0, -1).some((segment) =>

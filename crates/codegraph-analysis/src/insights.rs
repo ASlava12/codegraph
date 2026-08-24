@@ -3538,8 +3538,13 @@ struct UndeclaredImportGroup {
 
 impl UndeclaredImportGroup {
     fn record(&mut self, source: &str, source_id: NodeId, import_id: NodeId, edge: usize) {
+        // A tool's configuration is not the program either, wherever it
+        // sits: openzeppelin's `eslint.config.mjs` imports `@eslint/js`,
+        // which its package.json does not declare, and that is a note about
+        // the lint setup rather than a warning about what it ships.
         self.production_source |= !is_test_like_source_path(source)
             && !is_repository_tooling_source_path(source)
+            && !is_tool_configuration_source_path(source)
             && !is_vendored_source_path(source);
         self.sources.insert(source.to_string());
         for node in [source_id, import_id] {
