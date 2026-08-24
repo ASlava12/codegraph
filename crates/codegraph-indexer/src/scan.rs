@@ -635,16 +635,26 @@ pub(crate) fn parsing_adapter(
     source: &[u8],
 ) -> Option<&'static dyn codegraph_parser::LanguageAdapter> {
     if let Some(adapter) = adapter_for_path(path) {
-        // `.h` is C's extension and C++'s alike, and the extension is all
-        // the path can say. A header that declares a namespace, a
-        // template, a class or an access section is C++: parsing 21 such
-        // headers in the corpus as C++ produced fewer errors every time,
-        // and redis's `fast_float.h` went from 1152 to 150.
+        // `.h` is C's extension, C++'s and Objective-C's alike, and the
+        // extension is all the path can say. A header that declares a
+        // namespace, a template, a class or an access section is C++:
+        // parsing 21 such headers in the corpus as C++ produced fewer
+        // errors every time, and redis's `fast_float.h` went from 1152 to
+        // 150. One that declares an `@interface` is Objective-C, and that
+        // is where a framework states the whole of what it offers.
         if adapter.language() == Language::C
-            && std::str::from_utf8(source).is_ok_and(declares_cpp)
-            && let Some(cpp) = adapter_for_language(Language::Cpp)
+            && let Ok(text) = std::str::from_utf8(source)
         {
-            return Some(cpp);
+            if declares_objc(text)
+                && let Some(objc) = adapter_for_language(Language::ObjectiveC)
+            {
+                return Some(objc);
+            }
+            if declares_cpp(text)
+                && let Some(cpp) = adapter_for_language(Language::Cpp)
+            {
+                return Some(cpp);
+            }
         }
         return Some(adapter);
     }
@@ -1405,6 +1415,19 @@ fn r_exported_names(
 /// Whether a header written for either language is C++. C has no
 /// namespaces, no templates, no classes and no access sections, so a line
 /// opening one settles it.
+/// Whether a header is Objective-C's. `.h` is C's extension, C++'s and
+/// Objective-C's alike, and only what the file states says which: no other
+/// language writes `@interface`, `@protocol` or `@property`.
+fn declares_objc(source: &str) -> bool {
+    source.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("@interface")
+            || trimmed.starts_with("@protocol")
+            || trimmed.starts_with("@property")
+            || trimmed.starts_with("@implementation")
+    })
+}
+
 fn declares_cpp(source: &str) -> bool {
     source.lines().any(|line| {
         let trimmed = line.trim_start();

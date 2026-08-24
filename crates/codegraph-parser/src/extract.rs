@@ -559,6 +559,23 @@ pub(crate) fn classify_node(
             "import_spec" => ParsedItemKind::Import,
             _ => return None,
         },
+        // Objective-C states an interface and then implements it: a class
+        // is named once in each, and its methods are named by selector —
+        // `initWithBaseURL:sessionConfiguration:` is one name, and it is
+        // what a caller writes.
+        Language::ObjectiveC => match kind {
+            "class_interface" | "class_implementation" | "protocol_declaration" => {
+                ParsedItemKind::Type
+            }
+            "struct_specifier" | "union_specifier" | "enum_specifier" | "type_definition" => {
+                ParsedItemKind::Type
+            }
+            "method_declaration" | "method_definition" => ParsedItemKind::Function,
+            "function_definition" => ParsedItemKind::Function,
+            "preproc_function_def" => ParsedItemKind::Function,
+            "preproc_include" | "module_import" => ParsedItemKind::Import,
+            _ => return None,
+        },
         Language::C | Language::Cpp => match kind {
             // A macro the parser has never seen turns the code after it into
             // a shape it can recognise: `NLOHMANN_JSON_NAMESPACE_BEGIN` in
@@ -1364,6 +1381,17 @@ pub(crate) fn enclosing_type_label(
             {
                 named_child_text(candidate, "name", source)
             }
+            // An Objective-C method belongs to the class, category or
+            // protocol that states it, in the header and in the
+            // implementation alike.
+            Language::ObjectiveC
+                if matches!(
+                    kind,
+                    "class_interface" | "class_implementation" | "protocol_declaration"
+                ) =>
+            {
+                child_kind_text(candidate, "identifier", source)
+            }
             // A Solidity function belongs to the contract, interface or
             // library that declares it.
             Language::Solidity
@@ -1815,7 +1843,7 @@ pub(crate) fn control_flow_fact(
             "return_statement" => Some((ParsedItemKind::Return, "return")),
             _ => None,
         },
-        Language::C | Language::Cpp => match kind {
+        Language::C | Language::Cpp | Language::ObjectiveC => match kind {
             "if_statement" => Some((ParsedItemKind::Branch, "if")),
             "switch_statement" => Some((ParsedItemKind::Branch, "switch")),
             "case_statement" => Some((ParsedItemKind::Branch, "case")),
@@ -2006,6 +2034,83 @@ pub(crate) fn control_flow_fact(
     }
 }
 
+/// What an Objective-C declaration is called: a class, category or
+/// protocol by its first name, a method by its selector.
+fn objc_item_label(node: Node<'_>, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "class_interface" | "class_implementation" | "protocol_declaration" => {
+            child_kind_text(node, "identifier", source)
+        }
+        "method_declaration" | "method_definition" => objc_selector(node, source),
+        _ => None,
+    }
+    .filter(|label| !label.is_empty())
+}
+
+/// The selector a method declares: `initWithBaseURL:sessionConfiguration:`
+/// for one that takes arguments, and the bare name for one that does not.
+/// The grammar writes the parts as plain identifiers between the
+/// parameters, so the name is every identifier the declaration states.
+fn objc_selector(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    let mut parts = Vec::new();
+    let mut takes_arguments = false;
+    for child in node.named_children(&mut cursor) {
+        match child.kind() {
+            "identifier" => {
+                if let Some(text) = node_text(child, source) {
+                    parts.push(text);
+                }
+            }
+            "method_parameter" => takes_arguments = true,
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(if takes_arguments {
+        format!("{}:", parts.join(":"))
+    } else {
+        parts.join(":")
+    })
+}
+
+/// The selector a message sends: `[manager GET:path parameters:nil]` calls
+/// `GET:parameters:`, which is the name the method declares.
+fn objc_message_selector(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    let parts = node
+        .children_by_field_name("method", &mut cursor)
+        .filter_map(|part| node_text(part, source))
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        return None;
+    }
+    // Every argument is written after a colon, so a message with any
+    // argument at all names a selector with colons in it.
+    let mut cursor = node.walk();
+    let receiver = node.child_by_field_name("receiver");
+    let takes_arguments = node.named_children(&mut cursor).any(|child| {
+        Some(child) != receiver
+            && child.kind() != "identifier"
+            && !matches!(child.kind(), "comment" | "argument_list")
+    }) || node
+        .children_by_field_name("method", &mut node.walk())
+        .count()
+        < {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .filter(|child| child.kind() == "identifier" && Some(*child) != receiver)
+                .count()
+        };
+    Some(if takes_arguments {
+        format!("{}:", parts.join(":"))
+    } else {
+        parts.join(":")
+    })
+}
+
 /// The text of the first child of a given kind, for grammars that name
 /// their parts by node kind rather than by field.
 fn child_kind_text(node: Node<'_>, kind: &str, source: &[u8]) -> Option<String> {
@@ -2169,6 +2274,9 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
             matches!(node.kind(), "call_expression" | "new_expression")
         }
         Language::Go | Language::C | Language::Cpp => node.kind() == "call_expression",
+        // `[manager GET:path parameters:nil]` is a call, and its selector
+        // is the name being called.
+        Language::ObjectiveC => matches!(node.kind(), "call_expression" | "message_expression"),
         Language::Php => matches!(
             node.kind(),
             "function_call_expression" | "scoped_call_expression" | "member_call_expression"
@@ -2516,6 +2624,13 @@ pub(crate) fn call_label(language: Language, node: Node<'_>, source: &[u8]) -> O
         return Some(clean_call_label(simple_name(&callee)));
     }
 
+    if language == Language::ObjectiveC
+        && node.kind() == "message_expression"
+        && let Some(selector) = objc_message_selector(node, source)
+    {
+        return Some(clean_call_label(&selector));
+    }
+
     if language == Language::Elixir
         && let Some(target) = named_child_text(node, "target", source)
     {
@@ -2749,6 +2864,15 @@ pub(crate) fn item_label(
             .filter(|path| !path.is_empty());
     }
 
+    // A selector is the whole name of a method — `GET:parameters:success:`
+    // — and it is what a caller writes at the call site.
+    if language == Language::ObjectiveC
+        && matches!(kind, ParsedItemKind::Function | ParsedItemKind::Type)
+        && let Some(label) = objc_item_label(node, source)
+    {
+        return Some(label);
+    }
+
     if language == Language::Proto {
         return proto_item_label(node, source);
     }
@@ -2846,7 +2970,9 @@ pub(crate) fn descendant_field_text(
 
 pub(crate) fn is_entrypoint(language: Language, label: &str) -> bool {
     match language {
-        Language::Rust | Language::Go | Language::C | Language::Cpp => label == "main",
+        Language::Rust | Language::Go | Language::C | Language::Cpp | Language::ObjectiveC => {
+            label == "main"
+        }
         Language::Python => label == "main" || label == "__main__",
         Language::JavaScript | Language::TypeScript | Language::Tsx | Language::Php => {
             label.eq_ignore_ascii_case("main")

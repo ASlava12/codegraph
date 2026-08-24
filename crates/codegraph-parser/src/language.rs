@@ -42,6 +42,7 @@ pub enum Language {
     Proto,
     GraphQl,
     Solidity,
+    ObjectiveC,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,13 +272,20 @@ static SOLIDITY_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     extensions: &["sol"],
     file_names: &[],
 };
+// `.m` is Objective-C's implementation file and `.h` its header, which C
+// and C++ share: only a header's own contents say which of the three it is.
+static OBJC_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::ObjectiveC,
+    extensions: &["m", "mm"],
+    file_names: &[],
+};
 static R_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     language: Language::R,
     extensions: &["r", "R"],
     file_names: &[],
 };
 
-static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 30] = [
+static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 31] = [
     &RUST_ADAPTER,
     &PYTHON_ADAPTER,
     &JAVASCRIPT_ADAPTER,
@@ -308,6 +316,7 @@ static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 30] = [
     &PROTO_ADAPTER,
     &GRAPHQL_ADAPTER,
     &SOLIDITY_ADAPTER,
+    &OBJC_ADAPTER,
 ];
 
 pub fn language_adapters() -> &'static [&'static dyn LanguageAdapter] {
@@ -365,6 +374,7 @@ impl Language {
             Self::Proto => "proto",
             Self::GraphQl => "graphql",
             Self::Solidity => "solidity",
+            Self::ObjectiveC => "objc",
         }
     }
 
@@ -400,6 +410,7 @@ impl Language {
             Self::Proto => tree_sitter_proto::LANGUAGE.into(),
             Self::GraphQl => tree_sitter_graphql::LANGUAGE.into(),
             Self::Solidity => tree_sitter_solidity::LANGUAGE.into(),
+            Self::ObjectiveC => tree_sitter_objc::LANGUAGE.into(),
         }
     }
 }

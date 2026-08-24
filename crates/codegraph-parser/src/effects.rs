@@ -63,6 +63,14 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                     .as_deref()
                     .is_some_and(|value| matches!(simple_name(value), "getenv"))
         }
+        // `getenv` as in C, and Foundation's own
+        // `[[NSProcessInfo processInfo] environment]`.
+        Language::ObjectiveC => {
+            is_call_node(language, node, source)
+                && call
+                    .as_deref()
+                    .is_some_and(|value| matches!(simple_name(value), "getenv" | "environment"))
+        }
         // Match the exact access form, like the other languages: a
         // `contains` test also fired on the inner member_expression and on
         // any enclosing node, filing several facts for one physical read.
@@ -277,6 +285,16 @@ pub(crate) fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) 
         Language::C | Language::Cpp => call
             .as_deref()
             .is_some_and(|value| matches!(simple_name(value), "fopen" | "open")),
+        Language::ObjectiveC => call.as_deref().is_some_and(|value| {
+            matches!(
+                simple_name(value),
+                "fopen"
+                    | "contentsOfFile"
+                    | "dictionaryWithContentsOfFile"
+                    | "stringWithContentsOfFile"
+                    | "objectForInfoDictionaryKey"
+            )
+        }),
         Language::Php => call.as_deref().is_some_and(|value| {
             matches!(
                 simple_name(value),
@@ -461,6 +479,15 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
                     .is_some_and(|value| simple_name(value) == "raise")
         }
         Language::Java => node.kind() == "throw_statement",
+        // `@throw` raises, and `NSAssert` stops the program the way an
+        // assertion does.
+        Language::ObjectiveC => {
+            node.kind() == "throw_statement"
+                || (is_call_node(language, node, source)
+                    && call_label(language, node, source)
+                        .as_deref()
+                        .is_some_and(|value| simple_name(value).starts_with("NSAssert")))
+        }
         Language::CSharp => matches!(node.kind(), "throw_statement" | "throw_expression"),
         Language::Kotlin | Language::Scala => node.kind() == "throw_expression",
         Language::Lua => {
@@ -765,6 +792,7 @@ pub(crate) fn effect_metadata(
         | Language::Proto
         | Language::GraphQl
         | Language::Solidity
+        | Language::ObjectiveC
         | Language::R => None,
     };
 

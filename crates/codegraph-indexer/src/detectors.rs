@@ -186,6 +186,7 @@ pub(crate) fn framework_routes(language: Language, source: &str) -> Vec<Framewor
         Language::Ruby => ruby_framework_routes(source),
         Language::C
         | Language::Cpp
+        | Language::ObjectiveC
         | Language::Dart
         | Language::Hcl
         | Language::Solidity
@@ -518,6 +519,9 @@ pub(crate) fn framework_configs(
         // A configuration language states its settings outright, and a
         // schema states shapes; nothing in either is a framework's own file.
         Some(Language::Hcl | Language::Proto | Language::GraphQl | Language::Solidity) => {}
+        // An Objective-C project states its routes in code the same way a C
+        // one does: nothing here reads them from a framework's own file.
+        Some(Language::ObjectiveC) => {}
         Some(Language::Go) => configs.extend(go_framework_configs(source)),
         Some(Language::Php) => configs.extend(php_framework_configs(source)),
         Some(Language::Bash) => configs.extend(bash_framework_configs(source)),

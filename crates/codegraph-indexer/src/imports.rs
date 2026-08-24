@@ -20,7 +20,8 @@ pub(crate) fn local_import_target(
             js_local_import_target(source_label, import_label)
         }
         Language::Python => python_local_import_target(source_label, import_label),
-        Language::C | Language::Cpp => {
+        // `#import "AFURLSessionManager.h"` names a header the way C does.
+        Language::C | Language::Cpp | Language::ObjectiveC => {
             c_local_import_target(source_label, import_label, cmake_include_dirs)
         }
         Language::Php => php_local_import_target(source_label, import_label),

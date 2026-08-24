@@ -346,6 +346,7 @@ pub(crate) fn rationale_comment_text(language: Option<Language>, line: &str) -> 
             | Language::Dart
             | Language::Proto
             | Language::Solidity
+            | Language::ObjectiveC
             | Language::Java
             | Language::CSharp
             | Language::Kotlin

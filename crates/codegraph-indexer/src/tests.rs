@@ -4084,6 +4084,57 @@ fn reading_files_ahead_of_the_walk_changes_nothing_it_finds() {
 }
 
 #[test]
+fn an_objective_c_header_is_read_as_the_language_it_states() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    // `.h` is C's extension, C++'s and Objective-C's alike; only what the
+    // file states says which it is.
+    fs::write(
+        root.join("src").join("Manager.h"),
+        "#import <Foundation/Foundation.h>\n\n@interface Manager : NSObject\n- (void)startWithURL:(NSURL *)url;\n@end\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Manager.m"),
+        "#import \"Manager.h\"\n\n@implementation Manager\n- (void)startWithURL:(NSURL *)url {\n  [self startWithURL:url];\n}\n@end\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "src/Manager.h")
+            .and_then(|node| node.metadata.get("language"))
+            .map(String::as_str),
+        Some("objc")
+    );
+    // A selector is one name, and the header and the implementation state
+    // the same one.
+    assert!(
+        graph
+            .nodes
+            .iter()
+            .filter(|node| node.kind == NodeKind::Function)
+            .filter(|node| node.label == "startWithURL:")
+            .count()
+            >= 2,
+        "the header declares it and the implementation defines it"
+    );
+    assert!(
+        graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::Function
+                && node.label == "startWithURL:"
+                && node.metadata.get("owner_type").map(String::as_str) == Some("Manager")
+        }),
+        "and it belongs to the class that states it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_contract_reaches_the_contract_it_inherits() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("contracts")).unwrap();

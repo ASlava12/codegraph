@@ -12,7 +12,7 @@ fn language_registry_exposes_all_builtin_adapters() {
         .map(|adapter| adapter.info().language)
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(adapters.len(), 30);
+    assert_eq!(adapters.len(), 31);
     assert_eq!(
         languages,
         BTreeSet::from([
@@ -33,6 +33,7 @@ fn language_registry_exposes_all_builtin_adapters() {
             "kotlin",
             "lua",
             "nix",
+            "objc",
             "proto",
             "ocaml",
             "php",
@@ -71,6 +72,7 @@ fn detects_target_languages_by_extension() {
         ("main.tf", Language::Hcl),
         ("user.proto", Language::Proto),
         ("Token.sol", Language::Solidity),
+        ("Manager.m", Language::ObjectiveC),
         ("schema.graphql", Language::GraphQl),
     ];
 
@@ -3514,5 +3516,64 @@ fn a_function_like_macro_is_a_definition_the_code_calls() {
             .map(String::as_str),
         Some("macro"),
         "a reader can tell a macro from a function"
+    );
+}
+
+#[test]
+fn objective_c_names_a_method_by_its_selector() {
+    let adapter = adapter_for_language(Language::ObjectiveC).unwrap();
+    let source = br#"#import "AFURLSessionManager.h"
+
+@implementation AFHTTPSessionManager
+
+- (instancetype)initWithBaseURL:(NSURL *)url config:(NSString *)cfg {
+    [self.session GET:url parameters:nil];
+    [self start];
+    [self reloadWithForce:YES];
+    if (url == nil) {
+        @throw [NSException exceptionWithName:@"bad" reason:@"nil" userInfo:nil];
+    }
+    return self;
+}
+
+@end
+"#;
+    let parsed = adapter
+        .parse(Path::new("AFHTTPSessionManager.m"), source)
+        .unwrap();
+    let of_kind = |kind: ParsedItemKind| {
+        parsed
+            .items
+            .iter()
+            .filter(|item| item.kind == kind)
+            .map(|item| item.label.clone())
+            .collect::<Vec<_>>()
+    };
+
+    assert!(of_kind(ParsedItemKind::Type).contains(&"AFHTTPSessionManager".to_string()));
+    // A selector is one name, colons and all, and it is what a caller
+    // writes at the call site.
+    assert_eq!(
+        of_kind(ParsedItemKind::Function),
+        vec!["initWithBaseURL:config:"]
+    );
+    let calls = of_kind(ParsedItemKind::Call);
+    assert!(calls.contains(&"GET:parameters:".to_string()));
+    assert!(calls.contains(&"reloadWithForce:".to_string()));
+    // A message with no argument has no colon in its name.
+    assert!(calls.contains(&"start".to_string()));
+    let imports = of_kind(ParsedItemKind::Import);
+    assert!(
+        imports
+            .iter()
+            .any(|import| import.contains("AFURLSessionManager.h")),
+        "an `#import` names the header it pulls in: {imports:?}"
+    );
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error),
+        "`@throw` is where the method gives up"
     );
 }
