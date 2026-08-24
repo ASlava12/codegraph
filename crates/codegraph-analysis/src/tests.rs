@@ -8275,6 +8275,54 @@ fn insights_report_unreachable_source_files() {
 }
 
 #[test]
+fn config_read_only_by_vendored_code_is_a_note() {
+    let mut graph = CodeGraph::new("repo");
+    let configure = graph.add_node(NodeKind::Function, "as_fn_error");
+    // jemalloc's generated `configure` gives `as_lineno` three defaults.
+    let key = graph.add_node(NodeKind::Environment, "as_lineno");
+    for default_value in ["$1", "$3", "$LINENO"] {
+        graph.add_edge_with_metadata(
+            configure,
+            key,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("default_value".to_string(), default_value.to_string()),
+                ("file".to_string(), "deps/jemalloc/configure".to_string()),
+            ]),
+        );
+    }
+    // The project's own script gives PORT two.
+    let server = graph.add_node(NodeKind::Function, "main");
+    let port = graph.add_node(NodeKind::Environment, "PORT");
+    for (default_value, file) in [("8000", "src/serve.sh"), ("9000", "src/worker.sh")] {
+        graph.add_edge_with_metadata(
+            server,
+            port,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+            BTreeMap::from([
+                ("default_value".to_string(), default_value.to_string()),
+                ("file".to_string(), file.to_string()),
+            ]),
+        );
+    }
+
+    let report = insights(&graph);
+    let severity_of = |needle: &str| {
+        report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "conflicting_config_default" && insight.message.contains(needle)
+            })
+            .map(|insight| insight.severity)
+    };
+    assert_eq!(severity_of("PORT"), Some(InsightSeverity::Warning));
+    assert_eq!(severity_of("as_lineno"), Some(InsightSeverity::Info));
+}
+
+#[test]
 fn insights_report_conflicting_config_defaults() {
     let mut graph = CodeGraph::new("repo");
     let first_reader = graph.add_node(NodeKind::Function, "api_server");

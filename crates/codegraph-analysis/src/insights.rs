@@ -2241,6 +2241,23 @@ fn config_key_reads(graph: &CodeGraph) -> BTreeMap<(String, String), ConfigKeyRe
     groups
 }
 
+/// Whether every read of a key happens in vendored code: jemalloc's
+/// generated `configure` reads `as_lineno` three ways, which is autoconf's
+/// business rather than redis's.
+fn every_read_is_vendored(graph: &CodeGraph, edges: impl IntoIterator<Item = usize>) -> bool {
+    let mut files = edges.into_iter().filter_map(|index| {
+        graph
+            .edges
+            .get(index)
+            .and_then(|edge| edge.metadata.get("file"))
+    });
+    let mut any = false;
+    files.all(|file| {
+        any = true;
+        is_vendored_source_path(file)
+    }) && any
+}
+
 pub(crate) fn add_conflicting_config_default_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
@@ -2262,9 +2279,14 @@ pub(crate) fn add_conflicting_config_default_insights(
             .collect();
         let values = format_backtick_list(reads.defaults.keys().map(String::as_str), 8);
 
+        let vendored = every_read_is_vendored(graph, edges.iter().copied());
         insights.push(Insight {
             kind: "conflicting_config_default".to_string(),
-            severity: InsightSeverity::Warning,
+            severity: if vendored {
+                InsightSeverity::Info
+            } else {
+                InsightSeverity::Warning
+            },
             message: format!("{kind} `{label}` is read with multiple fallback values: {values}"),
             nodes: nodes.into_iter().collect(),
             edges: edges.into_iter().collect(),
@@ -2351,9 +2373,14 @@ pub(crate) fn add_mixed_config_requirement_insights(
         );
         let values = format_backtick_list(reads.defaults.keys().map(String::as_str), 8);
 
+        let vendored = every_read_is_vendored(graph, edges.iter().copied());
         insights.push(Insight {
             kind: "mixed_config_requirement".to_string(),
-            severity: InsightSeverity::Warning,
+            severity: if vendored {
+                InsightSeverity::Info
+            } else {
+                InsightSeverity::Warning
+            },
             message: format!(
                 "{kind} `{label}` is read both as required and with fallback values: {values}"
             ),
