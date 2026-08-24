@@ -7997,7 +7997,13 @@ fn insights_report_low_entrypoint_coverage() {
 
     let mut sparse = CodeGraph::new("repo");
     let sparse_entry = sparse.add_node(NodeKind::Entrypoint, "cargo bin:demo");
-    let sparse_main = sparse.add_node(NodeKind::Function, "main");
+    // The program the binary starts, as the scan records one.
+    let sparse_main = sparse.add_node_with_metadata(
+        NodeKind::Function,
+        "main",
+        None,
+        BTreeMap::from([("entrypoint_kind".to_string(), "program".to_string())]),
+    );
     sparse.add_edge(
         sparse.root,
         sparse_entry,
@@ -8044,6 +8050,39 @@ fn insights_report_low_entrypoint_coverage() {
         insight.message
     );
     assert!(insight.nodes.contains(&sparse_main) || insight.nodes.contains(&sparse_entry));
+}
+
+#[test]
+fn a_library_with_no_program_reads_its_coverage_as_context() {
+    // Alamofire, dplyr and ecto have no `main` and no route into their own
+    // code, so "entrypoints reach 0%" describes a library rather than a gap.
+    let mut graph = CodeGraph::new("repo");
+    let entry = graph.add_node(NodeKind::Entrypoint, "github workflow:CI/build");
+    let script = graph.add_node(NodeKind::File, "scripts/build.sh");
+    graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+    graph.add_edge_with_metadata(
+        entry,
+        script,
+        EdgeKind::References,
+        Confidence::Exact,
+        BTreeMap::from([("relation".to_string(), "entrypoint_file".to_string())]),
+    );
+    for index in 0..40 {
+        graph.add_node(NodeKind::Function, format!("helper_{index}"));
+    }
+
+    let report = insights(&graph);
+    let insight = report
+        .insights
+        .iter()
+        .find(|insight| insight.kind == "low_entrypoint_coverage")
+        .expect("expected a coverage diagnostic");
+    assert_eq!(insight.severity, InsightSeverity::Info);
+    assert!(
+        insight.message.starts_with("no program entrypoint starts"),
+        "{}",
+        insight.message
+    );
 }
 
 #[test]

@@ -1919,16 +1919,47 @@ pub(crate) fn add_entrypoint_coverage_insights(
             percentage(api_reached, functions.len())
         )
     };
+    // Alamofire, dplyr and ecto have no `main` and no route into their own
+    // code: their functions run when somebody else imports them. Coverage
+    // cannot be low where there is nothing to start, so that reads as
+    // context rather than as something to fix.
+    let started_in_code = starts_in_its_own_code(graph);
+    let opening = if started_in_code {
+        ""
+    } else {
+        "no program entrypoint starts this project's own code, so "
+    };
     insights.push(Insight {
         kind: "low_entrypoint_coverage".to_string(),
-        severity: InsightSeverity::Warning,
+        severity: if started_in_code {
+            InsightSeverity::Warning
+        } else {
+            InsightSeverity::Info
+        },
         message: format!(
-            "entrypoints reach {reached} of {} functions ({coverage}%), and {resolution}% of calls resolve to a scanned function — the rest name a dependency, the standard library, or a method the syntax cannot type{exported_note} — treat `unreachable_*` findings as gaps in call resolution, or as a library reached through its API, before reading them as dead code",
+            "{opening}entrypoints reach {reached} of {} functions ({coverage}%), and {resolution}% of calls resolve to a scanned function — the rest name a dependency, the standard library, or a method the syntax cannot type{exported_note} — treat `unreachable_*` findings as gaps in call resolution, or as a library reached through its API, before reading them as dead code",
             functions.len()
         ),
         nodes: entrypoints.into_iter().take(8).collect(),
         edges: Vec::new(),
     });
+}
+
+/// Whether anything starts this project's own code: a `main` the parser
+/// recognised, or an entrypoint a manifest, framework or CI file resolved
+/// onto a function.
+fn starts_in_its_own_code(graph: &CodeGraph) -> bool {
+    graph.nodes.iter().any(|node| {
+        node.kind == NodeKind::Function
+            && node
+                .metadata
+                .get("entrypoint_kind")
+                .is_some_and(|kind| kind == "program")
+    }) || graph.edges.iter().any(|edge| {
+        edge.metadata
+            .get("relation")
+            .is_some_and(|relation| relation == "entrypoint_function")
+    })
 }
 
 /// Whether entrypoints reach enough of the code for "unreachable" to be a
