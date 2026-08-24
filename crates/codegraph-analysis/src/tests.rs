@@ -5177,6 +5177,24 @@ fn a_question_the_graph_answers_outright_reaches_its_query() {
         plan("What functions run in parallel?").rule,
         "entrypoint_or_startup"
     );
+
+    // The question an agent asks before an edit.
+    let impact = plan("What would break if I change `compileScript`?");
+    assert_eq!(impact.rule, "reverse_dependency_or_impact");
+    assert_eq!(
+        impact.generated_query,
+        "dependents label:compileScript depth:4"
+    );
+    assert_eq!(
+        plan("Что сломается если изменить `compileScript`?").rule,
+        "reverse_dependency_or_impact"
+    );
+    // What a reader means by "most coupled" is which nodes carry the most
+    // edges.
+    assert_eq!(
+        plan("Which modules are most coupled?").rule,
+        "hotspot_or_centrality"
+    );
 }
 
 #[test]

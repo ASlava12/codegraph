@@ -374,6 +374,15 @@ pub(crate) fn natural_query_plan_with_anchor(
             "used by",
             "depends on",
             "depend on",
+            // The question an agent asks before an edit: "what would break
+            // if I change X" is what depends on X.
+            "would break",
+            "will break",
+            "if i change",
+            "if i remove",
+            "if i rename",
+            "что сломает",
+            "если изменить",
             "кто использ",
             "кто завис",
             "зависит от",
@@ -490,6 +499,11 @@ pub(crate) fn natural_query_plan_with_anchor(
             "hotspot",
             "hub",
             "central",
+            // What a reader means by "most coupled" is which nodes carry
+            // the most edges.
+            "coupled",
+            "coupling",
+            "связан",
             "important",
             "важн",
             "централ",
