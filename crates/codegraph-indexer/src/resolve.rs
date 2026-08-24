@@ -122,7 +122,10 @@ fn rust_method_is_std(method: &str) -> bool {
 }
 
 pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
-    let base = label.trim_end_matches('!');
+    // PHP writes `\count(..)` to mean the global function rather than one
+    // the current namespace might define, and monolog writes 273 of its
+    // standard-library calls that way.
+    let base = label.trim_end_matches('!').trim_start_matches('\\');
     match language {
         "rust" => {
             matches!(

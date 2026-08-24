@@ -3979,6 +3979,31 @@ fn scan_project_indexes_control_flow_facts() {
 }
 
 #[test]
+fn a_php_call_to_the_root_namespace_is_still_the_language() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("util.php"),
+        "<?php\nfunction total(array $rows) { return \\count($rows); }\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("\\count")
+        })
+        .and_then(|edge| edge.metadata.get("resolution"))
+        .map(String::as_str);
+    assert_eq!(resolution, Some("builtin"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_protected_method_answers_a_subclass_in_another_file() {
     // monolog declares `protected function getRecord` in its test base
     // class; 332 calls from the test files that extend it read as calls to
