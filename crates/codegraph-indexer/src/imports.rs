@@ -158,10 +158,39 @@ pub(crate) fn possible_local_import_target(
         Language::Java | Language::Kotlin | Language::Scala => {
             jvm_local_import_target(language, import_label)
         }
+        Language::Php => php_namespace_import_target(import_label),
         Language::Lua => lua_local_import_target(import_label),
         Language::OCaml => ocaml_local_import_target(import_label),
         _ => None,
     }
+}
+
+/// `use GuzzleHttp\Exception\InvalidArgumentException;` names a class, and
+/// PSR-4 maps its namespace onto a directory -- `GuzzleHttp\` onto `src/`
+/// here. The prefix a project maps varies, so each suffix of the namespace
+/// path is a candidate and the resolver takes the one file that ends with
+/// it. A name that matches nothing is a vendor class, which is why this is
+/// a possible local import rather than a required one.
+pub(crate) fn php_namespace_import_target(import_label: &str) -> Option<LocalImportTarget> {
+    let rest = import_label.trim().strip_prefix("use")?.trim_start();
+    let rest = rest.strip_prefix("function").map_or(rest, str::trim_start);
+    let target = rest
+        .split(|character: char| character.is_whitespace() || character == ';' || character == ',')
+        .next()?
+        .trim()
+        .trim_start_matches('\\');
+    let segments: Vec<&str> = target.split('\\').filter(|part| !part.is_empty()).collect();
+    if segments.len() < 2 {
+        return None;
+    }
+    let mut candidates = Vec::new();
+    for start in 0..segments.len() - 1 {
+        candidates.push(format!("{}.php", segments[start..].join("/")));
+    }
+    Some(LocalImportTarget {
+        target: target.to_string(),
+        candidates,
+    })
 }
 
 /// `@import("ast.zig")` names a file beside this one; `@import("std")`

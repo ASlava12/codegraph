@@ -4037,6 +4037,44 @@ func helperB() string { return "b" }
 }
 
 #[test]
+fn a_php_use_reaches_the_class_file() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src").join("Exception")).unwrap();
+    fs::write(
+        root.join("src").join("Client.php"),
+        "<?php\nnamespace GuzzleHttp;\n\nuse GuzzleHttp\\Exception\\BadResponseException;\nuse Psr\\Http\\Message\\UriInterface;\n\nclass Client {}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Exception").join("BadResponseException.php"),
+        "<?php\nnamespace GuzzleHttp\\Exception;\n\nclass BadResponseException extends \\RuntimeException {}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let file = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.kind == NodeKind::File && node.label == "src/Exception/BadResponseException.php"
+        })
+        .expect("missing class file");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::References
+                && edge.target == file.id
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "local_import_file")
+        }),
+        "PSR-4 maps the namespace onto the directory that holds the class"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_jvm_import_and_a_zig_import_reach_their_file() {
     let root = temp_project_root();
     let java_dir = root.join("gson/src/main/java/com/google/gson");
