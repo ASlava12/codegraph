@@ -3979,6 +3979,38 @@ fn scan_project_indexes_control_flow_facts() {
 }
 
 #[test]
+fn the_dotnet_platform_answers_its_own_calls() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    // Polly declares `Outcome.FromResult` and calls `Task.FromResult` 112
+    // times; the platform's static is not the project's method.
+    fs::write(
+        root.join("src").join("outcome.cs"),
+        "namespace Demo {\n    public class Outcome {\n        public static Outcome FromResult(int value) { return null; }\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("runner.cs"),
+        "namespace Demo {\n    public class Runner {\n        public object Run() { return Task.FromResult(1); }\n        public object Own() { return Outcome.FromResult(1); }\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let declared = node_id(&graph, NodeKind::Function, "FromResult");
+    let reaches = |label: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.target == declared
+                && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+        })
+    };
+    assert!(reaches("Outcome.FromResult"));
+    assert!(!reaches("Task.FromResult"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn rubys_kernel_calls_belong_to_the_language() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("lib")).unwrap();

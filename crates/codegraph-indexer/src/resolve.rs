@@ -80,6 +80,70 @@ fn csharp_member_of_every_value(method: &str) -> bool {
     )
 }
 
+/// Types the .NET platform gives every C# program. A call qualified by one
+/// of them — `TimeSpan.FromSeconds(..)`, `Guid.NewGuid()` — is the
+/// framework's, and so is `new ArgumentNullException(..)`.
+fn csharp_platform_type(name: &str) -> bool {
+    matches!(
+        name.split('<').next().unwrap_or(name),
+        "string"
+            | "String"
+            | "object"
+            | "Object"
+            | "Convert"
+            | "Math"
+            | "Console"
+            | "Debug"
+            | "Trace"
+            | "Task"
+            | "ValueTask"
+            | "Thread"
+            | "Interlocked"
+            | "Monitor"
+            | "Volatile"
+            | "TimeSpan"
+            | "DateTime"
+            | "DateTimeOffset"
+            | "Stopwatch"
+            | "Guid"
+            | "Uri"
+            | "Random"
+            | "Enumerable"
+            | "Array"
+            | "Activator"
+            | "Encoding"
+            | "StringBuilder"
+            | "List"
+            | "Dictionary"
+            | "HashSet"
+            | "Queue"
+            | "Stack"
+            | "Lazy"
+            | "Nullable"
+            | "CancellationToken"
+            | "CancellationTokenSource"
+            | "MemoryStream"
+            | "StreamReader"
+            | "StreamWriter"
+            | "File"
+            | "Path"
+            | "Directory"
+            | "Exception"
+            | "ArgumentException"
+            | "ArgumentNullException"
+            | "ArgumentOutOfRangeException"
+            | "InvalidOperationException"
+            | "NotSupportedException"
+            | "NotImplementedException"
+            | "ObjectDisposedException"
+            | "OperationCanceledException"
+            | "TaskCanceledException"
+            | "TimeoutException"
+            | "FormatException"
+            | "OverflowException"
+    )
+}
+
 /// Methods the Rust standard library gives every type.
 fn rust_method_is_std(method: &str) -> bool {
     matches!(
@@ -453,6 +517,56 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
         // which any project declares. Collection methods (`first`, `map`,
         // `include?`) are left out: a project defines those on its own
         // types as readily as the core library does.
+        // The framework every C# program compiles against. Polly's 11759
+        // unresolved calls were led by `TimeSpan.FromSeconds`, `nameof` and
+        // `ArgumentNullException` — the platform, not the project. Test
+        // libraries (Shouldly, xunit) are dependencies and stay out.
+        "csharp" => match base.rsplit_once('.') {
+            // The receiver has to be the type itself: `TimeSpan.FromSeconds`
+            // names one, while `args.Outcome.Exception.GetType` only ends in
+            // a property that shares a type's name.
+            Some((receiver, _)) => {
+                csharp_platform_type(receiver)
+                    || receiver
+                        .strip_prefix("System.")
+                        .is_some_and(csharp_platform_type)
+            }
+            None => {
+                csharp_platform_type(base)
+                    || matches!(base, "nameof" | "typeof" | "sizeof" | "default")
+            }
+        },
+        // Swift's own functions and the Foundation types it ships with.
+        "swift" => matches!(
+            base,
+            "print"
+                | "debugPrint"
+                | "dump"
+                | "NSLog"
+                | "assert"
+                | "assertionFailure"
+                | "precondition"
+                | "preconditionFailure"
+                | "fatalError"
+                | "abs"
+                | "min"
+                | "max"
+                | "swap"
+                | "zip"
+                | "stride"
+                | "String"
+                | "Int"
+                | "Double"
+                | "Float"
+                | "Bool"
+                | "Data"
+                | "Date"
+                | "URL"
+                | "URLRequest"
+                | "UUID"
+                | "NSError"
+                | "IndexPath"
+        ),
         "ruby" => matches!(
             base,
             "super"
