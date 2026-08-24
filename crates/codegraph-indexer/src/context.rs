@@ -60,6 +60,10 @@ pub(crate) struct IndexContext {
     pub(crate) pending_calls: Vec<PendingCall>,
     pub(crate) pending_type_references: Vec<PendingTypeReference>,
     pub(crate) pending_local_imports: Vec<PendingLocalImport>,
+    /// `using Polly.Telemetry;` names a namespace the project may declare
+    /// somewhere else entirely, so it can only be answered once every file
+    /// has been read.
+    pub(crate) pending_namespace_imports: Vec<PendingNamespaceImport>,
     pub(crate) pending_entrypoint_targets: Vec<PendingEntrypointTarget>,
     pub(crate) pending_route_handlers: Vec<PendingRouteHandler>,
     pub(crate) pending_compose_config_targets: Vec<PendingComposeConfigTarget>,
@@ -166,6 +170,12 @@ pub(crate) struct PendingTypeReference {
     pub(crate) label: String,
     pub(crate) language: String,
     pub(crate) span: SourceSpan,
+}
+
+pub(crate) struct PendingNamespaceImport {
+    pub(crate) import_node: NodeId,
+    pub(crate) language: &'static str,
+    pub(crate) namespace: String,
 }
 
 pub(crate) struct PendingLocalImport {

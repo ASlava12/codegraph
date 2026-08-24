@@ -1846,6 +1846,59 @@ pub(crate) fn stable_fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
+/// Link a namespace import to the namespace the project declares. C# writes
+/// `using Polly.Telemetry;` and declares that namespace in another file
+/// entirely; 417 of Polly's 742 usings name one of its own.
+pub(crate) fn resolve_pending_namespace_imports(context: &mut IndexContext) {
+    let pending = std::mem::take(&mut context.pending_namespace_imports);
+    for import in pending {
+        let Some(namespace_id) = context
+            .namespace_nodes
+            .get(&(import.language, import.namespace.clone()))
+            .copied()
+        else {
+            continue;
+        };
+        add_node_metadata(
+            &mut context.graph,
+            import.import_node,
+            "import_scope",
+            "local",
+        );
+        add_node_metadata(
+            &mut context.graph,
+            import.import_node,
+            "import_target",
+            import.namespace.clone(),
+        );
+        add_node_metadata(
+            &mut context.graph,
+            import.import_node,
+            "resolution",
+            "resolved",
+        );
+        add_node_metadata(
+            &mut context.graph,
+            import.import_node,
+            "resolved_namespace",
+            import.namespace.clone(),
+        );
+        let mut metadata = BTreeMap::new();
+        metadata.insert("relation".to_string(), "namespace_import".to_string());
+        metadata.insert("source".to_string(), "syntax".to_string());
+        metadata.insert("resolution".to_string(), "namespace_import".to_string());
+        metadata.insert("target".to_string(), import.namespace);
+        add_edge_once_with_metadata(
+            context,
+            import.import_node,
+            namespace_id,
+            EdgeKind::References,
+            Confidence::Syntactic,
+            metadata,
+        );
+    }
+}
+
 pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
     let pending_imports = std::mem::take(&mut context.pending_local_imports);
 

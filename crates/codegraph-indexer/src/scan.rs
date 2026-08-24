@@ -131,6 +131,7 @@ pub(crate) fn scan_project_with_scope(
         edge_keys_synced: 0,
         function_symbols: BTreeMap::new(),
         namespace_nodes: BTreeMap::new(),
+        pending_namespace_imports: Vec::new(),
         effect_entities: BTreeMap::new(),
         file_import_qualifiers: BTreeMap::new(),
         file_imported_names: BTreeMap::new(),
@@ -259,6 +260,7 @@ pub(crate) fn scan_project_with_scope(
     resolve_pending_calls(&mut context);
     resolve_pending_type_references(&mut context);
     resolve_pending_local_imports(&mut context);
+    resolve_pending_namespace_imports(&mut context);
     resolve_pending_entrypoint_targets(&mut context);
     resolve_pending_route_handlers(&mut context);
     link_imports_to_package_hubs(&mut context);
@@ -822,6 +824,20 @@ pub(crate) fn index_file(
                             mark_unresolved: true,
                             allow_suffix_fallback: language != Language::Rust,
                         });
+                    } else if let Some(namespace) = (item.kind == ParsedItemKind::Import)
+                        .then(|| csharp_namespace_import(language, &item.label))
+                        .flatten()
+                    {
+                        // `using Polly.Telemetry;` names a namespace, and the
+                        // project declares 92 of them; the declaration may be
+                        // in a file this walk has not reached yet.
+                        context
+                            .pending_namespace_imports
+                            .push(PendingNamespaceImport {
+                                import_node: item_id,
+                                language: language.name(),
+                                namespace,
+                            });
                     } else if let Some(possible_local_import) = possible_local_import {
                         context.pending_local_imports.push(PendingLocalImport {
                             import_node: item_id,

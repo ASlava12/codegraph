@@ -1494,6 +1494,62 @@ fn a_computed_require_names_no_module() {
 }
 
 #[test]
+fn a_csharp_using_finds_the_namespace_the_project_declares() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src").join("Polly.Core").join("Telemetry")).unwrap();
+    fs::create_dir_all(root.join("src").join("Polly.Core").join("Retry")).unwrap();
+    fs::write(
+        root.join("src")
+            .join("Polly.Core")
+            .join("Telemetry")
+            .join("TelemetryEvent.cs"),
+        "namespace Polly.Telemetry;\n\npublic class TelemetryEvent\n{\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Polly.Core").join("Retry").join("RetryStrategy.cs"),
+        "using System.Diagnostics;\nusing Polly.Telemetry;\nusing static Polly.Telemetry.TelemetryEvent;\n\nnamespace Polly.Retry;\n\npublic class RetryStrategy\n{\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.label == label)
+            .and_then(|node| node.metadata.get("resolution").cloned())
+    };
+    // The project declares `Polly.Telemetry`, so the using names something.
+    assert_eq!(
+        resolution("using Polly.Telemetry;").as_deref(),
+        Some("resolved")
+    );
+    // `System.Diagnostics` is the framework's, and `using static` names a
+    // type rather than the namespace.
+    assert_eq!(resolution("using System.Diagnostics;"), None);
+    assert_eq!(
+        resolution("using static Polly.Telemetry.TelemetryEvent;"),
+        None
+    );
+
+    let namespace = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "Polly.Telemetry")
+        .expect("the namespace is one node");
+    assert!(
+        graph.edges.iter().any(|edge| edge.target == namespace.id
+            && edge
+                .metadata
+                .get("relation")
+                .is_some_and(|relation| relation == "namespace_import")),
+        "the using reaches the namespace it names"
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn an_import_python_erases_is_not_a_runtime_dependency() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();

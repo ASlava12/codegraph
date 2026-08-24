@@ -1163,3 +1163,21 @@ pub(crate) fn line_is_type_checking_only(source: &str, line: u32) -> bool {
     }
     false
 }
+
+/// The namespace a C# `using` names. `using static X.Y` names a type and
+/// `using A = X.Y` an alias; neither is the namespace itself.
+pub(crate) fn csharp_namespace_import(language: Language, import_label: &str) -> Option<String> {
+    if language != Language::CSharp {
+        return None;
+    }
+    let value = import_label.trim().trim_end_matches(';').trim();
+    let rest = value.strip_prefix("using")?.trim();
+    if rest.is_empty() || rest.starts_with("static ") || rest.contains('=') {
+        return None;
+    }
+    let namespace = rest.trim();
+    namespace
+        .chars()
+        .all(|character| character.is_alphanumeric() || matches!(character, '.' | '_'))
+        .then(|| namespace.to_string())
+}
