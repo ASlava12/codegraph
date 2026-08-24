@@ -49,6 +49,31 @@ pub(crate) fn local_import_target(
     }
 }
 
+/// Haskell requires a module's name to match the path it is written at, so
+/// `import ShellCheck.AST` names `ShellCheck/AST.hs` under one of the
+/// project's source roots. shellcheck imports its own modules 134 times;
+/// the rest name libraries and are left alone.
+pub(crate) fn haskell_local_import_target(import_label: &str) -> Option<LocalImportTarget> {
+    let rest = import_label.trim().strip_prefix("import")?.trim_start();
+    let rest = rest.strip_prefix("qualified").map_or(rest, str::trim_start);
+    let module = rest
+        .split(|character: char| character.is_whitespace() || character == '(')
+        .next()?
+        .trim();
+    if module.is_empty() || !module.starts_with(|character: char| character.is_ascii_uppercase()) {
+        return None;
+    }
+    let path = module.replace('.', "/");
+    Some(LocalImportTarget {
+        target: module.to_string(),
+        candidates: vec![
+            format!("src/{path}.hs"),
+            format!("lib/{path}.hs"),
+            format!("{path}.hs"),
+        ],
+    })
+}
+
 /// `import ./helper.nix` and `import ./dir` name a path relative to the
 /// file that writes them, and a directory means its `default.nix`.
 /// `import <nixpkgs>` names a channel, which is not a file in this tree.
@@ -125,6 +150,10 @@ pub(crate) fn possible_local_import_target(
         Language::JavaScript | Language::TypeScript | Language::Tsx => {
             npm_package_import_target(import_label, npm_packages)
         }
+        // A Haskell import names a module, and most of them are a
+        // library's: `import Data.List` is not a file this project failed
+        // to ship, so a miss must stay quiet.
+        Language::Haskell => haskell_local_import_target(import_label),
         _ => None,
     }
 }

@@ -4037,6 +4037,53 @@ func helperB() string { return "b" }
 }
 
 #[test]
+fn a_haskell_import_reaches_the_module_it_names() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src").join("ShellCheck")).unwrap();
+    fs::write(
+        root.join("src").join("ShellCheck").join("Checker.hs"),
+        "module ShellCheck.Checker where\nimport ShellCheck.AST\nimport qualified Data.List\n\ncheck :: Int -> Int\ncheck x = x\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("ShellCheck").join("AST.hs"),
+        "module ShellCheck.AST where\n\nid' :: Int -> Int\nid' x = x\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let ast = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::File && node.label == "src/ShellCheck/AST.hs")
+        .expect("missing module file");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::References
+                && edge.target == ast.id
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "local_import_file")
+        }),
+        "the import must reach the file its module name names"
+    );
+    // `import qualified Data.List` names a library, not a file this
+    // project failed to ship.
+    assert!(
+        !graph.nodes.iter().any(|node| {
+            node.metadata
+                .get("resolution")
+                .is_some_and(|value| value == "unresolved")
+                && node.label.contains("Data.List")
+        }),
+        "a library import must not be reported as a missing local file"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_nix_import_reaches_the_file_it_names() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("modules").join("shell")).unwrap();
