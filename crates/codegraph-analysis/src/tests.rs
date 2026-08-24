@@ -2442,6 +2442,76 @@ fn workflow_from_file_expands_into_contained_symbols() {
 }
 
 #[test]
+fn workflow_does_not_expand_a_file_the_flow_only_passes_through() {
+    // A rails route references the file it is declared in. That file holds
+    // every other route of the app, and expanding it there replaced the one
+    // flow asked about with all of its siblings -- on mastodon, 196 unrelated
+    // routes ahead of the handler's own call chain. A container the flow
+    // arrives at is a landmark, not the subject.
+    let mut graph = CodeGraph::new("repo");
+    let routes_file = graph.add_node(NodeKind::File, "config/routes.rb");
+    let route = graph.add_node(NodeKind::Entrypoint, "route GET /accounts/:id");
+    let sibling = graph.add_node(NodeKind::Entrypoint, "route GET /statuses/:id");
+    let handler = graph.add_node(NodeKind::Function, "show");
+    let downstream = graph.add_node(NodeKind::Function, "authorize");
+    graph.add_edge(routes_file, route, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(routes_file, sibling, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(route, handler, EdgeKind::References, Confidence::Exact);
+    graph.add_edge(route, routes_file, EdgeKind::References, Confidence::Exact);
+    graph.add_edge(handler, downstream, EdgeKind::Calls, Confidence::Exact);
+
+    let from_route = workflow(
+        &graph,
+        WorkflowRequest {
+            start: TraceStart::NodeId(route),
+            max_depth: 5,
+            block_limit: 100,
+            filters: WorkflowFilters::default(),
+            compact: false,
+            max_fanout: None,
+        },
+    )
+    .expect("workflow report");
+
+    let labels: BTreeSet<_> = from_route
+        .blocks
+        .iter()
+        .map(|block| block.node.label.clone())
+        .collect();
+    assert!(
+        !labels.contains("route GET /statuses/:id"),
+        "a sibling route is not part of this route's flow: {labels:?}"
+    );
+    assert!(
+        labels.contains("show") && labels.contains("authorize"),
+        "the handler's own call chain is: {labels:?}"
+    );
+
+    // Rooted on the file, the same expansion is the whole point.
+    let from_file = workflow(
+        &graph,
+        WorkflowRequest {
+            start: TraceStart::NodeId(routes_file),
+            max_depth: 5,
+            block_limit: 100,
+            filters: WorkflowFilters::default(),
+            compact: false,
+            max_fanout: None,
+        },
+    )
+    .expect("workflow report");
+    let file_labels: BTreeSet<_> = from_file
+        .blocks
+        .iter()
+        .map(|block| block.node.label.clone())
+        .collect();
+    assert!(
+        file_labels.contains("route GET /statuses/:id"),
+        "a flow rooted on the file still expands into what it holds: {file_labels:?}"
+    );
+}
+
+#[test]
 fn journey_skips_dangling_edge_targets_instead_of_leaving_holes() {
     // A shorter route runs through a phantom node (an edge whose target has no
     // node — reachable in a deserialized graph). The BFS must not walk it; it

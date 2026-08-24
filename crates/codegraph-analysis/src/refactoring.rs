@@ -1066,21 +1066,32 @@ fn workflow_edge_priority(kind: &EdgeKind) -> u8 {
 /// the code symbols (and nested containers) it defines. That way a flow rooted
 /// on a file expands into the flows of the functions it holds instead of
 /// dead-ending on a lonely "leaf" block.
+///
+/// `expand_contains` says whether this node is one the flow is rooted on: the
+/// start container, or a container the start expands into. A container the flow
+/// only *arrives at* — the file a route names as its definition site, a module
+/// an import reaches — is a landmark on the way, not the subject. Expanding it
+/// would replace the flow being followed with everything else the file happens
+/// to hold: from one mastodon route that was 196 unrelated sibling routes,
+/// crowding the handler's own call chain out of the block budget.
 fn workflow_followable_edges<'graph>(
     graph: &'graph CodeGraph,
     adjacency: &TraceAdjacency,
     nodes_by_id: &BTreeMap<NodeId, &'graph Node>,
     node_id: NodeId,
     filters: &WorkflowFilters,
+    expand_contains: bool,
 ) -> Vec<(usize, &'graph Edge)> {
     let mut edges: Vec<(usize, &Edge)> = adjacency
         .trace_edges(graph, node_id, TraceDirection::Outgoing)
         .filter(|(_, edge)| workflow_edge_filter_matches(edge, filters))
         .collect();
-    if matches!(
-        nodes_by_id.get(&node_id).map(|node| &node.kind),
-        Some(NodeKind::File | NodeKind::Directory)
-    ) {
+    if expand_contains
+        && matches!(
+            nodes_by_id.get(&node_id).map(|node| &node.kind),
+            Some(NodeKind::File | NodeKind::Directory)
+        )
+    {
         for (edge_index, edge) in adjacency.contains_edges(graph, node_id) {
             if edge.kind == EdgeKind::Contains
                 // The same edge filter the transitions are later held to
@@ -1128,23 +1139,42 @@ pub(crate) fn workflow_with_insight_report(
     let mut transition_indexes = BTreeSet::new();
     let mut truncated = false;
     let mut truncated_children: BTreeMap<NodeId, usize> = BTreeMap::new();
+    // Containers the flow is rooted on: the start, and any container the start
+    // expands into (a directory holds files that hold symbols). Only these
+    // expand into what they contain -- see `workflow_followable_edges`.
+    let mut rooted_containers = BTreeSet::new();
 
     visited.insert(start.id);
     depths.insert(start.id, 0);
+    rooted_containers.insert(start.id);
     queue.push_back((start.id, 0));
 
     while let Some((node_id, depth)) = queue.pop_front() {
+        let expand_contains = rooted_containers.contains(&node_id);
         if depth >= max_depth {
-            if !workflow_followable_edges(graph, &adjacency, &nodes_by_id, node_id, &filters)
-                .is_empty()
+            if !workflow_followable_edges(
+                graph,
+                &adjacency,
+                &nodes_by_id,
+                node_id,
+                &filters,
+                expand_contains,
+            )
+            .is_empty()
             {
                 truncated = true;
             }
             continue;
         }
 
-        let mut followable =
-            workflow_followable_edges(graph, &adjacency, &nodes_by_id, node_id, &filters);
+        let mut followable = workflow_followable_edges(
+            graph,
+            &adjacency,
+            &nodes_by_id,
+            node_id,
+            &filters,
+            expand_contains,
+        );
         // Cap the fan-out per node, keeping the highest-priority edges (calls
         // first), so the block budget follows the call chain into depth instead
         // of exhausting on one wide node. Unset = unbounded breadth (default).
@@ -1167,6 +1197,7 @@ pub(crate) fn workflow_with_insight_report(
                     &nodes_by_id,
                     edge.target,
                     &filters,
+                    expand_contains && edge.kind == EdgeKind::Contains,
                 )
                 .is_empty();
                 (
@@ -1182,6 +1213,9 @@ pub(crate) fn workflow_with_insight_report(
         }
         for (edge_index, edge) in followable {
             let next = edge.target;
+            if expand_contains && edge.kind == EdgeKind::Contains {
+                rooted_containers.insert(next);
+            }
             if visited.contains(&next) {
                 transition_indexes.insert(edge_index);
                 continue;
