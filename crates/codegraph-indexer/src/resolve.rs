@@ -1435,69 +1435,56 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         let caller_path = graph_node(&context.graph, call.caller)
             .and_then(|node| node.span.as_ref())
             .map(|span| span.path.as_str());
-        let language_targets = all_targets
-            .into_iter()
-            .filter(|target| {
-                graph_node(&context.graph, *target)
-                    .and_then(|node| node.metadata.get("language"))
-                    .is_some_and(|language| language == &call.language)
-            })
-            .collect::<Vec<_>>();
+        // Each of these narrowings used to build a vector of its own, once
+        // per call: terraform makes 100000 of them, so the narrowing
+        // happens in place.
+        let mut language_targets = all_targets;
+        language_targets.retain(|target| {
+            graph_node(&context.graph, *target)
+                .and_then(|node| node.metadata.get("language"))
+                .is_some_and(|language| language == &call.language)
+        });
         // A definition that patches a runtime global answers only calls
         // written through that global. kong replaces `ngx.exit` in
         // globalpatches.lua, and `kong.response.exit(...)` -- a different
         // function, built inside the PDK factory -- was answered by it on
         // the shared tail alone.
         let call_owner = split_qualified_call(&call.label).map(|(owner, _)| owner);
-        let language_targets = language_targets
-            .into_iter()
-            .filter(|target| {
-                let Some(owner) = graph_node(&context.graph, *target)
-                    .and_then(|node| split_qualified_call(&node.label))
-                    .map(|(owner, _)| owner.to_string())
-                else {
-                    return true;
-                };
-                !patches_runtime_global(&call.language, &owner) || call_owner == Some(&owner)
-            })
-            .collect::<Vec<_>>();
+        language_targets.retain(|target| {
+            let Some(owner) = graph_node(&context.graph, *target)
+                .and_then(|node| split_qualified_call(&node.label))
+                .map(|(owner, _)| owner)
+            else {
+                return true;
+            };
+            !patches_runtime_global(&call.language, owner) || call_owner == Some(owner)
+        });
         // `value.parse::<usize>()` is `str::parse`, and this repository has
         // a `pub(crate) fn parse` of its own; ripgrep's 374 `.unwrap()`
         // calls found its private `fn unwrap`. A Rust call written through a
         // receiver is answered by a method, and by no method at all when the
         // name is one every type already has.
-        let language_targets = if receiver_call_is_universal(&call.language, &call.label) {
-            Vec::new()
+        if receiver_call_is_universal(&call.language, &call.label) {
+            language_targets.clear();
         } else if call.language == "rust" && call.label.contains('.') {
-            language_targets
-                .into_iter()
-                .filter(|target| {
-                    graph_node(&context.graph, *target)
-                        .is_some_and(|node| node.metadata.contains_key("owner_type"))
-                })
-                .collect::<Vec<_>>()
-        } else {
-            language_targets
-        };
+            language_targets.retain(|target| {
+                graph_node(&context.graph, *target)
+                    .is_some_and(|node| node.metadata.contains_key("owner_type"))
+            });
+        }
         // The program does not call its own tests. flask has exactly one
         // function named `close` — a helper in tests/test_helpers.py — so
         // `builder.close()` in src/flask/app.py resolved to it with full
         // confidence, and 1143 such links existed across the corpora. A
         // caller outside tests, examples and fixtures cannot mean one.
         let caller_is_test = caller_path.is_some_and(is_test_like_source_path);
-        let language_targets = if caller_is_test {
-            language_targets
-        } else {
-            language_targets
-                .iter()
-                .copied()
-                .filter(|target| {
-                    graph_node(&context.graph, *target)
-                        .and_then(|node| node.span.as_ref())
-                        .is_none_or(|span| !is_test_like_source_path(&span.path))
-                })
-                .collect::<Vec<_>>()
-        };
+        if !caller_is_test {
+            language_targets.retain(|target| {
+                graph_node(&context.graph, *target)
+                    .and_then(|node| node.span.as_ref())
+                    .is_none_or(|span| !is_test_like_source_path(&span.path))
+            });
+        }
         let local_targets = caller_path
             .map(|path| {
                 language_targets
