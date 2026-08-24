@@ -6945,6 +6945,30 @@ fn insights_report_unresolved_makefile_command_paths() {
     assert_eq!(insight.severity, InsightSeverity::Warning);
     assert_eq!(insight.nodes, vec![broken]);
     assert!(insight.message.contains("scripts/deploy.sh"));
+
+    // What the build produces is missing only until the build runs:
+    // redis's Makefile runs `./src/redis-server` and dune's runs
+    // `_boot/dune.exe`, neither of which is a file anybody wrote.
+    let built = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "make target:start",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "makefile_target".to_string()),
+            ("command".to_string(), "./src/redis-server".to_string()),
+            ("command_path".to_string(), "src/redis-server".to_string()),
+        ]),
+    );
+    graph.add_edge(graph.root, built, EdgeKind::Entrypoint, Confidence::Exact);
+    let report = insights(&graph);
+    let built_insight = report
+        .insights
+        .iter()
+        .find(|insight| {
+            insight.kind == "unresolved_makefile_command_path" && insight.nodes.contains(&built)
+        })
+        .expect("still recorded, and as a note");
+    assert_eq!(built_insight.severity, InsightSeverity::Info);
     assert!(!report.insights.iter().any(|insight| {
         insight.kind == "unresolved_makefile_command_path"
             && (insight.nodes.contains(&resolved)

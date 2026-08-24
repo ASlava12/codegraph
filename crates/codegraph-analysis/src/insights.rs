@@ -1762,9 +1762,18 @@ pub(crate) fn add_unresolved_workflow_command_path_insights(
             .get("command")
             .map(String::as_str)
             .unwrap_or(command_path);
+        // A command naming a source file this repository does not hold is a
+        // broken reference somebody can fix. One naming what the build
+        // produces — `src/redis-server`, `_boot/dune.exe`, `ca/ca.crt` — is
+        // missing only until the build runs, which is most of them.
+        let severity = if names_a_source_file(command_path) {
+            InsightSeverity::Warning
+        } else {
+            InsightSeverity::Info
+        };
         insights.push(Insight {
             kind: insight_kind.to_string(),
-            severity: InsightSeverity::Warning,
+            severity,
             message: format!(
                 "{label_prefix} `{}` runs `{command}` but command path `{command_path}` was not found",
                 node.label
@@ -1773,6 +1782,46 @@ pub(crate) fn add_unresolved_workflow_command_path_insights(
             edges: incoming_edge_indexes(graph, node.id, EdgeKind::Entrypoint),
         });
     }
+}
+
+/// Whether a path names a file a person writes rather than one a build
+/// produces. A script, a program's source, a configuration a project keeps
+/// — those are held in the repository, and a missing one is a broken
+/// reference.
+fn names_a_source_file(path: &str) -> bool {
+    let extension = path.rsplit('/').next().unwrap_or(path).rsplit_once('.');
+    extension.is_some_and(|(_, extension)| {
+        matches!(
+            extension.to_ascii_lowercase().as_str(),
+            "sh" | "bash"
+                | "zsh"
+                | "fish"
+                | "ps1"
+                | "py"
+                | "rb"
+                | "pl"
+                | "js"
+                | "mjs"
+                | "cjs"
+                | "ts"
+                | "lua"
+                | "php"
+                | "r"
+                | "jl"
+                | "sql"
+                | "yml"
+                | "yaml"
+                | "toml"
+                | "json"
+                | "cfg"
+                | "ini"
+                | "conf"
+                | "mk"
+                | "make"
+                | "cmake"
+                | "dockerfile"
+        )
+    })
 }
 
 pub(crate) fn add_entrypoint_dead_end_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
