@@ -298,6 +298,121 @@ drive("client insights read undeclared imports the way the CLI does", () => {
   }
 });
 
+// A PHP namespace states neither how its package hyphenates nor which of
+// two libraries publishes it, and a composer lockfile states the
+// namespaces a package autoloads. Reading only the first spelling made the
+// browser report 52 of koel's framework imports and 27 of monolog's
+// optional handlers as undeclared, where the CLI reported one and none.
+drive("client insights read php imports the way the CLI does", () => {
+  const graph = {
+    nodes: [
+      { id: 1, kind: "file", label: "composer.json" },
+      {
+        id: 2,
+        kind: "external_dependency",
+        label: "aws/aws-sdk-php",
+        metadata: { item_kind: "dependency", package_id: "composer:aws/aws-sdk-php" },
+      },
+      {
+        id: 3,
+        kind: "external_dependency",
+        label: "psr/http-message",
+        metadata: { item_kind: "dependency", package_id: "composer:psr/http-message" },
+      },
+      {
+        id: 4,
+        kind: "external_dependency",
+        label: "laravel/framework",
+        metadata: {
+          item_kind: "dependency",
+          package_id: "composer:laravel/framework",
+          autoloaded_namespaces: "Illuminate\\",
+        },
+      },
+      { id: 5, kind: "file", label: "src/Handler/DynamoDbHandler.php" },
+      { id: 6, kind: "file", label: "src/Http/Client.php" },
+      { id: 7, kind: "file", label: "app/Events/Event.php" },
+      { id: 8, kind: "file", label: "src/Reporting/Reporter.php" },
+      {
+        id: 10,
+        kind: "external_dependency",
+        label: "use Aws\\DynamoDb\\DynamoDbClient;",
+        metadata: { item_kind: "import", language: "php" },
+      },
+      {
+        id: 11,
+        kind: "external_dependency",
+        label: "use Psr\\Http\\Message\\RequestInterface;",
+        metadata: { item_kind: "import", language: "php" },
+      },
+      {
+        id: 12,
+        kind: "external_dependency",
+        label: "use Illuminate\\Broadcasting\\Channel;",
+        metadata: { item_kind: "import", language: "php" },
+      },
+      {
+        id: 13,
+        kind: "external_dependency",
+        label: "use Acme\\Reporting\\Report;",
+        metadata: { item_kind: "import", language: "php" },
+      },
+    ],
+    edges: [
+      { kind: "imports", source: 5, target: 10 },
+      { kind: "imports", source: 6, target: 11 },
+      { kind: "imports", source: 7, target: 12 },
+      { kind: "imports", source: 8, target: 13 },
+    ],
+  };
+  const findings = api
+    .buildClientInsights(graph)
+    .filter((insight) => insight.kind === "undeclared_external_import");
+  const named = findings.map((finding) => finding.message.split(" ")[0]);
+  // `aws/aws-sdk-php` publishes `Aws\`, psr/http-message serves
+  // `Psr\Http\Message`, and the lockfile says `Illuminate\` is laravel's.
+  for (const covered of ["aws/dynamo-db", "aws/dynamodb", "psr/http", "illuminate/broadcasting"]) {
+    if (named.includes(covered)) {
+      throw new Error(`${covered} is declared: ${JSON.stringify(findings)}`);
+    }
+  }
+  if (named.length !== 1 || !named[0].startsWith("acme/")) {
+    throw new Error(`only the undeclared vendor is reported: ${JSON.stringify(findings)}`);
+  }
+});
+
+// `cProfile` is a standard module that is not written in lower case, and
+// canonicalising the name before the standard-library test made the
+// browser report two of pytudes' notebooks as importing a package nobody
+// declared.
+drive("client insights know a standard module written in mixed case", () => {
+  const graph = {
+    nodes: [
+      { id: 1, kind: "file", label: "pyproject.toml" },
+      {
+        id: 2,
+        kind: "external_dependency",
+        label: "numpy",
+        metadata: { item_kind: "dependency", package_id: "python:numpy" },
+      },
+      { id: 3, kind: "file", label: "src/app/profile.py" },
+      {
+        id: 10,
+        kind: "external_dependency",
+        label: "import cProfile",
+        metadata: { item_kind: "import", language: "python" },
+      },
+    ],
+    edges: [{ kind: "imports", source: 3, target: 10 }],
+  };
+  const findings = api
+    .buildClientInsights(graph)
+    .filter((insight) => insight.kind === "undeclared_external_import");
+  if (findings.length !== 0) {
+    throw new Error(`cProfile is the standard library: ${JSON.stringify(findings)}`);
+  }
+});
+
 // An unresolved or ambiguous call is the expected default on a syntax-only
 // scan, and the CLI reads it as info; the browser used to call both a
 // warning, and looked for ambiguity in a shape the resolver stopped

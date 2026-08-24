@@ -67,6 +67,13 @@ Implemented now:
   capitalised `NS`/`CF`/`CG`/`Sec`) as that framework's, and a message whose receiver names a
   framework class (`[NSURL URLWithString:]`) as Foundation's rather than as a selector nothing
   declares.
+- The browser's own copy of the undeclared-import rule reads a package the way the CLI does: every
+  spelling a PHP namespace could name (`Doctrine\CouchDB` is doctrine/couchdb as readily as
+  doctrine/couch-db), the namespaces a composer lockfile says a package autoloads, the library a
+  declared name already covers (`aws/aws-sdk-php` publishes `Aws\`), and a standard module written
+  in mixed case (`cProfile`). Driving both sides over twelve scanned projects had the browser
+  reporting 52 of koel's framework imports, 27 of monolog's optional handlers and one of pytudes'
+  notebooks as undeclared where the CLI reported one, none and none.
 - A syntax-error finding names the line the parser lost the thread on, which is what tells a broken
   file from syntax a grammar does not cover: koel's specs are valid TypeScript that
   tree-sitter-typescript cannot read (`await original<typeof import('./helpers')>()`), and dune's C

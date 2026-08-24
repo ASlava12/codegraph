@@ -688,6 +688,12 @@ function addUndeclaredImportInsights(graph, insights) {
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
   // One finding per package, as the CLI reports it: a package imported from
   // sixty files is one fact about the manifest, not sixty.
+  const autoloadedNamespaces = (graph.nodes || [])
+    .map((node) => node.metadata?.autoloaded_namespaces)
+    .filter(Boolean)
+    .flatMap((namespaces) => String(namespaces).split(","))
+    .map((namespace) => namespace.trim())
+    .filter(Boolean);
   const grouped = new Map();
   graph.edges
     .filter((edge) => edge.kind === "imports")
@@ -700,18 +706,29 @@ function addUndeclaredImportInsights(graph, insights) {
       // `import(`${pkgDir}/package.json`)` names no package: the specifier
       // is built when it runs.
       if (label.includes("${")) return;
-      const first = importPackageCandidate(target?.metadata?.language, label);
-      if (!first) return;
-      // `import yaml` installs PyYAML and `import dotenv` python-dotenv, so
-      // both names are asked about and the most specific one is reported,
-      // as the CLI does.
-      const candidates = [first];
-      const distribution = first.ecosystem === "python" ? pythonDistributionName(first.package) : null;
-      if (distribution) candidates.unshift({ ecosystem: "python", package: distribution });
-      const candidate = candidates.reduce((best, entry) =>
+      // `import yaml` installs PyYAML and `import dotenv` python-dotenv, and
+      // a PHP namespace states neither how its package hyphenates nor which
+      // of two libraries publishes it, so every spelling is asked about and
+      // the most specific one is reported, as the CLI does.
+      const candidates = importPackageCandidates(target?.metadata?.language, label);
+      if (!candidates.length) return;
+      const inEcosystem = candidates.filter((entry) => declaredEcosystems.has(entry.ecosystem));
+      if (!inEcosystem.length) return;
+      const candidate = inEcosystem.reduce((best, entry) =>
         entry.package.length > best.package.length ? entry : best,
       );
-      if (!declaredEcosystems.has(candidate.ecosystem)) return;
+      // A composer lockfile states which namespaces each package
+      // autoloads, and that is the only place the mapping is written:
+      // `Illuminate\Broadcasting\Channel` comes from `laravel/framework`.
+      // The CLI reads it; without it the browser called 52 of koel's
+      // framework imports undeclared.
+      if (
+        target?.metadata?.language === "php" &&
+        phpImportedClass(label) &&
+        autoloadedNamespaces.some((namespace) => phpImportedClass(label).startsWith(namespace))
+      ) {
+        return;
+      }
       if (candidates.some((entry) => ownPackages.has(`${entry.ecosystem}:${entry.package}`))) return;
       if (candidates.some((entry) => isDeclaredPackage(declared, entry.ecosystem, entry.package))) {
         return;
@@ -751,6 +768,21 @@ function addUndeclaredImportInsights(graph, insights) {
       nodeId: group.nodeId,
     });
   });
+}
+
+// The class a PHP `use` statement names, without the leading separator or
+// an alias. The CLI reads the same shape before asking whether a package's
+// autoload namespaces cover it.
+function phpImportedClass(label) {
+  const statement = String(label || "").trim().replace(/;$/, "");
+  const rest =
+    statement.startsWith("use function ") ? statement.slice("use function ".length)
+    : statement.startsWith("use const ") ? statement.slice("use const ".length)
+    : statement.startsWith("use ") ? statement.slice("use ".length)
+    : null;
+  if (!rest) return "";
+  const [head] = rest.split(" as ");
+  return head.trim().replace(/^\\+/, "");
 }
 
 // Whether a path is the program itself rather than its tests, examples,
@@ -832,6 +864,25 @@ function typesPackageName(packageName) {
   return `@types/${packageName}`;
 }
 
+// Every package an import could name, in the order the CLI offers them.
+// One candidate for most languages; python adds the distribution name a
+// module installs under, and PHP every spelling of vendor and component.
+function importPackageCandidates(language, label) {
+  if (language === "php") {
+    return phpImportPackages(label).map((packageName) => ({
+      ecosystem: "composer",
+      package: packageName,
+    }));
+  }
+  const first = importPackageCandidate(language, label);
+  if (!first) return [];
+  if (first.ecosystem === "python") {
+    const distribution = pythonDistributionName(first.package);
+    if (distribution) return [{ ecosystem: "python", package: distribution }, first];
+  }
+  return [first];
+}
+
 function importPackageCandidate(language, label) {
   switch (language) {
     case "rust":
@@ -869,6 +920,11 @@ function pythonImportPackage(label) {
   // installs them, so nothing declares them either. The test comes before
   // canonicalisation, which turns the underscore into a dash.
   if (root.startsWith("_")) return null;
+  // A handful of standard modules are not written in lower case --
+  // `cProfile` is one, and pytudes profiles two of its notebooks with it --
+  // so the module is tested as written before it is canonicalised, which is
+  // the order the CLI tests it in.
+  if (pythonStdlibPackages.has(root)) return null;
   const packageName = normalizePythonPackageName(root);
   if (!packageName || pythonStdlibPackages.has(packageName)) return null;
   return { ecosystem: "python", package: packageName };
@@ -908,12 +964,22 @@ function goImportPackage(label) {
 }
 
 function phpImportPackage(label) {
-  const namespaces = phpImportNamespaces(label);
-  for (const namespace of namespaces) {
-    const candidate = phpNamespacePackage(namespace);
-    if (candidate) return { ecosystem: "composer", package: candidate };
+  const [first] = phpImportPackages(label);
+  return first ? { ecosystem: "composer", package: first } : null;
+}
+
+// Every package spelling a PHP import could name, in the order the CLI
+// offers them. A namespace states a vendor and a component and neither
+// says how the package hyphenates them, so both spellings are offered and
+// the declared set decides.
+function phpImportPackages(label) {
+  const packages = [];
+  for (const namespace of phpImportNamespaces(label)) {
+    for (const candidate of phpNamespacePackageCandidates(namespace)) {
+      if (!packages.includes(candidate)) packages.push(candidate);
+    }
   }
-  return null;
+  return packages;
 }
 
 function phpImportNamespaces(label) {
@@ -945,22 +1011,50 @@ function phpNamespaceWithoutAlias(value) {
     .replace(/^\\+/, "");
 }
 
-function phpNamespacePackage(namespace) {
+function phpNamespacePackageCandidates(namespace) {
   const parts = String(namespace || "")
     .split("\\")
     .map((part) => part.trim())
     .filter(Boolean);
-  if (parts.length < 2 || phpNonComposerNamespaceRoots.has(parts[0])) return null;
+  if (parts.length < 2 || phpNonComposerNamespaceRoots.has(parts[0])) return [];
 
-  if (parts[0] === "Monolog") return "monolog/monolog";
-  if (parts[0] === "PHPUnit") return "phpunit/phpunit";
-  if (parts[0] === "GuzzleHttp") return "guzzlehttp/guzzle";
+  const packages = [];
+  if (parts[0] === "Monolog") packages.push("monolog/monolog");
+  if (parts[0] === "PHPUnit") packages.push("phpunit/phpunit");
+  if (parts[0] === "GuzzleHttp") packages.push("guzzlehttp/guzzle");
   if (parts[0] === "Symfony" && parts[1] === "Component" && parts[2]) {
-    return `symfony/${composerPackagePart(parts[2])}`;
+    packages.push(`symfony/${composerPackagePart(parts[2])}`);
   }
-  if (parts[0] === "Psr" && parts[1]) return `psr/${composerPackagePart(parts[1])}`;
+  if (parts[0] === "Psr" && parts[1]) {
+    // `Psr\Log` is psr/log, but `Psr\Http\Message` is psr/http-message
+    // rather than psr/http. Offer both, and let the declared set decide.
+    packages.push(`psr/${composerPackagePart(parts[1])}`);
+    if (parts[2]) {
+      packages.push(`psr/${composerPackagePart(parts[1])}-${composerPackagePart(parts[2])}`);
+    }
+  }
+  // A capital run is a word boundary in one package name and part of the
+  // word in the next -- `Doctrine\CouchDB` is doctrine/couchdb, `MongoDB`
+  // is the vendor mongodb -- so both spellings are offered.
+  for (const vendor of composerPackageSpellings(parts[0])) {
+    for (const component of composerPackageSpellings(parts[1])) {
+      packages.push(`${vendor}/${component}`);
+    }
+    packages.push(`${vendor}/${vendor}`);
+  }
+  return packages.filter((entry, index) => packages.indexOf(entry) === index);
+}
 
-  return `${composerPackagePart(parts[0])}/${composerPackagePart(parts[1])}`;
+function composerPackageSpellings(value) {
+  const separated = composerPackagePart(value);
+  const glued = String(value || "")
+    .split("")
+    .filter((character) => /[A-Za-z0-9]/.test(character))
+    .join("")
+    .toLowerCase();
+  const spellings = [separated];
+  if (glued && !spellings.includes(glued)) spellings.push(glued);
+  return spellings;
 }
 
 function composerPackagePart(value) {
@@ -991,7 +1085,29 @@ function isDeclaredPackage(declared, ecosystem, packageName) {
   if (ecosystem === "python") {
     return declared.has(`python:${normalizePythonPackageName(packageName)}`);
   }
+  if (ecosystem === "composer") {
+    const imported = packageName.toLowerCase();
+    if (declared.has(`composer:${imported}`)) return true;
+    return Array.from(declared).some((packageId) => {
+      if (!packageId.startsWith("composer:")) return false;
+      return composerNamesTheSameLibrary(packageId.slice("composer:".length), imported);
+    });
+  }
   return declared.has(`${ecosystem}:${packageName.toLowerCase()}`);
+}
+
+// Whether a declared composer package is the library an import names. The
+// CLI asks the same question: `aws/aws-sdk-php` publishes `Aws\`, so a
+// short root still matches when the declared name opens with it as a word
+// of its own -- and otherwise a short root says too little on its own.
+function composerNamesTheSameLibrary(declared, imported) {
+  const glue = (value) => String(value).replace(/[^A-Za-z0-9]/g, "");
+  const library = declared.includes("/") ? declared.slice(declared.indexOf("/") + 1) : declared;
+  const root = glue(imported.split("/")[0]);
+  const declaredRoot = glue(library);
+  if (library.startsWith(`${root}-`)) return true;
+  if (root.length < 4) return false;
+  return declaredRoot === root || declaredRoot.startsWith(root) || root.startsWith(declaredRoot);
 }
 
 function normalizePythonPackageName(value) {
