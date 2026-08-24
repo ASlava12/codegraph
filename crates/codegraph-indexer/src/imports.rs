@@ -155,7 +155,9 @@ pub(crate) fn possible_local_import_target(
         // to ship, so a miss must stay quiet.
         Language::Haskell => haskell_local_import_target(import_label),
         Language::Elixir => elixir_local_import_target(import_label),
-        Language::Java | Language::Kotlin => jvm_local_import_target(language, import_label),
+        Language::Java | Language::Kotlin | Language::Scala => {
+            jvm_local_import_target(language, import_label)
+        }
         Language::Lua => lua_local_import_target(import_label),
         Language::OCaml => ocaml_local_import_target(import_label),
         _ => None,
@@ -180,9 +182,9 @@ pub(crate) fn zig_local_import_target(
 }
 
 /// `import com.google.gson.Gson;` names the file the package directory
-/// holds, which Java and Kotlin both require to match. The source root
-/// varies by build tool, so the package path is the candidate and the
-/// resolver finds the one file that ends with it.
+/// holds, which Java, Kotlin and Scala all lay out the same way. The
+/// source root varies by build tool, so the package path is the candidate
+/// and the resolver finds the one file that ends with it.
 pub(crate) fn jvm_local_import_target(
     language: Language,
     import_label: &str,
@@ -193,13 +195,16 @@ pub(crate) fn jvm_local_import_target(
         .split(|character: char| character.is_whitespace() || character == ';')
         .next()?
         .trim();
-    if target.is_empty() || target.ends_with('*') || !target.contains('.') {
+    // A wildcard names a package, not a file: `import java.util.*` and
+    // Scala's `import cats.implicits._`.
+    if target.is_empty() || target.ends_with('*') || target.ends_with('_') || !target.contains('.')
+    {
         return None;
     }
-    let extension = if language == Language::Kotlin {
-        "kt"
-    } else {
-        "java"
+    let extension = match language {
+        Language::Kotlin => "kt",
+        Language::Scala => "scala",
+        _ => "java",
     };
     let path = target.replace('.', "/");
     Some(LocalImportTarget {
