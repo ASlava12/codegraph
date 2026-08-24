@@ -1221,7 +1221,14 @@ pub(crate) fn add_unresolved_github_actions_run_path_insights(
         nodes.dedup();
         insights.push(Insight {
             kind: "unresolved_github_actions_run_path".to_string(),
-            severity: InsightSeverity::Warning,
+            // The same reading as everywhere else: a missing script is a
+            // broken reference, and `_boot/dune.exe` or `./src/redis-server`
+            // is missing only until the build runs.
+            severity: if names_a_source_file(command_path) {
+                InsightSeverity::Warning
+            } else {
+                InsightSeverity::Info
+            },
             message: format!(
                 "GitHub Actions job `{workflow}/{job}` runs `{command}` but command path `{command_path}` was not found"
             ),

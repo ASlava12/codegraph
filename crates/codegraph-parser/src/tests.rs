@@ -271,6 +271,28 @@ enum Role { ADMIN }
 }
 
 #[test]
+fn a_rubys_fallback_belongs_to_the_key_before_it() {
+    // `ENV['APP_ENV'] || ENV['RACK_ENV'] || :development` gives APP_ENV a
+    // fallback and RACK_ENV none; sinatra read RACK_ENV as its own default.
+    let parsed = parse_source(
+        "lib/sinatra/base.rb",
+        b"set :environment, (ENV['APP_ENV'] || ENV['RACK_ENV'] || :development).to_sym\n",
+        Language::Ruby,
+    )
+    .expect("parse ruby");
+    let default_of = |key: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == key)
+            .and_then(|item| item.metadata.get("default_value").cloned())
+    };
+
+    assert_eq!(default_of("APP_ENV").as_deref(), Some("RACK_ENV"));
+    assert_eq!(default_of("RACK_ENV"), None);
+}
+
+#[test]
 fn nix_modules_declare_the_options_they_offer() {
     let adapter = adapter_for_language(Language::Nix).unwrap();
     let source = br#"{ config, lib, ... }:

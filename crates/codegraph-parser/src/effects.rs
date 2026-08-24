@@ -981,7 +981,13 @@ pub(crate) fn ruby_env_default_value(node: Node<'_>, source: &[u8]) -> Option<St
     let expression = short_ancestor_text(node, source, |candidate| {
         candidate.contains("ENV[") && candidate.contains("||")
     })?;
-    quoted_string_values(&expression).into_iter().nth(1)
+    // `ENV['APP_ENV'] || ENV['RACK_ENV'] || :development` gives APP_ENV a
+    // fallback and RACK_ENV none: what follows a key is its default, and
+    // sinatra read RACK_ENV as its own.
+    let values = quoted_string_values(&expression);
+    let key = quoted_string_values(&text).into_iter().next()?;
+    let position = values.iter().position(|value| *value == key)?;
+    values.into_iter().nth(position + 1)
 }
 
 pub(crate) fn getenv_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
