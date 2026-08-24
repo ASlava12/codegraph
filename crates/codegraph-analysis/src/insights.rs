@@ -754,6 +754,17 @@ pub(crate) fn add_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Insi
 /// target is often a whole shell command, and only a token carrying a
 /// directory separator or a script extension can name something in the
 /// repository — a flag or a program name cannot.
+/// The value of a `NAME=value` word, when the word is one: a shell sets
+/// variables that way before the program it runs.
+fn shell_assignment_value(token: &str) -> Option<&str> {
+    let (name, value) = token.split_once('=')?;
+    let names_a_variable = !name.is_empty()
+        && name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_');
+    (names_a_variable && !value.is_empty()).then_some(value)
+}
+
 pub(crate) fn names_a_path(target: &str) -> bool {
     path_like_tokens(target).next().is_some()
 }
@@ -778,6 +789,11 @@ fn path_like_tokens(target: &str) -> impl Iterator<Item = &str> {
         if token.starts_with('@') && token.matches('/').count() == 1 {
             return None;
         }
+        // `env SRC=./fv/harnesses hardhat build` sets a variable before it
+        // names the program: the path is the value, and openzeppelin's
+        // script was reported unresolved because the whole assignment was
+        // read as one.
+        let token = shell_assignment_value(token).unwrap_or(token);
         if token.contains('/') {
             return Some(token);
         }
@@ -3799,6 +3815,118 @@ pub(crate) fn is_repository_tooling_source_path(path: &str) -> bool {
     })
 }
 
+/// What the packages in a repository ship, read from the `files` field
+/// each manifest states. openzeppelin publishes `/contracts/**/*.sol` and
+/// keeps its hardhat plugins and its formal-verification runner outside
+/// that: those directories are tooling, and a dev dependency is exactly
+/// what they should import.
+#[derive(Default)]
+pub(crate) struct PublishedPaths {
+    /// Every package manifest, by the directory it governs, and the paths
+    /// it publishes when it says. The nearest manifest is the one that
+    /// speaks for a file, so the others must not answer for it.
+    packages: Vec<(String, Option<PublishedGlobs>)>,
+}
+
+#[derive(Default)]
+struct PublishedGlobs {
+    include: Vec<String>,
+    exclude: Vec<String>,
+}
+
+impl PublishedGlobs {
+    fn covers(&self, path: &str) -> bool {
+        let inside = |prefix: &String| {
+            prefix.is_empty() || path == prefix || path.starts_with(&format!("{prefix}/"))
+        };
+        self.include.iter().any(inside) && !self.exclude.iter().any(inside)
+    }
+}
+
+impl PublishedPaths {
+    /// Whether the package that owns this path says the path does not
+    /// ship. A package that says nothing, or that publishes only a build
+    /// product the scan never held -- vue's `files: ["dist"]` over sources
+    /// in `src/` -- answers no: it knows nothing about this file.
+    fn excludes(&self, path: &str) -> bool {
+        self.packages
+            .iter()
+            .filter(|(directory, _)| {
+                directory.is_empty() || path.starts_with(&format!("{directory}/"))
+            })
+            .max_by_key(|(directory, _)| directory.len())
+            .and_then(|(_, globs)| globs.as_ref())
+            .is_some_and(|globs| !globs.covers(path))
+    }
+}
+
+/// The manifests' `files` globs, anchored on the directory each manifest
+/// sits in. A glob's literal head is all that is read: `**/*.sol` under
+/// `contracts/` publishes everything there, whatever the extension says.
+fn published_paths(graph: &CodeGraph) -> PublishedPaths {
+    let path_index = node_path_index(graph);
+    let source_paths: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::File && node.metadata.contains_key("language"))
+        .map(|node| {
+            path_index
+                .get(&node.id)
+                .map(String::as_str)
+                .unwrap_or(node.label.as_str())
+        })
+        .collect();
+
+    let mut packages = Vec::new();
+    for node in &graph.nodes {
+        if node.kind != NodeKind::File || !node.label.ends_with("package.json") {
+            continue;
+        }
+        let base = node
+            .label
+            .rsplit_once('/')
+            .map(|(directory, _)| directory.to_string())
+            .unwrap_or_default();
+        let globs = node
+            .metadata
+            .get("published_paths")
+            .map(|globs| published_globs(globs, &base))
+            // A package that publishes a build product the scan never held
+            // says nothing about which of its sources ship.
+            .filter(|globs| source_paths.iter().any(|path| globs.covers(path)));
+        packages.push((base, globs));
+    }
+    PublishedPaths { packages }
+}
+
+fn published_globs(globs: &str, base: &str) -> PublishedGlobs {
+    let mut published = PublishedGlobs::default();
+    for glob in globs.lines() {
+        let (negated, glob) = match glob.strip_prefix('!') {
+            Some(rest) => (true, rest),
+            None => (false, glob),
+        };
+        let head = glob
+            .split(['*', '?', '[', '{'])
+            .next()
+            .unwrap_or_default()
+            .trim_start_matches("./")
+            .trim_start_matches('/')
+            .trim_end_matches('/');
+        let prefix = match (base.is_empty(), head.is_empty()) {
+            (true, _) => head.to_string(),
+            (false, true) => base.to_string(),
+            (false, false) => format!("{base}/{head}"),
+        };
+        if negated {
+            published.exclude.push(prefix);
+        } else {
+            published.include.push(prefix);
+        }
+    }
+    published
+}
+
 pub(crate) fn add_non_runtime_dependency_import_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
@@ -3811,6 +3939,7 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
     let declared_ecosystems = declared_ecosystems_from_package_ids(declarations.keys());
 
     let path_index = node_path_index(graph);
+    let published = published_paths(graph);
     let mut reported = BTreeSet::new();
     let mut grouped: BTreeMap<String, NonRuntimeImport> = BTreeMap::new();
     for (import_edge_index, edge) in graph.edges.iter().enumerate() {
@@ -3842,6 +3971,11 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
             || is_repository_tooling_source_path(source_path)
             || is_vendored_source_path(source_path)
         {
+            continue;
+        }
+        // The manifest says what ships. Code outside it cannot turn a dev
+        // dependency into a runtime one, whatever the directory is called.
+        if published.excludes(source_path) {
             continue;
         }
         let Some(import_node) = nodes_by_id.get(&edge.target).copied() else {

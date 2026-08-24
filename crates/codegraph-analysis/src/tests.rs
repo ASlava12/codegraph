@@ -6905,6 +6905,46 @@ fn insights_report_duplicate_functions_and_error_flow() {
 }
 
 #[test]
+fn a_variable_set_before_a_command_is_read_as_the_path_it_holds() {
+    let mut graph = CodeGraph::new("repo");
+    // openzeppelin runs `env SRC=./fv/harnesses hardhat build`: the shell
+    // sets a variable, and the directory it names is right there.
+    let entrypoint = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "npm script:compile:harnesses",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "manifest_entrypoint".to_string()),
+            (
+                "target".to_string(),
+                "env SRC=./fv/harnesses hardhat build --noExpose".to_string(),
+            ),
+        ]),
+    );
+    graph.add_node(NodeKind::Directory, "fv/harnesses");
+    graph.add_edge(
+        graph.root,
+        entrypoint,
+        EdgeKind::Entrypoint,
+        Confidence::Exact,
+    );
+
+    let report = insights(&graph);
+    assert!(
+        !report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "unresolved_entrypoint_target"),
+        "{:?}",
+        report
+            .insights
+            .iter()
+            .map(|insight| insight.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn insights_report_unresolved_manifest_entrypoints() {
     let mut graph = CodeGraph::new("repo");
     let broken = graph.add_node_with_metadata(
@@ -11127,6 +11167,106 @@ fn insights_report_mixed_dependency_scopes() {
             .any(|insight| insight.kind == "conflicting_dependency_declaration")
     );
 }
+#[test]
+fn a_package_that_says_what_it_ships_is_believed_about_what_it_does_not() {
+    let mut graph = CodeGraph::new("repo");
+    // openzeppelin publishes its contracts and nothing else; its hardhat
+    // plugins are tooling, and `dev` is where their packages belong.
+    let manifest = graph.add_node_with_metadata(
+        NodeKind::File,
+        "package.json",
+        None,
+        BTreeMap::from([(
+            "published_paths".to_string(),
+            "/contracts/**/*.sol\n!/contracts/mocks/**/*".to_string(),
+        )]),
+    );
+    let shipped = graph.add_node_with_metadata(
+        NodeKind::File,
+        "contracts/token/ERC20.sol",
+        None,
+        BTreeMap::from([("language".to_string(), "solidity".to_string())]),
+    );
+    let plugin = graph.add_node_with_metadata(
+        NodeKind::File,
+        "hardhat/plugin.ts",
+        None,
+        BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+    );
+    let mock = graph.add_node_with_metadata(
+        NodeKind::File,
+        "contracts/mocks/AccountMock.sol",
+        None,
+        BTreeMap::from([("language".to_string(), "solidity".to_string())]),
+    );
+    let hardhat = dependency_node(&mut graph, "hardhat", "npm:hardhat");
+    graph.add_edge_with_metadata(
+        manifest,
+        hardhat,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "dev".to_string())]),
+    );
+    for source in [shipped, plugin, mock] {
+        let import = import_node(&mut graph, "import \"hardhat\";", "typescript");
+        graph.add_edge(source, import, EdgeKind::Imports, Confidence::Syntactic);
+    }
+
+    let report = insights(&graph);
+    let messages: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "non_runtime_dependency_import")
+        .map(|insight| insight.message.as_str())
+        .collect();
+
+    // The contract ships, so importing a dev package there is a finding.
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(
+        messages[0].contains("contracts/token/ERC20.sol"),
+        "{messages:?}"
+    );
+    // The plugin is outside what the package publishes, and the mock is
+    // excluded by name.
+    assert!(!messages[0].contains("hardhat/plugin.ts"), "{messages:?}");
+    assert!(!messages[0].contains("AccountMock"), "{messages:?}");
+}
+
+#[test]
+fn a_package_that_publishes_only_a_build_product_says_nothing_about_its_sources() {
+    let mut graph = CodeGraph::new("repo");
+    // vue's compiler-sfc publishes `dist`, which the scan never held. Its
+    // sources still ship, bundled, so the findings there stand.
+    let manifest = graph.add_node_with_metadata(
+        NodeKind::File,
+        "packages/compiler-sfc/package.json",
+        None,
+        BTreeMap::from([("published_paths".to_string(), "dist".to_string())]),
+    );
+    let source = graph.add_node_with_metadata(
+        NodeKind::File,
+        "packages/compiler-sfc/src/cache.ts",
+        None,
+        BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+    );
+    let lru = dependency_node(&mut graph, "lru-cache", "npm:lru-cache");
+    graph.add_edge_with_metadata(
+        manifest,
+        lru,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "dev".to_string())]),
+    );
+    let import = import_node(&mut graph, "import LRU from \"lru-cache\";", "typescript");
+    graph.add_edge(source, import, EdgeKind::Imports, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    assert_eq!(
+        report.by_kind.get("non_runtime_dependency_import"),
+        Some(&1)
+    );
+}
+
 #[test]
 fn insights_report_non_runtime_dependency_imports_from_production_sources() {
     let mut graph = CodeGraph::new("repo");

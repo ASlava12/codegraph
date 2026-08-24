@@ -28,6 +28,43 @@ pub(crate) fn index_manifest_facts(
     index_gitlab_ci_entrypoints(context, file_id, path, label, source);
     index_kubernetes_manifest_facts(context, file_id, path, label, source);
     index_properties_settings(context, file_id, label, source);
+    index_published_paths(context, file_id, path, source);
+}
+
+/// What a package ships. npm's `files` field states it exactly --
+/// openzeppelin publishes `/contracts/**/*.sol` and nothing else -- and
+/// without it the graph reads a repository's own build tooling as code
+/// that ships, so a dev dependency imported there looks like a mistake.
+pub(crate) fn index_published_paths(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    source: &str,
+) {
+    if path.file_name().and_then(|name| name.to_str()) != Some("package.json") {
+        return;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return;
+    };
+    let Some(files) = value.get("files").and_then(|files| files.as_array()) else {
+        return;
+    };
+    let published: Vec<&str> = files
+        .iter()
+        .filter_map(|entry| entry.as_str())
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .collect();
+    if published.is_empty() {
+        return;
+    }
+    add_file_metadata(
+        &mut context.graph,
+        file_id,
+        "published_paths",
+        published.join("\n"),
+    );
 }
 
 /// A `.properties` file states settings the program reads by name:
