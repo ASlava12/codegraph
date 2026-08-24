@@ -157,6 +157,37 @@ for (const [constant, signature] of SHARED_LISTS) {
   sharedNames += rustNames.size;
 }
 
+// Every finding the analysis can emit is rendered by name in the view. A
+// kind with no Russian name shows English words in the Russian UI, and 30
+// of the 52 did before anyone compared the two lists.
+const limitsRs = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "codegraph-analysis",
+  "src",
+  "limits.rs",
+);
+const knownKinds = readFileSync(limitsRs, "utf8").match(
+  /pub const KNOWN_INSIGHT_KINDS: &\[&str\] = &\[([\s\S]*?)\];/,
+);
+if (!knownKinds) throw new Error("check-defs: KNOWN_INSIGHT_KINDS is gone from limits.rs");
+const kinds = [...knownKinds[1].matchAll(/"([a-z_*]+)"/g)]
+  .map((match) => match[1])
+  .filter((kind) => !kind.includes("*"));
+const i18n = readFileSync(join(dir, "02-i18n-data.js"), "utf8");
+const russian = i18n.slice(i18n.search(/\bru:\s*\{/));
+const russianKinds = new Set(
+  [...russian.matchAll(/"kind\.([a-z_]+)":/g)].map((match) => match[1]),
+);
+const untranslated = kinds.filter((kind) => !russianKinds.has(kind));
+if (untranslated.length > 0) {
+  console.error(
+    `check-defs: ${untranslated.length} finding kind(s) have no Russian name: ${untranslated.join(", ")}`,
+  );
+  process.exit(1);
+}
+
 console.log(
-  `check-defs: ok (${defined.size} defs, ${calls.size} called names, 0 undefined, ${sharedNames} shared names in step)`,
+  `check-defs: ok (${defined.size} defs, ${calls.size} called names, 0 undefined, ${sharedNames} shared names in step, ${kinds.length} finding kinds named)`,
 );
