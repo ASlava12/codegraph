@@ -29,6 +29,7 @@ pub(crate) fn index_manifest_facts(
     index_kubernetes_manifest_facts(context, file_id, path, label, source);
     index_properties_settings(context, file_id, label, source);
     index_published_paths(context, file_id, path, source);
+    index_php_schema_tables(context, file_id, label, source);
 }
 
 /// What a package ships. npm's `files` field states it exactly --

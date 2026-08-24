@@ -196,6 +196,10 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
     if is_notebook_path(path) {
         return true;
     }
+    // A single-file component states its program in a `<script>` block.
+    if is_single_file_component(path) {
+        return true;
+    }
 
     matches!(
         path.file_name().and_then(|name| name.to_str()),

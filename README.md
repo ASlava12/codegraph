@@ -67,6 +67,12 @@ Implemented now:
   capitalised `NS`/`CF`/`CG`/`Sec`) as that framework's, and a message whose receiver names a
   framework class (`[NSURL URLWithString:]`) as Foundation's rather than as a selector nothing
   declares.
+- Single-file components are read as the programs they hold: a `.vue` or `.svelte` file states a
+  template, a script and a style together, and the `<script>` block (TypeScript when it says `lang="ts"`)
+  is parsed with every other line blanked, so a fact keeps the line of the component that holds it.
+  koel's 337 components contribute 723 functions and 2460 imports that nothing held before.
+- A Laravel migration declares tables: `Schema::create('songs', ..)` is the schema koel states, and
+  without it every query in the project referenced a table "without a matching indexed schema table".
 - A composer lockfile states which namespaces each package autoloads, and that is where the mapping
   is written down: `Illuminate\Broadcasting\Channel` comes from `laravel/framework` and
   `Spatie\Permission\..` from `spatie/laravel-permission`, which no rule about names could work out.

@@ -438,6 +438,62 @@ pub(crate) fn index_inline_sql_queries(
     }
 }
 
+/// The tables a Laravel migration declares. Koel writes its whole schema
+/// as `Schema::create('songs', function (Blueprint $table) { .. })`, and
+/// with no `CREATE TABLE` anywhere the graph held no table at all -- so
+/// every query in the project referenced a table "without a matching
+/// indexed schema table".
+pub(crate) fn index_php_schema_tables(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+) {
+    if !source.contains("Schema::") {
+        return;
+    }
+    for (index, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed
+            .split_once("Schema::create(")
+            .or_else(|| trimmed.split_once("Schema::createIfNotExists("))
+            .map(|(_, rest)| rest)
+        else {
+            continue;
+        };
+        let Some(name) = first_quoted_value(rest).filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        let table_key = sql_identifier_key(&name);
+        if table_key.is_empty() || context.sql_tables.contains_key(&table_key) {
+            continue;
+        }
+        let line_number = index as u32 + 1;
+        let mut metadata = BTreeMap::new();
+        metadata.insert("language".to_string(), "php".to_string());
+        metadata.insert("item_kind".to_string(), "sql_table".to_string());
+        metadata.insert("source".to_string(), "migration".to_string());
+        metadata.insert("table_name".to_string(), name.clone());
+        metadata.insert("table_key".to_string(), table_key.clone());
+        metadata.insert("line".to_string(), line_number.to_string());
+        let table_id = context.graph.add_node_with_metadata(
+            NodeKind::Type,
+            format!("sql table:{name}"),
+            Some(line_span(label, source, line_number)),
+            metadata,
+        );
+        context.sql_tables.insert(table_key, table_id);
+        add_edge_once_with_metadata(
+            context,
+            file_id,
+            table_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "sql_table".to_string())]),
+        );
+    }
+}
+
 pub(crate) fn index_sql_create_table(
     context: &mut IndexContext,
     file_id: NodeId,
@@ -825,7 +881,11 @@ pub(crate) fn raw_string_literal_at(source: &str, cursor: usize) -> Option<(Stri
 /// after its dot, so a token that ends with one came from prose ("Select
 /// context to install from. By default, install files from all contexts.").
 fn ends_a_prose_sentence(token: &str) -> bool {
-    token == "." || (token.ends_with('.') && token.chars().any(char::is_alphabetic))
+    // A question mark on its own is a placeholder and `!=` is an
+    // operator; a word that ends with one closes a sentence. koel asks
+    // "Delete selected playable(s) from the filesystem?" in a dialog, and
+    // the graph read it as a statement against a table called `the`.
+    token == "." || (token.ends_with(['.', '?', '!']) && token.chars().any(char::is_alphabetic))
 }
 
 /// A string literal only counts as an SQL statement when its first token is a

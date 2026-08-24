@@ -770,6 +770,12 @@ pub(crate) fn index_file(
             if label.ends_with(".ipynb") {
                 return parse_notebook(label, source).map(|parsed| (Language::Python, Ok(parsed)));
             }
+            // A `.vue` or `.svelte` file holds a template, a script and a
+            // style together; the script is the program, and every other
+            // line is blanked so a fact keeps the line that holds it.
+            if is_single_file_component(path) {
+                return parse_single_file_component(label, source);
+            }
             let adapter = adapter?;
             Some((
                 adapter.language(),

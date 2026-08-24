@@ -3,6 +3,7 @@
 //! facts, manifests, runtime surfaces, documents, SQL, and user rules.
 //! Modules map to feature areas; see each module's docs.
 
+mod components;
 mod context;
 mod detectors;
 mod docs_ingest;
@@ -33,6 +34,7 @@ pub use scan::{
 };
 pub use walk::{is_index_relevant_file, should_enter};
 
+pub(crate) use components::*;
 pub(crate) use context::*;
 pub(crate) use detectors::*;
 pub(crate) use docs_ingest::*;
@@ -40,7 +42,7 @@ pub(crate) use frameworks::*;
 pub(crate) use imports::*;
 pub(crate) use knowledge::*;
 pub(crate) use manifests::*;
-pub(crate) use notebooks::*;
+use notebooks::*;
 pub(crate) use options::*;
 pub(crate) use parse_cache::*;
 pub(crate) use resolve::*;

@@ -9339,6 +9339,91 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn a_single_file_component_states_its_program_in_a_script_block() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("player.ts"),
+        "export const play = () => true;\n",
+    )
+    .unwrap();
+    // koel writes 337 components like this one.
+    fs::write(
+        root.join("src").join("App.vue"),
+        r#"<template>
+  <button @click="start">Play</button>
+</template>
+
+<script setup lang="ts">
+import { play } from './player'
+
+const start = () => {
+  return play()
+}
+</script>
+
+<style scoped>
+button { color: red; }
+</style>
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let start = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Function && node.label == "start")
+        .expect("the component's function is in the graph");
+    // Every line outside the script is blanked, so a fact keeps the line
+    // of the file that holds it.
+    assert_eq!(
+        start.span.as_ref().map(|span| span.start_line),
+        Some(8),
+        "{:?}",
+        start.span
+    );
+    assert_eq!(
+        start.metadata.get("language").map(String::as_str),
+        Some("typescript")
+    );
+    // And what the component imports resolves like any other import.
+    assert!(
+        graph.nodes.iter().any(|node| {
+            node.label.contains("import { play }")
+                && node.metadata.get("resolved_path").map(String::as_str) == Some("src/player.ts")
+        }),
+        "the component's import reaches the file it names"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_dialog_asking_a_question_is_not_a_sql_statement() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    // koel asks this in a confirmation dialog, and the graph read it as a
+    // statement against a table called `the`.
+    fs::write(
+        root.join("src").join("menu.ts"),
+        "export const remove = async () => {\n  return confirm('Delete selected playable(s) from the filesystem? This action is NOT reversible!')\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let queries: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.label.starts_with("sql query:"))
+        .map(|node| node.label.as_str())
+        .collect();
+    assert!(queries.is_empty(), "{queries:?}");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_compiled_requirements_file_is_a_lock_not_a_constraint() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("examples").join("celery")).unwrap();
