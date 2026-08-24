@@ -2674,6 +2674,25 @@ fn haskell_type_signatures_do_not_become_functions() {
 }
 
 #[test]
+fn a_macro_the_parser_cannot_read_declares_nothing() {
+    // `NLOHMANN_JSON_NAMESPACE_BEGIN` in front of `namespace detail { … }`
+    // parses as a function named `namespace` covering the whole block; json
+    // filed 74 of those and spdlog 68.
+    let source = "#pragma once\nNLOHMANN_JSON_NAMESPACE_BEGIN\nnamespace detail\n{\ninline void from_json(int& v) { v = 1; }\n}\nNLOHMANN_JSON_NAMESPACE_END\n";
+    let parsed = parse_source("demo.hpp", source.as_bytes(), Language::Cpp).unwrap();
+    let functions: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Function)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert!(
+        !functions.contains(&"namespace"),
+        "no declaration is named by a reserved word: {functions:?}"
+    );
+}
+
+#[test]
 fn a_keyword_token_is_not_a_declaration() {
     // Kotlin's grammar names the `import` keyword the same as the statement
     // around it, and the walk reached both: okio filed 2183 import facts

@@ -352,6 +352,57 @@ fn is_deferred_body(language: Language, kind: &str) -> bool {
         )
 }
 
+/// Whether a C/C++ declaration is named by a word the language reserves,
+/// which no real declaration can be.
+fn names_a_c_keyword(node: Node<'_>, source: &[u8]) -> bool {
+    let Some(name) = first_identifier_in_field(node, "declarator", source)
+        .or_else(|| first_identifier(node, source))
+    else {
+        return false;
+    };
+    matches!(
+        name.as_str(),
+        "namespace"
+            | "class"
+            | "struct"
+            | "union"
+            | "enum"
+            | "template"
+            | "typename"
+            | "return"
+            | "if"
+            | "else"
+            | "for"
+            | "while"
+            | "switch"
+            | "case"
+            | "break"
+            | "continue"
+            | "const"
+            | "static"
+            | "inline"
+            | "virtual"
+            | "public"
+            | "private"
+            | "protected"
+            | "using"
+            | "typedef"
+            | "sizeof"
+            | "delete"
+            | "this"
+            | "throw"
+            | "try"
+            | "catch"
+            | "extern"
+            | "goto"
+            | "default"
+            | "void"
+            | "auto"
+            | "constexpr"
+            | "noexcept"
+    )
+}
+
 pub(crate) fn classify_node(
     language: Language,
     node: Node<'_>,
@@ -408,6 +459,12 @@ pub(crate) fn classify_node(
             _ => return None,
         },
         Language::C | Language::Cpp => match kind {
+            // A macro the parser has never seen turns the code after it into
+            // a shape it can recognise: `NLOHMANN_JSON_NAMESPACE_BEGIN` in
+            // front of `namespace detail { … }` reads as a function named
+            // `namespace` covering 574 lines. No C++ declaration is named by
+            // a reserved word, so that is a misparse rather than a fact.
+            "function_definition" if names_a_c_keyword(node, source) => return None,
             "function_definition" => ParsedItemKind::Function,
             // `#define serverAssert(x) …` defines something the code calls
             // like a function, and redis calls 7300 of them. An object-like
