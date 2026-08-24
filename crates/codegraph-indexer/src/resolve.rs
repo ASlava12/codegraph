@@ -2004,7 +2004,10 @@ pub(crate) fn resolve_pending_type_references(context: &mut IndexContext) {
                 // one file as a matter of course — `subnet_id =
                 // module.vpc.id` sits beside the module it names — and that
                 // reference is the dependency a reader is looking for.
-                let within_a_file_is_a_fact = matches!(reference.language.as_str(), "hcl" | "nix");
+                let within_a_file_is_a_fact = matches!(
+                    reference.language.as_str(),
+                    "hcl" | "nix" | "proto" | "graphql"
+                );
                 same_language && (within_a_file_is_a_fact || !same_file)
             })
             .collect::<Vec<_>>();

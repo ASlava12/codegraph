@@ -155,14 +155,16 @@ pub(crate) struct WalkContext<'a> {
     pub(crate) config_aliases: &'a BTreeMap<String, String>,
 }
 
-pub(crate) fn collect_items(
+/// The names one declaration writes to reach another: a Dart type, a
+/// Terraform address, a Nix option, a schema's field type. Kept out of
+/// [`collect_items`] so its stack frame stays small enough for the depth
+/// cap to hold on a deeply nested file.
+#[inline(never)]
+fn collect_reference_facts(
     context: &WalkContext<'_>,
     node: Node<'_>,
-    current_function: Option<String>,
-    scope: &DefinitionScope,
+    current_function: Option<&str>,
     facts: &mut CollectedFacts,
-    depth: usize,
-    deferred: bool,
 ) {
     let WalkContext {
         language,
@@ -170,37 +172,7 @@ pub(crate) fn collect_items(
         path,
         config_aliases,
     } = *context;
-    if depth >= MAX_TREE_DEPTH {
-        return;
-    }
-    if let Some(effect) = classify_effect(language, node, source, path, current_function.as_deref())
-    {
-        facts.items.push(effect);
-    }
-    if let Some(control_flow) =
-        classify_control_flow(language, node, source, path, current_function.as_deref())
-    {
-        facts.items.push(control_flow);
-    }
-
-    // A call outside any definition still happens: module initialisers,
-    // registration calls and whole script bodies run at load time. Those
-    // belong to the file, so the parent stays open rather than the call
-    // being dropped — unless the call sits in an unnamed callback, which
-    // runs when something invokes it and not when the file loads.
-    if (current_function.is_some() || !deferred)
-        && let Some(call) = classify_call(
-            language,
-            node,
-            source,
-            path,
-            current_function.as_deref(),
-            scope,
-        )
-    {
-        facts.items.push(call);
-    }
-
+    let current_function = current_function.map(ToString::to_string);
     if language == Language::Dart
         && node.kind() == "type_identifier"
         && let Some(label) = node_text(node, source)
@@ -208,6 +180,22 @@ pub(crate) fn collect_items(
     {
         facts.type_references.push(ParsedTypeReference {
             label,
+            span: span_for(path, node),
+            parent: current_function.clone(),
+        });
+    }
+
+    // A schema is a graph of its own: a field states the message or the
+    // type it carries, and following that name is following the schema.
+    if matches!(language, Language::Proto | Language::GraphQl)
+        && matches!(node.kind(), "message_or_enum_type" | "named_type")
+        && let Some(label) = node_text(node, source)
+        && !label.is_empty()
+    {
+        facts.type_references.push(ParsedTypeReference {
+            // `google.protobuf.Timestamp` is that package's message; the
+            // name a schema in this repository declares is the last part.
+            label: simple_name(&label).to_string(),
             span: span_for(path, node),
             parent: current_function.clone(),
         });
@@ -240,15 +228,67 @@ pub(crate) fn collect_items(
             parent: current_function.clone(),
         });
     }
+}
+
+pub(crate) fn collect_items(
+    context: &WalkContext<'_>,
+    node: Node<'_>,
+    current_function: Option<String>,
+    scope: &DefinitionScope,
+    facts: &mut CollectedFacts,
+    depth: usize,
+    deferred: bool,
+) {
+    let WalkContext {
+        language,
+        source,
+        path,
+        config_aliases: _,
+    } = *context;
+    if depth >= MAX_TREE_DEPTH {
+        return;
+    }
+    if let Some(effect) = classify_effect(language, node, source, path, current_function.as_deref())
+    {
+        facts.items.push(effect);
+    }
+    if let Some(control_flow) =
+        classify_control_flow(language, node, source, path, current_function.as_deref())
+    {
+        facts.items.push(control_flow);
+    }
+
+    // A call outside any definition still happens: module initialisers,
+    // registration calls and whole script bodies run at load time. Those
+    // belong to the file, so the parent stays open rather than the call
+    // being dropped — unless the call sits in an unnamed callback, which
+    // runs when something invokes it and not when the file loads.
+    if (current_function.is_some() || !deferred)
+        && let Some(call) = classify_call(
+            language,
+            node,
+            source,
+            path,
+            current_function.as_deref(),
+            scope,
+        )
+    {
+        facts.items.push(call);
+    }
+
+    collect_reference_facts(context, node, current_function.as_deref(), facts);
 
     let mut next_function = current_function;
     let mut next_scope: Option<DefinitionScope> = None;
     if let Some(mut item) = classify_node(language, node, source, path) {
-        // HCL has no functions: what a fact sits inside is the block that
-        // declares it, and `file(..)` in a resource belongs to that
-        // resource rather than to the file.
-        if language == Language::Hcl
-            && matches!(item.kind, ParsedItemKind::Type | ParsedItemKind::Module)
+        // HCL has no functions, and a schema's fields belong to the type
+        // that states them: what a fact sits inside is the declaration that
+        // holds it, so `file(..)` in a resource belongs to that resource and
+        // `Address address = 3;` belongs to the message.
+        if matches!(
+            language,
+            Language::Hcl | Language::Proto | Language::GraphQl
+        ) && matches!(item.kind, ParsedItemKind::Type | ParsedItemKind::Module)
         {
             next_function = Some(item.label.clone());
         }
@@ -731,6 +771,31 @@ pub(crate) fn classify_node(
             // A `locals` block holds values the rest of the file reads as
             // `local.name`, one declaration each.
             "attribute" if hcl_local_value(node, source) => ParsedItemKind::Type,
+            _ => return None,
+        },
+        // A `.proto` file is a service description: messages are the types
+        // it carries, and an `rpc` is a call other code makes across the
+        // wire.
+        Language::Proto => match kind {
+            "message" | "enum" | "service" => ParsedItemKind::Type,
+            "rpc" => ParsedItemKind::Function,
+            "import" => ParsedItemKind::Import,
+            "package" => ParsedItemKind::Module,
+            _ => return None,
+        },
+        // A GraphQL schema states types and the fields that reach them; a
+        // document states the operations a client sends.
+        Language::GraphQl => match kind {
+            "object_type_definition"
+            | "interface_type_definition"
+            | "input_object_type_definition"
+            | "enum_type_definition"
+            | "union_type_definition"
+            | "scalar_type_definition" => ParsedItemKind::Type,
+            "field_definition"
+            | "operation_definition"
+            | "fragment_definition"
+            | "directive_definition" => ParsedItemKind::Function,
             _ => return None,
         },
     };
@@ -1265,6 +1330,21 @@ pub(crate) fn enclosing_type_label(
                 if matches!(kind, "class_declaration" | "interface_declaration") =>
             {
                 named_child_text(candidate, "name", source)
+            }
+            // An `rpc` belongs to the service that offers it.
+            Language::Proto if kind == "service" => {
+                child_kind_text(candidate, "service_name", source)
+            }
+            // A GraphQL field belongs to the type that has it.
+            Language::GraphQl
+                if matches!(
+                    kind,
+                    "object_type_definition"
+                        | "interface_type_definition"
+                        | "input_object_type_definition"
+                ) =>
+            {
+                child_kind_text(candidate, "name", source)
             }
             _ => None,
         };
@@ -1838,6 +1918,7 @@ pub(crate) fn control_flow_fact(
             "if_expression" => Some((ParsedItemKind::Branch, "if")),
             _ => None,
         },
+        Language::Proto | Language::GraphQl => None,
         // HCL writes its branch as `cond ? a : b` and its loop as a `for`
         // expression over a collection.
         Language::Hcl => match kind {
@@ -1871,6 +1952,41 @@ pub(crate) fn control_flow_fact(
             _ => None,
         },
     }
+}
+
+/// The text of the first child of a given kind, for grammars that name
+/// their parts by node kind rather than by field.
+fn child_kind_text(node: Node<'_>, kind: &str, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find(|child| child.kind() == kind)
+        .and_then(|child| node_text(child, source))
+}
+
+/// What a `.proto` declaration is called: a message, enum, service and rpc
+/// each carry their name as a node of its own, and an import states a path.
+fn proto_item_label(node: Node<'_>, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "message" => child_kind_text(node, "message_name", source),
+        "enum" => child_kind_text(node, "enum_name", source),
+        "service" => child_kind_text(node, "service_name", source),
+        "rpc" => child_kind_text(node, "rpc_name", source),
+        "package" => child_kind_text(node, "full_ident", source),
+        "import" => node
+            .child_by_field_name("path")
+            .and_then(|path| node_text(path, source))
+            .map(|path| path.trim_matches('"').to_string()),
+        _ => None,
+    }
+    .filter(|label| !label.is_empty())
+}
+
+/// What a GraphQL declaration is called. Every definition carries a `name`,
+/// and a fragment carries a `fragment_name`.
+fn graphql_item_label(node: Node<'_>, source: &[u8]) -> Option<String> {
+    child_kind_text(node, "name", source)
+        .or_else(|| child_kind_text(node, "fragment_name", source))
+        .filter(|label| !label.is_empty())
 }
 
 /// The block type: the first word of `resource "aws_instance" "web"`.
@@ -2062,6 +2178,8 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
         }
         Language::R => node.kind() == "call" && !r_library_call(node, source),
         Language::Hcl => node.kind() == "function_call",
+        // A schema declares; nothing in it runs.
+        Language::Proto | Language::GraphQl => false,
     }
 }
 
@@ -2568,6 +2686,14 @@ pub(crate) fn item_label(
         return nix_option_path(node, source);
     }
 
+    if language == Language::Proto {
+        return proto_item_label(node, source);
+    }
+
+    if language == Language::GraphQl {
+        return graphql_item_label(node, source);
+    }
+
     if language == Language::Hcl {
         return match kind {
             ParsedItemKind::Import => hcl_module_source(node, source),
@@ -2670,8 +2796,9 @@ pub(crate) fn is_entrypoint(language: Language, label: &str) -> bool {
         Language::Lua | Language::Elixir | Language::Zig => label == "main",
         Language::Haskell | Language::OCaml | Language::Julia => label == "main",
         Language::Erlang | Language::Nix | Language::R => label == "main",
-        // A configuration has no entrypoint: nothing in it starts running.
-        Language::Hcl => false,
+        // A configuration or a schema has no entrypoint: nothing in it
+        // starts running.
+        Language::Hcl | Language::Proto | Language::GraphQl => false,
     }
 }
 

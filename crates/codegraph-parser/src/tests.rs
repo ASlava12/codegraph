@@ -12,7 +12,7 @@ fn language_registry_exposes_all_builtin_adapters() {
         .map(|adapter| adapter.info().language)
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(adapters.len(), 27);
+    assert_eq!(adapters.len(), 29);
     assert_eq!(
         languages,
         BTreeSet::from([
@@ -22,6 +22,7 @@ fn language_registry_exposes_all_builtin_adapters() {
             "csharp",
             "dart",
             "go",
+            "graphql",
             "haskell",
             "hcl",
             "elixir",
@@ -32,6 +33,7 @@ fn language_registry_exposes_all_builtin_adapters() {
             "kotlin",
             "lua",
             "nix",
+            "proto",
             "ocaml",
             "php",
             "python",
@@ -66,6 +68,8 @@ fn detects_target_languages_by_extension() {
         ("index.php", Language::Php),
         ("deploy.sh", Language::Bash),
         ("main.tf", Language::Hcl),
+        ("user.proto", Language::Proto),
+        ("schema.graphql", Language::GraphQl),
     ];
 
     for (path, language) in cases {
@@ -75,6 +79,111 @@ fn detects_target_languages_by_extension() {
             Some(language)
         );
     }
+}
+
+#[test]
+fn a_proto_service_states_the_calls_and_messages_it_carries() {
+    let adapter = adapter_for_language(Language::Proto).unwrap();
+    let source = br#"syntax = "proto3";
+
+package demo.users;
+
+import "demo/common.proto";
+
+message User {
+  string id = 1;
+  Address address = 2;
+}
+
+message Address { string city = 1; }
+
+service UserService {
+  rpc GetUser (GetUserRequest) returns (User);
+}
+
+message GetUserRequest { string id = 1; }
+"#;
+    let parsed = adapter.parse(Path::new("user.proto"), source).unwrap();
+    let of_kind = |kind: ParsedItemKind| {
+        parsed
+            .items
+            .iter()
+            .filter(|item| item.kind == kind)
+            .map(|item| item.label.clone())
+            .collect::<Vec<_>>()
+    };
+
+    assert!(of_kind(ParsedItemKind::Type).contains(&"User".to_string()));
+    assert!(of_kind(ParsedItemKind::Type).contains(&"UserService".to_string()));
+    assert_eq!(of_kind(ParsedItemKind::Module), vec!["demo.users"]);
+    assert_eq!(of_kind(ParsedItemKind::Import), vec!["demo/common.proto"]);
+
+    let rpc = parsed
+        .items
+        .iter()
+        .find(|item| item.kind == ParsedItemKind::Function && item.label == "GetUser")
+        .expect("an rpc is a call other code makes across the wire");
+    assert_eq!(
+        rpc.metadata.get("owner_type").map(String::as_str),
+        Some("UserService")
+    );
+
+    let referenced = parsed
+        .type_references
+        .iter()
+        .map(|reference| reference.label.clone())
+        .collect::<Vec<_>>();
+    assert!(referenced.contains(&"Address".to_string()));
+    assert!(referenced.contains(&"GetUserRequest".to_string()));
+}
+
+#[test]
+fn a_graphql_schema_states_its_types_and_their_fields() {
+    let adapter = adapter_for_language(Language::GraphQl).unwrap();
+    let source = br#"type Query {
+  user(id: ID!): User
+}
+
+type User implements Node {
+  id: ID!
+  address: Address
+}
+
+interface Node { id: ID! }
+
+type Address { city: String! }
+
+input UserFilter { email: String }
+
+enum Role { ADMIN }
+"#;
+    let parsed = adapter.parse(Path::new("schema.graphql"), source).unwrap();
+    let types = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Type)
+        .map(|item| item.label.clone())
+        .collect::<Vec<_>>();
+    assert!(types.contains(&"Query".to_string()));
+    assert!(types.contains(&"Node".to_string()));
+    assert!(types.contains(&"UserFilter".to_string()));
+    assert!(types.contains(&"Role".to_string()));
+
+    let field = parsed
+        .items
+        .iter()
+        .find(|item| item.kind == ParsedItemKind::Function && item.label == "user")
+        .expect("a field is what a query reaches");
+    assert_eq!(
+        field.metadata.get("owner_type").map(String::as_str),
+        Some("Query")
+    );
+    assert!(
+        parsed
+            .type_references
+            .iter()
+            .any(|reference| reference.label == "Address")
+    );
 }
 
 #[test]

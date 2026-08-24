@@ -193,8 +193,8 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                     .is_some_and(|value| matches!(value, "builtins.getEnv" | "getEnv"))
         }
         // A configuration takes its inputs as variables; nothing in the
-        // language reads the environment.
-        Language::Hcl => false,
+        // language reads the environment, and a schema states shapes.
+        Language::Hcl | Language::Proto | Language::GraphQl => false,
         Language::R => {
             node.kind() == "call"
                 && call
@@ -341,6 +341,8 @@ pub(crate) fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) 
         Language::Nix => call
             .as_deref()
             .is_some_and(|value| matches!(value, "builtins.readFile" | "builtins.fromJSON")),
+        // A schema reads nothing: it states what other code then reads.
+        Language::Proto | Language::GraphQl => false,
         // `file(..)` and `templatefile(..)` are how a configuration reads
         // what sits beside it.
         Language::Hcl => call.as_deref().is_some_and(|value| {
@@ -522,6 +524,8 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
                     .as_deref()
                     .is_some_and(|value| matches!(value, "throw" | "error" | "exit"))
         }
+        // A schema has no error path of its own.
+        Language::Proto | Language::GraphQl => false,
         // A configuration states its checks as blocks: a `validation` on a
         // variable, a `precondition` or `postcondition` on a resource. They
         // are where it refuses to apply, which is what an error path is.
@@ -747,6 +751,8 @@ pub(crate) fn effect_metadata(
         | Language::Erlang
         | Language::Nix
         | Language::Hcl
+        | Language::Proto
+        | Language::GraphQl
         | Language::R => None,
     };
 

@@ -39,6 +39,8 @@ pub enum Language {
     Nix,
     R,
     Hcl,
+    Proto,
+    GraphQl,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -248,13 +250,25 @@ static HCL_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     extensions: &["tf", "tfvars", "hcl"],
     file_names: &[],
 };
+// A schema is a graph already: `.proto` states services and messages,
+// `.graphql` states types and the fields that reach them.
+static PROTO_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Proto,
+    extensions: &["proto"],
+    file_names: &[],
+};
+static GRAPHQL_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::GraphQl,
+    extensions: &["graphql", "gql", "graphqls"],
+    file_names: &[],
+};
 static R_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     language: Language::R,
     extensions: &["r", "R"],
     file_names: &[],
 };
 
-static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 27] = [
+static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 29] = [
     &RUST_ADAPTER,
     &PYTHON_ADAPTER,
     &JAVASCRIPT_ADAPTER,
@@ -282,6 +296,8 @@ static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 27] = [
     &NIX_ADAPTER,
     &R_ADAPTER,
     &HCL_ADAPTER,
+    &PROTO_ADAPTER,
+    &GRAPHQL_ADAPTER,
 ];
 
 pub fn language_adapters() -> &'static [&'static dyn LanguageAdapter] {
@@ -336,6 +352,8 @@ impl Language {
             Self::Nix => "nix",
             Self::R => "r",
             Self::Hcl => "hcl",
+            Self::Proto => "proto",
+            Self::GraphQl => "graphql",
         }
     }
 
@@ -368,6 +386,8 @@ impl Language {
             Self::Nix => tree_sitter_nix::LANGUAGE.into(),
             Self::R => tree_sitter_r::LANGUAGE.into(),
             Self::Hcl => tree_sitter_hcl::LANGUAGE.into(),
+            Self::Proto => tree_sitter_proto::LANGUAGE.into(),
+            Self::GraphQl => tree_sitter_graphql::LANGUAGE.into(),
         }
     }
 }

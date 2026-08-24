@@ -321,7 +321,12 @@ pub(crate) fn rationale_comment_text(language: Option<Language>, line: &str) -> 
     let trimmed = line.trim_start();
     match language {
         Some(
-            Language::Python | Language::Bash | Language::Ruby | Language::Elixir | Language::Hcl,
+            Language::Python
+            | Language::Bash
+            | Language::Ruby
+            | Language::Elixir
+            | Language::Hcl
+            | Language::GraphQl,
         ) => trimmed.strip_prefix('#'),
         Some(Language::Lua | Language::Haskell) => trimmed.strip_prefix("--"),
         Some(Language::Julia | Language::Erlang | Language::Nix | Language::R) => trimmed
@@ -339,6 +344,7 @@ pub(crate) fn rationale_comment_text(language: Option<Language>, line: &str) -> 
             | Language::C
             | Language::Cpp
             | Language::Dart
+            | Language::Proto
             | Language::Java
             | Language::CSharp
             | Language::Kotlin

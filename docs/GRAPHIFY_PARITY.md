@@ -42,7 +42,7 @@ CodeGraph already has the right foundation: Rust workspace, typed graph schema, 
 
 | Graphify idea | Current CodeGraph state | Target state |
 | --- | --- | --- |
-| Local AST code graph | Implemented for 27 languages (Rust, Python, JS/TS/TSX, Go, C, C++, Dart, PHP, Bash, Ruby, Java, C#, Kotlin, Swift, Scala, Lua, Elixir, Zig, Haskell, OCaml, Julia, Erlang, Nix, R, HCL) | Continue expanding language adapters while preserving typed facts and provenance |
+| Local AST code graph | Implemented for 29 languages (Rust, Python, JS/TS/TSX, Go, C, C++, Dart, PHP, Bash, Ruby, Java, C#, Kotlin, Swift, Scala, Lua, Elixir, Zig, Haskell, OCaml, Julia, Erlang, Nix, R, HCL, Protobuf, GraphQL) | Continue expanding language adapters while preserving typed facts and provenance |
 | Confidence tags | Implemented as `exact`, `semantic`, `syntactic`, `heuristic`, `unknown`, with Markdown report wording for extracted/resolved/inferred/ambiguous evidence | Keep wording aligned as new confidence sources are added |
 | Interactive graph | Implemented in web UI with graph cards, filters, focused slices, source preview, workflows, and compact workflow/callflow blocks | Add community and hotspot overlays directly into the UI graph/card flows |
 | Query/path/explain | Implemented across CLI/API/web, including deterministic English/Russian natural-language `ask` mapping to bounded graph slices without vector storage | Add saved query sessions and MCP tool wrappers next |

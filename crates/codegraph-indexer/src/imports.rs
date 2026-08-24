@@ -25,6 +25,10 @@ pub(crate) fn local_import_target(
         }
         Language::Php => php_local_import_target(source_label, import_label),
         Language::Hcl => hcl_local_import_target(source_label, import_label),
+        Language::Proto => proto_local_import_target(source_label, import_label),
+        // A GraphQL schema states its types in one document; nothing in the
+        // language names another file.
+        Language::GraphQl => None,
         Language::Bash => bash_local_import_target(source_label, import_label),
 
         Language::Go => go_local_import_target(source_label, import_label),
@@ -73,6 +77,30 @@ pub(crate) fn haskell_local_import_target(import_label: &str) -> Option<LocalImp
             format!("lib/{path}.hs"),
             format!("{path}.hs"),
         ],
+    })
+}
+
+/// `import "google/protobuf/timestamp.proto";` names a file by the path a
+/// compiler would find it under: from a root of the repository, or beside
+/// the file that imports it.
+pub(crate) fn proto_local_import_target(
+    source_label: &str,
+    import_label: &str,
+) -> Option<LocalImportTarget> {
+    let path = import_label.trim().trim_matches('"');
+    // `google/protobuf/timestamp.proto` and its siblings ship with the
+    // compiler, and `google/api/...` with googleapis: an import of one names
+    // a dependency rather than a file of this repository.
+    if path.is_empty() || path.starts_with("google/") || path.starts_with("grpc/") {
+        return None;
+    }
+    let mut candidates = vec![path.to_string()];
+    if let Some(directory) = path_dir(source_label) {
+        candidates.push(join_path(Some(directory.as_str()), path));
+    }
+    Some(LocalImportTarget {
+        target: path.to_string(),
+        candidates,
     })
 }
 

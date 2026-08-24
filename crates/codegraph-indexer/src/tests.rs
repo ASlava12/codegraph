@@ -4036,6 +4036,64 @@ fn a_configurations_declarations_refer_to_each_other() {
 }
 
 #[test]
+fn a_proto_import_of_the_compilers_own_types_is_a_dependency() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("api")).unwrap();
+    fs::write(
+        root.join("api").join("user.proto"),
+        "syntax = \"proto3\";\n\nimport \"google/protobuf/timestamp.proto\";\nimport \"api/common.proto\";\n\nmessage User {\n  Address address = 1;\n}\n\nmessage Address { string city = 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("api").join("common.proto"),
+        "syntax = \"proto3\";\n\nmessage Empty {}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    // The file and the import that names it share a label; the import is
+    // the one that says what it reached for.
+    let import_scope = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::ExternalDependency && node.label == label)
+            .and_then(|node| node.metadata.get("import_scope"))
+            .cloned()
+    };
+    assert_eq!(
+        import_scope("google/protobuf/timestamp.proto"),
+        None,
+        "the compiler's own types are a dependency, not a file to look for"
+    );
+    assert_eq!(
+        import_scope("api/common.proto").as_deref(),
+        Some("local"),
+        "a path this repository holds is a file of it"
+    );
+
+    let references = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == EdgeKind::References
+                && edge.metadata.get("relation").map(String::as_str) == Some("type_reference")
+        })
+        .filter_map(|edge| {
+            let source = graph.nodes.iter().find(|node| node.id == edge.source)?;
+            let target = graph.nodes.iter().find(|node| node.id == edge.target)?;
+            Some((source.label.clone(), target.label.clone()))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        references.contains(&("User".to_string(), "Address".to_string())),
+        "a message carries the messages its fields state: {references:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_terraform_module_reaches_the_configuration_it_names() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("modules").join("vpc")).unwrap();
