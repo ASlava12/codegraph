@@ -112,4 +112,37 @@ if (missing.length > 0) {
   );
   process.exit(1);
 }
-console.log(`check-defs: ok (${defined.size} defs, ${calls.size} called names, 0 undefined)`);
+// The browser recomputes the CLI's findings on the graph it holds, and a
+// list it keeps its own copy of drifts silently: the Python standard
+// library set held 41 names against the CLI's 193, so the view called
+// `ast` and `code` dependencies flask forgot to declare.
+const insightsRs = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "codegraph-analysis",
+  "src",
+  "insights.rs",
+);
+const rustSource = readFileSync(insightsRs, "utf8");
+const rustStart = rustSource.indexOf("pub(crate) fn is_python_stdlib_package");
+const rustBlock = rustSource.slice(rustStart, rustSource.indexOf("\n}", rustStart));
+const rustNames = new Set(
+  [...rustBlock.matchAll(/"([A-Za-z_][A-Za-z_0-9.]*)"/g)].map((match) => match[1]),
+);
+const jsBlock = raw.match(/const pythonStdlibPackages = new Set\(\[([\s\S]*?)\]\);/);
+const jsNames = new Set(
+  jsBlock ? [...jsBlock[1].matchAll(/"([A-Za-z_][A-Za-z_0-9.]*)"/g)].map((match) => match[1]) : [],
+);
+const onlyRust = [...rustNames].filter((name) => !jsNames.has(name));
+const onlyJs = [...jsNames].filter((name) => !rustNames.has(name));
+if (onlyRust.length > 0 || onlyJs.length > 0) {
+  console.error("check-defs: the Python standard-library lists disagree");
+  if (onlyRust.length > 0) console.error(`  only in insights.rs: ${onlyRust.join(", ")}`);
+  if (onlyJs.length > 0) console.error(`  only in 12-filters.js: ${onlyJs.join(", ")}`);
+  process.exit(1);
+}
+
+console.log(
+  `check-defs: ok (${defined.size} defs, ${calls.size} called names, 0 undefined, ${rustNames.size} stdlib names in step)`,
+);
