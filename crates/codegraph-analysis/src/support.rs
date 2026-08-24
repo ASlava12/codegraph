@@ -31,7 +31,17 @@ pub(crate) fn resolve_trace_start<'a>(
 ) -> Option<&'a Node> {
     match start {
         TraceStart::NodeId(id) => graph.nodes.iter().find(|node| node.id == *id),
-        TraceStart::Label(label) => best_labelled_node(graph, label),
+        // A durable `cg-*` id names one node exactly; anything else is a
+        // label, ranked as described above.
+        TraceStart::Label(label) => graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.metadata
+                    .get("stable_id")
+                    .is_some_and(|stable_id| stable_id == label)
+            })
+            .or_else(|| best_labelled_node(graph, label)),
     }
 }
 

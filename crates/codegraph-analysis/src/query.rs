@@ -3779,7 +3779,14 @@ pub(crate) fn endpoint_matches(graph: &CodeGraph, id: NodeId, expected: &str) ->
             .nodes
             .iter()
             .find(|node| node.id == id)
-            .is_some_and(|node| text_matches(&node.label, expected))
+            .is_some_and(|node| {
+                // The durable id names one node exactly, which is what an
+                // agent saved; the label is matched as text.
+                node.metadata
+                    .get("stable_id")
+                    .is_some_and(|stable_id| stable_id == expected)
+                    || text_matches(&node.label, expected)
+            })
 }
 
 pub(crate) fn endpoint_nodes(graph: &CodeGraph, edges: &[Edge]) -> Vec<Node> {

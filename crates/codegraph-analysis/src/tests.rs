@@ -8760,6 +8760,35 @@ fn explain_edge_says_what_it_searched_for() {
 }
 
 #[test]
+fn every_surface_takes_the_durable_id() {
+    let mut graph = CodeGraph::new("repo");
+    let main = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "main",
+        None,
+        BTreeMap::from([("stable_id".to_string(), "cg-1111111111111111".to_string())]),
+    );
+    let helper = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "helper",
+        None,
+        BTreeMap::from([("stable_id".to_string(), "cg-2222222222222222".to_string())]),
+    );
+    graph.add_edge(main, helper, EdgeKind::Calls, Confidence::Heuristic);
+
+    // A trace start, which `workflow` and both traces resolve through.
+    let start = resolve_trace_start(
+        &graph,
+        &TraceStart::Label("cg-2222222222222222".to_string()),
+    )
+    .expect("the durable id names a node");
+    assert_eq!(start.id, helper);
+    // ...and an edge endpoint, which `explain-edge` matches on.
+    assert!(endpoint_matches(&graph, main, "cg-1111111111111111"));
+    assert!(!endpoint_matches(&graph, helper, "cg-1111111111111111"));
+}
+
+#[test]
 fn a_name_means_the_definition_not_the_error_that_wraps_it() {
     let mut graph = CodeGraph::new("repo");
     // `scan_project(..).unwrap()` gives the error construct the name of
