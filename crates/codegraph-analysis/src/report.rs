@@ -8,6 +8,27 @@ use std::fmt::Write as _;
 #[allow(unused_imports)]
 use crate::*;
 
+/// The durable id of every node the kept insights cite. Only those: a
+/// report on a large project holds tens of thousands of findings before the
+/// limit, and a table of all their nodes would dwarf the report.
+fn durable_node_ids(graph: &CodeGraph, report: &InsightReport) -> BTreeMap<String, String> {
+    let cited: BTreeSet<NodeId> = report
+        .insights
+        .iter()
+        .flat_map(|insight| insight.nodes.iter().copied())
+        .collect();
+    graph
+        .nodes
+        .iter()
+        .filter(|node| cited.contains(&node.id))
+        .filter_map(|node| {
+            node.metadata
+                .get("stable_id")
+                .map(|stable_id| (node.id.to_string(), stable_id.clone()))
+        })
+        .collect()
+}
+
 pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> ProjectReport {
     let limits = normalize_project_report_limits(limits);
     let full_insight_report = insights(graph);
@@ -30,6 +51,8 @@ pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> Project
         },
     );
 
+    let durable_node_ids = durable_node_ids(graph, &insight_report);
+
     ProjectReport {
         graph_schema_version: graph.schema_version,
         summary: summarize(graph),
@@ -47,8 +70,29 @@ pub fn project_report(graph: &CodeGraph, limits: ProjectReportLimits) -> Project
         hotspots: hotspots(graph, limits.hotspot_limit),
         communities: communities(graph, limits.community_limit),
         file_summaries,
+        durable_node_ids,
         node_summaries,
     }
+}
+
+/// How a committed report cites a node: by the durable id when the scan
+/// stamped one, because the positional `n42` moves when a file is edited
+/// above the node and this document is read weeks later.
+fn durable_or_positional(report: &ProjectReport, node: NodeId) -> String {
+    let positional = node.to_string();
+    report
+        .durable_node_ids
+        .get(&positional)
+        .cloned()
+        .unwrap_or(positional)
+}
+
+/// The durable id a node carries, for the tables that hold whole nodes.
+fn node_reference(node: &Node) -> String {
+    node.metadata
+        .get("stable_id")
+        .cloned()
+        .unwrap_or_else(|| node.id.to_string())
 }
 
 pub fn project_report_markdown(
@@ -458,7 +502,7 @@ pub fn project_report_markdown(
             let node_refs = insight
                 .nodes
                 .iter()
-                .map(ToString::to_string)
+                .map(|node| durable_or_positional(report, *node))
                 .collect::<Vec<_>>()
                 .join(", ");
             let evidence = if insight.edges.is_empty() {
@@ -563,7 +607,11 @@ pub(crate) fn edge_index_refs(indexes: &[usize], limit: usize) -> String {
 }
 
 pub(crate) fn node_ref(node: &Node) -> String {
-    markdown_table_cell(&format!("`{}` `{}`", node.id, markdown_code(&node.label)))
+    markdown_table_cell(&format!(
+        "`{}` `{}`",
+        node_reference(node),
+        markdown_code(&node.label)
+    ))
 }
 
 pub(crate) fn node_span_ref(node: &Node) -> String {

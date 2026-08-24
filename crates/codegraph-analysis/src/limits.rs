@@ -2,6 +2,7 @@
 
 use codegraph_core::{Node, NodeId};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[allow(unused_imports)]
 use crate::*;
@@ -221,6 +222,12 @@ pub struct ProjectReport {
     pub communities: CommunityReport,
     pub file_summaries: ProjectCompactFileSummaryReport,
     pub node_summaries: ProjectCompactNodeSummaryReport,
+    /// The durable `cg-*` id for each node the report's insight evidence
+    /// cites, keyed by the positional `n42` form. A report is committed and
+    /// read later, and the positional id of a node moves when a file is
+    /// edited above it; the durable one does not.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub durable_node_ids: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -8004,6 +8004,72 @@ fn insights_report_duplicate_compose_published_ports() {
 }
 
 #[test]
+fn a_report_cites_a_node_by_the_id_that_survives_an_edit() {
+    let mut graph = CodeGraph::new("repo");
+    let file = graph.add_node(NodeKind::File, "src/app.rs");
+    let handler = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "handle",
+        Some(SourceSpan {
+            path: "src/app.rs".to_string(),
+            start_line: 12,
+            start_column: 1,
+            end_line: 30,
+            end_column: 2,
+        }),
+        BTreeMap::from([
+            ("item_kind".to_string(), "function".to_string()),
+            ("stable_id".to_string(), "cg-1234567890abcdef".to_string()),
+        ]),
+    );
+    graph.add_edge(file, handler, EdgeKind::Contains, Confidence::Exact);
+    // A cycle gives the report a warning whose evidence names the node.
+    let helper = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "helper",
+        Some(SourceSpan {
+            path: "src/helper.rs".to_string(),
+            start_line: 3,
+            start_column: 1,
+            end_line: 9,
+            end_column: 2,
+        }),
+        BTreeMap::from([
+            ("item_kind".to_string(), "function".to_string()),
+            ("stable_id".to_string(), "cg-fedcba0987654321".to_string()),
+        ]),
+    );
+    graph.add_edge(handler, helper, EdgeKind::Calls, Confidence::Exact);
+    graph.add_edge(helper, handler, EdgeKind::Calls, Confidence::Exact);
+
+    let report = project_report(&graph, ProjectReportLimits::default());
+    assert_eq!(
+        report.durable_node_ids.get(&handler.to_string()),
+        Some(&"cg-1234567890abcdef".to_string()),
+        "{:?}",
+        report.durable_node_ids
+    );
+
+    let markdown = project_report_markdown(&report, &ProjectReportMarkdownOptions::default());
+    assert!(
+        markdown.contains("cg-1234567890abcdef"),
+        "the node summaries cite the durable id"
+    );
+    assert!(
+        !markdown.contains(&format!("`{handler}` `handle`")),
+        "and not the positional one"
+    );
+    assert!(
+        markdown.contains("nodes: cg-"),
+        "insight evidence cites durable ids: {}",
+        markdown
+            .lines()
+            .find(|line| line.contains("nodes: "))
+            .unwrap_or_default()
+    );
+}
+
+#[test]
 fn a_dead_end_in_a_test_manifest_is_a_note() {
     let mut graph = CodeGraph::new("repo");
     // json declares a fuzzer target in `tests/thirdparty/Fuzzer` and a CUDA
