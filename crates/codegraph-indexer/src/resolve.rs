@@ -1445,6 +1445,10 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                         ("relation".to_string(), "constructor_reference".to_string()),
                         ("type_label".to_string(), call.label),
                         ("language".to_string(), call.language),
+                        // The file beside the line, as a call edge carries
+                        // it: an edge a reader can place without looking
+                        // its source node up first.
+                        ("file".to_string(), call.span.path.clone()),
                         ("line".to_string(), call.span.start_line.to_string()),
                     ]),
                 );

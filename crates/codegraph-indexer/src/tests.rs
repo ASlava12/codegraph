@@ -8340,15 +8340,23 @@ fn a_call_naming_several_types_records_the_candidates() {
         Some(&"2".to_string())
     );
 
-    // The unambiguous one still becomes a direct reference to its type.
-    assert!(
-        graph.edges.iter().any(|edge| {
+    // The unambiguous one still becomes a direct reference to its type,
+    // carrying where it was written — the file beside the line, as a call
+    // edge carries them.
+    let reference = graph
+        .edges
+        .iter()
+        .find(|edge| {
             edge.kind == EdgeKind::References
                 && edge.metadata.get("relation").map(String::as_str)
                     == Some("constructor_reference")
                 && edge.metadata.get("type_label").map(String::as_str) == Some("Ticket")
-        }),
-        "a single matching type still gives a constructor reference"
+        })
+        .expect("a single matching type still gives a constructor reference");
+    assert!(
+        reference.metadata.contains_key("file") && reference.metadata.contains_key("line"),
+        "the reference must say where it was written: {:?}",
+        reference.metadata
     );
 }
 
