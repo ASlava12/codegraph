@@ -422,12 +422,17 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
             .as_deref()
             .is_some_and(|target| matches!(target, "raise" | "throw")),
         Language::Zig => {
-            node.kind() == "builtin_function"
-                && node
-                    .named_child(0)
-                    .and_then(|child| node_text(child, source))
-                    .as_deref()
-                    == Some("@panic")
+            // `error.NotFound` is the value a Zig function fails with, and
+            // the grammar gives it a node of its own -- a named set's
+            // member (`MyError.NotFound`) reads as a field access and
+            // cannot be told apart without types.
+            node.kind() == "error_type"
+                || (node.kind() == "builtin_function"
+                    && node
+                        .named_child(0)
+                        .and_then(|child| node_text(child, source))
+                        .as_deref()
+                        == Some("@panic"))
         }
         Language::Haskell => {
             is_call_node(language, node, source)
@@ -472,10 +477,18 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
                     })
         }
         Language::R => {
+            // `stop()` is base R; a package written this decade raises with
+            // rlang's `abort()` or cli's `cli_abort()`, qualified or not --
+            // dplyr writes 218 of those against 26 `stop()`.
             node.kind() == "call"
                 && call_label(language, node, source)
                     .as_deref()
-                    .is_some_and(|value| matches!(value, "stop" | "stopifnot" | "warning"))
+                    .is_some_and(|value| {
+                        matches!(
+                            simple_name(value),
+                            "stop" | "stopifnot" | "warning" | "abort" | "cli_abort" | "cli_warn"
+                        )
+                    })
         }
         Language::Swift => {
             is_call_node(language, node, source)

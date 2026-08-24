@@ -2160,6 +2160,51 @@ pub fn main() !void {
 }
 
 #[test]
+fn a_zig_function_fails_with_an_error_value() {
+    // `error.NotFound` is how a Zig function fails, and zls returns one
+    // 139 times; only `@panic` was recorded before.
+    let source = r#"pub fn find(key: []const u8) !u32 {
+    if (key.len == 0) return error.EmptyKey;
+    const MyError = error{ Missing };
+    _ = MyError;
+    return 1;
+}
+"#;
+    let parsed = parse_source("find.zig", source.as_bytes(), Language::Zig).unwrap();
+    let errors: Vec<&str> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Error)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(errors.len(), 1, "items: {:?}", parsed.items);
+    assert!(
+        errors[0].contains("EmptyKey"),
+        "the fact names the error it fails with: {errors:?}"
+    );
+}
+
+#[test]
+fn an_r_package_raises_with_abort() {
+    // `stop()` is base R; dplyr writes `abort()` and `cli::cli_abort()`
+    // 218 times against 26 `stop()`.
+    let source = r#"check <- function(x) {
+  if (x < 0) abort("negative")
+  if (x > 9) cli::cli_abort("too big")
+  if (is.na(x)) stop("missing")
+  x
+}
+"#;
+    let parsed = parse_source("check.R", source.as_bytes(), Language::R).unwrap();
+    let errors = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Error)
+        .count();
+    assert_eq!(errors, 3, "items: {:?}", parsed.items);
+}
+
+#[test]
 fn calls_on_literals_are_labeled_by_method_not_by_the_literal() {
     // `"x".to_string()` used to produce a call target carrying the whole
     // literal, so each distinct literal minted its own placeholder node
