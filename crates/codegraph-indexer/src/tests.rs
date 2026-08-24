@@ -539,6 +539,54 @@ fn scan_project_indexes_markdown_front_matter_wikilinks_and_backlinks() {
 }
 
 #[test]
+fn a_table_created_inside_a_do_block_is_still_a_table() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("migrations")).unwrap();
+    // kong writes eight of its tables this way, so a migration can run
+    // twice without failing.
+    fs::write(
+        root.join("migrations").join("001_vaults.sql"),
+        r#"DO $$
+BEGIN
+  IF (SELECT to_regclass('vaults_tags_idx')) IS NULL THEN
+    CREATE TABLE IF NOT EXISTS "vaults_beta" (
+      "id"     UUID PRIMARY KEY,
+      "prefix" TEXT UNIQUE
+    );
+
+    CREATE INDEX IF NOT EXISTS "vaults_beta_tags_idx" ON "vaults_beta" ("prefix");
+  END IF;
+END$$;
+
+INSERT INTO audit (statement) VALUES ('CREATE TABLE never_ran (id INT)');
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let tables: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.label.starts_with("sql table:"))
+        .map(|node| node.label.as_str())
+        .collect();
+
+    assert!(tables.contains(&"sql table:vaults_beta"), "{tables:?}");
+    // A verb inside a string literal is text, not a statement.
+    assert!(!tables.contains(&"sql table:never_ran"), "{tables:?}");
+    // And the table cites the line it is written on, not the `DO`.
+    let table = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "sql table:vaults_beta")
+        .and_then(|node| node.span.as_ref())
+        .expect("the table carries a span");
+    assert_eq!(table.start_line, 4, "{table:?}");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scan_project_indexes_sql_schema_facts() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("db").join("migrations")).unwrap();

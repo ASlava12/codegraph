@@ -1174,14 +1174,7 @@ pub(crate) fn sql_statements(source: &str) -> Vec<SqlStatement> {
                 current.push(character);
             }
             ';' if !in_single_quote && !in_double_quote => {
-                let sql = current.trim().to_string();
-                if !sql.is_empty() {
-                    statements.push(SqlStatement {
-                        sql,
-                        line: statement_line,
-                        end_line: line,
-                    });
-                }
+                push_statement(&mut statements, &current, statement_line, line);
                 current.clear();
             }
             '\n' => {
@@ -1192,16 +1185,66 @@ pub(crate) fn sql_statements(source: &str) -> Vec<SqlStatement> {
         }
     }
 
-    let sql = current.trim().to_string();
-    if !sql.is_empty() {
-        statements.push(SqlStatement {
-            sql,
-            line: statement_line,
-            end_line: line,
-        });
-    }
+    push_statement(&mut statements, &current, statement_line, line);
 
     statements
+}
+
+/// One statement, beginning where its verb does. Postgres migrations wrap
+/// DDL in `DO $$ BEGIN IF ... THEN CREATE TABLE ... END IF; END $$;` so the
+/// statement runs only once, and kong writes eight of its tables that way:
+/// reading only what starts with a verb missed every one of them.
+fn push_statement(statements: &mut Vec<SqlStatement>, text: &str, line: u32, end_line: u32) {
+    let sql = text.trim();
+    if sql.is_empty() {
+        return;
+    }
+    let (sql, skipped_lines) = match ddl_verb_offset(sql) {
+        Some(0) | None => (sql.to_string(), 0),
+        Some(offset) => (
+            sql[offset..].trim_start().to_string(),
+            sql[..offset].matches('\n').count() as u32,
+        ),
+    };
+    if sql.is_empty() {
+        return;
+    }
+    statements.push(SqlStatement {
+        sql,
+        line: line + skipped_lines,
+        end_line,
+    });
+}
+
+/// Where the DDL a statement carries begins, when something precedes it.
+/// Only what a statement can be opened by counts, and only outside quotes,
+/// so `INSERT INTO log VALUES ('CREATE TABLE ...')` stays an insert.
+fn ddl_verb_offset(sql: &str) -> Option<usize> {
+    const VERBS: [&str; 4] = ["create ", "alter table", "drop table", "truncate table"];
+    let lowered = sql.to_ascii_lowercase();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let bytes = lowered.as_bytes();
+    for (offset, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'\'' if !in_double_quote => in_single_quote = !in_single_quote,
+            b'"' if !in_single_quote => in_double_quote = !in_double_quote,
+            _ if in_single_quote || in_double_quote => {}
+            _ => {
+                // A verb opens a statement only at a word boundary.
+                let at_word_start = offset == 0
+                    || !bytes[offset - 1].is_ascii_alphanumeric() && bytes[offset - 1] != b'_';
+                if at_word_start
+                    && VERBS
+                        .iter()
+                        .any(|verb| bytes[offset..].starts_with(verb.as_bytes()))
+                {
+                    return Some(offset);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// `IF NOT EXISTS` however the author cased it. Kong writes every migration
