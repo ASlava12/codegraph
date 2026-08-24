@@ -1177,12 +1177,23 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
 /// pytest` and `import myapp.utils` look identical until the walk is over — so
 /// the parser records the candidate paths and the answer is settled here,
 /// against the files and directories the scan actually found.
-fn resolved_import_package(context: &IndexContext, package: ImportedPackage) -> ImportedPackage {
+fn resolved_import_package(
+    context: &IndexContext,
+    scanned_candidates: &mut BTreeMap<String, bool>,
+    package: ImportedPackage,
+) -> ImportedPackage {
     let ImportedPackage::Local(candidates) = &package else {
         return package;
     };
     let scanned = candidates.iter().any(|candidate| {
-        match candidate.strip_suffix('/') {
+        // Every call with an import in scope asks this, and the answer
+        // depends only on what the scan holds: django-oscar asked it
+        // enough times that formatting the suffix to compare was 54% of
+        // its scan.
+        if let Some(answer) = scanned_candidates.get(candidate) {
+            return *answer;
+        }
+        let answer = match candidate.strip_suffix('/') {
             Some(directory) => context.directory_nodes.contains_key(directory),
             None => {
                 context.file_nodes.contains_key(candidate.as_str())
@@ -1193,15 +1204,27 @@ fn resolved_import_package(context: &IndexContext, package: ImportedPackage) -> 
                     || context
                         .file_nodes
                         .keys()
-                        .any(|path| path.ends_with(&format!("/{candidate}")))
+                        .any(|path| path_ends_with_segment(path, candidate))
             }
-        }
+        };
+        scanned_candidates.insert(candidate.clone(), answer);
+        answer
     });
     if scanned {
         package
     } else {
         ImportedPackage::External
     }
+}
+
+/// Whether a path ends with a candidate that starts at a segment boundary:
+/// `src/flask/__init__.py` ends with `flask/__init__.py`, and
+/// `src/notflask/__init__.py` does not.
+fn path_ends_with_segment(path: &str, candidate: &str) -> bool {
+    let Some(prefix) = path.len().checked_sub(candidate.len()) else {
+        return false;
+    };
+    prefix > 0 && path.as_bytes()[prefix - 1] == b'/' && path.ends_with(candidate)
 }
 
 fn declared_in_module(path: &str, target: &str) -> bool {
@@ -1376,6 +1399,9 @@ fn one_methods_overloads(graph: &CodeGraph, targets: &[NodeId]) -> bool {
 
 pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     let pending_calls = std::mem::take(&mut context.pending_calls);
+    // What the scan holds does not change while calls are resolved, so each
+    // candidate path is looked for once.
+    let mut scanned_candidates: BTreeMap<String, bool> = BTreeMap::new();
     // The files that export something. Only there does "not exported"
     // mean private: a CommonJS file hands its functions out through
     // `module.exports`, which is not an export statement, so nothing in it
@@ -1509,7 +1535,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 .cloned(),
             None => None,
         }
-        .map(|package| resolved_import_package(context, package));
+        .map(|package| resolved_import_package(context, &mut scanned_candidates, package));
         if imported_package == Some(ImportedPackage::External) {
             add_external_call_placeholder(context, call);
             continue;
@@ -1682,7 +1708,9 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     .get(call.span.path.as_str())
                     .and_then(|qualifiers| qualifiers.get(package))
                     .cloned()
-                    .map(|package| resolved_import_package(context, package))
+                    .map(|package| {
+                        resolved_import_package(context, &mut scanned_candidates, package)
+                    })
                 {
                     Some(ImportedPackage::Local(candidates)) => Some(candidates),
                     _ => None,
