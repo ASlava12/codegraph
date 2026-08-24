@@ -665,6 +665,15 @@ function addUndeclaredImportInsights(graph, insights) {
 
   if (declaredEcosystems.size === 0) return;
 
+  // Nothing declares a dependency on itself: guzzle's own sources
+  // `use GuzzleHttp\…`, which names the package its composer.json claims.
+  const ownPackages = new Set(
+    (graph.nodes.find((node) => node.kind === "repository")?.metadata?.own_package_ids || "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  );
+
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
   // One finding per package, as the CLI reports it: a package imported from
   // sixty files is one fact about the manifest, not sixty.
@@ -683,6 +692,7 @@ function addUndeclaredImportInsights(graph, insights) {
       const candidate = importPackageCandidate(target?.metadata?.language, label);
       if (!candidate) return;
       if (!declaredEcosystems.has(candidate.ecosystem)) return;
+      if (ownPackages.has(`${candidate.ecosystem}:${candidate.package}`)) return;
       if (isDeclaredPackage(declared, candidate.ecosystem, candidate.package)) return;
       // `import type { X } from 'trusted-types/lib'` is served by
       // `@types/trusted-types`, and needs nothing at run time.

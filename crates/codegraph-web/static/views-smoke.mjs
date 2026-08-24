@@ -204,6 +204,39 @@ drive("client insights agree with the CLI on undeclared imports", () => {
 // scan, and the CLI reads it as info; the browser used to call both a
 // warning, and looked for ambiguity in a shape the resolver stopped
 // writing when it started bounding uncertainty in one placeholder node.
+drive("a project does not depend on itself", () => {
+  const graph = {
+    nodes: [
+      {
+        id: 1,
+        kind: "repository",
+        label: "guzzle",
+        metadata: { own_package_ids: "composer:guzzlehttp/guzzle" },
+      },
+      { id: 2, kind: "file", label: "src/Client.php" },
+      {
+        id: 3,
+        kind: "external_dependency",
+        label: "psr/http-client",
+        metadata: { item_kind: "dependency", package_id: "composer:psr/http-client" },
+      },
+      {
+        id: 4,
+        kind: "external_dependency",
+        label: "use GuzzleHttp\\Psr7\\Request;",
+        metadata: { item_kind: "import", language: "php" },
+      },
+    ],
+    edges: [{ kind: "imports", source: 2, target: 4 }],
+  };
+  const undeclared = api
+    .buildClientInsights(graph)
+    .filter((insight) => insight.kind === "undeclared_external_import");
+  if (undeclared.length !== 0) {
+    throw new Error(`expected none, got ${JSON.stringify(undeclared.map((i) => i.message))}`);
+  }
+});
+
 drive("client insights see both halves of the CLI's ambiguity rule", () => {
   const graph = {
     nodes: [
