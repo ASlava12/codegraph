@@ -6310,6 +6310,52 @@ fn rails_reads_a_collection_block_and_a_namespaced_controller() {
 }
 
 #[test]
+fn a_js_call_on_a_value_is_not_a_project_function_of_the_same_name() {
+    // `str.trim()` is a string's, `Buffer.concat` node's, `args.map` an
+    // array's -- and axios declares a `trim`, vue a `map` and zod a
+    // `startsWith`, so matching on the tail of the call gave each of them
+    // callers it never had. `this.trim()` is the class's own.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("package.json"), "{\n  \"name\": \"app\"\n}\n").unwrap();
+    fs::write(
+        root.join("src").join("utils.js"),
+        "export function trim(value) {\n  return value\n}\n\nexport function shout(value) {\n  return value\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("app.js"),
+        "import { trim, shout } from './utils'\n\nexport function run(str) {\n  const clean = str.trim()\n  return shout(trim(clean))\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let calls_into_utils = |label: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+                && graph.nodes.iter().any(|node| {
+                    node.id == edge.target
+                        && node
+                            .span
+                            .as_ref()
+                            .is_some_and(|span| span.path.ends_with("utils.js"))
+                })
+        })
+    };
+    assert!(
+        !calls_into_utils("str.trim"),
+        "`str.trim()` is the string's own"
+    );
+    assert!(
+        calls_into_utils("trim") && calls_into_utils("shout"),
+        "the imported helpers still resolve"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_ruby_call_on_a_value_is_not_a_project_method_every_value_has() {
     // `params.each`, `@queue.empty?`, `formats.include?`: ruby writes the
     // receiver and the label keeps only the method, so a project method

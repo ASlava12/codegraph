@@ -86,6 +86,16 @@ pub(crate) fn receiver_call_is_universal(language: &str, label: &str) -> bool {
     };
     match language {
         "rust" => rust_method_is_std(method),
+        // A JS or TS call keeps its receiver in the label, and `this` is
+        // the one receiver whose methods are the class's own. Everything
+        // else is a value whose type the syntax does not name: `str.trim`
+        // is a string's, `Buffer.concat` node's, `map.get` a Map's, and
+        // `this._def.checks.find` an array's -- yet axios declares a
+        // `trim`, vue a `get` and zod a `find`, and matching on the tail
+        // gave each of them callers it never had.
+        "javascript" | "typescript" | "tsx" => {
+            !matches!(receiver, "this" | "self") && js_member_of_every_value(method)
+        }
         // C# writes a static call the same way as an instance call, and only
         // the receiver's spelling tells them apart: `JsonConvert.ToString` is
         // Newtonsoft's own API, called 720 times, while `value.ToString` is
@@ -93,6 +103,66 @@ pub(crate) fn receiver_call_is_universal(language: &str, label: &str) -> bool {
         "csharp" => !receiver_names_a_csharp_type(receiver) && csharp_member_of_every_value(method),
         _ => false,
     }
+}
+
+/// Methods JavaScript gives every array, string, promise or function.
+/// Names a project defines as readily as the platform does -- `get`, `set`,
+/// `has`, `add`, `on`, `emit`, `close`, `find` -- are left out, because
+/// there the project's own method is the likelier answer.
+fn js_member_of_every_value(method: &str) -> bool {
+    matches!(
+        method,
+        "map"
+            | "filter"
+            | "forEach"
+            | "reduce"
+            | "reduceRight"
+            | "some"
+            | "every"
+            | "findIndex"
+            | "indexOf"
+            | "lastIndexOf"
+            | "join"
+            | "slice"
+            | "splice"
+            | "concat"
+            | "push"
+            | "pop"
+            | "shift"
+            | "unshift"
+            | "sort"
+            | "reverse"
+            | "flat"
+            | "flatMap"
+            | "entries"
+            | "then"
+            | "catch"
+            | "finally"
+            | "toString"
+            | "valueOf"
+            | "trim"
+            | "trimStart"
+            | "trimEnd"
+            | "split"
+            | "replace"
+            | "replaceAll"
+            | "match"
+            | "matchAll"
+            | "startsWith"
+            | "endsWith"
+            | "padStart"
+            | "padEnd"
+            | "toLowerCase"
+            | "toUpperCase"
+            | "charAt"
+            | "charCodeAt"
+            | "substring"
+            | "repeat"
+            | "call"
+            | "apply"
+            | "bind"
+            | "toFixed"
+    )
 }
 
 /// Whether a C# receiver is spelled the way the language spells a type: a

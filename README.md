@@ -184,6 +184,12 @@ Implemented now:
   controller's `put`. The class settles it -- `Song::query()` reaches the model that declares it,
   and a class the project never declares leaves the project. Across koel that is 852 fewer ambiguous
   calls, 505 more that reach the method they name, and 1405 recorded as leaving.
+- The same holds in JavaScript and TypeScript, where the label keeps the receiver and `this` is the
+  one receiver whose methods are the class's own: `str.trim()` is a string's, `Buffer.concat` node's,
+  `args.map` an array's, `promise.then` a promise's -- yet axios declares a `trim`, vue a `map` and
+  zod a `startsWith`, and matching on the tail gave each of them callers it never had. Names a
+  project defines as readily as the platform does (`get`, `set`, `has`, `add`, `on`, `emit`, `find`)
+  stay out of the list.
 - A ruby call written through a value is not a project method every value already has: `params.each`
   is a hash's, `formats.include?` an array's, `{ .. }.to_json` a hash's. The label keeps only the
   method name, so mastodon's `Trends::History#each` collected 268 callers, its connection pool's
