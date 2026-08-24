@@ -2319,6 +2319,8 @@ pub(crate) fn resolve_pending_namespace_imports(context: &mut IndexContext) {
 
 pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
     let pending_imports = std::mem::take(&mut context.pending_local_imports);
+    // What the scan holds does not change while imports are resolved.
+    let files_by_name = files_by_name(&context.file_nodes);
 
     for import in pending_imports {
         let source_path = context
@@ -2330,6 +2332,7 @@ pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
             .map(|span| span.path.clone());
         let resolved = resolve_local_import_candidate(
             &context.file_nodes,
+            &files_by_name,
             &import.candidates,
             source_path.as_deref(),
             import.allow_suffix_fallback,
@@ -2483,6 +2486,7 @@ pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
 
 pub(crate) fn resolve_local_import_candidate(
     file_nodes: &BTreeMap<String, NodeId>,
+    files_by_name: &BTreeMap<String, Vec<(String, NodeId)>>,
     candidates: &[String],
     source_path: Option<&str>,
     allow_suffix_fallback: bool,
@@ -2511,10 +2515,15 @@ pub(crate) fn resolve_local_import_candidate(
     // ending in the candidate is evidence; several are a coincidence, and
     // the import stays unresolved rather than picking one.
     for candidate in candidates {
-        let suffix = format!("/{candidate}");
-        let mut matches = file_nodes
+        // Only a file whose own name ends the candidate can match it, and
+        // there are a handful of those against terraform's 19000 files.
+        let file_name = candidate.rsplit('/').next().unwrap_or(candidate);
+        let Some(same_name) = files_by_name.get(file_name) else {
+            continue;
+        };
+        let mut matches = same_name
             .iter()
-            .filter(|(path, _)| path.ends_with(&suffix) && !is_the_source(path));
+            .filter(|(path, _)| path_ends_with_segment(path, candidate) && !is_the_source(path));
         if let Some((path, file_id)) = matches.next()
             && matches.next().is_none()
         {
@@ -2522,6 +2531,23 @@ pub(crate) fn resolve_local_import_candidate(
         }
     }
     None
+}
+
+/// Files grouped by their own name, so an import that names a path ending
+/// in one is looked for among the few files that could match rather than
+/// among all of them.
+pub(crate) fn files_by_name(
+    file_nodes: &BTreeMap<String, NodeId>,
+) -> BTreeMap<String, Vec<(String, NodeId)>> {
+    let mut index: BTreeMap<String, Vec<(String, NodeId)>> = BTreeMap::new();
+    for (path, id) in file_nodes {
+        let name = path.rsplit('/').next().unwrap_or(path.as_str());
+        index
+            .entry(name.to_string())
+            .or_default()
+            .push((path.clone(), *id));
+    }
+    index
 }
 
 pub(crate) fn resolve_directory_import_candidate(
