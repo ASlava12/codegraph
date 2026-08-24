@@ -1757,14 +1757,14 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Journey start label or node id such as main or n12.",
+                            "Journey start label or node id: a label such as main, the durable cg-* id the scan stamps, or n12.",
                         ),
                         query_param(
                             "to",
                             true,
                             "string",
                             None,
-                            "Journey target label or node id such as load_config or n42.",
+                            "Journey target label or node id: a label such as load_config, the durable cg-* id the scan stamps, or n42.",
                         ),
                         query_param(
                             "depth",
@@ -1857,7 +1857,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Component target label or node id such as load_config or n42.",
+                            "Component target label or node id: a label such as load_config, the durable cg-* id the scan stamps, or n42.",
                         ),
                         query_param(
                             "group_limit",
@@ -1922,7 +1922,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Impact target label or node id such as load_config or n42.",
+                            "Impact target label or node id: a label such as load_config, the durable cg-* id the scan stamps, or n42.",
                         ),
                         query_param(
                             "depth",
@@ -2018,7 +2018,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             true,
                             "string",
                             None,
-                            "Refactor target label or node id such as load_config or n42.",
+                            "Refactor target label or node id: a label such as load_config, the durable cg-* id the scan stamps, or n42.",
                         ),
                         query_param(
                             "from",

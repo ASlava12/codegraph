@@ -339,7 +339,7 @@ pub(crate) enum Command {
 
     /// Emit a step-numbered execution journey between two graph labels or node ids.
     #[command(
-        after_help = "Examples:\n  codegraph journey --from main --to load_config .\n  codegraph journey --from 'cargo bin:api' --to n42 . --depth 8 --paths 5"
+        after_help = "Examples:\n  codegraph journey --from main --to load_config .\n  codegraph journey --from 'cargo bin:api' --to cg-84c8d5208eb7ad51 . --depth 8 --paths 5"
     )]
     Journey(JourneyArgs),
 
@@ -384,8 +384,8 @@ pub(crate) enum Command {
         #[arg(long)]
         note: Option<String>,
 
-        /// Linked graph node ids (numeric or n-prefixed, e.g. 42 or n42);
-        /// repeat for multiple nodes.
+        /// Linked graph node ids: the durable `cg-*` id the scan stamps,
+        /// or numeric/n-prefixed (42, n42); repeat for multiple nodes.
         #[arg(long = "node-id", value_parser = parse_cli_node_id)]
         node_ids: Vec<u64>,
 
@@ -509,10 +509,11 @@ pub(crate) enum Command {
 
     /// Report the blast radius of changing a node: dependents, entrypoints, tests, and impact score.
     #[command(
-        after_help = "Examples:\n  codegraph impact load_config .\n  codegraph impact n42 . --depth 8 --limit 200"
+        after_help = "Examples:\n  codegraph impact load_config .\n  codegraph impact cg-fb5e193a42ee8970 . --depth 8 --limit 200"
     )]
     Impact {
-        /// Impact target label or node id, for example: load_config or n42.
+        /// Impact target: a label, the durable `cg-*` id the scan stamps,
+        /// or a numeric/n-prefixed id -- load_config, cg-fb5e19…, n42.
         target: String,
 
         /// Project root to scan.
@@ -546,7 +547,8 @@ pub(crate) enum Command {
     /// Group a node's incoming/outgoing dependencies by architecture area, package, and language.
     #[command(visible_alias = "component")]
     ComponentDependencies {
-        /// Component target label or node id, for example: load_config or n42.
+        /// Component target: a label, the durable `cg-*` id the scan
+        /// stamps, or a numeric/n-prefixed id.
         target: String,
 
         /// Project root to scan.
@@ -1400,11 +1402,13 @@ pub(crate) struct WorkflowQueryArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct JourneyArgs {
-    /// Journey start label or node id, for example: main or n12.
+    /// Journey start: a label, the durable `cg-*` id the scan stamps, or a
+    /// numeric/n-prefixed id -- main, cg-fb5e19…, n12.
     #[arg(long)]
     pub(crate) from: String,
 
-    /// Journey target label or node id, for example: load_config or n42.
+    /// Journey target: a label, the durable `cg-*` id the scan stamps, or a
+    /// numeric/n-prefixed id.
     #[arg(long)]
     pub(crate) to: String,
 
@@ -1434,7 +1438,8 @@ pub(crate) struct JourneyArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct RefactorContextArgs {
-    /// Refactor target label or node id, for example: load_config or n42.
+    /// Refactor target: a label, the durable `cg-*` id the scan stamps, or a
+    /// numeric/n-prefixed id.
     pub(crate) target: String,
 
     /// Project root to scan.
