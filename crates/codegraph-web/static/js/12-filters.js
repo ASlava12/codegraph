@@ -416,7 +416,16 @@ function buildClientInsights(graph) {
       });
     }
 
-    if (node.kind === "function" && !entrypointIds.has(node.id) && !calledIds.has(node.id)) {
+    // A definition written inside another is reached through the one that
+    // holds it: shellcheck names 167 `where` bindings `f`, and "nothing calls
+    // f" is not news about a local helper. The CLI skips these; the browser
+    // reported 58 of them on this repository until it did the same.
+    if (
+      node.kind === "function" &&
+      !node.metadata?.enclosing_function &&
+      !entrypointIds.has(node.id) &&
+      !calledIds.has(node.id)
+    ) {
       insights.push({
         kind: "orphan_function",
         severity: "info",
