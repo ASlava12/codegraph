@@ -451,6 +451,18 @@ pub(crate) fn index_skipped_file(
         "max_file_size_bytes".to_string(),
         options.max_file_size.to_string(),
     );
+    add_skipped_file(context, path, label, metadata);
+}
+
+/// A file the scan records but does not read into facts: it still belongs to
+/// the project, and saying so is more useful than leaving a hole where a file
+/// was.
+fn add_skipped_file(
+    context: &mut IndexContext,
+    path: &Path,
+    label: &str,
+    mut metadata: BTreeMap<String, String>,
+) {
     if let Some(adapter) = adapter_for_path(path) {
         metadata.insert("language".to_string(), adapter.language().to_string());
     } else if is_markdown_document(path) {
@@ -491,6 +503,20 @@ pub(crate) fn index_file(
             metadata.insert("read_error".to_string(), error.to_string());
         })
         .ok();
+    // Minified code is a build product: its names are the minifier's, not
+    // the project's. Alamofire's `docs/js/jquery.min.js` alone produced 2029
+    // facts named after jQuery's internals, more than a third of everything
+    // that project's own source declares.
+    if let Some(source) = source_bytes.as_deref()
+        && let Some(longest_line) = minified_line_length(source)
+    {
+        metadata.insert("skipped".to_string(), "true".to_string());
+        metadata.insert("skipped_reason".to_string(), "minified".to_string());
+        metadata.insert("longest_line_bytes".to_string(), longest_line.to_string());
+        add_skipped_file(context, path, label, metadata);
+        return;
+    }
+
     let adapter = adapter_for_path(path).map(|adapter| {
         // `.h` is C's extension and C++'s alike, and the extension is all
         // the path can say. A header that declares a namespace, a

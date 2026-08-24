@@ -3979,6 +3979,53 @@ fn scan_project_indexes_control_flow_facts() {
 }
 
 #[test]
+fn a_minified_file_is_recorded_but_not_read_for_facts() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    let packed = format!(
+        "!function(e){{var t={{}};function n(r){{if(t[r])return t[r].exports;{}}}}}(window);",
+        "var a=e[r],b=a.length,c=b?a[0]:null;if(c){return c.call(this,a,b)}".repeat(40)
+    );
+    fs::write(root.join("bundle.min.js"), &packed).unwrap();
+    fs::write(
+        root.join("app.js"),
+        format!(
+            "// {}\nfunction start() {{ return 1; }}\n",
+            "a long note about why this module exists ".repeat(80)
+        ),
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let minified = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "bundle.min.js")
+        .expect("the file is still part of the project");
+    assert_eq!(
+        minified.metadata.get("skipped_reason").map(String::as_str),
+        Some("minified")
+    );
+    assert!(
+        !graph
+            .nodes
+            .iter()
+            .any(|node| node.kind == NodeKind::Function && node.label == "n"),
+        "a minifier's names are not the project's"
+    );
+    // A long comment is not minification: this file is read as usual.
+    assert!(
+        graph
+            .nodes
+            .iter()
+            .any(|node| node.kind == NodeKind::Function && node.label == "start"),
+        "a file with one long comment line is still source"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_private_rust_function_answers_only_its_own_module() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();

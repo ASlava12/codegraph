@@ -221,3 +221,54 @@ pub(crate) fn is_probably_source_file(path: &Path, max_file_size: u64) -> bool {
     path.metadata()
         .is_ok_and(|metadata| metadata.len() <= max_file_size)
 }
+
+/// The longest line of a file that a tool packed onto one line, or `None` for
+/// code a person wrote. Minifiers strip the whitespace and leave the
+/// punctuation, so the widest line is dense with `(){};,` and almost free of
+/// spaces — which a long comment, a wide table or an embedded blob is not.
+pub fn minified_line_length(source: &[u8]) -> Option<usize> {
+    let longest = source
+        .split(|byte| *byte == b'\n')
+        .max_by_key(|line| line.len())?;
+    let width = longest.len();
+    let lines = source.iter().filter(|byte| **byte == b'\n').count() + 1;
+    if width < 2_000 || source.len() / lines <= 200 {
+        return None;
+    }
+    let spaces = longest
+        .iter()
+        .filter(|byte| matches!(byte, b' ' | b'\t'))
+        .count();
+    let punctuation = longest
+        .iter()
+        .filter(|byte| {
+            matches!(
+                byte,
+                b'{' | b'}'
+                    | b'('
+                    | b')'
+                    | b'['
+                    | b']'
+                    | b';'
+                    | b':'
+                    | b','
+                    | b'.'
+                    | b'='
+                    | b'+'
+                    | b'-'
+                    | b'*'
+                    | b'/'
+                    | b'<'
+                    | b'>'
+                    | b'!'
+                    | b'&'
+                    | b'|'
+                    | b'?'
+                    | b'%'
+                    | b'^'
+                    | b'~'
+            )
+        })
+        .count();
+    (spaces * 10 < width && punctuation * 10 > width).then_some(width)
+}
