@@ -4037,6 +4037,89 @@ func helperB() string { return "b" }
 }
 
 #[test]
+fn a_nix_import_reaches_the_file_it_names() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("modules").join("shell")).unwrap();
+    fs::write(
+        root.join("default.nix"),
+        "{ pkgs ? import <nixpkgs> {} }:\nlet\n  shell = import ./modules/shell;\n  helper = import ./modules/helper.nix { inherit pkgs; };\nin\n  { inherit shell helper; }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("modules").join("shell").join("default.nix"),
+        "{ }:\n{ value = 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("modules").join("helper.nix"),
+        "{ pkgs }:\n{ value = 2; }\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reaches = |target: &str| {
+        let file = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::File && node.label == target)
+            .unwrap_or_else(|| panic!("missing {target}"));
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::References
+                && edge.target == file.id
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "local_import_file")
+        })
+    };
+    // A directory means its `default.nix`, and a file means itself.
+    assert!(
+        reaches("modules/shell/default.nix"),
+        "import ./modules/shell"
+    );
+    assert!(reaches("modules/helper.nix"), "import ./modules/helper.nix");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_erlang_include_reaches_its_header() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("src").join("demo.erl"),
+        "-module(demo).\n-include(\"demo.hrl\").\n-export([run/0]).\nrun() -> ok.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("include").join("demo.hrl"),
+        "-define(TAG, demo).\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let header = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::File && node.label == "include/demo.hrl")
+        .expect("missing header");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::References
+                && edge.target == header.id
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "local_import_file")
+        }),
+        "the include must reach the header beside the module"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_repository_is_named_by_its_directory() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();

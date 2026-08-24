@@ -28,6 +28,8 @@ pub(crate) fn local_import_target(
         Language::Rust => rust_local_import_target(source_label, import_label),
         Language::Go => go_local_import_target(source_label, import_label),
         Language::Dart => dart_local_import_target(source_label, import_label, dart_packages),
+        Language::Nix => nix_local_import_target(source_label, import_label),
+        Language::Erlang => erlang_local_import_target(source_label, import_label),
         // No deterministic local-file resolution for these import systems yet
         // (classpaths / gem load paths / assembly references); imports still
         // land as facts and can join package hubs.
@@ -43,10 +45,69 @@ pub(crate) fn local_import_target(
         | Language::Haskell
         | Language::OCaml
         | Language::Julia
-        | Language::Erlang
-        | Language::Nix
         | Language::R => None,
     }
+}
+
+/// `import ./helper.nix` and `import ./dir` name a path relative to the
+/// file that writes them, and a directory means its `default.nix`.
+/// `import <nixpkgs>` names a channel, which is not a file in this tree.
+pub(crate) fn nix_local_import_target(
+    source_label: &str,
+    import_label: &str,
+) -> Option<LocalImportTarget> {
+    let rest = import_label.trim().strip_prefix("import")?.trim_start();
+    let path = rest
+        .split_whitespace()
+        .next()?
+        .trim_end_matches(&[';', ')', ','][..]);
+    if !(path.starts_with("./") || path.starts_with("../")) {
+        return None;
+    }
+    let joined = join_path(path_dir(source_label).as_deref(), path);
+    let mut candidates = vec![joined.clone()];
+    if !joined.ends_with(".nix") {
+        candidates.push(format!("{joined}/default.nix"));
+        candidates.push(format!("{joined}.nix"));
+    }
+    Some(LocalImportTarget {
+        target: path.to_string(),
+        candidates,
+    })
+}
+
+/// `-include("cowboy.hrl")` names a header this project ships, next to the
+/// module or under the conventional `include/` and `src/` directories.
+pub(crate) fn erlang_local_import_target(
+    source_label: &str,
+    import_label: &str,
+) -> Option<LocalImportTarget> {
+    let rest = import_label.trim().strip_prefix("-include")?;
+    let path = rest
+        .trim()
+        .trim_start_matches('(')
+        .trim_end_matches(&[')', '.', ' '][..])
+        .trim_matches('"');
+    if path.is_empty() || path.starts_with('/') {
+        return None;
+    }
+    let directory = path_dir(source_label);
+    let mut candidates = vec![join_path(directory.as_deref(), path)];
+    // A module in `src/` includes a header from the application's
+    // `include/`, which is its sibling.
+    if let Some(parent) = directory
+        .as_deref()
+        .and_then(|dir| dir.rsplit_once('/').map(|(head, _)| head.to_string()))
+    {
+        candidates.push(format!("{parent}/include/{path}"));
+        candidates.push(format!("{parent}/src/{path}"));
+    }
+    candidates.push(format!("include/{path}"));
+    candidates.push(format!("src/{path}"));
+    Some(LocalImportTarget {
+        target: path.to_string(),
+        candidates,
+    })
 }
 
 pub(crate) fn possible_local_import_target(

@@ -555,6 +555,9 @@ pub(crate) fn classify_node(
         Language::Erlang => match kind {
             "fun_decl" => ParsedItemKind::Function,
             "module_attribute" => ParsedItemKind::Module,
+            // `-include("x.hrl")` pulls in a file and `-import(lists, [...])`
+            // names a module: cowboy writes 154 of them.
+            "pp_include" | "import_attribute" => ParsedItemKind::Import,
             _ => return None,
         },
         // Nix has no functions or types as such; a binding whose value is a
@@ -562,6 +565,9 @@ pub(crate) fn classify_node(
         // pull in other expressions.
         Language::Nix => match kind {
             "binding" if nix_binding_is_function(node) => ParsedItemKind::Function,
+            // `import ./helper.nix { ... }` is how one Nix file pulls in
+            // another; home-manager writes 253 of them and none was a fact.
+            "apply_expression" if nix_import_expression(node, source) => ParsedItemKind::Import,
             _ => return None,
         },
         // R declares functions by assigning a lambda: `run <- function(x) ...`.
@@ -2233,4 +2239,19 @@ pub(crate) fn dedupe_type_references(references: &mut Vec<ParsedTypeReference>) 
             && left.span.start_line == right.span.start_line
             && left.span.start_column == right.span.start_column
     });
+}
+
+/// Whether this application is a Nix `import`: the function of the
+/// innermost application is the `import` builtin, however many arguments
+/// follow it (`import ./x.nix { ... }` applies twice).
+fn nix_import_expression(node: Node<'_>, source: &[u8]) -> bool {
+    let mut function = node.child_by_field_name("function");
+    while let Some(inner) = function {
+        if inner.kind() == "apply_expression" {
+            function = inner.child_by_field_name("function");
+            continue;
+        }
+        return node_text(inner, source).as_deref().map(str::trim) == Some("import");
+    }
+    false
 }
