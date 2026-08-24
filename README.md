@@ -29,6 +29,7 @@ Implemented now:
 - Filesystem scanner with default build/vendor ignore rules.
 - Automatic semantic enrichment: when a language server for a scanned language is installed, the scan asks it to resolve what syntax cannot and applies the result as `confidence: semantic` edges over the syntactic graph. The root node records the outcome either way (`semantic_enrichment=applied` with `semantic_servers`, or `semantic_enrichment=skipped` with `semantic_skip_reason`), a missing or failing server degrades to the syntactic graph instead of failing the scan, and `--no-semantic` restores a machine-independent scan (use it in CI).
 - Tree-sitter based syntax extraction for Rust, Python, JavaScript, TypeScript, TSX, Go, C, C++, Dart, PHP, Bash, Ruby, Java, C#, Kotlin, Swift, Scala, Lua, Elixir, Zig, Haskell, OCaml, Julia, Erlang, Nix, R, HCL (Terraform, Packer, Nomad), Protobuf, GraphQL, Solidity, and Objective-C.
+- Files are read into facts on every core, one round ahead of the walk that assembles the graph, so reading and assembling overlap; the graph is assembled in one order and is byte-identical run to run. Terraform's 49 MB first scan takes 3.6s and 0.58 GB on an 18-core machine, and 0.4s from a warm cache.
 - Function, type/class, module/namespace, import/include, and entrypoint candidate nodes.
 - What a definition lets others see, recorded as `visibility` wherever the language states it: a
   keyword (`pub`, `static`, `local`, `private`, `defp`), a name (`_helper` in Python and Dart, a
