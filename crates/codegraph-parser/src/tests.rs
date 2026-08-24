@@ -306,6 +306,10 @@ fn nix_modules_declare_the_options_they_offer() {
         default = null;
       };
 
+      options = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+      };
+
       includes = lib.mkOption {
         type = lib.types.listOf (lib.types.submodule {
           options = {
@@ -332,9 +336,19 @@ fn nix_modules_declare_the_options_they_offer() {
     // A submodule states its options under the `type` of the option that
     // holds them, and a user still writes the name straight through.
     assert!(options.contains(&"programs.git.includes.condition".to_string()));
+    // And an option can be called `options` itself: home-manager declares
+    // `programs.delta.options` and `home.keyboard.options`.
     assert!(
-        !options.iter().any(|option| option.contains("options")),
-        "`options` is where a module states its names, not part of one: {options:?}"
+        options.contains(&"programs.git.options".to_string()),
+        "{options:?}"
+    );
+    // `options` is where a module states its names rather than part of any
+    // of them — except where it is the name.
+    assert!(
+        !options
+            .iter()
+            .any(|option| option.contains("options.") || option.starts_with("options")),
+        "{options:?}"
     );
 }
 

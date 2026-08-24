@@ -2430,9 +2430,13 @@ pub(crate) fn nix_option_path(node: Node<'_>, source: &[u8]) -> Option<String> {
     // option that holds it: `options.programs.git.includes.type.options
     // .condition` is the option a user writes as
     // `programs.git.includes.condition`.
+    let segments: Vec<&str> = parts.iter().flat_map(|part| part.split('.')).collect();
     let mut path: Vec<&str> = Vec::new();
-    for segment in parts.iter().flat_map(|part| part.split('.')) {
-        if segment == "options" {
+    for (index, segment) in segments.iter().copied().enumerate() {
+        // home-manager declares `programs.delta.options` and
+        // `home.keyboard.options`: the last segment is the option's own
+        // name, whatever it is called.
+        if segment == "options" && index + 1 < segments.len() {
             if path
                 .last()
                 .is_some_and(|last| names_an_option_attribute(last))
