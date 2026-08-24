@@ -5692,6 +5692,50 @@ fn a_go_call_through_a_package_qualifier_reads_past_the_type() {
 }
 
 #[test]
+fn a_program_without_an_extension_states_its_language_in_its_first_line() {
+    // A file with no extension is read, and its shebang is the only thing
+    // that says what it is. Four interpreters were missing: mastodon keeps
+    // thirteen ruby programs in `bin/`, and kong's `bin/kong` -- the
+    // gateway's whole CLI -- runs under OpenResty's `resty`.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("bin")).unwrap();
+    fs::write(
+        root.join("bin").join("kong"),
+        "#!/usr/bin/env resty\n\nlocal cli = require \"kong.cmd\"\n\nlocal function run()\n  return cli.run()\nend\n\nrun()\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("bin").join("rake"),
+        "#!/usr/bin/env ruby\n\ndef run\n  puts 'rake'\nend\n\nrun\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let language_of = |path: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == NodeKind::Function
+                    && node.span.as_ref().is_some_and(|span| span.path == path)
+            })
+            .and_then(|node| node.metadata.get("language").cloned())
+    };
+    assert_eq!(language_of("bin/kong").as_deref(), Some("lua"));
+    assert_eq!(language_of("bin/rake").as_deref(), Some("ruby"));
+    assert!(
+        graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::Entrypoint
+                && node.label == "script:bin/kong"
+                && node.metadata.get("interpreter").map(String::as_str) == Some("resty")
+        }),
+        "and the entrypoint names what runs it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_cabal_file_states_the_programs_it_builds() {
     // Haskell states its programs in the package's `.cabal` file:
     // `executable shellcheck` with `main-is: shellcheck.hs`. Without

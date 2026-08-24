@@ -117,6 +117,10 @@ Implemented now:
   `executable shellcheck` with `main-is: shellcheck.hs` is the program, a `test-suite` states a test
   program under its own `hs-source-dirs`, and a `library` states none. shellcheck's coverage finding
   is gone -- its entrypoints were its shell scripts and CI jobs.
+- A program with no extension states its language in its first line, and four interpreters the
+  corpus uses were not read: `ruby` (mastodon keeps thirteen programs in `bin/`), `lua`/`luajit`/
+  `resty` (kong's `bin/kong` is the gateway's whole CLI), `ocaml` and `dash`, along with `elixir`,
+  `julia` and `Rscript`. The entrypoint names the interpreter that runs it.
 - OCaml states what it builds in `dune` files, one per directory, and they are read as the manifests
   they are: `(executable (name main))` in `bin/dune` is `bin/main.ml`, `(executables (names a b))`
   states two programs, and `(test ...)`/`(tests ...)` state the test programs. The dune repository

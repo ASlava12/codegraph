@@ -2003,6 +2003,16 @@ pub(crate) fn pubspec_uses_flutter(source: &str) -> bool {
     })
 }
 
+/// The interpreter's own name, kept static so the entrypoint metadata
+/// names what runs the file rather than the language it is written in.
+fn interpreter_name(interpreter: &str) -> &'static str {
+    match interpreter {
+        "luajit" => "luajit",
+        "resty" => "resty",
+        _ => "lua",
+    }
+}
+
 pub(crate) fn shebang_interpreter(source: &str) -> Option<(&'static str, &'static str)> {
     let line = source.lines().next()?.trim();
     let command = line.strip_prefix("#!")?.trim();
@@ -2031,9 +2041,20 @@ pub(crate) fn shebang_interpreter(source: &str) -> Option<(&'static str, &'stati
         "sh" => Some(("sh", "bash")),
         "zsh" => Some(("zsh", "bash")),
         "ksh" => Some(("ksh", "bash")),
+        "dash" => Some(("dash", "bash")),
         "python" | "python2" | "python3" => Some(("python", "python")),
         "node" | "nodejs" => Some(("node", "javascript")),
         "php" => Some(("php", "php")),
+        // A file with no extension states its language in its first line,
+        // and these were not read: mastodon keeps thirteen ruby programs in
+        // `bin/`, and kong's `bin/kong` -- the gateway's whole CLI -- runs
+        // under OpenResty's lua.
+        "ruby" => Some(("ruby", "ruby")),
+        "lua" | "luajit" | "resty" => Some((interpreter_name(interpreter), "lua")),
+        "ocaml" => Some(("ocaml", "ocaml")),
+        "elixir" => Some(("elixir", "elixir")),
+        "julia" => Some(("julia", "julia")),
+        "Rscript" => Some(("Rscript", "r")),
         _ => None,
     }
 }
@@ -2044,6 +2065,12 @@ pub(crate) fn shebang_language(source: &str) -> Option<Language> {
         "python" => Some(Language::Python),
         "javascript" => Some(Language::JavaScript),
         "php" => Some(Language::Php),
+        "ruby" => Some(Language::Ruby),
+        "lua" => Some(Language::Lua),
+        "ocaml" => Some(Language::OCaml),
+        "elixir" => Some(Language::Elixir),
+        "julia" => Some(Language::Julia),
+        "r" => Some(Language::R),
         _ => None,
     }
 }
