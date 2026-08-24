@@ -192,13 +192,7 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
     if is_sql_file(path) {
         return true;
     }
-    // A notebook is JSON holding a program: `.ipynb` names no language the
-    // extension registry knows, and the program inside it is Python.
-    if path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("ipynb"))
-    {
+    if is_notebook_path(path) {
         return true;
     }
 
@@ -280,4 +274,12 @@ pub fn minified_line_length(source: &[u8]) -> Option<usize> {
         })
         .count();
     (spaces * 10 < width && punctuation * 10 > width).then_some(width)
+}
+
+/// A notebook is JSON holding a program: `.ipynb` names no language the
+/// extension registry knows, and the program inside it is Python.
+pub(crate) fn is_notebook_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ipynb"))
 }

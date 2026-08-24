@@ -4482,9 +4482,19 @@ pub(crate) fn add_parse_error_insights(graph: &CodeGraph, insights: &mut Vec<Ins
                 .get("max_file_size_bytes")
                 .map(String::as_str)
                 .unwrap_or("unknown");
+            // A file the scan would have read for facts is missing from
+            // the graph, and a reader can raise the budget. A data file is
+            // not: pytudes skips thirteen text corpora and one 20 MB list
+            // of sudokus, and holding them would add nothing.
+            let holds_facts = node.metadata.contains_key("language")
+                || node.metadata.get("item_kind").map(String::as_str) == Some("notebook");
             insights.push(Insight {
                 kind: "skipped_large_file".to_string(),
-                severity: InsightSeverity::Warning,
+                severity: if holds_facts {
+                    InsightSeverity::Warning
+                } else {
+                    InsightSeverity::Info
+                },
                 message: format!(
                     "{} skipped because size {file_size} exceeds max file size {max_file_size}",
                     node.label

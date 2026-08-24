@@ -12308,27 +12308,51 @@ fn bounded_quality_gate_caps_sample_and_keeps_totals() {
 #[test]
 fn insights_report_skipped_large_files() {
     let mut graph = CodeGraph::new("repo");
-    let mut metadata = BTreeMap::new();
-    metadata.insert("skipped".to_string(), "true".to_string());
-    metadata.insert("skipped_reason".to_string(), "max_file_size".to_string());
-    metadata.insert("file_size_bytes".to_string(), "8192".to_string());
-    metadata.insert("max_file_size_bytes".to_string(), "4096".to_string());
-    let file = graph.add_node_with_metadata(NodeKind::File, "src/huge.rs", None, metadata);
+    let skipped = |graph: &mut CodeGraph, label: &str, extra: &[(&str, &str)]| {
+        let mut metadata = BTreeMap::from([
+            ("skipped".to_string(), "true".to_string()),
+            ("skipped_reason".to_string(), "max_file_size".to_string()),
+            ("file_size_bytes".to_string(), "8192".to_string()),
+            ("max_file_size_bytes".to_string(), "4096".to_string()),
+        ]);
+        for (key, value) in extra {
+            metadata.insert(key.to_string(), value.to_string());
+        }
+        graph.add_node_with_metadata(NodeKind::File, label, None, metadata)
+    };
+    // The scan records what a file is even when it is too large to read.
+    let source = skipped(&mut graph, "src/huge.rs", &[("language", "rust")]);
+    let notebook = skipped(
+        &mut graph,
+        "ipynb/Advent.ipynb",
+        &[("item_kind", "notebook")],
+    );
+    let data = skipped(&mut graph, "data/text/big.txt", &[]);
 
     let summary = summarize(&graph);
-    assert_eq!(summary.skipped_files, 1);
+    assert_eq!(summary.skipped_files, 3);
 
     let report = insights(&graph);
+    let severity_of = |node: NodeId| {
+        report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "skipped_large_file" && insight.nodes.contains(&node))
+            .map(|insight| insight.severity)
+    };
+
+    // A file the scan would have read for facts is missing from the graph.
+    assert_eq!(severity_of(source), Some(InsightSeverity::Warning));
+    assert_eq!(severity_of(notebook), Some(InsightSeverity::Warning));
+    // pytudes keeps thirteen text corpora it never meant anyone to parse.
+    assert_eq!(severity_of(data), Some(InsightSeverity::Info));
+
     let insight = report
         .insights
         .iter()
         .find(|insight| insight.kind == "skipped_large_file")
         .expect("expected skipped large file insight");
-
-    assert_eq!(insight.severity, InsightSeverity::Warning);
-    assert!(insight.message.contains("src/huge.rs"));
     assert!(insight.message.contains("8192"));
-    assert!(insight.nodes.contains(&file));
 }
 
 #[test]

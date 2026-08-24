@@ -534,6 +534,14 @@ fn add_skipped_file(
         metadata.insert("language".to_string(), "markdown".to_string());
         metadata.insert("item_kind".to_string(), "document".to_string());
         metadata.insert("document_kind".to_string(), document_kind(path, label));
+    } else if is_rst_document(path) {
+        metadata.insert("language".to_string(), "rst".to_string());
+        metadata.insert("item_kind".to_string(), "document".to_string());
+        metadata.insert("document_kind".to_string(), document_kind(path, label));
+    } else if is_notebook_path(path) {
+        // A notebook holds a program, and the file is too large to read
+        // here, so say what it is without guessing which language.
+        metadata.insert("item_kind".to_string(), "notebook".to_string());
     } else if is_sql_file(path) {
         metadata.insert("language".to_string(), "sql".to_string());
         metadata.insert("item_kind".to_string(), "sql_schema".to_string());
