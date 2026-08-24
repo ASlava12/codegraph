@@ -3979,6 +3979,36 @@ fn scan_project_indexes_control_flow_facts() {
 }
 
 #[test]
+fn rubys_kernel_calls_belong_to_the_language() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(
+        root.join("lib").join("app.rb"),
+        "def render(value)\n  raise ArgumentError if value.nil?\n  present(value)\nend\n\ndef present(value)\n  value\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution"))
+            .map(String::as_str)
+    };
+    assert_eq!(resolution("raise"), Some("builtin"));
+    assert_eq!(resolution("nil?"), Some("builtin"));
+    // The project's own method still answers its own call.
+    assert_eq!(resolution("present"), Some("resolved"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_call_to_the_root_namespace_is_still_the_language() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();
