@@ -1453,10 +1453,10 @@ pub(crate) fn classify_control_flow(
     path: &str,
     function_name: Option<&str>,
 ) -> Option<ParsedItem> {
-    let (kind, control_kind) = if language == Language::Elixir {
-        elixir_control_flow_fact(node, source)?
-    } else {
-        control_flow_fact(language, node)?
+    let (kind, control_kind) = match language {
+        Language::Elixir => elixir_control_flow_fact(node, source)?,
+        Language::R => r_control_flow_fact(node, source)?,
+        _ => control_flow_fact(language, node)?,
     };
     let mut metadata = BTreeMap::new();
     metadata.insert("control_kind".to_string(), control_kind.to_string());
@@ -1967,6 +1967,25 @@ pub(crate) fn call_label(language: Language, node: Node<'_>, source: &[u8]) -> O
 }
 
 /// Control-flow facts for Elixir, whose if/case/cond/for/with parse as calls.
+/// R writes its early exit as a call -- `return(x)` -- so the node kind
+/// alone cannot see it, the way Elixir's control flow cannot be seen
+/// without reading the call's target. dplyr writes 171 of them.
+pub(crate) fn r_control_flow_fact(
+    node: Node<'_>,
+    source: &[u8],
+) -> Option<(ParsedItemKind, &'static str)> {
+    if node.kind() == "call"
+        && node
+            .child_by_field_name("function")
+            .and_then(|function| node_text(function, source))
+            .as_deref()
+            == Some("return")
+    {
+        return Some((ParsedItemKind::Return, "return"));
+    }
+    control_flow_fact(Language::R, node)
+}
+
 pub(crate) fn elixir_control_flow_fact(
     node: Node<'_>,
     source: &[u8],

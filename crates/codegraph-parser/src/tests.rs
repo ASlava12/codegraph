@@ -2266,6 +2266,37 @@ assert config.enable;
 }
 
 #[test]
+fn an_r_function_returns_by_calling_return() {
+    // dplyr writes `return(x)` 171 times; the node is an ordinary call,
+    // so the kind alone cannot see it.
+    let source = r#"pick <- function(x) {
+  if (x < 0) return(0)
+  for (i in seq_len(x)) print(i)
+  x
+}
+"#;
+    let parsed = parse_source("pick.R", source.as_bytes(), Language::R).unwrap();
+    let kinds: Vec<ParsedItemKind> = parsed
+        .items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.kind,
+                ParsedItemKind::Return | ParsedItemKind::Branch | ParsedItemKind::Loop
+            )
+        })
+        .map(|item| item.kind)
+        .collect();
+    assert!(
+        kinds.contains(&ParsedItemKind::Return),
+        "items: {:?}",
+        parsed.items
+    );
+    assert!(kinds.contains(&ParsedItemKind::Branch));
+    assert!(kinds.contains(&ParsedItemKind::Loop));
+}
+
+#[test]
 fn calls_on_literals_are_labeled_by_method_not_by_the_literal() {
     // `"x".to_string()` used to produce a call target carrying the whole
     // literal, so each distinct literal minted its own placeholder node
