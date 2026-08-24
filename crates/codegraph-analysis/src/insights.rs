@@ -2668,12 +2668,15 @@ pub(crate) fn add_rationale_risk_comment_insights(graph: &CodeGraph, insights: &
             .unwrap_or_else(|| "unknown location".to_string());
         // A note left in vendored code is upstream's: redis carries
         // jemalloc's FIXMEs and dune carries opam's, and reading them as
-        // loudly as a project's own buries the ones somebody here can act on.
-        let vendored = path.is_some_and(is_vendored_source_path);
+        // loudly as a project's own buries the ones somebody here can act
+        // on. A note in a fixture or a test is about that test — 44 of the
+        // corpus's 207 — and the same reasoning applies.
+        let elsewhere = path
+            .is_some_and(|path| is_vendored_source_path(path) || is_test_like_source_path(path));
         let severity = match kind {
-            "security" if !vendored => InsightSeverity::Error,
+            "security" if !elsewhere => InsightSeverity::Error,
             "security" => InsightSeverity::Warning,
-            "fixme" | "hack" | "bug" | "xxx" if !vendored => InsightSeverity::Warning,
+            "fixme" | "hack" | "bug" | "xxx" if !elsewhere => InsightSeverity::Warning,
             "fixme" | "hack" | "bug" | "xxx" => InsightSeverity::Info,
             _ => continue,
         };

@@ -9393,8 +9393,15 @@ fn a_note_left_in_vendored_code_is_upstreams() {
         "deps/jemalloc/src/arena.c",
         "FIXME: really hppa2.0-hp",
     );
+    // A note left in a fixture is about that fixture.
+    let in_a_test = comment(
+        &mut graph,
+        "tests/modules/services/php-fpm_test.c",
+        "FIXME: this fixture assumes a socket",
+    );
     graph.add_edge(mine, ours, EdgeKind::Contains, Confidence::Exact);
     graph.add_edge(theirs, vendored, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(mine, in_a_test, EdgeKind::Contains, Confidence::Exact);
 
     let report = insights(&graph);
     let severity_of = |needle: &str| {
@@ -9408,6 +9415,7 @@ fn a_note_left_in_vendored_code_is_upstreams() {
     };
     assert_eq!(severity_of("retry loop"), Some(InsightSeverity::Warning));
     assert_eq!(severity_of("hppa2.0-hp"), Some(InsightSeverity::Info));
+    assert_eq!(severity_of("assumes a socket"), Some(InsightSeverity::Info));
 }
 
 #[test]
