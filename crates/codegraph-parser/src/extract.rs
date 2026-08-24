@@ -1349,6 +1349,15 @@ pub(crate) fn enclosing_type_label(
             .and_then(|type_node| go_type_name(type_node, source));
     }
 
+    // C++ writes a member's definition outside its class and names the
+    // owner in the declarator: `void file_helper::open(..)` belongs to
+    // `file_helper`, and nothing encloses it to say so.
+    if matches!(language, Language::C | Language::Cpp)
+        && let Some(owner) = c_qualified_declarator_owner(node, source)
+    {
+        return Some(owner);
+    }
+
     let mut current = node.parent();
     while let Some(candidate) = current {
         let kind = candidate.kind();
@@ -2983,14 +2992,134 @@ pub(crate) fn item_label(
             .or_else(|| named_child_text(node, "name", source))
             .or_else(|| first_identifier(node, source)),
         Language::Elixir => elixir_item_label(node, source),
-        Language::C | Language::Cpp => first_identifier_in_field(node, "declarator", source)
-            .or_else(|| first_identifier(node, source)),
+        Language::C | Language::Cpp => {
+            let declared = (kind == ParsedItemKind::Function)
+                .then(|| c_declared_function_name(node, source))
+                .flatten();
+            declared
+                .or_else(|| first_identifier_in_field(node, "declarator", source))
+                .or_else(|| first_identifier(node, source))
+        }
         Language::Go if kind == ParsedItemKind::Function => {
             named_child_text(node, "name", source).or_else(|| first_identifier(node, source))
         }
         Language::Bash => first_identifier(node, source),
         _ => first_identifier(node, source),
     }
+}
+
+/// The type an out-of-line C++ definition belongs to, read from the
+/// scope of its qualified declarator. `sinks::base_sink<Mutex>::log`
+/// belongs to `base_sink`, and a namespace on its own does not name a
+/// type, so only the scope nearest the name is read.
+fn c_qualified_declarator_owner(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        if current.kind() == "function_declarator"
+            && let Some(declarator) = current.child_by_field_name("declarator")
+        {
+            return c_qualified_owner(declarator, source);
+        }
+        let mut cursor = current.walk();
+        let children: Vec<Node<'_>> = current.children(&mut cursor).collect();
+        stack.extend(children.into_iter().rev());
+    }
+    None
+}
+
+fn c_qualified_owner(declarator: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut current = declarator;
+    let mut owner = None;
+    loop {
+        match current.kind() {
+            "qualified_identifier" => {
+                let scope = current.child_by_field_name("scope");
+                let name = current.child_by_field_name("name")?;
+                // The scope nearest the name is the type; anything further
+                // out is the namespace it sits in.
+                if let Some(scope) = scope {
+                    owner = c_type_name_of(scope, source).or(owner);
+                }
+                current = name;
+            }
+            "pointer_declarator" | "reference_declarator" | "parenthesized_declarator" => {
+                current = current.child_by_field_name("declarator")?;
+            }
+            _ => break,
+        }
+    }
+    owner
+}
+
+/// The type a scope names, unwrapping the template arguments a C++
+/// definition repeats: `base_sink<Mutex>` is `base_sink`.
+fn c_type_name_of(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let node = match node.kind() {
+        "template_type" => node.child_by_field_name("name")?,
+        _ => node,
+    };
+    node_text(node, source)
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
+}
+
+/// The name a declarator declares, past the parts that decorate it.
+/// `void sinks::base_sink<Mutex>::log(..)` declares `log`; reading the
+/// first identifier of the qualified name called it `base_sink`, and
+/// spdlog had 27 functions named `registry` and 17 named `ansicolor_sink`
+/// after the classes they belong to.
+fn c_declarator_name(declarator: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut current = declarator.child_by_field_name("declarator")?;
+    loop {
+        let next = match current.kind() {
+            "qualified_identifier" | "template_function" => current.child_by_field_name("name"),
+            "pointer_declarator" | "reference_declarator" | "parenthesized_declarator" => {
+                current.child_by_field_name("declarator")
+            }
+            _ => None,
+        };
+        match next {
+            Some(next) => current = next,
+            None => break,
+        }
+    }
+    node_text(current, source)
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
+}
+
+/// The name a C or C++ definition attaches to its parameter list.
+/// spdlog writes `SPDLOG_INLINE bool is_color_terminal() SPDLOG_NOEXCEPT`,
+/// and a macro after the parameters is read by the grammar as the
+/// declarator: seventeen of spdlog's functions were called
+/// `SPDLOG_INLINE` and `is_color_terminal` was in the graph under no name
+/// at all.
+fn c_declared_function_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut stack = vec![node];
+    let mut called: Option<String> = None;
+    while let Some(current) = stack.pop() {
+        if current.kind() == "function_declarator"
+            && let Some(name) = c_declarator_name(current, source)
+        {
+            return Some(name);
+        }
+        // The macro makes the grammar give up: what it recovers is the
+        // name followed by the parameters, read as a call. That is still
+        // the name the definition declares, so it answers when nothing
+        // parsed cleanly.
+        if current.kind() == "init_declarator"
+            && current
+                .child_by_field_name("value")
+                .is_some_and(|value| value.kind() == "argument_list")
+            && called.is_none()
+        {
+            called = first_identifier_in_field(current, "declarator", source);
+        }
+        let mut cursor = current.walk();
+        let children: Vec<Node<'_>> = current.children(&mut cursor).collect();
+        stack.extend(children.into_iter().rev());
+    }
+    called
 }
 
 pub(crate) fn descendant_field_text(

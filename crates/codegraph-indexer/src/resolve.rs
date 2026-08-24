@@ -1620,6 +1620,16 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // calls found its private `fn unwrap`. A Rust call written through a
         // receiver is answered by a method, and by no method at all when the
         // name is one every type already has.
+        // `::open(...)` names the global namespace outright, which is
+        // where C++ says a class member is not: spdlog calls the POSIX
+        // `::open` and the graph answered with its own `file_helper::open`,
+        // closing a cycle with `fopen_s` that the program does not have.
+        if matches!(call.language.as_str(), "c" | "cpp") && call.label.starts_with("::") {
+            language_targets.retain(|target| {
+                graph_node(&context.graph, *target)
+                    .is_some_and(|node| !node.metadata.contains_key("owner_type"))
+            });
+        }
         if receiver_call_is_universal(&call.language, &call.label) {
             language_targets.clear();
         } else if call.language == "rust" && call.label.contains('.') {

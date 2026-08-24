@@ -802,6 +802,59 @@ APP_HOME="${APP_HOME:-./}"
 }
 
 #[test]
+fn a_cpp_definition_is_named_by_the_method_it_defines() {
+    // spdlog writes its macros around the name and its members outside
+    // the class: `SPDLOG_INLINE bool is_color_terminal() SPDLOG_NOEXCEPT`
+    // was read as a function called `SPDLOG_NOEXCEPT`, and
+    // `void SPDLOG_INLINE file_helper::open(..)` as one called
+    // `file_helper`.
+    let parsed = parse_source(
+        "os-inl.h",
+        br#"SPDLOG_INLINE bool is_color_terminal() SPDLOG_NOEXCEPT {
+    return true;
+}
+
+SPDLOG_INLINE void file_helper::open(const std::string &filename) {
+    (void)filename;
+}
+
+template <typename Mutex>
+void SPDLOG_INLINE sinks::base_sink<Mutex>::log(const log_msg &msg) {
+    (void)msg;
+}
+"#,
+        Language::Cpp,
+    )
+    .unwrap();
+
+    let functions: Vec<(&str, Option<&str>)> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Function)
+        .map(|item| {
+            (
+                item.label.as_str(),
+                item.metadata.get("owner_type").map(String::as_str),
+            )
+        })
+        .collect();
+
+    assert!(
+        functions.contains(&("is_color_terminal", None)),
+        "{functions:?}"
+    );
+    // A member defined outside its class still belongs to it.
+    assert!(
+        functions.contains(&("open", Some("file_helper"))),
+        "{functions:?}"
+    );
+    assert!(
+        functions.contains(&("log", Some("base_sink"))),
+        "{functions:?}"
+    );
+}
+
+#[test]
 fn parses_python_environment_default_values() {
     let parsed = parse_source(
         "app.py",

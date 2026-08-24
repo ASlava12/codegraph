@@ -9337,6 +9337,46 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn a_call_into_the_global_namespace_is_not_a_member() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    // spdlog calls the POSIX `::open` from `os::fopen_s`, and the graph
+    // answered with its own `file_helper::open`.
+    fs::write(
+        root.join("src").join("file_helper.h"),
+        "#pragma once\n\nclass file_helper {\npublic:\n    void open(const char *name);\n};\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("os.cpp"),
+        "#include \"file_helper.h\"\n#include <fcntl.h>\n\nvoid file_helper::open(const char *name) {\n    (void)name;\n}\n\nint write_to(const char *name) {\n    return ::open(name, 0);\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let member = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Function && node.label == "open")
+        .expect("the member definition is named after the method");
+    assert_eq!(
+        member.metadata.get("owner_type").map(String::as_str),
+        Some("file_helper")
+    );
+    // And the global call does not reach it.
+    assert!(
+        !graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.target == member.id
+                && edge.metadata.get("call_label").map(String::as_str) == Some("::open")
+        }),
+        "a class member cannot answer a call into the global namespace"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_include_reaches_the_directory_the_build_puts_on_its_path() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("windows").join("runner")).unwrap();
