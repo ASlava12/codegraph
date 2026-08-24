@@ -171,11 +171,16 @@ struct MissingImport {
     target: String,
     sources: BTreeSet<String>,
     production_source: bool,
+    /// Whether every file that names it wrote a C-family include whose
+    /// first directory this repository does not hold — a library the
+    /// machine installs rather than a file of this project.
+    from_an_include_path: bool,
     nodes: BTreeSet<NodeId>,
     edges: Vec<usize>,
 }
 
 pub(crate) fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let directories = scanned_directory_labels(graph);
     let mut missing: BTreeMap<String, MissingImport> = BTreeMap::new();
     for node in &graph.nodes {
         if node.kind != NodeKind::ExternalDependency
@@ -209,6 +214,20 @@ pub(crate) fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: 
         {
             continue;
         }
+        // `#include "openssl/ssl.h"` is written with quotes and comes from
+        // the include path all the same: redis holds no `openssl/`
+        // directory and spdlog no `benchmark/` one, so what is missing is a
+        // library the machine installs rather than a file of this project.
+        let from_an_include_path = matches!(
+            node.metadata.get("language").map(String::as_str),
+            Some("c") | Some("cpp") | Some("objc")
+        ) && !target.starts_with("./")
+            && !target.starts_with("../")
+            && target.split_once('/').is_some_and(|(head, _)| {
+                !directories
+                    .iter()
+                    .any(|directory| *directory == head || directory.ends_with(&format!("/{head}")))
+            });
         let edges = incoming_edge_indexes(graph, node.id, EdgeKind::Imports);
         let source = edges
             .first()
@@ -231,11 +250,13 @@ pub(crate) fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: 
                 target: target.to_string(),
                 sources: BTreeSet::new(),
                 production_source: false,
+                from_an_include_path: true,
                 nodes: BTreeSet::new(),
                 edges: Vec::new(),
             });
         entry.sources.insert(source.to_string());
         entry.production_source |= production;
+        entry.from_an_include_path &= from_an_include_path;
         entry.nodes.insert(node.id);
         entry.nodes.extend(
             edges
@@ -257,7 +278,7 @@ pub(crate) fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: 
         let target = entry.target;
         insights.push(Insight {
             kind: "unresolved_local_import".to_string(),
-            severity: if entry.production_source {
+            severity: if entry.production_source && !entry.from_an_include_path {
                 InsightSeverity::Warning
             } else {
                 InsightSeverity::Info

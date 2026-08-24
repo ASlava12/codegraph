@@ -4084,6 +4084,35 @@ fn reading_files_ahead_of_the_walk_changes_nothing_it_finds() {
 }
 
 #[test]
+fn a_path_built_as_the_program_runs_is_not_one_file() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src").join("commands")).unwrap();
+    fs::write(root.join("src").join("commands").join("get.json"), "{}\n").unwrap();
+    fs::write(
+        root.join("linter.js"),
+        "const schema = require('./src/commands/' + name);\nconst fs = require('node:fs');\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let imports = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::ExternalDependency)
+        .map(|node| node.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(imports.iter().any(|label| label.contains("node:fs")));
+    // redis writes `require('../src/commands/' + command_schema)`, and the
+    // literal in front of the `+` is a prefix rather than a file.
+    assert!(
+        !imports.iter().any(|label| label.contains("src/commands")),
+        "{imports:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_require_written_in_a_comment_is_not_an_import() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("lib")).unwrap();

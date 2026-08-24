@@ -10096,6 +10096,45 @@ fn build_tooling_may_import_a_dev_dependency() {
 }
 
 #[test]
+fn a_quoted_include_of_an_installed_library_is_a_note() {
+    let mut graph = CodeGraph::new("repo");
+    graph.add_node(NodeKind::Directory, "src");
+    let source = graph.add_node(NodeKind::File, "src/tls.c");
+    let unresolved = |graph: &mut CodeGraph, label: &str, target: &str| {
+        let node = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            label,
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "import".to_string()),
+                ("language".to_string(), "c".to_string()),
+                ("import_scope".to_string(), "local".to_string()),
+                ("import_target".to_string(), target.to_string()),
+                ("resolution".to_string(), "unresolved".to_string()),
+            ]),
+        );
+        graph.add_edge(source, node, EdgeKind::Imports, Confidence::Syntactic);
+        node
+    };
+    // redis holds no `openssl/` directory, so that header comes from the
+    // include path; `release.h` is a file it should hold next door.
+    unresolved(&mut graph, "#include \"openssl/ssl.h\"", "openssl/ssl.h");
+    unresolved(&mut graph, "#include \"release.h\"", "release.h");
+
+    let severity_of = |needle: &str| {
+        insights(&graph)
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "unresolved_local_import" && insight.message.contains(needle)
+            })
+            .map(|insight| insight.severity)
+    };
+    assert_eq!(severity_of("openssl/ssl.h"), Some(InsightSeverity::Info));
+    assert_eq!(severity_of("release.h"), Some(InsightSeverity::Warning));
+}
+
+#[test]
 fn a_composer_package_is_matched_by_the_library_it_ships() {
     let mut graph = CodeGraph::new("repo");
     let source = graph.add_node(NodeKind::File, "src/Monolog/Handler/ElasticaHandler.php");

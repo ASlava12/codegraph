@@ -318,6 +318,14 @@ pub(crate) fn commonjs_require_call(line: &str) -> Option<String> {
                 .starts_with(['"', '\'', '`'])
                 .then(|| first_quoted_value(argument))
                 .flatten()?;
+            // `require('../src/commands/' + name)` builds its path as it
+            // runs, so the literal in front is a prefix rather than a file:
+            // redis writes one, and the graph went looking for
+            // `src/commands.js`.
+            let after = argument[module.len() + 2..].trim_start();
+            if !after.starts_with(')') {
+                return None;
+            }
             return Some(format!("require(\"{module}\")"));
         }
         search_start = start + "require(".len();
