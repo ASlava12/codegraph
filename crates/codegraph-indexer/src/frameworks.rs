@@ -639,28 +639,149 @@ pub(crate) fn go_framework_routes(source: &str) -> Vec<FrameworkRoute> {
 /// a bare `get 'name'` in a helper is not mistaken for a route.
 pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
     const METHODS: &[&str] = &["get", "post", "put", "patch", "delete", "head", "options"];
-    source
-        .lines()
-        .enumerate()
-        .filter_map(|(index, line)| {
-            let trimmed = line.trim();
-            let (method, rest) = METHODS
-                .iter()
-                .find_map(|method| trimmed.strip_prefix(method).map(|rest| (*method, rest)))?;
-            if !rest.starts_with(char::is_whitespace) {
-                return None;
+    // Rails states its routes in a file of its own, and `resources :users`
+    // is seven of them.
+    let rails = source.contains("routes.draw");
+    let mut routes = Vec::new();
+    let mut prefixes: Vec<String> = Vec::new();
+
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if rails {
+            // `namespace :admin do` puts everything inside it under /admin.
+            if let Some(rest) = trimmed.strip_prefix("namespace ")
+                && trimmed.ends_with(" do")
+                && let Some(name) = ruby_symbol_name(rest)
+            {
+                prefixes.push(name);
+                continue;
             }
-            let path = first_quoted_value(rest)?;
-            if !path.starts_with('/') {
-                return None;
+            if trimmed == "end" {
+                prefixes.pop();
+                continue;
             }
-            Some(FrameworkRoute {
-                framework: "sinatra".to_string(),
-                method: method.to_ascii_uppercase(),
-                path,
-                handler: None,
-                line: index as u32 + 1,
-            })
+            let prefix = if prefixes.is_empty() {
+                String::new()
+            } else {
+                format!("/{}", prefixes.join("/"))
+            };
+            if let Some(rest) = trimmed.strip_prefix("root ") {
+                routes.push(FrameworkRoute {
+                    framework: "rails".to_string(),
+                    method: "GET".to_string(),
+                    path: if prefix.is_empty() {
+                        "/".to_string()
+                    } else {
+                        prefix.clone()
+                    },
+                    handler: rails_route_handler(rest),
+                    line: line_number,
+                });
+                continue;
+            }
+            if let Some(rest) = trimmed
+                .strip_prefix("resources ")
+                .or_else(|| trimmed.strip_prefix("resource "))
+            {
+                let singular = trimmed.starts_with("resource ");
+                if let Some(name) = ruby_symbol_name(rest) {
+                    routes.extend(rails_resource_routes(&prefix, &name, singular, line_number));
+                }
+                continue;
+            }
+        }
+
+        let Some((method, rest)) = METHODS
+            .iter()
+            .find_map(|method| trimmed.strip_prefix(method).map(|rest| (*method, rest)))
+        else {
+            continue;
+        };
+        if !rest.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let Some(path) = first_quoted_value(rest) else {
+            continue;
+        };
+        if !rails && !path.starts_with('/') {
+            continue;
+        }
+        let prefix = if prefixes.is_empty() {
+            String::new()
+        } else {
+            format!("/{}", prefixes.join("/"))
+        };
+        routes.push(FrameworkRoute {
+            framework: if rails { "rails" } else { "sinatra" }.to_string(),
+            method: method.to_ascii_uppercase(),
+            path: format!("{prefix}/{}", path.trim_start_matches('/')),
+            handler: rails_route_handler(rest),
+            line: line_number,
+        });
+    }
+
+    routes
+}
+
+/// The name a Ruby symbol states: `:users` in `resources :users`.
+fn ruby_symbol_name(rest: &str) -> Option<String> {
+    let value = rest.trim().strip_prefix(':')?;
+    let name: String = value
+        .chars()
+        .take_while(|character| character.is_alphanumeric() || *character == '_')
+        .collect();
+    (!name.is_empty()).then_some(name)
+}
+
+/// The action a Rails route points at: `to: "health#show"` is `show` in the
+/// health controller.
+fn rails_route_handler(rest: &str) -> Option<String> {
+    let value = rest.split("to:").nth(1)?;
+    let target = first_quoted_value(value)?;
+    let (_, action) = target.split_once('#')?;
+    (!action.is_empty()).then(|| action.to_string())
+}
+
+/// What `resources :users` declares: the seven routes Rails generates for
+/// it, and six for a singular `resource` which has no id of its own.
+fn rails_resource_routes(
+    prefix: &str,
+    name: &str,
+    singular: bool,
+    line: u32,
+) -> Vec<FrameworkRoute> {
+    let base = format!("{prefix}/{name}");
+    let member = if singular {
+        base.clone()
+    } else {
+        format!("{base}/:id")
+    };
+    let mut declared = vec![
+        ("GET", base.clone(), "index"),
+        ("POST", base.clone(), "create"),
+        ("GET", format!("{base}/new"), "new"),
+        ("GET", member.clone(), "show"),
+        ("GET", format!("{member}/edit"), "edit"),
+        ("PATCH", member.clone(), "update"),
+        ("PUT", member.clone(), "update"),
+        ("DELETE", member, "destroy"),
+    ];
+    if singular {
+        // A singular resource has no collection to list.
+        declared.retain(|(_, _, action)| *action != "index");
+    }
+    declared
+        .into_iter()
+        .map(|(method, path, action)| FrameworkRoute {
+            framework: "rails".to_string(),
+            method: method.to_string(),
+            path,
+            handler: Some(action.to_string()),
+            line,
         })
         .collect()
 }

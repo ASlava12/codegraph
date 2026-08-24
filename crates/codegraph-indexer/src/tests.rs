@@ -9173,6 +9173,59 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn rails_states_its_routes_in_a_file_of_its_own() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::write(
+        root.join("config").join("routes.rb"),
+        "Rails.application.routes.draw do\n  root to: \"home#index\"\n  get \"/health\", to: \"health#show\"\n  resources :users\n  namespace :admin do\n    get \"dashboard\", to: \"dashboard#index\"\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let routes = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata.get("item_kind").map(String::as_str) == Some("framework_route")
+        })
+        .map(|node| node.label.clone())
+        .collect::<Vec<_>>();
+
+    // `resources :users` is seven routes, and Rails writes both PATCH and
+    // PUT for the update.
+    for expected in [
+        "route GET /users",
+        "route POST /users",
+        "route GET /users/new",
+        "route GET /users/:id",
+        "route GET /users/:id/edit",
+        "route PATCH /users/:id",
+        "route PUT /users/:id",
+        "route DELETE /users/:id",
+    ] {
+        assert!(routes.contains(&expected.to_string()), "{routes:?}");
+    }
+    // `root to:` is the one route with no path written, and a namespace
+    // puts everything inside it under its own.
+    assert!(routes.contains(&"route GET /".to_string()), "{routes:?}");
+    assert!(
+        routes.contains(&"route GET /admin/dashboard".to_string()),
+        "{routes:?}"
+    );
+    // The action a route points at is what serves it.
+    assert!(
+        graph.nodes.iter().any(|node| {
+            node.label == "route GET /health"
+                && node.metadata.get("handler").map(String::as_str) == Some("show")
+        }),
+        "{routes:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn aspnet_fills_in_the_route_template_it_writes() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("Controllers")).unwrap();
