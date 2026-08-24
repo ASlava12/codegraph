@@ -4044,7 +4044,12 @@ pub(crate) fn is_tool_configuration_source_path(path: &str) -> bool {
     if !matches!(extension, "js" | "cjs" | "mjs" | "ts" | "cts" | "mts") {
         return false;
     }
-    stem.ends_with(".config") || stem.starts_with('.') && stem.ends_with("rc")
+    // `vite.config.sw.js` and `jest.config.base.ts` are configurations
+    // too: the tool's name comes first and what follows says which of
+    // several configurations this is.
+    stem.ends_with(".config")
+        || stem.split('.').skip(1).any(|part| part == "config")
+        || stem.starts_with('.') && stem.ends_with("rc")
 }
 
 /// A repository's own build, release and benchmark tooling: `scripts/build.js`,

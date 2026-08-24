@@ -9339,6 +9339,40 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn a_php_include_written_from_the_root_reaches_the_file() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app").join("Providers")).unwrap();
+    fs::create_dir_all(root.join("routes")).unwrap();
+    // Laravel's `base_path()` names a path from the project root, and the
+    // provider that writes it sits three directories down.
+    fs::write(
+        root.join("routes").join("channels.php"),
+        "<?php\n\nBroadcast::channel('user.{id}', static fn () => true);\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("Providers").join("BroadcastServiceProvider.php"),
+        "<?php\n\nclass BroadcastServiceProvider\n{\n    public function boot(): void\n    {\n        require base_path('routes/channels.php');\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let include = graph
+        .nodes
+        .iter()
+        .find(|node| node.label.contains("channels.php") && node.label.contains("require"))
+        .expect("the include is in the graph");
+    assert_eq!(
+        include.metadata.get("resolved_path").map(String::as_str),
+        Some("routes/channels.php"),
+        "{:?}",
+        include.metadata
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_lockfile_says_which_package_autoloads_a_namespace() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("app")).unwrap();

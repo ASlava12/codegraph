@@ -893,10 +893,38 @@ pub(crate) fn php_local_import_target(
             &format!("{path}.php"),
         ));
     }
+    // Laravel writes `require base_path('routes/channels.php')`, and every
+    // one of the framework's path helpers names a path from the project
+    // root rather than from the file that writes it.
+    if names_a_path_from_the_root(import_label) {
+        candidates.push(normalize_path(&path));
+        if !path_has_extension(&path) {
+            candidates.push(normalize_path(&format!("{path}.php")));
+        }
+    }
+    dedup_preserving_order(&mut candidates);
     Some(LocalImportTarget {
         target: path,
         candidates,
     })
+}
+
+/// Whether a PHP include names its path from the project root. Laravel
+/// states that with a helper -- `base_path`, `app_path`, `config_path`,
+/// `resource_path` and their siblings -- and `__DIR__ . '/../..'` says
+/// the same thing by walking out of the file's own directory.
+fn names_a_path_from_the_root(import_label: &str) -> bool {
+    const HELPERS: [&str; 8] = [
+        "base_path(",
+        "app_path(",
+        "config_path(",
+        "database_path(",
+        "public_path(",
+        "resource_path(",
+        "storage_path(",
+        "lang_path(",
+    ];
+    HELPERS.iter().any(|helper| import_label.contains(helper))
 }
 
 pub(crate) fn bash_local_import_target(

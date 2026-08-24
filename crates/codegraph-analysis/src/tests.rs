@@ -11699,6 +11699,23 @@ fn insights_report_mixed_dependency_scopes() {
     );
 }
 #[test]
+fn a_configuration_with_a_name_of_its_own_is_still_a_configuration() {
+    // koel builds its service worker with `vite.config.sw.js`, which is a
+    // configuration for vite however many names it carries.
+    for path in [
+        "vite.config.sw.js",
+        "jest.config.base.ts",
+        "packages/app/vite.config.ts",
+        ".eslintrc.js",
+    ] {
+        assert!(is_tool_configuration_source_path(path), "{path}");
+    }
+    for path in ["src/config.ts", "app/config/database.js", "src/main.ts"] {
+        assert!(!is_tool_configuration_source_path(path), "{path}");
+    }
+}
+
+#[test]
 fn a_package_that_autoloads_the_namespace_is_the_one_that_declares_it() {
     let mut graph = CodeGraph::new("repo");
     let manifest = graph.add_node(NodeKind::File, "composer.json");

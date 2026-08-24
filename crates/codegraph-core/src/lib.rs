@@ -81,7 +81,7 @@ pub fn is_test_like_source_path(path: &str) -> bool {
             // `_examples`: the convention says outright that the code is
             // not part of the build.
             matches!(
-                part.trim_start_matches('_'),
+                part.trim_matches('_'),
                 "testdata"
                     | "testing"
                     | "testthat"
@@ -606,6 +606,9 @@ mod test_path_words {
             // underscore: gqlgen keeps twenty example apps in `_examples`.
             "_examples/chat/server.go",
             "_testdata/schema.graphql",
+            // Jest and Vitest name the directory with underscores on both
+            // sides: koel keeps `__mocks__/useContextMenu.ts` there.
+            "resources/js/composables/__mocks__/useContextMenu.ts",
         ] {
             assert!(is_test_like_source_path(path), "{path}");
         }
