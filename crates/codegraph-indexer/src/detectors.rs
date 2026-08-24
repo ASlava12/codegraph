@@ -291,7 +291,7 @@ pub(crate) fn index_framework_routes(
     parsed: &ParsedFile,
     local_functions: &BTreeMap<String, NodeId>,
 ) {
-    for route in framework_routes(language, source) {
+    for route in framework_routes(language, label, source) {
         // The detectors read text, so they cannot tell a route from an
         // example of one. flask documents `@app.route("/")` inside a
         // docstring, and that line claimed about 140 functions as its
@@ -390,14 +390,18 @@ fn names_a_route_path(path: &str) -> bool {
     path.starts_with(['/', '*', '^', ':'])
 }
 
-pub(crate) fn framework_routes(language: Language, source: &str) -> Vec<FrameworkRoute> {
+pub(crate) fn framework_routes(
+    language: Language,
+    label: &str,
+    source: &str,
+) -> Vec<FrameworkRoute> {
     match language {
         Language::Python => python_framework_routes(source),
         Language::JavaScript | Language::TypeScript | Language::Tsx => js_framework_routes(source),
         Language::Rust => rust_framework_routes(source),
         Language::Go => go_framework_routes(source),
         Language::Php => php_framework_routes(source),
-        Language::Ruby => ruby_framework_routes(source),
+        Language::Ruby => ruby_framework_routes(label, source),
         Language::Java | Language::Kotlin => jvm_framework_routes(source),
         Language::CSharp => csharp_framework_routes(source),
         Language::C

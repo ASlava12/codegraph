@@ -4651,7 +4651,19 @@ pub(crate) fn add_duplicate_framework_route_insights(
         // own, so `path("")` in twenty apps is twenty different URLs:
         // django-oscar declares `/` twenty times and none of them collides.
         // Within one URLconf it still would, so that is what is compared.
-        let scope = if node.metadata.get("framework").map(String::as_str) == Some("django") {
+        // Rails draws each `config/routes/*.rb` into the router at a
+        // mount point of its own -- `draw(:admin)` inside `namespace
+        // :admin` -- so the same written path in two of those files is
+        // two URLs, exactly as it is for two Django URLconfs. Mastodon
+        // splits its router across five files and 39 of its 47 duplicate
+        // groups spanned two of them.
+        let drawn_separately = node
+            .span
+            .as_ref()
+            .is_some_and(|span| span.path.contains("config/routes/"));
+        let scope = if drawn_separately
+            || node.metadata.get("framework").map(String::as_str) == Some("django")
+        {
             node.span
                 .as_ref()
                 .map(|span| span.path.clone())

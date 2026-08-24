@@ -662,11 +662,17 @@ pub(crate) fn go_framework_routes(source: &str) -> Vec<FrameworkRoute> {
 /// `get '/hello' do ... end` is how Sinatra declares a route, and Rails
 /// writes the same shape in `routes.rb`. The path has to look like one, so
 /// a bare `get 'name'` in a helper is not mistaken for a route.
-pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
+pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkRoute> {
     const METHODS: &[&str] = &["get", "post", "put", "patch", "delete", "head", "options"];
     // Rails states its routes in a file of its own, and `resources :users`
     // is seven of them.
-    let rails = source.contains("routes.draw");
+    // Rails splits a large router across `config/routes/*.rb`, each drawn
+    // from the main file: mastodon writes five of them, and only the main
+    // one says `routes.draw`. A file in that directory is a routes file.
+    let rails = source.contains("routes.draw")
+        || label == "config/routes.rb"
+        || label.contains("config/routes/")
+        || label.ends_with("/config/routes.rb");
     let mut routes = Vec::new();
     let mut prefixes: Vec<String> = Vec::new();
     // The depth a `concern` block opened at, while one is open.
@@ -694,18 +700,7 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                 }
                 continue;
             }
-            let prefix = {
-                let parts: Vec<&str> = prefixes
-                    .iter()
-                    .map(String::as_str)
-                    .filter(|part| !part.is_empty())
-                    .collect();
-                if parts.is_empty() {
-                    String::new()
-                } else {
-                    format!("/{}", parts.join("/"))
-                }
-            };
+            let prefix = joined_route_prefix(&prefixes);
             if let Some(rest) = trimmed.strip_prefix("root ") {
                 routes.push(FrameworkRoute {
                     framework: "rails".to_string(),
@@ -768,14 +763,22 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                         } else {
                             let key = rails_option_value(rest, "param")
                                 .unwrap_or_else(|| "id".to_string());
-                            let parent = name.trim_end_matches('s');
-                            format!("{segment}/:{parent}_{key}")
+                            format!("{segment}/:{}_{key}", rails_singular(&name))
                         };
                         prefixes.push(member);
                     }
                 }
                 continue;
             }
+        }
+
+        // Every `end` pops one entry, so every block that opens has to
+        // push one: mastodon's `config/routes/api.rb` opens `member do`,
+        // `collection do` and `scope module: :v1 do` between its
+        // namespaces, and the stack drained until `/api/v1/accounts` read
+        // as `/accounts`.
+        if rails && opens_a_ruby_block(trimmed) {
+            prefixes.push(rails_block_prefix(trimmed));
         }
 
         let Some((method, rest)) = METHODS
@@ -787,17 +790,30 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
         if !rest.starts_with(char::is_whitespace) {
             continue;
         }
-        let Some(path) = first_quoted_value(rest) else {
+        // Rails names the path with a symbol as often as with a string:
+        // `get :verify_credentials, to: 'credentials#show'` is the path
+        // `verify_credentials`, and reading the first quoted value on the
+        // line took the controller as the path.
+        let before_target = rest.split("to:").next().unwrap_or(rest);
+        let Some(path) = first_quoted_value(before_target)
+            .or_else(|| ruby_symbol_name(before_target).map(|name| format!("/{name}")))
+            .or_else(|| first_quoted_value(rest))
+        else {
             continue;
         };
         if !rails && !path.starts_with('/') {
             continue;
         }
-        let prefix = if prefixes.is_empty() {
-            String::new()
-        } else {
-            format!("/{}", prefixes.join("/"))
-        };
+        // Sinatra declares a route with the block that serves it: `get
+        // '/' do .. end`. A request spec writes `get '/accounts'` with no
+        // block at all, and mastodon's suite made 469 of those read as
+        // routes the program serves.
+        if !rails
+            && !(trimmed.ends_with(" do") || trimmed.contains(" { ") || trimmed.ends_with('{'))
+        {
+            continue;
+        }
+        let prefix = joined_route_prefix(&prefixes);
         routes.push(FrameworkRoute {
             framework: if rails { "rails" } else { "sinatra" }.to_string(),
             method: method.to_ascii_uppercase(),
@@ -912,6 +928,71 @@ fn rails_resource_actions(rest: &str) -> RailsResourceActions {
         }
     }
     actions
+}
+
+/// The singular Rails writes for a resource name: `statuses` is
+/// `status` and `policies` is `policy`. Only the endings that matter to
+/// a route key are covered -- the inflector is a table nobody can carry.
+fn rails_singular(name: &str) -> String {
+    for ending in ["sses", "ses", "xes", "zes", "ches", "shes"] {
+        if let Some(stem) = name.strip_suffix(ending) {
+            return match ending {
+                "sses" => format!("{stem}ss"),
+                "ses" => format!("{stem}s"),
+                _ => stem.to_string(),
+            };
+        }
+    }
+    if let Some(stem) = name.strip_suffix("ies") {
+        return format!("{stem}y");
+    }
+    name.strip_suffix('s').unwrap_or(name).to_string()
+}
+
+/// The path the open blocks state, skipping the ones that add nothing:
+/// every block pushes an entry so that every `end` pops one.
+fn joined_route_prefix(prefixes: &[String]) -> String {
+    let parts: Vec<&str> = prefixes
+        .iter()
+        .map(String::as_str)
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("/{}", parts.join("/"))
+    }
+}
+
+/// Whether a line opens a block that an `end` will close.
+fn opens_a_ruby_block(line: &str) -> bool {
+    let trimmed = line.trim_end();
+    trimmed.ends_with(" do")
+        || trimmed.ends_with('|') && trimmed.contains(" do |")
+        || [
+            "if ", "unless ", "case ", "begin", "class ", "module ", "def ",
+        ]
+        .iter()
+        .any(|opener| trimmed.starts_with(opener))
+}
+
+/// What a block adds to the path. `scope :v1_alpha do` and `scope path:
+/// 'ap' do` prefix what they hold; `member do` and `collection do` do
+/// not.
+fn rails_block_prefix(line: &str) -> String {
+    let Some(rest) = line.trim().strip_prefix("scope ") else {
+        return String::new();
+    };
+    rails_option_value(rest, "path")
+        .or_else(|| {
+            // `scope :v1_alpha do` names the segment directly; `scope
+            // module: :v1 do` names a module and no segment.
+            let head = rest.split(',').next().unwrap_or_default().trim();
+            head.strip_suffix(" do")
+                .or(Some(head))
+                .and_then(ruby_symbol_name)
+        })
+        .unwrap_or_default()
 }
 
 /// The value of a `key: 'value'` option on a route line.

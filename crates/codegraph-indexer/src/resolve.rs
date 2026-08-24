@@ -2933,13 +2933,22 @@ pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
         // method it means: koel writes 139 controllers whose method is
         // `__invoke`, and the name alone chooses none of them.
         if let Some(owner) = reference.owner.as_deref() {
+            // A Ruby class states the modules it sits in --
+            // `ActivityPub::LikesController` -- and a Rails route names
+            // the controller path, which the inflector turns into that
+            // name. Comparing what the two end with settles the method
+            // without knowing the project's acronym rules.
+            let owner_tail = owner.rsplit("::").next().unwrap_or(owner);
             let owned: Vec<NodeId> = targets
                 .iter()
                 .copied()
                 .filter(|target| {
                     graph_node(&context.graph, *target)
                         .and_then(|node| node.metadata.get("owner_type"))
-                        .is_some_and(|declared| declared == owner)
+                        .is_some_and(|declared| {
+                            declared == owner
+                                || declared.rsplit("::").next().unwrap_or(declared) == owner_tail
+                        })
                 })
                 .collect();
             if !owned.is_empty() {
