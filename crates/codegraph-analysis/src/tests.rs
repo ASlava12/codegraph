@@ -1882,6 +1882,31 @@ fn entrypoints_lead_with_programs_not_ci_jobs() {
 }
 
 #[test]
+fn a_question_about_a_topic_is_not_a_search_for_its_name() {
+    // "APIs", "HTTP" and "CI" read as names because of the capitals, and
+    // the filters they produced answered with nothing at all.
+    for (question, expected) in [
+        (
+            "what are the public APIs",
+            "symbols metadata.visibility:public limit:50",
+        ),
+        ("what are the HTTP routes", "routes depth:4 edge_limit:300"),
+        ("where is the CI configured", "configs depth:6"),
+    ] {
+        let plan = natural_query_plan(question).expect("the question routes");
+        assert_eq!(plan.generated_query, expected, "{question}");
+    }
+
+    // A name that happens to be capitalised is still a name.
+    let plan = natural_query_plan("what calls ApiClient").expect("the question routes");
+    assert!(
+        plan.generated_query.contains("ApiClient"),
+        "{}",
+        plan.generated_query
+    );
+}
+
+#[test]
 fn the_entrypoint_query_answers_in_the_same_order_as_the_overview() {
     let mut graph = CodeGraph::new("repo");
     let mut declare = |label: &str, metadata: BTreeMap<String, String>| {

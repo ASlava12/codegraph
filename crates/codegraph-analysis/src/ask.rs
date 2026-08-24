@@ -149,6 +149,12 @@ pub(crate) fn natural_query_plan_with_anchor(
         .filter(|term| natural_query_token_looks_specific(term))
         .map(|term| lower.replace(&term.to_lowercase(), " "))
         .unwrap_or_else(|| lower.clone());
+    // A word the routing rules match on is what the question is about,
+    // not a name to filter by: "what are the public APIs" read `APIs` as
+    // a name because of the capitals, so `search:APIs` answered with
+    // nothing at all -- and so did `routes handler:HTTP` and `configs
+    // target:CI`.
+    let term = term.filter(|term| !natural_query_routes_on_this_word(term));
     let quoted_term = term.as_deref().map(quote_query_value);
     // A guessed anchor is a word from the question, not a name from the
     // project, and topic questions ask about the project as a whole: "what
@@ -836,6 +842,17 @@ pub(crate) fn natural_query_token_looks_specific(token: &str) -> bool {
             .chars()
             .any(|character| character.is_ascii_uppercase())
         || token.chars().any(|character| character.is_ascii_digit())
+}
+
+/// Whether the word is what the question is *about* rather than a name
+/// in the project: the words the routing rules themselves match on.
+pub(crate) fn natural_query_routes_on_this_word(token: &str) -> bool {
+    let lower = token.to_lowercase();
+    let singular = lower.strip_suffix('s').unwrap_or(&lower);
+    matches!(
+        singular,
+        "api" | "http" | "https" | "ci" | "url" | "uri" | "endpoint" | "interface" | "surface"
+    )
 }
 
 pub(crate) fn natural_query_stop_word(token: &str) -> bool {
