@@ -180,14 +180,34 @@ const russian = i18n.slice(i18n.search(/\bru:\s*\{/));
 const russianKinds = new Set(
   [...russian.matchAll(/"kind\.([a-z_]+)":/g)].map((match) => match[1]),
 );
-const untranslated = kinds.filter((kind) => !russianKinds.has(kind));
+// The graph's own vocabulary is rendered the same way, so it needs the
+// same names: `control_flow`, `contains`, `defines` and `depends_on` were
+// shown in English.
+const coreRs = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "codegraph-core",
+  "src",
+  "lib.rs",
+);
+const core = readFileSync(coreRs, "utf8");
+const enumVariants = (name) => {
+  const block = core.match(new RegExp(`pub enum ${name}\\s*\\{([\\s\\S]*?)\\n\\}`));
+  if (!block) throw new Error(`check-defs: ${name} is gone from codegraph-core`);
+  return [...block[1].matchAll(/\n {4}([A-Z][A-Za-z]*)/g)].map((match) =>
+    match[1].replace(/(?<!^)([A-Z])/g, "_$1").toLowerCase(),
+  );
+};
+const vocabulary = [...enumVariants("NodeKind"), ...enumVariants("EdgeKind")];
+const untranslated = [...kinds, ...vocabulary].filter((kind) => !russianKinds.has(kind));
 if (untranslated.length > 0) {
   console.error(
-    `check-defs: ${untranslated.length} finding kind(s) have no Russian name: ${untranslated.join(", ")}`,
+    `check-defs: ${untranslated.length} kind(s) have no Russian name: ${untranslated.join(", ")}`,
   );
   process.exit(1);
 }
 
 console.log(
-  `check-defs: ok (${defined.size} defs, ${calls.size} called names, 0 undefined, ${sharedNames} shared names in step, ${kinds.length} finding kinds named)`,
+  `check-defs: ok (${defined.size} defs, ${calls.size} called names, 0 undefined, ${sharedNames} shared names in step, ${kinds.length + vocabulary.length} kinds named)`,
 );
