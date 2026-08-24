@@ -434,6 +434,20 @@ cargo run -p codegraph-cli -- report . --fail-on warning --insight-limit 100
 cargo run -p codegraph-cli -- report . --format markdown --output CODEGRAPH_REPORT.md
 ```
 
+**What each severity means.** A `warning` is about the program itself. A
+finding reads as `info` when it is not: when it is about code the project
+did not write (a vendored `vendor/`, `deps/`, `third_party/` or
+`node_modules/` directory) or does not ship (tests, examples, docs, build
+scripts); when nothing looked for the thing it names (a path inside an
+install or build directory, a hidden path, or a name a template fills in);
+when the project starts nothing of its own, so coverage cannot be low; or
+when the subject is the resolution rather than the code, as with unresolved
+and ambiguous calls. `error` is reserved for a file the scan could not read
+or parse, a `SECURITY:` comment in the project's own code, and a diagnostic
+a language server reported as an error. Every risk row in the report names
+one kind at one severity, so the warning rows add up to the summary's
+warning count.
+
 The JSON report includes a `risk_summary` with total findings, severity counts, a weighted score (errors ×100 plus warnings ×10 — info findings are counted but do not affect the score or grade, so large healthy repositories read as healthy), a grade, and the top insight kinds. Error-flow facts and heuristic-resolution findings (ambiguous calls, cross-language heuristic edges) read as info on syntactic-only scans and escalate to warnings once semantic enrichment has run. The quality gate is calculated from the full insight set even when the returned insight list is capped with `--insight-limit`; the gate payload itself carries limit-independent totals and severity/kind breakdowns plus a failing-first sample of at most 25 findings, so report JSON stays compact on noisy repositories (the limit is published as `report_quality_gate_sample_limit` in `/api/capabilities`). The Markdown report is a Graphify-style handoff artifact for humans and agents, with summary, compact node/file summaries, key concepts, communities, surprising links, architecture links, risks, evidence ids, suggested questions, and confidence wording that maps CodeGraph evidence to extracted/resolved/inferred/ambiguous labels.
 
 Explain scan coverage before or after a full graph scan:
