@@ -27,28 +27,7 @@ pub(crate) fn index_sql_schema(
     add_file_metadata(&mut context.graph, file_id, "source", "sql");
 
     for statement in sql_statements(source) {
-        let normalized = statement.sql.trim_start().to_ascii_lowercase();
-        if normalized.starts_with("create table")
-            || normalized.starts_with("create temporary table")
-            || normalized.starts_with("create temp table")
-        {
-            index_sql_create_table(context, file_id, label, source, &statement);
-        } else if normalized.starts_with("create view")
-            || normalized.starts_with("create or replace view")
-            || normalized.starts_with("create materialized view")
-        {
-            index_sql_create_view(context, file_id, label, source, &statement);
-        } else if normalized.starts_with("create index")
-            || normalized.starts_with("create unique index")
-            || normalized.starts_with("create index if not exists")
-            || normalized.starts_with("create unique index if not exists")
-        {
-            index_sql_create_index(context, file_id, label, source, &statement);
-        } else if normalized.starts_with("alter table") {
-            index_sql_alter_ref(context, file_id, &statement, "alter");
-        } else if normalized.starts_with("drop table") {
-            index_sql_alter_ref(context, file_id, &statement, "drop");
-        }
+        index_sql_ddl_statement(context, file_id, label, source, &statement);
         for join in sql_join_pairs(&statement.sql) {
             context.pending_sql_joins.push(PendingSqlJoin {
                 left: join.0,
@@ -70,6 +49,109 @@ pub(crate) fn index_sql_schema(
     }
 }
 
+/// A name that stands in for one: `$(TABLE)` and `%s` are filled in when the
+/// statement runs, and `<table>` is how documentation writes "your table
+/// here".
+fn names_a_placeholder(name: &str) -> bool {
+    name.contains(['$', '%', '{', '<', '>'])
+}
+
+/// The schema a single DDL statement declares, wherever it was written.
+fn index_sql_ddl_statement(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+    statement: &SqlStatement,
+) {
+    let normalized = statement.sql.trim_start().to_ascii_lowercase();
+    if normalized.starts_with("create table")
+        || normalized.starts_with("create temporary table")
+        || normalized.starts_with("create temp table")
+    {
+        index_sql_create_table(context, file_id, label, source, statement);
+    } else if normalized.starts_with("create view")
+        || normalized.starts_with("create or replace view")
+        || normalized.starts_with("create materialized view")
+    {
+        index_sql_create_view(context, file_id, label, source, statement);
+    } else if normalized.starts_with("create index")
+        || normalized.starts_with("create unique index")
+        || normalized.starts_with("create index if not exists")
+        || normalized.starts_with("create unique index if not exists")
+    {
+        index_sql_create_index(context, file_id, label, source, statement);
+    } else if normalized.starts_with("alter table") {
+        index_sql_alter_ref(context, file_id, statement, "alter");
+    } else if normalized.starts_with("drop table") {
+        index_sql_alter_ref(context, file_id, statement, "drop");
+    }
+}
+
+/// Whether a line the parser saw is a comment: covered by a quoted range and
+/// not by a string one. `DROP TABLE [IF EXISTS] <table>` written in a comment
+/// describes SQL rather than running it, and this repository's own comments
+/// said so twice.
+fn line_is_a_comment(parsed: &ParsedFile, line: u32) -> bool {
+    let covers = |ranges: &[(u32, u32)]| {
+        ranges
+            .iter()
+            .any(|(start, end)| line >= *start && line <= *end)
+    };
+    covers(&parsed.quoted_line_ranges) && !covers(&parsed.string_line_ranges)
+}
+
+/// A schema written inside application code. Kong keeps its tables in Lua
+/// migrations - `CREATE TABLE IF NOT EXISTS plugins (...)` inside a string -
+/// so nothing declared the 15 tables its own queries read.
+pub(crate) fn index_embedded_sql_schema(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+    parsed: &ParsedFile,
+) {
+    if is_sql_file(path) {
+        return;
+    }
+
+    for literal in source_sql_literals(source) {
+        if line_is_a_comment(parsed, literal.line) {
+            continue;
+        }
+        // `DROP TABLE [IF EXISTS] <table>` inside a doc comment is a sentence
+        // about SQL, and dplyr writes exactly that between backticks.
+        if sql_query_tokens(&literal.value)
+            .iter()
+            .any(|token| ends_a_prose_sentence(token))
+        {
+            continue;
+        }
+        for statement in sql_statements(&literal.value) {
+            // A statement's lines are counted inside the literal; the span
+            // has to point at the file the literal is written in.
+            let offset = literal.line.saturating_sub(1);
+            let statement = SqlStatement {
+                sql: statement.sql,
+                line: statement.line + offset,
+                end_line: statement.end_line + offset,
+            };
+            // The same table is created by more than one migration
+            // (`consumers` twice in kong); the first declaration is the one
+            // the graph keeps.
+            if parse_sql_create_table(&statement.sql).is_some_and(|table| {
+                context
+                    .sql_tables
+                    .contains_key(&sql_identifier_key(&table.name))
+            }) {
+                continue;
+            }
+            index_sql_ddl_statement(context, file_id, label, source, &statement);
+        }
+    }
+}
+
 /// Record an ALTER/DROP TABLE target for schema-consistency resolution.
 pub(crate) fn index_sql_alter_ref(
     context: &mut IndexContext,
@@ -81,14 +163,29 @@ pub(crate) fn index_sql_alter_ref(
     // ALTER TABLE [ONLY] name / DROP TABLE [IF EXISTS] name
     let mut index = 2;
     while let Some(token) = tokens.get(index) {
-        let lower = token.to_ascii_lowercase();
-        if matches!(lower.as_str(), "if" | "exists" | "only") {
+        // Documentation writes the guard in brackets - `DROP TABLE [IF
+        // EXISTS] <table>` - and a bracketed name is read as one token, so
+        // the whole guard has to be recognised at once.
+        let lower = token
+            .trim_matches(|character: char| matches!(character, '[' | ']'))
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase();
+        if matches!(
+            lower.as_str(),
+            "if" | "not" | "exists" | "only" | "if exists" | "if not exists"
+        ) {
             index += 1;
             continue;
         }
         break;
     }
-    if let Some(table) = next_sql_table_token(&tokens, index) {
+    // `ALTER TABLE $(TABLE)` names whatever the migration substitutes, so
+    // there is no table to look for.
+    if let Some(table) =
+        next_sql_table_token(&tokens, index).filter(|table| !names_a_placeholder(table))
+    {
         context.pending_sql_alter_refs.push(PendingSqlAlterRef {
             file: file_id,
             table,
@@ -195,8 +292,8 @@ pub(crate) struct SqlStatement {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SqlCreateTable {
-    name: String,
-    body: String,
+    pub(crate) name: String,
+    pub(crate) body: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -266,6 +363,9 @@ pub(crate) fn index_inline_sql_queries(
 
     let test_cutoff = rust_test_module_cutoff(language, source);
     for literal in source_sql_literals(source) {
+        if line_is_a_comment(parsed, literal.line) {
+            continue;
+        }
         let table_refs = sql_query_table_refs(&literal.value);
         if table_refs.is_empty() {
             continue;
@@ -556,19 +656,25 @@ pub(crate) fn rust_test_module_cutoff(language: Language, source: &str) -> Optio
 /// open with one of six verbs, so a file whose text holds none of them
 /// holds no query, and the literals never have to be pulled out of it.
 fn could_hold_sql(source: &str) -> bool {
-    const VERBS: [&[u8]; 6] = [
-        b"select", b"insert", b"update", b"delete", b"replace", b"with",
+    // A migration's string holds DDL rather than a query, so the schema
+    // verbs count too: kong writes `CREATE TABLE`, `ALTER TABLE` and
+    // `DROP TABLE` and nothing else.
+    const VERBS: [&[u8]; 9] = [
+        b"select", b"insert", b"update", b"delete", b"replace", b"with", b"create", b"alter",
+        b"drop",
     ];
     let bytes = source.as_bytes();
     bytes.iter().enumerate().any(|(index, byte)| {
         let opening = byte.to_ascii_lowercase();
-        matches!(opening, b's' | b'i' | b'u' | b'd' | b'r' | b'w')
-            && VERBS.iter().any(|verb| {
-                verb[0] == opening
-                    && bytes
-                        .get(index..index + verb.len())
-                        .is_some_and(|window| window.eq_ignore_ascii_case(verb))
-            })
+        matches!(
+            opening,
+            b's' | b'i' | b'u' | b'd' | b'r' | b'w' | b'c' | b'a'
+        ) && VERBS.iter().any(|verb| {
+            verb[0] == opening
+                && bytes
+                    .get(index..index + verb.len())
+                    .is_some_and(|window| window.eq_ignore_ascii_case(verb))
+        })
     })
 }
 
@@ -585,6 +691,14 @@ pub(crate) fn source_sql_literals(source: &str) -> Vec<SourceSqlLiteral> {
     let mut counted = 0usize;
 
     while cursor < source.len() {
+        if let Some((value, end)) = lua_long_string_at(source, cursor) {
+            line += newlines_in(&source[counted..cursor]);
+            counted = cursor;
+            literals.push(SourceSqlLiteral { value, line });
+            cursor = end;
+            continue;
+        }
+
         if let Some((value, end)) = raw_string_literal_at(source, cursor) {
             line += newlines_in(&source[counted..cursor]);
             counted = cursor;
@@ -655,6 +769,31 @@ pub(crate) fn source_sql_literals(source: &str) -> Vec<SourceSqlLiteral> {
 
 fn newlines_in(text: &str) -> u32 {
     text.bytes().filter(|byte| *byte == b'\n').count() as u32
+}
+
+/// Lua writes its long strings between `[[` and `]]`, with any number of
+/// equals signs in between for nesting. Kong keeps every migration's DDL in
+/// one, so nothing read its schema before.
+pub(crate) fn lua_long_string_at(source: &str, cursor: usize) -> Option<(String, usize)> {
+    let rest = source.get(cursor..)?;
+    let bytes = rest.as_bytes();
+    if bytes.first() != Some(&b'[') {
+        return None;
+    }
+    let mut index = 1;
+    while bytes.get(index) == Some(&b'=') {
+        index += 1;
+    }
+    if bytes.get(index) != Some(&b'[') {
+        return None;
+    }
+    let closing = format!("]{}]", "=".repeat(index - 1));
+    let content_start = cursor + index + 1;
+    let relative_end = source[content_start..].find(&closing)?;
+    Some((
+        source[content_start..content_start + relative_end].to_string(),
+        content_start + relative_end + closing.len(),
+    ))
 }
 
 pub(crate) fn raw_string_literal_at(source: &str, cursor: usize) -> Option<(String, usize)> {
@@ -1065,14 +1204,21 @@ pub(crate) fn sql_statements(source: &str) -> Vec<SqlStatement> {
     statements
 }
 
+/// `IF NOT EXISTS` however the author cased it. Kong writes every migration
+/// in capitals, and reading the guard as the name called 47 of its tables
+/// `IF`.
+fn strip_if_not_exists(text: &str) -> &str {
+    const GUARD: &str = "if not exists";
+    match text.get(..GUARD.len()) {
+        Some(head) if head.eq_ignore_ascii_case(GUARD) => text[GUARD.len()..].trim_start(),
+        _ => text,
+    }
+}
+
 pub(crate) fn parse_sql_create_table(sql: &str) -> Option<SqlCreateTable> {
     let normalized = sql.to_ascii_lowercase();
     let table_index = normalized.find("table")?;
-    let after_table = sql[table_index + "table".len()..].trim_start();
-    let after_table = after_table
-        .strip_prefix("if not exists")
-        .map(str::trim_start)
-        .unwrap_or(after_table);
+    let after_table = strip_if_not_exists(sql[table_index + "table".len()..].trim_start());
     let (name, rest) = read_sql_identifier(after_table)?;
     let open = rest.find('(')?;
     let close = matching_closing_paren(rest, open)?;
@@ -1085,11 +1231,7 @@ pub(crate) fn parse_sql_create_table(sql: &str) -> Option<SqlCreateTable> {
 pub(crate) fn parse_sql_create_named_object(sql: &str, keyword: &str) -> Option<String> {
     let normalized = sql.to_ascii_lowercase();
     let keyword_index = normalized.find(keyword)?;
-    let mut rest = sql[keyword_index + keyword.len()..].trim_start();
-    rest = rest
-        .strip_prefix("if not exists")
-        .map(str::trim_start)
-        .unwrap_or(rest);
+    let rest = strip_if_not_exists(sql[keyword_index + keyword.len()..].trim_start());
     read_sql_identifier(rest).map(|(name, _)| name)
 }
 

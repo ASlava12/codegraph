@@ -877,6 +877,7 @@ pub(crate) fn index_file(
                         &parsed,
                         &local_functions,
                     );
+                    index_embedded_sql_schema(context, file_id, path, label, source, &parsed);
                 }
 
                 // One edge per read site, so two reads of the same key in one

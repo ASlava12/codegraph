@@ -1494,6 +1494,85 @@ fn a_computed_require_names_no_module() {
 }
 
 #[test]
+fn a_schema_written_in_lua_is_a_schema() {
+    // Kong keeps every table in a migration's long string, in capitals.
+    let table = parse_sql_create_table(
+        "CREATE TABLE IF NOT EXISTS \"plugins\" (\n  id UUID PRIMARY KEY,\n  name TEXT\n)",
+    )
+    .expect("a guarded create still names its table");
+    assert_eq!(table.name, "plugins");
+
+    let literals = source_sql_literals(
+        "return {\n  postgres = {\n    up = [[\n      CREATE TABLE IF NOT EXISTS acls (id UUID);\n    ]]\n  }\n}\n",
+    );
+    assert_eq!(literals.len(), 1, "{literals:?}");
+    assert!(literals[0].value.contains("CREATE TABLE"));
+    assert_eq!(literals[0].line, 3, "the literal starts where Lua opens it");
+
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("migrations")).unwrap();
+    fs::write(
+        root.join("migrations").join("001_init.lua"),
+        "return {\n  postgres = {\n    up = [[\n      CREATE TABLE IF NOT EXISTS plugins (\n        id UUID PRIMARY KEY,\n        name TEXT\n      );\n    ]]\n  }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("dao.lua"),
+        "local function select_plugins(db)\n  return db:query(\"SELECT id, name FROM plugins\")\nend\n\nreturn select_plugins\n",
+    )
+    .unwrap();
+
+    // A comment describing SQL is not a schema, and not a query either.
+    fs::write(
+        root.join("docs.lua"),
+        "-- `DROP TABLE [IF EXISTS] <table>` removes a table.\n-- CREATE TABLE notes (id INT);\nreturn {}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    assert!(
+        !graph
+            .nodes
+            .iter()
+            .any(|node| node.label == "sql table:notes"),
+        "a commented-out create declares nothing"
+    );
+    let table = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "sql table:plugins")
+        .expect("the Lua migration declares the table");
+    assert_eq!(
+        table.span.as_ref().map(|span| span.path.as_str()),
+        Some("migrations/001_init.lua")
+    );
+    assert!(
+        graph
+            .nodes
+            .iter()
+            .any(|node| node.label == "sql column:plugins.name"),
+        "its columns come with it"
+    );
+    let query = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.metadata
+                .get("item_kind")
+                .is_some_and(|kind| kind == "app_sql_query")
+        })
+        .expect("the query is indexed");
+    assert!(
+        graph
+            .edges
+            .iter()
+            .any(|edge| edge.source == query.id && edge.target == table.id),
+        "the query reaches the table the migration created"
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn a_file_does_not_import_itself() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src").join("flask")).unwrap();
