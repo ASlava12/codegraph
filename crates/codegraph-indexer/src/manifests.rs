@@ -644,6 +644,30 @@ pub(crate) fn pyproject_dependencies(source: &str) -> Vec<ManifestDependency> {
         }
     }
 
+    // PEP 735 development groups, which uv fills in and pip installs with
+    // `--group`. flask keeps `cryptography`, `python-dotenv` and its test
+    // and typing tools here, and nothing else in the file declares them.
+    if let Some(groups) = value
+        .get("dependency-groups")
+        .and_then(|value| value.as_table())
+    {
+        for values in groups.values() {
+            let Some(values) = values.as_array() else {
+                continue;
+            };
+            for value in values {
+                // `{include-group = "tests"}` pulls in another group rather
+                // than naming a package.
+                if let Some((name, version)) = value
+                    .as_str()
+                    .and_then(package_name_and_version_from_requirement)
+                {
+                    dependencies.push(manifest_dependency(name, "dev", "python", version));
+                }
+            }
+        }
+    }
+
     if let Some(poetry) = value.get("tool").and_then(|value| value.get("poetry")) {
         collect_toml_table_keys(
             poetry,

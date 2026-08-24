@@ -2845,9 +2845,13 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
         }) {
             continue;
         }
+        // `Psr\Http\Message\RequestInterface` could come from psr/http or
+        // from psr/http-message, and only the second is a package anybody
+        // publishes, so name the most specific candidate.
         let Some(import) = imports
             .iter()
-            .find(|import| declared_ecosystems.contains(import.ecosystem.as_str()))
+            .filter(|import| declared_ecosystems.contains(import.ecosystem.as_str()))
+            .max_by_key(|import| import.package.len())
         else {
             continue;
         };
@@ -2876,6 +2880,7 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
             .entry((import.ecosystem.clone(), import.package.clone()))
             .or_insert_with(|| UndeclaredImportGroup {
                 sources: BTreeSet::new(),
+                production_source: false,
                 nodes: Vec::new(),
                 edges: Vec::new(),
             })
@@ -2891,7 +2896,14 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
         let where_from = format_backtick_list(group.sources.iter().map(String::as_str), 3);
         insights.push(Insight {
             kind: "undeclared_external_import".to_string(),
-            severity: InsightSeverity::Warning,
+            // A test's fixture package and an example script's numpy are
+            // not the program's dependencies, so they read as notes rather
+            // than warnings, as an unresolved import from a test does.
+            severity: if group.production_source {
+                InsightSeverity::Warning
+            } else {
+                InsightSeverity::Info
+            },
             message: format!(
                 "`{package}` is imported from {where_from} but no matching {ecosystem} dependency was found"
             ),
@@ -2905,12 +2917,17 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
 /// the package once instead of once per import site.
 struct UndeclaredImportGroup {
     sources: BTreeSet<String>,
+    /// Whether any importer is the program itself rather than its tests,
+    /// examples, docs or build scripts.
+    production_source: bool,
     nodes: Vec<NodeId>,
     edges: Vec<usize>,
 }
 
 impl UndeclaredImportGroup {
     fn record(&mut self, source: &str, source_id: NodeId, import_id: NodeId, edge: usize) {
+        self.production_source |=
+            !is_test_like_source_path(source) && !is_repository_tooling_source_path(source);
         self.sources.insert(source.to_string());
         for node in [source_id, import_id] {
             if !self.nodes.contains(&node) {
@@ -3238,6 +3255,24 @@ pub(crate) fn is_tool_configuration_source_path(path: &str) -> bool {
     stem.ends_with(".config") || stem.starts_with('.') && stem.ends_with("rc")
 }
 
+/// A repository's own build, release and benchmark tooling: `scripts/build.js`,
+/// `gulpfile.js`, `docs/scripts/utils.js`, `__benchmarks__/effect.bench.ts`.
+/// It runs on a developer's machine or in CI rather than shipping, so a dev
+/// dependency is exactly where what it imports belongs.
+pub(crate) fn is_repository_tooling_source_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    let file = normalized.rsplit('/').next().unwrap_or_default();
+    if file.starts_with("gulpfile.") || file.starts_with("gruntfile.") {
+        return true;
+    }
+    normalized.split('/').any(|segment| {
+        matches!(
+            segment,
+            "scripts" | "tools" | "bench" | "benchmarks" | "__benchmarks__" | "doc" | "docs"
+        )
+    })
+}
+
 pub(crate) fn add_non_runtime_dependency_import_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
@@ -3273,11 +3308,12 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
         // `eslint.config.js` importing `eslint`, `vite.config.js`
         // importing `vite`: a build tool's own configuration is not the
         // code that ships, and 23 of Vue's 74 findings were that.
-        if path_index
+        let source_path = path_index
             .get(&source.id)
             .map(String::as_str)
-            .map(is_tool_configuration_source_path)
-            .unwrap_or_else(|| is_tool_configuration_source_path(&source.label))
+            .unwrap_or(source.label.as_str());
+        if is_tool_configuration_source_path(source_path)
+            || is_repository_tooling_source_path(source_path)
         {
             continue;
         }
@@ -4108,9 +4144,46 @@ pub(crate) fn import_package_candidates(
             .collect();
     }
 
+    if language == "python" {
+        let Some(package) = python_import_package(label) else {
+            return Vec::new();
+        };
+        return python_distribution_name(&package)
+            .into_iter()
+            .map(ToString::to_string)
+            .chain([package])
+            .map(|package| ImportPackage {
+                ecosystem: "python".to_string(),
+                package,
+            })
+            .collect();
+    }
+
     import_package_candidate(language, label)
         .into_iter()
         .collect()
+}
+
+/// The distribution a Python module comes from, where the two names differ:
+/// `import yaml` installs PyYAML and `import dotenv` python-dotenv. Only
+/// well-known pairs are listed; every other module shares its name with the
+/// package that ships it.
+fn python_distribution_name(module: &str) -> Option<&'static str> {
+    Some(match module {
+        "attr" => "attrs",
+        "bs4" => "beautifulsoup4",
+        "cv2" => "opencv-python",
+        "dateutil" => "python-dateutil",
+        "dotenv" => "python-dotenv",
+        "elftools" => "pyelftools",
+        "jwt" => "pyjwt",
+        "openssl" => "pyopenssl",
+        "pil" => "pillow",
+        "serial" => "pyserial",
+        "sklearn" => "scikit-learn",
+        "yaml" => "pyyaml",
+        _ => return None,
+    })
 }
 
 pub(crate) fn import_matches_package_id(package_id: &str, import: &ImportPackage) -> bool {

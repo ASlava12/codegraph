@@ -8998,6 +8998,88 @@ fn one_methods_overloads_are_not_a_cycle() {
 }
 
 #[test]
+fn build_tooling_may_import_a_dev_dependency() {
+    let mut graph = CodeGraph::new("repo");
+    let manifest = graph.add_node(NodeKind::File, "package.json");
+    let esbuild = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "esbuild",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "dependency".to_string()),
+            ("package_id".to_string(), "npm:esbuild".to_string()),
+            ("dependency_kind".to_string(), "dev".to_string()),
+        ]),
+    );
+    graph.add_edge_with_metadata(
+        manifest,
+        esbuild,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "dev".to_string())]),
+    );
+
+    for path in ["scripts/dev.js", "gulpfile.js", "src/index.js"] {
+        let file = graph.add_node(NodeKind::File, path);
+        let import = import_node(&mut graph, "import esbuild from \"esbuild\";", "javascript");
+        graph.add_edge(file, import, EdgeKind::Imports, Confidence::Syntactic);
+    }
+
+    let report = insights(&graph);
+    let reported = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "non_runtime_dependency_import")
+        .map(|insight| insight.message.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert!(reported[0].contains("src/index.js"), "{reported:?}");
+    assert!(!reported[0].contains("scripts/dev.js"), "{reported:?}");
+    assert!(!reported[0].contains("gulpfile.js"), "{reported:?}");
+}
+
+#[test]
+fn an_undeclared_import_names_the_package_that_ships_the_module() {
+    let mut graph = CodeGraph::new("repo");
+    let source = graph.add_node(NodeKind::File, "src/app.py");
+    let example = graph.add_node(NodeKind::File, "examples/demo.py");
+    // `import yaml` installs PyYAML, so the declared package covers it.
+    let declared = dependency_node(&mut graph, "PyYAML", "python:pyyaml");
+    graph.add_edge(source, declared, EdgeKind::DependsOn, Confidence::Exact);
+    let yaml = import_node(&mut graph, "import yaml", "python");
+    let dotenv = import_node(&mut graph, "from dotenv import load_dotenv", "python");
+    let numpy = import_node(&mut graph, "import numpy", "python");
+    graph.add_edge(source, yaml, EdgeKind::Imports, Confidence::Syntactic);
+    graph.add_edge(source, dotenv, EdgeKind::Imports, Confidence::Syntactic);
+    graph.add_edge(example, numpy, EdgeKind::Imports, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    let undeclared = |needle: &str| {
+        report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "undeclared_external_import" && insight.message.contains(needle)
+            })
+            .map(|insight| insight.severity)
+    };
+    assert_eq!(undeclared("yaml"), None, "PyYAML ships the yaml module");
+    // The message names the distribution rather than the module.
+    assert_eq!(
+        undeclared("python-dotenv"),
+        Some(InsightSeverity::Warning),
+        "{:?}",
+        report
+            .insights
+            .iter()
+            .map(|insight| insight.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    // An example script's dependency is not the program's.
+    assert_eq!(undeclared("numpy"), Some(InsightSeverity::Info));
+}
+
+#[test]
 fn insights_report_undeclared_external_imports() {
     let mut graph = CodeGraph::new("repo");
     let file = graph.add_node(NodeKind::File, "src/main.ts");

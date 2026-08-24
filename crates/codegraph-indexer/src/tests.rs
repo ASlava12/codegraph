@@ -1494,6 +1494,38 @@ fn a_computed_require_names_no_module() {
 }
 
 #[test]
+fn pyproject_dependency_groups_are_declared_dependencies() {
+    // PEP 735 groups, which uv writes and pip installs with `--group`.
+    // flask keeps `cryptography` and `python-dotenv` only here.
+    let dependencies = pyproject_dependencies(
+        r#"[project]
+name = "flask"
+dependencies = ["click>=8.1.3"]
+
+[project.optional-dependencies]
+dotenv = ["python-dotenv"]
+
+[dependency-groups]
+dev = ["ruff", {include-group = "tests"}]
+typing = ["cryptography", "mypy"]
+"#,
+    );
+    let named = |name: &str| {
+        dependencies
+            .iter()
+            .find(|dependency| dependency.name == name)
+            .map(|dependency| dependency.kind.as_str())
+    };
+    assert_eq!(named("click"), Some("runtime"));
+    assert_eq!(named("python-dotenv"), Some("optional"));
+    assert_eq!(named("cryptography"), Some("dev"));
+    assert_eq!(named("ruff"), Some("dev"));
+    assert_eq!(named("mypy"), Some("dev"));
+    // `{include-group = "tests"}` names a group rather than a package.
+    assert_eq!(named("tests"), None);
+}
+
+#[test]
 fn a_quoted_include_of_a_system_header_is_not_a_missing_file() {
     // redis writes four of its libc includes with quotes, which searches
     // next to the file first and the system path second.
