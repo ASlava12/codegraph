@@ -347,7 +347,7 @@ pub(crate) async fn focus_api(
     ApiQuery(query): ApiQuery<FocusQuery>,
 ) -> Result<Json<codegraph_analysis::QueryResult>, ApiError> {
     let graph = scan_graph(&state, query.path.as_deref()).await?;
-    let node_ids = parse_node_ids(query.node_ids.as_deref())?;
+    let node_ids = parse_node_ids(&graph, query.node_ids.as_deref())?;
     let edge_indexes = parse_edge_indexes(query.edge_indexes.as_deref())?;
     let result = focus_subgraph(
         &graph,

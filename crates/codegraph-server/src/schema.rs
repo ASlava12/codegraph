@@ -1174,7 +1174,13 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Build a focused subgraph from node ids and edge indexes. Returned edges include metadata.edge_index for exact edge explanation and UI selection.",
                     vec![
                         path_param(),
-                        query_param("node_ids", false, "csv<u64>", None, "Node ids to include."),
+                        query_param(
+                            "node_ids",
+                            false,
+                            "csv<string>",
+                            None,
+                            "Node ids to include: durable cg-* ids, numeric, or n-prefixed.",
+                        ),
                         query_param(
                             "edge_indexes",
                             false,

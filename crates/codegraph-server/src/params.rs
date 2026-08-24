@@ -281,7 +281,13 @@ pub(crate) fn resolve_node_id_param(
     parse_node_id_param(value)
 }
 
-pub(crate) fn parse_node_ids(value: Option<&str>) -> Result<Vec<codegraph_core::NodeId>, ApiError> {
+/// Every id in a comma-separated list, resolved the way a single one is: the
+/// error message offered the durable `cg-*` id, and this list was the one
+/// place that then refused it.
+pub(crate) fn parse_node_ids(
+    graph: &CodeGraph,
+    value: Option<&str>,
+) -> Result<Vec<codegraph_core::NodeId>, ApiError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
@@ -289,7 +295,7 @@ pub(crate) fn parse_node_ids(value: Option<&str>) -> Result<Vec<codegraph_core::
         .split(',')
         .map(str::trim)
         .filter(|part| !part.is_empty())
-        .map(parse_node_id_param)
+        .map(|part| resolve_node_id_param(graph, part))
         .collect()
 }
 

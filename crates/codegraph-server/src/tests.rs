@@ -104,6 +104,31 @@ use tokio::time::sleep;
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
 
 #[test]
+fn a_list_of_node_ids_takes_the_form_its_error_offers() {
+    let mut graph = codegraph_core::CodeGraph::new("repo");
+    let first = graph.add_node_with_metadata(
+        codegraph_core::NodeKind::Function,
+        "load",
+        None,
+        std::collections::BTreeMap::from([(
+            "stable_id".to_string(),
+            "cg-1234567890abcdef".to_string(),
+        )]),
+    );
+    let second = graph.add_node(codegraph_core::NodeKind::Function, "helper");
+
+    // The error message names the durable id, and `/api/focus` used to be
+    // the one place that refused it.
+    let ids = parse_node_ids(&graph, Some("cg-1234567890abcdef")).expect("durable id");
+    assert_eq!(ids, vec![first]);
+    let mixed = parse_node_ids(&graph, Some(&format!("cg-1234567890abcdef, n{}", second.0)))
+        .expect("mixed forms");
+    assert_eq!(mixed, vec![first, second]);
+    assert!(parse_node_ids(&graph, Some("cg-nope")).is_err());
+    assert_eq!(parse_node_ids(&graph, None).expect("no ids"), Vec::new());
+}
+
+#[test]
 fn resolve_scan_root_allows_configured_projects() {
     let temp = temp_server_root();
     let root = temp.join("root");
