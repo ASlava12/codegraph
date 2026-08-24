@@ -78,6 +78,52 @@ fn detects_target_languages_by_extension() {
 }
 
 #[test]
+fn nix_modules_declare_the_options_they_offer() {
+    let adapter = adapter_for_language(Language::Nix).unwrap();
+    let source = br#"{ config, lib, ... }:
+{
+  options = {
+    programs.git = {
+      enable = lib.mkEnableOption "Git";
+
+      signing.key = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+      };
+
+      includes = lib.mkOption {
+        type = lib.types.listOf (lib.types.submodule {
+          options = {
+            condition = lib.mkOption { type = lib.types.str; };
+          };
+        });
+      };
+    };
+  };
+
+  config = lib.mkIf config.programs.git.enable { };
+}
+"#;
+    let parsed = adapter.parse(Path::new("git.nix"), source).unwrap();
+    let options = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Type)
+        .map(|item| item.label.clone())
+        .collect::<Vec<_>>();
+
+    assert!(options.contains(&"programs.git.enable".to_string()));
+    assert!(options.contains(&"programs.git.signing.key".to_string()));
+    // A submodule states its options under the `type` of the option that
+    // holds them, and a user still writes the name straight through.
+    assert!(options.contains(&"programs.git.includes.condition".to_string()));
+    assert!(
+        !options.iter().any(|option| option.contains("options")),
+        "`options` is where a module states its names, not part of one: {options:?}"
+    );
+}
+
+#[test]
 fn hcl_declares_by_block_and_addresses_by_name() {
     let adapter = adapter_for_language(Language::Hcl).unwrap();
     let source = br#"terraform {

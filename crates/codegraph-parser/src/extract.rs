@@ -657,6 +657,9 @@ pub(crate) fn classify_node(
         // lambda is the closest thing to a named callable, and `import` calls
         // pull in other expressions.
         Language::Nix => match kind {
+            // What a module offers to configure, which is what a reader of
+            // an option-driven configuration is looking for.
+            "binding" if nix_option_declaration(node, source) => ParsedItemKind::Type,
             "binding" if nix_binding_is_function(node) => ParsedItemKind::Function,
             // `import ./helper.nix { ... }` is how one Nix file pulls in
             // another; home-manager writes 253 of them and none was a fact.
@@ -2081,6 +2084,83 @@ pub(crate) fn julia_is_short_definition_head(node: Node<'_>) -> bool {
 }
 
 /// A Nix binding whose value is a lambda, i.e. a named function.
+/// Whether a Nix binding declares a module option: `enable = mkEnableOption
+/// "Git"`, `key = mkOption { .. }`. home-manager states 3978 of them, and
+/// they are the whole of what its modules offer to configure.
+pub(crate) fn nix_option_declaration(node: Node<'_>, source: &[u8]) -> bool {
+    let Some(value) = node.child_by_field_name("expression") else {
+        return false;
+    };
+    let mut head = value;
+    while head.kind() == "apply_expression" {
+        let Some(function) = head.child_by_field_name("function") else {
+            break;
+        };
+        head = function;
+    }
+    node_text(head, source).is_some_and(|text| {
+        matches!(
+            simple_name(&text),
+            "mkOption" | "mkEnableOption" | "mkPackageOption" | "mkEnableOption'"
+        )
+    })
+}
+
+/// The path a module option is configured under. A declaration nests —
+/// `options = { programs.git = { signing = { key = mkOption { .. }; }; }; }`
+/// — and the name a user writes is every attribute on the way down.
+pub(crate) fn nix_option_path(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut parts = Vec::new();
+    let mut current = Some(node);
+    while let Some(ancestor) = current {
+        if ancestor.kind() == "binding"
+            && let Some(path) = named_child_text(ancestor, "attrpath", source)
+        {
+            parts.push(path);
+        }
+        current = ancestor.parent();
+    }
+    parts.reverse();
+    // `options` is where a module states its names rather than part of any
+    // of them, and a submodule states more of them under the `type` of the
+    // option that holds it: `options.programs.git.includes.type.options
+    // .condition` is the option a user writes as
+    // `programs.git.includes.condition`.
+    let mut path: Vec<&str> = Vec::new();
+    for segment in parts.iter().flat_map(|part| part.split('.')) {
+        if segment == "options" {
+            if path
+                .last()
+                .is_some_and(|last| names_an_option_attribute(last))
+            {
+                path.pop();
+            }
+            continue;
+        }
+        path.push(segment);
+    }
+    (!path.is_empty()).then(|| path.join("."))
+}
+
+/// The attributes `mkOption` itself takes, which a nested declaration sits
+/// under without them being part of its name.
+fn names_an_option_attribute(segment: &str) -> bool {
+    matches!(
+        segment,
+        "type"
+            | "default"
+            | "example"
+            | "description"
+            | "apply"
+            | "defaultText"
+            | "nullable"
+            | "readOnly"
+            | "visible"
+            | "internal"
+            | "freeformType"
+    )
+}
+
 pub(crate) fn nix_binding_is_function(node: Node<'_>) -> bool {
     node.child_by_field_name("expression")
         .is_some_and(|value| value.kind() == "function_expression")
@@ -2404,6 +2484,10 @@ pub(crate) fn item_label(
 
     if language == Language::Lua && node.kind() == "function_definition" {
         return lua_bound_function_name(node, source);
+    }
+
+    if language == Language::Nix && kind == ParsedItemKind::Type {
+        return nix_option_path(node, source);
     }
 
     if language == Language::Hcl {
