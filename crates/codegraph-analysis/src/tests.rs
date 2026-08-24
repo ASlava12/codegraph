@@ -1882,6 +1882,43 @@ fn entrypoints_lead_with_programs_not_ci_jobs() {
 }
 
 #[test]
+fn a_verb_the_question_ends_on_is_not_what_it_asks_about() {
+    let mut graph = CodeGraph::new("repo");
+    // terraform has a function called `read`, and "what environment
+    // variables does it read" filtered its configuration down to the
+    // reads that mention `read`.
+    graph.add_node(NodeKind::Function, "read");
+    let config = graph.add_node_with_metadata(
+        NodeKind::Environment,
+        "TF_LOG",
+        None,
+        BTreeMap::from([("item_kind".to_string(), "environment_read".to_string())]),
+    );
+    let caller = graph.add_node(NodeKind::Function, "logging_setup");
+    graph.add_edge(
+        caller,
+        config,
+        EdgeKind::ReadsEnvironment,
+        Confidence::Heuristic,
+    );
+
+    let report = natural_query(
+        &graph,
+        NaturalQueryRequest {
+            question: "what environment variables does it read".to_string(),
+            compact: false,
+        },
+    )
+    .expect("the question routes");
+
+    assert_eq!(report.generated_query, "configs depth:6");
+    assert!(
+        report.result.nodes.iter().any(|node| node.id == config),
+        "the answer holds the variable the project reads"
+    );
+}
+
+#[test]
 fn a_question_about_a_topic_is_not_a_search_for_its_name() {
     // "APIs", "HTTP" and "CI" read as names because of the capitals, and
     // the filters they produced answered with nothing at all.

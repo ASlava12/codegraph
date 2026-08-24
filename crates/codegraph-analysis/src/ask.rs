@@ -19,10 +19,9 @@ pub fn natural_query(
     // answered with nothing at all, where the question deserved the
     // project's routes. Keep the filter only when the name is really there.
     if plan.anchor_is_guessed
-        && plan
-            .term
-            .as_deref()
-            .is_some_and(|term| !graph_names_exactly(graph, term))
+        && plan.term.as_deref().is_some_and(|term| {
+            !graph_names_exactly(graph, term) || natural_query_is_a_question_verb(term)
+        })
     {
         plan = widened_plan(&request.question, plan.term.as_deref())?;
     }
@@ -842,6 +841,38 @@ pub(crate) fn natural_query_token_looks_specific(token: &str) -> bool {
             .chars()
             .any(|character| character.is_ascii_uppercase())
         || token.chars().any(|character| character.is_ascii_digit())
+}
+
+/// Whether a guessed anchor is the question's verb rather than what it
+/// asks about. terraform has a function called `read`, so "what
+/// environment variables does it read" filtered its configuration reads
+/// down to two -- the ones that mention `read`.
+pub(crate) fn natural_query_is_a_question_verb(token: &str) -> bool {
+    let lower = token.to_lowercase();
+    let stem = lower
+        .strip_suffix("es")
+        .or_else(|| lower.strip_suffix('s'))
+        .unwrap_or(&lower);
+    matches!(
+        stem,
+        "read"
+            | "write"
+            | "use"
+            | "call"
+            | "run"
+            | "start"
+            | "load"
+            | "set"
+            | "get"
+            | "handle"
+            | "depend"
+            | "import"
+            | "export"
+            | "break"
+            | "change"
+            | "configure"
+            | "configured"
+    )
 }
 
 /// Whether the word is what the question is *about* rather than a name
