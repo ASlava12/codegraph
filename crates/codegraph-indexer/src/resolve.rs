@@ -3862,16 +3862,30 @@ pub(crate) fn entrypoint_target_candidates(
             })
             .into_iter()
             .collect(),
-        "docker" => command_path_candidate(pending)
-            .map(|path| EntrypointTargetCandidate {
-                path,
-                symbol: None,
-                file_confidence: Confidence::Heuristic,
-                function_confidence: Confidence::Heuristic,
-                resolution: "docker_command_path",
-            })
-            .into_iter()
-            .collect(),
+        // A Dockerfile's command runs inside the image, where the paths are
+        // the ones `COPY` put there from the build context -- the
+        // repository, not the directory the Dockerfile sits in. Mastodon
+        // keeps `streaming/Dockerfile` and runs `node ./streaming/index.js`
+        // from `WORKDIR /opt/mastodon`, and reading that beside the
+        // Dockerfile looked for `streaming/streaming/index.js`.
+        "docker" => {
+            let mut candidates: Vec<EntrypointTargetCandidate> = command_path_candidate(pending)
+                .into_iter()
+                .chain(
+                    normalized_command_path_candidate("", &pending.target)
+                        .map(|candidate| candidate.path),
+                )
+                .map(|path| EntrypointTargetCandidate {
+                    path,
+                    symbol: None,
+                    file_confidence: Confidence::Heuristic,
+                    function_confidence: Confidence::Heuristic,
+                    resolution: "docker_command_path",
+                })
+                .collect();
+            candidates.dedup_by(|left, right| left.path == right.path);
+            candidates
+        }
         "compose" => command_path_candidate(pending)
             .map(|path| EntrypointTargetCandidate {
                 path,

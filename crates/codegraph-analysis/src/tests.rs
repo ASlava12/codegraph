@@ -7676,6 +7676,47 @@ fn insights_report_unresolved_compose_env_file_paths() {
 }
 
 #[test]
+fn an_env_file_the_repository_keeps_out_is_a_note() {
+    // mastodon's compose file gives every service `.env.production`, which
+    // its own `.gitignore` lists: whoever deploys writes it from the
+    // `.sample` beside it. Missing is the shape the repository intends.
+    let mut graph = CodeGraph::new("repo");
+    let web = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "compose service:web",
+        None,
+        BTreeMap::from([("item_kind".to_string(), "compose_service".to_string())]),
+    );
+    let deployed = graph.add_node_with_metadata(
+        NodeKind::Config,
+        "compose env file:.env.production",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "compose_env_file".to_string()),
+            ("service".to_string(), "web".to_string()),
+            ("env_file_path".to_string(), ".env.production".to_string()),
+            ("env_file_is_not_kept".to_string(), "gitignore".to_string()),
+        ]),
+    );
+    graph.add_edge(graph.root, web, EdgeKind::Entrypoint, Confidence::Exact);
+    graph.add_edge_with_metadata(
+        web,
+        deployed,
+        EdgeKind::ReadsConfig,
+        Confidence::Exact,
+        BTreeMap::from([("relation".to_string(), "compose_env_file".to_string())]),
+    );
+
+    let report = insights(&graph);
+    let insight = report
+        .insights
+        .iter()
+        .find(|insight| insight.kind == "unresolved_compose_env_file_path")
+        .expect("the missing env file is still reported");
+    assert_eq!(insight.severity, InsightSeverity::Info);
+}
+
+#[test]
 fn insights_report_unresolved_compose_volume_source_paths() {
     let mut graph = CodeGraph::new("repo");
     let web = graph.add_node_with_metadata(

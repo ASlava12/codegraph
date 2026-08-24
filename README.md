@@ -67,6 +67,11 @@ Implemented now:
   capitalised `NS`/`CF`/`CG`/`Sec`) as that framework's, and a message whose receiver names a
   framework class (`[NSURL URLWithString:]`) as Foundation's rather than as a selector nothing
   declares.
+- A Dockerfile's command is resolved against the build context as well as the directory the
+  Dockerfile sits in: mastodon keeps `streaming/Dockerfile` and runs `node ./streaming/index.js`
+  from its `WORKDIR`, which is the repository, not `streaming/streaming/index.js`.
+- A compose `env_file` the repository's own `.gitignore` keeps out is a note rather than a warning:
+  `.env.production` is written by whoever deploys, from the `.sample` the project ships beside it.
 - A ruby route is a declaration, not a call: sinatra states the block that serves the route on the
   line that opens it (`get '/x' do`, `get('/x') {`), so a request spec's `post '/accounts', params:
   { id: 1 }` is a call to a route rather than one of the program's own. 148 of mastodon's specs read

@@ -417,6 +417,17 @@ pub(crate) fn index_compose_entrypoints(
             metadata.insert("line".to_string(), env_file.line.to_string());
             metadata.insert("env_file".to_string(), env_file.path.clone());
             metadata.insert("env_file_path".to_string(), normalized_env_file.clone());
+            // A file the project's own `.gitignore` keeps out is one whoever
+            // deploys writes: mastodon lists `.env.production` there and
+            // ships `.env.production.sample` beside it. Missing is what the
+            // repository intends, not a reference anybody can fix.
+            if context
+                .build_products
+                .as_ref()
+                .is_some_and(|products| products.builds(&normalized_env_file))
+            {
+                metadata.insert("env_file_is_not_kept".to_string(), "gitignore".to_string());
+            }
             let config_id = context.graph.add_node_with_metadata(
                 NodeKind::Config,
                 format!("compose env file:{normalized_env_file}"),

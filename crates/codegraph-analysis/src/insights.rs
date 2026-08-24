@@ -1028,7 +1028,10 @@ pub(crate) fn add_unresolved_compose_env_file_path_insights(
             .span
             .as_ref()
             .is_some_and(|span| is_test_like_source_path(&span.path))
-            && !is_test_like_source_path(env_file_path);
+            && !is_test_like_source_path(env_file_path)
+            // The repository states which files it does not keep, and a
+            // deployment's env file is one of them.
+            && !node.metadata.contains_key("env_file_is_not_kept");
     }
 
     for (env_file_path, entry) in missing {

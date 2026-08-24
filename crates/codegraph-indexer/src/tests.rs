@@ -5692,6 +5692,56 @@ fn a_go_call_through_a_package_qualifier_reads_past_the_type() {
 }
 
 #[test]
+fn a_dockerfile_command_runs_from_the_build_context() {
+    // A Dockerfile's command runs inside the image, on the paths `COPY` put
+    // there from the build context. Mastodon keeps `streaming/Dockerfile`
+    // and runs `node ./streaming/index.js` from `WORKDIR /opt/mastodon`,
+    // and reading that beside the Dockerfile looked for
+    // `streaming/streaming/index.js`.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("streaming")).unwrap();
+    fs::write(
+        root.join("streaming").join("index.js"),
+        "console.log('streaming');\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("streaming").join("Dockerfile"),
+        "FROM node:20\nWORKDIR /opt/app\nCOPY . /opt/app\nCMD [ \"node\", \"./streaming/index.js\" ]\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let entrypoint = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.kind == NodeKind::Entrypoint
+                && node.metadata.get("item_kind").map(String::as_str)
+                    == Some("dockerfile_entrypoint")
+        })
+        .expect("the docker command entrypoint");
+    let index = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::File && node.label == "streaming/index.js")
+        .expect("the file it runs");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.source == entrypoint.id
+                && edge.target == index.id
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|resolution| resolution == "docker_command_path")
+        }),
+        "the command reaches the file the build context holds"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_spec_that_calls_a_route_is_not_a_route() {
     // `post '/accounts', params: { id: 1 }` in a request spec calls a route;
     // it does not declare one. Sinatra declares a route with the block that
