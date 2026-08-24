@@ -1791,12 +1791,19 @@ pub(crate) fn graph_node_mut(
     graph.nodes.iter_mut().find(|node| node.id == id)
 }
 
-/// Attach a location-derived identity that does not change when unrelated
-/// files add or remove earlier numeric nodes. Numeric `n42` ids stay as the
+/// Attach an identity that survives an edit. Numeric `n42` ids stay as the
 /// compact in-memory key; `stable_id` is the durable handle for agents,
 /// bookmarks, and cross-scan investigation memory.
+///
+/// It is built from what the node is -- its kind, file, name and language --
+/// and not from where in the file it sits: a function added at the top of a
+/// file used to change the id of every function below it, so a saved handle
+/// went stale on an edit that had nothing to do with it. When one file
+/// declares a name more than once, the order they are declared in tells them
+/// apart.
 pub(crate) fn annotate_stable_node_ids(graph: &mut CodeGraph) {
     let mut used = BTreeSet::new();
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
     for node in &mut graph.nodes {
         let path = node
             .span
@@ -1804,18 +1811,11 @@ pub(crate) fn annotate_stable_node_ids(graph: &mut CodeGraph) {
             .map(|span| span.path.as_str())
             .or_else(|| (node.kind == NodeKind::File).then_some(node.label.as_str()))
             .unwrap_or("");
-        let (line, column) = node
-            .span
-            .as_ref()
-            .map(|span| (span.start_line, span.start_column))
-            .unwrap_or((0, 0));
-        let canonical = format!(
-            "{}\0{}\0{}\0{}\0{}\0{}\0{}",
+        let identity = format!(
+            "{}\0{}\0{}\0{}\0{}",
             node_kind_name(&node.kind),
             path,
             node.label,
-            line,
-            column,
             node.metadata
                 .get("language")
                 .map(String::as_str)
@@ -1825,6 +1825,9 @@ pub(crate) fn annotate_stable_node_ids(graph: &mut CodeGraph) {
                 .map(String::as_str)
                 .unwrap_or("")
         );
+        let ordinal = seen.entry(identity.clone()).or_insert(0);
+        let canonical = format!("{identity}\0{ordinal}");
+        *ordinal += 1;
         let mut hash = stable_fnv1a64(canonical.as_bytes());
         while !used.insert(hash) {
             hash = hash.wrapping_add(1);

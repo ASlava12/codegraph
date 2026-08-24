@@ -4451,6 +4451,50 @@ fn an_erlang_include_reaches_its_header() {
 }
 
 #[test]
+fn a_stable_id_survives_an_edit_above_it() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    let ids = |graph: &CodeGraph| {
+        graph
+            .nodes
+            .iter()
+            .filter(|node| node.kind == NodeKind::Function)
+            .filter_map(|node| {
+                node.metadata
+                    .get("stable_id")
+                    .map(|id| (node.label.clone(), id.clone()))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+
+    fs::write(
+        root.join("src").join("main.rs"),
+        "fn main() {\n    helper();\n}\n\nfn helper() -> u32 {\n    1\n}\n",
+    )
+    .unwrap();
+    let before = ids(&scan_project(&root, &IndexOptions::default()).unwrap());
+
+    // A function added at the top moves every line below it.
+    fs::write(
+        root.join("src").join("main.rs"),
+        "fn added() {}\n\nfn main() {\n    helper();\n}\n\nfn helper() -> u32 {\n    1\n}\n",
+    )
+    .unwrap();
+    let after = ids(&scan_project(&root, &IndexOptions::default()).unwrap());
+
+    for (label, id) in &before {
+        assert_eq!(
+            after.get(label),
+            Some(id),
+            "`{label}` changed identity because something above it moved"
+        );
+    }
+    assert!(after.contains_key("added"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_repository_is_named_by_its_directory() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();
