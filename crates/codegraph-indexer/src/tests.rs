@@ -6310,6 +6310,49 @@ fn rails_reads_a_collection_block_and_a_namespaced_controller() {
 }
 
 #[test]
+fn a_python_call_on_a_value_is_not_a_project_method_of_the_same_name() {
+    // `key.split(",")` is a string's and `kwargs.setdefault` a dict's,
+    // while django-oscar declares a `split` template filter and flask a
+    // `setdefault`. `self` is the one receiver whose methods are the
+    // class's own, and the mapping protocol stays out of the list because a
+    // project that mimics a dict declares all of it.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app")).unwrap();
+    fs::write(
+        root.join("app").join("filters.py"),
+        "def split(value, separator=','):\n    return value\n\n\ndef slugify(value):\n    return value\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("views.py"),
+        "from .filters import split, slugify\n\n\nclass View:\n    def render(self, key):\n        parts = key.split(',')\n        return slugify(split(parts, ','))\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let calls = |label: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+                && graph.nodes.iter().any(|node| {
+                    node.id == edge.target
+                        && node
+                            .span
+                            .as_ref()
+                            .is_some_and(|span| span.path.ends_with("filters.py"))
+                })
+        })
+    };
+    assert!(!calls("key.split"), "`key.split(',')` is the string's own");
+    assert!(
+        calls("split") && calls("slugify"),
+        "the imported filters still resolve"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_js_call_on_a_value_is_not_a_project_function_of_the_same_name() {
     // `str.trim()` is a string's, `Buffer.concat` node's, `args.map` an
     // array's -- and axios declares a `trim`, vue a `map` and zod a

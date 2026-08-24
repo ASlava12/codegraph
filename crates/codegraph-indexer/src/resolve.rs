@@ -96,6 +96,12 @@ pub(crate) fn receiver_call_is_universal(language: &str, label: &str) -> bool {
         "javascript" | "typescript" | "tsx" => {
             !matches!(receiver, "this" | "self") && js_member_of_every_value(method)
         }
+        // Python names the receiver too, and `self` (or `cls`) is the one
+        // whose methods are the class's own: `value.split` is a string's,
+        // `kwargs.setdefault` a dict's, `stack.extend` a list's -- while
+        // django-oscar declares a `split`, flask a `setdefault` and pytudes
+        // an `extend`.
+        "python" => !matches!(receiver, "self" | "cls") && python_method_of_every_value(method),
         // C# writes a static call the same way as an instance call, and only
         // the receiver's spelling tells them apart: `JsonConvert.ToString` is
         // Newtonsoft's own API, called 720 times, while `value.ToString` is
@@ -103,6 +109,49 @@ pub(crate) fn receiver_call_is_universal(language: &str, label: &str) -> bool {
         "csharp" => !receiver_names_a_csharp_type(receiver) && csharp_member_of_every_value(method),
         _ => false,
     }
+}
+
+/// Methods Python gives every list, dict, set or string. Names a project
+/// defines as readily as the language does -- `get`, `update`, `read`,
+/// `write`, `close`, `add`, `count`, `index`, `format` -- are left out.
+fn python_method_of_every_value(method: &str) -> bool {
+    matches!(
+        method,
+        "append"
+            | "extend"
+            | "insert"
+            | "sort"
+            | "reverse"
+            // `keys`, `values` and `items` are the mapping protocol, and a
+            // project that mimics a dict declares all three: requests'
+            // `RequestsCookieJar` does, and refusing them would take its
+            // callers away.
+            | "setdefault"
+            | "popitem"
+            | "join"
+            | "split"
+            | "rsplit"
+            | "splitlines"
+            | "strip"
+            | "lstrip"
+            | "rstrip"
+            | "startswith"
+            | "endswith"
+            | "lower"
+            | "upper"
+            | "title"
+            | "casefold"
+            | "encode"
+            | "decode"
+            | "rjust"
+            | "ljust"
+            | "zfill"
+            | "isdigit"
+            | "isalpha"
+            | "isspace"
+            | "partition"
+            | "format_map"
+    )
 }
 
 /// Methods JavaScript gives every array, string, promise or function.

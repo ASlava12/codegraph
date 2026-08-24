@@ -184,6 +184,11 @@ Implemented now:
   controller's `put`. The class settles it -- `Song::query()` reaches the model that declares it,
   and a class the project never declares leaves the project. Across koel that is 852 fewer ambiguous
   calls, 505 more that reach the method they name, and 1405 recorded as leaving.
+- Python names its receiver too, and `self` (or `cls`) is the one whose methods are the class's own:
+  `key.split(',')` is a string's and `kwargs.setdefault` a dict's, while django-oscar declares a
+  `split` template filter and flask a `setdefault`. The mapping protocol (`keys`, `values`, `items`)
+  stays out of the list, because a project that mimics a dict declares all of it -- requests'
+  `RequestsCookieJar` does, and its eleven callers are real.
 - The same holds in JavaScript and TypeScript, where the label keeps the receiver and `this` is the
   one receiver whose methods are the class's own: `str.trim()` is a string's, `Buffer.concat` node's,
   `args.map` an array's, `promise.then` a promise's -- yet axios declares a `trim`, vue a `map` and
