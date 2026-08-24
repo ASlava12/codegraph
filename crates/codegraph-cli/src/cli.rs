@@ -188,7 +188,9 @@ pub(crate) enum Command {
         /// Graph JSON files to merge (as produced by scan/export).
         inputs: Vec<PathBuf>,
 
-        /// Also merge registered projects by name, scanned through the cache (repeatable).
+        /// Also merge registered projects by name, scanned through the cache
+        /// as syntactic graphs — the semantic pass belongs to a single
+        /// project's own scan (repeatable).
         #[arg(long = "project")]
         projects: Vec<String>,
 
