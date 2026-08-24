@@ -5692,6 +5692,61 @@ fn a_go_call_through_a_package_qualifier_reads_past_the_type() {
 }
 
 #[test]
+fn a_c_file_is_c_whatever_its_variables_are_called() {
+    // `.h` is C's extension, C++'s and Objective-C's alike, so a header is
+    // sniffed for what it declares. `.c` says C outright, and sniffing it
+    // too read `class = getClientType(c)` -- an assignment to a variable
+    // named `class` -- as a C++ class declaration: redis parsed
+    // networking.c as C++, which put its `addReplyError` in a different
+    // language than the 132 C calls to it.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("server.h"),
+        "void addReplyError(void *c, const char *err);\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("networking.c"),
+        "#include \"server.h\"\n\nint getClientType(void *c) {\n    return 0;\n}\n\nvoid addReplyError(void *c, const char *err) {\n    int class = getClientType(c);\n    (void)class;\n    (void)err;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("db.c"),
+        "#include \"server.h\"\n\nvoid lookupKey(void *c) {\n    addReplyError(c, \"boom\");\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let handler = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.kind == NodeKind::Function
+                && node.label == "addReplyError"
+                && node
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.path.ends_with("networking.c"))
+        })
+        .expect("the definition");
+    assert_eq!(
+        handler.metadata.get("language").map(String::as_str),
+        Some("c"),
+        "a .c file is C"
+    );
+    assert!(
+        graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Calls && edge.target == handler.id),
+        "so a call from another .c file reaches it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_java_static_import_says_whose_method_a_bare_call_means() {
     // `import static com.google.common.truth.Truth.assertThat` makes a bare
     // `assertThat` Truth's, and retrofit declares an `assertThat` of its

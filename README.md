@@ -103,6 +103,12 @@ Implemented now:
   protobuf code no longer reports 3234 calls as unresolved, and `providers.SchemaCache.Set` reaches
   the in-repo package that declares it. Go's predeclared types count as the language's own when they
   are written as conversions -- `string(b)`, `int64(n)` -- rather than as functions nothing declares.
+- A `.c` file is read as C. Only a header's extension is ambiguous -- `.h` is C's, C++'s and
+  Objective-C's alike -- and sniffing a `.c` file for what it declares read redis's `class =
+  getClientType(c)`, an assignment to a variable named `class`, as a C++ class: `networking.c` and
+  `config.c` were parsed as C++, which put their `addReplyError` and `addReply` in a different
+  language from the calls to them. redis resolves 1961 more calls, and the cycle its blocking code
+  really has becomes visible.
 - A Java static import says whose method a bare call means: `import static
   com.google.common.truth.Truth.assertThat` makes `assertThat` Truth's, which is the only thing that
   tells it from the `assertThat` retrofit declares in a test helper -- 663 calls read as the

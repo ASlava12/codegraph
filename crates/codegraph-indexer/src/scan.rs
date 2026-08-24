@@ -672,7 +672,13 @@ pub(crate) fn parsing_adapter(
         // errors every time, and redis's `fast_float.h` went from 1152 to
         // 150. One that declares an `@interface` is Objective-C, and that
         // is where a framework states the whole of what it offers.
+        // Only a header's extension is ambiguous. `redis/src/networking.c`
+        // writes `class = getClientType(c)` -- an assignment to a variable
+        // named `class` -- and reading that as a C++ class declaration
+        // parsed the file as C++, which put its `addReplyError` in another
+        // language than the 132 C calls to it.
         if adapter.language() == Language::C
+            && path_extension_is_ambiguous(path)
             && let Ok(text) = std::str::from_utf8(source)
         {
             if declares_objc(text)
@@ -1538,13 +1544,30 @@ fn declares_objc(source: &str) -> bool {
 fn declares_cpp(source: &str) -> bool {
     source.lines().any(|line| {
         let trimmed = line.trim_start();
+        // A declaration, not an assignment: C has no `class` keyword, so a
+        // line that opens with one and then assigns is a variable named
+        // `class` in a header shared with C code.
+        let declares = |keyword: &str| {
+            trimmed
+                .strip_prefix(keyword)
+                .is_some_and(|rest| !rest.trim_start().starts_with('='))
+        };
         trimmed.starts_with("namespace ")
             || trimmed.starts_with("template <")
             || trimmed.starts_with("template<")
-            || trimmed.starts_with("class ")
+            || declares("class ")
             || trimmed.starts_with("public:")
             || trimmed.starts_with("private:")
     })
+}
+
+/// Whether a path's extension leaves the language open. `.h` is C's, C++'s
+/// and Objective-C's alike; `.c` is C's.
+fn path_extension_is_ambiguous(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("h") | Some("inc")
+    )
 }
 
 /// The definition of `name` in this file whose body holds `span`. Several
