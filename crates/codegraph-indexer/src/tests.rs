@@ -12571,7 +12571,10 @@ fn a_call_edge_says_what_settled_it() {
     .unwrap();
     fs::write(
         root.join("pkg").join("app.py"),
-        "from .helpers import build\n\n\ndef near():\n    return 4\n\n\ndef run():\n    return build() + near() + lonely()\n",
+        // The star import is what lets `lonely` be resolved by name at all:
+        // a module reaches nothing it does not import, and `import *` is
+        // the one form whose bindings cannot be listed.
+        "from .helpers import build\nfrom .other import *\n\n\ndef near():\n    return 4\n\n\ndef run():\n    return build() + near() + lonely()\n",
     )
     .unwrap();
 

@@ -695,6 +695,7 @@ function addUndeclaredImportInsights(graph, insights) {
     .map((namespace) => namespace.trim())
     .filter(Boolean);
   const grouped = new Map();
+  const optional = new Set();
   graph.edges
     .filter((edge) => edge.kind === "imports")
     .forEach((edge) => {
@@ -702,6 +703,9 @@ function addUndeclaredImportInsights(graph, insights) {
       const target = nodeById.get(edge.target);
       const scope = target?.metadata?.import_scope;
       if (scope === "local" || scope === "workspace") return;
+      // `setup.py` declares the dependencies; what it imports to do so is
+      // the packaging tool, not a dependency it forgot.
+      if (isDependencyManifestSourcePath(source?.label)) return;
       const label = target?.label || "";
       // `import(`${pkgDir}/package.json`)` names no package: the specifier
       // is built when it runs.
@@ -743,6 +747,14 @@ function addUndeclaredImportInsights(graph, insights) {
       }
 
       const key = `${candidate.ecosystem}:${candidate.package}`;
+      // An import the program erases or guards is not a package it has to
+      // declare: `try: import settings_local` says outright that the
+      // program runs without it. One such import settles it for the
+      // package, wherever else it is written -- as the CLI settles it.
+      if (target?.metadata?.type_only === "true" || target?.metadata?.optional === "true") {
+        optional.add(key);
+        return;
+      }
       const group = grouped.get(key) || {
         candidate,
         sources: [],
@@ -755,7 +767,8 @@ function addUndeclaredImportInsights(graph, insights) {
       grouped.set(key, group);
     });
 
-  grouped.forEach((group) => {
+  grouped.forEach((group, key) => {
+    if (optional.has(key)) return;
     const shown = group.sources.slice(0, 3).join(", ");
     const rest = group.sources.length - 3;
     const from = rest > 0 ? `${shown}, and ${rest} more` : shown;
@@ -853,6 +866,27 @@ function pythonDistributionName(moduleName) {
       yaml: "pyyaml",
     }[moduleName] || null
   );
+}
+
+// `setup.py` is where a python project declares its dependencies; what it
+// imports in order to do so is the packaging tool.
+function isDependencyManifestSourcePath(path) {
+  const normalized = String(path || "").replace(/\\/g, "/").toLowerCase();
+  return normalized.split("/").pop() === "setup.py";
+}
+
+// Whether a declared distribution's name contains the module's name as
+// whole words -- `django-haystack` carries `haystack`. A short module name
+// says too little to match this way.
+function pythonDistributionCarriesModule(declared, module) {
+  if (module.length < 4) return false;
+  const words = String(declared).split(/[-_.]/);
+  const wanted = String(module).split(/[-_.]/);
+  if (!wanted.length || words.length <= wanted.length) return false;
+  for (let index = 0; index + wanted.length <= words.length; index += 1) {
+    if (wanted.every((part, offset) => words[index + offset] === part)) return true;
+  }
+  return false;
 }
 
 // The DefinitelyTyped package that carries types for another.
@@ -1083,7 +1117,17 @@ function isDeclaredPackage(declared, ecosystem, packageName) {
     );
   }
   if (ecosystem === "python") {
-    return declared.has(`python:${normalizePythonPackageName(packageName)}`);
+    const canonical = normalizePythonPackageName(packageName);
+    if (declared.has(`python:${canonical}`)) return true;
+    // A distribution often ships a module under a shorter name of its own:
+    // `django-haystack` ships `haystack`, `sorl-thumbnail` ships `sorl`,
+    // `factory-boy` ships `factory`. The CLI asks the same question, and
+    // without it the browser called ten of django-oscar's dependencies
+    // undeclared.
+    return Array.from(declared).some((packageId) => {
+      if (!packageId.startsWith("python:")) return false;
+      return pythonDistributionCarriesModule(packageId.slice("python:".length), canonical);
+    });
   }
   if (ecosystem === "composer") {
     const imported = packageName.toLowerCase();

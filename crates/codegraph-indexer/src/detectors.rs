@@ -577,6 +577,57 @@ pub(crate) fn commonjs_bound_names(line: &str) -> Vec<String> {
     }
 }
 
+/// `%run other.ipynb` in a notebook: an import written in IPython's
+/// dialect. It runs the other notebook in this one's namespace, so the
+/// dependency is real and every name the other notebook defines is bound
+/// here -- which is why the file is also recorded as binding names it does
+/// not list.
+pub(crate) fn index_notebook_run_imports(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if !is_notebook_path(path) {
+        return;
+    }
+    for (target, line) in notebook_run_targets(source) {
+        context.file_wildcard_imports.insert(label.to_string());
+        let Some(candidate) = normalize_manifest_relative_path(label, &target) else {
+            continue;
+        };
+        let mut metadata = BTreeMap::new();
+        metadata.insert("language".to_string(), "python".to_string());
+        metadata.insert("parser".to_string(), "syntax-pattern".to_string());
+        metadata.insert("item_kind".to_string(), "import".to_string());
+        metadata.insert("import_style".to_string(), "ipython_run".to_string());
+        metadata.insert("import_scope".to_string(), "local".to_string());
+        metadata.insert("import_target".to_string(), candidate.clone());
+        metadata.insert("resolution".to_string(), "pending".to_string());
+        let import_id = context.graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            format!("%run {target}"),
+            Some(line_span(label, source, line)),
+            metadata,
+        );
+        add_edge_once(
+            context,
+            file_id,
+            import_id,
+            EdgeKind::Imports,
+            Confidence::Syntactic,
+        );
+        context.pending_local_imports.push(PendingLocalImport {
+            import_node: import_id,
+            target: candidate.clone(),
+            candidates: vec![candidate],
+            mark_unresolved: true,
+            allow_suffix_fallback: false,
+        });
+    }
+}
+
 pub(crate) fn commonjs_require_call(line: &str) -> Option<String> {
     let mut search_start = 0;
     while let Some(offset) = line[search_start..].find("require(") {

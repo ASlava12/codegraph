@@ -1783,22 +1783,39 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             })
             .unwrap_or_default();
 
-        // A module shares nothing ambiently: a bare name a JS or TS module
-        // calls is either declared in that file or imported into it.
+        // A module shares nothing ambiently: a bare name a JS, TS or Python
+        // module calls is either declared in that file or imported into it.
         // `const h = originalH` in vue's Teleport spec and `const {
         // trigger } = useContextMenu()` in koel's context menus bind a name
         // the file never imports, and matching by name alone sent those
         // calls into other modules -- 204 of koel's cross-file calls and
         // 201 of vue's. A file that imports nothing may be a classic script
         // loaded by a page, where a bare name really can come from
-        // anywhere, so the rule asks only files that state an import.
-        if matches!(call.language.as_str(), "javascript" | "typescript" | "tsx")
-            && !call.label.contains('.')
+        // anywhere, so the rule asks only files that state an import -- and
+        // never one whose imports cannot be listed, `from x import *` or a
+        // notebook's `%run other.ipynb`.
+        if matches!(
+            call.language.as_str(),
+            "javascript" | "typescript" | "tsx" | "python"
+        ) && !call.label.contains('.')
             && local_targets.is_empty()
+            && !context
+                .file_wildcard_imports
+                .contains(call.span.path.as_str())
             && let Some(imported) = context.file_imported_names.get(call.span.path.as_str())
             && !imported.contains_key(&call.label)
         {
             language_targets.clear();
+        }
+        // A python method is reached through an object -- `grid.print()` --
+        // never by its bare name, whatever the file imports. pytudes writes
+        // a `print` method on its grid class, and 58 notebook calls to the
+        // builtin `print` were answered by it.
+        if call.language == "python" && !call.label.contains('.') {
+            language_targets.retain(|target| {
+                graph_node(&context.graph, *target)
+                    .is_some_and(|node| !node.metadata.contains_key("owner_type"))
+            });
         }
         // A qualified call names where it comes from. When the calling file
         // imports that qualifier, the import list answers the question that

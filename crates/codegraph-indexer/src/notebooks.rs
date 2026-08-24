@@ -106,6 +106,27 @@ fn is_ipython_magic(line: &str) -> bool {
         || (trimmed.ends_with('?') && !trimmed.contains(' '))
 }
 
+/// The notebooks a notebook runs. `%run AdventUtils.ipynb` executes another
+/// notebook in this one's namespace -- how pytudes shares `parse`, `answer`
+/// and forty other names across thirty notebooks -- so it is an import
+/// written in IPython's dialect rather than Python's, and it binds every
+/// name the other notebook defines rather than a list.
+pub(crate) fn notebook_run_targets(source: &str) -> Vec<(String, u32)> {
+    notebook_program(source)
+        .into_iter()
+        .filter_map(|line| {
+            let rest = line.text.trim().strip_prefix("%run")?.trim().to_string();
+            // `%run -i other.ipynb` passes flags before the path.
+            let target = rest
+                .split_whitespace()
+                .find(|token| !token.starts_with('-'))?
+                .trim_matches(['"', '\''])
+                .to_string();
+            (!target.is_empty()).then_some((target, line.notebook_line))
+        })
+        .collect()
+}
+
 /// A notebook's code read as the program it is, with every fact pointing at
 /// the line of the `.ipynb` file that holds it.
 pub(crate) fn parse_notebook(label: &str, source: &[u8]) -> Option<ParsedFile> {

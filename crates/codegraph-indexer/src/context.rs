@@ -52,6 +52,11 @@ pub(crate) struct IndexContext {
     /// what `from flask import Blueprint` tells a later `Blueprint()` that
     /// matching by name alone cannot.
     pub(crate) file_imported_names: BTreeMap<String, BTreeMap<String, ImportedPackage>>,
+    /// Files whose import list cannot be complete: `from x import *` and a
+    /// notebook's `%run other.ipynb` both bind every name the other module
+    /// defines, so a bare call there can mean something the file never
+    /// names.
+    pub(crate) file_wildcard_imports: BTreeSet<String>,
     /// One placeholder node per (language, label) for unresolved call targets.
     pub(crate) unresolved_call_placeholders: BTreeMap<(String, String), NodeId>,
     pub(crate) cargo_workspace_dependencies: BTreeMap<String, Option<String>>,

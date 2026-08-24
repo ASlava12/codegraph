@@ -381,6 +381,56 @@ drive("client insights read php imports the way the CLI does", () => {
   }
 });
 
+// A distribution ships a module under a shorter name of its own, `setup.py`
+// imports the packaging tool in order to declare dependencies, and a
+// guarded import says outright that the program runs without the package.
+// Without those three the browser called ten of django-oscar's declared
+// dependencies undeclared.
+drive("client insights read a distribution's module name", () => {
+  const graph = {
+    nodes: [
+      { id: 1, kind: "file", label: "setup.py" },
+      {
+        id: 2,
+        kind: "external_dependency",
+        label: "django-haystack",
+        metadata: { item_kind: "dependency", package_id: "python:django-haystack" },
+      },
+      { id: 3, kind: "file", label: "src/oscar/apps/search/facets.py" },
+      { id: 4, kind: "file", label: "sandbox/settings.py" },
+      {
+        id: 10,
+        kind: "external_dependency",
+        label: "from haystack import connections",
+        metadata: { item_kind: "import", language: "python" },
+      },
+      {
+        id: 11,
+        kind: "external_dependency",
+        label: "import setuptools",
+        metadata: { item_kind: "import", language: "python" },
+      },
+      {
+        id: 12,
+        kind: "external_dependency",
+        label: "from settings_local import *",
+        metadata: { item_kind: "import", language: "python", optional: "true" },
+      },
+    ],
+    edges: [
+      { kind: "imports", source: 3, target: 10 },
+      { kind: "imports", source: 1, target: 11 },
+      { kind: "imports", source: 4, target: 12 },
+    ],
+  };
+  const findings = api
+    .buildClientInsights(graph)
+    .filter((insight) => insight.kind === "undeclared_external_import");
+  if (findings.length !== 0) {
+    throw new Error(`all three are accounted for: ${JSON.stringify(findings)}`);
+  }
+});
+
 // `cProfile` is a standard module that is not written in lower case, and
 // canonicalising the name before the standard-library test made the
 // browser report two of pytudes' notebooks as importing a package nobody

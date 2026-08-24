@@ -138,6 +138,7 @@ pub(crate) fn scan_project_with_scope(
         effect_entities: BTreeMap::new(),
         file_import_qualifiers: BTreeMap::new(),
         file_imported_names: BTreeMap::new(),
+        file_wildcard_imports: BTreeSet::new(),
         type_symbols: BTreeMap::new(),
         file_nodes: BTreeMap::new(),
         directory_nodes: BTreeMap::new(),
@@ -822,6 +823,7 @@ pub(crate) fn index_file(
         if let Some(language) = language {
             index_commonjs_require_imports(context, file_id, label, language, source);
         }
+        index_notebook_run_imports(context, file_id, path, label, source);
     }
 
     if let Some((language, parse_result)) = parse_result {
@@ -1026,6 +1028,12 @@ pub(crate) fn index_file(
                                 .entry(label.to_string())
                                 .or_default()
                                 .insert(qualifier, package.clone());
+                        }
+                        // `from x import *` binds every name the other
+                        // module defines, so this file's import list can
+                        // never say what a bare call means.
+                        if item.label.trim_end().ends_with("import *") {
+                            context.file_wildcard_imports.insert(label.to_string());
                         }
                         let bound_names = match language {
                             Language::Python => python_imported_names(&item.label),

@@ -103,6 +103,13 @@ Implemented now:
   protobuf code no longer reports 3234 calls as unresolved, and `providers.SchemaCache.Set` reaches
   the in-repo package that declares it. Go's predeclared types count as the language's own when they
   are written as conversions -- `string(b)`, `int64(n)` -- rather than as functions nothing declares.
+- A Python module calls what it declares or imports too, and a bare name never means a method --
+  pytudes writes a `print` method on its grid class, and 58 notebook calls to the builtin were
+  answered by it. `%run other.ipynb` is an import written in IPython's dialect: it runs the other
+  notebook in this one's namespace, so the dependency is now an edge in the graph, and a file that
+  runs one (or writes `from x import *`) keeps the old name matching, because its bindings cannot be
+  listed. Across flask, requests, django-oscar and pytudes that is about 660 calls that no longer
+  reach a module their file never names, and 51 that now reach the one it does.
 - A JavaScript or TypeScript module calls what it declares or imports, and nothing else by a bare
   name: `const h = originalH` in vue's Teleport spec and `const { trigger } = useContextMenu()` in
   koel's context menus bind names the file never imports, and matching by name alone sent those
