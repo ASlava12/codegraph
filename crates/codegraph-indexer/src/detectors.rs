@@ -44,10 +44,19 @@ pub(crate) fn index_script_entrypoint(
     metadata.insert("interpreter".to_string(), interpreter.to_string());
     metadata.insert("language".to_string(), language.to_string());
 
+    // The shebang is what makes the file a program, and it is the first
+    // line of it: a reader following this entrypoint lands there.
+    let shebang = source.lines().next().unwrap_or_default();
     let entrypoint_id = context.graph.add_node_with_metadata(
         NodeKind::Entrypoint,
         format!("script:{label}"),
-        None,
+        Some(SourceSpan {
+            path: label.to_string(),
+            start_line: 1,
+            start_column: 0,
+            end_line: 1,
+            end_column: shebang.chars().count() as u32,
+        }),
         metadata,
     );
     add_edge_once(

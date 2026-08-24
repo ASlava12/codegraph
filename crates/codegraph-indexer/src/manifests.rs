@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind};
+use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan};
 use codegraph_parser::Language;
 use globset::GlobSet;
 use walkdir::WalkDir;
@@ -120,6 +120,33 @@ pub(crate) fn add_manifest_dependency_edge_once(
     );
 }
 
+/// The line of a manifest that declares an entry by name: `"start": ..`,
+/// `name = "codegraph"`, `start:`. Nothing is claimed when the name is not
+/// written plainly, because a span pointing at the wrong line is worse than
+/// one the reader knows is missing.
+fn manifest_entry_line(source: &str, name: &str) -> Option<u32> {
+    if name.is_empty() {
+        return None;
+    }
+    source.lines().enumerate().find_map(|(index, line)| {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') || trimmed.starts_with("//") {
+            return None;
+        }
+        let declares = trimmed.starts_with(&format!("\"{name}\""))
+            || trimmed.starts_with(&format!("'{name}'"))
+            || trimmed.starts_with(&format!("{name} ="))
+            || trimmed.starts_with(&format!("{name}="))
+            || trimmed.starts_with(&format!("{name}:"))
+            || trimmed.contains(&format!("\"{name}\":"))
+            || trimmed.contains(&format!("= \"{name}\""))
+            // `module github.com/hashicorp/terraform`: the keyword states
+            // what kind of entry it is and the name closes the line.
+            || (trimmed.ends_with(name) && trimmed.len() > name.len() + 1);
+        declares.then_some(index as u32 + 1)
+    })
+}
+
 pub(crate) fn index_manifest_entrypoints(
     context: &mut IndexContext,
     file_id: NodeId,
@@ -137,10 +164,26 @@ pub(crate) fn index_manifest_entrypoints(
             metadata.insert("target".to_string(), target.to_string());
         }
 
+        // A manifest entry is written on a line, and a reader following an
+        // entrypoint wants that line: `"start": "node server.js"` is where
+        // the program is declared, and the node used to point nowhere.
+        let span = entrypoint
+            .label
+            .split_once(':')
+            .map(|(_, name)| name)
+            .and_then(|name| manifest_entry_line(source, name))
+            .map(|line| SourceSpan {
+                path: label.to_string(),
+                start_line: line,
+                start_column: 0,
+                end_line: line,
+                end_column: 0,
+            });
+
         let entrypoint_id = context.graph.add_node_with_metadata(
             NodeKind::Entrypoint,
             entrypoint.label,
-            None,
+            span,
             metadata,
         );
         add_edge_once(

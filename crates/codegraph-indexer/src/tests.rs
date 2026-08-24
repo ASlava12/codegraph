@@ -4084,6 +4084,44 @@ fn reading_files_ahead_of_the_walk_changes_nothing_it_finds() {
 }
 
 #[test]
+fn an_entrypoint_points_at_the_line_that_declares_it() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("package.json"),
+        "{\n  \"name\": \"demo\",\n  \"scripts\": {\n    \"start\": \"node server.js\",\n    \"lint:fix\": \"eslint --fix .\"\n  }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("run.sh"),
+        "#!/usr/bin/env bash\nset -euo pipefail\necho running\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let span_of = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Entrypoint && node.label == label)
+            .and_then(|node| node.span.clone())
+    };
+
+    let start = span_of("npm script:start").expect("the npm script is an entrypoint");
+    assert_eq!(start.path, "package.json");
+    assert_eq!(start.start_line, 4, "the line that declares it");
+    // A name with a colon in it is still one name.
+    let lint = span_of("npm script:lint:fix").expect("the second script too");
+    assert_eq!(lint.start_line, 5);
+    // A script is a program because of its first line.
+    let script = span_of("script:run.sh").expect("the shebang makes it a program");
+    assert_eq!(script.path, "run.sh");
+    assert_eq!(script.start_line, 1);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_objective_c_header_is_read_as_the_language_it_states() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();
