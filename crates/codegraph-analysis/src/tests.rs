@@ -5178,6 +5178,129 @@ fn a_symbol_named_after_a_keyword_does_not_hijack_the_question() {
 }
 
 #[test]
+fn a_query_says_which_definition_of_a_shared_name_it_answered_about() {
+    let mut graph = CodeGraph::new("repo");
+    let first = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "load",
+        Some(SourceSpan {
+            path: "src/config.rs".to_string(),
+            start_line: 10,
+            start_column: 1,
+            end_line: 20,
+            end_column: 2,
+        }),
+        BTreeMap::from([("item_kind".to_string(), "function".to_string())]),
+    );
+    let second = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "load",
+        Some(SourceSpan {
+            path: "src/assets.rs".to_string(),
+            start_line: 5,
+            start_column: 1,
+            end_line: 8,
+            end_column: 2,
+        }),
+        BTreeMap::from([("item_kind".to_string(), "function".to_string())]),
+    );
+    let caller = graph.add_node(NodeKind::Function, "main");
+    graph.add_edge(caller, second, EdgeKind::Calls, Confidence::Exact);
+
+    // A neighbors query has one start, and kong has two functions called
+    // `load`: "nothing calls load" is only true of the one that was picked.
+    let neighbors =
+        query_graph(&graph, "neighbors label:load direction:in depth:2").expect("neighbors query");
+    assert_eq!(neighbors.notes.len(), 1, "{:?}", neighbors.notes);
+    assert!(
+        neighbors.notes[0].contains("2 definitions are named `load`"),
+        "{:?}",
+        neighbors.notes
+    );
+
+    // Both ends of a path are picks of the same kind.
+    let path = query_graph(&graph, "path from:load to:main depth:4").expect("path query");
+    assert!(
+        path.notes.iter().any(|note| note.contains("`load`")),
+        "{:?}",
+        path.notes
+    );
+
+    // A durable id names one node, so there is nothing to say.
+    let stable = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == first)
+        .and_then(|node| node.metadata.get("stable_id").cloned());
+    if let Some(stable) = stable {
+        let exact = query_graph(&graph, &format!("neighbors label:{stable} depth:1"))
+            .expect("neighbors by id");
+        assert!(exact.notes.is_empty(), "{:?}", exact.notes);
+    }
+}
+
+#[test]
+fn a_question_about_a_topic_is_not_a_question_about_files() {
+    let plan = |question: &str| {
+        let plan = natural_query_plan(question).expect("plan");
+        (plan.rule, plan.generated_query)
+    };
+
+    // The noun naming the kind of thing asked about used to decide the
+    // command, so "the riskiest files" ran a file search and answered with
+    // files rather than with findings.
+    assert_eq!(
+        plan("what are the riskiest files?"),
+        ("risk_or_insight".to_string(), "insights".to_string())
+    );
+    assert_eq!(
+        plan("which files are most central?"),
+        (
+            "hotspot_or_centrality".to_string(),
+            "hotspots min_score:3 edge_limit:300".to_string()
+        )
+    );
+    // A schema is part of the graph: kong declares its tables inside Lua
+    // migrations, and this question used to search for the word `define`.
+    assert_eq!(
+        plan("which tables does the database schema define?"),
+        ("sql_schema".to_string(), "sql limit:50".to_string())
+    );
+    // A file still routes a file question.
+    assert_eq!(
+        plan("which files import `serde`?").0,
+        "package_or_import".to_string()
+    );
+    // And a named file's imports are the file's, not a package's: nothing is
+    // called `kong/init.lua`.
+    assert_eq!(
+        plan("what does kong/init.lua import?"),
+        (
+            "file_imports".to_string(),
+            "files path:kong/init.lua direction:out edge_limit:300".to_string()
+        )
+    );
+}
+
+#[test]
+fn a_question_ending_on_its_verb_is_still_about_its_subject() {
+    let anchor = |question: &str| natural_query_guessed_anchor(question);
+
+    // The guess took the last word, and a question ends on its verb as often
+    // as on its subject: "where are plugins loaded?" is about plugins.
+    assert_eq!(
+        anchor("where are plugins loaded?").as_deref(),
+        Some("plugins")
+    );
+    assert_eq!(
+        anchor("where is the router configured?").as_deref(),
+        Some("router")
+    );
+    // With nothing but a verb left, the verb is still the best guess.
+    assert_eq!(anchor("what is cached?").as_deref(), Some("cached"));
+}
+
+#[test]
 fn an_imperative_opening_a_question_is_not_a_symbol() {
     let query = |question: &str| natural_query_plan(question).expect("plan").generated_query;
 

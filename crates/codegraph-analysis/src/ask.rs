@@ -24,7 +24,7 @@ pub fn natural_query(
             .as_deref()
             .is_some_and(|term| !graph_names_exactly(graph, term))
     {
-        plan = natural_query_plan_with_anchor(&request.question, false)?;
+        plan = widened_plan(&request.question, plan.term.as_deref())?;
     }
     let mut alternatives = plan.alternatives.clone();
     let mut result = match query_graph(graph, &plan.generated_query) {
@@ -46,7 +46,7 @@ pub fn natural_query(
     // is not asking about it, and `configs target:read` answered with
     // nothing. A guess that yields nothing was not a name in this question.
     if plan.anchor_is_guessed && result.nodes.is_empty() {
-        let widened = natural_query_plan_with_anchor(&request.question, false)?;
+        let widened = widened_plan(&request.question, plan.term.as_deref())?;
         if widened.generated_query != plan.generated_query
             && let Ok(widened_result) = query_graph(graph, &widened.generated_query)
             && !widened_result.nodes.is_empty()
@@ -72,6 +72,23 @@ pub fn natural_query(
         result,
         alternatives,
     })
+}
+
+/// The plan to fall back to when a guessed anchor was not a name in this
+/// project. The word is no longer a filter, but it is still the reader's
+/// best search: "what depends on lyaml" is answered better by the three
+/// files that mention lyaml than by the project's first fifty nodes.
+fn widened_plan(question: &str, guess: Option<&str>) -> Result<NaturalQueryPlan, QueryError> {
+    let mut plan = natural_query_plan_with_anchor(question, false)?;
+    if let Some(guess) = guess
+        && plan.generated_query == natural_query_fallback_query(None)
+    {
+        plan.generated_query = natural_query_fallback_query(Some(guess));
+        plan.term = Some(guess.to_string());
+        plan.rule = "general_search_from_question_word".to_string();
+        plan.confidence = "low".to_string();
+    }
+    Ok(plan)
 }
 
 /// Whether the project has something by exactly this name. The bar is
@@ -133,6 +150,15 @@ pub(crate) fn natural_query_plan_with_anchor(
         .map(|term| lower.replace(&term.to_lowercase(), " "))
         .unwrap_or_else(|| lower.clone());
     let quoted_term = term.as_deref().map(quote_query_value);
+    // A guessed anchor is a word from the question, not a name from the
+    // project, and topic questions ask about the project as a whole: "what
+    // are the riskiest files?" is answered by the findings, not by searching
+    // them for the word `files`.
+    let filter_term = if anchor_is_guessed {
+        None
+    } else {
+        quoted_term.clone()
+    };
     let fallback = natural_query_fallback_query(term.as_deref());
     let mut alternatives = vec![fallback.clone()];
     if let Some(term) = quoted_term.as_deref() {
@@ -377,7 +403,22 @@ pub(crate) fn natural_query_plan_with_anchor(
             "импорт",
         ],
     ) {
-        if let Some(term) = quoted_term.as_deref() {
+        // "what does kong/init.lua import?" names a file, not a package:
+        // `packages package:kong/init.lua` matched nothing, because no
+        // dependency is called that.
+        if let Some(raw_term) = term
+            .as_deref()
+            .filter(|term| term.contains('/') || term.contains('.'))
+        {
+            (
+                format!(
+                    "files path:{} direction:out edge_limit:300",
+                    quote_query_value(raw_term)
+                ),
+                "file_imports".to_string(),
+                "high".to_string(),
+            )
+        } else if let Some(term) = quoted_term.as_deref() {
             (
                 format!("packages package:{term} edge_limit:300"),
                 "package_or_import".to_string(),
@@ -389,6 +430,110 @@ pub(crate) fn natural_query_plan_with_anchor(
                 "package_or_import".to_string(),
                 "medium".to_string(),
             )
+        }
+    } else if natural_query_mentions_any(
+        &routing,
+        &[
+            "unreachable",
+            "dead",
+            "unused",
+            "orphan",
+            "мертв",
+            "неисп",
+            "недостиж",
+        ],
+    ) {
+        if let Some(term) = quoted_term.as_deref() {
+            (
+                format!("unreachable search:{term}"),
+                "unreachable_or_unused".to_string(),
+                "high".to_string(),
+            )
+        } else {
+            (
+                "unreachable".to_string(),
+                "unreachable_or_unused".to_string(),
+                "medium".to_string(),
+            )
+        }
+    } else if natural_query_mentions_any(
+        &routing,
+        &[
+            "hotspot",
+            "hub",
+            "central",
+            "important",
+            "важн",
+            "централ",
+            "узел",
+        ],
+    ) {
+        if let Some(term) = filter_term.as_deref() {
+            (
+                format!("hotspots search:{term} min_score:3 edge_limit:300"),
+                "hotspot_or_centrality".to_string(),
+                "medium".to_string(),
+            )
+        } else {
+            (
+                "hotspots min_score:3 edge_limit:300".to_string(),
+                "hotspot_or_centrality".to_string(),
+                "medium".to_string(),
+            )
+        }
+    } else if natural_query_mentions_any(
+        &routing,
+        &[
+            "risk",
+            "issue",
+            "problem",
+            "warning",
+            "security",
+            "риск",
+            "проблем",
+            "уязв",
+            "предупреж",
+        ],
+    ) {
+        if let Some(term) = filter_term.as_deref() {
+            (
+                format!("insights search:{term}"),
+                "risk_or_insight".to_string(),
+                "medium".to_string(),
+            )
+        } else {
+            (
+                "insights".to_string(),
+                "risk_or_insight".to_string(),
+                "medium".to_string(),
+            )
+        }
+    } else if natural_query_mentions_any(
+        &routing,
+        &[
+            "table",
+            "column",
+            "schema",
+            "sql",
+            "таблиц",
+            "колонк",
+            "схем",
+        ],
+    ) {
+        // A project's schema is a first-class part of its graph: kong
+        // declares 39 tables inside Lua migrations, and "which tables does
+        // the schema define?" used to search for the word `define`.
+        match filter_term.as_deref() {
+            Some(term) => (
+                format!("sql table:{term} limit:50"),
+                "sql_schema".to_string(),
+                "high".to_string(),
+            ),
+            None => (
+                "sql limit:50".to_string(),
+                "sql_schema".to_string(),
+                "medium".to_string(),
+            ),
         }
     } else if natural_query_mentions_any(&routing, &["file", "source", "path", "файл", "исход"])
     {
@@ -436,83 +581,6 @@ pub(crate) fn natural_query_plan_with_anchor(
                 fallback.clone(),
                 "general_search".to_string(),
                 "low".to_string(),
-            )
-        }
-    } else if natural_query_mentions_any(
-        &routing,
-        &[
-            "unreachable",
-            "dead",
-            "unused",
-            "orphan",
-            "мертв",
-            "неисп",
-            "недостиж",
-        ],
-    ) {
-        if let Some(term) = quoted_term.as_deref() {
-            (
-                format!("unreachable search:{term}"),
-                "unreachable_or_unused".to_string(),
-                "high".to_string(),
-            )
-        } else {
-            (
-                "unreachable".to_string(),
-                "unreachable_or_unused".to_string(),
-                "medium".to_string(),
-            )
-        }
-    } else if natural_query_mentions_any(
-        &routing,
-        &[
-            "hotspot",
-            "hub",
-            "central",
-            "important",
-            "важн",
-            "централ",
-            "узел",
-        ],
-    ) {
-        if let Some(term) = quoted_term.as_deref() {
-            (
-                format!("hotspots search:{term} min_score:3 edge_limit:300"),
-                "hotspot_or_centrality".to_string(),
-                "medium".to_string(),
-            )
-        } else {
-            (
-                "hotspots min_score:3 edge_limit:300".to_string(),
-                "hotspot_or_centrality".to_string(),
-                "medium".to_string(),
-            )
-        }
-    } else if natural_query_mentions_any(
-        &routing,
-        &[
-            "risk",
-            "issue",
-            "problem",
-            "warning",
-            "security",
-            "риск",
-            "проблем",
-            "уязв",
-            "предупреж",
-        ],
-    ) {
-        if let Some(term) = quoted_term.as_deref() {
-            (
-                format!("insights search:{term}"),
-                "risk_or_insight".to_string(),
-                "medium".to_string(),
-            )
-        } else {
-            (
-                "insights".to_string(),
-                "risk_or_insight".to_string(),
-                "medium".to_string(),
             )
         }
     } else {
@@ -632,7 +700,7 @@ pub(crate) fn natural_query_candidates(question: &str) -> Vec<String> {
 /// so callers must confirm the project has something by that name before
 /// filtering on it.
 pub(crate) fn natural_query_guessed_anchor(question: &str) -> Option<String> {
-    question
+    let words = question
         .split_whitespace()
         .map(|token| {
             token.trim_matches(|character: char| {
@@ -640,8 +708,22 @@ pub(crate) fn natural_query_guessed_anchor(question: &str) -> Option<String> {
             })
         })
         .filter(|token| token.chars().count() >= 3)
-        .rfind(|token| !natural_query_stop_word(&token.to_lowercase()))
+        .filter(|token| !natural_query_stop_word(&token.to_lowercase()))
+        .collect::<Vec<_>>();
+    // The thing asked about is a name, and a question ends on its verb as
+    // often as on its subject: "where are plugins loaded?" is about plugins.
+    words
+        .iter()
+        .rfind(|token| !reads_as_a_verb(&token.to_lowercase()))
+        .or_else(|| words.last())
         .map(ToString::to_string)
+}
+
+/// Whether a word reads as an English verb form rather than as a name. A
+/// name may end the same way (`embedded`, `mapping`), so this only breaks a
+/// tie between words the question already offered.
+fn reads_as_a_verb(word: &str) -> bool {
+    (word.ends_with("ed") || word.ends_with("ing")) && word.chars().count() > 4
 }
 
 pub(crate) fn natural_query_quoted_terms(question: &str) -> Vec<String> {

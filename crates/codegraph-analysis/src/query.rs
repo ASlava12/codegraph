@@ -268,6 +268,9 @@ pub(crate) fn query_neighbors(
     graph: &CodeGraph,
     spec: QuerySpec,
 ) -> Result<QueryResult, QueryError> {
+    // Which name the caller gave, so an answer about one of several
+    // definitions says so, as a trace does.
+    let mut start_label: Option<String> = None;
     validate_neighbor_terms(&spec)?;
     let max_depth = spec
         .terms
@@ -299,6 +302,7 @@ pub(crate) fn query_neighbors(
         .or_else(|| spec.terms.get("node"))
         .or_else(|| spec.positional.first())
     {
+        start_label = Some(label.clone());
         resolve_node_reference(graph, label).ok_or_else(|| {
             QueryError::new(format!("neighbors start `{label}` did not match a node"))
         })?
@@ -373,7 +377,7 @@ pub(crate) fn query_neighbors(
         .cloned()
         .collect();
 
-    Ok(QueryResult::new(
+    let result = QueryResult::new(
         graph,
         spec.original,
         nodes,
@@ -381,7 +385,38 @@ pub(crate) fn query_neighbors(
         visited_nodes.len(),
         total_edges,
         truncated,
-    ))
+    );
+    Ok(
+        match note_for_shared_label(graph, start_label.as_deref(), start) {
+            Some(note) => result.with_note(note),
+            None => result,
+        },
+    )
+}
+
+/// The note a query owes its reader when the name it was given belongs to
+/// several definitions: kong has two functions called `load`, and "nothing
+/// calls load" is only true of the one that was picked.
+fn note_for_shared_label(graph: &CodeGraph, label: Option<&str>, chosen: NodeId) -> Option<String> {
+    let label = label?;
+    let node = graph.nodes.iter().find(|node| node.id == chosen)?;
+    shared_name_note(graph, label, node)
+}
+
+/// Both ends of a path can name several definitions, and the answer is
+/// about the pair that was picked.
+fn with_endpoint_notes(
+    graph: &CodeGraph,
+    from: &str,
+    to: &str,
+    start: NodeId,
+    target: NodeId,
+    result: QueryResult,
+) -> QueryResult {
+    [(from, start), (to, target)]
+        .into_iter()
+        .filter_map(|(label, chosen)| note_for_shared_label(graph, Some(label), chosen))
+        .fold(result, |result, note| result.with_note(note))
 }
 
 pub(crate) fn query_symbols(
@@ -1773,6 +1808,7 @@ pub(crate) fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResu
         .ok_or_else(|| QueryError::new(format!("path start `{from}` did not match a node")))?;
     let target = resolve_node_reference(graph, to)
         .ok_or_else(|| QueryError::new(format!("path target `{to}` did not match a node")))?;
+    let (from, to) = (from.clone(), to.clone());
     let edge_kind = spec
         .terms
         .get("edge_kind")
@@ -1780,14 +1816,21 @@ pub(crate) fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResu
 
     if start == target {
         let node = graph.nodes.iter().find(|node| node.id == start).cloned();
-        return Ok(QueryResult::new(
+        return Ok(with_endpoint_notes(
             graph,
-            spec.original,
-            node.into_iter().collect(),
-            Vec::new(),
-            1,
-            0,
-            false,
+            &from,
+            &to,
+            start,
+            target,
+            QueryResult::new(
+                graph,
+                spec.original,
+                node.into_iter().collect(),
+                Vec::new(),
+                1,
+                0,
+                false,
+            ),
         ));
     }
 
@@ -1822,28 +1865,42 @@ pub(crate) fn query_path(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResu
                 let nodes = path_nodes(graph, start, &edges);
                 let total_nodes = nodes.len();
                 let total_edges = edges.len();
-                return Ok(QueryResult::new(
+                return Ok(with_endpoint_notes(
                     graph,
-                    spec.original,
-                    nodes,
-                    edges,
-                    total_nodes,
-                    total_edges,
-                    false,
+                    &from,
+                    &to,
+                    start,
+                    target,
+                    QueryResult::new(
+                        graph,
+                        spec.original,
+                        nodes,
+                        edges,
+                        total_nodes,
+                        total_edges,
+                        false,
+                    ),
                 ));
             }
             queue.push_back((edge.target, depth + 1));
         }
     }
 
-    Ok(QueryResult::new(
+    Ok(with_endpoint_notes(
         graph,
-        spec.original,
-        Vec::new(),
-        Vec::new(),
-        0,
-        0,
-        truncated,
+        &from,
+        &to,
+        start,
+        target,
+        QueryResult::new(
+            graph,
+            spec.original,
+            Vec::new(),
+            Vec::new(),
+            0,
+            0,
+            truncated,
+        ),
     ))
 }
 
