@@ -100,9 +100,21 @@ pub(crate) fn scan_project_with_scope(
     cancel: &ScanCancellation,
 ) -> Result<CodeGraph, IndexError> {
     let ignored_globs = compile_ignored_globs(&options.ignored_globs)?;
+    // `scan .` named the repository "." and gave its node a stable id
+    // derived from that, so the same project answered to two identities
+    // depending on how its path was written. The directory has a name;
+    // ask the filesystem for it.
+    let canonical_root = root.canonicalize().ok();
     let root_label = root
         .file_name()
         .and_then(|name| name.to_str())
+        .filter(|name| *name != "." && *name != "..")
+        .or_else(|| {
+            canonical_root
+                .as_deref()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+        })
         .unwrap_or(".");
     let cargo_workspace_dependencies = cargo_workspace_dependencies(root);
     let go_modules = go_module_roots(root, options, &ignored_globs);

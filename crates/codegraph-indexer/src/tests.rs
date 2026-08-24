@@ -4037,6 +4037,43 @@ func helperB() string { return "b" }
 }
 
 #[test]
+fn a_repository_is_named_by_its_directory() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    let name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("temp root has a name")
+        .to_string();
+
+    let absolute = scan_project(&root, &IndexOptions::default()).unwrap();
+    // The same project reached through a path that ends in `.` -- what
+    // `codegraph scan .` hands the indexer -- is the same project. (The
+    // cwd is process-wide; a test must not move it out from under the
+    // others.)
+    let dotted = scan_project(root.join("."), &IndexOptions::default()).unwrap();
+
+    let repository = |graph: &CodeGraph| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Repository)
+            .expect("no repository node")
+            .clone()
+    };
+    assert_eq!(repository(&absolute).label, name);
+    assert_eq!(repository(&dotted).label, name);
+    assert_eq!(
+        repository(&absolute).metadata.get("stable_id"),
+        repository(&dotted).metadata.get("stable_id"),
+        "one project, one identity"
+    );
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn a_fact_belongs_to_the_definition_that_holds_it() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();
