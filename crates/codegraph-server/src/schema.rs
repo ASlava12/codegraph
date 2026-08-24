@@ -926,7 +926,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_post(
                     "/api/scan-jobs",
-                    "Queue a long-running scan job.",
+                    "Queue a long-running scan job. The job builds the syntactic graph and can be cancelled; ask for language-server facts with the semantic jobs, which `/api/scan` and the analysis endpoints apply on their own.",
                     vec![],
                     Some("ScanJobRequest { path?: string }"),
                     "ScanJob",
@@ -970,7 +970,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                 ),
                 api_get(
                     "/api/scan-jobs/{id}/result",
-                    "Return graph result for a completed scan job.",
+                    "Return graph result for a completed scan job. Syntactic, as the job built it.",
                     vec![id_param()],
                     "ScanJobResult",
                 ),
