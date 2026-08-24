@@ -204,6 +204,35 @@ drive("client insights agree with the CLI on undeclared imports", () => {
 // scan, and the CLI reads it as info; the browser used to call both a
 // warning, and looked for ambiguity in a shape the resolver stopped
 // writing when it started bounding uncertainty in one placeholder node.
+drive("client insights see both halves of the CLI's ambiguity rule", () => {
+  const graph = {
+    nodes: [
+      { id: 1, kind: "function", label: "caller" },
+      { id: 2, kind: "function", label: "indexOf" },
+      { id: 3, kind: "function", label: "indexOf" },
+      {
+        id: 4,
+        kind: "external_dependency",
+        label: "helper",
+        metadata: { item_kind: "call", resolution: "ambiguous", candidate_count: "2" },
+      },
+    ],
+    edges: [
+      // One call written once, landing on two definitions.
+      { kind: "calls", source: 1, target: 2, metadata: { call_label: "indexOf" } },
+      { kind: "calls", source: 1, target: 3, metadata: { call_label: "indexOf" } },
+      // ...and the placeholder the resolver leaves for a bounded ambiguity.
+      { kind: "calls", source: 1, target: 4, metadata: { call_label: "helper" } },
+    ],
+  };
+  const ambiguous = api
+    .buildClientInsights(graph)
+    .filter((insight) => insight.kind === "ambiguous_call_resolution");
+  if (ambiguous.length !== 2) {
+    throw new Error(`expected both halves, got ${JSON.stringify(ambiguous.map((i) => i.message))}`);
+  }
+});
+
 drive("client insights read unresolved and ambiguous calls as the CLI does", () => {
   const placeholder = (id, label, resolution, extra = {}) => ({
     id, kind: "function", label,

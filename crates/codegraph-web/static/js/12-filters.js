@@ -534,6 +534,35 @@ function buildClientInsights(graph) {
       });
     });
 
+  // The other half of the CLI's rule: one caller writing one call that
+  // landed on several definitions -- a method with overloads links to
+  // every signature -- which no placeholder records.
+  const callTargets = new Map();
+  graph.edges.forEach((edge) => {
+    if (edge.kind !== "calls") return;
+    const label = (edge.metadata?.call_label || "").trim();
+    if (!label) return;
+    const key = `${edge.source}\u0000${label}`;
+    const targets = callTargets.get(key) || { source: edge.source, label, targets: new Set() };
+    targets.targets.add(edge.target);
+    callTargets.set(key, targets);
+  });
+  callTargets.forEach((group) => {
+    if (group.targets.size < 2) return;
+    const caller = nodesById.get(group.source)?.label || "unknown";
+    const targetLabels = [...group.targets]
+      .map((id) => nodesById.get(id)?.label)
+      .filter(Boolean)
+      .slice(0, 5)
+      .join(", ");
+    insights.push({
+      kind: "ambiguous_call_resolution",
+      severity: heuristicSeverity,
+      message: `${caller} calls ${group.label} but it resolves to multiple targets: ${targetLabels}`,
+      nodeId: group.source,
+    });
+  });
+
   graph.edges
     .filter((edge) => edge.kind === "may_error")
     .forEach((edge) => {
@@ -725,7 +754,12 @@ function pythonImportPackage(label) {
   const match = value.match(/^import\s+([A-Za-z_][A-Za-z0-9_.-]*)/) ||
     value.match(/^from\s+([A-Za-z_][A-Za-z0-9_.-]*)\s+import\b/);
   if (!match) return null;
-  const packageName = normalizePythonPackageName(match[1].split(".")[0]);
+  const root = match[1].split(".")[0];
+  // `_typeshed` and its kind exist only for type checkers; nothing
+  // installs them, so nothing declares them either. The test comes before
+  // canonicalisation, which turns the underscore into a dash.
+  if (root.startsWith("_")) return null;
+  const packageName = normalizePythonPackageName(root);
   if (!packageName || pythonStdlibPackages.has(packageName)) return null;
   return { ecosystem: "python", package: packageName };
 }
@@ -954,48 +988,36 @@ const phpNonComposerNamespaceRoots = new Set([
   "PDO",
 ]);
 
+// The modules Python ships, kept in step with `is_python_stdlib_package`
+// in codegraph-analysis: the browser reported `ast`, `code` and 150 more
+// as dependencies flask forgot to declare.
 const pythonStdlibPackages = new Set([
-  "abc",
-  "argparse",
-  "asyncio",
-  "base64",
-  "collections",
-  "contextlib",
-  "csv",
-  "dataclasses",
-  "datetime",
-  "functools",
-  "glob",
-  "hashlib",
-  "http",
-  "importlib",
-  "inspect",
-  "io",
-  "itertools",
-  "json",
-  "logging",
-  "math",
-  "os",
-  "pathlib",
-  "pickle",
-  "random",
-  "re",
-  "shutil",
-  "sqlite3",
-  "statistics",
-  "string",
-  "subprocess",
-  "sys",
-  "tempfile",
-  "threading",
-  "time",
-  "typing",
-  "unittest",
-  "urllib",
-  "uuid",
-  "venv",
-  "warnings",
-  "xml",
+  "abc", "annotationlib", "antigravity", "argparse", "array", "ast", "asyncio",
+  "atexit", "base64", "bdb", "binascii", "bisect", "builtins", "bz2", "cProfile",
+  "calendar", "cmath", "cmd", "code", "codecs", "codeop", "collections", "colorsys",
+  "compileall", "compression", "concurrent", "configparser", "contextlib", "contextvars",
+  "copy", "copyreg", "csv", "ctypes", "curses", "dataclasses", "datetime", "dbm",
+  "decimal", "difflib", "dis", "doctest", "email", "encodings", "ensurepip", "enum",
+  "errno", "faulthandler", "fcntl", "filecmp", "fileinput", "fnmatch", "fractions",
+  "ftplib", "functools", "gc", "genericpath", "getopt", "getpass", "gettext", "glob",
+  "graphlib", "grp", "gzip", "hashlib", "heapq", "hmac", "html", "http", "idlelib",
+  "imaplib", "importlib", "inspect", "io", "ipaddress", "itertools", "json", "keyword",
+  "linecache", "locale", "logging", "lzma", "mailbox", "marshal", "math", "mimetypes",
+  "mmap", "modulefinder", "msvcrt", "multiprocessing", "netrc", "nt", "ntpath",
+  "nturl2path", "numbers", "opcode", "operator", "optparse", "os", "pathlib", "pdb",
+  "pickle", "pickletools", "pkgutil", "platform", "plistlib", "poplib", "posix",
+  "posixpath", "pprint", "profile", "pstats", "pty", "pwd", "py_compile", "pyclbr",
+  "pydoc", "pydoc_data", "pyexpat", "queue", "quopri", "random", "re", "readline",
+  "reprlib", "resource", "rlcompleter", "runpy", "sched", "secrets", "select", "selectors",
+  "shelve", "shlex", "shutil", "signal", "site", "smtplib", "socket", "socketserver",
+  "sqlite3", "sre_compile", "sre_constants", "sre_parse", "ssl", "stat", "statistics",
+  "string", "stringprep", "struct", "subprocess", "symtable", "sys", "sysconfig",
+  "syslog", "tabnanny", "tarfile", "tempfile", "termios", "textwrap", "this", "threading",
+  "time", "timeit", "tkinter", "token", "tokenize", "tomllib", "trace", "traceback",
+  "tracemalloc", "tty", "turtle", "turtledemo", "types", "typing", "unicodedata",
+  "unittest", "urllib", "uuid", "venv", "warnings", "wave", "weakref", "webbrowser",
+  "winreg", "winsound", "wsgiref", "xml", "xmlrpc", "zipapp", "zipfile", "zipimport",
+  "zlib", "zoneinfo",
 ]);
 
 function renderKindFilters(kinds) {
