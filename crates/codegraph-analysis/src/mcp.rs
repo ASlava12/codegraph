@@ -86,6 +86,16 @@ impl McpEngine<'_> {
                         "name": "codegraph",
                         "version": env!("CARGO_PKG_VERSION"),
                     },
+                    // Which project this server answers about. It scans one
+                    // root at startup, and a caller that believes otherwise
+                    // reads answers about the wrong repository.
+                    "instructions": match self.root {
+                        Some(root) => format!(
+                            "Every tool answers about the project at {}, scanned when this server started. To ask about another project, start a server with that path.",
+                            root.display()
+                        ),
+                        None => "Every tool answers about the project this server scanned when it started.".to_string(),
+                    },
                 })),
                 None,
             ),
@@ -111,24 +121,40 @@ impl McpEngine<'_> {
             return (Err("tools/call requires a `name`".to_string()), None);
         };
         let args = params.get("arguments").cloned().unwrap_or(json!({}));
+        // No tool takes a project path: this server scanned one root when it
+        // started. A call that names another project would otherwise be
+        // answered from the wrong graph without a word.
+        let named_project = ["path", "root", "project"]
+            .into_iter()
+            .find(|key| args.get(*key).is_some_and(|value| !value.is_null()));
 
         let started = Instant::now();
-        let payload = match name {
-            "query_graph" => self.tool_query_graph(&args),
-            "get_node_card" => self.tool_node_card(&args),
-            "get_neighbors" => self.tool_neighbors(&args),
-            "shortest_path" => self.tool_shortest_path(&args),
-            "workflow" => self.tool_workflow(&args),
-            "insights" => self.tool_insights(&args),
-            "impact" => self.tool_impact(&args),
-            "report" => self.tool_report(&args),
-            "refactor_context" => self.tool_refactor_context(&args),
-            "ask" => self.tool_ask(&args),
-            "source_search" => self.tool_source_search(&args),
-            "memory_save" => self.tool_memory_save(&args),
-            "memory_list" => self.tool_memory_list(&args),
-            "memory_reflect" => self.tool_memory_reflect(&args),
-            _ => Err(format!("unknown tool `{name}`")),
+        let payload = if let Some(named) = named_project {
+            let root = self
+                .root
+                .map(|root| root.display().to_string())
+                .unwrap_or_else(|| "the project it scanned".to_string());
+            Err(format!(
+                "`{named}` is not a parameter of `{name}`: this server answers about {root}, scanned when it started. Start a server with another path to ask about another project."
+            ))
+        } else {
+            match name {
+                "query_graph" => self.tool_query_graph(&args),
+                "get_node_card" => self.tool_node_card(&args),
+                "get_neighbors" => self.tool_neighbors(&args),
+                "shortest_path" => self.tool_shortest_path(&args),
+                "workflow" => self.tool_workflow(&args),
+                "insights" => self.tool_insights(&args),
+                "impact" => self.tool_impact(&args),
+                "report" => self.tool_report(&args),
+                "refactor_context" => self.tool_refactor_context(&args),
+                "ask" => self.tool_ask(&args),
+                "source_search" => self.tool_source_search(&args),
+                "memory_save" => self.tool_memory_save(&args),
+                "memory_list" => self.tool_memory_list(&args),
+                "memory_reflect" => self.tool_memory_reflect(&args),
+                _ => Err(format!("unknown tool `{name}`")),
+            }
         };
         let audit = McpToolAudit {
             tool: name.to_string(),

@@ -176,6 +176,40 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_call_that_names_another_project_says_which_one_this_is() {
+        let server = test_server();
+        // The server scans one root at startup, so a `path` argument would
+        // otherwise be answered from the wrong graph without a word.
+        let response = parse(server.handle_line(
+            r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"query_graph","arguments":{"path":"/elsewhere","query":"nodes kind:function"}}}"#,
+        ));
+        assert_eq!(response["result"]["isError"], true);
+        let message = response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(message.contains("`path` is not a parameter"), "{message}");
+        assert!(message.contains("this server answers about"), "{message}");
+
+        // The same call without it is answered.
+        let answered = parse(server.handle_line(
+            r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"query_graph","arguments":{"query":"nodes kind:function"}}}"#,
+        ));
+        assert_eq!(answered["result"]["isError"], false);
+
+        // And initialize says which project the answers are about.
+        let initialized = parse(server.handle_line(
+            r#"{"jsonrpc":"2.0","id":8,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#,
+        ));
+        let instructions = initialized["result"]["instructions"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            instructions.contains("Every tool answers about the project at"),
+            "{instructions}"
+        );
+    }
+
+    #[test]
     fn tool_calls_are_audited_when_query_log_is_enabled() {
         use std::fs;
         use std::time::{SystemTime, UNIX_EPOCH};
