@@ -42,7 +42,7 @@ Implemented now:
 - Manifest-defined entrypoints from Cargo, npm, Go, Python, setup.py/setup.cfg, Composer, and CMake project metadata.
 - Shebang-defined script entrypoints for Bash, Python, Node.js, and PHP scripts, including extensionless CLI files.
 - Dockerfile, Docker Compose, GitHub Actions, GitLab CI, and Kubernetes runtime entrypoints, including Compose service dependencies, workflow/pipeline job dependencies, CI environment inputs with secret-safe value classification, CI job-reference and script-path checks, runtime config inputs, published ports, local bind volumes, Kubernetes workloads, Ingresses, services, Service selector links, and ConfigMap/Secret references.
-- Framework route entrypoints for common Python, JavaScript/TypeScript, Rust, Go, and PHP web route declarations.
+- Framework route entrypoints for common Python, JavaScript/TypeScript, Rust, Go, PHP, and Ruby web route declarations.
 - Rust/Axum route entrypoints handle multiline `.route(...)` calls and ignore string literal route markers.
 - Resolved manifest entrypoint targets for common file paths, command paths, CMake executables, and Python module callables.
 - Approximate `calls` edges between functions when syntax-level names can be resolved. Each edge records

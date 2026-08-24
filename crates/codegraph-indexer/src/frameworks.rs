@@ -547,6 +547,37 @@ pub(crate) fn go_framework_routes(source: &str) -> Vec<FrameworkRoute> {
         .collect()
 }
 
+/// `get '/hello' do ... end` is how Sinatra declares a route, and Rails
+/// writes the same shape in `routes.rb`. The path has to look like one, so
+/// a bare `get 'name'` in a helper is not mistaken for a route.
+pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
+    const METHODS: &[&str] = &["get", "post", "put", "patch", "delete", "head", "options"];
+    source
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let trimmed = line.trim();
+            let (method, rest) = METHODS
+                .iter()
+                .find_map(|method| trimmed.strip_prefix(method).map(|rest| (*method, rest)))?;
+            if !rest.starts_with(char::is_whitespace) {
+                return None;
+            }
+            let path = first_quoted_value(rest)?;
+            if !path.starts_with('/') {
+                return None;
+            }
+            Some(FrameworkRoute {
+                framework: "sinatra".to_string(),
+                method: method.to_ascii_uppercase(),
+                path,
+                handler: None,
+                line: index as u32 + 1,
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn php_framework_routes(source: &str) -> Vec<FrameworkRoute> {
     let mut routes = Vec::new();
     let mut pending = Vec::new();

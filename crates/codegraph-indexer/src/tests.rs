@@ -4037,6 +4037,36 @@ func helperB() string { return "b" }
 }
 
 #[test]
+fn a_sinatra_route_is_an_entrypoint() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("app.rb"),
+        "require 'sinatra'\n\nget '/hello' do\n  'hi'\nend\n\npost '/messages' do\n  201\nend\n\nget params['name']\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let routes: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata
+                .get("entrypoint_kind")
+                .is_some_and(|kind| kind == "route")
+        })
+        .map(|node| node.label.as_str())
+        .collect();
+    assert_eq!(
+        routes,
+        vec!["route GET /hello", "route POST /messages"],
+        "a call whose argument is not a path is not a route"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_use_reaches_the_class_file() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src").join("Exception")).unwrap();

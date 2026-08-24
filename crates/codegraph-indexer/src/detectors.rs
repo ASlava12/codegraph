@@ -171,11 +171,11 @@ pub(crate) fn framework_routes(language: Language, source: &str) -> Vec<Framewor
         Language::Rust => rust_framework_routes(source),
         Language::Go => go_framework_routes(source),
         Language::Php => php_framework_routes(source),
+        Language::Ruby => ruby_framework_routes(source),
         Language::C
         | Language::Cpp
         | Language::Dart
         | Language::Bash
-        | Language::Ruby
         | Language::Java
         | Language::CSharp
         | Language::Kotlin
