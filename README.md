@@ -308,7 +308,7 @@ Implemented now:
 - Investigation insights for application SQL query strings that reference tables without matching indexed schema tables.
 - Dependency consistency insights for external imports/CommonJS requires that are not backed by declared manifest dependencies.
 - Dependency consistency insights for runtime manifest dependencies with no matching import.
-- Dependency consistency insights for package declarations with conflicting manifest constraints.
+- Dependency consistency insights for package declarations with conflicting manifest constraints. Two texts are not two requirements: a constraint is read as the range of versions it admits, so a Cargo workspace asking for `anyhow 1.0.75` in one crate and `1.0.103` in another installs one version and says nothing, while `blinker ==1.6.2` against `>=1.9.0` cannot be satisfied at once and does. A bare version is a range where cargo and pub read one and a pin where npm, composer, Go and Python do; an unreadable constraint is reported rather than assumed compatible.
 - Dependency consistency insights for packages declared across multiple dependency scopes such as runtime and dev/build.
 - Dependency consistency insights for production imports of packages declared only in non-runtime scopes, including Go `// indirect` requirements.
 - Composer dependency consistency insights map common PHP namespace imports such as `Monolog\*`, `Symfony\Component\Console\*`, and `PHPUnit\Framework\*` back to package nodes.

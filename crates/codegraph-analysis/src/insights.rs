@@ -3110,6 +3110,221 @@ fn manifest_is_the_projects_own(label: &str) -> bool {
         && !is_repository_tooling_source_path(label)
 }
 
+/// A version constraint read as the range of versions it admits, so two
+/// declarations can be asked whether any single version satisfies both.
+/// `anyhow 1.0.75` and `anyhow 1.0.103` are one dependency in a Cargo
+/// workspace; `blinker ==1.6.2` and `blinker >=1.9.0` are two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VersionRange {
+    low: Option<(u64, u64, u64)>,
+    low_inclusive: bool,
+    high: Option<(u64, u64, u64)>,
+    high_inclusive: bool,
+}
+
+impl VersionRange {
+    fn any() -> Self {
+        Self {
+            low: None,
+            low_inclusive: true,
+            high: None,
+            high_inclusive: true,
+        }
+    }
+
+    fn intersect(self, other: Self) -> Option<Self> {
+        let (low, low_inclusive) = match (self.low, other.low) {
+            (Some(left), Some(right)) if left == right => {
+                (Some(left), self.low_inclusive && other.low_inclusive)
+            }
+            (Some(left), Some(right)) if left > right => (Some(left), self.low_inclusive),
+            (Some(_), Some(right)) => (Some(right), other.low_inclusive),
+            (Some(left), None) => (Some(left), self.low_inclusive),
+            (None, Some(right)) => (Some(right), other.low_inclusive),
+            (None, None) => (None, true),
+        };
+        let (high, high_inclusive) = match (self.high, other.high) {
+            (Some(left), Some(right)) if left == right => {
+                (Some(left), self.high_inclusive && other.high_inclusive)
+            }
+            (Some(left), Some(right)) if left < right => (Some(left), self.high_inclusive),
+            (Some(_), Some(right)) => (Some(right), other.high_inclusive),
+            (Some(left), None) => (Some(left), self.high_inclusive),
+            (None, Some(right)) => (Some(right), other.high_inclusive),
+            (None, None) => (None, true),
+        };
+        let empty = match (low, high) {
+            (Some(low), Some(high)) => {
+                low > high || (low == high && !(low_inclusive && high_inclusive))
+            }
+            _ => false,
+        };
+        (!empty).then_some(Self {
+            low,
+            low_inclusive,
+            high,
+            high_inclusive,
+        })
+    }
+}
+
+/// The next version a caret range excludes: `^1.2.3` stops at 2.0.0, and
+/// `^0.4.1` at 0.5.0, because a leading zero makes the next component the
+/// breaking one.
+fn caret_upper_bound(version: (u64, u64, u64)) -> (u64, u64, u64) {
+    match version {
+        (0, 0, patch) => (0, 0, patch + 1),
+        (0, minor, _) => (0, minor + 1, 0),
+        (major, _, _) => (major + 1, 0, 0),
+    }
+}
+
+fn parse_version_number(text: &str) -> Option<(u64, u64, u64)> {
+    let text = text.trim();
+    let core = text
+        .split(['+', '-'])
+        .next()
+        .unwrap_or(text)
+        .trim_end_matches('.');
+    let mut parts = core.split('.');
+    let major = parts.next()?.trim().parse::<u64>().ok()?;
+    let minor = parts
+        .next()
+        .map(|part| part.trim().parse::<u64>().unwrap_or(0))
+        .unwrap_or(0);
+    let patch = parts
+        .next()
+        .map(|part| part.trim().parse::<u64>().unwrap_or(0))
+        .unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+/// One clause of a constraint, such as `>=1.2` or `^0.4` or `1.0.75`.
+fn parse_version_clause(clause: &str, bare_is_exact: bool) -> Option<VersionRange> {
+    let clause = clause.trim();
+    if clause.is_empty() || clause == "*" || clause.eq_ignore_ascii_case("any") {
+        return Some(VersionRange::any());
+    }
+    let (operator, rest) = if let Some(rest) = clause.strip_prefix(">=") {
+        (">=", rest)
+    } else if let Some(rest) = clause.strip_prefix("<=") {
+        ("<=", rest)
+    } else if let Some(rest) = clause.strip_prefix("==") {
+        ("==", rest)
+    } else if let Some(rest) = clause.strip_prefix("!=") {
+        return parse_version_number(rest).map(|_| VersionRange::any());
+    } else if let Some(rest) = clause.strip_prefix("~=") {
+        ("~", rest)
+    } else if let Some(rest) = clause.strip_prefix('>') {
+        (">", rest)
+    } else if let Some(rest) = clause.strip_prefix('<') {
+        ("<", rest)
+    } else if let Some(rest) = clause.strip_prefix('^') {
+        ("^", rest)
+    } else if let Some(rest) = clause.strip_prefix('~') {
+        ("~", rest)
+    } else if let Some(rest) = clause.strip_prefix('=') {
+        ("==", rest)
+    } else {
+        ("", clause)
+    };
+    let version = parse_version_number(rest)?;
+    Some(match operator {
+        ">=" => VersionRange {
+            low: Some(version),
+            low_inclusive: true,
+            high: None,
+            high_inclusive: true,
+        },
+        ">" => VersionRange {
+            low: Some(version),
+            low_inclusive: false,
+            high: None,
+            high_inclusive: true,
+        },
+        "<=" => VersionRange {
+            low: None,
+            low_inclusive: true,
+            high: Some(version),
+            high_inclusive: true,
+        },
+        "<" => VersionRange {
+            low: None,
+            low_inclusive: true,
+            high: Some(version),
+            high_inclusive: false,
+        },
+        "==" => VersionRange {
+            low: Some(version),
+            low_inclusive: true,
+            high: Some(version),
+            high_inclusive: true,
+        },
+        "^" => VersionRange {
+            low: Some(version),
+            low_inclusive: true,
+            high: Some(caret_upper_bound(version)),
+            high_inclusive: false,
+        },
+        "~" => VersionRange {
+            low: Some(version),
+            low_inclusive: true,
+            high: Some((version.0, version.1 + 1, 0)),
+            high_inclusive: false,
+        },
+        _ if bare_is_exact => VersionRange {
+            low: Some(version),
+            low_inclusive: true,
+            high: Some(version),
+            high_inclusive: true,
+        },
+        // Cargo and pub read a bare version as "compatible with this one".
+        _ => VersionRange {
+            low: Some(version),
+            low_inclusive: true,
+            high: Some(caret_upper_bound(version)),
+            high_inclusive: false,
+        },
+    })
+}
+
+/// The whole constraint, which may be several clauses that all have to hold
+/// (`>=0.1.5 <2.0.0`), or several the resolver may choose between (`^1 || ^2`).
+fn parse_version_constraint(constraint: &str, bare_is_exact: bool) -> Option<VersionRange> {
+    // An alternation admits everything its widest branch does; reading only
+    // the first branch would call `^1 || ^2` a conflict with `^2`.
+    if constraint.contains("||") {
+        return Some(VersionRange::any());
+    }
+    constraint
+        .split([',', ' '])
+        .map(str::trim)
+        .filter(|clause| !clause.is_empty())
+        .try_fold(VersionRange::any(), |range, clause| {
+            parse_version_clause(clause, bare_is_exact).and_then(|clause| range.intersect(clause))
+        })
+}
+
+/// Whether one version could satisfy every constraint a package was declared
+/// with. An unreadable constraint answers "unknown", which reports rather
+/// than hides.
+pub(crate) fn constraints_can_agree(ecosystem: &str, constraints: &[&str]) -> bool {
+    // npm and python pin an exact version when no operator is written;
+    // cargo and pub read the same text as a compatible range.
+    let bare_is_exact = matches!(ecosystem, "npm" | "python" | "composer" | "go");
+    let mut range = VersionRange::any();
+    for constraint in constraints {
+        let Some(parsed) = parse_version_constraint(constraint, bare_is_exact) else {
+            return false;
+        };
+        let Some(narrowed) = range.intersect(parsed) else {
+            return false;
+        };
+        range = narrowed;
+    }
+    true
+}
+
 pub(crate) fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let mut groups: BTreeMap<NodeId, Vec<(usize, String)>> = BTreeMap::new();
     for (index, edge) in graph.edges.iter().enumerate() {
@@ -3150,6 +3365,23 @@ pub(crate) fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &
             .map(|(_, version)| version.as_str())
             .collect();
         if distinct_versions.len() < 2 {
+            continue;
+        }
+        // Two texts are not two requirements: a Cargo workspace where one
+        // crate asks for `anyhow 1.0.75` and another for `1.0.103` installs
+        // one version that satisfies both, and 25 of the corpora's 32
+        // findings were that. `blinker ==1.6.2` against `>=1.9.0` is not.
+        let ecosystem = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == target)
+            .and_then(|node| node.metadata.get("package_id"))
+            .and_then(|package_id| package_id.split_once(':').map(|(head, _)| head))
+            .unwrap_or_default();
+        if constraints_can_agree(
+            ecosystem,
+            &distinct_versions.iter().copied().collect::<Vec<_>>(),
+        ) {
             continue;
         }
 

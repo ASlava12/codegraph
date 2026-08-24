@@ -8070,6 +8070,42 @@ fn a_report_cites_a_node_by_the_id_that_survives_an_edit() {
 }
 
 #[test]
+fn two_constraints_conflict_only_when_no_version_satisfies_both() {
+    let agree =
+        |ecosystem: &str, constraints: &[&str]| constraints_can_agree(ecosystem, constraints);
+
+    // A Cargo workspace where one crate asks for 1.0.75 and another for
+    // 1.0.103 installs one version: a bare cargo version is a range.
+    assert!(agree("cargo", &["1.0.75", "1.0.103"]));
+    assert!(agree("cargo", &["2", "2.2.7", "2.4.0"]));
+    assert!(agree("cargo", &["0.4.0", "0.4.18"]));
+    assert!(agree("cargo", &["1", "=1.0.229"]));
+    // A leading zero makes the next component the breaking one.
+    assert!(!agree("cargo", &["0.4.0", "0.8.0"]));
+    assert!(!agree("cargo", &["1.0.0", "2.0.0"]));
+
+    // pub and npm carets, and the ranges pubspec writes out.
+    assert!(agree("dart", &["^2.5.0", "^2.11.0"]));
+    assert!(agree("dart", &[">=0.1.5 <2.0.0", "^1.0.0"]));
+    assert!(agree("npm", &["^5.3.0", "^5.6.2"]));
+    assert!(agree("npm", &["*", "~6.0.3"]));
+    // npm pins what it writes bare, so two pins are two requirements.
+    assert!(!agree("npm", &["4.9.5", "^5"]));
+    assert!(!agree("npm", &["12.20.55", "20.19.39"]));
+
+    // Python's `==` against a floor that excludes it.
+    assert!(agree("python", &["==3.1.2", ">=3.1.2"]));
+    assert!(agree("python", &["==2.1.2", ">=2.1.1"]));
+    assert!(!agree("python", &["==1.6.2", ">=1.9.0"]));
+    assert!(!agree("python", &["==2.3.3", ">=3.1.0"]));
+
+    // An alternation admits what its widest branch does, and a constraint
+    // nothing can read is reported rather than hidden.
+    assert!(agree("npm", &["^1 || ^2", "^2.0.0"]));
+    assert!(!agree("npm", &["not-a-version", "1.0.0"]));
+}
+
+#[test]
 fn a_php_namespace_offers_the_spellings_composer_publishes() {
     // `Doctrine\CouchDB` is doctrine/couchdb and `MongoDB\Collection` is
     // mongodb/collection: a run of capitals is one word in the published
@@ -8809,7 +8845,9 @@ fn an_example_apps_own_pinning_is_a_note() {
             ]),
         );
     };
-    // Two example apps pinning their own versions is the examples' business.
+    // Two example apps that cannot agree on a version is the examples'
+    // business — and they have to actually disagree: `^1.2.0` and `^1.5.0`
+    // install one version between them, `^1.2.0` and `^2.0.0` do not.
     declare(
         &mut graph,
         "pkgs/ok_http/example/pubspec.yaml",
@@ -8819,7 +8857,7 @@ fn an_example_apps_own_pinning_is_a_note() {
     declare(
         &mut graph,
         "pkgs/cronet_http/example/pubspec.yaml",
-        "^1.5.0",
+        "^2.0.0",
         "runtime",
     );
 
@@ -8844,7 +8882,7 @@ fn an_example_apps_own_pinning_is_a_note() {
         ]),
     );
     for (manifest, version) in [
-        ("pkgs/http/pubspec.yaml", "^1.5.0"),
+        ("pkgs/http/pubspec.yaml", "^2.0.0"),
         ("pkgs/ok_http/example/pubspec.yaml", "^1.2.0"),
     ] {
         let file = own.add_node(NodeKind::File, manifest);
