@@ -1100,17 +1100,30 @@ pub(crate) fn scan_with_options(
                 .unwrap_or_else(default_cache_dir),
         )
     });
-    let graph = scan_project_cached(&path, &options, cache.as_ref())?.graph;
+    scan_with_cache_status(path, options, cache_args, cache).map(|(graph, _)| graph)
+}
+
+/// The graph a command answers from, with the cache status the scan
+/// reported. `report` needs both, and reaching past this for the cache
+/// status is how it came to answer from a graph the semantic pass never
+/// touched while `insights` beside it answered from one that had.
+fn scan_with_cache_status(
+    path: PathBuf,
+    options: codegraph_indexer::IndexOptions,
+    cache_args: &CacheArgs,
+    cache: Option<GraphCache>,
+) -> Result<(codegraph_core::CodeGraph, codegraph_storage::CacheInfo)> {
+    let scanned = scan_project_cached(&path, &options, cache.as_ref())?;
     let (graph, _) = auto_enrich_graph(
         &path,
-        graph,
+        scanned.graph,
         semantic_cache_from_args(cache_args).as_ref(),
         &AutoEnrichmentOptions {
             enabled: !cache_args.no_semantic,
             ..AutoEnrichmentOptions::default()
         },
     );
-    Ok(graph)
+    Ok((graph, scanned.cache))
 }
 
 fn semantic_cache_from_args(cache_args: &CacheArgs) -> Option<SemanticLspCache> {
@@ -1147,14 +1160,15 @@ fn build_project_report_snapshot(
                 .unwrap_or_else(default_cache_dir),
         )
     });
-    let output = scan_project_cached(args.scan.path.clone(), &options, cache.as_ref())?;
     let coverage = scan_coverage(&args.scan.path, &options)?;
-    let report = project_report(&output.graph, report_limits_from_args(&args));
+    let (graph, cache_info) =
+        scan_with_cache_status(args.scan.path.clone(), options, &args.scan.cache, cache)?;
+    let report = project_report(&graph, report_limits_from_args(&args));
 
     Ok(ProjectReportSnapshot {
         root: args.scan.path.display().to_string(),
         generated_at_unix: unix_seconds(),
-        cache: output.cache,
+        cache: cache_info,
         coverage,
         report,
     })
