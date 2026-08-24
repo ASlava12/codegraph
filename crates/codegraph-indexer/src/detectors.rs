@@ -96,6 +96,13 @@ pub(crate) fn index_framework_routes(
         if parsed.line_is_quoted(route.line) {
             continue;
         }
+        // A route names a path. `app.get('json escape')` reads a setting,
+        // and express reads eleven of them in `lib/response.js` alone; all
+        // 1324 real routes across the corpora start with `/`, a wildcard, a
+        // regex anchor, or a parameter.
+        if !names_a_route_path(&route.path) {
+            continue;
+        }
         let mut metadata = BTreeMap::new();
         metadata.insert("item_kind".to_string(), "framework_route".to_string());
         metadata.insert("entrypoint_kind".to_string(), "route".to_string());
@@ -162,6 +169,11 @@ pub(crate) fn index_framework_routes(
             }
         }
     }
+}
+
+/// Whether a string reads as the path half of a route declaration.
+fn names_a_route_path(path: &str) -> bool {
+    path.starts_with(['/', '*', '^', ':'])
 }
 
 pub(crate) fn framework_routes(language: Language, source: &str) -> Vec<FrameworkRoute> {

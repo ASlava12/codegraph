@@ -3864,9 +3864,21 @@ pub(crate) fn add_unresolved_framework_route_handler_insights(
         edges.sort_unstable();
         edges.dedup();
 
+        // A framework's own tests declare routes to exercise the router:
+        // every one of gin's 15 and eleven of express's live in a test file,
+        // where the handler is a local closure rather than a definition.
+        // The duplicate-route rule already reads a route there as a fixture.
+        let declared_by_the_project = node
+            .span
+            .as_ref()
+            .is_none_or(|span| manifest_is_the_projects_own(&span.path));
         insights.push(Insight {
             kind: "unresolved_framework_route_handler".to_string(),
-            severity: InsightSeverity::Warning,
+            severity: if declared_by_the_project {
+                InsightSeverity::Warning
+            } else {
+                InsightSeverity::Info
+            },
             message: format!(
                 "{framework} route `{method} {path}` references handler `{handler}` but no matching function was found"
             ),

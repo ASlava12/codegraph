@@ -8070,6 +8070,50 @@ fn a_report_cites_a_node_by_the_id_that_survives_an_edit() {
 }
 
 #[test]
+fn a_route_declared_by_a_test_is_a_fixture() {
+    let mut graph = CodeGraph::new("repo");
+    let route = |graph: &mut CodeGraph, path: &str, file: &str| {
+        graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            format!("route GET {path}"),
+            Some(SourceSpan {
+                path: file.to_string(),
+                start_line: 4,
+                start_column: 1,
+                end_line: 4,
+                end_column: 40,
+            }),
+            BTreeMap::from([
+                ("item_kind".to_string(), "framework_route".to_string()),
+                ("framework".to_string(), "express".to_string()),
+                ("method".to_string(), "GET".to_string()),
+                ("path".to_string(), path.to_string()),
+                ("handler".to_string(), "handler".to_string()),
+            ]),
+        )
+    };
+    let served = route(&mut graph, "/users", "lib/app.js");
+    let fixture = route(&mut graph, "/test", "test/app.router.js");
+    for node in [served, fixture] {
+        graph.add_edge(graph.root, node, EdgeKind::Entrypoint, Confidence::Exact);
+    }
+
+    let report = insights(&graph);
+    let severity_of = |needle: &str| {
+        report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "unresolved_framework_route_handler"
+                    && insight.message.contains(needle)
+            })
+            .map(|insight| insight.severity)
+    };
+    assert_eq!(severity_of("/users"), Some(InsightSeverity::Warning));
+    assert_eq!(severity_of("/test"), Some(InsightSeverity::Info));
+}
+
+#[test]
 fn a_dead_end_in_a_test_manifest_is_a_note() {
     let mut graph = CodeGraph::new("repo");
     // json declares a fuzzer target in `tests/thirdparty/Fuzzer` and a CUDA

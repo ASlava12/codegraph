@@ -1494,6 +1494,33 @@ fn a_computed_require_names_no_module() {
 }
 
 #[test]
+fn a_setting_read_is_not_a_route() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    // `app.get('json escape')` reads a setting; express reads eleven of
+    // them in `lib/response.js` alone, and each looked like a route.
+    fs::write(
+        root.join("lib").join("response.js"),
+        "const app = require('./app')\nfunction send(res) {\n  const escape = app.get('json escape')\n  return escape\n}\napp.get('/users', function listUsers(req, res) { res.end() })\nmodule.exports = send\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let routes: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata
+                .get("item_kind")
+                .is_some_and(|kind| kind == "framework_route")
+        })
+        .filter_map(|node| node.metadata.get("path").cloned())
+        .collect();
+    assert_eq!(routes, vec!["/users".to_string()], "{routes:?}");
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn a_schema_written_in_lua_is_a_schema() {
     // Kong keeps every table in a migration's long string, in capitals.
     let table = parse_sql_create_table(
