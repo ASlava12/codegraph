@@ -9189,6 +9189,56 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn a_notebook_holds_the_program_someone_wrote_in_cells() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    // Jupyter writes one source line per line of JSON, which is what lets
+    // a fact point at the line of the notebook that holds it.
+    fs::write(
+        root.join("analysis.ipynb"),
+        "{\n \"cells\": [\n  {\n   \"cell_type\": \"markdown\",\n   \"source\": [\n    \"# Analysis\\n\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"source\": [\n    \"import os\\n\",\n    \"\\n\",\n    \"DATA = os.environ[\\\"DATA_PATH\\\"]\\n\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"source\": [\n    \"def load_frame(path):\\n\",\n    \"    return path\\n\"\n   ]\n  }\n ],\n \"nbformat\": 4\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let node = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.label == label)
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing {label}: {:?}",
+                    graph
+                        .nodes
+                        .iter()
+                        .map(|node| node.label.as_str())
+                        .collect::<Vec<_>>()
+                )
+            })
+    };
+
+    // The markdown cell is prose, and the code cells are the program.
+    let function = node("load_frame");
+    assert_eq!(function.kind, NodeKind::Function);
+    assert_eq!(
+        function.span.as_ref().map(|span| span.start_line),
+        Some(20),
+        "a fact points at the line of the notebook that holds it"
+    );
+    assert_eq!(node("DATA_PATH").kind, NodeKind::Environment);
+    assert!(
+        graph
+            .nodes
+            .iter()
+            .any(|node| node.label.contains("import os")),
+        "what a notebook imports is what its program imports"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn rails_states_its_routes_in_a_file_of_its_own() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("config")).unwrap();

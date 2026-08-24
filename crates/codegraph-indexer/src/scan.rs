@@ -754,6 +754,11 @@ pub(crate) fn index_file(
     // cover is read here.
     let parse_result = context.parsed_ahead.remove(label).or_else(|| {
         source_bytes.as_ref().and_then(|source| {
+            // A notebook is JSON holding the program someone wrote in
+            // cells, and the facts in it are the program's.
+            if label.ends_with(".ipynb") {
+                return parse_notebook(label, source).map(|parsed| (Language::Python, Ok(parsed)));
+            }
             let adapter = adapter?;
             Some((
                 adapter.language(),

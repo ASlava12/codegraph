@@ -4944,6 +4944,12 @@ pub(crate) fn python_import_package(label: &str) -> Option<String> {
     if package.starts_with('_') {
         return None;
     }
+    // A handful of standard modules are not written in lower case —
+    // `cProfile` is one, and pytudes profiles two of its notebooks with it
+    // — so the module is tested as written before it is canonicalised.
+    if is_python_stdlib_package(package) {
+        return None;
+    }
     let package = canonical_python_package_name(package);
     if is_python_stdlib_package(&package) || package.is_empty() {
         None

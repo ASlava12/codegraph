@@ -192,6 +192,15 @@ pub fn is_index_relevant_file(path: &Path) -> bool {
     if is_sql_file(path) {
         return true;
     }
+    // A notebook is JSON holding a program: `.ipynb` names no language the
+    // extension registry knows, and the program inside it is Python.
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ipynb"))
+    {
+        return true;
+    }
 
     matches!(
         path.file_name().and_then(|name| name.to_str()),
