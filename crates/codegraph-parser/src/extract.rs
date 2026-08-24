@@ -29,11 +29,17 @@ pub fn parse_source(
         .ok_or(ParseError::ParseFailed { language })?;
     let root = tree.root_node();
     let mut facts = CollectedFacts::default();
+    let config_aliases = if language == Language::Nix {
+        nix_config_aliases(root, source_text.as_bytes())
+    } else {
+        BTreeMap::new()
+    };
     collect_items(
         &WalkContext {
             language,
             source: source_text.as_bytes(),
             path: &path.to_string_lossy(),
+            config_aliases: &config_aliases,
         },
         root,
         None,
@@ -143,6 +149,10 @@ pub(crate) struct WalkContext<'a> {
     pub(crate) language: Language,
     pub(crate) source: &'a [u8],
     pub(crate) path: &'a str,
+    /// What a name stands for where a file gives one to a part of the
+    /// configuration: `cfg = config.programs.git;`, which home-manager
+    /// writes 677 times and then reads 6546 times as `cfg.something`.
+    pub(crate) config_aliases: &'a BTreeMap<String, String>,
 }
 
 pub(crate) fn collect_items(
@@ -158,6 +168,7 @@ pub(crate) fn collect_items(
         language,
         source,
         path,
+        config_aliases,
     } = *context;
     if depth >= MAX_TREE_DEPTH {
         return;
@@ -194,6 +205,20 @@ pub(crate) fn collect_items(
         && node.kind() == "type_identifier"
         && let Some(label) = node_text(node, source)
         && !label.is_empty()
+    {
+        facts.type_references.push(ParsedTypeReference {
+            label,
+            span: span_for(path, node),
+            parent: current_function.clone(),
+        });
+    }
+
+    // What a module reads is the other half of what it declares:
+    // `config.programs.git.enable`, and `cfg.enable` where the file bound
+    // `cfg = config.programs.git`.
+    if language == Language::Nix
+        && node.kind() == "select_expression"
+        && let Some(label) = nix_option_reference(node, source, config_aliases)
     {
         facts.type_references.push(ParsedTypeReference {
             label,
@@ -2140,6 +2165,59 @@ pub(crate) fn nix_option_path(node: Node<'_>, source: &[u8]) -> Option<String> {
         path.push(segment);
     }
     (!path.is_empty()).then(|| path.join("."))
+}
+
+/// The names a Nix file binds to a part of the configuration:
+/// `cfg = config.programs.git;`. Reading `cfg.enable` is reading
+/// `programs.git.enable`, and the whole ecosystem writes it that way.
+pub(crate) fn nix_config_aliases(root: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    let mut aliases = BTreeMap::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+        if node.kind() != "binding" {
+            continue;
+        }
+        let (Some(name), Some(value)) = (
+            named_child_text(node, "attrpath", source),
+            node.child_by_field_name("expression"),
+        ) else {
+            continue;
+        };
+        if name.contains('.') || value.kind() != "select_expression" {
+            continue;
+        }
+        if let Some(path) = nix_config_path(value, source) {
+            aliases.insert(name, path);
+        }
+    }
+    aliases
+}
+
+/// The configuration path a `config.a.b` expression names.
+fn nix_config_path(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let base = node.child_by_field_name("expression")?;
+    (node_text(base, source).as_deref() == Some("config"))
+        .then(|| named_child_text(node, "attrpath", source))
+        .flatten()
+}
+
+/// The option a `select_expression` reads, whether it says so outright or
+/// through the name the file gave that part of the configuration.
+pub(crate) fn nix_option_reference(
+    node: Node<'_>,
+    source: &[u8],
+    aliases: &BTreeMap<String, String>,
+) -> Option<String> {
+    if let Some(path) = nix_config_path(node, source) {
+        return Some(path);
+    }
+    let base = node.child_by_field_name("expression")?;
+    let name = node_text(base, source)?;
+    let prefix = aliases.get(&name)?;
+    let path = named_child_text(node, "attrpath", source)?;
+    Some(format!("{prefix}.{path}"))
 }
 
 /// The attributes `mkOption` itself takes, which a nested declaration sits

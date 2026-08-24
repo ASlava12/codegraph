@@ -124,6 +124,37 @@ fn nix_modules_declare_the_options_they_offer() {
 }
 
 #[test]
+fn nix_modules_read_the_options_they_declare() {
+    let adapter = adapter_for_language(Language::Nix).unwrap();
+    let source = br#"{ config, lib, ... }:
+let
+  cfg = config.programs.git;
+in
+{
+  options.programs.git.enable = lib.mkEnableOption "Git";
+
+  config = lib.mkIf cfg.enable {
+    home.file.".gitconfig".text = config.home.homeDirectory;
+  };
+}
+"#;
+    let parsed = adapter.parse(Path::new("git.nix"), source).unwrap();
+    let read = parsed
+        .type_references
+        .iter()
+        .map(|reference| reference.label.clone())
+        .collect::<Vec<_>>();
+
+    // Written outright, and written through the name the file gave that
+    // part of the configuration.
+    assert!(read.contains(&"home.homeDirectory".to_string()));
+    assert!(
+        read.contains(&"programs.git.enable".to_string()),
+        "`cfg.enable` where `cfg = config.programs.git` reads that option: {read:?}"
+    );
+}
+
+#[test]
 fn hcl_declares_by_block_and_addresses_by_name() {
     let adapter = adapter_for_language(Language::Hcl).unwrap();
     let source = br#"terraform {
