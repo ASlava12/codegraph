@@ -528,6 +528,9 @@ pub(crate) struct ManifestEntrypoint {
     pub(crate) kind: String,
     pub(crate) ecosystem: String,
     pub(crate) target: Option<String>,
+    /// The line the extractor read the entry on, when it read text rather
+    /// than a parsed document. Nothing else can find it as reliably.
+    pub(crate) line: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -128,23 +128,139 @@ fn manifest_entry_line(source: &str, name: &str) -> Option<u32> {
     if name.is_empty() {
         return None;
     }
-    source.lines().enumerate().find_map(|(index, line)| {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with('#') || trimmed.starts_with("//") {
-            return None;
+    source
+        .lines()
+        .enumerate()
+        .find_map(|(index, line)| line_declares_entry(line, name).then_some(index as u32 + 1))
+}
+
+fn line_declares_entry(line: &str, name: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with('#') || trimmed.starts_with("//") {
+        return false;
+    }
+    trimmed.starts_with(&format!("\"{name}\""))
+        || trimmed.starts_with(&format!("'{name}'"))
+        || trimmed.starts_with(&format!("{name} ="))
+        || trimmed.starts_with(&format!("{name}="))
+        || trimmed.starts_with(&format!("{name}:"))
+        || trimmed.contains(&format!("\"{name}\":"))
+        || trimmed.contains(&format!("= \"{name}\""))
+        // `module github.com/hashicorp/terraform`: the keyword states
+        // what kind of entry it is and the name closes the line.
+        || (trimmed.ends_with(name) && trimmed.len() > name.len() + 1)
+}
+
+/// The line an entry is written on inside the section that declares it.
+/// oscar's package.json writes `"eslint"` twice -- once as a dev
+/// dependency on line 11 and once as a script on line 30 -- so a search
+/// of the whole file cited the dependency as the script's home. The
+/// section that owns the entry has to bound the search.
+fn manifest_entry_line_in_sections(source: &str, sections: &[&str], name: &str) -> Option<u32> {
+    if name.is_empty() {
+        return None;
+    }
+    let lines: Vec<&str> = source.lines().collect();
+    for section in sections {
+        for (index, line) in lines.iter().enumerate() {
+            let Some(shape) = section_opens_here(line, section) else {
+                continue;
+            };
+            let found = lines
+                .iter()
+                .enumerate()
+                .skip(index + 1)
+                .take_while(|(offset, candidate)| {
+                    !section_ends_here(shape, line, candidate, &lines[index + 1..*offset])
+                })
+                .find_map(|(offset, candidate)| {
+                    line_declares_entry(candidate, name).then_some(offset as u32 + 1)
+                });
+            if found.is_some() {
+                return found;
+            }
         }
-        let declares = trimmed.starts_with(&format!("\"{name}\""))
-            || trimmed.starts_with(&format!("'{name}'"))
-            || trimmed.starts_with(&format!("{name} ="))
-            || trimmed.starts_with(&format!("{name}="))
-            || trimmed.starts_with(&format!("{name}:"))
-            || trimmed.contains(&format!("\"{name}\":"))
-            || trimmed.contains(&format!("= \"{name}\""))
-            // `module github.com/hashicorp/terraform`: the keyword states
-            // what kind of entry it is and the name closes the line.
-            || (trimmed.ends_with(name) && trimmed.len() > name.len() + 1);
-        declares.then_some(index as u32 + 1)
-    })
+    }
+    None
+}
+
+/// How a manifest writes the head of a section: JSON quotes the key, TOML
+/// brackets it, YAML and INI-shaped files end it with a colon or bracket.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SectionShape {
+    Braced,
+    Bracketed,
+    Indented,
+}
+
+fn section_opens_here(line: &str, section: &str) -> Option<SectionShape> {
+    let trimmed = line.trim();
+    if trimmed.starts_with(&format!("\"{section}\"")) {
+        return Some(SectionShape::Braced);
+    }
+    if trimmed.starts_with(&format!("[{section}]"))
+        || trimmed.starts_with(&format!("[[{section}]]"))
+    {
+        return Some(SectionShape::Bracketed);
+    }
+    if trimmed.starts_with(&format!("{section}:")) || trimmed.starts_with(&format!("{section} =")) {
+        return Some(SectionShape::Indented);
+    }
+    None
+}
+
+fn section_ends_here(shape: SectionShape, head: &str, line: &str, between: &[&str]) -> bool {
+    match shape {
+        // The section's own braces close it: count what the head opened.
+        SectionShape::Braced => {
+            let mut depth = brace_depth(head);
+            for previous in between {
+                depth += brace_depth(previous);
+            }
+            depth <= 0
+        }
+        SectionShape::Bracketed => line.trim_start().starts_with('['),
+        SectionShape::Indented => {
+            let indent = head.len() - head.trim_start().len();
+            !line.trim().is_empty() && line.len() - line.trim_start().len() <= indent
+        }
+    }
+}
+
+fn brace_depth(line: &str) -> i32 {
+    let mut depth = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+    for character in line.chars() {
+        match character {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            '{' | '[' if !quoted => depth += 1,
+            '}' | ']' if !quoted => depth -= 1,
+            _ => {}
+        }
+    }
+    depth
+}
+
+/// Which sections of a manifest can declare this kind of entry. An
+/// ecosystem states its entrypoints in a named place, and naming that
+/// place here keeps every extractor free of it.
+fn manifest_entry_sections(ecosystem: &str, kind: &str) -> &'static [&'static str] {
+    match (ecosystem, kind) {
+        ("npm", "script") => &["scripts"],
+        ("composer", "script") => &["scripts"],
+        ("composer", "bin") => &["bin"],
+        ("cargo", "binary") => &["bin", "package"],
+        ("cargo", "example") => &["example"],
+        ("python", "console_script") => {
+            &["project.scripts", "options.entry_points", "console_scripts"]
+        }
+        ("python", "gui_script") => &["project.gui-scripts"],
+        ("python", "poetry_script") => &["tool.poetry.scripts"],
+        _ => &[],
+    }
 }
 
 pub(crate) fn index_manifest_entrypoints(
@@ -167,11 +283,21 @@ pub(crate) fn index_manifest_entrypoints(
         // A manifest entry is written on a line, and a reader following an
         // entrypoint wants that line: `"start": "node server.js"` is where
         // the program is declared, and the node used to point nowhere.
+        let name = entrypoint.label.split_once(':').map(|(_, name)| name);
+        let sections = manifest_entry_sections(&entrypoint.ecosystem, &entrypoint.kind);
         let span = entrypoint
-            .label
-            .split_once(':')
-            .map(|(_, name)| name)
-            .and_then(|name| manifest_entry_line(source, name))
+            .line
+            .or_else(|| {
+                name.and_then(|name| {
+                    if sections.is_empty() {
+                        manifest_entry_line(source, name)
+                    } else {
+                        // The section knows where its entries are; the rest
+                        // of the file only knows where the name appears.
+                        manifest_entry_line_in_sections(source, sections, name)
+                    }
+                })
+            })
             .map(|line| SourceSpan {
                 path: label.to_string(),
                 start_line: line,
@@ -559,9 +685,9 @@ pub(crate) fn composer_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
 }
 
 pub(crate) fn cmake_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
-    cmake_command_bodies(source, "add_executable")
+    cmake_command_sites(source, "add_executable")
         .into_iter()
-        .filter_map(|body| {
+        .filter_map(|(body, line)| {
             let args = cmake_command_args(&body);
             let name = args.first()?.trim();
             if name.is_empty()
@@ -578,11 +704,12 @@ pub(crate) fn cmake_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
                 .skip(1)
                 .find(|arg| is_cmake_source_argument(arg))
                 .cloned();
-            Some(manifest_entrypoint(
+            Some(manifest_entrypoint_at(
                 format!("cmake executable:{name}"),
                 "executable",
                 "cmake",
                 target,
+                line,
             ))
         })
         .collect()
@@ -2957,5 +3084,20 @@ pub(crate) fn manifest_entrypoint(
         kind: entrypoint_kind.into(),
         ecosystem: ecosystem.into(),
         target,
+        line: None,
+    }
+}
+
+/// The same entry, declared on a line the extractor already knows.
+pub(crate) fn manifest_entrypoint_at(
+    label: impl Into<String>,
+    entrypoint_kind: impl Into<String>,
+    ecosystem: impl Into<String>,
+    target: Option<String>,
+    line: u32,
+) -> ManifestEntrypoint {
+    ManifestEntrypoint {
+        line: Some(line),
+        ..manifest_entrypoint(label, entrypoint_kind, ecosystem, target)
     }
 }

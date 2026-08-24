@@ -7249,6 +7249,56 @@ find_package(Boost 1.83 REQUIRED COMPONENTS filesystem)
 }
 
 #[test]
+fn an_entrypoint_cites_the_line_its_own_section_declares_it_on() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "name": "demo",
+  "devDependencies": {
+    "eslint": "^8.56.0"
+  },
+  "scripts": {
+    "eslint": "eslint src",
+    "build": "gulp"
+  }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("CMakeLists.txt"),
+        "project(demo)\n\nADD_EXECUTABLE(demo-test test.c)\n\nADD_TEST(NAME demo-test\n  COMMAND demo-test)\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let line_of = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == label
+                    && node.metadata.get("item_kind").map(String::as_str)
+                        == Some("manifest_entrypoint")
+            })
+            .and_then(|node| node.span.as_ref())
+            .map(|span| span.start_line)
+    };
+
+    // The name is written twice: once as a dev dependency and once as the
+    // script. Only the script's own section declares the script.
+    assert_eq!(line_of("npm script:eslint"), Some(7));
+    assert_eq!(line_of("npm script:build"), Some(8));
+    // And the command that builds the executable is where it is declared,
+    // not the later command that names it again.
+    assert_eq!(line_of("cmake executable:demo-test"), Some(3));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scan_project_adds_manifest_entrypoint_edges() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();

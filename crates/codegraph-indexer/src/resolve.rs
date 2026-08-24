@@ -3676,6 +3676,17 @@ pub(crate) fn root_relative_command_path_candidate(command: &str) -> Option<Comm
 }
 
 pub(crate) fn cmake_command_bodies(source: &str, command_name: &str) -> Vec<String> {
+    cmake_command_sites(source, command_name)
+        .into_iter()
+        .map(|(body, _)| body)
+        .collect()
+}
+
+/// Every call of a CMake command together with the line it is written on.
+/// A reader following `add_executable(hiredis-test ...)` wants that line,
+/// and searching the file for the name later finds `ADD_TEST(NAME
+/// hiredis-test` instead.
+pub(crate) fn cmake_command_sites(source: &str, command_name: &str) -> Vec<(String, u32)> {
     let source = strip_cmake_comments(source);
     let lowered = source.to_ascii_lowercase();
     let needle = command_name.to_ascii_lowercase();
@@ -3707,7 +3718,12 @@ pub(crate) fn cmake_command_bodies(source: &str, command_name: &str) -> Vec<Stri
         let Some((body, close)) = cmake_parenthesized_body(&source, open) else {
             break;
         };
-        bodies.push(body);
+        let line = source[..start]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count() as u32
+            + 1;
+        bodies.push((body, line));
         search_from = close + 1;
     }
 
