@@ -4037,6 +4037,86 @@ func helperB() string { return "b" }
 }
 
 #[test]
+fn a_lua_require_reaches_the_module_it_names() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("kong").join("tools")).unwrap();
+    fs::write(
+        root.join("kong").join("handler.lua"),
+        "local utils = require \"kong.tools.utils\"\nlocal cjson = require \"cjson\"\nreturn { utils = utils, cjson = cjson }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("kong").join("tools").join("utils.lua"),
+        "local M = {}\nfunction M.trim(s) return s end\nreturn M\n",
+    )
+    .unwrap();
+    // The rock the project requires, whose name a file here happens to share.
+    fs::write(
+        root.join("kong").join("tools").join("cjson.lua"),
+        "local M = {}\nreturn M\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let file = |path: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::File && node.label == path)
+            .unwrap_or_else(|| panic!("missing {path}"))
+            .id
+    };
+    let reaches = |target: NodeId| {
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::References
+                && edge.target == target
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "local_import_file")
+        })
+    };
+    assert!(reaches(file("kong/tools/utils.lua")), "kong.tools.utils");
+    // `require "cjson"` names a rock, not the file that happens to share
+    // the name.
+    assert!(!reaches(file("kong/tools/cjson.lua")), "cjson is a rock");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_ocaml_open_reaches_the_module_file() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("main.ml"),
+        "open Stdune\n\nlet run () = Stdune.Path.root\n",
+    )
+    .unwrap();
+    fs::write(root.join("src").join("stdune.ml"), "let version = \"1\"\n").unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let stdune = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::File && node.label == "src/stdune.ml")
+        .expect("missing module file");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::References
+                && edge.target == stdune.id
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "local_import_file")
+        }),
+        "`open Stdune` must reach stdune.ml"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_haskell_import_reaches_the_module_it_names() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src").join("ShellCheck")).unwrap();

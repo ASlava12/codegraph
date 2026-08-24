@@ -154,8 +154,61 @@ pub(crate) fn possible_local_import_target(
         // library's: `import Data.List` is not a file this project failed
         // to ship, so a miss must stay quiet.
         Language::Haskell => haskell_local_import_target(import_label),
+        Language::Lua => lua_local_import_target(import_label),
+        Language::OCaml => ocaml_local_import_target(import_label),
         _ => None,
     }
+}
+
+/// `require "kong.tools.utils"` names `kong/tools/utils.lua`, the path Lua
+/// itself derives from the module name. kong writes 3,718 of them, most
+/// naming its own modules and the rest naming a rock.
+pub(crate) fn lua_local_import_target(import_label: &str) -> Option<LocalImportTarget> {
+    let module = first_quoted_value(import_label)?;
+    // A bare name is a rock: kong requires `cjson` and `lfs`, and the
+    // repository happens to ship `kong/tools/cjson.lua`, which is a
+    // different module. Only a dotted path names a file in this tree.
+    if module.is_empty() || module.contains('/') || !module.contains('.') {
+        return None;
+    }
+    let path = module.replace('.', "/");
+    Some(LocalImportTarget {
+        target: module.to_string(),
+        candidates: vec![
+            format!("{path}.lua"),
+            format!("{path}/init.lua"),
+            format!("lib/{path}.lua"),
+            format!("src/{path}.lua"),
+        ],
+    })
+}
+
+/// `open Stdune` names the module OCaml compiles from `stdune.ml`, the same
+/// name-to-file rule call resolution already uses. A submodule path
+/// (`Fiber.O`) names the file of its root.
+pub(crate) fn ocaml_local_import_target(import_label: &str) -> Option<LocalImportTarget> {
+    let rest = import_label
+        .trim()
+        .strip_prefix("open")
+        .or_else(|| import_label.trim().strip_prefix("include"))?
+        .trim_start();
+    let module = rest
+        .split(|character: char| character.is_whitespace() || character == '(')
+        .next()?
+        .trim();
+    let root = module.split('.').next()?;
+    if root.is_empty() || !root.starts_with(|character: char| character.is_ascii_uppercase()) {
+        return None;
+    }
+    let file = root.to_ascii_lowercase();
+    Some(LocalImportTarget {
+        target: module.to_string(),
+        candidates: vec![
+            format!("{file}.ml"),
+            format!("src/{file}.ml"),
+            format!("lib/{file}.ml"),
+        ],
+    })
 }
 
 /// A workspace import: `@vue/shared` resolves to the directory whose
