@@ -1494,6 +1494,39 @@ fn a_computed_require_names_no_module() {
 }
 
 #[test]
+fn a_suggested_package_is_named_without_a_version() {
+    // composer's `suggest` maps a package to a sentence about why to install
+    // it. monolog suggests a dozen, one per optional handler.
+    let dependencies = composer_dependencies(
+        r#"{
+            "require": {"php": ">=8.1", "psr/log": "^3"},
+            "require-dev": {"predis/predis": "^1.1"},
+            "suggest": {
+                "predis/predis": "Allow sending log messages to a Redis server",
+                "aws/aws-sdk-php": "Allow sending log messages to AWS services"
+            }
+        }"#,
+    );
+    let scopes = |name: &str| {
+        dependencies
+            .iter()
+            .filter(|dependency| dependency.name == name)
+            .map(|dependency| (dependency.kind.as_str(), dependency.version.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        scopes("aws/aws-sdk-php"),
+        vec![("optional", None)],
+        "a suggestion names a package, not a version"
+    );
+    assert_eq!(
+        scopes("predis/predis"),
+        vec![("dev", Some("^1.1".to_string())), ("optional", None)]
+    );
+    assert_eq!(scopes("psr/log"), vec![("runtime", Some("^3".to_string()))]);
+}
+
+#[test]
 fn a_rust_module_path_is_read_inside_its_own_crate() {
     // `crate::` names the crate the file belongs to, and a workspace has one
     // per member: serde_derive's `use crate::internals::ast` is

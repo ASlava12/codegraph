@@ -1152,6 +1152,10 @@ pub(crate) fn composer_dependencies(source: &str) -> Vec<ManifestDependency> {
     let mut dependencies = Vec::new();
     collect_json_object_keys(&value, "require", "runtime", "composer", &mut dependencies);
     collect_json_object_keys(&value, "require-dev", "dev", "composer", &mut dependencies);
+    // `suggest` names packages a feature needs and the project deliberately
+    // does not require: monolog suggests a dozen, one per optional handler,
+    // and its own `RedisHandler` imports one of them on purpose.
+    collect_suggested_packages(&value, &mut dependencies);
     dependencies.retain(|dependency| dependency.name != "php");
     dependencies
 }
@@ -2053,6 +2057,27 @@ pub(crate) fn collect_toml_entrypoint_keys(
             entrypoint_kind,
             ecosystem,
             target.as_str().map(str::to_string),
+        ));
+    }
+}
+
+/// Composer's `suggest` maps a package to a sentence telling the reader why
+/// they might install it, not to a version. The name is the fact; reading
+/// the sentence as a constraint made monolog disagree with itself about
+/// eight packages.
+fn collect_suggested_packages(
+    value: &serde_json::Value,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    let Some(object) = value.get("suggest").and_then(|value| value.as_object()) else {
+        return;
+    };
+    for name in object.keys() {
+        dependencies.push(manifest_dependency(
+            name.clone(),
+            "optional",
+            "composer",
+            None,
         ));
     }
 }

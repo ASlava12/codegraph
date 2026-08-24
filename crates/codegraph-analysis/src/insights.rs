@@ -3480,9 +3480,13 @@ pub(crate) fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &
     }
 
     for ((manifest, _), declarations) in groups {
+        // An optional declaration says "install this to use that feature",
+        // which every dev dependency for the same package agrees with:
+        // monolog tests eight of its optional handlers.
         let scopes: BTreeSet<_> = declarations
             .iter()
             .map(|declaration| declaration.scope.as_str())
+            .filter(|scope| *scope != "optional")
             .collect();
         if scopes.len() < 2 {
             continue;
@@ -3707,7 +3711,10 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
             .iter()
             .map(|declaration| declaration.kind.as_str())
             .collect();
-        if scopes.contains("runtime") {
+        // An optional dependency imported from the code that needs it is
+        // the pattern, not a mistake: composer's `suggest` and a Python
+        // extra both say "install this to use that handler".
+        if scopes.contains("runtime") || scopes.contains("optional") {
             continue;
         }
         if !reported.insert((edge.source, package_id.clone())) {
