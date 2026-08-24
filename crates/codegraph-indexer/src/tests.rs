@@ -1530,6 +1530,7 @@ fn a_schema_written_in_lua_is_a_schema() {
     .unwrap();
 
     let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    assert_graph_invariants(&graph);
     assert!(
         !graph
             .nodes
@@ -3878,6 +3879,73 @@ fn stable_ids_survive_unrelated_file_additions() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// What every scanned graph has to hold, whatever the languages in it.
+///
+/// Driving these over the 23-project corpus found no violation - no dangling
+/// edge, no repeated or missing stable id, no span pointing at a file the
+/// graph does not have, and no two identical edges - and the self-loops are
+/// all recursive calls. Asserting them here keeps it that way: an indexer
+/// pass that forgets `add_edge_once` or invents a span shows up as a failing
+/// test rather than as a number nobody recomputes.
+fn assert_graph_invariants(graph: &codegraph_core::CodeGraph) {
+    let ids: BTreeSet<NodeId> = graph.nodes.iter().map(|node| node.id).collect();
+    let files: BTreeSet<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::File)
+        .map(|node| node.label.as_str())
+        .collect();
+    for edge in &graph.edges {
+        assert!(
+            ids.contains(&edge.source) && ids.contains(&edge.target),
+            "edge {:?} names a node the graph does not hold",
+            edge.kind
+        );
+        // Only a call can start and end at the same node: a function that
+        // calls itself. Anything else is a pass linking a node to itself.
+        assert!(
+            edge.source != edge.target || edge.kind == EdgeKind::Calls,
+            "{:?} is a self edge",
+            edge.kind
+        );
+    }
+    let mut stable_ids = BTreeSet::new();
+    for node in &graph.nodes {
+        let stable_id = node
+            .metadata
+            .get("stable_id")
+            .unwrap_or_else(|| panic!("`{}` has no stable id", node.label));
+        assert!(
+            stable_ids.insert(stable_id.as_str()),
+            "two nodes share the stable id {stable_id}"
+        );
+        if let Some(span) = node.span.as_ref()
+            && span.path != "."
+        {
+            assert!(
+                files.contains(span.path.as_str()),
+                "`{}` is placed in `{}`, which is not a file in the graph",
+                node.label,
+                span.path
+            );
+        }
+    }
+    let mut seen = BTreeSet::new();
+    for edge in &graph.edges {
+        let key = (
+            edge.source,
+            edge.target,
+            edge.kind,
+            format!("{:?}", edge.metadata),
+        );
+        assert!(
+            seen.insert(key),
+            "two identical {:?} edges between the same nodes",
+            edge.kind
+        );
+    }
+}
+
 #[test]
 fn scan_project_indexes_mixed_language_repository_as_one_graph() {
     let root = temp_project_root();
@@ -3973,6 +4041,7 @@ fn scan_project_indexes_mixed_language_repository_as_one_graph() {
     fs::write(root.join("scripts").join("env.sh"), "DEPLOY_ENV=prod\n").unwrap();
 
     let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    assert_graph_invariants(&graph);
     let labels: BTreeSet<_> = graph.nodes.iter().map(|node| node.label.as_str()).collect();
     for expected in [
         "rust/src/main.rs",
@@ -7155,6 +7224,7 @@ jobs:
     .unwrap();
 
     let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    assert_graph_invariants(&graph);
     let steps: Vec<_> = graph
         .nodes
         .iter()
