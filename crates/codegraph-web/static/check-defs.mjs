@@ -199,7 +199,17 @@ const enumVariants = (name) => {
     match[1].replace(/(?<!^)([A-Z])/g, "_$1").toLowerCase(),
   );
 };
-const vocabulary = [...enumVariants("NodeKind"), ...enumVariants("EdgeKind")];
+// The entrypoint kinds the schema publishes are rendered the same way.
+const schemaRs = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "..", "..", "codegraph-server", "src", "schema.rs"),
+  "utf8",
+);
+const entrypointKinds = schemaRs.match(/"entrypoint_kind",\s*vec!\[([\s\S]*?)\]/);
+const vocabulary = [
+  ...enumVariants("NodeKind"),
+  ...enumVariants("EdgeKind"),
+  ...(entrypointKinds ? [...entrypointKinds[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]) : []),
+];
 const untranslated = [...kinds, ...vocabulary].filter((kind) => !russianKinds.has(kind));
 if (untranslated.length > 0) {
   console.error(
