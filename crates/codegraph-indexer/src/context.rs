@@ -189,6 +189,10 @@ pub(crate) struct PendingCall {
     pub(crate) receiver: Option<String>,
     /// The call goes through a value the body binds, not to a definition.
     pub(crate) callee_is_value: bool,
+    /// The call is written through a value whose class the syntax does not
+    /// name (`accounts.each`), rather than bare (`each`, which means
+    /// `self`) or through a constant (`Rails.application`).
+    pub(crate) receiver_is_a_value: bool,
 }
 
 pub(crate) struct PendingTypeReference {

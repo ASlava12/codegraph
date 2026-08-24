@@ -1379,6 +1379,8 @@ pub(crate) fn index_file(
                         receiver: item.metadata.get("receiver").cloned(),
                         callee_is_value: item.metadata.get("callee_form").map(String::as_str)
                             == Some("value"),
+                        receiver_is_a_value: item.metadata.get("receiver_form").map(String::as_str)
+                            == Some("value"),
                     });
                 }
 

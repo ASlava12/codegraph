@@ -1549,10 +1549,19 @@ pub(crate) fn classify_call(
     // `Rails.application.configure` is `configure` -- so the constant the
     // call is written through is the only thing left that says whose method
     // it means.
-    if language == Language::Ruby
-        && let Some(receiver) = ruby_constant_receiver(node, source)
-    {
-        metadata.insert("receiver".to_string(), receiver);
+    if language == Language::Ruby && node.child_by_field_name("receiver").is_some() {
+        match ruby_constant_receiver(node, source) {
+            Some(receiver) => {
+                metadata.insert("receiver".to_string(), receiver);
+            }
+            // `accounts.each`, `@definitions.keys`, `base.extend`: the call
+            // goes through a value whose class the syntax does not name.
+            // Which methods it can mean is a different question from a bare
+            // call, which means `self`.
+            None => {
+                metadata.insert("receiver_form".to_string(), "value".to_string());
+            }
+        }
     }
     // `done()` where the body wrote `runningCtx, done := context.WithCancel(…)`
     // calls a value, not a definition. Saying so separates a call that has

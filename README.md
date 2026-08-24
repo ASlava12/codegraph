@@ -184,6 +184,12 @@ Implemented now:
   controller's `put`. The class settles it -- `Song::query()` reaches the model that declares it,
   and a class the project never declares leaves the project. Across koel that is 852 fewer ambiguous
   calls, 505 more that reach the method they name, and 1405 recorded as leaving.
+- A ruby call written through a value is not a project method every value already has: `params.each`
+  is a hash's, `formats.include?` an array's, `{ .. }.to_json` a hash's. The label keeps only the
+  method name, so mastodon's `Trends::History#each` collected 268 callers, its connection pool's
+  `empty?` 134 and its IP map's `include?` 126 -- and the pool's own `@queue.size` was answered by
+  the `size` it declares two lines above. A bare call means `self` and is left alone; 601 call sites
+  stop reaching a method they never name.
 - Ruby resolves through the constant a call is written through. A ruby call's label keeps only the
   method name, so `Addressable::URI.parse(href).normalize` and a project's own
   `HashtagNormalizer#normalize` looked like one call; the receiver's leading constant says which is

@@ -17,6 +17,68 @@ use crate::*;
 /// gives every value. A project may declare `fn map` or `ToString` of its
 /// own, but `option.map(..)` and `value.ToString()` are not calls to it, and
 /// the syntax alone cannot say what type the receiver has.
+/// Methods every ruby object or collection answers to. A project declares
+/// these on its own types as readily as the core library does, which is why
+/// they are not builtins -- but a call written through a value the syntax
+/// does not name is the core library's far more often than it is the
+/// project's, and matching by name alone cannot tell them apart.
+fn ruby_method_of_every_value(method: &str) -> bool {
+    matches!(
+        method,
+        "each"
+            | "each_with_index"
+            | "each_with_object"
+            | "map"
+            | "flat_map"
+            | "select"
+            | "filter"
+            | "reject"
+            | "find"
+            | "detect"
+            | "reduce"
+            | "inject"
+            | "size"
+            | "length"
+            | "count"
+            | "first"
+            | "last"
+            | "empty?"
+            | "any?"
+            | "all?"
+            | "none?"
+            | "include?"
+            | "to_s"
+            | "to_a"
+            | "to_h"
+            | "to_i"
+            | "to_json"
+            | "keys"
+            | "values"
+            | "sort"
+            | "sort_by"
+            | "group_by"
+            | "min"
+            | "max"
+            | "sum"
+            | "uniq"
+            | "join"
+            | "split"
+            | "freeze"
+            | "dup"
+            | "clone"
+            | "hash"
+            | "tap"
+            | "then"
+            | "present?"
+            | "blank?"
+            | "nil?"
+            | "is_a?"
+            | "kind_of?"
+            | "respond_to?"
+            | "instance_of?"
+    )
+}
+
 pub(crate) fn receiver_call_is_universal(language: &str, label: &str) -> bool {
     let (receiver, method) = match label.rsplit_once('.') {
         Some((receiver, method)) => (receiver.trim(), method.trim()),
@@ -1756,6 +1818,19 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 graph_node(&context.graph, *target)
                     .is_some_and(|node| !node.metadata.contains_key("owner_type"))
             });
+        }
+        // `accounts.each`, `stack.empty?`, `map.include?`: ruby writes the
+        // receiver and the label keeps only the method, so a project method
+        // named after one every collection has answered calls on values it
+        // never saw -- mastodon's `Trends::History#each` had 268 callers,
+        // its connection pool's `empty?` 134 and its IP map's `include?`
+        // 126. A bare call means `self` and is left alone; only a call
+        // through a value the syntax does not name is refused.
+        if call.language == "ruby"
+            && call.receiver_is_a_value
+            && ruby_method_of_every_value(&call.label)
+        {
+            language_targets.clear();
         }
         if receiver_call_is_universal(&call.language, &call.label) {
             language_targets.clear();

@@ -6310,6 +6310,53 @@ fn rails_reads_a_collection_block_and_a_namespaced_controller() {
 }
 
 #[test]
+fn a_ruby_call_on_a_value_is_not_a_project_method_every_value_has() {
+    // `params.each`, `@queue.empty?`, `formats.include?`: ruby writes the
+    // receiver and the label keeps only the method, so a project method
+    // named after one every collection has answered calls on values it
+    // never saw. mastodon's `Trends::History#each` had 268 callers, and
+    // its connection pool's own `@queue.size` was answered by the `size`
+    // it declares two lines above.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app")).unwrap();
+    fs::write(
+        root.join("app").join("history.rb"),
+        "class History\n  def each(&block)\n    @values.each(&block)\n  end\n\n  def refresh\n    @values = []\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("filter.rb"),
+        "class Filter\n  def run(params, history)\n    params.each { |key, value| puts key }\n    history.refresh\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reaches = |label: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && graph.nodes.iter().any(|node| {
+                    node.id == edge.target
+                        && node.label == label
+                        && node
+                            .span
+                            .as_ref()
+                            .is_some_and(|span| span.path.ends_with("history.rb"))
+                })
+        })
+    };
+    assert!(
+        !reaches("each"),
+        "`params.each` is a hash's, not this project's"
+    );
+    assert!(
+        reaches("refresh"),
+        "and a method the core library does not have still resolves"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_ruby_call_through_a_gems_constant_is_not_this_projects_method() {
     // A ruby call's label keeps only the method name, so
     // `Addressable::URI.parse(href).normalize` and the project's own
