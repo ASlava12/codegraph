@@ -682,27 +682,62 @@ pub(crate) fn raw_string_literal_at(source: &str, cursor: usize) -> Option<(Stri
     ))
 }
 
+/// Sentences end where SQL never does: a qualified SQL name always continues
+/// after its dot, so a token that ends with one came from prose ("Select
+/// context to install from. By default, install files from all contexts.").
+fn ends_a_prose_sentence(token: &str) -> bool {
+    token == "." || (token.ends_with('.') && token.chars().any(char::is_alphabetic))
+}
+
 /// A string literal only counts as an SQL statement when its first token is a
 /// statement keyword. Without this gate, prose such as "Build a workflow from
 /// a selected node" matches the bare `from <word>` pattern and produces
 /// phantom table references (Phase 9 dogfooding).
 pub(crate) fn sql_statement_shaped(tokens: &[String]) -> bool {
+    if tokens.iter().any(|token| ends_a_prose_sentence(token)) {
+        return false;
+    }
     let Some(first) = tokens.first() else {
         return false;
     };
+    let carries = |keyword: &str| {
+        tokens
+            .iter()
+            .skip(1)
+            .any(|token| token.eq_ignore_ascii_case(keyword))
+    };
     match first.to_ascii_lowercase().as_str() {
-        "select" | "insert" | "delete" | "replace" => true,
+        // Real statements name where their rows come from or go to; the test
+        // name "insert, update, and delete raises on stale entries" does not.
+        "select" | "delete" => carries("from"),
+        "insert" | "replace" => carries("into"),
         // Real UPDATE statements carry a SET clause; "Update Cache" does not.
-        "update" => tokens
-            .iter()
-            .skip(1)
-            .any(|token| token.eq_ignore_ascii_case("set")),
+        "update" => carries("set"),
         // Real CTEs contain a SELECT; "With flour from the mill" does not.
-        "with" => tokens
-            .iter()
-            .skip(1)
-            .any(|token| token.eq_ignore_ascii_case("select")),
+        "with" => carries("select"),
         _ => false,
+    }
+}
+
+/// True when the statement holding `index` was opened by `keyword`.
+fn opens_the_statement(tokens: &[String], index: usize, keyword: &str) -> bool {
+    let start = tokens[..index]
+        .iter()
+        .rposition(|token| matches!(token.as_str(), ";" | ")" | "("))
+        .map(|boundary| boundary + 1)
+        .unwrap_or(0);
+    tokens
+        .get(start)
+        .is_some_and(|token| token.eq_ignore_ascii_case(keyword))
+}
+
+/// UPDATE, INSERT INTO, DELETE and REPLACE INTO open a statement. Mid-sentence
+/// they are ordinary words ("... cannot update (delete first)"), so bind them
+/// only where a statement can begin.
+fn opens_a_statement(tokens: &[String], index: usize) -> bool {
+    match index.checked_sub(1) {
+        None => true,
+        Some(previous) => matches!(tokens[previous].as_str(), ";" | "("),
     }
 }
 
@@ -717,29 +752,36 @@ pub(crate) fn sql_query_table_refs(query: &str) -> Vec<SqlQueryTableRef> {
     for (index, token) in tokens.iter().enumerate() {
         let lower = token.to_ascii_lowercase();
         let reference = match lower.as_str() {
-            "from" => next_sql_table_token(&tokens, index + 1).map(|table| SqlQueryTableRef {
-                operation: "select".to_string(),
-                table,
-                role: "source".to_string(),
-            }),
+            "from" if reads_a_row_source(&tokens, index) => {
+                next_sql_table_token(&tokens, index + 1).map(|table| SqlQueryTableRef {
+                    operation: "select".to_string(),
+                    table,
+                    role: "source".to_string(),
+                })
+            }
             "join" => next_sql_table_token(&tokens, index + 1).map(|table| SqlQueryTableRef {
                 operation: "select".to_string(),
                 table,
                 role: "join".to_string(),
             }),
-            "into" if previous_sql_keyword(&tokens, index, "insert") => {
+            "into"
+                if opens_the_statement(&tokens, index, "insert")
+                    || opens_the_statement(&tokens, index, "replace") =>
+            {
                 next_sql_table_token(&tokens, index + 1).map(|table| SqlQueryTableRef {
                     operation: "insert".to_string(),
                     table,
                     role: "target".to_string(),
                 })
             }
-            "update" => next_sql_table_token(&tokens, index + 1).map(|table| SqlQueryTableRef {
-                operation: "update".to_string(),
-                table,
-                role: "target".to_string(),
-            }),
-            "delete" => tokens
+            "update" if opens_a_statement(&tokens, index) => {
+                next_sql_table_token(&tokens, index + 1).map(|table| SqlQueryTableRef {
+                    operation: "update".to_string(),
+                    table,
+                    role: "target".to_string(),
+                })
+            }
+            "delete" if opens_a_statement(&tokens, index) => tokens
                 .get(index + 1)
                 .filter(|token| token.eq_ignore_ascii_case("from"))
                 .and_then(|_| next_sql_table_token(&tokens, index + 2))
@@ -861,12 +903,32 @@ pub(crate) fn skip_quoted_sql_fragment(query: &str, cursor: usize, quote: char) 
     content_start
 }
 
-pub(crate) fn previous_sql_keyword(tokens: &[String], index: usize, keyword: &str) -> bool {
-    tokens[..index]
-        .iter()
-        .rev()
-        .take_while(|token| !matches!(token.as_str(), ";" | ")" | "("))
-        .any(|token| token.eq_ignore_ascii_case(keyword))
+/// `EXTRACT(EPOCH FROM ts)` and `SUBSTRING(x FROM 2)` spell FROM inside a call,
+/// where it separates arguments instead of naming a row source. A FROM clause
+/// belongs to a SELECT, so the parentheses around it must open one.
+fn reads_a_row_source(tokens: &[String], index: usize) -> bool {
+    let mut depth = 0usize;
+    for position in (0..index).rev() {
+        match tokens[position].as_str() {
+            ")" => depth += 1,
+            "(" if depth > 0 => depth -= 1,
+            "(" => {
+                return tokens[position + 1..index]
+                    .iter()
+                    .any(|token| token.eq_ignore_ascii_case("select"));
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+/// A table alias is a bare name, so a qualified name where an alias would sit
+/// means the text is prose: "Delete from uninitialized collections.Map".
+fn qualified_alias_follows(tokens: &[String], table_index: usize) -> bool {
+    tokens
+        .get(table_index + 1)
+        .is_some_and(|next| next.contains('.') && !next.starts_with('.') && !next.ends_with('.'))
 }
 
 pub(crate) fn next_sql_table_token(tokens: &[String], start: usize) -> Option<String> {
@@ -881,6 +943,9 @@ pub(crate) fn next_sql_table_token(tokens: &[String], start: usize) -> Option<St
             return None;
         }
         if is_sql_non_table_keyword(&lower) {
+            return None;
+        }
+        if qualified_alias_follows(tokens, index) {
             return None;
         }
         let table = token

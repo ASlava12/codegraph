@@ -691,6 +691,52 @@ fn sql_query_table_refs_require_statement_shaped_literals() {
 }
 
 #[test]
+fn sql_query_table_refs_skip_prose_that_opens_with_a_statement_keyword() {
+    // A docstring signature: the table came from "columns from `df`" prose.
+    assert!(
+        sql_query_table_refs(
+            "select(df::AbstractDataFrame, args...)\n\nCreate a data frame with columns from `df`."
+        )
+        .is_empty()
+    );
+    // A CLI help string.
+    assert!(
+        sql_query_table_refs(
+            "Select context to install from. By default, install files from all contexts."
+        )
+        .is_empty()
+    );
+    // Test names that list the operations they exercise.
+    assert!(sql_query_table_refs("insert, update, insert_or_update and delete").is_empty());
+    assert!(sql_query_table_refs("replace because cannot update (delete first)").is_empty());
+    // A panic message: SQL aliases are never qualified names.
+    assert!(sql_query_table_refs("Delete from uninitialized collections.Map").is_empty());
+    // FROM inside a call separates arguments instead of naming a row source.
+    assert!(sql_query_table_refs("SELECT EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) AS now").is_empty());
+
+    // Real statements keep their tables.
+    assert_eq!(
+        sql_query_table_refs("SELECT path FROM searchIndex").len(),
+        1
+    );
+    assert_eq!(
+        sql_query_table_refs(
+            "INSERT INTO plans (name) VALUES ($1) ON CONFLICT DO UPDATE SET x = 1"
+        )
+        .len(),
+        1
+    );
+    assert_eq!(
+        sql_query_table_refs("SELECT id FROM sessions s WHERE s.expires < now()").len(),
+        1
+    );
+    assert_eq!(
+        sql_query_table_refs("SELECT id FROM users WHERE id IN (SELECT user_id FROM admins)").len(),
+        2
+    );
+}
+
+#[test]
 fn rust_use_globs_and_item_imports_are_not_local_file_imports() {
     assert!(rust_local_import_target("crates/x/src/lib.rs", "use super::*;").is_none());
     assert!(
