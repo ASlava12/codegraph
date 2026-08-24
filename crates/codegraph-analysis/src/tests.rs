@@ -255,6 +255,25 @@ fn project_report_combines_summary_quality_and_limited_views() {
             .iter()
             .any(|risk| risk.kind == "parse_error" && risk.severity == "error")
     );
+    // The reason separates a grammar this scan cannot read from a file
+    // nothing can: redis's `life.lua` is Latin-1, not broken Lua.
+    assert!(
+        report
+            .insights
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "parse_error"
+                && insight
+                    .message
+                    .ends_with("failed to parse: unexpected token")),
+        "{:?}",
+        report
+            .insights
+            .insights
+            .iter()
+            .map(|insight| insight.message.as_str())
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]

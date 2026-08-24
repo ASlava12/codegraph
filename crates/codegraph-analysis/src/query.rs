@@ -4402,11 +4402,14 @@ pub(crate) fn add_parse_error_insights(graph: &CodeGraph, insights: &mut Vec<Ins
                 nodes: vec![node.id],
                 edges: Vec::new(),
             });
-        } else if node.metadata.contains_key("parse_error") {
+        } else if let Some(reason) = node.metadata.get("parse_error") {
+            // The reason is the difference between a grammar this scan
+            // cannot read and a file nothing can: redis's `life.lua` is
+            // Latin-1, which is what "source is not valid utf-8" says.
             insights.push(Insight {
                 kind: "parse_error".to_string(),
                 severity: InsightSeverity::Error,
-                message: format!("{} failed to parse", node.label),
+                message: format!("{} failed to parse: {reason}", node.label),
                 nodes: vec![node.id],
                 edges: Vec::new(),
             });
