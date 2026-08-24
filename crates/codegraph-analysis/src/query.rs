@@ -697,12 +697,12 @@ pub(crate) fn query_documents(
         .take(edge_limit)
         .map(|(_, edge)| edge.clone())
         .collect::<Vec<_>>();
-    let nodes = graph
-        .nodes
+    let matched_ids: Vec<NodeId> = matched
         .iter()
-        .filter(|node| node_ids.contains(&node.id))
-        .cloned()
-        .collect::<Vec<_>>();
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let nodes = matched_nodes_first(graph, &matched_ids, &node_ids);
     let total_nodes = nodes.len();
 
     Ok(QueryResult::new(
@@ -771,12 +771,12 @@ pub(crate) fn query_sql(graph: &CodeGraph, mut spec: QuerySpec) -> Result<QueryR
         .take(edge_limit)
         .map(|(_, edge)| edge.clone())
         .collect::<Vec<_>>();
-    let nodes = graph
-        .nodes
+    let matched_ids: Vec<NodeId> = matched
         .iter()
-        .filter(|node| node_ids.contains(&node.id))
-        .cloned()
-        .collect::<Vec<_>>();
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let nodes = matched_nodes_first(graph, &matched_ids, &node_ids);
     let total_nodes = nodes.len();
 
     Ok(QueryResult::new(
@@ -832,12 +832,12 @@ pub(crate) fn query_entrypoints(
         node_ids.insert(edge.source);
         node_ids.insert(edge.target);
     }
-    let nodes = graph
-        .nodes
+    let matched_ids: Vec<NodeId> = matched
         .iter()
-        .filter(|node| node_ids.contains(&node.id))
-        .cloned()
-        .collect::<Vec<_>>();
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let nodes = matched_nodes_first(graph, &matched_ids, &node_ids);
 
     let total_nodes = nodes.len();
     Ok(QueryResult::new(
@@ -933,12 +933,12 @@ pub(crate) fn query_routes(
         }
     }
 
-    let nodes = graph
-        .nodes
+    let matched_ids: Vec<NodeId> = matched
         .iter()
-        .filter(|node| node_ids.contains(&node.id))
-        .cloned()
-        .collect::<Vec<_>>();
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let nodes = matched_nodes_first(graph, &matched_ids, &node_ids);
     let total_edges = edge_indexes.len();
     let edges = graph
         .edges
@@ -1034,12 +1034,12 @@ pub(crate) fn query_packages(
         .take(edge_limit)
         .map(|(_, edge)| edge.clone())
         .collect::<Vec<_>>();
-    let nodes = graph
-        .nodes
+    let matched_ids: Vec<NodeId> = matched
         .iter()
-        .filter(|node| node_ids.contains(&node.id))
-        .cloned()
-        .collect::<Vec<_>>();
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let nodes = matched_nodes_first(graph, &matched_ids, &node_ids);
 
     let total_nodes = nodes.len();
     Ok(QueryResult::new(
@@ -1125,12 +1125,12 @@ pub(crate) fn query_configs(
         }
     }
 
-    let nodes = graph
-        .nodes
+    let matched_ids: Vec<NodeId> = matched_targets
         .iter()
-        .filter(|node| node_ids.contains(&node.id))
-        .cloned()
-        .collect::<Vec<_>>();
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let nodes = matched_nodes_first(graph, &matched_ids, &node_ids);
     let edges = graph
         .edges
         .iter()
@@ -1242,12 +1242,12 @@ pub(crate) fn query_errors(
         }
     }
 
-    let nodes = graph
-        .nodes
+    let matched_ids: Vec<NodeId> = matched_errors
         .iter()
-        .filter(|node| node_ids.contains(&node.id))
-        .cloned()
-        .collect::<Vec<_>>();
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let nodes = matched_nodes_first(graph, &matched_ids, &node_ids);
     let edges = graph
         .edges
         .iter()
@@ -1295,12 +1295,12 @@ pub(crate) fn query_cycles(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryRe
         edge_indexes.extend(insight.edges.iter().copied());
     }
 
-    let nodes = graph
-        .nodes
+    let matched_ids: Vec<NodeId> = matched
         .iter()
-        .filter(|node| node_ids.contains(&node.id))
-        .cloned()
-        .collect::<Vec<_>>();
+        .take(spec.limit)
+        .flat_map(|insight| insight.nodes.iter().copied())
+        .collect();
+    let nodes = matched_nodes_first(graph, &matched_ids, &node_ids);
     let edges = graph
         .edges
         .iter()
@@ -1320,6 +1320,31 @@ pub(crate) fn query_cycles(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryRe
         total_edges,
         total_matches > spec.limit,
     ))
+}
+
+/// The nodes a query matched, in the order that chose them, followed by the
+/// context its edges reach. A result read top-down opens with the answer:
+/// filtering the whole graph by an id set returned the repository node
+/// first and the answer somewhere in the hundreds that followed.
+fn matched_nodes_first(
+    graph: &CodeGraph,
+    matched: &[NodeId],
+    node_ids: &BTreeSet<NodeId>,
+) -> Vec<Node> {
+    let selected: BTreeSet<NodeId> = matched.iter().copied().collect();
+    let by_id: BTreeMap<NodeId, &Node> = graph.nodes.iter().map(|node| (node.id, node)).collect();
+    let mut nodes: Vec<Node> = matched
+        .iter()
+        .filter_map(|id| by_id.get(id).map(|node| (*node).clone()))
+        .collect();
+    nodes.extend(
+        graph
+            .nodes
+            .iter()
+            .filter(|node| node_ids.contains(&node.id) && !selected.contains(&node.id))
+            .cloned(),
+    );
+    nodes
 }
 
 pub(crate) fn query_hotspots(

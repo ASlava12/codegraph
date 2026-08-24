@@ -5509,6 +5509,38 @@ fn query_cycles_returns_dependency_cycle_context() {
 }
 
 #[test]
+fn a_query_opens_with_what_it_matched() {
+    // Filtering the whole graph by an id set returned the repository node
+    // first and the answer somewhere in the hundreds that followed.
+    let mut graph = CodeGraph::new("repo");
+    let file = graph.add_node(NodeKind::File, "src/main.rs");
+    let entry = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "cargo bin:demo",
+        None,
+        BTreeMap::from([("entrypoint_kind".to_string(), "bin".to_string())]),
+    );
+    let main = graph.add_node(NodeKind::Function, "main");
+    graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+    graph.add_edge(file, entry, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(entry, main, EdgeKind::References, Confidence::Exact);
+
+    let result = query_graph(&graph, "entrypoints").unwrap();
+    assert_eq!(
+        result.nodes.first().map(|node| node.id),
+        Some(entry),
+        "{:?}",
+        result
+            .nodes
+            .iter()
+            .map(|node| node.label.as_str())
+            .collect::<Vec<_>>()
+    );
+    // The context an entrypoint reaches still travels with it.
+    assert!(result.nodes.iter().any(|node| node.id == main));
+}
+
+#[test]
 fn query_hotspots_returns_high_degree_context() {
     let mut graph = CodeGraph::new("repo");
     let main = graph.add_node_with_metadata(

@@ -458,6 +458,25 @@ pub(crate) fn natural_query_plan_with_anchor(
         }
     } else if natural_query_mentions_any(
         &routing,
+        &["cycle", "circular", "circle", "цикл", "кольц"],
+    ) {
+        // The graph answers this one outright, and "show me the cycles"
+        // used to fall through to a text search that matched nothing.
+        if let Some(term) = filter_term.as_deref() {
+            (
+                format!("cycles search:{term}"),
+                "dependency_cycle".to_string(),
+                "high".to_string(),
+            )
+        } else {
+            (
+                "cycles".to_string(),
+                "dependency_cycle".to_string(),
+                "high".to_string(),
+            )
+        }
+    } else if natural_query_mentions_any(
+        &routing,
         &[
             "hotspot",
             "hub",
