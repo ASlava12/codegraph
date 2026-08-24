@@ -197,8 +197,13 @@ pub(crate) fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: 
             .map(String::as_str)
             .unwrap_or(node.label.as_str());
         // `. ./$cache_file` names whatever the script put in that variable,
-        // so there is no file to go looking for.
-        if target.contains('$') {
+        // and `@HOME_MANAGER_LIB@` is filled in when the package is built,
+        // so there is no file to go looking for. `./dist/vue.cjs.js` is
+        // written by a build into a directory no scan walks.
+        if target.contains('$')
+            || (target.starts_with('@') && target.ends_with('@'))
+            || command_path_is_installed_or_unscanned(target)
+        {
             continue;
         }
         let edges = incoming_edge_indexes(graph, node.id, EdgeKind::Imports);

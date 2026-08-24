@@ -1494,6 +1494,35 @@ fn a_computed_require_names_no_module() {
 }
 
 #[test]
+fn a_quoted_include_of_a_system_header_is_not_a_missing_file() {
+    // redis writes four of its libc includes with quotes, which searches
+    // next to the file first and the system path second.
+    for header in ["stdio.h", "limits.h", "ctype.h", "sys/socket.h"] {
+        let include = format!("#include \"{header}\"");
+        assert!(
+            local_import_target(Language::C, "src/mstr.c", &include, &[], &[]).is_none(),
+            "{header} is the toolchain's"
+        );
+        let possible =
+            possible_local_import_target(Language::C, "src/mstr.c", &include, &[], &[], &[])
+                .unwrap_or_else(|| panic!("{header} still resolves against a project copy"));
+        assert_eq!(possible.target, header);
+        assert!(possible.candidates.contains(&format!("src/{header}")));
+    }
+
+    // A project header keeps its own resolution, misses included.
+    let project = local_import_target(
+        Language::C,
+        "src/mstr.c",
+        "#include \"release.h\"",
+        &[],
+        &[],
+    )
+    .expect("a project header is a local import");
+    assert_eq!(project.target, "release.h");
+}
+
+#[test]
 fn a_command_names_the_path_the_shell_would_run() {
     let path_of = |label: &str, command: &str| {
         normalized_command_path_candidate(label, command).map(|candidate| candidate.path)

@@ -144,6 +144,7 @@ pub(crate) fn possible_local_import_target(
     npm_packages: &[NpmPackageRoot],
 ) -> Option<LocalImportTarget> {
     match language {
+        Language::C | Language::Cpp => c_system_header_target(source_label, import_label),
         Language::Python => python_absolute_local_import_target(source_label, import_label),
         Language::Go => go_module_import_target(import_label, go_modules),
         Language::Dart => dart_package_import_target(import_label, dart_packages),
@@ -631,6 +632,13 @@ pub(crate) fn c_local_import_target(
     cmake_include_dirs: &[String],
 ) -> Option<LocalImportTarget> {
     let header = first_quoted_value(import_label)?;
+    // `#include "stdio.h"` searches next to the file first and the system
+    // path second, and redis writes four of its libc includes that way. A
+    // project that ships its own copy still resolves, as a possible local
+    // import; one that does not is including the system header.
+    if is_c_system_header(&header) {
+        return None;
+    }
     let mut candidates = vec![join_path(path_dir(source_label).as_deref(), &header)];
     candidates.extend(
         cmake_include_dirs
@@ -645,6 +653,77 @@ pub(crate) fn c_local_import_target(
     dedup_preserving_order(&mut candidates);
     Some(LocalImportTarget {
         target: header.clone(),
+        candidates,
+    })
+}
+
+/// A header a C toolchain ships. The list covers the C standard library and
+/// the POSIX headers a project is likely to include by name; anything under
+/// `sys/` is the operating system's by convention.
+pub(crate) fn is_c_system_header(header: &str) -> bool {
+    if header.starts_with("sys/") || header.starts_with("bits/") {
+        return true;
+    }
+    matches!(
+        header,
+        "assert.h"
+            | "complex.h"
+            | "ctype.h"
+            | "dirent.h"
+            | "dlfcn.h"
+            | "errno.h"
+            | "fcntl.h"
+            | "fenv.h"
+            | "float.h"
+            | "grp.h"
+            | "inttypes.h"
+            | "iso646.h"
+            | "limits.h"
+            | "locale.h"
+            | "math.h"
+            | "netdb.h"
+            | "poll.h"
+            | "pthread.h"
+            | "pwd.h"
+            | "regex.h"
+            | "sched.h"
+            | "semaphore.h"
+            | "setjmp.h"
+            | "signal.h"
+            | "stdalign.h"
+            | "stdarg.h"
+            | "stdatomic.h"
+            | "stdbool.h"
+            | "stddef.h"
+            | "stdint.h"
+            | "stdio.h"
+            | "stdlib.h"
+            | "stdnoreturn.h"
+            | "string.h"
+            | "strings.h"
+            | "syslog.h"
+            | "termios.h"
+            | "tgmath.h"
+            | "threads.h"
+            | "time.h"
+            | "uchar.h"
+            | "unistd.h"
+            | "utime.h"
+            | "wchar.h"
+            | "wctype.h"
+    )
+}
+
+/// A project may ship a header that shadows a system one, so the system name
+/// is still worth resolving -- quietly, because a miss is the toolchain's
+/// copy rather than a file the project failed to ship.
+fn c_system_header_target(source_label: &str, import_label: &str) -> Option<LocalImportTarget> {
+    let header = first_quoted_value(import_label).filter(|header| is_c_system_header(header))?;
+    let mut candidates = vec![join_path(path_dir(source_label).as_deref(), &header)];
+    candidates.push(header.clone());
+    dedup_preserving_order(&mut candidates);
+    Some(LocalImportTarget {
+        target: header,
         candidates,
     })
 }

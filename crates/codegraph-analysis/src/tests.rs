@@ -6121,6 +6121,46 @@ fn insights_report_unresolved_local_imports() {
 }
 
 #[test]
+fn insights_keep_quiet_about_built_and_substituted_import_targets() {
+    let mut graph = CodeGraph::new("repo");
+    let file = graph.add_node(NodeKind::File, "packages/vue/index.js");
+    // A build writes the first into a directory no scan walks, and the
+    // package build fills in the second.
+    for (label, target) in [
+        ("require('./dist/vue.cjs.js')", "./dist/vue.cjs.js"),
+        ("source @HOME_MANAGER_LIB@", "@HOME_MANAGER_LIB@"),
+    ] {
+        let import = graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            label,
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "import".to_string()),
+                ("language".to_string(), "javascript".to_string()),
+                ("import_scope".to_string(), "local".to_string()),
+                ("import_target".to_string(), target.to_string()),
+                ("resolution".to_string(), "unresolved".to_string()),
+            ]),
+        );
+        graph.add_edge(file, import, EdgeKind::Imports, Confidence::Syntactic);
+    }
+
+    let report = insights(&graph);
+    assert!(
+        !report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "unresolved_local_import"),
+        "built and substituted targets are not missing files: {:?}",
+        report
+            .insights
+            .iter()
+            .map(|insight| insight.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn insights_report_unresolved_sql_table_references() {
     let mut graph = CodeGraph::new("repo");
     let load_users = graph.add_node(NodeKind::Function, "load_users");
