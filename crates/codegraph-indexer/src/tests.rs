@@ -4037,6 +4037,42 @@ func helperB() string { return "b" }
 }
 
 #[test]
+fn an_elixir_alias_reaches_the_module_file() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib").join("ecto")).unwrap();
+    fs::write(
+        root.join("lib").join("ecto").join("repo.ex"),
+        "defmodule Ecto.Repo do\n  alias Ecto.Query\n  import Config\n\n  def all(_), do: []\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib").join("ecto").join("query.ex"),
+        "defmodule Ecto.Query do\n  def from(_), do: %{}\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let query = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::File && node.label == "lib/ecto/query.ex")
+        .expect("missing module file");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::References
+                && edge.target == query.id
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "local_import_file")
+        }),
+        "`alias Ecto.Query` must reach lib/ecto/query.ex"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_lua_require_reaches_the_module_it_names() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("kong").join("tools")).unwrap();

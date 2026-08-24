@@ -154,10 +154,61 @@ pub(crate) fn possible_local_import_target(
         // library's: `import Data.List` is not a file this project failed
         // to ship, so a miss must stay quiet.
         Language::Haskell => haskell_local_import_target(import_label),
+        Language::Elixir => elixir_local_import_target(import_label),
         Language::Lua => lua_local_import_target(import_label),
         Language::OCaml => ocaml_local_import_target(import_label),
         _ => None,
     }
+}
+
+/// `alias Ecto.Query` names the module Elixir compiles from
+/// `lib/ecto/query.ex`: the module path underscored, which is the mapping
+/// `mix` itself expects. Ecto writes 568 of these.
+pub(crate) fn elixir_local_import_target(import_label: &str) -> Option<LocalImportTarget> {
+    let rest = ["alias ", "import ", "use ", "require "]
+        .iter()
+        .find_map(|head| import_label.trim().strip_prefix(head))?
+        .trim_start();
+    let module = rest
+        .split(|character: char| character.is_whitespace() || character == ',')
+        .next()?
+        .trim();
+    if module.is_empty() || !module.starts_with(|character: char| character.is_ascii_uppercase()) {
+        return None;
+    }
+    let path = module
+        .split('.')
+        .map(underscore_module_segment)
+        .collect::<Vec<_>>()
+        .join("/");
+    Some(LocalImportTarget {
+        target: module.to_string(),
+        candidates: vec![
+            format!("lib/{path}.ex"),
+            format!("{path}.ex"),
+            format!("lib/{path}/{}.ex", path.rsplit('/').next().unwrap_or(&path)),
+        ],
+    })
+}
+
+/// `HTTPClient` -> `http_client`, the conversion `Macro.underscore` does:
+/// an underscore before each capital that starts a word.
+fn underscore_module_segment(segment: &str) -> String {
+    let characters: Vec<char> = segment.chars().collect();
+    let mut out = String::with_capacity(segment.len() + 4);
+    for (index, character) in characters.iter().enumerate() {
+        if character.is_ascii_uppercase() && index > 0 {
+            let previous = characters[index - 1];
+            let next_is_lower = characters
+                .get(index + 1)
+                .is_some_and(|next| next.is_ascii_lowercase());
+            if previous.is_ascii_lowercase() || previous.is_ascii_digit() || next_is_lower {
+                out.push('_');
+            }
+        }
+        out.extend(character.to_lowercase());
+    }
+    out
 }
 
 /// `require "kong.tools.utils"` names `kong/tools/utils.lua`, the path Lua
