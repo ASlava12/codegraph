@@ -32,6 +32,7 @@ pub(crate) fn local_import_target(
         Language::Erlang => erlang_local_import_target(source_label, import_label),
         Language::Julia => julia_local_import_target(source_label, import_label),
         Language::Ruby => ruby_local_import_target(source_label, import_label),
+        Language::Zig => zig_local_import_target(source_label, import_label),
         // No deterministic local-file resolution for these import systems yet
         // (classpaths / gem load paths / assembly references); imports still
         // land as facts and can join package hubs.
@@ -42,7 +43,6 @@ pub(crate) fn local_import_target(
         | Language::Scala
         | Language::Lua
         | Language::Elixir
-        | Language::Zig
         | Language::Haskell
         | Language::OCaml
         | Language::R => None,
@@ -155,10 +155,57 @@ pub(crate) fn possible_local_import_target(
         // to ship, so a miss must stay quiet.
         Language::Haskell => haskell_local_import_target(import_label),
         Language::Elixir => elixir_local_import_target(import_label),
+        Language::Java | Language::Kotlin => jvm_local_import_target(language, import_label),
         Language::Lua => lua_local_import_target(import_label),
         Language::OCaml => ocaml_local_import_target(import_label),
         _ => None,
     }
+}
+
+/// `@import("ast.zig")` names a file beside this one; `@import("std")`
+/// names the standard library. zls writes 394 imports and every path-shaped
+/// one points at a file in the tree.
+pub(crate) fn zig_local_import_target(
+    source_label: &str,
+    import_label: &str,
+) -> Option<LocalImportTarget> {
+    let path = first_quoted_value(import_label)?;
+    if !path.ends_with(".zig") || path.starts_with('/') {
+        return None;
+    }
+    Some(LocalImportTarget {
+        target: path.clone(),
+        candidates: vec![join_path(path_dir(source_label).as_deref(), &path)],
+    })
+}
+
+/// `import com.google.gson.Gson;` names the file the package directory
+/// holds, which Java and Kotlin both require to match. The source root
+/// varies by build tool, so the package path is the candidate and the
+/// resolver finds the one file that ends with it.
+pub(crate) fn jvm_local_import_target(
+    language: Language,
+    import_label: &str,
+) -> Option<LocalImportTarget> {
+    let rest = import_label.trim().strip_prefix("import")?.trim_start();
+    let rest = rest.strip_prefix("static").map_or(rest, str::trim_start);
+    let target = rest
+        .split(|character: char| character.is_whitespace() || character == ';')
+        .next()?
+        .trim();
+    if target.is_empty() || target.ends_with('*') || !target.contains('.') {
+        return None;
+    }
+    let extension = if language == Language::Kotlin {
+        "kt"
+    } else {
+        "java"
+    };
+    let path = target.replace('.', "/");
+    Some(LocalImportTarget {
+        target: target.to_string(),
+        candidates: vec![format!("{path}.{extension}")],
+    })
 }
 
 /// `include("abstractdataframe.jl")` splices in a file beside this one --

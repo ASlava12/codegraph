@@ -4037,6 +4037,58 @@ func helperB() string { return "b" }
 }
 
 #[test]
+fn a_jvm_import_and_a_zig_import_reach_their_file() {
+    let root = temp_project_root();
+    let java_dir = root.join("gson/src/main/java/com/google/gson");
+    fs::create_dir_all(&java_dir).unwrap();
+    fs::write(
+        java_dir.join("Gson.java"),
+        "package com.google.gson;\n\nimport com.google.gson.FormattingStyle;\nimport java.util.Objects;\n\npublic final class Gson {}\n",
+    )
+    .unwrap();
+    fs::write(
+        java_dir.join("FormattingStyle.java"),
+        "package com.google.gson;\n\npublic final class FormattingStyle {}\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("main.zig"),
+        "const std = @import(\"std\");\nconst ast = @import(\"ast.zig\");\n\npub fn main() void {\n    _ = ast;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("ast.zig"),
+        "pub const Node = struct {};\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reaches = |path: &str| {
+        let file = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::File && node.label == path)
+            .unwrap_or_else(|| panic!("missing {path}"));
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::References
+                && edge.target == file.id
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "local_import_file")
+        })
+    };
+    assert!(
+        reaches("gson/src/main/java/com/google/gson/FormattingStyle.java"),
+        "the package path names the file, whatever the source root"
+    );
+    assert!(reaches("src/ast.zig"), "@import(\"ast.zig\")");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_julia_include_and_a_ruby_require_relative_reach_their_file() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src").join("other")).unwrap();
