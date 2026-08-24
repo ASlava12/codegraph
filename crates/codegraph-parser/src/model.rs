@@ -38,6 +38,12 @@ pub struct ParsedFile {
     #[serde(default)]
     pub string_line_ranges: Vec<(u32, u32)>,
     pub has_error_nodes: bool,
+    /// The line the parser first lost the thread on, when it did. A file
+    /// with an error node still yields facts, and where the grammar
+    /// stumbled is what tells a project's own broken file from syntax the
+    /// grammar does not cover.
+    #[serde(default)]
+    pub first_error_line: Option<u32>,
 }
 
 impl ParsedFile {

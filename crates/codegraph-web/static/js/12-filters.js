@@ -411,7 +411,9 @@ function buildClientInsights(graph) {
         // A limit of the extraction rather than a defect in the code; kept
         // in step with the server's own severity.
         severity: "info",
-        message: `${node.label} contains syntax error nodes`,
+        message: node.metadata?.syntax_error_line
+          ? `${node.label} contains syntax error nodes, first at line ${node.metadata.syntax_error_line}`
+          : `${node.label} contains syntax error nodes`,
         nodeId: node.id,
       });
     }

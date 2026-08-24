@@ -61,7 +61,22 @@ pub fn parse_source(
         quoted_line_ranges: line_ranges_of(root, source_text, QuotedKinds::StringsAndComments),
         string_line_ranges: line_ranges_of(root, source_text, QuotedKinds::StringsOnly),
         has_error_nodes: root.has_error(),
+        first_error_line: first_error_line(root),
     })
+}
+
+/// The 1-based line of the first error or missing node in the tree. Only
+/// the branches that hold one are walked: `has_error` marks the path down
+/// to it, so a clean file costs one check.
+fn first_error_line(node: Node<'_>) -> Option<u32> {
+    if !node.has_error() && !node.is_missing() {
+        return None;
+    }
+    if node.is_error() || node.is_missing() {
+        return Some(node.start_position().row as u32 + 1);
+    }
+    let mut cursor = node.walk();
+    node.children(&mut cursor).find_map(first_error_line)
 }
 
 /// The lines covered by string literals and comments, merged. A detector

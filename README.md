@@ -67,6 +67,14 @@ Implemented now:
   capitalised `NS`/`CF`/`CG`/`Sec`) as that framework's, and a message whose receiver names a
   framework class (`[NSURL URLWithString:]`) as Foundation's rather than as a selector nothing
   declares.
+- A syntax-error finding names the line the parser lost the thread on, which is what tells a broken
+  file from syntax a grammar does not cover: koel's specs are valid TypeScript that
+  tree-sitter-typescript cannot read (`await original<typeof import('./helpers')>()`), and dune's C
+  stubs start with an OCaml macro where a return type belongs.
+- A Makefile is read as make, not as shell. Its recipes are shell, and the file around them is not:
+  reading the whole file with a shell grammar made terraform's Makefile a file that calls
+  `protobuf:`, `.PHONY:` and `CURDIR`, and put a syntax error on every Makefile in the corpus. The
+  targets and the commands they run are read by the makefile detector, which is what states them.
 - A Dockerfile's command is resolved against the build context as well as the directory the
   Dockerfile sits in: mastodon keeps `streaming/Dockerfile` and runs `node ./streaming/index.js`
   from its `WORKDIR`, which is the repository, not `streaming/streaming/index.js`.

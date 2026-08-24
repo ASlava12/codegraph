@@ -4568,7 +4568,13 @@ pub(crate) fn add_parse_error_insights(graph: &CodeGraph, insights: &mut Vec<Ins
                 // of the corpus warnings were the parser's own reach.
                 kind: "syntax_error".to_string(),
                 severity: InsightSeverity::Info,
-                message: format!("{} contains syntax error nodes", node.label),
+                message: match node.metadata.get("syntax_error_line") {
+                    Some(line) => format!(
+                        "{} contains syntax error nodes, first at line {line}",
+                        node.label
+                    ),
+                    None => format!("{} contains syntax error nodes", node.label),
+                },
                 nodes: vec![node.id],
                 edges: Vec::new(),
             });

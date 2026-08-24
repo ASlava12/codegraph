@@ -5692,6 +5692,64 @@ fn a_go_call_through_a_package_qualifier_reads_past_the_type() {
 }
 
 #[test]
+fn a_makefile_is_read_as_make_and_not_as_shell() {
+    // A Makefile's recipes are shell; the file around them is not. Reading
+    // the whole file as shell made terraform's Makefile call `protobuf:`,
+    // `.PHONY:` and `CURDIR`, and reported a syntax error on every Makefile
+    // in the corpus. The targets and what they run are the makefile
+    // detector's to state.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("scripts")).unwrap();
+    fs::write(
+        root.join("scripts").join("check.sh"),
+        "#!/bin/sh\necho ok\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("Makefile"),
+        ".DEFAULT_GOAL := help\n\nCURDIR_ARG := $(if $(CURDIR),--dir $(CURDIR),)\n\ncheck:\n\t\"$(CURDIR)/scripts/check.sh\"\n\n.PHONY: check\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let makefile_nodes: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.span
+                .as_ref()
+                .is_some_and(|span| span.path == "Makefile")
+        })
+        .collect();
+    assert!(
+        makefile_nodes.iter().any(|node| {
+            node.kind == NodeKind::Entrypoint
+                && node.metadata.get("item_kind").map(String::as_str) == Some("makefile_target")
+        }),
+        "the target is still read"
+    );
+    for node in &makefile_nodes {
+        assert_ne!(
+            node.kind,
+            NodeKind::ExternalDependency,
+            "make syntax is not a shell command: {:?}",
+            node.label
+        );
+    }
+    let file = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::File && node.label == "Makefile")
+        .expect("the Makefile is still scanned");
+    assert!(
+        !file.metadata.contains_key("syntax_errors"),
+        "and no grammar is asked to read it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_dockerfile_command_runs_from_the_build_context() {
     // A Dockerfile's command runs inside the image, on the paths `COPY` put
     // there from the build context. Mastodon keeps `streaming/Dockerfile`

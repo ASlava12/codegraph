@@ -271,6 +271,33 @@ enum Role { ADMIN }
 }
 
 #[test]
+fn a_parse_error_says_where_the_parser_lost_the_thread() {
+    // A file with an error node still yields facts, and an error node says
+    // the grammar did not cover something rather than that the code is
+    // broken. Which line it stumbled on is what tells the two apart: koel
+    // writes `await original<typeof import('@/utils/helpers')>()`, which
+    // TypeScript accepts and the grammar does not.
+    let parsed = parse_source(
+        "spec.ts",
+        b"const ok = 1\nconst mod = await original<typeof import('./helpers')>()\n",
+        Language::TypeScript,
+    )
+    .expect("parse typescript");
+
+    assert!(parsed.has_error_nodes, "the grammar stumbles here");
+    assert_eq!(
+        parsed.first_error_line,
+        Some(2),
+        "and the line it stumbled on is the one that holds the syntax"
+    );
+
+    let clean = parse_source("clean.ts", b"const ok = 1\n", Language::TypeScript)
+        .expect("parse typescript");
+    assert!(!clean.has_error_nodes);
+    assert_eq!(clean.first_error_line, None);
+}
+
+#[test]
 fn a_jvm_system_property_is_configuration() {
     let parsed = parse_source(
         "src/main/java/com/google/gson/internal/JavaVersion.java",

@@ -829,6 +829,14 @@ pub(crate) fn index_file(
             Ok(parsed) => {
                 if parsed.has_error_nodes {
                     add_file_metadata(&mut context.graph, file_id, "syntax_errors", "true");
+                    if let Some(line) = parsed.first_error_line {
+                        add_file_metadata(
+                            &mut context.graph,
+                            file_id,
+                            "syntax_error_line",
+                            line.to_string(),
+                        );
+                    }
                 }
 
                 let mut local_functions = BTreeMap::new();

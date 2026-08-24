@@ -168,7 +168,14 @@ static PHP_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
 static BASH_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     language: Language::Bash,
     extensions: &["sh", "bash", "zsh", "ksh"],
-    file_names: &["Makefile"],
+    // A Makefile is not a shell script. Its recipes are, but the file
+    // around them -- `PREFIX_ARG := $(if ..)`, `protobuf:`, `.PHONY:` --
+    // is make, and reading it as shell made terraform's Makefile a file
+    // that calls `protobuf:`, `.PHONY:` and `CURDIR`, and every Makefile
+    // in the corpus one the parser reports an error on. The targets and
+    // the commands they run are read by the makefile detector, which is
+    // what states them.
+    file_names: &[],
 };
 
 static RUBY_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
