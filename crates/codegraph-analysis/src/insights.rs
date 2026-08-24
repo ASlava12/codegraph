@@ -4751,6 +4751,11 @@ pub(crate) fn add_unresolved_framework_route_handler_insights(
         if node.metadata.get("handler_scope").map(String::as_str) == Some("external") {
             continue;
         }
+        // A resource declares a whole set of actions in one line, and a
+        // controller that serves three of the five is the ordinary case:
+        // koel writes `apiResource('albums', AlbumController::class)` and
+        // implements index, show and update.
+        let expanded = node.metadata.get("route_form").map(String::as_str) == Some("resource");
         // A framework's own tests declare routes to exercise the router:
         // every one of gin's 15 and eleven of express's live in a test file,
         // where the handler is a local closure rather than a definition.
@@ -4761,7 +4766,7 @@ pub(crate) fn add_unresolved_framework_route_handler_insights(
             .is_none_or(|span| manifest_is_the_projects_own(&span.path));
         insights.push(Insight {
             kind: "unresolved_framework_route_handler".to_string(),
-            severity: if declared_by_the_project {
+            severity: if declared_by_the_project && !expanded {
                 InsightSeverity::Warning
             } else {
                 InsightSeverity::Info

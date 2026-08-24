@@ -322,6 +322,9 @@ pub(crate) fn index_framework_routes(
         if let Some(qualifier) = route.handler_qualifier.as_deref() {
             metadata.insert("handler_qualifier".to_string(), qualifier.to_string());
         }
+        if route.expanded {
+            metadata.insert("route_form".to_string(), "resource".to_string());
+        }
 
         let entrypoint_id = context.graph.add_node_with_metadata(
             NodeKind::Entrypoint,
@@ -371,6 +374,7 @@ pub(crate) fn index_framework_routes(
                 context.pending_route_handlers.push(PendingRouteHandler {
                     entrypoint: entrypoint_id,
                     handler: handler.to_string(),
+                    owner: route.handler_qualifier.clone(),
                 });
             }
         }

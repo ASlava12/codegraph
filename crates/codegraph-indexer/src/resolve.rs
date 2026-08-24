@@ -2877,6 +2877,38 @@ pub(crate) fn link_imports_to_package_hubs(context: &mut IndexContext) {
     }
 }
 
+/// The file an import in this file brings a class in from, by the name it
+/// is used under. PHP writes `use App\\Http\\Controllers\\API\\
+/// ScrobbleController;` and sometimes `use ... as EnrollTwoFactorController;`,
+/// and the resolved import already names the file.
+fn imported_class_file(graph: &CodeGraph, file: &str, name: &str) -> Option<String> {
+    let file_id = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::File && node.label == file)
+        .map(|node| node.id)?;
+    graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Imports && edge.source == file_id)
+        .filter_map(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+        .find_map(|import| {
+            let path = import.metadata.get("resolved_path")?;
+            let statement = import.label.trim().trim_end_matches(';');
+            let used_as = statement
+                .rsplit_once(" as ")
+                .map(|(_, alias)| alias.trim())
+                .unwrap_or_else(|| {
+                    statement
+                        .rsplit(['\\', '/', ' '])
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                });
+            (used_as == name).then(|| path.clone())
+        })
+}
+
 pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
     let pending = std::mem::take(&mut context.pending_route_handlers);
     for reference in pending {
@@ -2887,7 +2919,7 @@ pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
         let language = graph_node(&context.graph, reference.entrypoint)
             .and_then(|node| node.metadata.get("language"))
             .cloned();
-        let targets = resolve_function_targets(&context.function_symbols, &reference.handler)
+        let mut targets = resolve_function_targets(&context.function_symbols, &reference.handler)
             .into_iter()
             .filter(|target| {
                 language.as_deref().is_none_or(|language| {
@@ -2897,6 +2929,45 @@ pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
                 })
             })
             .collect::<Vec<_>>();
+        // The route says which class serves it, and that settles which
+        // method it means: koel writes 139 controllers whose method is
+        // `__invoke`, and the name alone chooses none of them.
+        if let Some(owner) = reference.owner.as_deref() {
+            let owned: Vec<NodeId> = targets
+                .iter()
+                .copied()
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.metadata.get("owner_type"))
+                        .is_some_and(|declared| declared == owner)
+                })
+                .collect();
+            if !owned.is_empty() {
+                targets = owned;
+            }
+            // Two classes can share a name -- koel has an API and a
+            // Subsonic `ScrobbleController` -- and one of them is what the
+            // route file imported. An alias is the same statement:
+            // `EnrollController as EnrollTwoFactorController` names a file.
+            let declaring_file = graph_node(&context.graph, reference.entrypoint)
+                .and_then(|node| node.span.as_ref().map(|span| span.path.clone()));
+            if let Some(file) = declaring_file
+                && let Some(path) = imported_class_file(&context.graph, &file, owner)
+            {
+                let declared: Vec<NodeId> = targets
+                    .iter()
+                    .copied()
+                    .filter(|target| {
+                        graph_node(&context.graph, *target)
+                            .and_then(|node| node.span.as_ref())
+                            .is_some_and(|span| span.path == path)
+                    })
+                    .collect();
+                if !declared.is_empty() {
+                    targets = declared;
+                }
+            }
+        }
         // A decorator sits directly above the function it registers, so the
         // handler is in the route's own file — which `detectors` already
         // tried. Reaching here means it was not, and linking to every

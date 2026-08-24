@@ -9337,6 +9337,141 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn laravel_states_its_routes_in_a_file_of_route_calls() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("routes")).unwrap();
+    fs::create_dir_all(root.join("app").join("Http").join("Controllers")).unwrap();
+    fs::write(
+        root.join("routes").join("api.php"),
+        r#"<?php
+
+use App\Http\Controllers\AlbumController;
+use App\Http\Controllers\PingController;
+
+Route::prefix('api')
+    ->middleware('auth')
+    ->group(static function (): void {
+        Route::get('ping', PingController::class);
+        Route::put('albums/{album}/rename', [AlbumController::class, 'rename']);
+        Route::apiResource('albums', AlbumController::class)
+            ->except('destroy');
+    });
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("app")
+            .join("Http")
+            .join("Controllers")
+            .join("AlbumController.php"),
+        r#"<?php
+
+namespace App\Http\Controllers;
+
+class AlbumController
+{
+    public function index()
+    {
+        return [];
+    }
+
+    public function rename()
+    {
+        return [];
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("app")
+            .join("Http")
+            .join("Controllers")
+            .join("PingController.php"),
+        r#"<?php
+
+namespace App\Http\Controllers;
+
+class PingController
+{
+    public function __invoke()
+    {
+        return 'pong';
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let routes: Vec<(String, String, Option<String>)> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata.get("item_kind").map(String::as_str) == Some("framework_route")
+        })
+        .map(|node| {
+            (
+                node.metadata.get("method").cloned().unwrap_or_default(),
+                node.metadata.get("path").cloned().unwrap_or_default(),
+                node.metadata.get("handler").cloned(),
+            )
+        })
+        .collect();
+
+    // The group hands its prefix to everything it holds.
+    assert!(
+        routes.contains(&(
+            "GET".to_string(),
+            "/api/ping".to_string(),
+            Some("__invoke".to_string())
+        )),
+        "{routes:?}"
+    );
+    assert!(
+        routes.contains(&(
+            "PUT".to_string(),
+            "/api/albums/{album}/rename".to_string(),
+            Some("rename".to_string())
+        )),
+        "{routes:?}"
+    );
+    // `apiResource` declares the set, and `->except('destroy')` takes one
+    // of them back.
+    assert!(
+        routes.contains(&(
+            "GET".to_string(),
+            "/api/albums".to_string(),
+            Some("index".to_string())
+        )),
+        "{routes:?}"
+    );
+    assert!(
+        !routes
+            .iter()
+            .any(|(method, path, _)| method == "DELETE" && path == "/api/albums/{album}"),
+        "{routes:?}"
+    );
+
+    // And the controller the route names settles which method it means.
+    let renamed = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Function && node.label == "rename")
+        .expect("the controller method is in the graph");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.target == renamed.id
+                && edge.metadata.get("resolution").map(String::as_str)
+                    == Some("framework_route_handler")
+        }),
+        "the route reaches the method it names"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_route_handler_the_file_imports_belongs_to_the_package() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

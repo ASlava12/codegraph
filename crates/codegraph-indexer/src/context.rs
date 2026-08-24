@@ -212,6 +212,11 @@ pub(crate) struct PendingLocalImport {
 pub(crate) struct PendingRouteHandler {
     pub(crate) entrypoint: NodeId,
     pub(crate) handler: String,
+    /// The class the route hands the request to, when the route names one:
+    /// Laravel's `[SongController::class, 'update']` says which `update`
+    /// it means, and koel declares 139 controllers whose method is
+    /// `__invoke`.
+    pub(crate) owner: Option<String>,
 }
 
 pub(crate) struct PendingEntrypointTarget {
@@ -553,6 +558,11 @@ pub(crate) struct FrameworkRoute {
     /// `django.contrib.sitemaps.views` rather than anything the project
     /// declares.
     pub(crate) handler_qualifier: Option<String>,
+    /// Whether the framework expanded this route from a declaration of
+    /// several: Laravel's `apiResource` declares five, and a controller
+    /// that implements three of them is the ordinary case rather than a
+    /// hole in the program.
+    pub(crate) expanded: bool,
     pub(crate) line: u32,
 }
 

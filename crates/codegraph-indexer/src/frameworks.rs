@@ -454,6 +454,7 @@ fn django_url_routes(source: &str) -> Vec<FrameworkRoute> {
             handler: django_route_handler(&handler_source).map(|(name, _)| name),
             handler_qualifier: django_route_handler(&handler_source)
                 .and_then(|(_, qualifier)| qualifier),
+            expanded: false,
             line: index as u32 + 1,
         });
     }
@@ -561,6 +562,7 @@ pub(crate) fn route_from_python_decorator(
         path,
         handler: None,
         handler_qualifier: None,
+        expanded: false,
         line: line_number,
     })
 }
@@ -620,6 +622,7 @@ pub(crate) fn rust_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                 path,
                 handler,
                 handler_qualifier: None,
+                expanded: false,
                 line: line_number,
             })
         })
@@ -642,6 +645,7 @@ pub(crate) fn go_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                     path,
                     handler,
                     handler_qualifier: None,
+                    expanded: false,
                     line: line_number,
                 });
             }
@@ -701,6 +705,7 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                     },
                     handler: rails_route_handler(rest),
                     handler_qualifier: None,
+                    expanded: false,
                     line: line_number,
                 });
                 continue;
@@ -743,6 +748,7 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
             path: format!("{prefix}/{}", path.trim_start_matches('/')),
             handler: rails_route_handler(rest),
             handler_qualifier: None,
+            expanded: false,
             line: line_number,
         });
     }
@@ -805,13 +811,14 @@ fn rails_resource_routes(
             path,
             handler: Some(action.to_string()),
             handler_qualifier: None,
+            expanded: true,
             line,
         })
         .collect()
 }
 
 pub(crate) fn php_framework_routes(source: &str) -> Vec<FrameworkRoute> {
-    let mut routes = Vec::new();
+    let mut routes = laravel_routes(source);
     let mut pending = Vec::new();
 
     for (index, line) in source.lines().enumerate() {
@@ -827,6 +834,7 @@ pub(crate) fn php_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                     path,
                     handler: None,
                     handler_qualifier: None,
+                    expanded: false,
                     line: line_number,
                 });
             }
@@ -847,6 +855,268 @@ pub(crate) fn php_framework_routes(source: &str) -> Vec<FrameworkRoute> {
     }
 
     routes
+}
+
+/// Laravel states its routes in a file of `Route::` calls, and a group
+/// gives its prefix to everything it holds: koel declares 147 of them and
+/// the graph held none, because the PHP extractor knew only Symfony's
+/// `#[Route]` attribute.
+fn laravel_routes(source: &str) -> Vec<FrameworkRoute> {
+    if !source.contains("Route::") {
+        return Vec::new();
+    }
+    let mut routes = Vec::new();
+    // The prefix a group opened, and the brace depth it holds until.
+    let mut groups: Vec<(usize, String)> = Vec::new();
+    // A chain states its prefix before it opens the group, and koel writes
+    // the two on different lines.
+    let mut pending_prefix: Option<String> = None;
+    let mut depth = 0usize;
+    let lines: Vec<&str> = source.lines().collect();
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let trimmed = line.trim();
+        while groups
+            .last()
+            .is_some_and(|(open_depth, _)| depth < *open_depth)
+        {
+            groups.pop();
+        }
+        let prefix = groups
+            .iter()
+            .map(|(_, prefix)| prefix.as_str())
+            .filter(|prefix| !prefix.is_empty())
+            .collect::<Vec<_>>()
+            .join("/");
+
+        if let Some(prefix) = laravel_group_prefix(trimmed) {
+            pending_prefix = Some(prefix);
+        }
+        if let Some(verb) = laravel_route_verb(trimmed) {
+            let arguments = trimmed
+                .split_once(&format!("{verb}("))
+                .map(|(_, rest)| rest)
+                .unwrap_or_default();
+            if let Some(path) = first_quoted_value(arguments) {
+                let handler = laravel_route_handler(arguments);
+                let joined = join_laravel_path(&prefix, &path);
+                match verb {
+                    // `->except('update', 'destroy')` limits what the
+                    // expansion declares, and koel writes it on the line
+                    // below the resource.
+                    "apiResource" | "resource" => routes.extend(laravel_resource_routes(
+                        &prefix,
+                        &path,
+                        handler.as_ref().map(|(_, owner)| owner.as_str()),
+                        verb == "resource",
+                        &laravel_chained_actions(&lines, index),
+                        line_number,
+                    )),
+                    _ => routes.push(FrameworkRoute {
+                        framework: "laravel".to_string(),
+                        method: verb.to_ascii_uppercase(),
+                        path: joined,
+                        handler: handler.as_ref().map(|(handler, _)| handler.clone()),
+                        handler_qualifier: handler.map(|(_, owner)| owner),
+                        expanded: false,
+                        line: line_number,
+                    }),
+                }
+            }
+        }
+
+        // `Route::prefix('api')->group(...)` and `->prefix('api')->group(`
+        // both hand their prefix to the block that opens on the line.
+        let opened = line.matches('{').count();
+        let closed = line.matches('}').count();
+        if opened > closed && trimmed.contains("->group(") {
+            if let Some(prefix) = pending_prefix.take() {
+                groups.push((depth + 1, prefix));
+            } else {
+                // A group with no prefix of its own still holds a depth, so
+                // the prefixes above it are not popped by its braces.
+                groups.push((depth + 1, String::new()));
+            }
+        }
+        // A statement that ends without opening a group takes its prefix
+        // with it.
+        if trimmed.ends_with(';') {
+            pending_prefix = None;
+        }
+        depth = depth + opened - closed.min(depth + opened);
+    }
+    routes
+}
+
+/// The verb a `Route::` call names, when the call declares a route.
+fn laravel_route_verb(line: &str) -> Option<&'static str> {
+    let rest = line.split_once("Route::")?.1;
+    let verb = rest.split_once('(')?.0.trim();
+    matches!(
+        verb,
+        "get"
+            | "post"
+            | "put"
+            | "patch"
+            | "delete"
+            | "options"
+            | "any"
+            | "apiResource"
+            | "resource"
+    )
+    .then(|| match verb {
+        "get" => "get",
+        "post" => "post",
+        "put" => "put",
+        "patch" => "patch",
+        "delete" => "delete",
+        "options" => "options",
+        "any" => "any",
+        "apiResource" => "apiResource",
+        _ => "resource",
+    })
+}
+
+/// The controller a route hands the request to, and the method it calls
+/// on it: `[SongController::class, 'update']` is `update` on
+/// `SongController`, and `SongController::class` on its own is the
+/// invokable controller's `__invoke`.
+fn laravel_route_handler(arguments: &str) -> Option<(String, String)> {
+    let after_path = arguments.split_once(',')?.1.trim();
+    if let Some(inner) = after_path.strip_prefix('[') {
+        let controller = inner.split_once("::class")?.0.trim().rsplit('\\').next()?;
+        let method = first_quoted_value(inner)?;
+        return (!controller.is_empty() && !method.is_empty())
+            .then(|| (method, controller.to_string()));
+    }
+    if let Some((controller, _)) = after_path.split_once("::class") {
+        let controller = controller.trim().rsplit('\\').next()?;
+        return (!controller.is_empty()).then(|| ("__invoke".to_string(), controller.to_string()));
+    }
+    // `'PostController@show'`, the older string form.
+    let quoted = first_quoted_value(after_path)?;
+    let (controller, method) = quoted.split_once('@')?;
+    (!controller.is_empty() && !method.is_empty())
+        .then(|| (method.to_string(), controller.to_string()))
+}
+
+/// The prefix a group states, from either `Route::prefix('api')` or a
+/// `->prefix('api')` in the chain.
+fn laravel_group_prefix(line: &str) -> Option<String> {
+    let rest = line.split_once("prefix(")?.1;
+    first_quoted_value(rest).filter(|prefix| !prefix.is_empty())
+}
+
+fn join_laravel_path(prefix: &str, path: &str) -> String {
+    let path = path.trim_matches('/');
+    let prefix = prefix.trim_matches('/');
+    match (prefix.is_empty(), path.is_empty()) {
+        (true, true) => "/".to_string(),
+        (true, false) => format!("/{path}"),
+        (false, true) => format!("/{prefix}"),
+        (false, false) => format!("/{prefix}/{path}"),
+    }
+}
+
+/// What `Route::apiResource('albums', AlbumController::class)` declares.
+/// A nested resource is written with a dot -- `artists.albums` -- and the
+/// parent's key sits between the two.
+fn laravel_resource_routes(
+    prefix: &str,
+    name: &str,
+    controller: Option<&str>,
+    with_forms: bool,
+    limits: &LaravelResourceLimits,
+    line: u32,
+) -> Vec<FrameworkRoute> {
+    // The resource's own name states the nesting; the prefix the group
+    // gave it is joined afterwards, or the parent key reads
+    // `{/api/album}`.
+    let segments: Vec<&str> = name.split('.').collect();
+    let mut base = String::new();
+    for (index, segment) in segments.iter().enumerate() {
+        if index > 0 {
+            let parent = segments[index - 1].trim_end_matches('s');
+            base.push_str(&format!("/{{{parent}}}"));
+        }
+        if index > 0 {
+            base.push('/');
+        }
+        base.push_str(segment);
+    }
+    let key = segments
+        .last()
+        .copied()
+        .unwrap_or("id")
+        .trim_end_matches('s');
+    let member = format!("{base}/{{{key}}}");
+    let mut declared = vec![
+        ("GET", base.clone(), "index"),
+        ("POST", base.clone(), "store"),
+        ("GET", member.clone(), "show"),
+        ("PUT", member.clone(), "update"),
+        ("DELETE", member.clone(), "destroy"),
+    ];
+    if with_forms {
+        declared.push(("GET", format!("{base}/create"), "create"));
+        declared.push(("GET", format!("{member}/edit"), "edit"));
+    }
+    declared
+        .into_iter()
+        .filter(|(_, _, action)| limits.declares(action))
+        .map(|(method, path, action)| FrameworkRoute {
+            framework: "laravel".to_string(),
+            method: method.to_string(),
+            path: join_laravel_path(prefix, &path),
+            handler: Some(action.to_string()),
+            handler_qualifier: controller.map(str::to_string),
+            expanded: true,
+            line,
+        })
+        .collect()
+}
+
+/// What `->only(..)` and `->except(..)` say about a resource, read from
+/// the chain that follows it -- koel writes `->except('update',
+/// 'destroy')` on the line below the resource itself.
+#[derive(Default)]
+struct LaravelResourceLimits {
+    only: Vec<String>,
+    except: Vec<String>,
+}
+
+impl LaravelResourceLimits {
+    fn declares(&self, action: &str) -> bool {
+        if !self.only.is_empty() {
+            return self.only.iter().any(|name| name == action);
+        }
+        !self.except.iter().any(|name| name == action)
+    }
+}
+
+fn laravel_chained_actions(lines: &[&str], index: usize) -> LaravelResourceLimits {
+    let mut limits = LaravelResourceLimits::default();
+    for line in lines.iter().skip(index).take(4) {
+        let trimmed = line.trim();
+        for (opener, target) in [("->only(", true), ("->except(", false)] {
+            if let Some(rest) = trimmed.split_once(opener).map(|(_, rest)| rest) {
+                let list = rest.split(')').next().unwrap_or_default();
+                let names: Vec<String> = list
+                    .split(',')
+                    .filter_map(first_quoted_value)
+                    .collect();
+                if target {
+                    limits.only.extend(names);
+                } else {
+                    limits.except.extend(names);
+                }
+            }
+        }
+        if trimmed.ends_with(';') {
+            break;
+        }
+    }
+    limits
 }
 
 /// ASP.NET writes a route as an attribute above the action that serves it,
@@ -892,6 +1162,7 @@ pub(crate) fn csharp_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                     path,
                     handler: None,
                     handler_qualifier: None,
+                    expanded: false,
                     line: line_number,
                 });
             }
@@ -998,6 +1269,7 @@ pub(crate) fn jvm_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                     path,
                     handler: None,
                     handler_qualifier: None,
+                    expanded: false,
                     line: line_number,
                 });
             }
@@ -1119,6 +1391,7 @@ pub(crate) fn route_from_call_line(
         path,
         handler,
         handler_qualifier: None,
+        expanded: false,
         line: line_number,
     })
 }
