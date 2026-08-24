@@ -689,11 +689,22 @@ function addUndeclaredImportInsights(graph, insights) {
       // `import(`${pkgDir}/package.json`)` names no package: the specifier
       // is built when it runs.
       if (label.includes("${")) return;
-      const candidate = importPackageCandidate(target?.metadata?.language, label);
-      if (!candidate) return;
+      const first = importPackageCandidate(target?.metadata?.language, label);
+      if (!first) return;
+      // `import yaml` installs PyYAML and `import dotenv` python-dotenv, so
+      // both names are asked about and the most specific one is reported,
+      // as the CLI does.
+      const candidates = [first];
+      const distribution = first.ecosystem === "python" ? pythonDistributionName(first.package) : null;
+      if (distribution) candidates.unshift({ ecosystem: "python", package: distribution });
+      const candidate = candidates.reduce((best, entry) =>
+        entry.package.length > best.package.length ? entry : best,
+      );
       if (!declaredEcosystems.has(candidate.ecosystem)) return;
-      if (ownPackages.has(`${candidate.ecosystem}:${candidate.package}`)) return;
-      if (isDeclaredPackage(declared, candidate.ecosystem, candidate.package)) return;
+      if (candidates.some((entry) => ownPackages.has(`${entry.ecosystem}:${entry.package}`))) return;
+      if (candidates.some((entry) => isDeclaredPackage(declared, entry.ecosystem, entry.package))) {
+        return;
+      }
       // `import type { X } from 'trusted-types/lib'` is served by
       // `@types/trusted-types`, and needs nothing at run time.
       if (
@@ -704,9 +715,15 @@ function addUndeclaredImportInsights(graph, insights) {
       }
 
       const key = `${candidate.ecosystem}:${candidate.package}`;
-      const group = grouped.get(key) || { candidate, sources: [], nodeId: target?.id || source?.id };
+      const group = grouped.get(key) || {
+        candidate,
+        sources: [],
+        production: false,
+        nodeId: target?.id || source?.id,
+      };
       const sourceLabel = source?.label || String(edge.source);
       if (!group.sources.includes(sourceLabel)) group.sources.push(sourceLabel);
+      group.production = group.production || isProductionSourcePath(sourceLabel);
       grouped.set(key, group);
     });
 
@@ -716,11 +733,83 @@ function addUndeclaredImportInsights(graph, insights) {
     const from = rest > 0 ? `${shown}, and ${rest} more` : shown;
     insights.push({
       kind: "undeclared_external_import",
-      severity: "warning",
+      // A test's fixture package and an example script's numpy are not the
+      // program's dependencies, and the CLI files them as notes.
+      severity: group.production ? "warning" : "info",
       message: `${group.candidate.package} is imported from ${from} without a matching ${group.candidate.ecosystem} dependency`,
       nodeId: group.nodeId,
     });
   });
+}
+
+// Whether a path is the program itself rather than its tests, examples,
+// docs, build scripts or vendored code. The CLI asks the same question
+// before deciding whether a finding is a warning or a note.
+function isProductionSourcePath(path) {
+  const normalized = String(path).replace(/\\/g, "/").toLowerCase();
+  const file = normalized.split("/").pop() || "";
+  const stem = file.includes(".") ? file.slice(0, file.lastIndexOf(".")) : file;
+  const segments = normalized.split("/");
+  const carried = segments.some((segment) =>
+    ["vendor", "vendored", "third_party", "thirdparty", "3rdparty", "deps", "node_modules"].includes(
+      segment,
+    ),
+  );
+  const tooling =
+    file.startsWith("gulpfile.") ||
+    file.startsWith("gruntfile.") ||
+    segments.some((segment) =>
+      ["scripts", "tools", "bench", "benchmarks", "__benchmarks__", "doc", "docs"].includes(segment),
+    );
+  const tests =
+    segments.slice(0, -1).some((segment) =>
+      [
+        "test",
+        "tests",
+        "testdata",
+        "testing",
+        "testthat",
+        "fixture",
+        "fixtures",
+        "example",
+        "examples",
+        "sample",
+        "samples",
+        "mock",
+        "mocks",
+        "spec",
+        "specs",
+      ].includes(segment),
+    ) ||
+    stem === "test" ||
+    stem === "tests" ||
+    stem.startsWith("test_") ||
+    stem.endsWith("_test") ||
+    stem.endsWith("_tests") ||
+    stem.endsWith("_spec") ||
+    file.includes(".test.") ||
+    file.includes(".spec.");
+  return !carried && !tooling && !tests;
+}
+
+// The distribution a Python module comes from, where the two names differ.
+function pythonDistributionName(moduleName) {
+  return (
+    {
+      attr: "attrs",
+      bs4: "beautifulsoup4",
+      cv2: "opencv-python",
+      dateutil: "python-dateutil",
+      dotenv: "python-dotenv",
+      elftools: "pyelftools",
+      jwt: "pyjwt",
+      openssl: "pyopenssl",
+      pil: "pillow",
+      serial: "pyserial",
+      sklearn: "scikit-learn",
+      yaml: "pyyaml",
+    }[moduleName] || null
+  );
 }
 
 // The DefinitelyTyped package that carries types for another.

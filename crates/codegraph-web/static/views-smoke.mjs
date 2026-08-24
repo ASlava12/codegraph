@@ -200,6 +200,74 @@ drive("client insights agree with the CLI on undeclared imports", () => {
   }
 });
 
+// The CLI names the distribution a module comes from and files a test's or
+// a build script's undeclared import as a note. Driving the bundle over
+// flask showed the browser reporting ten warnings where the CLI reported
+// one warning and eight notes.
+drive("client insights read undeclared imports the way the CLI does", () => {
+  const graph = {
+    nodes: [
+      { id: 1, kind: "file", label: "pyproject.toml" },
+      {
+        id: 2,
+        kind: "external_dependency",
+        label: "python-dotenv",
+        metadata: { item_kind: "dependency", package_id: "python:python-dotenv" },
+      },
+      { id: 3, kind: "file", label: "src/app/config.py" },
+      { id: 4, kind: "file", label: "tests/test_config.py" },
+      { id: 5, kind: "file", label: "scripts/release.py" },
+      {
+        id: 10,
+        kind: "external_dependency",
+        label: "from dotenv import load_dotenv",
+        metadata: { item_kind: "import", language: "python" },
+      },
+      {
+        id: 11,
+        kind: "external_dependency",
+        label: "import fixture_only",
+        metadata: { item_kind: "import", language: "python" },
+      },
+      {
+        id: 12,
+        kind: "external_dependency",
+        label: "import enquirer",
+        metadata: { item_kind: "import", language: "python" },
+      },
+      {
+        id: 13,
+        kind: "external_dependency",
+        label: "import yaml",
+        metadata: { item_kind: "import", language: "python" },
+      },
+    ],
+    edges: [
+      { kind: "imports", source: 3, target: 10 },
+      { kind: "imports", source: 4, target: 11 },
+      { kind: "imports", source: 5, target: 12 },
+      { kind: "imports", source: 3, target: 13 },
+    ],
+  };
+  const findings = api
+    .buildClientInsights(graph)
+    .filter((insight) => insight.kind === "undeclared_external_import");
+  const named = Object.fromEntries(
+    findings.map((finding) => [finding.message.split(" ")[0], finding.severity]),
+  );
+  if (named.dotenv || named["python-dotenv"]) {
+    throw new Error(`python-dotenv ships the dotenv module: ${JSON.stringify(findings)}`);
+  }
+  // An undeclared module is named by the distribution that ships it, as
+  // the CLI names it.
+  if (named.pyyaml !== "warning" || named.yaml) {
+    throw new Error(`an undeclared module names its distribution: ${JSON.stringify(findings)}`);
+  }
+  if (named["fixture-only"] !== "info" || named.enquirer !== "info") {
+    throw new Error(`a test's and a script's imports are notes: ${JSON.stringify(findings)}`);
+  }
+});
+
 // An unresolved or ambiguous call is the expected default on a syntax-only
 // scan, and the CLI reads it as info; the browser used to call both a
 // warning, and looked for ambiguity in a shape the resolver stopped
