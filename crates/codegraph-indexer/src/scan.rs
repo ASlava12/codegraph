@@ -246,36 +246,55 @@ pub(crate) fn scan_project_with_scope(
         })
         .collect::<VecDeque<_>>();
 
-    for entry in &walked {
-        cancel.check()?;
-        match entry {
-            WalkedEntry::Directory { label } => {
-                let id = context.graph.add_node(NodeKind::Directory, label);
-                context.directory_nodes.insert(label.to_string(), id);
-                context.graph.add_edge(
-                    context.graph.root,
-                    id,
-                    EdgeKind::Contains,
-                    Confidence::Exact,
-                );
-            }
-            WalkedEntry::File {
-                path,
-                label,
-                oversized: Some(bytes),
-            } => {
-                if is_index_relevant_file(path) {
-                    index_skipped_file(&mut context, path, label, *bytes, options);
+    let indexed = std::thread::scope(|scope| -> Result<(), IndexError> {
+        let mut reading_ahead: Option<
+            std::thread::ScopedJoinHandle<'_, Vec<(String, ParsedSource)>>,
+        > = None;
+        for entry in &walked {
+            cancel.check()?;
+            match entry {
+                WalkedEntry::Directory { label } => {
+                    let id = context.graph.add_node(NodeKind::Directory, label);
+                    context.directory_nodes.insert(label.to_string(), id);
+                    context.graph.add_edge(
+                        context.graph.root,
+                        id,
+                        EdgeKind::Contains,
+                        Confidence::Exact,
+                    );
                 }
-            }
-            WalkedEntry::File { path, label, .. } => {
-                if context.parsed_ahead.is_empty() {
-                    parse_ahead(&mut context, &mut unparsed, options);
+                WalkedEntry::File {
+                    path,
+                    label,
+                    oversized: Some(bytes),
+                } => {
+                    if is_index_relevant_file(path) {
+                        index_skipped_file(&mut context, path, label, *bytes, options);
+                    }
                 }
-                index_file(&mut context, path, label, options);
+                WalkedEntry::File { path, label, .. } => {
+                    if context.parsed_ahead.is_empty() {
+                        // The round after this one is read while this one is
+                        // assembled into the graph, so the cores are not idle
+                        // for the part of a scan that has to happen in order.
+                        let round = match reading_ahead.take() {
+                            Some(handle) => handle.join().unwrap_or_default(),
+                            None => parse_round(&next_round(&mut unparsed), options),
+                        };
+                        context.parsed_ahead.extend(round);
+                        let upcoming = next_round(&mut unparsed);
+                        if !upcoming.is_empty() {
+                            reading_ahead =
+                                Some(scope.spawn(move || parse_round(&upcoming, options)));
+                        }
+                    }
+                    index_file(&mut context, path, label, options);
+                }
             }
         }
-    }
+        Ok(())
+    });
+    indexed?;
 
     // `.mcp.json` is a dotfile the walk skips by default, yet it declares
     // the repository's MCP tool servers. Probe the conventional root
@@ -549,20 +568,20 @@ enum WalkedEntry {
 
 /// How many files one round of reading holds at once. Bounded so a
 /// repository of any size costs the same memory here.
-const PARSE_AHEAD_FILES: usize = 256;
+const PARSE_AHEAD_FILES: usize = 1024;
 
 /// Read the next files into facts, on as many threads as the machine has.
 /// This is the one step of a scan that needs nothing from the graph.
-fn parse_ahead(
-    context: &mut IndexContext,
-    unparsed: &mut VecDeque<(PathBuf, String)>,
-    options: &IndexOptions,
-) {
-    let round = unparsed
+/// The next files to read, taken off the queue.
+fn next_round(unparsed: &mut VecDeque<(PathBuf, String)>) -> Vec<(PathBuf, String)> {
+    unparsed
         .drain(..unparsed.len().min(PARSE_AHEAD_FILES))
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>()
+}
+
+fn parse_round(round: &[(PathBuf, String)], options: &IndexOptions) -> Vec<(String, ParsedSource)> {
     if round.is_empty() {
-        return;
+        return Vec::new();
     }
     let threads = std::thread::available_parallelism()
         .map(usize::from)
@@ -570,22 +589,20 @@ fn parse_ahead(
         .clamp(1, 16)
         .min(round.len());
     if threads < 2 {
-        context.parsed_ahead.extend(
-            round
-                .iter()
-                .filter_map(|(path, label)| preparse_file(path, label, options)),
-        );
-        return;
+        return round
+            .iter()
+            .filter_map(|(path, label)| preparse_file(path, label, options))
+            .collect();
     }
     // One file can cost more than a hundred others — redis's `fast_float.h`
     // against a page of Lua — so a thread takes the next file when it is
     // free rather than a fixed share of them up front.
     let next = AtomicUsize::new(0);
+    let mut parsed_round = Vec::new();
     std::thread::scope(|scope| {
         let handles = (0..threads)
             .map(|_| {
                 let next = &next;
-                let round = &round;
                 scope.spawn(move || {
                     let mut parsed = Vec::new();
                     loop {
@@ -601,10 +618,11 @@ fn parse_ahead(
             .collect::<Vec<_>>();
         for handle in handles {
             if let Ok(parsed) = handle.join() {
-                context.parsed_ahead.extend(parsed);
+                parsed_round.extend(parsed);
             }
         }
     });
+    parsed_round
 }
 
 /// One file read into facts, exactly as [`index_file`] would read it.

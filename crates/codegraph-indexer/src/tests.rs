@@ -4042,7 +4042,7 @@ fn reading_files_ahead_of_the_walk_changes_nothing_it_finds() {
     // with the walk.
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();
-    for index in 0..300 {
+    for index in 0..1200 {
         fs::write(
             root.join("src").join(format!("module{index}.rs")),
             format!("pub fn helper{index}() {{ other{index}(); }}\n\nfn other{index}() {{}}\n"),
@@ -4058,6 +4058,22 @@ fn reading_files_ahead_of_the_walk_changes_nothing_it_finds() {
     .unwrap();
 
     let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    // Reading runs one round ahead of the walk, so a project of more than
+    // one round proves the rounds line up with it.
+    let again = scan_project(&root, &IndexOptions::default()).unwrap();
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .map(|node| (format!("{:?}", node.kind), node.label.clone()))
+            .collect::<Vec<_>>(),
+        again
+            .nodes
+            .iter()
+            .map(|node| (format!("{:?}", node.kind), node.label.clone()))
+            .collect::<Vec<_>>(),
+        "the same project reads the same way twice"
+    );
     let functions = graph
         .nodes
         .iter()

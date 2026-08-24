@@ -1697,8 +1697,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     .cloned()
                     .map(|package| {
                         resolved_import_package(context, &mut scanned_candidates, package)
-                    })
-                {
+                    }) {
                     Some(ImportedPackage::Local(candidates)) => Some(candidates),
                     _ => None,
                 }
