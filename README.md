@@ -103,6 +103,12 @@ Implemented now:
   protobuf code no longer reports 3234 calls as unresolved, and `providers.SchemaCache.Set` reaches
   the in-repo package that declares it. Go's predeclared types count as the language's own when they
   are written as conversions -- `string(b)`, `int64(n)` -- rather than as functions nothing declares.
+- How a project is laid out is answered by what the graph can answer: "how is this project
+  organized" searched it for the word `project` and found five nodes, and "what are the main
+  subsystems" answered with the entrypoints because it says `main`. Both now answer with the busiest
+  parts of the graph, under a rule that says the communities and architecture commands are what
+  really group a project into areas. An ordinal is not a name either -- "what should I read first"
+  no longer filters the entrypoints by `first`.
 - Asking what breaks settles a question before any topic word does: "what breaks if I change the
   SongResource endpoint" was answered with koel's HTTP routes and "what would break if I remove the
   Setting config" with its configuration reads, because the topic rules key on nouns a symbol's name

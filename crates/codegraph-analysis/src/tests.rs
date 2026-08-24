@@ -1973,6 +1973,45 @@ fn a_question_the_graph_cannot_answer_says_what_it_answers_instead() {
 }
 
 #[test]
+fn how_a_project_is_laid_out_is_not_a_search_for_the_word_project() {
+    // "how is this project organized" searched the graph for the word
+    // `project` and answered with five nodes; "what are the main
+    // subsystems" answered with the entrypoints, because it says `main`.
+    // A query cannot group a project into areas -- that is what the
+    // communities and architecture commands do -- so the busiest parts of
+    // the graph stand in for it, and the rule says so.
+    for question in [
+        "how is this project organized",
+        "what are the main subsystems",
+        "what is the architecture",
+    ] {
+        let plan = natural_query_plan(question).expect("the question routes");
+        assert_eq!(
+            plan.generated_query, "hotspots min_score:3 edge_limit:300",
+            "{question}"
+        );
+        assert_eq!(
+            plan.rule, "hotspots_stand_in_for_architecture",
+            "{question}"
+        );
+        assert_eq!(plan.confidence, "low", "{question}");
+    }
+
+    // Where to begin reading is where the program begins. `first` is an
+    // ordinal a question is built from, not a name to filter by; the verb
+    // `read` may still be one, and the ask surface widens it away when the
+    // project has nothing by that name.
+    let plan = natural_query_plan("what should I read first").expect("the question routes");
+    assert!(
+        plan.generated_query.starts_with("entrypoints"),
+        "{}",
+        plan.generated_query
+    );
+    assert_eq!(plan.rule, "entrypoint_or_startup");
+    assert!(!plan.generated_query.contains("first"));
+}
+
+#[test]
 fn asking_what_breaks_settles_the_question_before_any_topic_word() {
     // The topic rules key on nouns a symbol's own name may sit beside:
     // "what breaks if I change the SongResource endpoint" was answered with

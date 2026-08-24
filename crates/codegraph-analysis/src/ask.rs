@@ -372,6 +372,32 @@ pub(crate) fn natural_query_plan_with_anchor(
                 "medium".to_string(),
             )
         }
+    // How a project is laid out is what `codegraph communities` and
+    // `codegraph architecture` answer; a query cannot, so the busiest parts
+    // of the graph stand in for it -- as structural coupling stands in for
+    // co-change. Asked before the entrypoint rule, because "what are the
+    // main subsystems" is not a question about `main`.
+    } else if natural_query_mentions_any(
+        &routing,
+        &[
+            "subsystem",
+            "organized",
+            "organised",
+            "structured",
+            "architecture",
+            "layout",
+            "laid out",
+            "подсистем",
+            "устроен",
+            "структур",
+            "архитектур",
+        ],
+    ) {
+        (
+            "hotspots min_score:3 edge_limit:300".to_string(),
+            "hotspots_stand_in_for_architecture".to_string(),
+            "low".to_string(),
+        )
     } else if natural_query_mentions_any(
         &routing,
         &[
@@ -380,6 +406,10 @@ pub(crate) fn natural_query_plan_with_anchor(
             "entry point",
             "startup",
             "start",
+            // Where to begin reading is where the program begins.
+            "read first",
+            "start reading",
+            "начать чтен",
             "main",
             "boot",
             // "how do I run the tests" asks what starts the project, and
@@ -956,11 +986,16 @@ pub(crate) fn natural_query_stop_word(token: &str) -> bool {
             | "why"
             | "which"
             // Adverbs a question is built from: "which files change
-            // together" searched the project for `together`.
+            // together" searched the project for `together`, and "what
+            // should I read first" for `first`.
             | "together"
             | "often"
             | "recently"
+            | "first"
+            | "next"
+            | "instead"
             | "вместе"
+            | "сначала"
             | "does"
             | "do"
             | "is"
