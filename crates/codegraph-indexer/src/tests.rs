@@ -7075,6 +7075,49 @@ jobs:
 }
 
 #[test]
+fn a_manifest_that_does_not_parse_says_so() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("fixtures")).unwrap();
+    // A missing brace, and a table header that never closes.
+    fs::write(
+        root.join("package.json"),
+        "{\"name\": \"demo\", \"dependencies\": {",
+    )
+    .unwrap();
+    fs::write(root.join("Cargo.toml"), "[package\nname = \"demo\"\n").unwrap();
+    // A whole manifest is fine.
+    fs::write(
+        root.join("composer.json"),
+        "{\"name\": \"demo/app\", \"require\": {\"psr/log\": \"^3.0\"}}",
+    )
+    .unwrap();
+    // A deliberately broken fixture is a note rather than a warning.
+    fs::write(root.join("fixtures").join("package.json"), "{oops").unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reasons: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            node.metadata
+                .get("manifest_parse_error")
+                .map(|reason| (node.label.as_str(), reason.as_str()))
+        })
+        .collect();
+    let labels: Vec<_> = reasons.iter().map(|(label, _)| *label).collect();
+    assert!(labels.contains(&"package.json"), "{reasons:?}");
+    assert!(labels.contains(&"Cargo.toml"), "{reasons:?}");
+    assert!(!labels.contains(&"composer.json"), "{reasons:?}");
+    assert!(
+        reasons
+            .iter()
+            .all(|(_, reason)| !reason.contains('\n') && reason.len() <= 200),
+        "the reason is one short line: {reasons:?}"
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn a_workflow_step_runs_where_the_workflow_says() {
     let root = temp_project_root();
     fs::create_dir_all(root.join(".github").join("workflows")).unwrap();

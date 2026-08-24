@@ -1517,6 +1517,38 @@ pub(crate) fn manifest_dependencies(
     }
 }
 
+/// Why a structured manifest could not be read, when it could not be.
+///
+/// A `package.json` with a missing brace declares nothing, and the scan said
+/// nothing about it: every dependency finding then described a project whose
+/// manifest nobody could read. Only the formats with a parser are checked;
+/// `requirements.txt` and `go.mod` are read line by line and cannot fail.
+pub(crate) fn manifest_parse_error(path: &Path, source: &str) -> Option<String> {
+    let first_line = |reason: String| {
+        let line = reason
+            .lines()
+            .next()
+            .unwrap_or("could not be parsed")
+            .trim();
+        let mut short: String = line.chars().take(200).collect();
+        if short.is_empty() {
+            short = "could not be parsed".to_string();
+        }
+        short
+    };
+    match path.file_name().and_then(|name| name.to_str())? {
+        "Cargo.toml" | "pyproject.toml" | "Pipfile" => toml::from_str::<toml::Value>(source)
+            .err()
+            .map(|error| first_line(error.to_string())),
+        "package.json" | "package-lock.json" | "composer.json" | "composer.lock" | "vcpkg.json" => {
+            serde_json::from_str::<serde_json::Value>(source)
+                .err()
+                .map(|error| first_line(error.to_string()))
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn manifest_entrypoints(path: &Path, source: &str) -> Vec<ManifestEntrypoint> {
     match path.file_name().and_then(|name| name.to_str()) {
         Some("Cargo.toml") => cargo_entrypoints(path, source),

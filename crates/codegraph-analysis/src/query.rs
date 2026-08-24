@@ -1,7 +1,9 @@
 //! The graph query language: expression parsing, every query slice, node
 //! reference resolution, and result assembly.
 
-use codegraph_core::{CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind};
+use codegraph_core::{
+    CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind, is_vendored_source_path,
+};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[allow(unused_imports)]
@@ -4387,6 +4389,25 @@ pub(crate) fn add_parse_error_insights(graph: &CodeGraph, insights: &mut Vec<Ins
                 severity: InsightSeverity::Warning,
                 message: format!(
                     "{} skipped because size {file_size} exceeds max file size {max_file_size}",
+                    node.label
+                ),
+                nodes: vec![node.id],
+                edges: Vec::new(),
+            });
+        } else if let Some(reason) = node.metadata.get("manifest_parse_error") {
+            // A manifest nobody can parse declares nothing, so every
+            // dependency finding about the project is missing what it says.
+            let vendored = is_vendored_source_path(&node.label);
+            let fixture = is_test_like_source_path(&node.label);
+            insights.push(Insight {
+                kind: "malformed_manifest".to_string(),
+                severity: if vendored || fixture {
+                    InsightSeverity::Info
+                } else {
+                    InsightSeverity::Warning
+                },
+                message: format!(
+                    "{} could not be parsed, so its dependencies are missing: {reason}",
                     node.label
                 ),
                 nodes: vec![node.id],

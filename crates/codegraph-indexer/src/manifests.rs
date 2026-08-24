@@ -45,6 +45,11 @@ pub(crate) fn index_manifest_dependencies(
     path: &Path,
     source: &str,
 ) {
+    // A manifest that does not parse declares nothing; say so rather than
+    // letting every dependency finding describe a file nobody could read.
+    if let Some(reason) = manifest_parse_error(path, source) {
+        add_file_metadata(&mut context.graph, file_id, "manifest_parse_error", reason);
+    }
     if let Some(own) = manifest_own_package_id(path, source) {
         context.own_package_ids.insert(own);
     }

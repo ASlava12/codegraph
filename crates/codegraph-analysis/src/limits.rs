@@ -33,6 +33,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "skipped_large_file",
     "syntax_error",
     "test_only_runtime_dependency",
+    "malformed_manifest",
     "unmatched_platform_channel",
     "undeclared_flutter_asset",
     "undeclared_external_import",
