@@ -932,7 +932,7 @@ pub fn entrypoints(graph: &CodeGraph) -> Vec<Node> {
 /// How likely an entrypoint is to be the one someone means: a declared program
 /// first, then the routes a server exposes, then scripts and build targets,
 /// then CI and container declarations — and tests last, whatever declares them.
-fn entrypoint_rank(node: &Node) -> u8 {
+pub(crate) fn entrypoint_rank(node: &Node) -> u8 {
     let kind = node
         .metadata
         .get("entrypoint_kind")
@@ -955,8 +955,26 @@ fn entrypoint_rank(node: &Node) -> u8 {
     if test_like {
         return 5;
     }
+    // A script whose shebang says how to run it is a program too, unless
+    // it sits where the repository keeps its build: koel's `artisan` at
+    // the root is how the program runs, and ripgrep's `ci/test-complete`
+    // is how it is tested.
+    // The path is on the span when the scan placed the node, and in the
+    // label -- `script:ci/test-complete` -- when it did not.
+    let tooling = node
+        .span
+        .as_ref()
+        .map(|span| span.path.as_str())
+        .or_else(|| node.label.split_once(':').map(|(_, path)| path))
+        .is_some_and(is_repository_tooling_source_path);
     match (source, kind) {
-        ("manifest", "binary" | "executable" | "app") => 0,
+        // What a manifest publishes as a program: a binary, the module a
+        // Go repository is, or a console script a package installs.
+        (
+            "manifest",
+            "binary" | "executable" | "app" | "module" | "console_script" | "gui_script",
+        ) => 0,
+        ("shebang", _) if !tooling => 1,
         // A program the parser recognised: below an explicitly declared
         // binary, above the routes and scripts around it. Graphs scanned
         // before programs were labelled fall back to the node kind.

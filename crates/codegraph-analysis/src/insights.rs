@@ -4071,6 +4071,9 @@ pub(crate) fn is_repository_tooling_source_path(path: &str) -> bool {
             segment,
             "scripts"
                 | "tools"
+                // `ci/` is the build and the test run: ripgrep keeps six
+                // shell scripts there and nothing else runs them.
+                | "ci"
                 | "bench"
                 | "benchmarks"
                 | "__benchmarks__"

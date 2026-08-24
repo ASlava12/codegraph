@@ -1882,6 +1882,55 @@ fn entrypoints_lead_with_programs_not_ci_jobs() {
 }
 
 #[test]
+fn the_entrypoint_query_answers_in_the_same_order_as_the_overview() {
+    let mut graph = CodeGraph::new("repo");
+    let mut declare = |label: &str, metadata: BTreeMap<String, String>| {
+        let id = graph.add_node_with_metadata(NodeKind::Entrypoint, label, None, metadata);
+        graph.add_edge(graph.root, id, EdgeKind::Entrypoint, Confidence::Exact);
+        id
+    };
+    // As the file walk produces them: `.github/` first.
+    let ci_job = declare(
+        "github workflow:CI/test",
+        BTreeMap::from([
+            ("source".to_string(), "github-actions".to_string()),
+            ("entrypoint_kind".to_string(), "workflow_job".to_string()),
+        ]),
+    );
+    let route = declare(
+        "route GET /api/ping",
+        BTreeMap::from([
+            ("source".to_string(), "framework".to_string()),
+            ("entrypoint_kind".to_string(), "route".to_string()),
+        ]),
+    );
+    // koel's `artisan` is how the program runs; a script under `ci/` is
+    // how it is tested.
+    let ci_script = declare(
+        "script:ci/test-complete",
+        BTreeMap::from([("source".to_string(), "shebang".to_string())]),
+    );
+    let console = declare(
+        "script:artisan",
+        BTreeMap::from([("source".to_string(), "shebang".to_string())]),
+    );
+
+    let answered: Vec<NodeId> = query_graph(&graph, "entrypoints")
+        .expect("the query runs")
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Entrypoint)
+        .map(|node| node.id)
+        .collect();
+
+    assert_eq!(
+        answered,
+        vec![console, route, ci_script, ci_job],
+        "{answered:?}"
+    );
+}
+
+#[test]
 fn an_ambiguous_start_label_picks_the_declared_program() {
     let mut graph = CodeGraph::new("repo");
     let span = |path: &str| {

@@ -802,7 +802,7 @@ pub(crate) fn query_entrypoints(
     validate_entrypoint_terms(&spec)?;
 
     let path_index = node_path_index(graph);
-    let matched: Vec<_> = graph
+    let mut matched: Vec<_> = graph
         .nodes
         .iter()
         .filter(|node| {
@@ -810,6 +810,19 @@ pub(crate) fn query_entrypoints(
         })
         .cloned()
         .collect();
+    // A reader asking where the program starts wants the program: koel's
+    // 151 entrypoints opened with eight GitHub Actions jobs, which say how
+    // it is built and tested rather than how it runs. The overview ranks
+    // them for the same reason, and one ranking is enough.
+    matched.sort_by_key(|node| {
+        (
+            entrypoint_rank(node),
+            node.span
+                .as_ref()
+                .map_or(0, |span| span.path.matches('/').count()),
+            node.id,
+        )
+    });
     let selected_ids: BTreeSet<_> = matched
         .iter()
         .take(spec.limit)
