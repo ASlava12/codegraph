@@ -499,6 +499,21 @@ pub(crate) fn index_commonjs_require_imports(
             metadata.insert("resolution".to_string(), "pending".to_string());
         }
 
+        // What the line binds, so a later call can be answered by the
+        // import list the way an ESM import already is: `var compileETag =
+        // require('./utils').compileETag` binds `compileETag`.
+        let package = local_import
+            .as_ref()
+            .map(|local| ImportedPackage::Local(local.candidates.clone()))
+            .unwrap_or(ImportedPackage::External);
+        for name in commonjs_bound_names(line) {
+            context
+                .file_imported_names
+                .entry(label.to_string())
+                .or_default()
+                .insert(name, package.clone());
+        }
+
         let import_id = context.graph.add_node_with_metadata(
             NodeKind::ExternalDependency,
             require_call,
@@ -521,6 +536,44 @@ pub(crate) fn index_commonjs_require_imports(
                 allow_suffix_fallback: true,
             });
         }
+    }
+}
+
+/// The names a `require` line binds. `const { a, b: c } = require('m')`
+/// binds `a` and `c`, `var x = require('m')` binds `x`, and `var a =
+/// require('m').a` binds `a`. An assignment to a property (`exports.x =
+/// require('m')`) binds nothing this file can call by name.
+pub(crate) fn commonjs_bound_names(line: &str) -> Vec<String> {
+    let trimmed = line.trim();
+    let Some(rest) = ["const ", "let ", "var "]
+        .iter()
+        .find_map(|keyword| trimmed.strip_prefix(keyword))
+    else {
+        return Vec::new();
+    };
+    let Some((binding, _)) = rest.split_once('=') else {
+        return Vec::new();
+    };
+    let binding = binding.trim();
+    let is_name = |name: &str| {
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|character| character.is_alphanumeric() || matches!(character, '_' | '$'))
+    };
+    if let Some(names) = binding.strip_prefix('{') {
+        return names
+            .trim_end_matches('}')
+            .split(',')
+            .map(|part| part.rsplit(':').next().unwrap_or(part).trim().to_string())
+            .filter(|name| is_name(name))
+            .collect();
+    }
+    // A destructured array or a property assignment names nothing to call.
+    if is_name(binding) {
+        vec![binding.to_string()]
+    } else {
+        Vec::new()
     }
 }
 

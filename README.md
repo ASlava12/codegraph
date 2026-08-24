@@ -103,6 +103,14 @@ Implemented now:
   protobuf code no longer reports 3234 calls as unresolved, and `providers.SchemaCache.Set` reaches
   the in-repo package that declares it. Go's predeclared types count as the language's own when they
   are written as conversions -- `string(b)`, `int64(n)` -- rather than as functions nothing declares.
+- A JavaScript or TypeScript module calls what it declares or imports, and nothing else by a bare
+  name: `const h = originalH` in vue's Teleport spec and `const { trigger } = useContextMenu()` in
+  koel's context menus bind names the file never imports, and matching by name alone sent those
+  calls into other modules -- 204 of koel's cross-file calls, 201 of vue's, 34 of axios's. A
+  `require` binds a name the same way an import statement does (`var compileETag =
+  require('./utils').compileETag`), and a file that states no import at all may be a classic script,
+  where a bare name really can come from anywhere, so the rule asks only files that import
+  something.
 - PHP resolves through the class a static call is written through. `Uuid::generate()` kept only
   `generate` in its label, so a class the project declares and a package's facade looked like one
   call: `File::hash($path)` was answered by koel's own authenticator and `Cache::put` by a

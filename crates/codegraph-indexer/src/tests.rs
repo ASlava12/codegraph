@@ -5692,6 +5692,53 @@ fn a_go_call_through_a_package_qualifier_reads_past_the_type() {
 }
 
 #[test]
+fn a_module_calls_what_it_imports_or_declares() {
+    // `const h = originalH` binds a name the file never imports, and
+    // matching by name alone sent the call into the module that declares
+    // the original. A module shares nothing ambiently: what a file calls by
+    // a bare name it either declares or imports -- including through a
+    // `require`, which binds a name just as an import statement does.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(root.join("package.json"), "{\n  \"name\": \"app\"\n}\n").unwrap();
+    fs::write(
+        root.join("lib").join("utils.js"),
+        "function compileETag (value) {\n  return value\n}\n\nfunction render (value) {\n  return value\n}\n\nmodule.exports = { compileETag, render }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib").join("app.js"),
+        "var compileETag = require('./utils').compileETag\n\nfunction start (options) {\n  var render = options.render\n\n  compileETag('x')\n  render('y')\n}\n\nmodule.exports = start\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reaches = |label: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && graph.nodes.iter().any(|node| {
+                    node.id == edge.target
+                        && node.label == label
+                        && node
+                            .span
+                            .as_ref()
+                            .is_some_and(|span| span.path.ends_with("utils.js"))
+                })
+        })
+    };
+    assert!(
+        reaches("compileETag"),
+        "a require binds the name the file then calls"
+    );
+    assert!(
+        !reaches("render"),
+        "a name the body binds is not the module's export of the same name"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_static_call_names_the_class_it_goes_through() {
     // `File::hash($path)` is Laravel's facade, and koel declares a `hash`
     // of its own in an authenticator: the label kept only the method, so
