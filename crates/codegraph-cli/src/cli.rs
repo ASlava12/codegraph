@@ -131,6 +131,9 @@ pub(crate) enum Command {
     IncrementalUpdate(IncrementalOutputArgs),
 
     /// Register a repository in the global graph registry.
+    #[command(
+        after_help = "Examples:\n  codegraph registry-add ../backend --name backend\n  codegraph registry-add . --registry-path ./registry.json"
+    )]
     RegistryAdd {
         /// Repository root to register.
         #[arg(default_value = ".")]
@@ -163,6 +166,9 @@ pub(crate) enum Command {
     },
 
     /// Run one graph query expression across all (or selected) registered repositories.
+    #[command(
+        after_help = "Examples:\n  codegraph registry-query 'configs target:DATABASE_URL'\n  codegraph registry-query 'nodes kind:function limit:5' --project backend"
+    )]
     RegistryQuery {
         /// Query expression, for example: nodes kind:function or path from:main to:load_config.
         expression: String,
@@ -184,6 +190,9 @@ pub(crate) enum Command {
     },
 
     /// Merge graph JSON artifacts and/or registered projects into one graph with source provenance.
+    #[command(
+        after_help = "Examples:\n  codegraph merge api.json docs.json --output merged.json\n  codegraph merge --project backend --project frontend --output merged.json"
+    )]
     Merge {
         /// Graph JSON files to merge (as produced by scan/export).
         inputs: Vec<PathBuf>,
@@ -561,6 +570,9 @@ pub(crate) enum Command {
 
     /// List the exact dependency edges between two architecture areas with confidence and risks.
     #[command(visible_alias = "contract")]
+    #[command(
+        after_help = "Examples:\n  codegraph component-contract . --source docs --target crates/codegraph-analysis\n  Area names come from `codegraph architecture .` and must match exactly."
+    )]
     ComponentContract {
         /// Source architecture area, for example: crates or web.
         #[arg(long)]
@@ -603,6 +615,9 @@ pub(crate) enum Command {
     SourceSearch(SourceSearchArgs),
 
     /// Explain why an edge exists and show confidence/provenance evidence.
+    #[command(
+        after_help = "Examples:\n  codegraph explain-edge . --edge-index 42\n  codegraph explain-edge . --source main --target load_config --kind calls"
+    )]
     ExplainEdge {
         /// Project root to scan.
         #[arg(default_value = ".")]
@@ -726,6 +741,9 @@ pub(crate) enum Command {
     WorkflowQuery(WorkflowQueryArgs),
 
     /// Trace config files and environment variables back to readers and entrypoints.
+    #[command(
+        after_help = "Examples:\n  codegraph trace-config DATABASE_URL .\n  codegraph trace-config config/settings.toml . --depth 8"
+    )]
     #[command(
         after_help = "Examples:\n  codegraph trace-config DATABASE_URL .\n  codegraph trace-config config/settings.toml . --depth 8"
     )]
