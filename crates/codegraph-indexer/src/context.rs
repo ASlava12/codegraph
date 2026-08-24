@@ -11,6 +11,13 @@ use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
 use crate::*;
 
+/// What reading one file yielded: the language it was read as, and its
+/// facts or the error that stopped them.
+pub(crate) type ParsedSource = (
+    codegraph_parser::Language,
+    Result<codegraph_parser::ParsedFile, codegraph_parser::ParseError>,
+);
+
 pub(crate) struct IndexContext {
     pub(crate) graph: CodeGraph,
     /// Lazily synced `(source, target, kind)` keys of `graph.edges`, kept by
@@ -87,6 +94,9 @@ pub(crate) struct IndexContext {
     pub(crate) pending_migration_dir_refs: Vec<PendingMigrationDirRef>,
     pub(crate) sql_migration_dirs: BTreeMap<String, Vec<NodeId>>,
     pub(crate) pending_mcp_local_refs: Vec<PendingMcpLocalRef>,
+    /// Files read into facts ahead of the walk, on every core. Emptied as
+    /// the walk reaches each one.
+    pub(crate) parsed_ahead: BTreeMap<String, ParsedSource>,
 }
 
 /// A path-like MCP server command/argument waiting to be matched against

@@ -1,9 +1,10 @@
 //! Project walking and per-file indexing: the scan entrypoints, scan
 //! coverage reporting, and the file-level fact dispatcher.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan};
 use codegraph_parser::{Language, ParsedItemKind, adapter_for_language, adapter_for_path};
@@ -176,8 +177,15 @@ pub(crate) fn scan_project_with_scope(
         pending_migration_dir_refs: Vec::new(),
         sql_migration_dirs: BTreeMap::new(),
         pending_mcp_local_refs: Vec::new(),
+        parsed_ahead: BTreeMap::new(),
     };
 
+    // The walk is read in two passes: what it found, and then what each
+    // file holds. Reading a file into facts is the whole cost of a first
+    // scan — 80% of it on terraform — and it is the one part that needs
+    // nothing from the graph being built, so it happens on every core while
+    // the graph itself is still assembled in one order.
+    let mut walked: Vec<WalkedEntry> = Vec::new();
     for entry in WalkDir::new(root)
         .sort_by_file_name()
         .into_iter()
@@ -205,14 +213,7 @@ pub(crate) fn scan_project_with_scope(
             if !scope.is_none_or(|scope| scope.includes_directory(&label)) {
                 continue;
             }
-            let id = context.graph.add_node(NodeKind::Directory, &label);
-            context.directory_nodes.insert(label.to_string(), id);
-            context.graph.add_edge(
-                context.graph.root,
-                id,
-                EdgeKind::Contains,
-                Confidence::Exact,
-            );
+            walked.push(WalkedEntry::Directory { label });
             continue;
         }
 
@@ -220,13 +221,58 @@ pub(crate) fn scan_project_with_scope(
             if !scope.is_none_or(|scope| scope.includes_file(&label)) {
                 continue;
             }
-            match entry.metadata() {
-                Ok(metadata) if metadata.len() > options.max_file_size => {
-                    if is_index_relevant_file(path) {
-                        index_skipped_file(&mut context, path, &label, metadata.len(), options);
-                    }
+            let oversized = entry
+                .metadata()
+                .ok()
+                .map(|metadata| metadata.len())
+                .filter(|bytes| *bytes > options.max_file_size);
+            walked.push(WalkedEntry::File {
+                path: path.to_path_buf(),
+                label,
+                oversized,
+            });
+        }
+    }
+
+    let mut unparsed = walked
+        .iter()
+        .filter_map(|entry| match entry {
+            WalkedEntry::File {
+                path,
+                label,
+                oversized: None,
+            } => Some((path.clone(), label.clone())),
+            _ => None,
+        })
+        .collect::<VecDeque<_>>();
+
+    for entry in &walked {
+        cancel.check()?;
+        match entry {
+            WalkedEntry::Directory { label } => {
+                let id = context.graph.add_node(NodeKind::Directory, label);
+                context.directory_nodes.insert(label.to_string(), id);
+                context.graph.add_edge(
+                    context.graph.root,
+                    id,
+                    EdgeKind::Contains,
+                    Confidence::Exact,
+                );
+            }
+            WalkedEntry::File {
+                path,
+                label,
+                oversized: Some(bytes),
+            } => {
+                if is_index_relevant_file(path) {
+                    index_skipped_file(&mut context, path, label, *bytes, options);
                 }
-                _ => index_file(&mut context, path, &label, options),
+            }
+            WalkedEntry::File { path, label, .. } => {
+                if context.parsed_ahead.is_empty() {
+                    parse_ahead(&mut context, &mut unparsed, options);
+                }
+                index_file(&mut context, path, label, options);
             }
         }
     }
@@ -486,6 +532,128 @@ fn add_skipped_file(
     );
 }
 
+/// What one pass of the walk found, so the next pass can read files into
+/// facts on every core before the graph is assembled in one order.
+enum WalkedEntry {
+    Directory {
+        label: String,
+    },
+    File {
+        path: PathBuf,
+        label: String,
+        /// The size of a file too large to read, which the graph records
+        /// without reading.
+        oversized: Option<u64>,
+    },
+}
+
+/// How many files one round of reading holds at once. Bounded so a
+/// repository of any size costs the same memory here.
+const PARSE_AHEAD_FILES: usize = 256;
+
+/// Read the next files into facts, on as many threads as the machine has.
+/// This is the one step of a scan that needs nothing from the graph.
+fn parse_ahead(
+    context: &mut IndexContext,
+    unparsed: &mut VecDeque<(PathBuf, String)>,
+    options: &IndexOptions,
+) {
+    let round = unparsed
+        .drain(..unparsed.len().min(PARSE_AHEAD_FILES))
+        .collect::<Vec<_>>();
+    if round.is_empty() {
+        return;
+    }
+    let threads = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .clamp(1, 8)
+        .min(round.len());
+    if threads < 2 {
+        context.parsed_ahead.extend(
+            round
+                .iter()
+                .filter_map(|(path, label)| preparse_file(path, label, options)),
+        );
+        return;
+    }
+    // One file can cost more than a hundred others — redis's `fast_float.h`
+    // against a page of Lua — so a thread takes the next file when it is
+    // free rather than a fixed share of them up front.
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let handles = (0..threads)
+            .map(|_| {
+                let next = &next;
+                let round = &round;
+                scope.spawn(move || {
+                    let mut parsed = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let Some((path, label)) = round.get(index) else {
+                            break;
+                        };
+                        parsed.extend(preparse_file(path, label, options));
+                    }
+                    parsed
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            if let Ok(parsed) = handle.join() {
+                context.parsed_ahead.extend(parsed);
+            }
+        }
+    });
+}
+
+/// One file read into facts, exactly as [`index_file`] would read it.
+fn preparse_file(
+    path: &Path,
+    label: &str,
+    options: &IndexOptions,
+) -> Option<(String, ParsedSource)> {
+    let stamp = file_stamp(path);
+    let source = fs::read(path).ok()?;
+    if minified_line_length(&source).is_some() {
+        return None;
+    }
+    let adapter = parsing_adapter(path, &source)?;
+    Some((
+        label.to_string(),
+        (
+            adapter.language(),
+            parse_source_cached(options, stamp, label, &source, adapter),
+        ),
+    ))
+}
+
+/// The adapter that reads a file: its extension states one, a `.h` that
+/// declares C++ means the other, and a script says so on its first line.
+pub(crate) fn parsing_adapter(
+    path: &Path,
+    source: &[u8],
+) -> Option<&'static dyn codegraph_parser::LanguageAdapter> {
+    if let Some(adapter) = adapter_for_path(path) {
+        // `.h` is C's extension and C++'s alike, and the extension is all
+        // the path can say. A header that declares a namespace, a
+        // template, a class or an access section is C++: parsing 21 such
+        // headers in the corpus as C++ produced fewer errors every time,
+        // and redis's `fast_float.h` went from 1152 to 150.
+        if adapter.language() == Language::C
+            && std::str::from_utf8(source).is_ok_and(declares_cpp)
+            && let Some(cpp) = adapter_for_language(Language::Cpp)
+        {
+            return Some(cpp);
+        }
+        return Some(adapter);
+    }
+    std::str::from_utf8(source)
+        .ok()
+        .and_then(shebang_language)
+        .and_then(adapter_for_language)
+}
+
 pub(crate) fn index_file(
     context: &mut IndexContext,
     path: &Path,
@@ -517,29 +685,11 @@ pub(crate) fn index_file(
         return;
     }
 
-    let adapter = adapter_for_path(path).map(|adapter| {
-        // `.h` is C's extension and C++'s alike, and the extension is all
-        // the path can say. A header that declares a namespace, a
-        // template, a class or an access section is C++: parsing 21 such
-        // headers in the corpus as C++ produced fewer errors every time,
-        // and redis's `fast_float.h` went from 1152 to 150.
-        if adapter.language() == Language::C
-            && source_bytes
-                .as_deref()
-                .and_then(|source| std::str::from_utf8(source).ok())
-                .is_some_and(declares_cpp)
-            && let Some(cpp) = adapter_for_language(Language::Cpp)
-        {
-            return cpp;
-        }
-        adapter
-    });
-    let language = adapter.map(|adapter| adapter.language()).or_else(|| {
-        source_bytes
-            .as_deref()
-            .and_then(|source| std::str::from_utf8(source).ok())
-            .and_then(shebang_language)
-    });
+    let adapter = source_bytes
+        .as_deref()
+        .and_then(|source| parsing_adapter(path, source))
+        .or_else(|| adapter_for_path(path));
+    let language = adapter.map(|adapter| adapter.language());
 
     if let Some(language) = language {
         metadata.insert("language".to_string(), language.to_string());
@@ -572,12 +722,16 @@ pub(crate) fn index_file(
         .then(|| ocaml_interface_names(path))
         .flatten();
 
-    let parse_result = source_bytes.as_ref().and_then(|source| {
-        let adapter = adapter.or_else(|| language.and_then(adapter_for_language))?;
-        Some((
-            adapter.language(),
-            parse_source_cached(options, pre_read_stamp, label, source, adapter),
-        ))
+    // Read ahead of the walk on every core; only a file the round did not
+    // cover is read here.
+    let parse_result = context.parsed_ahead.remove(label).or_else(|| {
+        source_bytes.as_ref().and_then(|source| {
+            let adapter = adapter?;
+            Some((
+                adapter.language(),
+                parse_source_cached(options, pre_read_stamp, label, source, adapter),
+            ))
+        })
     });
 
     let file_id = context

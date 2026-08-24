@@ -4036,6 +4036,54 @@ fn a_configurations_declarations_refer_to_each_other() {
 }
 
 #[test]
+fn reading_files_ahead_of_the_walk_changes_nothing_it_finds() {
+    // Files are read into facts on every core before the graph is
+    // assembled; more files than one round holds proves the rounds line up
+    // with the walk.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    for index in 0..300 {
+        fs::write(
+            root.join("src").join(format!("module{index}.rs")),
+            format!("pub fn helper{index}() {{ other{index}(); }}\n\nfn other{index}() {{}}\n"),
+        )
+        .unwrap();
+    }
+    // A header whose contents, not its extension, say which language it is:
+    // the round that reads it must decide the same way the walk would.
+    fs::write(
+        root.join("src").join("shape.h"),
+        "namespace shapes {\nclass Circle { public: double area(); };\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let functions = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Function)
+        .count();
+    assert!(functions >= 600, "every file was read: {functions}");
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "src/shape.h")
+            .and_then(|node| node.metadata.get("language"))
+            .map(String::as_str),
+        Some("cpp")
+    );
+    let calls = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Calls)
+        .count();
+    assert!(calls >= 300, "and its calls were resolved: {calls}");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_proto_import_of_the_compilers_own_types_is_a_dependency() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("api")).unwrap();
