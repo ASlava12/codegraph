@@ -325,7 +325,10 @@ pub(crate) enum Command {
     /// Emit investigation insights such as unresolved calls and error flows.
     Insights(InsightArgs),
 
-    /// Run insight checks and exit non-zero when findings meet a severity threshold.
+    /// Run insight checks and exit with code 2 when findings meet a severity threshold.
+    #[command(
+        after_help = "Examples:\n  codegraph check . --fail-on error\n  codegraph check . --fail-on warning --kind dependency\n\nExit codes: 0 when the gate passes, 2 when matching insights are at or above the threshold."
+    )]
     Check(CheckArgs),
 
     /// Query focused graph slices as JSON.
