@@ -8294,6 +8294,93 @@ fn insights_report_unreachable_source_files() {
 }
 
 #[test]
+fn an_example_apps_own_pinning_is_a_note() {
+    let mut graph = CodeGraph::new("repo");
+    let package = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "http",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "dependency".to_string()),
+            ("package_id".to_string(), "pub:http".to_string()),
+        ]),
+    );
+    let declare = |graph: &mut CodeGraph, manifest: &str, version: &str, scope: &str| {
+        let file = graph.add_node(NodeKind::File, manifest);
+        graph.add_edge_with_metadata(
+            file,
+            package,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_version".to_string(), version.to_string()),
+                ("dependency_kind".to_string(), scope.to_string()),
+            ]),
+        );
+    };
+    // Two example apps pinning their own versions is the examples' business.
+    declare(
+        &mut graph,
+        "pkgs/ok_http/example/pubspec.yaml",
+        "^1.2.0",
+        "runtime",
+    );
+    declare(
+        &mut graph,
+        "pkgs/cronet_http/example/pubspec.yaml",
+        "^1.5.0",
+        "runtime",
+    );
+
+    let report = insights(&graph);
+    let conflicting: Vec<_> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "conflicting_dependency_declaration")
+        .collect();
+    assert_eq!(conflicting.len(), 1, "{conflicting:?}");
+    assert_eq!(conflicting[0].severity, InsightSeverity::Info);
+
+    // The library itself disagreeing with an example is the project's.
+    let mut own = CodeGraph::new("repo");
+    let owned_package = own.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "http",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "dependency".to_string()),
+            ("package_id".to_string(), "pub:http".to_string()),
+        ]),
+    );
+    for (manifest, version) in [
+        ("pkgs/http/pubspec.yaml", "^1.5.0"),
+        ("pkgs/ok_http/example/pubspec.yaml", "^1.2.0"),
+    ] {
+        let file = own.add_node(NodeKind::File, manifest);
+        own.add_edge_with_metadata(
+            file,
+            owned_package,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_version".to_string(), version.to_string())]),
+        );
+    }
+    let report = insights(&own);
+    assert!(
+        report.insights.iter().any(
+            |insight| insight.kind == "conflicting_dependency_declaration"
+                && insight.severity == InsightSeverity::Warning
+        ),
+        "{:?}",
+        report
+            .insights
+            .iter()
+            .map(|insight| (insight.kind.as_str(), insight.severity))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn config_read_only_by_vendored_code_is_a_note() {
     let mut graph = CodeGraph::new("repo");
     let configure = graph.add_node(NodeKind::Function, "as_fn_error");

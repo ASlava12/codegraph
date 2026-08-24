@@ -3067,6 +3067,16 @@ pub(crate) fn add_unused_dependency_insights(graph: &CodeGraph, insights: &mut V
     }
 }
 
+/// Whether a manifest belongs to the program rather than to an example app,
+/// a test fixture or something the project vendored. A dart workspace's
+/// `pkgs/ok_http/example/pubspec.yaml` pinning its own version of a package
+/// is the example's business.
+fn manifest_is_the_projects_own(label: &str) -> bool {
+    !is_test_like_source_path(label)
+        && !is_vendored_source_path(label)
+        && !is_repository_tooling_source_path(label)
+}
+
 pub(crate) fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let mut groups: BTreeMap<NodeId, Vec<(usize, String)>> = BTreeMap::new();
     for (index, edge) in graph.edges.iter().enumerate() {
@@ -3139,9 +3149,18 @@ pub(crate) fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &
                 .into_iter(),
             3,
         );
+        let declared_by_the_project = declarations
+            .iter()
+            .filter_map(|(index, _)| graph.edges.get(*index))
+            .filter_map(|edge| node_label(graph, edge.source))
+            .any(manifest_is_the_projects_own);
         insights.push(Insight {
             kind: "conflicting_dependency_declaration".to_string(),
-            severity: InsightSeverity::Warning,
+            severity: if declared_by_the_project {
+                InsightSeverity::Warning
+            } else {
+                InsightSeverity::Info
+            },
             message: format!(
                 "Dependency `{package}` is declared with multiple constraints: {versions} in {manifests}"
             ),
@@ -3227,7 +3246,11 @@ pub(crate) fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &
         let scope_list = format_backtick_list(scopes.iter().copied(), 6);
         insights.push(Insight {
             kind: "mixed_dependency_scope".to_string(),
-            severity: InsightSeverity::Warning,
+            severity: if manifest_is_the_projects_own(manifest_label) {
+                InsightSeverity::Warning
+            } else {
+                InsightSeverity::Info
+            },
             message: format!(
                 "`{manifest_label}` declares dependency `{package}` in multiple dependency scopes: {scope_list}"
             ),
