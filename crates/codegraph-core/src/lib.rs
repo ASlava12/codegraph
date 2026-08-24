@@ -143,6 +143,11 @@ pub fn is_vendored_source_path(path: &str) -> bool {
                 | "3rdparty"
                 | "deps"
                 | "node_modules"
+                // spdlog carries fmt in `include/spdlog/fmt/bundled`, and a
+                // project that copies a library in names the directory
+                // either this way or `external`.
+                | "bundled"
+                | "external"
         )
     })
 }
@@ -542,6 +547,8 @@ mod tests {
             "vendor/re/src/pmark.ml",
             "src/lev/vendor/ev.c",
             "third_party/zlib/zlib.h",
+            "include/spdlog/fmt/bundled/format.h",
+            "external/googletest/src/gtest.cc",
             "node_modules/puppeteer/install.mjs",
         ] {
             assert!(is_vendored_source_path(path), "{path}");

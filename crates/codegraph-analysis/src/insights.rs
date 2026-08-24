@@ -823,7 +823,11 @@ pub(crate) fn add_unresolved_entrypoint_insights(graph: &CodeGraph, insights: &m
                 .trim_start_matches("./")
                 .trim_end_matches('/')
                 .trim_end_matches('\\');
-            scanned_paths.contains(token) || is_unscanned_hidden_path(&scanned_paths, token)
+            scanned_paths.contains(token)
+                || is_unscanned_hidden_path(&scanned_paths, token)
+                // `@php vendor/bin/phpunit` runs what composer installs, as
+                // monolog's `composer script:test` does.
+                || command_path_is_installed_or_unscanned(token)
         }) {
             continue;
         }
