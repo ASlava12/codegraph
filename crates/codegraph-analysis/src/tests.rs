@@ -141,6 +141,35 @@ fn summary_counts_graph_facts() {
 }
 
 #[test]
+fn a_file_that_could_not_be_read_is_a_finding() {
+    let mut graph = CodeGraph::new("repo");
+    graph.add_node(NodeKind::File, "src/main.rs");
+    let unreadable = graph.add_node_with_metadata(
+        NodeKind::File,
+        "src/secret.rs",
+        None,
+        BTreeMap::from([(
+            "read_error".to_string(),
+            "Permission denied (os error 13)".to_string(),
+        )]),
+    );
+
+    let report = insights(&graph);
+    let finding = report
+        .insights
+        .iter()
+        .find(|insight| insight.kind == "unreadable_file")
+        .expect("a file with no facts must say why");
+    assert_eq!(finding.severity, InsightSeverity::Error);
+    assert_eq!(finding.nodes, vec![unreadable]);
+    assert!(
+        finding.message.contains("Permission denied"),
+        "message: {}",
+        finding.message
+    );
+}
+
+#[test]
 fn project_report_combines_summary_quality_and_limited_views() {
     let mut graph = CodeGraph::new("repo");
     let file = graph.add_node(NodeKind::File, "src/main.rs");

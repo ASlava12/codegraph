@@ -922,7 +922,9 @@ The image starts `codegraph-server` as a non-root user with `/workspace` as the
 default project root and `/cache` as the persistent graph cache directory.
 Use `--max-file-size <bytes>` to cap per-file reads. Source/manifest files above
 the limit remain visible as skipped file nodes and produce `skipped_large_file`
-insights. When a selected project has `.codegraph/config.toml`, the server uses
+insights. A file the scan could not open at all — permissions, a broken
+symlink — is reported as `unreadable_file` with the reason, so a file with no
+facts is never silently empty. When a selected project has `.codegraph/config.toml`, the server uses
 that repository-owned scan policy for API and web requests.
 Completed scan and semantic enrichment jobs are retained in bounded in-memory
 stores so large graph results do not accumulate without limit. Use

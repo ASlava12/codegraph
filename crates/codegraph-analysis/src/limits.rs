@@ -39,6 +39,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "unreachable_config_read",
     "unreachable_error_flow",
     "unreachable_source_file",
+    "unreadable_file",
     "unresolved_call",
     "unresolved_compose_command_path",
     "unresolved_compose_env_file_path",

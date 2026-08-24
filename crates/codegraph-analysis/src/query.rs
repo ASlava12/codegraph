@@ -4385,6 +4385,16 @@ pub(crate) fn add_parse_error_insights(graph: &CodeGraph, insights: &mut Vec<Ins
                 nodes: vec![node.id],
                 edges: Vec::new(),
             });
+        } else if let Some(reason) = node.metadata.get("read_error") {
+            // A file the scan could not open holds no facts, and without
+            // this the graph shows it as a file with nothing in it.
+            insights.push(Insight {
+                kind: "unreadable_file".to_string(),
+                severity: InsightSeverity::Error,
+                message: format!("{} could not be read: {reason}", node.label),
+                nodes: vec![node.id],
+                edges: Vec::new(),
+            });
         } else if node.metadata.contains_key("parse_error") {
             insights.push(Insight {
                 kind: "parse_error".to_string(),
