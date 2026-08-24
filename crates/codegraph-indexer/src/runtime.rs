@@ -1491,6 +1491,95 @@ pub(crate) fn link_kubernetes_services_to_workloads(
     }
 }
 
+/// The providers a Terraform configuration requires:
+/// `required_providers { happycloud = { source = "example.com/awesomecorp/happycloud", version = "1.0" } }`.
+/// 212 of terraform's own `.tf` files hold nothing else, and the graph
+/// held nothing from them.
+pub(crate) fn terraform_required_providers(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut depth_of_block: Option<usize> = None;
+    let mut depth = 0usize;
+    let mut pending: Option<(String, Option<String>, Option<String>)> = None;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.starts_with("//") {
+            continue;
+        }
+        let opens = trimmed.matches('{').count();
+        let closes = trimmed.matches('}').count();
+        if trimmed.starts_with("required_providers") && trimmed.contains('{') {
+            depth_of_block = Some(depth);
+            depth += opens - closes.min(opens);
+            continue;
+        }
+        if let Some(block_depth) = depth_of_block {
+            // `happycloud = {` opens one provider; the lines inside it name
+            // where it comes from and which versions are allowed.
+            if depth == block_depth + 1
+                && let Some((name, rest)) = trimmed.split_once('=')
+                && !name.trim().is_empty()
+                && name.trim().chars().all(|character| {
+                    character.is_alphanumeric() || character == '_' || character == '-'
+                })
+            {
+                if let Some((name, source_name, version)) = pending.take() {
+                    dependencies.push(terraform_provider(name, source_name, version));
+                }
+                let rest = rest.trim();
+                if rest.starts_with('{') {
+                    pending = Some((name.trim().to_string(), None, None));
+                } else {
+                    // The older form states the version instead of a block:
+                    // `null = "~> 2.0"`.
+                    let version = rest.trim_matches('"').trim();
+                    dependencies.push(terraform_provider(
+                        name.trim().to_string(),
+                        None,
+                        (!version.is_empty()).then(|| version.to_string()),
+                    ));
+                }
+            } else if let Some((_, source_name, version)) = pending.as_mut() {
+                if let Some(value) = terraform_attribute(trimmed, "source") {
+                    *source_name = Some(value);
+                } else if let Some(value) = terraform_attribute(trimmed, "version") {
+                    *version = Some(value);
+                }
+            }
+            if closes > opens && depth <= block_depth + 1 {
+                if let Some((name, source_name, version)) = pending.take() {
+                    dependencies.push(terraform_provider(name, source_name, version));
+                }
+                if depth == block_depth {
+                    depth_of_block = None;
+                }
+            }
+        }
+        depth = depth + opens - closes.min(depth + opens);
+    }
+    if let Some((name, source_name, version)) = pending {
+        dependencies.push(terraform_provider(name, source_name, version));
+    }
+    dependencies
+}
+
+/// A provider as the graph records it: named the way its source names it,
+/// because that is what another configuration would write.
+fn terraform_provider(
+    name: String,
+    source_name: Option<String>,
+    version: Option<String>,
+) -> ManifestDependency {
+    manifest_dependency(source_name.unwrap_or(name), "runtime", "terraform", version)
+}
+
+/// The value a Terraform attribute states: `source = "hashicorp/aws"`.
+fn terraform_attribute(line: &str, key: &str) -> Option<String> {
+    let rest = line.trim().strip_prefix(key)?;
+    let value = rest.trim_start().strip_prefix('=')?;
+    let value = value.trim().trim_matches('"').trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
 pub(crate) fn manifest_dependencies(
     path: &Path,
     source: &str,
@@ -1513,6 +1602,9 @@ pub(crate) fn manifest_dependencies(
         Some("conanfile.txt") => conanfile_txt_dependencies(source),
         Some("CMakeLists.txt") => cmake_dependencies(source),
         Some("pubspec.yaml") => pubspec_dependencies(source),
+        // A Terraform configuration states its providers in the file that
+        // uses them rather than in a manifest of its own.
+        Some(name) if name.ends_with(".tf") => terraform_required_providers(source),
         _ => Vec::new(),
     }
 }

@@ -4450,6 +4450,54 @@ fn a_proto_import_of_the_compilers_own_types_is_a_dependency() {
 }
 
 #[test]
+fn a_configuration_declares_the_providers_it_requires() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("main.tf"),
+        "terraform {\n  required_providers {\n    happycloud = {\n      source  = \"example.com/awesomecorp/happycloud\"\n      version = \"1.0.0\"\n    }\n\n    aws = {\n      source = \"hashicorp/aws\"\n    }\n\n    null = \"~> 2.0\"\n  }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let version_of = |id: NodeId| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| edge.target == id && edge.kind == EdgeKind::DependsOn)
+            .and_then(|edge| edge.metadata.get("dependency_version").cloned())
+    };
+    let declared = graph
+        .nodes
+        .iter()
+        .filter(|node| node.metadata.get("ecosystem").map(String::as_str) == Some("terraform"))
+        .map(|node| (node.label.clone(), version_of(node.id)))
+        .collect::<Vec<_>>();
+
+    // A provider is named the way its source names it, because that is what
+    // another configuration would write.
+    assert!(
+        declared.contains(&(
+            "example.com/awesomecorp/happycloud".to_string(),
+            Some("1.0.0".to_string())
+        )),
+        "{declared:?}"
+    );
+    assert!(
+        declared.iter().any(|(label, _)| label == "hashicorp/aws"),
+        "{declared:?}"
+    );
+    // The older form states the version instead of a block, and the key is
+    // the name.
+    assert!(
+        declared.iter().any(|(label, _)| label == "null"),
+        "{declared:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_terraform_module_reaches_the_configuration_it_names() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("modules").join("vpc")).unwrap();
