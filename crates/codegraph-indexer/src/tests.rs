@@ -1494,6 +1494,76 @@ fn a_computed_require_names_no_module() {
 }
 
 #[test]
+fn a_rust_module_path_is_read_inside_its_own_crate() {
+    // `crate::` names the crate the file belongs to, and a workspace has one
+    // per member: serde_derive's `use crate::internals::ast` is
+    // `serde_derive/src/internals/mod.rs`, not a sibling crate's file.
+    let target = possible_local_import_target(
+        Language::Rust,
+        "serde_derive/src/de/enum_.rs",
+        "use crate::internals::ast::Variant;",
+        &[],
+        &[],
+        &[],
+    )
+    .expect("a crate-relative module is a possible local import");
+    assert_eq!(target.target, "internals");
+    assert!(
+        target
+            .candidates
+            .contains(&"serde_derive/src/internals/mod.rs".to_string()),
+        "{:?}",
+        target.candidates
+    );
+    // The crate root is tried before the file's own directory, so a module
+    // that exists in both is read as the crate's.
+    let position = |needle: &str| {
+        target
+            .candidates
+            .iter()
+            .position(|candidate| candidate == needle)
+    };
+    assert!(
+        position("serde_derive/src/internals/mod.rs")
+            < position("serde_derive/src/de/internals.rs"),
+        "{:?}",
+        target.candidates
+    );
+
+    // A crate laid out without `src/` is found by walking up: ripgrep keeps
+    // `crates/core/flags/mod.rs` next to `crates/core/main.rs`.
+    let ripgrep = possible_local_import_target(
+        Language::Rust,
+        "crates/core/flags/complete/bash.rs",
+        "use crate::flags::defs::FLAGS;",
+        &[],
+        &[],
+        &[],
+    )
+    .expect("a module path away from src/ is still a candidate");
+    assert!(
+        ripgrep
+            .candidates
+            .contains(&"crates/core/flags/mod.rs".to_string()),
+        "{:?}",
+        ripgrep.candidates
+    );
+
+    // And a module a compiling crate names is never a missing file: it may
+    // be written inline or re-exported, so a miss stays quiet.
+    assert!(
+        local_import_target(
+            Language::Rust,
+            "serde/src/private/ser.rs",
+            "use crate::ser::Impossible;",
+            &[],
+            &[],
+        )
+        .is_none()
+    );
+}
+
+#[test]
 fn a_setting_read_is_not_a_route() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("lib")).unwrap();

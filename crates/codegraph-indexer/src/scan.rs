@@ -808,6 +808,7 @@ pub(crate) fn index_file(
                             target: local_import.target,
                             candidates: local_import.candidates,
                             mark_unresolved: true,
+                            allow_suffix_fallback: language != Language::Rust,
                         });
                     } else if let Some(possible_local_import) = possible_local_import {
                         context.pending_local_imports.push(PendingLocalImport {
@@ -815,6 +816,7 @@ pub(crate) fn index_file(
                             target: possible_local_import.target,
                             candidates: possible_local_import.candidates,
                             mark_unresolved: false,
+                            allow_suffix_fallback: language != Language::Rust,
                         });
                     }
 

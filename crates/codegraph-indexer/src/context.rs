@@ -173,6 +173,11 @@ pub(crate) struct PendingLocalImport {
     pub(crate) target: String,
     pub(crate) candidates: Vec<String>,
     pub(crate) mark_unresolved: bool,
+    /// Whether a file whose path merely ends with the candidate may answer.
+    /// A C include is searched for along a path the compiler is told about,
+    /// so the suffix is evidence; `crate::ser` names a module of this crate
+    /// and nothing else, so a file of that name in a sibling crate is not.
+    pub(crate) allow_suffix_fallback: bool,
 }
 
 pub(crate) struct PendingRouteHandler {

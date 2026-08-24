@@ -1861,6 +1861,7 @@ pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
             &context.file_nodes,
             &import.candidates,
             source_path.as_deref(),
+            import.allow_suffix_fallback,
         );
 
         if let Some((candidate, file_id)) = resolved {
@@ -2001,6 +2002,7 @@ pub(crate) fn resolve_local_import_candidate(
     file_nodes: &BTreeMap<String, NodeId>,
     candidates: &[String],
     source_path: Option<&str>,
+    allow_suffix_fallback: bool,
 ) -> Option<(String, NodeId)> {
     // No file imports itself. `from flask import Flask` written in a fixture
     // named `flask.py` matched that fixture, and the graph read the match as
@@ -2017,6 +2019,9 @@ pub(crate) fn resolve_local_import_candidate(
         {
             return Some((path, file_id));
         }
+    }
+    if !allow_suffix_fallback {
+        return None;
     }
     // A project's own package is often not at the root: flask's tutorial
     // imports `flaskr.db` from examples/tutorial/flaskr/db.py. One path

@@ -25,7 +25,7 @@ pub(crate) fn local_import_target(
         }
         Language::Php => php_local_import_target(source_label, import_label),
         Language::Bash => bash_local_import_target(source_label, import_label),
-        Language::Rust => rust_local_import_target(source_label, import_label),
+
         Language::Go => go_local_import_target(source_label, import_label),
         Language::Dart => dart_local_import_target(source_label, import_label, dart_packages),
         Language::Nix => nix_local_import_target(source_label, import_label),
@@ -36,7 +36,8 @@ pub(crate) fn local_import_target(
         // No deterministic local-file resolution for these import systems yet
         // (classpaths / gem load paths / assembly references); imports still
         // land as facts and can join package hubs.
-        Language::Java
+        Language::Rust
+        | Language::Java
         | Language::CSharp
         | Language::Kotlin
         | Language::Swift
@@ -145,6 +146,11 @@ pub(crate) fn possible_local_import_target(
 ) -> Option<LocalImportTarget> {
     match language {
         Language::C | Language::Cpp => c_system_header_target(source_label, import_label),
+        // `use crate::de` in a project that compiles always names something:
+        // a module file, a module written inline, or a name the crate root
+        // re-exports from elsewhere. Only the first is a file, so a miss is
+        // not a module serde failed to ship - it had 24 of them.
+        Language::Rust => rust_local_import_target(source_label, import_label),
         Language::Python => python_absolute_local_import_target(source_label, import_label),
         Language::Go => go_module_import_target(import_label, go_modules),
         Language::Dart => dart_package_import_target(import_label, dart_packages),
@@ -811,13 +817,19 @@ pub(crate) fn rust_local_import_target(
     {
         return None;
     }
-    let module_path = join_path(base.as_deref(), module);
+    // The crate root first, then the directories between the file and it:
+    // ripgrep's `crates/core` has no `src/`, so `use crate::flags` in
+    // `crates/core/flags/complete/bash.rs` is `crates/core/flags/mod.rs`.
+    let mut candidates = Vec::new();
+    for root in rust_module_roots(source_label, base.as_deref()) {
+        let module_path = join_path(Some(root.as_str()), module);
+        candidates.push(normalize_path(&format!("{module_path}.rs")));
+        candidates.push(normalize_path(&format!("{module_path}/mod.rs")));
+    }
+    dedup_preserving_order(&mut candidates);
     Some(LocalImportTarget {
         target: module.to_string(),
-        candidates: vec![
-            normalize_path(&format!("{module_path}.rs")),
-            normalize_path(&format!("{module_path}/mod.rs")),
-        ],
+        candidates,
     })
 }
 
@@ -982,14 +994,37 @@ pub(crate) fn path_has_extension(path: &str) -> bool {
         .is_some_and(|name| name.contains('.'))
 }
 
+/// Where a module path may be rooted: the directory the prefix names, then
+/// every directory between the file and the repository root. A crate laid
+/// out without `src/` is found by the second, and the first keeps the
+/// common case exact.
+fn rust_module_roots(source_label: &str, base: Option<&str>) -> Vec<String> {
+    let mut roots = Vec::new();
+    if let Some(base) = base {
+        roots.push(base.to_string());
+    }
+    let mut directory = path_dir(source_label);
+    while let Some(current) = directory {
+        roots.push(current.clone());
+        directory = path_dir(&current);
+    }
+    roots.push(String::new());
+    dedup_preserving_order(&mut roots);
+    roots
+}
+
+/// The crate a file belongs to, which is what `crate::` names. A workspace
+/// has one per member, and reading the file's own directory instead sent
+/// serde_derive's `use crate::internals::ast` looking for
+/// `serde_derive/src/de/internals.rs`.
 pub(crate) fn rust_crate_root(source_label: &str) -> Option<String> {
-    if source_label == "src/main.rs" || source_label == "src/lib.rs" {
+    if let Some(index) = source_label.rfind("/src/") {
+        return Some(source_label[..index + "/src".len()].to_string());
+    }
+    if source_label.starts_with("src/") {
         return Some("src".to_string());
     }
-    source_label
-        .strip_prefix("src/")
-        .map(|_| "src".to_string())
-        .or_else(|| path_dir(source_label))
+    path_dir(source_label)
 }
 
 pub(crate) fn path_dir(path: &str) -> Option<String> {

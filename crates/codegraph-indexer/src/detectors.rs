@@ -256,6 +256,7 @@ pub(crate) fn index_commonjs_require_imports(
                 target: local_import.target,
                 candidates: local_import.candidates,
                 mark_unresolved: true,
+                allow_suffix_fallback: true,
             });
         }
     }
