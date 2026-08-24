@@ -8070,6 +8070,82 @@ fn a_report_cites_a_node_by_the_id_that_survives_an_edit() {
 }
 
 #[test]
+fn a_class_split_across_files_is_one_unit() {
+    let mut graph = CodeGraph::new("repo");
+    let function = |graph: &mut CodeGraph, label: &str, path: &str, owner: Option<&str>| {
+        let mut metadata = BTreeMap::from([("item_kind".to_string(), "function".to_string())]);
+        if let Some(owner) = owner {
+            metadata.insert("owner_type".to_string(), owner.to_string());
+        }
+        graph.add_node_with_metadata(
+            NodeKind::Function,
+            label,
+            Some(SourceSpan {
+                path: path.to_string(),
+                start_line: 1,
+                start_column: 1,
+                end_line: 9,
+                end_column: 2,
+            }),
+            metadata,
+        )
+    };
+    // A class whose methods call each other is one unit, however many files
+    // C# splits it across.
+    let or_result = function(
+        &mut graph,
+        "OrResult",
+        "src/Polly/PolicyBuilder.OrSyntax.cs",
+        Some("PolicyBuilder"),
+    );
+    let builder = function(
+        &mut graph,
+        "PolicyBuilder",
+        "src/Polly/PolicyBuilder.cs",
+        Some("PolicyBuilder"),
+    );
+    graph.add_edge(or_result, builder, EdgeKind::Calls, Confidence::Exact);
+    graph.add_edge(builder, or_result, EdgeKind::Calls, Confidence::Exact);
+
+    // Two files that import each other across directories still couple.
+    let log = graph.add_node(NodeKind::File, "kong/cmd/utils/log.lua");
+    let deprecation = graph.add_node(NodeKind::File, "kong/deprecation.lua");
+    graph.add_edge(log, deprecation, EdgeKind::Imports, Confidence::Syntactic);
+    graph.add_edge(deprecation, log, EdgeKind::Imports, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    let cycles: Vec<_> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "dependency_cycle")
+        .map(|insight| (insight.severity, insight.message.as_str()))
+        .collect();
+    let severity_of = |needle: &str| {
+        cycles
+            .iter()
+            .find(|(_, message)| message.contains(needle))
+            .map(|(severity, _)| *severity)
+    };
+    // Reported, but as one class's own shape rather than as coupling.
+    assert_eq!(
+        severity_of("OrResult"),
+        Some(InsightSeverity::Info),
+        "{cycles:?}"
+    );
+    assert!(
+        cycles
+            .iter()
+            .any(|(_, message)| message.contains("inside one type")),
+        "{cycles:?}"
+    );
+    assert_eq!(
+        severity_of("log.lua"),
+        Some(InsightSeverity::Warning),
+        "{cycles:?}"
+    );
+}
+
+#[test]
 fn two_constraints_conflict_only_when_no_version_satisfies_both() {
     let agree =
         |ecosystem: &str, constraints: &[&str]| constraints_can_agree(ecosystem, constraints);

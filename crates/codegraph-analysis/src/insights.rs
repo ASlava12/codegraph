@@ -4186,6 +4186,27 @@ pub(crate) fn insight_severity_from_str(value: &str) -> InsightSeverity {
 /// graph links it to every overload, and the overloads then appear to
 /// call each other. "`indexOf` -> `indexOf` -> `indexOf`" is not a cycle
 /// a reader can act on: it is one method.
+/// Whether every member of a cycle belongs to the same type. A class whose
+/// methods call each other is one unit however many files it is written
+/// across - C# splits `PolicyBuilder` over `PolicyBuilder.cs` and
+/// `PolicyBuilder.OrSyntax.cs` - so the walk between them is not coupling
+/// between components.
+fn component_is_one_type(nodes_by_id: &BTreeMap<NodeId, &Node>, component: &[NodeId]) -> bool {
+    let mut owner: Option<&str> = None;
+    for id in component {
+        let Some(node) = nodes_by_id.get(id) else {
+            return false;
+        };
+        let Some(node_owner) = node.metadata.get("owner_type") else {
+            return false;
+        };
+        if *owner.get_or_insert(node_owner.as_str()) != node_owner {
+            return false;
+        }
+    }
+    owner.is_some()
+}
+
 fn component_is_one_method(nodes_by_id: &BTreeMap<NodeId, &Node>, component: &[NodeId]) -> bool {
     let mut label: Option<&str> = None;
     let mut owner: Option<&str> = None;
@@ -4298,7 +4319,12 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
         let files: BTreeSet<&str> = placed.iter().copied().collect();
         // Unknown is not the same as confined: a cycle is only local when
         // every node in it is known to sit in the one file.
-        let crosses_files = !(files.len() == 1 && placed.len() == component.len());
+        // A class is one unit however many files it is written across: C#
+        // splits `PolicyBuilder` over `PolicyBuilder.cs` and
+        // `PolicyBuilder.OrSyntax.cs`, and its methods calling each other is
+        // not coupling between parts of the program.
+        let one_type = component_is_one_type(&nodes_by_id, &component);
+        let crosses_files = !(one_type || (files.len() == 1 && placed.len() == component.len()));
         // A cycle among vendored files is upstream's shape: redis carries
         // jemalloc's and lua's, and dune carries re's.
         let vendored = !files.is_empty() && files.iter().all(|file| is_vendored_source_path(file));
@@ -4309,6 +4335,8 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
         };
         let scope = if crosses_files {
             "across files"
+        } else if one_type && files.len() > 1 {
+            "inside one type"
         } else {
             "inside one file"
         };
