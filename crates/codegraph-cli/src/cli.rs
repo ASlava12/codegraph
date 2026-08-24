@@ -1103,9 +1103,10 @@ pub(crate) struct NodeCardArgs {
     #[command(flatten)]
     pub(crate) scan: ScanArgs,
 
-    /// Graph node id to inspect, numeric or n-prefixed (42 or n42).
-    #[arg(long, value_parser = parse_cli_node_id)]
-    pub(crate) node_id: u64,
+    /// Graph node to inspect: numeric (42), n-prefixed (n42), or the
+    /// durable `cg-*` id the scan stamps on every node.
+    #[arg(long)]
+    pub(crate) node_id: String,
 
     /// Maximum neighboring edges to include.
     #[arg(long, default_value_t = 24)]

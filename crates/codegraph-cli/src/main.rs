@@ -762,11 +762,14 @@ fn main() -> Result<()> {
             } else {
                 node_card_fast
             };
+            // The durable `cg-*` id is what an agent saved; resolving it
+            // needs the graph, so it happens here rather than in the flag.
+            let node_id = resolve_node_id(&graph, &args.node_id)?;
             let card = card_builder(
                 &graph,
                 Some(&args.scan.path),
                 NodeCardRequest {
-                    node_id: NodeId(args.node_id),
+                    node_id,
                     edge_limit: args.edge_limit,
                     source_context: args.source_context,
                     insight_limit: args.insight_limit,
@@ -1062,6 +1065,21 @@ fn merge_preview_compact(
 
 /// Node ids are printed as `n42` in query results and web deep links;
 /// accept both that form and the bare numeric id (audit F8).
+/// The node a `--node-id` names: a numeric or n-prefixed id, or the
+/// durable `cg-*` one, which only the graph can resolve.
+fn resolve_node_id(graph: &codegraph_core::CodeGraph, value: &str) -> Result<NodeId> {
+    if let Some(node) = graph.nodes.iter().find(|node| {
+        node.metadata
+            .get("stable_id")
+            .is_some_and(|stable_id| stable_id == value)
+    }) {
+        return Ok(node.id);
+    }
+    let id =
+        codegraph_analysis::parse_node_id(value).map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok(id)
+}
+
 pub(crate) fn parse_cli_node_id(value: &str) -> Result<u64, String> {
     codegraph_analysis::parse_node_id(value)
         .map(|id| id.0)
