@@ -732,6 +732,34 @@ fn parses_environment_config_and_error_facts() {
 }
 
 #[test]
+fn ruby_states_a_default_in_a_block_and_a_comparison_is_not_one() {
+    let parsed = parse_source(
+        "config.rb",
+        br#"port = ENV.fetch('PORT') { 3000 }
+enabled = ENV['ES_ENABLED'] == 'true' || ENV.fetch('ES_HOST', 'localhost') != 'localhost'
+mode = ENV['APP_ENV'] || 'development'
+"#,
+        Language::Ruby,
+    )
+    .unwrap();
+
+    let default_of = |key: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == key)
+            .and_then(|item| item.metadata.get("default_value").cloned())
+    };
+
+    // `fetch` with a block hands the block's value back.
+    assert_eq!(default_of("PORT"), Some("3000".to_string()));
+    // A comparison is not a fallback, however many `||` follow it.
+    assert_eq!(default_of("ES_ENABLED"), None);
+    // And the plain form still states one.
+    assert_eq!(default_of("APP_ENV"), Some("development".to_string()));
+}
+
+#[test]
 fn setting_a_variable_is_not_reading_it() {
     // oscar's conftest sets DATABASE_NAME for the suite, and sinatra's
     // test helper sets APP_ENV. Reading those as unguarded environment

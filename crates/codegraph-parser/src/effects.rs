@@ -1042,10 +1042,37 @@ pub(crate) fn dart_env_default_value(node: Node<'_>, source: &[u8]) -> Option<St
     quoted_string_values(&expression).into_iter().nth(1)
 }
 
+/// The value a `fetch` block hands back: `ENV.fetch('PORT') { 3000 }`.
+/// Only a literal counts -- a block that computes something states no
+/// single value.
+fn ruby_fetch_block_default(text: &str) -> Option<String> {
+    let after_call = text.split_once(')')?.1;
+    let body = after_call
+        .trim_start()
+        .strip_prefix('{')?
+        .split('}')
+        .next()?
+        .trim();
+    let literal = body.trim_matches(['\'', '"']);
+    (!literal.is_empty()
+        && !literal.contains(char::is_whitespace)
+        && literal.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | ':' | '-')
+        }))
+    .then(|| literal.to_string())
+}
+
 pub(crate) fn ruby_env_default_value(node: Node<'_>, source: &[u8]) -> Option<String> {
     let text = short_node_text(node, source)?;
     if text.contains("ENV.fetch") {
-        return all_string_literals(node, source).into_iter().nth(1);
+        return all_string_literals(node, source)
+            .into_iter()
+            .nth(1)
+            // `ENV.fetch('PORT') { 3000 }` hands the block's value back
+            // when the variable is unset, which is what a default is.
+            // mastodon writes both forms and the block one read as a
+            // variable the program requires.
+            .or_else(|| ruby_fetch_block_default(&text));
     }
     let expression = short_ancestor_text(node, source, |candidate| {
         candidate.contains("ENV[") && candidate.contains("||")
@@ -1053,6 +1080,15 @@ pub(crate) fn ruby_env_default_value(node: Node<'_>, source: &[u8]) -> Option<St
     // `ENV['APP_ENV'] || ENV['RACK_ENV'] || :development` gives APP_ENV a
     // fallback and RACK_ENV none: what follows a key is its default, and
     // sinatra read RACK_ENV as its own.
+    //
+    // What follows has to be the `||` itself. `ENV['ES_ENABLED'] == 'true'
+    // || ENV.fetch('ES_HOST', 'localhost') != 'localhost'` compares the
+    // variable to a string and then goes on to another test, and
+    // mastodon's `'true'` was read as a default for six variables.
+    let after_read = expression.split_once(text.as_str()).map(|(_, rest)| rest)?;
+    if !after_read.trim_start().starts_with("||") {
+        return None;
+    }
     let values = quoted_string_values(&expression);
     let key = quoted_string_values(&text).into_iter().next()?;
     let position = values.iter().position(|value| *value == key)?;
