@@ -1134,7 +1134,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "edge_limit",
                             false,
                             "usize",
-                            Some("80"),
+                            Some("24"),
                             "Maximum context edges.",
                         )
                         .with_range(1, MAX_NODE_CONTEXT_EDGE_LIMIT)
@@ -1903,7 +1903,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "edge_limit",
                             false,
                             "usize",
-                            Some("40"),
+                            Some("100"),
                             "Maximum listed contract edges.",
                         )
                         .with_range(1, 500),
@@ -1936,7 +1936,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                             "limit",
                             false,
                             "usize",
-                            Some("100"),
+                            Some("40"),
                             "Maximum listed dependents.",
                         )
                         .with_range(1, 1_000),

@@ -2093,6 +2093,54 @@ fn embedded_web_assets_support_keyboard_graph_navigation() {
 }
 
 #[tokio::test]
+async fn a_published_default_is_the_one_the_handler_uses() {
+    // The schema said `/api/node-card` lists 80 context edges by default
+    // and the handler listed 24; `/api/impact` said 100 dependents and
+    // the handler took 40. A default is part of the contract an agent
+    // plans around.
+    let root = temp_server_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    let state = test_state(root.clone(), vec![], true);
+
+    let Json(card) = node_card_api(
+        State(state),
+        ApiQuery(NodeCardQuery {
+            path: Some(root.clone()),
+            node_id: "n1".to_string(),
+            edge_limit: None,
+            source_context: None,
+            insight_limit: None,
+            include_insights: None,
+        }),
+    )
+    .await
+    .expect("node card");
+
+    let schema = api_schema_response();
+    let documented = schema
+        .groups
+        .iter()
+        .flat_map(|group| group.endpoints.iter())
+        .find(|endpoint| endpoint.path == "/api/node-card")
+        .and_then(|endpoint| {
+            endpoint
+                .parameters
+                .iter()
+                .find(|parameter| parameter.name == "edge_limit")
+                .and_then(|parameter| parameter.default)
+        })
+        .expect("edge_limit is published with a default");
+    assert_eq!(
+        documented,
+        card.context.edge_limit.to_string(),
+        "the published default is not the one the handler applied"
+    );
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[tokio::test]
 async fn the_schema_describes_the_fields_the_responses_carry() {
     // An agent reads the schema before the response. A field that is
     // returned and not described, or described and not returned, is a
