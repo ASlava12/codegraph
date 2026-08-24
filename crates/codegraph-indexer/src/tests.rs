@@ -9287,6 +9287,55 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn a_solidity_function_says_who_may_call_it() {
+    let root = temp_project_root();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("Token.sol"),
+        r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Token {
+    function transfer(address to, uint256 value) public returns (bool) {
+        return _update(to, value);
+    }
+
+    function balanceOf(address holder) external view returns (uint256) {
+        return 0;
+    }
+
+    function _update(address to, uint256 value) internal returns (bool) {
+        return true;
+    }
+
+    function _seed() private pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let visibility_of = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == label)
+            .and_then(|node| node.metadata.get("visibility").cloned())
+    };
+
+    // The ABI is what `public` and `external` put outside.
+    assert_eq!(visibility_of("transfer"), Some("public".to_string()));
+    assert_eq!(visibility_of("balanceOf"), Some("public".to_string()));
+    // `internal` reaches derived contracts, the way `protected` does.
+    assert_eq!(visibility_of("_update"), Some("protected".to_string()));
+    assert_eq!(visibility_of("_seed"), Some("private".to_string()));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn objective_c_calls_the_frameworks_by_name() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

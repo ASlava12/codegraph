@@ -1061,6 +1061,16 @@ pub(crate) fn visibility_label(
             Some(exported) if !exported.contains(label) => "private",
             _ => "public",
         }),
+        // Solidity writes the visibility of every function down, and it
+        // decides who may call: `external` and `public` are the contract's
+        // ABI, `internal` reaches derived contracts the way `protected`
+        // does, and `private` stops at this contract.
+        Language::Solidity => match solidity_visibility(node, source)? {
+            "external" | "public" => Some("public"),
+            "internal" => Some("protected"),
+            "private" => Some("private"),
+            _ => None,
+        },
         // Dart reads a leading underscore as library-private, as Python
         // reads it as a contract.
         Language::Dart => Some(if label.starts_with('_') {
@@ -1070,6 +1080,20 @@ pub(crate) fn visibility_label(
         }),
         _ => None,
     }
+}
+
+/// The word a Solidity declaration spends on visibility. The grammar
+/// gives it a node of its own, sitting between the parameters and the
+/// body.
+fn solidity_visibility(node: Node<'_>, source: &[u8]) -> Option<&'static str> {
+    let mut cursor = node.walk();
+    let text = node
+        .children(&mut cursor)
+        .find(|child| child.kind() == "visibility")
+        .and_then(|child| node_text(child, source))?;
+    ["external", "public", "internal", "private"]
+        .into_iter()
+        .find(|keyword| text.trim() == *keyword)
 }
 
 /// The visibility keyword a declaration carries, if it carries one. Java
