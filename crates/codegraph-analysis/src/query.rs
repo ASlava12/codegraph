@@ -827,7 +827,7 @@ pub(crate) fn query_entrypoints(
         .collect();
     let total_edges = matched_edges.len();
     let edges: Vec<_> = matched_edges.into_iter().take(spec.limit).collect();
-    let mut node_ids = selected_ids;
+    let mut node_ids = selected_ids.clone();
     for edge in &edges {
         node_ids.insert(edge.source);
         node_ids.insert(edge.target);
@@ -1388,17 +1388,33 @@ pub(crate) fn query_hotspots(
         .collect();
     let total_edges = matched_edges.len();
     let edges: Vec<_> = matched_edges.into_iter().take(edge_limit).collect();
-    let mut node_ids = selected_ids;
+    let mut node_ids = selected_ids.clone();
     for edge in &edges {
         node_ids.insert(edge.source);
         node_ids.insert(edge.target);
     }
-    let nodes = graph
-        .nodes
+    // The hotspots themselves first and in the order that ranks them, each
+    // carrying the score that put it there: everything else in the result
+    // is a neighbour reached through their edges, and asking "what is
+    // central here" answered with a repository node and a benchmark script
+    // because the subgraph came out in graph order.
+    let mut nodes = matched
         .iter()
-        .filter(|node| node_ids.contains(&node.id))
-        .cloned()
+        .take(spec.limit)
+        .map(|hotspot| {
+            let mut node = hotspot.node.clone();
+            node.metadata
+                .insert("hotspot_score".to_string(), hotspot.score.to_string());
+            node
+        })
         .collect::<Vec<_>>();
+    nodes.extend(
+        graph
+            .nodes
+            .iter()
+            .filter(|node| node_ids.contains(&node.id) && !selected_ids.contains(&node.id))
+            .cloned(),
+    );
 
     let total_nodes = nodes.len();
     Ok(QueryResult::new(

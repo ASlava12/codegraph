@@ -5546,6 +5546,21 @@ fn query_hotspots_returns_high_degree_context() {
     assert_eq!(result.edges.len(), 3);
     assert!(result.nodes.iter().any(|node| node.id == main));
     assert!(result.nodes.iter().any(|node| node.id == python_worker));
+    // The hotspot itself comes first and says what put it there;
+    // everything after it is a neighbour reached through its edges.
+    assert_eq!(result.nodes[0].id, main);
+    assert_eq!(
+        result.nodes[0]
+            .metadata
+            .get("hotspot_score")
+            .map(String::as_str),
+        Some("4")
+    );
+    assert!(
+        result.nodes[1..]
+            .iter()
+            .all(|node| !node.metadata.contains_key("hotspot_score"))
+    );
 
     let incoming = query_graph(&graph, "hotspots label:main direction:in").unwrap();
     assert_eq!(incoming.total_edges, 2);
