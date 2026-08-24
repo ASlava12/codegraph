@@ -1786,7 +1786,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "JourneyReport",
                 )
                 .with_response_fields(journey_response_fields())
-                .with_example("/api/journey?path=.&from=main&to=load_config&depth=8&paths=3"),
+                .with_example("/api/journey?path=.&from=main&to=scan_project&depth=8&paths=3"),
                 api_post(
                     "/api/mcp",
                     "HTTP MCP transport: handle one MCP JSON-RPC 2.0 message (initialize, ping, tools/list, tools/call) against the scanned graph; protected by the same optional bearer token as every /api/ route. Notifications return 202 with no body.",
@@ -1879,7 +1879,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "ComponentDependencyReport",
                 )
                 .with_response_fields(component_dependency_response_fields())
-                .with_example("/api/component-dependencies?path=.&target=load_config"),
+                .with_example("/api/component-dependencies?path=.&target=scan_project"),
                 api_get(
                     "/api/component-contract",
                     "List the exact dependency edges between two architecture areas with confidence and related risks.",
@@ -1911,7 +1911,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "ComponentContractReport",
                 )
                 .with_response_fields(component_contract_response_fields())
-                .with_example("/api/component-contract?path=.&source=docs&target=crates"),
+                .with_example("/api/component-contract?path=.&source=docs&target=crates/codegraph-analysis"),
                 api_get(
                     "/api/impact",
                     "Report the blast radius of changing a node: dependents, affected entrypoints/routes/tests, and a risk-weighted impact score.",
@@ -1944,7 +1944,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "ImpactReport",
                 )
                 .with_response_fields(impact_response_fields())
-                .with_example("/api/impact?path=.&target=load_config&depth=6"),
+                .with_example("/api/impact?path=.&target=scan_project&depth=6"),
                 api_get(
                     "/api/seams",
                     "Rank cross-area boundaries by coupling friction: safest seams to extract and most tangled boundaries needing work.",
@@ -2071,7 +2071,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "RefactorContextBundle",
                 )
                 .with_response_fields(refactor_context_response_fields())
-                .with_example("/api/refactor-context?path=.&target=load_config&from=main&depth=8"),
+                .with_example("/api/refactor-context?path=.&target=scan_project&from=main&depth=8"),
                 api_get(
                     "/api/dependents",
                     "Trace incoming dependents that can reach a node.",
@@ -2091,7 +2091,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "TraceResult?",
                 )
                 .with_response_fields(trace_result_response_fields())
-                .with_example("/api/dependents?path=.&label=load_config&depth=3"),
+                .with_example("/api/dependents?path=.&label=scan_project&depth=3"),
                 api_get(
                     "/api/trace-config",
                     "Trace config/environment readers and paths from entrypoints.",
@@ -2172,7 +2172,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "SourceResponse",
                 )
                 .with_response_fields(source_preview_response_fields())
-                .with_example("/api/source?path=.&file=src/main.rs&start_line=10&end_line=40"),
+                .with_example("/api/source?path=.&file=crates/codegraph-cli/src/main.rs&start_line=10&end_line=40"),
                 api_get(
                     "/api/source-search",
                     "Search source text with compact context snippets.",
@@ -3696,6 +3696,12 @@ pub(crate) fn trace_result_response_fields() -> Vec<ApiParameterSpec> {
             "bool",
             "Whether the trace was capped by depth or traversal limits.",
         ),
+        response_field(
+            "notes",
+            false,
+            "string[]",
+            "What the answer is about when the request left it open, such as which definition a shared name was taken to mean. Absent when the request named one thing.",
+        ),
     ]
 }
 
@@ -3761,6 +3767,12 @@ pub(crate) fn workflow_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "usize",
             "Workflow transition count before optional compaction.",
+        ),
+        response_field(
+            "notes",
+            false,
+            "string[]",
+            "What the answer is about when the request left it open, such as which definition a shared name was taken to mean. Absent when the request named one thing.",
         ),
         response_field(
             "truncated",
@@ -4090,6 +4102,12 @@ pub(crate) fn journey_response_fields() -> Vec<ApiParameterSpec> {
             true,
             "bool",
             "Whether the path search hit the depth bound before finding a path.",
+        ),
+        response_field(
+            "notes",
+            false,
+            "string[]",
+            "What the answer is about when the request left it open, such as which definition a shared name was taken to mean. Absent when the request named one thing.",
         ),
     ]
 }

@@ -2065,7 +2065,41 @@ async fn the_schema_describes_the_fields_the_responses_carry() {
     let Json(coverage_body) = coverage_api(State(state.clone()), ApiQuery(query()))
         .await
         .expect("coverage");
-    let Json(capabilities_body) = capabilities_api(State(state)).await.expect("capabilities");
+    let Json(capabilities_body) = capabilities_api(State(state.clone()))
+        .await
+        .expect("capabilities");
+    // `notes` rides on these two only when a name was shared, so it is
+    // described as optional and must not be demanded here.
+    let Json(trace_body) = trace_api(
+        State(state.clone()),
+        ApiQuery(TraceQuery {
+            path: Some(root.clone()),
+            label: Some("main".to_string()),
+            node_id: None,
+            depth: Some(2),
+        }),
+    )
+    .await
+    .expect("trace");
+    let Json(workflow_body) = workflow_api(
+        State(state),
+        ApiQuery(WorkflowQuery {
+            path: Some(root.clone()),
+            label: Some("main".to_string()),
+            node_id: None,
+            depth: Some(2),
+            block_limit: Some(20),
+            edge_kind: None,
+            confidence: None,
+            language: None,
+            risk_severity: None,
+            block_kind: None,
+            compact: None,
+            max_fanout: None,
+        }),
+    )
+    .await
+    .expect("workflow");
 
     let schema = api_schema_response();
     let fields_of = |path: &str| -> Vec<(&'static str, &'static str, bool)> {
@@ -2092,6 +2126,11 @@ async fn the_schema_describes_the_fields_the_responses_carry() {
         (
             "/api/capabilities",
             serde_json::to_value(capabilities_body).unwrap(),
+        ),
+        ("/api/trace", serde_json::to_value(trace_body).unwrap()),
+        (
+            "/api/workflow",
+            serde_json::to_value(workflow_body).unwrap(),
         ),
     ];
     for (path, body) in checks {
