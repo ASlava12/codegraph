@@ -412,6 +412,12 @@ pub(crate) fn is_document_path_reference(target: &str) -> bool {
                         | "bash"
                         | "md"
                         | "markdown"
+                        // A document points at another document as often
+                        // as at code: openzeppelin's `xref:governance.adoc`
+                        // and Python's `see :doc:`install.rst``.
+                        | "adoc"
+                        | "asciidoc"
+                        | "rst"
                         | "toml"
                         | "json"
                         | "yaml"
@@ -544,6 +550,154 @@ pub(crate) fn index_plain_text_document(
             }
         }
     }
+}
+
+/// AsciiDoc is how the Java and Solidity worlds document themselves:
+/// openzeppelin writes 37 `.adoc` files, one beside every contract
+/// directory. A line opening with `=` signs is a section, and
+/// `xref:governance.adoc[..]` names another document.
+pub(crate) fn index_asciidoc_document(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    path: &Path,
+    label: &str,
+    source: &str,
+) {
+    if !is_asciidoc_document(path) {
+        return;
+    }
+    let doc_kind = document_kind(path, label);
+    add_file_metadata(&mut context.graph, file_id, "item_kind", "document");
+    add_file_metadata(&mut context.graph, file_id, "source", "asciidoc");
+    add_file_metadata(
+        &mut context.graph,
+        file_id,
+        "document_kind",
+        doc_kind.clone(),
+    );
+
+    let mut current_section = None;
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        if let Some(heading) = asciidoc_heading(line) {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("item_kind".to_string(), "document_section".to_string());
+            metadata.insert("source".to_string(), "asciidoc".to_string());
+            metadata.insert("language".to_string(), "asciidoc".to_string());
+            metadata.insert("document_kind".to_string(), doc_kind.clone());
+            metadata.insert("heading".to_string(), heading.clone());
+            metadata.insert("line".to_string(), line_number.to_string());
+            let section_id = context.graph.add_node_with_metadata(
+                NodeKind::Module,
+                format!("{label}#{heading}"),
+                Some(line_span(label, source, line_number)),
+                metadata,
+            );
+            add_edge_once(
+                context,
+                file_id,
+                section_id,
+                EdgeKind::Contains,
+                Confidence::Exact,
+            );
+            current_section = Some(section_id);
+            continue;
+        }
+
+        let source_id = current_section.unwrap_or(file_id);
+        for (target, relation) in asciidoc_references(line) {
+            if let Some(candidates) = markdown_path_candidates(label, &target) {
+                context
+                    .pending_document_path_refs
+                    .push(PendingDocumentPathRef {
+                        source: source_id,
+                        target,
+                        candidates,
+                        relation,
+                        line: line_number,
+                        text: None,
+                        line_ref: None,
+                    });
+            }
+        }
+    }
+}
+
+/// The heading a line states: AsciiDoc opens a section with `=` signs and
+/// a space, and the number of them is the depth.
+fn asciidoc_heading(line: &str) -> Option<String> {
+    let trimmed = line.trim_end();
+    let depth = trimmed
+        .chars()
+        .take_while(|character| *character == '=')
+        .count();
+    if depth == 0 || depth > 6 {
+        return None;
+    }
+    let heading = trimmed.get(depth..)?.trim();
+    // `==` alone opens a block delimiter rather than a section.
+    (!heading.is_empty() && trimmed.chars().nth(depth) == Some(' ')).then(|| heading.to_string())
+}
+
+/// What a line points at: another document through `xref:` or `link:`, a
+/// file pulled in with `include::`, and a path in backticks.
+fn asciidoc_references(line: &str) -> Vec<(String, &'static str)> {
+    let mut references = Vec::new();
+    for (opener, relation) in [
+        ("include::", "asciidoc_include"),
+        ("xref:", "asciidoc_xref"),
+        ("link:", "asciidoc_link"),
+    ] {
+        let mut rest = line;
+        while let Some(start) = rest.find(opener) {
+            rest = &rest[start + opener.len()..];
+            let target = rest
+                .split(['[', ' ', '"', ')'])
+                .next()
+                .unwrap_or_default()
+                .trim();
+            // `xref:upgrades-plugins::proxies.adoc` names another module's
+            // documentation, which this repository does not hold.
+            if !target.is_empty() && !target.contains("::") && !target.contains("://") {
+                references.push((
+                    target.split('#').next().unwrap_or(target).to_string(),
+                    relation,
+                ));
+            }
+        }
+    }
+    for code in rst_literals_in_backticks(line) {
+        references.push((code, "asciidoc_literal_path"));
+    }
+    references
+}
+
+/// The single-backtick spans of a line: AsciiDoc marks a literal with
+/// one backtick where reStructuredText uses two.
+fn rst_literals_in_backticks(line: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut rest = line;
+    while let Some(start) = rest.find('`') {
+        rest = &rest[start + 1..];
+        let Some(end) = rest.find('`') else {
+            break;
+        };
+        let value = rest[..end].trim().to_string();
+        rest = &rest[end + 1..];
+        // Only something shaped like a path is a path.
+        if value.contains('/') || value.contains('.') {
+            values.push(value);
+        }
+    }
+    values
+}
+
+pub(crate) fn is_asciidoc_document(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("adoc") || extension.eq_ignore_ascii_case("asciidoc")
+        })
 }
 
 /// reStructuredText is Python's documentation format, and django-oscar

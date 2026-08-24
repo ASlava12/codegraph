@@ -9339,6 +9339,63 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn an_asciidoc_document_states_its_sections() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("contracts")).unwrap();
+    fs::write(root.join("remappings.txt"), "@openzeppelin/=contracts/\n").unwrap();
+    // openzeppelin writes one of these beside every contract directory.
+    fs::write(
+        root.join("contracts").join("README.adoc"),
+        "= Access Control\n\nNOTE: read the guide.\n\n== Core\n\nUse `remappings.txt` to point at the contracts.\n\n=== Extensions\n\nSee xref:governance.adoc[the governance guide].\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("contracts").join("governance.adoc"),
+        "= Governance\n\nHow to set up on-chain governance.\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let sections: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata.get("item_kind").map(String::as_str) == Some("document_section")
+        })
+        .map(|node| node.label.as_str())
+        .collect();
+
+    assert!(
+        sections.contains(&"contracts/README.adoc#Access Control"),
+        "{sections:?}"
+    );
+    assert!(
+        sections.contains(&"contracts/README.adoc#Core"),
+        "{sections:?}"
+    );
+    assert!(
+        sections.contains(&"contracts/README.adoc#Extensions"),
+        "{sections:?}"
+    );
+
+    // A cross-reference reaches the document it names, and a literal
+    // reaches the file.
+    let relations: Vec<&str> = graph
+        .edges
+        .iter()
+        .filter_map(|edge| edge.metadata.get("relation").map(String::as_str))
+        .filter(|relation| relation.starts_with("asciidoc"))
+        .collect();
+    assert!(relations.contains(&"asciidoc_xref"), "{relations:?}");
+    assert!(
+        relations.contains(&"asciidoc_literal_path"),
+        "{relations:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_generate_directive_names_the_program_that_writes_the_code() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("graph")).unwrap();
