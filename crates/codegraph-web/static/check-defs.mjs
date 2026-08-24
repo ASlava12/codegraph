@@ -207,6 +207,7 @@ const schemaRs = readFileSync(
 // Values the view renders as labels rather than terms a reader types.
 const RENDERED_ENUMS = [
   "entrypoint_kind",
+  "workflow_block_kind",
   "cache_status",
   "graph_confidence",
   "risk_grade",
