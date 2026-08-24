@@ -1882,6 +1882,26 @@ fn entrypoints_lead_with_programs_not_ci_jobs() {
 }
 
 #[test]
+fn a_question_the_graph_cannot_answer_says_what_it_answers_instead() {
+    // The graph holds no history, so which files change together is not
+    // something it knows; searching the project for `together` answered
+    // with nothing at all.
+    let plan = natural_query_plan("which files change together").expect("the question routes");
+    assert_eq!(plan.generated_query, "hotspots min_score:3 edge_limit:300");
+    assert_eq!(plan.rule, "structural_coupling_stands_in_for_cochange");
+    assert_eq!(plan.confidence, "low");
+
+    // The impact question in the present tense is the same question.
+    let plan =
+        natural_query_plan("what changes when I edit SongController").expect("the question routes");
+    assert_eq!(
+        plan.generated_query,
+        "dependents label:SongController depth:4"
+    );
+    assert_eq!(plan.rule, "reverse_dependency_or_impact");
+}
+
+#[test]
 fn a_verb_the_question_ends_on_is_not_what_it_asks_about() {
     let mut graph = CodeGraph::new("repo");
     // terraform has a function called `read`, and "what environment

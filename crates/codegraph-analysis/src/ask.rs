@@ -388,6 +388,13 @@ pub(crate) fn natural_query_plan_with_anchor(
             "if i change",
             "if i remove",
             "if i rename",
+            // The same question in the present tense: "what changes when I
+            // edit the parser" is what depends on the parser.
+            "when i change",
+            "when i edit",
+            "when i touch",
+            "if i edit",
+            "if i touch",
             "что сломает",
             "если изменить",
             "кто использ",
@@ -528,6 +535,26 @@ pub(crate) fn natural_query_plan_with_anchor(
                 "high".to_string(),
             )
         }
+    } else if natural_query_mentions_any(
+        &routing,
+        &[
+            "change together",
+            "changed together",
+            "changes together",
+            "co-change",
+            "cochange",
+            "меняются вместе",
+        ],
+    ) {
+        // The graph holds no history, so which files change together is
+        // not something it knows. What it does hold is which files depend
+        // on each other, and saying so plainly beats searching the project
+        // for the word "together".
+        (
+            "hotspots min_score:3 edge_limit:300".to_string(),
+            "structural_coupling_stands_in_for_cochange".to_string(),
+            "low".to_string(),
+        )
     } else if natural_query_mentions_any(
         &routing,
         &[
@@ -909,6 +936,12 @@ pub(crate) fn natural_query_stop_word(token: &str) -> bool {
             | "how"
             | "why"
             | "which"
+            // Adverbs a question is built from: "which files change
+            // together" searched the project for `together`.
+            | "together"
+            | "often"
+            | "recently"
+            | "вместе"
             | "does"
             | "do"
             | "is"
