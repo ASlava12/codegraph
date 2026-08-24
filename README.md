@@ -67,6 +67,11 @@ Implemented now:
   capitalised `NS`/`CF`/`CG`/`Sec`) as that framework's, and a message whose receiver names a
   framework class (`[NSURL URLWithString:]`) as Foundation's rather than as a selector nothing
   declares.
+- A qualified call's import qualifier is read from the front of the name, not from the segment
+  before the method: `protoimpl.X.MessageStateOf` comes from `protoimpl`, so terraform's generated
+  protobuf code no longer reports 3234 calls as unresolved, and `providers.SchemaCache.Set` reaches
+  the in-repo package that declares it. Go's predeclared types count as the language's own when they
+  are written as conversions -- `string(b)`, `int64(n)` -- rather than as functions nothing declares.
 - Ruby resolves through the constant a call is written through. A ruby call's label keeps only the
   method name, so `Addressable::URI.parse(href).normalize` and a project's own
   `HashtagNormalizer#normalize` looked like one call; the receiver's leading constant says which is

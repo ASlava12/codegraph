@@ -5632,6 +5632,66 @@ fn a_julia_include_and_a_ruby_require_relative_reach_their_file() {
 }
 
 #[test]
+fn a_go_call_through_a_package_qualifier_reads_past_the_type() {
+    // `protoimpl.X.MessageStateOf(m)` names a package, a variable inside it
+    // and a method. The owner is the last segment before the method -- `X` --
+    // and looking that up in the import list found nothing, so 3234 of
+    // terraform's generated protobuf calls were reported unresolved instead
+    // of as calls into the package the file states it imports.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("internal").join("state")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
+    fs::write(
+        root.join("internal").join("state").join("state.go"),
+        "package state\n\ntype Store struct{}\n\nfunc (s Store) MessageStateOf(m int) int {\n\treturn m\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("main.go"),
+        "package main\n\nimport (\n\t\"google.golang.org/protobuf/runtime/protoimpl\"\n)\n\nfunc main() {\n\tprotoimpl.X.MessageStateOf(1)\n\t_ = string(1)\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let own = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "MessageStateOf"
+                && node
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.path.ends_with("state.go"))
+        })
+        .expect("the project's own method");
+    assert!(
+        !graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Calls && edge.target == own.id),
+        "a call into an imported package is not answered by a method sharing its name"
+    );
+    let external = graph.nodes.iter().any(|node| {
+        node.kind == NodeKind::ExternalDependency
+            && node.label == "protoimpl.X.MessageStateOf"
+            && node.metadata.get("resolution").map(String::as_str) == Some("external")
+    });
+    assert!(external, "the call is recorded as leaving the project");
+    // `string(1)` converts a value; the language declares the name.
+    let conversion = graph.nodes.iter().any(|node| {
+        node.kind == NodeKind::ExternalDependency
+            && node.label == "string"
+            && node.metadata.get("resolution").map(String::as_str) == Some("builtin")
+    });
+    assert!(
+        conversion,
+        "a predeclared type used as a conversion is the language's, not a missing function"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_ruby_call_through_a_gems_constant_is_not_this_projects_method() {
     // A ruby call's label keeps only the method name, so
     // `Addressable::URI.parse(href).normalize` and the project's own

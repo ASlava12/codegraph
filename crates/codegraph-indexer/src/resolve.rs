@@ -496,6 +496,10 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
             .iter()
             .any(|prefix| base.starts_with(prefix))
         }
+        // Go's predeclared types are written as calls when a value is
+        // converted -- `string(b)`, `int64(n)`, `[]byte` aside. terraform
+        // writes 400 of those, and reporting them as unresolved calls claims
+        // the scan looked for a function that was never meant to exist.
         "go" => matches!(
             base,
             "make"
@@ -516,6 +520,27 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
                 | "min"
                 | "max"
                 | "clear"
+                | "string"
+                | "bool"
+                | "byte"
+                | "rune"
+                | "error"
+                | "any"
+                | "int"
+                | "int8"
+                | "int16"
+                | "int32"
+                | "int64"
+                | "uint"
+                | "uint8"
+                | "uint16"
+                | "uint32"
+                | "uint64"
+                | "uintptr"
+                | "float32"
+                | "float64"
+                | "complex64"
+                | "complex128"
         ),
         "c" | "cpp" => {
             matches!(
@@ -1728,7 +1753,23 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             Some((owner, _)) => context
                 .file_import_qualifiers
                 .get(call.span.path.as_str())
-                .and_then(|qualifiers| qualifiers.get(owner))
+                .and_then(|qualifiers| {
+                    // The owner is the last segment before the method --
+                    // `a::b::Type::method` is `Type`'s. An import qualifier is
+                    // the first: `protoimpl.X.MessageStateOf` comes from
+                    // `protoimpl`, and looking `X` up in the import list found
+                    // nothing, so 3234 calls in terraform's generated protobuf
+                    // code were reported unresolved rather than as calls into
+                    // the package the file imports.
+                    qualifiers.get(owner).or_else(|| {
+                        let head = call
+                            .label
+                            .split_once("::")
+                            .or_else(|| call.label.split_once('.'))
+                            .map(|(head, _)| head)?;
+                        (head != owner).then(|| qualifiers.get(head))?
+                    })
+                })
                 .cloned(),
             // `from collections import OrderedDict` binds a bare name, so
             // the call site has no qualifier to look up — the name itself
