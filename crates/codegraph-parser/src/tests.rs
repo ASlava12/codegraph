@@ -2674,6 +2674,37 @@ fn haskell_type_signatures_do_not_become_functions() {
 }
 
 #[test]
+fn a_swift_try_is_named_by_what_it_calls() {
+    // The string inside `try AssertParse(Foo.self, "--name value")` is an
+    // argument, and swift-argument-parser's tests filed a hundred failure
+    // paths called `--name` and `--foo`.
+    let source = "func check() throws {\n  try AssertParse(Foo.self, \"--name value\")\n  throw ParserError.invalidValue\n}\n";
+    let parsed = parse_source("demo.swift", source.as_bytes(), Language::Swift).unwrap();
+    let errors: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Error)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert!(
+        errors
+            .iter()
+            .any(|label| label.starts_with("try AssertParse")),
+        "a propagating try is named by the call: {errors:?}"
+    );
+    assert!(
+        !errors.iter().any(|label| label.trim() == "--name value"),
+        "and not by an argument: {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|label| label.contains("ParserError.invalidValue")),
+        "a throw still names the error: {errors:?}"
+    );
+}
+
+#[test]
 fn a_cpp_throw_macro_is_a_failure_path_and_an_assertion_is_not() {
     // json writes `JSON_THROW(...)` rather than the keyword, and spdlog
     // `SPDLOG_THROW(...)`; a test framework's assertion about throwing is
