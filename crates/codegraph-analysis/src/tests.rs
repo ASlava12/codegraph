@@ -6472,6 +6472,76 @@ fn insights_report_ambiguous_call_resolution() {
 }
 
 #[test]
+fn an_import_from_code_the_package_never_ships_is_a_note() {
+    let mut graph = CodeGraph::new("repo");
+    graph.add_node_with_metadata(
+        NodeKind::File,
+        "package.json",
+        None,
+        BTreeMap::from([(
+            "published_paths".to_string(),
+            "/contracts/**/*.sol".to_string(),
+        )]),
+    );
+    let contract = graph.add_node_with_metadata(
+        NodeKind::File,
+        "contracts/token/ERC20.sol",
+        None,
+        BTreeMap::from([("language".to_string(), "solidity".to_string())]),
+    );
+    let harness = graph.add_node_with_metadata(
+        NodeKind::File,
+        "fv/harnesses/AccessControlHarness.sol",
+        None,
+        BTreeMap::from([("language".to_string(), "solidity".to_string())]),
+    );
+    let unresolved_import = |graph: &mut CodeGraph, target: &str| {
+        graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            format!("import \"{target}\";"),
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "import".to_string()),
+                ("language".to_string(), "solidity".to_string()),
+                ("import_scope".to_string(), "local".to_string()),
+                ("import_target".to_string(), target.to_string()),
+                ("resolution".to_string(), "unresolved".to_string()),
+            ]),
+        )
+    };
+    let from_contract = unresolved_import(&mut graph, "./Missing.sol");
+    let from_harness = unresolved_import(&mut graph, "../patched/access/AccessControl.sol");
+    graph.add_edge(
+        contract,
+        from_contract,
+        EdgeKind::Imports,
+        Confidence::Syntactic,
+    );
+    graph.add_edge(
+        harness,
+        from_harness,
+        EdgeKind::Imports,
+        Confidence::Syntactic,
+    );
+
+    let report = insights(&graph);
+    let severity = |target: &str| {
+        report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "unresolved_local_import" && insight.message.contains(target)
+            })
+            .map(|insight| insight.severity)
+    };
+
+    // The contract ships: a dead import there is a defect in the program.
+    assert_eq!(severity("./Missing.sol"), Some(InsightSeverity::Warning));
+    // The harness does not, and `make` writes the tree it imports.
+    assert_eq!(severity("../patched/"), Some(InsightSeverity::Info));
+}
+
+#[test]
 fn insights_report_unresolved_local_imports() {
     let mut graph = CodeGraph::new("repo");
     let file = graph.add_node(NodeKind::File, "src/app.js");

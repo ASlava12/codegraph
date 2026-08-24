@@ -181,6 +181,7 @@ struct MissingImport {
 
 pub(crate) fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let directories = scanned_directory_labels(graph);
+    let published = published_paths(graph);
     let mut missing: BTreeMap<String, MissingImport> = BTreeMap::new();
     for node in &graph.nodes {
         if node.kind != NodeKind::ExternalDependency
@@ -237,12 +238,18 @@ pub(crate) fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: 
         // Imports inside inline test modules or test-convention files are
         // fixture wiring, not production dead links, mirroring the
         // benchmark-oracle test exclusions (Phase 9 dogfooding).
+        // And openzeppelin's formal-verification harnesses import
+        // `../patched/...`, a copy of the contracts that `make` writes
+        // beside them. The package publishes the contracts and not the
+        // harnesses, so this is the verification setup rather than the
+        // program.
         let production = !node
             .metadata
             .get("test_context")
             .is_some_and(|value| value == "true")
             && !is_test_like_source_path(source)
-            && !is_vendored_source_path(source);
+            && !is_vendored_source_path(source)
+            && !published.excludes(source);
 
         let entry = missing
             .entry(missing_import_key(source, target))
