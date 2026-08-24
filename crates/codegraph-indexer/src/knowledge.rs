@@ -320,9 +320,9 @@ fn comment_text<'a>(label: &str, language: Option<Language>, line: &'a str) -> O
 pub(crate) fn rationale_comment_text(language: Option<Language>, line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
     match language {
-        Some(Language::Python | Language::Bash | Language::Ruby | Language::Elixir) => {
-            trimmed.strip_prefix('#')
-        }
+        Some(
+            Language::Python | Language::Bash | Language::Ruby | Language::Elixir | Language::Hcl,
+        ) => trimmed.strip_prefix('#'),
         Some(Language::Lua | Language::Haskell) => trimmed.strip_prefix("--"),
         Some(Language::Julia | Language::Erlang | Language::Nix | Language::R) => trimmed
             .strip_prefix('%')

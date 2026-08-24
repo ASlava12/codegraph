@@ -24,6 +24,7 @@ pub(crate) fn local_import_target(
             c_local_import_target(source_label, import_label, cmake_include_dirs)
         }
         Language::Php => php_local_import_target(source_label, import_label),
+        Language::Hcl => hcl_local_import_target(source_label, import_label),
         Language::Bash => bash_local_import_target(source_label, import_label),
 
         Language::Go => go_local_import_target(source_label, import_label),
@@ -71,6 +72,32 @@ pub(crate) fn haskell_local_import_target(import_label: &str) -> Option<LocalImp
             format!("src/{path}.hs"),
             format!("lib/{path}.hs"),
             format!("{path}.hs"),
+        ],
+    })
+}
+
+/// A Terraform module names its source, and a source that starts with `./`
+/// or `../` is a directory of this repository: `source = "../modules/vpc"`
+/// is the configuration in that directory, which the registry and git forms
+/// are not.
+pub(crate) fn hcl_local_import_target(
+    source_label: &str,
+    import_label: &str,
+) -> Option<LocalImportTarget> {
+    let path = import_label.trim();
+    if !(path.starts_with("./") || path.starts_with("../")) {
+        return None;
+    }
+    let joined = join_path(path_dir(source_label).as_deref(), path);
+    Some(LocalImportTarget {
+        target: path.to_string(),
+        // A module is a directory, and every file in it is part of it; the
+        // conventional entry file stands for the whole.
+        candidates: vec![
+            format!("{joined}/main.tf"),
+            format!("{joined}/terraform.tf"),
+            format!("{joined}/variables.tf"),
+            joined,
         ],
     })
 }

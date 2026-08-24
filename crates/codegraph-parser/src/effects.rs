@@ -192,6 +192,9 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                     .as_deref()
                     .is_some_and(|value| matches!(value, "builtins.getEnv" | "getEnv"))
         }
+        // A configuration takes its inputs as variables; nothing in the
+        // language reads the environment.
+        Language::Hcl => false,
         Language::R => {
             node.kind() == "call"
                 && call
@@ -338,6 +341,20 @@ pub(crate) fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) 
         Language::Nix => call
             .as_deref()
             .is_some_and(|value| matches!(value, "builtins.readFile" | "builtins.fromJSON")),
+        // `file(..)` and `templatefile(..)` are how a configuration reads
+        // what sits beside it.
+        Language::Hcl => call.as_deref().is_some_and(|value| {
+            matches!(
+                value,
+                "file"
+                    | "templatefile"
+                    | "fileexists"
+                    | "filebase64"
+                    | "jsondecode"
+                    | "yamldecode"
+                    | "csvdecode"
+            )
+        }),
         Language::R => call.as_deref().is_some_and(|value| {
             matches!(simple_name(value), "read.csv" | "readRDS" | "readLines")
         }),
@@ -504,6 +521,17 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
                 && call_label(language, node, source)
                     .as_deref()
                     .is_some_and(|value| matches!(value, "throw" | "error" | "exit"))
+        }
+        // A configuration states its checks as blocks: a `validation` on a
+        // variable, a `precondition` or `postcondition` on a resource. They
+        // are where it refuses to apply, which is what an error path is.
+        Language::Hcl => {
+            node.kind() == "block"
+                && first_identifier(node, source)
+                    .as_deref()
+                    .is_some_and(|kind| {
+                        matches!(kind, "validation" | "precondition" | "postcondition")
+                    })
         }
         Language::Nix => {
             // `assert cond; body` stops the evaluation when the condition
@@ -718,6 +746,7 @@ pub(crate) fn effect_metadata(
         | Language::Julia
         | Language::Erlang
         | Language::Nix
+        | Language::Hcl
         | Language::R => None,
     };
 

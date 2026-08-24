@@ -187,6 +187,7 @@ pub(crate) fn framework_routes(language: Language, source: &str) -> Vec<Framewor
         Language::C
         | Language::Cpp
         | Language::Dart
+        | Language::Hcl
         | Language::Bash
         | Language::Java
         | Language::CSharp
@@ -511,6 +512,9 @@ pub(crate) fn framework_configs(
             configs.extend(js_framework_configs(source))
         }
         Some(Language::Rust) => configs.extend(rust_framework_configs(source)),
+        // A configuration language states its settings outright; nothing in
+        // it is a framework's own file.
+        Some(Language::Hcl) => {}
         Some(Language::Go) => configs.extend(go_framework_configs(source)),
         Some(Language::Php) => configs.extend(php_framework_configs(source)),
         Some(Language::Bash) => configs.extend(bash_framework_configs(source)),

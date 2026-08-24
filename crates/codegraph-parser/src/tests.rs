@@ -12,7 +12,7 @@ fn language_registry_exposes_all_builtin_adapters() {
         .map(|adapter| adapter.info().language)
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(adapters.len(), 26);
+    assert_eq!(adapters.len(), 27);
     assert_eq!(
         languages,
         BTreeSet::from([
@@ -23,6 +23,7 @@ fn language_registry_exposes_all_builtin_adapters() {
             "dart",
             "go",
             "haskell",
+            "hcl",
             "elixir",
             "erlang",
             "java",
@@ -64,6 +65,7 @@ fn detects_target_languages_by_extension() {
         ("main.dart", Language::Dart),
         ("index.php", Language::Php),
         ("deploy.sh", Language::Bash),
+        ("main.tf", Language::Hcl),
     ];
 
     for (path, language) in cases {
@@ -73,6 +75,79 @@ fn detects_target_languages_by_extension() {
             Some(language)
         );
     }
+}
+
+#[test]
+fn hcl_declares_by_block_and_addresses_by_name() {
+    let adapter = adapter_for_language(Language::Hcl).unwrap();
+    let source = br#"terraform {
+  required_version = ">= 1.5"
+}
+
+variable "region" {
+  type = string
+
+  validation {
+    condition     = length(var.region) > 0
+    error_message = "region must be set"
+  }
+}
+
+locals {
+  prefix = "demo"
+}
+
+module "vpc" {
+  source = "./modules/vpc"
+}
+
+resource "aws_instance" "web" {
+  ami = data.aws_ami.ubuntu.id
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+output "id" {
+  value = aws_instance.web.id
+}
+"#;
+    let parsed = adapter.parse(Path::new("main.tf"), source).unwrap();
+    let labels = |kind: ParsedItemKind| {
+        parsed
+            .items
+            .iter()
+            .filter(|item| item.kind == kind)
+            .map(|item| item.label.clone())
+            .collect::<Vec<_>>()
+    };
+
+    let declared = labels(ParsedItemKind::Type);
+    // Terraform's own addresses, which is how the rest of the configuration
+    // refers to each of these.
+    assert!(declared.contains(&"var.region".to_string()));
+    assert!(declared.contains(&"local.prefix".to_string()));
+    assert!(declared.contains(&"aws_instance.web".to_string()));
+    assert!(declared.contains(&"output.id".to_string()));
+    // A `lifecycle` block is how a resource is configured, and `terraform`
+    // states settings for the run: neither declares anything addressable.
+    assert!(!declared.iter().any(|label| label.contains("lifecycle")));
+    assert!(
+        !declared
+            .iter()
+            .any(|label| label.contains("required_version"))
+    );
+
+    assert_eq!(labels(ParsedItemKind::Module), vec!["module.vpc"]);
+    assert_eq!(labels(ParsedItemKind::Import), vec!["./modules/vpc"]);
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Error),
+        "a `validation` block is where a configuration refuses to apply"
+    );
 }
 
 #[test]

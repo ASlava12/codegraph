@@ -3979,6 +3979,49 @@ fn scan_project_indexes_control_flow_facts() {
 }
 
 #[test]
+fn a_terraform_module_reaches_the_configuration_it_names() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("modules").join("vpc")).unwrap();
+    fs::write(
+        root.join("main.tf"),
+        "module \"vpc\" {\n  source = \"./modules/vpc\"\n}\n\nresource \"aws_instance\" \"web\" {\n  subnet_id = module.vpc.id\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("modules").join("vpc").join("main.tf"),
+        "resource \"aws_vpc\" \"this\" {\n  cidr_block = \"10.0.0.0/16\"\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    assert!(
+        graph
+            .nodes
+            .iter()
+            .any(|node| node.kind == NodeKind::Type && node.label == "aws_instance.web"),
+        "a resource is a thing the configuration declares"
+    );
+    let module = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "./modules/vpc")
+        .expect("the module's source");
+    let target = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.source == module.id)
+        .filter_map(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+        .map(|node| node.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        target.contains(&"modules/vpc/main.tf"),
+        "a local module source is a directory of this repository, not an outside dependency: {target:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn the_dotnet_platform_answers_its_own_calls() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();

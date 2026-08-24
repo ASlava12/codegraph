@@ -663,6 +663,26 @@ pub(crate) fn classify_node(
             "call_expression" if julia_include_call(node, source) => ParsedItemKind::Import,
             _ => return None,
         },
+        // HCL declares by block: `resource "aws_instance" "web" { .. }`. A
+        // block at the top level of a file declares something the rest of
+        // the configuration addresses by name; one nested inside it is that
+        // declaration's own settings and not a thing of its own.
+        Language::Hcl => match kind {
+            "block" if hcl_block_declares(node, source) => {
+                if hcl_block_type(node, source).as_deref() == Some("module") {
+                    ParsedItemKind::Module
+                } else {
+                    ParsedItemKind::Type
+                }
+            }
+            // `module "vpc" { source = "../modules/vpc" }` is how one
+            // configuration pulls in another.
+            "attribute" if hcl_module_source(node, source).is_some() => ParsedItemKind::Import,
+            // A `locals` block holds values the rest of the file reads as
+            // `local.name`, one declaration each.
+            "attribute" if hcl_local_value(node, source) => ParsedItemKind::Type,
+            _ => return None,
+        },
     };
 
     let label = item_label(language, item_kind, node, source)?;
@@ -1768,6 +1788,13 @@ pub(crate) fn control_flow_fact(
             "if_expression" => Some((ParsedItemKind::Branch, "if")),
             _ => None,
         },
+        // HCL writes its branch as `cond ? a : b` and its loop as a `for`
+        // expression over a collection.
+        Language::Hcl => match kind {
+            "conditional" => Some((ParsedItemKind::Branch, "conditional")),
+            "for_expr" => Some((ParsedItemKind::Loop, "for")),
+            _ => None,
+        },
         Language::R => match kind {
             "if_statement" => Some((ParsedItemKind::Branch, "if")),
             "for_statement" => Some((ParsedItemKind::Loop, "for")),
@@ -1794,6 +1821,97 @@ pub(crate) fn control_flow_fact(
             _ => None,
         },
     }
+}
+
+/// The block type: the first word of `resource "aws_instance" "web"`.
+fn hcl_block_type(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find(|child| child.kind() == "identifier")
+        .and_then(|child| node_text(child, source))
+}
+
+/// The quoted labels a block carries after its type, unquoted.
+fn hcl_block_labels(node: Node<'_>, source: &[u8]) -> Vec<String> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .filter(|child| child.kind() == "string_lit")
+        .filter_map(|child| node_text(child, source))
+        .map(|text| text.trim_matches('"').to_string())
+        .filter(|text| !text.is_empty())
+        .collect()
+}
+
+/// Whether a block stands at the top level of its file. A `lifecycle` or
+/// `network_interface` block is how a resource is configured, not another
+/// thing the configuration declares.
+fn hcl_block_is_top_level(node: Node<'_>) -> bool {
+    node.parent()
+        .and_then(|body| body.parent())
+        .is_some_and(|parent| parent.kind() == "config_file")
+}
+
+/// Whether a top-level block declares something addressable. `locals` holds
+/// its declarations one level down, and `terraform` states settings for the
+/// run rather than anything the configuration refers to.
+fn hcl_block_declares(node: Node<'_>, source: &[u8]) -> bool {
+    hcl_block_is_top_level(node)
+        && !matches!(
+            hcl_block_type(node, source).as_deref(),
+            Some("locals") | Some("terraform") | None
+        )
+}
+
+/// Whether an attribute is a value inside a top-level `locals` block, which
+/// the rest of the configuration reads as `local.name`. Every other
+/// attribute is one setting of the block that holds it.
+fn hcl_local_value(node: Node<'_>, source: &[u8]) -> bool {
+    node.parent()
+        .and_then(|body| body.parent())
+        .is_some_and(|block| {
+            block.kind() == "block"
+                && hcl_block_is_top_level(block)
+                && hcl_block_type(block, source).as_deref() == Some("locals")
+        })
+}
+
+/// The address Terraform writes for a declaration, which is also how the
+/// rest of the configuration refers to it: `aws_instance.web`, `var.region`,
+/// `module.vpc`, `local.name`.
+fn hcl_declaration_label(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if node.kind() == "attribute" {
+        let name = first_identifier(node, source)?;
+        return Some(format!("local.{name}"));
+    }
+    let block_type = hcl_block_type(node, source)?;
+    let labels = hcl_block_labels(node, source);
+    let joined = labels.join(".");
+    Some(match block_type.as_str() {
+        // A resource is addressed by its type and name alone.
+        "resource" if !joined.is_empty() => joined,
+        "variable" if !joined.is_empty() => format!("var.{joined}"),
+        _ if joined.is_empty() => block_type,
+        _ => format!("{block_type}.{joined}"),
+    })
+}
+
+/// The configuration a `module` block pulls in: the path or registry name
+/// its `source` states.
+fn hcl_module_source(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if node.kind() != "attribute" || first_identifier(node, source).as_deref() != Some("source") {
+        return None;
+    }
+    let block = node.parent().and_then(|body| body.parent())?;
+    if hcl_block_type(block, source).as_deref() != Some("module") {
+        return None;
+    }
+    let mut cursor = node.walk();
+    let value = node
+        .named_children(&mut cursor)
+        .find(|child| child.kind() != "identifier")
+        .and_then(|child| node_text(child, source))?;
+    let value = value.trim().trim_matches('"').to_string();
+    (!value.is_empty()).then_some(value)
 }
 
 pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) -> bool {
@@ -1864,6 +1982,7 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
                     .is_some_and(|callee| callee.kind() == "apply_expression")
         }
         Language::R => node.kind() == "call" && !r_library_call(node, source),
+        Language::Hcl => node.kind() == "function_call",
     }
 }
 
@@ -2236,6 +2355,13 @@ pub(crate) fn item_label(
         return lua_bound_function_name(node, source);
     }
 
+    if language == Language::Hcl {
+        return match kind {
+            ParsedItemKind::Import => hcl_module_source(node, source),
+            _ => hcl_declaration_label(node, source),
+        };
+    }
+
     if kind == ParsedItemKind::Import {
         return node_text(node, source).map(compact_label);
     }
@@ -2331,6 +2457,8 @@ pub(crate) fn is_entrypoint(language: Language, label: &str) -> bool {
         Language::Lua | Language::Elixir | Language::Zig => label == "main",
         Language::Haskell | Language::OCaml | Language::Julia => label == "main",
         Language::Erlang | Language::Nix | Language::R => label == "main",
+        // A configuration has no entrypoint: nothing in it starts running.
+        Language::Hcl => false,
     }
 }
 

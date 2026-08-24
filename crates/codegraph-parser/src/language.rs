@@ -38,6 +38,7 @@ pub enum Language {
     Erlang,
     Nix,
     R,
+    Hcl,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,13 +241,20 @@ static NIX_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     extensions: &["nix"],
     file_names: &[],
 };
+// Terraform, Packer, Nomad and Consul all write HCL, and a `.tf` file is
+// the shape most projects carry it in.
+static HCL_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
+    language: Language::Hcl,
+    extensions: &["tf", "tfvars", "hcl"],
+    file_names: &[],
+};
 static R_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     language: Language::R,
     extensions: &["r", "R"],
     file_names: &[],
 };
 
-static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 26] = [
+static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 27] = [
     &RUST_ADAPTER,
     &PYTHON_ADAPTER,
     &JAVASCRIPT_ADAPTER,
@@ -273,6 +281,7 @@ static LANGUAGE_ADAPTERS: [&dyn LanguageAdapter; 26] = [
     &ERLANG_ADAPTER,
     &NIX_ADAPTER,
     &R_ADAPTER,
+    &HCL_ADAPTER,
 ];
 
 pub fn language_adapters() -> &'static [&'static dyn LanguageAdapter] {
@@ -326,6 +335,7 @@ impl Language {
             Self::Erlang => "erlang",
             Self::Nix => "nix",
             Self::R => "r",
+            Self::Hcl => "hcl",
         }
     }
 
@@ -357,6 +367,7 @@ impl Language {
             Self::Erlang => tree_sitter_erlang::LANGUAGE.into(),
             Self::Nix => tree_sitter_nix::LANGUAGE.into(),
             Self::R => tree_sitter_r::LANGUAGE.into(),
+            Self::Hcl => tree_sitter_hcl::LANGUAGE.into(),
         }
     }
 }
