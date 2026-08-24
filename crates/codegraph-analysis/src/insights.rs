@@ -4280,6 +4280,15 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
                 .metadata
                 .get("type_only")
                 .is_some_and(|value| value == "true")
+            // A Dart `part` and the file it belongs to are one library
+            // written across two files, and each names the other by
+            // definition.
+            || [edge.source, edge.target].iter().any(|id| {
+                nodes_by_id
+                    .get(id)
+                    .and_then(|node| node.metadata.get("import_form"))
+                    .is_some_and(|form| form == "part")
+            })
         {
             continue;
         }

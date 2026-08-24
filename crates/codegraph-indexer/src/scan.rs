@@ -829,6 +829,18 @@ pub(crate) fn index_file(
                     {
                         item_metadata.insert("type_only".to_string(), "true".to_string());
                     }
+                    // A Dart `part` and the file it belongs to are one
+                    // library written across two files, the way a header and
+                    // its source are: `frame_reader.dart` says `part of
+                    // 'frames.dart'` and `frames.dart` says `part
+                    // 'frame_reader.dart'`, and that is not two files
+                    // depending on each other.
+                    if item.kind == ParsedItemKind::Import
+                        && language == Language::Dart
+                        && (item.label.starts_with("part ") || item.label.starts_with("part of"))
+                    {
+                        item_metadata.insert("import_form".to_string(), "part".to_string());
+                    }
                     item_metadata.insert("language".to_string(), language.to_string());
                     item_metadata.insert("parser".to_string(), "tree-sitter".to_string());
                     item_metadata.insert(

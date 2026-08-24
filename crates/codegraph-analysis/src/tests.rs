@@ -9419,6 +9419,54 @@ fn a_note_left_in_vendored_code_is_upstreams() {
 }
 
 #[test]
+fn a_dart_part_is_not_a_dependency_cycle() {
+    // `frame_reader.dart` says `part of 'frames.dart'` and `frames.dart`
+    // says `part 'frame_reader.dart'`: one library written across two
+    // files, which named each other by definition.
+    let mut graph = CodeGraph::new("repo");
+    let library = graph.add_node(NodeKind::File, "lib/frames.dart");
+    let part = graph.add_node(NodeKind::File, "lib/frame_reader.dart");
+    let import_metadata = |target: &str| {
+        BTreeMap::from([
+            ("item_kind".to_string(), "import".to_string()),
+            ("language".to_string(), "dart".to_string()),
+            ("import_form".to_string(), "part".to_string()),
+            ("resolved_path".to_string(), target.to_string()),
+        ])
+    };
+    let declares = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "part 'frame_reader.dart';",
+        None,
+        import_metadata("lib/frame_reader.dart"),
+    );
+    let belongs = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "part of 'frames.dart';",
+        None,
+        import_metadata("lib/frames.dart"),
+    );
+    graph.add_edge(library, declares, EdgeKind::Imports, Confidence::Syntactic);
+    graph.add_edge(declares, part, EdgeKind::References, Confidence::Syntactic);
+    graph.add_edge(part, belongs, EdgeKind::Imports, Confidence::Syntactic);
+    graph.add_edge(
+        belongs,
+        library,
+        EdgeKind::References,
+        Confidence::Syntactic,
+    );
+
+    let report = insights(&graph);
+    assert!(
+        !report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "dependency_cycle"),
+        "one library across two files is not two files depending on each other"
+    );
+}
+
+#[test]
 fn insights_report_rationale_risk_comments() {
     let mut graph = CodeGraph::new("repo");
     let file = graph.add_node(NodeKind::File, "src/auth.rs");
