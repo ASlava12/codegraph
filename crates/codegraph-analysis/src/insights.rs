@@ -4665,10 +4665,50 @@ pub(crate) fn import_matches_package_id(package_id: &str, import: &ImportPackage
             package == canonical || package == hyphenated || package == underscored
         }
         "python" => package == canonical_python_package_name(&import.package),
-        "npm" | "composer" | "dart" => package == import.package.to_ascii_lowercase(),
+        "npm" | "dart" => package == import.package.to_ascii_lowercase(),
+        // A composer package's vendor is whoever publishes it, and the
+        // namespace a class sits in says nothing about that: `Elastica\\`
+        // comes from `ruflin/elastica` and `Gelf\\` from
+        // `graylog2/gelf-php`. What the two do share is the name after the
+        // slash.
+        "composer" => {
+            let imported = import.package.to_ascii_lowercase();
+            package == imported || composer_names_the_same_library(package, &imported)
+        }
         "vcpkg" | "conan" | "cmake" => package == import.package.to_ascii_lowercase(),
         _ => package == import.package,
     }
+}
+
+/// Whether a declared composer package is the library an import names,
+/// going by the part after the vendor: `ruflin/elastica` ships `Elastica\`,
+/// `graylog2/gelf-php` ships `Gelf\`, `aws/aws-sdk-php` ships `Aws\`.
+fn composer_names_the_same_library(declared: &str, imported: &str) -> bool {
+    let glue = |value: &str| {
+        value
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+    };
+    let library = declared
+        .split_once('/')
+        .map(|(_, name)| name)
+        .unwrap_or(declared);
+    let (Some(root), Some(declared_root)) =
+        (imported.split('/').next().map(glue), Some(glue(library)))
+    else {
+        return false;
+    };
+    // `aws/aws-sdk-php` publishes `Aws\`: a short root still matches when
+    // the declared name opens with it as a word of its own.
+    if library.starts_with(&format!("{root}-")) {
+        return true;
+    }
+    // Otherwise a short root — `db`, `io` — says too little on its own.
+    if root.len() < 4 {
+        return false;
+    }
+    declared_root == root || declared_root.starts_with(&root) || root.starts_with(&declared_root)
 }
 
 pub(crate) fn rust_import_package(label: &str) -> Option<String> {
@@ -5133,7 +5173,17 @@ pub(crate) fn is_declared_package(
             canonical_python_package_name(package)
         )),
         "npm" => declared.contains(&format!("npm:{}", package.to_ascii_lowercase())),
-        "composer" => declared.contains(&format!("composer:{}", package.to_ascii_lowercase())),
+        "composer" => {
+            let imported = package.to_ascii_lowercase();
+            declared.contains(&format!("composer:{imported}"))
+                || declared.iter().any(|package_id| {
+                    package_id
+                        .strip_prefix("composer:")
+                        .is_some_and(|declared| {
+                            composer_names_the_same_library(declared, &imported)
+                        })
+                })
+        }
         "vcpkg" | "conan" | "cmake" => {
             declared.contains(&format!("{ecosystem}:{}", package.to_ascii_lowercase()))
         }

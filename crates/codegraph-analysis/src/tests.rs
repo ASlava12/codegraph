@@ -10010,6 +10010,39 @@ fn build_tooling_may_import_a_dev_dependency() {
 }
 
 #[test]
+fn a_composer_package_is_matched_by_the_library_it_ships() {
+    let mut graph = CodeGraph::new("repo");
+    let source = graph.add_node(NodeKind::File, "src/Monolog/Handler/ElasticaHandler.php");
+    // A composer vendor is whoever publishes the package, and the namespace
+    // says nothing about that: monolog declares these and imports those.
+    for (label, package_id) in [
+        ("ruflin/elastica", "composer:ruflin/elastica"),
+        ("graylog2/gelf-php", "composer:graylog2/gelf-php"),
+        ("aws/aws-sdk-php", "composer:aws/aws-sdk-php"),
+    ] {
+        let declared = dependency_node(&mut graph, label, package_id);
+        graph.add_edge(source, declared, EdgeKind::DependsOn, Confidence::Exact);
+    }
+    for label in [
+        "use Elastica\\Client;",
+        "use Gelf\\Message;",
+        "use Aws\\DynamoDb\\DynamoDbClient;",
+    ] {
+        let import = import_node(&mut graph, label, "php");
+        graph.add_edge(source, import, EdgeKind::Imports, Confidence::Syntactic);
+    }
+
+    let report = insights(&graph);
+    let undeclared = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "undeclared_external_import")
+        .map(|insight| insight.message.as_str())
+        .collect::<Vec<_>>();
+    assert!(undeclared.is_empty(), "{undeclared:?}");
+}
+
+#[test]
 fn a_rust_use_names_a_crate_only_when_it_is_one() {
     let mut graph = CodeGraph::new("repo");
     let source = graph.add_node(NodeKind::File, "crates/searcher/src/core.rs");
