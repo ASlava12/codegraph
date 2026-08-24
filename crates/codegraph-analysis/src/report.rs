@@ -656,26 +656,23 @@ pub(crate) fn project_risk_summary(report: &InsightReport) -> ProjectRiskSummary
     // repository size, and folding them in graded every large healthy
     // repository critical (Phase 9 dogfooding).
     let score = errors * 100 + warnings * 10;
-    let mut kind_severities: BTreeMap<String, InsightSeverity> = BTreeMap::new();
+    // One row per kind and severity. Pairing a kind's worst severity with
+    // its total said "undeclared external import, warning, 9" where one of
+    // the nine was a warning and eight were notes about a test's imports.
+    // This summary is built from the untruncated report, so the counts are
+    // every finding rather than the sample a limit left.
+    let mut counts: BTreeMap<(&str, InsightSeverity), usize> = BTreeMap::new();
     for insight in &report.insights {
-        kind_severities
-            .entry(insight.kind.clone())
-            .and_modify(|severity| *severity = (*severity).max(insight.severity))
-            .or_insert(insight.severity);
+        *counts
+            .entry((insight.kind.as_str(), insight.severity))
+            .or_insert(0) += 1;
     }
-    let mut top_kinds: Vec<_> = report
-        .by_kind
-        .iter()
-        .map(|(kind, count)| ProjectRiskKindSummary {
-            kind: kind.clone(),
-            severity: severity_name(
-                kind_severities
-                    .get(kind)
-                    .copied()
-                    .unwrap_or(InsightSeverity::Info),
-            )
-            .to_string(),
-            count: *count,
+    let mut top_kinds: Vec<_> = counts
+        .into_iter()
+        .map(|((kind, severity), count)| ProjectRiskKindSummary {
+            kind: kind.to_string(),
+            severity: severity_name(severity).to_string(),
+            count,
         })
         .collect();
     top_kinds.sort_by(|left, right| {

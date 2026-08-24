@@ -8294,6 +8294,60 @@ fn insights_report_unreachable_source_files() {
 }
 
 #[test]
+fn risk_rows_count_what_they_are_labelled() {
+    let mut graph = CodeGraph::new("repo");
+    let manifest = graph.add_node(NodeKind::File, "pyproject.toml");
+    let package = dependency_node(&mut graph, "numpy", "python:numpy");
+    graph.add_edge(manifest, package, EdgeKind::DependsOn, Confidence::Exact);
+    // One import from the program and two from examples: one warning and
+    // two notes of the same kind.
+    for (path, module) in [
+        ("src/app/main.py", "import pandas"),
+        ("examples/demo.py", "import tqdm"),
+        ("examples/other.py", "import h5py"),
+    ] {
+        let file = graph.add_node(NodeKind::File, path);
+        let import = import_node(&mut graph, module, "python");
+        graph.add_edge(file, import, EdgeKind::Imports, Confidence::Syntactic);
+    }
+
+    // A small insight limit truncates the embedded sample; the summary is
+    // built from the whole report, so the counts must not follow it.
+    let report = project_report(
+        &graph,
+        ProjectReportLimits {
+            architecture_group_limit: 5,
+            architecture_edge_limit: 5,
+            language_link_limit: 5,
+            hotspot_limit: 1,
+            community_limit: 5,
+            insight_limit: 1,
+            file_summary_limit: 1,
+            node_summary_limit: 2,
+            fail_on: InsightSeverity::Error,
+        },
+    );
+    let rows: Vec<_> = report
+        .risk_summary
+        .top_kinds
+        .iter()
+        .filter(|row| row.kind == "undeclared_external_import")
+        .map(|row| (row.severity.as_str(), row.count))
+        .collect();
+    assert!(rows.contains(&("warning", 1)), "{rows:?}");
+    assert!(rows.contains(&("info", 2)), "{rows:?}");
+    // Every warning row adds up to the summary's own count.
+    let warning_rows: usize = report
+        .risk_summary
+        .top_kinds
+        .iter()
+        .filter(|row| row.severity == "warning")
+        .map(|row| row.count)
+        .sum();
+    assert_eq!(warning_rows, report.risk_summary.warnings);
+}
+
+#[test]
 fn an_example_apps_own_pinning_is_a_note() {
     let mut graph = CodeGraph::new("repo");
     let package = graph.add_node_with_metadata(
