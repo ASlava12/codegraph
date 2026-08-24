@@ -2354,6 +2354,173 @@ pub(crate) fn go_module_roots(
 /// Every package.json in the repository that names a package, so a
 /// workspace import can be told from a dependency. Longest name first, so
 /// `@scope/a-b` wins over `@scope/a` when both could prefix-match.
+/// What each `tsconfig.json` says an import prefix stands for. Bundlers
+/// read the same file, and without it koel's `@/utils` looks like a
+/// package nobody declared rather than the directory beside it.
+pub(crate) fn typescript_path_aliases(
+    root: &Path,
+    options: &IndexOptions,
+    ignored_globs: &Option<GlobSet>,
+) -> Vec<PathAlias> {
+    let mut aliases: Vec<PathAlias> = Vec::new();
+    for entry in WalkDir::new(root)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| should_enter(entry, root, options, ignored_globs))
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !(name.starts_with("tsconfig") || name.starts_with("jsconfig"))
+            || !name.ends_with(".json")
+        {
+            continue;
+        }
+        let Ok(source) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&strip_json_comments(&source))
+        else {
+            continue;
+        };
+        let options_value = value.get("compilerOptions");
+        let Some(paths) = options_value
+            .and_then(|options| options.get("paths"))
+            .and_then(|paths| paths.as_object())
+        else {
+            continue;
+        };
+        let directory = path
+            .parent()
+            .and_then(|parent| parent.strip_prefix(root).ok())
+            .map(|relative| normalize_path(&relative.to_string_lossy().replace('\\', "/")))
+            .unwrap_or_default();
+        let base = options_value
+            .and_then(|options| options.get("baseUrl"))
+            .and_then(|base| base.as_str())
+            .map(|base| join_path(Some(&directory), base))
+            .unwrap_or(directory);
+        for (pattern, targets) in paths {
+            // Only the `prefix/*` form names a directory; an exact mapping
+            // names one module, which the same substitution covers.
+            let Some(prefix) = pattern.strip_suffix('*') else {
+                continue;
+            };
+            let targets: Vec<String> = targets
+                .as_array()
+                .map(|targets| {
+                    targets
+                        .iter()
+                        .filter_map(|target| target.as_str())
+                        .filter_map(|target| target.strip_suffix('*'))
+                        .map(|target| join_path(Some(&base), target))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if prefix.is_empty() || targets.is_empty() {
+                continue;
+            }
+            if let Some(existing) = aliases.iter_mut().find(|alias| alias.prefix == *prefix) {
+                existing.targets.extend(targets);
+                existing.targets.dedup();
+            } else {
+                aliases.push(PathAlias {
+                    prefix: prefix.to_string(),
+                    targets,
+                });
+            }
+        }
+    }
+    // The longest prefix wins, as it does in TypeScript.
+    aliases.sort_by(|left, right| {
+        right
+            .prefix
+            .len()
+            .cmp(&left.prefix.len())
+            .then_with(|| left.prefix.cmp(&right.prefix))
+    });
+    aliases
+}
+
+/// A `tsconfig.json` is JSON with comments, which serde will not read.
+fn strip_json_comments(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut chars = source.chars().peekable();
+    while let Some(character) = chars.next() {
+        if in_string {
+            out.push(character);
+            match character {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match character {
+            '"' => {
+                in_string = true;
+                out.push(character);
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                for next in chars.by_ref() {
+                    if next == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut previous = ' ';
+                for next in chars.by_ref() {
+                    if previous == '*' && next == '/' {
+                        break;
+                    }
+                    if next == '\n' {
+                        out.push('\n');
+                    }
+                    previous = next;
+                }
+            }
+            _ => out.push(character),
+        }
+    }
+    // A trailing comma is legal in a tsconfig and not in JSON, and what
+    // follows it is usually a newline and an indent.
+    let mut cleaned = String::with_capacity(out.len());
+    let mut held = String::new();
+    for character in out.chars() {
+        if !held.is_empty() {
+            if character.is_whitespace() {
+                held.push(character);
+                continue;
+            }
+            if !matches!(character, '}' | ']') {
+                cleaned.push_str(&held);
+            } else {
+                // Keep the layout, drop the comma.
+                cleaned.push_str(&held[1..]);
+            }
+            held.clear();
+        }
+        if character == ',' {
+            held.push(character);
+            continue;
+        }
+        cleaned.push(character);
+    }
+    cleaned.push_str(&held);
+    cleaned
+}
+
 pub(crate) fn npm_package_roots(
     root: &Path,
     options: &IndexOptions,

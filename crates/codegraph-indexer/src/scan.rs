@@ -120,6 +120,7 @@ pub(crate) fn scan_project_with_scope(
     let cargo_workspace_dependencies = cargo_workspace_dependencies(root);
     let go_modules = go_module_roots(root, options, &ignored_globs);
     let npm_packages = npm_package_roots(root, options, &ignored_globs);
+    let path_aliases = typescript_path_aliases(root, options, &ignored_globs);
     let dart_packages = dart_package_roots(root, options, &ignored_globs);
     let c_include_dirs = c_include_dirs(root, options, &ignored_globs);
     let julia_exports = julia_exported_names(root, options, &ignored_globs);
@@ -145,6 +146,7 @@ pub(crate) fn scan_project_with_scope(
         cargo_workspace_dependencies,
         go_modules,
         npm_packages,
+        path_aliases,
         own_package_ids: BTreeSet::new(),
         dart_packages,
         c_include_dirs,
@@ -963,6 +965,7 @@ pub(crate) fn index_file(
                             &item.label,
                             &context.c_include_dirs,
                             &context.dart_packages,
+                            &context.path_aliases,
                         )
                     } else {
                         None

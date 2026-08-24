@@ -472,7 +472,14 @@ pub(crate) fn index_commonjs_require_imports(
         metadata.insert("item_kind".to_string(), "import".to_string());
         metadata.insert("import_style".to_string(), "commonjs".to_string());
 
-        let local_import = local_import_target(language, label, &require_call, &[], &[]);
+        let local_import = local_import_target(
+            language,
+            label,
+            &require_call,
+            &[],
+            &[],
+            &context.path_aliases,
+        );
         if let Some(local_import) = local_import.as_ref() {
             metadata.insert("import_scope".to_string(), "local".to_string());
             metadata.insert("import_target".to_string(), local_import.target.clone());

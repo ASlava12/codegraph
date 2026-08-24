@@ -67,6 +67,10 @@ Implemented now:
   capitalised `NS`/`CF`/`CG`/`Sec`) as that framework's, and a message whose receiver names a
   framework class (`[NSURL URLWithString:]`) as Foundation's rather than as a selector nothing
   declares.
+- An import written through a path alias reaches the file it names: `tsconfig.json`/`jsconfig.json`
+  `compilerOptions.paths` is read the way every bundler reads it (comments and trailing commas
+  included, `baseUrl` honoured, longest prefix winning), so koel's `@/stores/userStore` is
+  `resources/assets/js/stores/userStore.ts` rather than a package nobody declared.
 - Unresolved call targets share one placeholder node per language and label (every call site keeps its own `calls` edge), and language builtins/std macros (`Some`, `format!`, `println!`, `len`, `console.log`, `make`, …) are classified as `resolution: builtin` instead of counting as external dependencies or unresolved-call findings. A definition that patches a runtime namespace — kong replaces `ngx.exit` — answers only calls written through that namespace, and a qualified builtin (`Object.create`) is never answered by a project function that shares its tail. `unresolved_call` findings are grouped per call label and read as `info` on syntactic-only scans — they escalate to `warning` only after semantic (LSP) enrichment has run and the target still cannot be resolved.
 - Source rationale comments such as `WHY`, `NOTE`, `TODO`, `FIXME`, `HACK`, `BUG`, `XXX`, and `SECURITY` are indexed as linked graph facts with source spans for human and agent review.
 - Common branch, loop, async/concurrency, and return/exit constructs are indexed as source-spanned graph facts for workflow diagrams and node-card investigation, and workflow blocks classify them as branch, loop, async, and return steps. These facts carry the dedicated `control_flow` node kind, so kind facets, summaries, and web filters show them by name instead of `unknown`.

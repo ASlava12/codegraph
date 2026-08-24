@@ -58,6 +58,8 @@ pub(crate) struct IndexContext {
     pub(crate) go_modules: Vec<GoModuleRoot>,
     pub(crate) dart_packages: Vec<DartPackageRoot>,
     pub(crate) npm_packages: Vec<NpmPackageRoot>,
+    /// What `tsconfig.json` says an import prefix stands for.
+    pub(crate) path_aliases: Vec<PathAlias>,
     /// Package names the project's own manifests claim. Nothing declares
     /// a dependency on itself.
     pub(crate) own_package_ids: BTreeSet<String>,
@@ -579,6 +581,18 @@ pub(crate) struct FrameworkConfig {
 pub(crate) struct GoModuleRoot {
     pub(crate) module: String,
     pub(crate) dir: Option<String>,
+}
+
+/// A path alias a TypeScript or JavaScript project declares, so an
+/// import can be written from the project root rather than relative to
+/// the file: koel writes `@/utils`, and its tsconfig says that is
+/// `resources/assets/js/utils`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PathAlias {
+    /// What the specifier starts with, without the wildcard: `@/`.
+    pub(crate) prefix: String,
+    /// Where it points, repository-relative and ending in a slash.
+    pub(crate) targets: Vec<String>,
 }
 
 /// A package.json inside the repository and where it sits. A workspace

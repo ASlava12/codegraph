@@ -14,10 +14,11 @@ pub(crate) fn local_import_target(
     import_label: &str,
     cmake_include_dirs: &[String],
     dart_packages: &[DartPackageRoot],
+    path_aliases: &[PathAlias],
 ) -> Option<LocalImportTarget> {
     match language {
         Language::JavaScript | Language::TypeScript | Language::Tsx => {
-            js_local_import_target(source_label, import_label)
+            js_local_import_target(source_label, import_label, path_aliases)
         }
         Language::Python => python_local_import_target(source_label, import_label),
         // `#import "AFURLSessionManager.h"` names a header the way C does.
@@ -590,10 +591,14 @@ fn typescript_source_of_compiled_import(path: &str) -> Option<String> {
 pub(crate) fn js_local_import_target(
     source_label: &str,
     import_label: &str,
+    path_aliases: &[PathAlias],
 ) -> Option<LocalImportTarget> {
     let module = first_quoted_value(import_label)?;
     if !(module.starts_with("./") || module.starts_with("../")) {
-        return None;
+        // `@/utils` is a directory the project named in its tsconfig, and
+        // every bundler reads that file: koel writes 500 imports that way
+        // and the graph called four of them undeclared packages.
+        return aliased_js_import_target(&module, path_aliases);
     }
     // A bundler reads `./template/index.html?raw` as that file, asked for
     // in a particular way. The question mark and everything after it say
@@ -609,6 +614,32 @@ pub(crate) fn js_local_import_target(
     }
     Some(LocalImportTarget {
         target: module.clone(),
+        candidates,
+    })
+}
+
+/// What an aliased import names, when a `tsconfig.json` states the
+/// alias. The longest prefix wins, as it does in TypeScript.
+fn aliased_js_import_target(module: &str, path_aliases: &[PathAlias]) -> Option<LocalImportTarget> {
+    let extensions = [
+        "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "vue", "d.ts",
+    ];
+    let alias = path_aliases
+        .iter()
+        .find(|alias| module.starts_with(&alias.prefix))?;
+    let rest = module.strip_prefix(&alias.prefix)?;
+    let rest = rest.split('?').next().unwrap_or(rest);
+    let mut candidates = Vec::new();
+    for target in &alias.targets {
+        let path = join_path(Some(target), rest);
+        candidates.extend(with_file_extensions(&path, &extensions));
+        for extension in extensions {
+            candidates.push(normalize_path(&format!("{path}/index.{extension}")));
+        }
+    }
+    dedup_preserving_order(&mut candidates);
+    (!candidates.is_empty()).then(|| LocalImportTarget {
+        target: module.to_string(),
         candidates,
     })
 }

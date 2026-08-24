@@ -1101,10 +1101,7 @@ fn laravel_chained_actions(lines: &[&str], index: usize) -> LaravelResourceLimit
         for (opener, target) in [("->only(", true), ("->except(", false)] {
             if let Some(rest) = trimmed.split_once(opener).map(|(_, rest)| rest) {
                 let list = rest.split(')').next().unwrap_or_default();
-                let names: Vec<String> = list
-                    .split(',')
-                    .filter_map(first_quoted_value)
-                    .collect();
+                let names: Vec<String> = list.split(',').filter_map(first_quoted_value).collect();
                 if target {
                     limits.only.extend(names);
                 } else {

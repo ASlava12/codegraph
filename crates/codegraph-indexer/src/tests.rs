@@ -1741,6 +1741,7 @@ fn a_rust_module_path_is_read_inside_its_own_crate() {
             "use crate::ser::Impossible;",
             &[],
             &[],
+            &[],
         )
         .is_none()
     );
@@ -1934,7 +1935,7 @@ fn a_quoted_include_of_a_system_header_is_not_a_missing_file() {
     for header in ["stdio.h", "limits.h", "ctype.h", "sys/socket.h"] {
         let include = format!("#include \"{header}\"");
         assert!(
-            local_import_target(Language::C, "src/mstr.c", &include, &[], &[]).is_none(),
+            local_import_target(Language::C, "src/mstr.c", &include, &[], &[], &[]).is_none(),
             "{header} is the toolchain's"
         );
         let possible =
@@ -1949,6 +1950,7 @@ fn a_quoted_include_of_a_system_header_is_not_a_missing_file() {
         Language::C,
         "src/mstr.c",
         "#include \"release.h\"",
+        &[],
         &[],
         &[],
     )
@@ -9331,6 +9333,77 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
             Confidence::Heuristic,
         ),
         "route handler in another module should resolve through the global function registry"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_import_written_through_a_path_alias_reaches_the_file() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("resources").join("js").join("stores")).unwrap();
+    // koel writes `@/utils` and states what `@` is in the tsconfig beside
+    // its sources; every bundler reads the same file.
+    fs::write(
+        root.join("resources").join("tsconfig.json"),
+        r#"{
+  // The alias every component writes.
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./js/*"],
+    },
+  },
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("resources").join("js").join("utils.ts"),
+        "export const noop = () => {};
+",
+    )
+    .unwrap();
+    fs::write(
+        root.join("resources")
+            .join("js")
+            .join("stores")
+            .join("userStore.ts"),
+        "export const userStore = {};
+",
+    )
+    .unwrap();
+    fs::write(
+        root.join("resources").join("js").join("app.ts"),
+        "import { noop } from '@/utils';
+import { userStore } from '@/stores/userStore';
+
+export const start = () => {
+  noop();
+  return userStore;
+};
+",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolved: Vec<Option<&str>> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata.get("item_kind").map(String::as_str) == Some("import")
+                && node.label.contains("@/")
+        })
+        .map(|node| node.metadata.get("resolved_path").map(String::as_str))
+        .collect();
+
+    assert_eq!(resolved.len(), 2, "{resolved:?}");
+    assert!(
+        resolved.contains(&Some("resources/js/utils.ts")),
+        "{resolved:?}"
+    );
+    assert!(
+        resolved.contains(&Some("resources/js/stores/userStore.ts")),
+        "{resolved:?}"
     );
 
     fs::remove_dir_all(root).unwrap();
