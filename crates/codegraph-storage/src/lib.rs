@@ -1552,6 +1552,15 @@ fn merge_graph_preview(
             id_map.insert(node.id.0, existing);
             continue;
         }
+        // An environment variable, a configuration key and a declared
+        // package are one node the whole graph shares, the way a directory
+        // is. Appending the rescanned file's copy left the preview with two
+        // of each — 56 of them on requests — which is not what the graph
+        // this preview stands in for looks like.
+        if let Some(existing) = find_existing_shared_node(&merged, node) {
+            id_map.insert(node.id.0, existing);
+            continue;
+        }
 
         let new_id = NodeId(next_id);
         next_id += 1;
@@ -1733,6 +1742,31 @@ fn incremental_merge_blockers(
 
 fn partial_merge_warning(blockers: &[IncrementalMergeBlocker]) -> Option<String> {
     blockers.first().map(|blocker| blocker.message.clone())
+}
+
+/// The node a rescanned file shares with the rest of the graph rather than
+/// declaring: one per environment variable, configuration key or declared
+/// package, named by its label and carrying no span of its own.
+fn find_existing_shared_node(graph: &CodeGraph, node: &Node) -> Option<NodeId> {
+    if node.span.is_some() {
+        return None;
+    }
+    let item_kind = node.metadata.get("item_kind").map(String::as_str);
+    let shared = matches!(node.kind, NodeKind::Environment | NodeKind::Config)
+        || (node.kind == NodeKind::ExternalDependency && item_kind == Some("dependency"));
+    if !shared {
+        return None;
+    }
+    graph
+        .nodes
+        .iter()
+        .find(|candidate| {
+            candidate.kind == node.kind
+                && candidate.label == node.label
+                && candidate.span.is_none()
+                && candidate.metadata.get("item_kind").map(String::as_str) == item_kind
+        })
+        .map(|candidate| candidate.id)
 }
 
 fn find_existing_directory(graph: &CodeGraph, label: &str) -> Option<NodeId> {
@@ -2117,6 +2151,61 @@ mod tests {
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn a_merge_preview_keeps_one_node_per_shared_key() {
+        // An environment variable is one node the whole graph shares, the
+        // way a directory is: appending the rescanned file's copy left the
+        // preview with two of each.
+        let mut cached = CodeGraph::new("repo");
+        let cached_file = cached.add_node(NodeKind::File, "src/app.py");
+        let cached_env = cached.add_node_with_metadata(
+            NodeKind::Environment,
+            "DATABASE_URL",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "environment".to_string())]),
+        );
+        cached.add_edge(
+            cached_file,
+            cached_env,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+        let other = cached.add_node(NodeKind::File, "src/other.py");
+        cached.add_edge(
+            other,
+            cached_env,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+
+        let mut changed = CodeGraph::new("repo");
+        let changed_file = changed.add_node(NodeKind::File, "src/app.py");
+        let changed_env = changed.add_node_with_metadata(
+            NodeKind::Environment,
+            "DATABASE_URL",
+            None,
+            BTreeMap::from([("item_kind".to_string(), "environment".to_string())]),
+        );
+        changed.add_edge(
+            changed_file,
+            changed_env,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+
+        let chunks = build_graph_indexes(&cached).chunks;
+        let scan_paths = BTreeSet::from(["src/app.py".to_string()]);
+        let (merged, _) =
+            merge_graph_preview(&cached, &chunks, &changed, &scan_paths, &BTreeSet::new());
+
+        let named = merged
+            .nodes
+            .iter()
+            .filter(|node| node.kind == NodeKind::Environment && node.label == "DATABASE_URL")
+            .count();
+        assert_eq!(named, 1, "one variable, one node");
     }
 
     #[test]
