@@ -117,6 +117,10 @@ Implemented now:
   `executable shellcheck` with `main-is: shellcheck.hs` is the program, a `test-suite` states a test
   program under its own `hs-source-dirs`, and a `library` states none. shellcheck's coverage finding
   is gone -- its entrypoints were its shell scripts and CI jobs.
+- A file contains what its own lines hold. A namespace many files reopen (C# `namespace`, PHP
+  `namespace`, Ruby `module`) is one node, and every declaring file said it *contained* that node --
+  putting one file's span inside another 1020 times in koel and 122 in mastodon. The file the
+  declaration sits in contains it; the files that reopen it declare it.
 - A program with no extension states its language in its first line, and four interpreters the
   corpus uses were not read: `ruby` (mastodon keeps thirteen programs in `bin/`), `lua`/`luajit`/
   `resty` (kong's `bin/kong` is the gateway's whole CLI), `ocaml` and `dash`, along with `elixir`,

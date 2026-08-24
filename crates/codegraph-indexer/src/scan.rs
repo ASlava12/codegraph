@@ -1115,9 +1115,28 @@ pub(crate) fn index_file(
                         ParsedItemKind::Import => EdgeKind::Imports,
                         _ => EdgeKind::Contains,
                     };
-                    context
-                        .graph
-                        .add_edge(file_id, item_id, edge_kind, Confidence::Syntactic);
+                    // A file holds the code its own lines hold. The second
+                    // file to reopen a namespace shares the first one's node,
+                    // and saying it *contains* that node put another file's
+                    // span inside it: koel's 1020 `contains` edges and
+                    // mastodon's 122 crossed files that way. What this file
+                    // does is declare the namespace again.
+                    if existing_namespace.is_some() && edge_kind == EdgeKind::Contains {
+                        let mut metadata = BTreeMap::new();
+                        metadata.insert("relation".to_string(), "declares_namespace".to_string());
+                        add_edge_once_with_metadata(
+                            context,
+                            file_id,
+                            item_id,
+                            EdgeKind::References,
+                            Confidence::Syntactic,
+                            metadata,
+                        );
+                    } else {
+                        context
+                            .graph
+                            .add_edge(file_id, item_id, edge_kind, Confidence::Syntactic);
+                    }
                     if let Some(local_import) = local_import {
                         context.pending_local_imports.push(PendingLocalImport {
                             import_node: item_id,

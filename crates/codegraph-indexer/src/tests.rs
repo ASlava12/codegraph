@@ -12096,15 +12096,28 @@ fn reopened_namespaces_share_one_node_but_distinct_modules_do_not() {
         "both C# files share one namespace node: {namespaces:?}"
     );
     let namespace_id = namespaces[0].id;
-    let declaring_files = graph
+    // A file contains what its own lines hold, so the file the shared node's
+    // span points at contains it and the other declares it: saying both
+    // contain it put one file's span inside another, 1020 times in koel.
+    let holds = graph
         .edges
         .iter()
         .filter(|edge| edge.target == namespace_id && edge.kind == EdgeKind::Contains)
         .count();
-    assert_eq!(
-        declaring_files, 2,
-        "each declaring file contains the namespace"
-    );
+    assert_eq!(holds, 1, "one file's lines hold the declaration");
+    let declares = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.target == namespace_id
+                && edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "declares_namespace")
+        })
+        .count();
+    assert_eq!(declares, 1, "and the file that reopens it declares it");
 
     let rust_modules = graph
         .nodes
