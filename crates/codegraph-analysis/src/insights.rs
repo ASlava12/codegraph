@@ -2,7 +2,8 @@
 //! every insight generator with severity calibration.
 
 use codegraph_core::{
-    COMPUTED_ENVIRONMENT_KEY, CodeGraph, EdgeKind, Node, NodeId, NodeKind, is_python_stdlib_package,
+    COMPUTED_ENVIRONMENT_KEY, CodeGraph, EdgeKind, Node, NodeId, NodeKind,
+    is_python_stdlib_package, is_vendored_source_path,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -221,7 +222,8 @@ pub(crate) fn add_unresolved_local_import_insights(graph: &CodeGraph, insights: 
             .metadata
             .get("test_context")
             .is_some_and(|value| value == "true")
-            && !is_test_like_source_path(source);
+            && !is_test_like_source_path(source)
+            && !is_vendored_source_path(source);
 
         let entry = missing
             .entry(missing_import_key(source, target))
@@ -2577,17 +2579,24 @@ pub(crate) fn add_rationale_risk_comment_insights(graph: &CodeGraph, insights: &
         let Some(kind) = node.metadata.get("rationale_kind").map(String::as_str) else {
             continue;
         };
-        let severity = match kind {
-            "security" => InsightSeverity::Error,
-            "fixme" | "hack" | "bug" | "xxx" => InsightSeverity::Warning,
-            _ => continue,
-        };
         let edges = incoming_edge_indexes(graph, node.id, EdgeKind::Contains);
+        let path = node.span.as_ref().map(|span| span.path.as_str());
         let location = node
             .span
             .as_ref()
             .map(|span| format!("{}:{}", span.path, span.start_line))
             .unwrap_or_else(|| "unknown location".to_string());
+        // A note left in vendored code is upstream's: redis carries
+        // jemalloc's FIXMEs and dune carries opam's, and reading them as
+        // loudly as a project's own buries the ones somebody here can act on.
+        let vendored = path.is_some_and(is_vendored_source_path);
+        let severity = match kind {
+            "security" if !vendored => InsightSeverity::Error,
+            "security" => InsightSeverity::Warning,
+            "fixme" | "hack" | "bug" | "xxx" if !vendored => InsightSeverity::Warning,
+            "fixme" | "hack" | "bug" | "xxx" => InsightSeverity::Info,
+            _ => continue,
+        };
         insights.push(Insight {
             kind: "rationale_risk_comment".to_string(),
             severity,
@@ -2959,8 +2968,9 @@ struct UndeclaredImportGroup {
 
 impl UndeclaredImportGroup {
     fn record(&mut self, source: &str, source_id: NodeId, import_id: NodeId, edge: usize) {
-        self.production_source |=
-            !is_test_like_source_path(source) && !is_repository_tooling_source_path(source);
+        self.production_source |= !is_test_like_source_path(source)
+            && !is_repository_tooling_source_path(source)
+            && !is_vendored_source_path(source);
         self.sources.insert(source.to_string());
         for node in [source_id, import_id] {
             if !self.nodes.contains(&node) {
@@ -3347,6 +3357,7 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
             .unwrap_or(source.label.as_str());
         if is_tool_configuration_source_path(source_path)
             || is_repository_tooling_source_path(source_path)
+            || is_vendored_source_path(source_path)
         {
             continue;
         }
@@ -3954,7 +3965,10 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
         // Unknown is not the same as confined: a cycle is only local when
         // every node in it is known to sit in the one file.
         let crosses_files = !(files.len() == 1 && placed.len() == component.len());
-        let severity = if crosses_files {
+        // A cycle among vendored files is upstream's shape: redis carries
+        // jemalloc's and lua's, and dune carries re's.
+        let vendored = !files.is_empty() && files.iter().all(|file| is_vendored_source_path(file));
+        let severity = if crosses_files && !vendored {
             InsightSeverity::Warning
         } else {
             InsightSeverity::Info

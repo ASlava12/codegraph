@@ -8569,6 +8569,51 @@ fn insights_report_undeclared_flutter_asset_reads() {
 }
 
 #[test]
+fn a_note_left_in_vendored_code_is_upstreams() {
+    let mut graph = CodeGraph::new("repo");
+    let mine = graph.add_node(NodeKind::File, "src/server.c");
+    let theirs = graph.add_node(NodeKind::File, "deps/jemalloc/src/arena.c");
+    let comment = |graph: &mut CodeGraph, path: &str, text: &str| {
+        graph.add_node_with_metadata(
+            NodeKind::Unknown,
+            text,
+            Some(SourceSpan {
+                path: path.to_string(),
+                start_line: 9,
+                start_column: 1,
+                end_line: 9,
+                end_column: 20,
+            }),
+            BTreeMap::from([
+                ("item_kind".to_string(), "rationale_comment".to_string()),
+                ("rationale_kind".to_string(), "fixme".to_string()),
+            ]),
+        )
+    };
+    let ours = comment(&mut graph, "src/server.c", "FIXME: drop the retry loop");
+    let vendored = comment(
+        &mut graph,
+        "deps/jemalloc/src/arena.c",
+        "FIXME: really hppa2.0-hp",
+    );
+    graph.add_edge(mine, ours, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(theirs, vendored, EdgeKind::Contains, Confidence::Exact);
+
+    let report = insights(&graph);
+    let severity_of = |needle: &str| {
+        report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "rationale_risk_comment" && insight.message.contains(needle)
+            })
+            .map(|insight| insight.severity)
+    };
+    assert_eq!(severity_of("retry loop"), Some(InsightSeverity::Warning));
+    assert_eq!(severity_of("hppa2.0-hp"), Some(InsightSeverity::Info));
+}
+
+#[test]
 fn insights_report_rationale_risk_comments() {
     let mut graph = CodeGraph::new("repo");
     let file = graph.add_node(NodeKind::File, "src/auth.rs");

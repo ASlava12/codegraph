@@ -128,6 +128,25 @@ pub fn is_test_like_source_path(path: &str) -> bool {
         || normalized.contains("/generated/")
 }
 
+/// Whether a path holds code the project vendored rather than wrote: redis
+/// carries jemalloc, lua and hiredis under `deps/`, and dune keeps `re` and
+/// `opam` under `vendor/`. A FIXME or a cycle in there is upstream's, and
+/// saying so as loudly as one in the project's own source buries the second.
+pub fn is_vendored_source_path(path: &str) -> bool {
+    path.replace('\\', "/").split('/').any(|segment| {
+        matches!(
+            segment.to_ascii_lowercase().as_str(),
+            "vendor"
+                | "vendored"
+                | "third_party"
+                | "thirdparty"
+                | "3rdparty"
+                | "deps"
+                | "node_modules"
+        )
+    })
+}
+
 /// Whether a Python module name is the standard library's.
 pub fn is_python_stdlib_package(package: &str) -> bool {
     // Python's own `sys.stdlib_module_names`, minus the private
@@ -516,6 +535,26 @@ impl CodeGraph {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn vendored_paths_are_the_ones_a_project_carries() {
+        for path in [
+            "deps/jemalloc/src/arena.c",
+            "vendor/re/src/pmark.ml",
+            "src/lev/vendor/ev.c",
+            "third_party/zlib/zlib.h",
+            "node_modules/puppeteer/install.mjs",
+        ] {
+            assert!(is_vendored_source_path(path), "{path}");
+        }
+        for path in [
+            "src/server.c",
+            "crates/codegraph-core/src/lib.rs",
+            "dependencies.md",
+        ] {
+            assert!(!is_vendored_source_path(path), "{path}");
+        }
+    }
+
     use super::*;
 
     #[test]
