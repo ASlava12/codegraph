@@ -610,6 +610,21 @@ pub(crate) fn effect_label(
         }
     }
 
+    // The same for Lua's `assert(...)`, which guards an expression rather
+    // than carrying a message: kong writes `assert(client:send { method =
+    // "GET" })` and filed 1369 failure paths called `GET`. `error("msg")`
+    // does carry one and keeps the general rule.
+    if kind == ParsedItemKind::Error
+        && language == Language::Lua
+        && named_child_text(node, "name", source).as_deref() == Some("assert")
+        && let Some(text) = node_text(node, source)
+    {
+        let label = compact_label(text);
+        if !label.trim().is_empty() {
+            return Some(truncate_label(label, 120));
+        }
+    }
+
     // An empty string literal is not an identity: `panic!("")` and
     // `read("")` produced nodes labelled with nothing at all, and a key or
     // path is exactly what an effect fact is named by. Fall through to the

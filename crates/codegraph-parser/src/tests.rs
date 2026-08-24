@@ -2674,6 +2674,34 @@ fn haskell_type_signatures_do_not_become_functions() {
 }
 
 #[test]
+fn a_lua_assert_is_named_by_what_it_guards() {
+    // kong writes `assert(client:send { method = "GET" })` and filed 1369
+    // failure paths called `GET`; `error("msg")` does carry its message.
+    let source = "local function fetch(client)\n  local res = assert(client:send { method = \"GET\", path = \"/\" })\n  if not res then\n    error(\"no response\")\n  end\n  return res\nend\n";
+    let parsed = parse_source("demo.lua", source.as_bytes(), Language::Lua).unwrap();
+    let errors: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Error)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert!(
+        errors
+            .iter()
+            .any(|label| label.starts_with("assert(client:send")),
+        "the guard is named by what it guards: {errors:?}"
+    );
+    assert!(
+        !errors.iter().any(|label| label.trim() == "GET"),
+        "and not by an argument inside it: {errors:?}"
+    );
+    assert!(
+        errors.iter().any(|label| label.contains("no response")),
+        "error() still carries its message: {errors:?}"
+    );
+}
+
+#[test]
 fn a_swift_try_is_named_by_what_it_calls() {
     // The string inside `try AssertParse(Foo.self, "--name value")` is an
     // argument, and swift-argument-parser's tests filed a hundred failure
