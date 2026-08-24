@@ -1239,6 +1239,77 @@ pub(crate) fn line_is_type_checking_only(source: &str, line: u32) -> bool {
     false
 }
 
+/// Whether a Python import sits in a `try:` whose `except` handles the
+/// import failing. `try: import cryptography / except ImportError:` states
+/// that the program runs without the package, which is what an optional
+/// dependency is — and requests writes its `import cryptography` in the
+/// `else:` of such a block, which is the same statement about it.
+pub(crate) fn line_is_a_guarded_import(source: &str, line: u32) -> bool {
+    let lines: Vec<&str> = source.lines().collect();
+    let Some(index) = (line as usize).checked_sub(1) else {
+        return false;
+    };
+    let Some(target) = lines.get(index) else {
+        return false;
+    };
+    let indent_of = |text: &str| text.len() - text.trim_start().len();
+    let target_indent = indent_of(target);
+
+    // The `try:` that holds it, reached by walking out through the blocks
+    // it sits in: requests writes its `from cryptography import ..` inside
+    // an `if` inside the `try`, and an ImportError anywhere in the body is
+    // caught the same way. A `def` or `class` ends the walk: an import
+    // there runs when the function is called, not when the module loads.
+    let mut try_line = None;
+    let mut enclosing_indent = target_indent;
+    for (above, text) in lines[..index].iter().enumerate().rev() {
+        let trimmed = text.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = indent_of(text);
+        if indent >= enclosing_indent {
+            continue;
+        }
+        if trimmed == "try:" {
+            try_line = Some((above, indent));
+            break;
+        }
+        if trimmed.starts_with("def ")
+            || trimmed.starts_with("async def ")
+            || trimmed.starts_with("class ")
+        {
+            break;
+        }
+        // `except`, `else` and `finally` belong to the `try` above them, so
+        // the walk keeps looking at their own level rather than stepping
+        // out of it: requests writes one of its imports in such an `else`.
+        if trimmed == "else:" || trimmed == "finally:" || trimmed.starts_with("except") {
+            enclosing_indent = indent + 1;
+            continue;
+        }
+        enclosing_indent = indent;
+    }
+    let Some((try_line, try_indent)) = try_line else {
+        return false;
+    };
+
+    // The handler that closes it: the first `except` at the `try`'s own
+    // indent.
+    lines[try_line + 1..]
+        .iter()
+        .find_map(|text| {
+            let trimmed = text.trim();
+            if trimmed.is_empty() || indent_of(text) > try_indent {
+                return None;
+            }
+            trimmed.strip_prefix("except").map(|handled| {
+                handled.contains("ImportError") || handled.contains("ModuleNotFoundError")
+            })
+        })
+        .unwrap_or(false)
+}
+
 /// The namespace a C# `using` names. `using static X.Y` names a type and
 /// `using A = X.Y` an alias; neither is the namespace itself.
 pub(crate) fn csharp_namespace_import(language: Language, import_label: &str) -> Option<String> {

@@ -2989,6 +2989,13 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
             .metadata
             .get("import_scope")
             .is_some_and(|scope| scope == "local")
+            // `try: import simplejson as json / except ImportError: import
+            // json` is a project stating that it runs without the package,
+            // which is why it does not declare it.
+            || import_node
+                .metadata
+                .get("optional")
+                .is_some_and(|value| value == "true")
         {
             continue;
         }
@@ -3799,6 +3806,13 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
             || import_node
                 .metadata
                 .get("type_only")
+                .is_some_and(|value| value == "true")
+            // `try: import cryptography / except ImportError:` states that
+            // the program runs without the package: flask and requests each
+            // write one, and that is what an optional dependency is.
+            || import_node
+                .metadata
+                .get("optional")
                 .is_some_and(|value| value == "true")
         {
             continue;

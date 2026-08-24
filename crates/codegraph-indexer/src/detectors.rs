@@ -219,6 +219,25 @@ pub(crate) fn framework_routes(language: Language, source: &str) -> Vec<Framewor
     }
 }
 
+/// Whether a line is a comment in a curly-brace language: `//`, or a line
+/// of a block comment as it is usually written.
+fn line_is_a_javascript_comment(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*')
+}
+
+/// Whether a block comment is open after this line. Only the last `/*` or
+/// `*/` on the line decides, which is what a source file's comments look
+/// like.
+fn block_comment_continues(line: &str, was_open: bool) -> bool {
+    match (line.rfind("/*"), line.rfind("*/")) {
+        (Some(open), Some(close)) => open > close,
+        (Some(_), None) => true,
+        (None, Some(_)) => false,
+        (None, None) => was_open,
+    }
+}
+
 pub(crate) fn index_commonjs_require_imports(
     context: &mut IndexContext,
     file_id: NodeId,
@@ -233,7 +252,16 @@ pub(crate) fn index_commonjs_require_imports(
         return;
     }
 
+    let mut in_block_comment = false;
     for (index, line) in source.lines().enumerate() {
+        // Express documents `app.engine('ejs', require('ejs').__express)` in
+        // a comment above the method, and reading it as an import made the
+        // project depend on a package it only mentions.
+        let was_in_block_comment = in_block_comment;
+        in_block_comment = block_comment_continues(line, in_block_comment);
+        if was_in_block_comment || line_is_a_javascript_comment(line) {
+            continue;
+        }
         let Some(require_call) = commonjs_require_call(line) else {
             continue;
         };

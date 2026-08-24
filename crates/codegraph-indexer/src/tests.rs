@@ -4084,6 +4084,68 @@ fn reading_files_ahead_of_the_walk_changes_nothing_it_finds() {
 }
 
 #[test]
+fn a_require_written_in_a_comment_is_not_an_import() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(
+        root.join("lib").join("application.js"),
+        "/**\n * Register a view engine:\n *\n *     app.engine('ejs', require('ejs').__express);\n */\nconst http = require('node:http');\n// require('debug') is what we used to do\nmodule.exports = http;\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let imported = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::ExternalDependency)
+        .map(|node| node.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        imported.iter().any(|label| label.contains("node:http")),
+        "{imported:?}"
+    );
+    // Express documents its view engines in a comment above the method.
+    assert!(
+        !imported.iter().any(|label| label.contains("ejs")),
+        "{imported:?}"
+    );
+    assert!(
+        !imported.iter().any(|label| label.contains("debug")),
+        "{imported:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_import_a_project_handles_the_absence_of_is_optional() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("compat.py"),
+        // The two shapes a project writes: the import in the `try`, and the
+        // one in the `else` that runs when the `try` succeeded.
+        "try:\n    import simplejson as json\nexcept ImportError:\n    import json\n\ntry:\n    from urllib3.contrib import pyopenssl\nexcept ImportError:\n    pyopenssl = None\nelse:\n    import cryptography\n\nimport requests\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let optional = |needle: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::ExternalDependency && node.label.contains(needle))
+            .map(|node| node.metadata.get("optional").map(String::as_str) == Some("true"))
+    };
+    assert_eq!(optional("simplejson"), Some(true));
+    assert_eq!(optional("cryptography"), Some(true));
+    // An import nothing guards is what the program needs to run.
+    assert_eq!(optional("import requests"), Some(false));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_renamed_cargo_dependency_is_declared_under_both_names() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();

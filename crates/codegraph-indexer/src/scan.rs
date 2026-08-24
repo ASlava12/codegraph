@@ -829,6 +829,17 @@ pub(crate) fn index_file(
                     {
                         item_metadata.insert("type_only".to_string(), "true".to_string());
                     }
+                    // `try: import cryptography / except ImportError:` says
+                    // the program runs without the package, which is what an
+                    // optional dependency is.
+                    if item.kind == ParsedItemKind::Import
+                        && language == Language::Python
+                        && source_text.as_deref().is_some_and(|source| {
+                            line_is_a_guarded_import(source, item.span.start_line)
+                        })
+                    {
+                        item_metadata.insert("optional".to_string(), "true".to_string());
+                    }
                     // A Dart `part` and the file it belongs to are one
                     // library written across two files, the way a header and
                     // its source are: `frame_reader.dart` says `part of
