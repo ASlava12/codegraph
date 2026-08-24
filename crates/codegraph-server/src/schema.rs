@@ -3521,7 +3521,7 @@ pub(crate) fn hotspot_response_fields() -> Vec<ApiParameterSpec> {
             "hotspots",
             true,
             "Hotspot[]",
-            "High-degree files, functions, entrypoints, and config nodes.",
+            "High-degree files, functions, entrypoints, and config nodes. Degree counts the dependency edges a node takes part in -- calls, imports, references, reads -- and not the containment that holds a file's symbols.",
         ),
         response_field(
             "architectural_hubs",

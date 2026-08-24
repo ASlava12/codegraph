@@ -99,7 +99,9 @@ pub(crate) enum Command {
     /// Emit ranked surprising dependency links as JSON.
     SurprisingLinks(SurprisingLinkArgs),
 
-    /// Emit high-degree graph hotspots as JSON.
+    /// Emit high-degree graph hotspots as JSON. Degree counts dependency
+    /// edges -- calls, imports, references, reads -- not the containment
+    /// that holds a file's symbols.
     Hotspots(HotspotArgs),
 
     /// Emit graph communities/subsystems as JSON.
