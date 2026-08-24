@@ -1369,8 +1369,13 @@ pub(crate) fn enclosing_type_label(
             Language::Python if kind == "class_definition" => {
                 named_child_text(candidate, "name", source)
             }
+            // Ruby states a constant path: a class inside `module
+            // Settings` is `Settings::AccountsController`, which is how
+            // mastodon writes the same class when it declares it in one
+            // line. Without the modules, two controllers of the same
+            // name are one.
             Language::Ruby if matches!(kind, "class" | "module") => {
-                named_child_text(candidate, "name", source)
+                ruby_constant_path(candidate, source)
             }
             Language::Java | Language::CSharp | Language::Kotlin | Language::Scala
                 if kind.ends_with("_declaration") || kind.ends_with("_definition") =>
@@ -3006,6 +3011,24 @@ pub(crate) fn item_label(
         Language::Bash => first_identifier(node, source),
         _ => first_identifier(node, source),
     }
+}
+
+/// The constant path a Ruby class or module states, modules included:
+/// `module Settings; class AccountsController` is
+/// `Settings::AccountsController`.
+fn ruby_constant_path(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut parts = vec![named_child_text(node, "name", source)?];
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if matches!(candidate.kind(), "class" | "module")
+            && let Some(name) = named_child_text(candidate, "name", source)
+        {
+            parts.push(name);
+        }
+        current = candidate.parent();
+    }
+    parts.reverse();
+    Some(parts.join("::"))
 }
 
 /// The type an out-of-line C++ definition belongs to, read from the

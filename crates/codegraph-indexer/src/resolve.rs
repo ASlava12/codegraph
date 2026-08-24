@@ -2939,18 +2939,32 @@ pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
             // name. Comparing what the two end with settles the method
             // without knowing the project's acronym rules.
             let owner_tail = owner.rsplit("::").next().unwrap_or(owner);
-            let owned: Vec<NodeId> = targets
+            let owner_is = |target: &NodeId, exact: bool| {
+                graph_node(&context.graph, *target)
+                    .and_then(|node| node.metadata.get("owner_type"))
+                    .is_some_and(|declared| {
+                        if exact {
+                            declared == owner
+                        } else {
+                            declared.rsplit("::").next().unwrap_or(declared) == owner_tail
+                        }
+                    })
+            };
+            // The name as written wins: mastodon declares both
+            // `PrivacyController` and `Settings::PrivacyController`, and
+            // a route naming the first means the first.
+            let mut owned: Vec<NodeId> = targets
                 .iter()
                 .copied()
-                .filter(|target| {
-                    graph_node(&context.graph, *target)
-                        .and_then(|node| node.metadata.get("owner_type"))
-                        .is_some_and(|declared| {
-                            declared == owner
-                                || declared.rsplit("::").next().unwrap_or(declared) == owner_tail
-                        })
-                })
+                .filter(|target| owner_is(target, true))
                 .collect();
+            if owned.is_empty() {
+                owned = targets
+                    .iter()
+                    .copied()
+                    .filter(|target| owner_is(target, false))
+                    .collect();
+            }
             if !owned.is_empty() {
                 targets = owned;
             }

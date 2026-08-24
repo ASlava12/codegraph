@@ -9355,7 +9355,7 @@ fn a_rails_resource_declares_what_it_says_it_declares() {
         root.join("app")
             .join("controllers")
             .join("accounts_controller.rb"),
-        "class AccountsController\n  def show\n    render :show\n  end\nend\n",
+        "class AccountsController\n  def show\n    render :show\n  end\nend\n\nmodule Settings\n  class AccountsController\n    def show\n      render :settings\n    end\n  end\nend\n",
     )
     .unwrap();
     fs::write(
@@ -9415,11 +9415,16 @@ fn a_rails_resource_declares_what_it_says_it_declares() {
         "{routes:?}"
     );
 
-    // The controller the route names settles which `show` it means.
+    // The controller the route names settles which `show` it means, and
+    // the name as written wins over one that merely ends the same way.
     let show = graph
         .nodes
         .iter()
-        .find(|node| node.kind == NodeKind::Function && node.label == "show")
+        .find(|node| {
+            node.kind == NodeKind::Function
+                && node.label == "show"
+                && node.metadata.get("owner_type").map(String::as_str) == Some("AccountsController")
+        })
         .expect("the controller action is in the graph");
     assert!(
         graph.edges.iter().any(|edge| {

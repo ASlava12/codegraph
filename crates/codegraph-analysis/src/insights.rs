@@ -1109,7 +1109,16 @@ pub(crate) fn add_unresolved_compose_volume_source_path_insights(
                     .get("resolution")
                     .is_some_and(|value| value == "compose_volume_source_path")
         });
-        if resolved || path_holds_an_unexpanded_variable(source_path) {
+        if resolved
+            || path_holds_an_unexpanded_variable(source_path)
+            // The project keeps this directory out of the repository
+            // because Docker creates it on first run: mastodon mounts
+            // `./postgres14` and lists it in its own `.gitignore`.
+            || node
+                .metadata
+                .get("source_is_a_build_product")
+                .is_some_and(|value| value == "true")
+        {
             continue;
         }
 

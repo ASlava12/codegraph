@@ -499,6 +499,18 @@ pub(crate) fn index_compose_entrypoints(
             if let Some(source) = volume.source.as_deref() {
                 metadata.insert("source_path".to_string(), source.to_string());
                 if let Some(local_source_path) = compose_volume_local_source_path(label, source) {
+                    // A data directory the project keeps out of the
+                    // repository is one Docker creates on first run:
+                    // mastodon mounts `./postgres14` and lists it in its
+                    // own `.gitignore`.
+                    if context
+                        .build_products
+                        .as_ref()
+                        .is_some_and(|products| products.builds(&local_source_path))
+                    {
+                        metadata
+                            .insert("source_is_a_build_product".to_string(), "true".to_string());
+                    }
                     metadata.insert("local_source_path".to_string(), local_source_path);
                 }
             }
