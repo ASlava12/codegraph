@@ -358,6 +358,13 @@ pub(crate) fn classify_node(
     source: &[u8],
     path: &str,
 ) -> Option<ParsedItem> {
+    // An anonymous node is a literal token, and its kind is the text it
+    // holds: Kotlin's `import` keyword answers to the same kind as the
+    // import statement around it, and okio filed 2183 facts that were the
+    // word `import` and nothing else. A declaration is always a named node.
+    if !node.is_named() {
+        return None;
+    }
     let kind = node.kind();
     let item_kind = match language {
         Language::Rust => match kind {

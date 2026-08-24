@@ -2674,6 +2674,26 @@ fn haskell_type_signatures_do_not_become_functions() {
 }
 
 #[test]
+fn a_keyword_token_is_not_a_declaration() {
+    // Kotlin's grammar names the `import` keyword the same as the statement
+    // around it, and the walk reached both: okio filed 2183 import facts
+    // whose whole text was the word `import`.
+    let source = "package okio.internal\n\nimport okio.Buffer\nimport okio.ByteString\n\nfun size(buffer: Buffer): Long = buffer.size\n";
+    let parsed = parse_source("demo.kt", source.as_bytes(), Language::Kotlin).unwrap();
+    let imports: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Import)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(
+        imports,
+        vec!["import okio.Buffer", "import okio.ByteString"],
+        "one fact per import, and each says what it imports"
+    );
+}
+
+#[test]
 fn a_lua_assert_is_named_by_what_it_guards() {
     // kong writes `assert(client:send { method = "GET" })` and filed 1369
     // failure paths called `GET`; `error("msg")` does carry its message.
