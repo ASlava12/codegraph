@@ -528,6 +528,10 @@ pub(crate) fn classify_node(
         Language::Zig => match kind {
             "function_declaration" => ParsedItemKind::Function,
             "builtin_function" if zig_import_builtin(node, source) => ParsedItemKind::Import,
+            // A Zig type is a constant bound to a container: `const Server =
+            // struct { ... }`. zls declares 260 of them and the graph had
+            // no types for the language at all.
+            "variable_declaration" if zig_container_declaration(node) => ParsedItemKind::Type,
             _ => return None,
         },
         Language::Haskell => match kind {
@@ -555,6 +559,9 @@ pub(crate) fn classify_node(
         Language::Erlang => match kind {
             "fun_decl" => ParsedItemKind::Function,
             "module_attribute" => ParsedItemKind::Module,
+            // `-record(state, {...})` is the shape a module passes around
+            // and `-type`/`-opaque` name one; cowboy declares 87 of them.
+            "record_decl" | "type_alias" | "opaque" => ParsedItemKind::Type,
             // `-include("x.hrl")` pulls in a file and `-import(lists, [...])`
             // names a module: cowboy writes 154 of them.
             "pp_include" | "import_attribute" => ParsedItemKind::Import,
@@ -2119,6 +2126,19 @@ pub(crate) fn item_label(
         return Some(name);
     }
 
+    // `-type opts() :: ...` carries its parameter list in the name node; a
+    // reader calls the type `opts`, as a record is called `state`.
+    if language == Language::Erlang
+        && matches!(node.kind(), "type_alias" | "opaque")
+        && let Some(name) = named_child_text(node, "name", source)
+    {
+        return Some(
+            name.split_once('(')
+                .map(|(head, _)| head.trim().to_string())
+                .unwrap_or(name),
+        );
+    }
+
     if let Some(name) = named_child_text(node, "name", source) {
         return Some(name);
     }
@@ -2254,4 +2274,20 @@ fn nix_import_expression(node: Node<'_>, source: &[u8]) -> bool {
         return node_text(inner, source).as_deref().map(str::trim) == Some("import");
     }
     false
+}
+
+/// Whether this Zig declaration binds a container -- a struct, an enum, an
+/// error set or a union -- which is how the language declares a type.
+fn zig_container_declaration(node: Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor).any(|child| {
+        matches!(
+            child.kind(),
+            "struct_declaration"
+                | "enum_declaration"
+                | "union_declaration"
+                | "error_set_declaration"
+                | "opaque_declaration"
+        )
+    })
 }

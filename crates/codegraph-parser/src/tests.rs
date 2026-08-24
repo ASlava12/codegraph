@@ -2297,6 +2297,56 @@ fn an_r_function_returns_by_calling_return() {
 }
 
 #[test]
+fn a_zig_container_is_a_type() {
+    // zls declares 260 types as `const Name = struct { ... }`; the graph
+    // had no Zig types at all.
+    let source = r#"pub const Server = struct {
+    port: u16,
+};
+const Mode = enum { fast, slow };
+const Value = union { a: u8, b: u16 };
+const count: u32 = 3;
+"#;
+    let parsed = parse_source("server.zig", source.as_bytes(), Language::Zig).unwrap();
+    let types: Vec<&str> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Type)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(
+        types,
+        vec!["Server", "Mode", "Value"],
+        "items: {:?}",
+        parsed.items
+    );
+}
+
+#[test]
+fn an_erlang_record_and_type_are_types() {
+    // cowboy declares 23 records and 64 types; a reader calls them
+    // `state` and `opts`, without the parameter list.
+    let source = r#"-module(demo).
+-record(state, {socket, timeout = 5000}).
+-type opts() :: map().
+-opaque handle() :: reference().
+"#;
+    let parsed = parse_source("demo.erl", source.as_bytes(), Language::Erlang).unwrap();
+    let types: Vec<&str> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Type)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(
+        types,
+        vec!["state", "opts", "handle"],
+        "items: {:?}",
+        parsed.items
+    );
+}
+
+#[test]
 fn calls_on_literals_are_labeled_by_method_not_by_the_literal() {
     // `"x".to_string()` used to produce a call target carrying the whole
     // literal, so each distinct literal minted its own placeholder node
