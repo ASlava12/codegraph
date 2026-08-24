@@ -204,11 +204,24 @@ const schemaRs = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "..", "..", "codegraph-server", "src", "schema.rs"),
   "utf8",
 );
-const entrypointKinds = schemaRs.match(/"entrypoint_kind",\s*vec!\[([\s\S]*?)\]/);
+// Values the view renders as labels rather than terms a reader types.
+const RENDERED_ENUMS = [
+  "entrypoint_kind",
+  "cache_status",
+  "graph_confidence",
+  "risk_grade",
+  "semantic_work_status",
+  "semantic_work_capability",
+];
+const enumValues = (name) => {
+  const block = schemaRs.match(new RegExp(`"${name}",\\s*vec!\\[([\\s\\S]*?)\\]`));
+  if (!block) throw new Error(`check-defs: the ${name} enum is gone from schema.rs`);
+  return [...block[1].matchAll(/"([a-z_]+)"/g)].map((match) => match[1]);
+};
 const vocabulary = [
   ...enumVariants("NodeKind"),
   ...enumVariants("EdgeKind"),
-  ...(entrypointKinds ? [...entrypointKinds[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]) : []),
+  ...RENDERED_ENUMS.flatMap(enumValues),
 ];
 const untranslated = [...kinds, ...vocabulary].filter((kind) => !russianKinds.has(kind));
 if (untranslated.length > 0) {
