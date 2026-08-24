@@ -727,6 +727,80 @@ pub(crate) fn cmake_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
         .collect()
 }
 
+/// The programs a `.cabal` file declares. Haskell states them in stanzas:
+/// `executable shellcheck` with `main-is: shellcheck.hs`, and the module
+/// sits under the stanza's `hs-source-dirs` when it names one. A
+/// `test-suite` states a program too, and says it is a test.
+pub(crate) fn cabal_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    let mut entrypoints = Vec::new();
+    let mut stanza: Option<(&'static str, String, u32)> = None;
+    let mut main_is: Option<String> = None;
+    let mut source_dir: Option<String> = None;
+    let finish = |stanza: &Option<(&'static str, String, u32)>,
+                      main_is: &Option<String>,
+                      source_dir: &Option<String>,
+                      entrypoints: &mut Vec<ManifestEntrypoint>| {
+        let (Some((kind, name, line)), Some(main)) = (stanza.as_ref(), main_is.as_ref()) else {
+            return;
+        };
+        let target = match source_dir.as_deref() {
+            Some(directory) if directory != "." => format!("{directory}/{main}"),
+            _ => main.clone(),
+        };
+        entrypoints.push(manifest_entrypoint_at(
+            format!("cabal {kind}:{name}"),
+            *kind,
+            "cabal",
+            Some(target),
+            *line,
+        ));
+    };
+    for (index, raw) in source.lines().enumerate() {
+        let line = index as u32 + 1;
+        // A stanza opens at the left margin; its fields are indented.
+        if !raw.starts_with(char::is_whitespace) && !raw.trim().is_empty() {
+            finish(&stanza, &main_is, &source_dir, &mut entrypoints);
+            stanza = None;
+            main_is = None;
+            source_dir = None;
+            let head = raw.trim();
+            for (keyword, kind) in [
+                ("executable ", "executable"),
+                ("test-suite ", "test"),
+                ("benchmark ", "benchmark"),
+            ] {
+                if let Some(name) = head.strip_prefix(keyword) {
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        stanza = Some((kind, name.to_string(), line));
+                    }
+                }
+            }
+            continue;
+        }
+        let Some((field, value)) = raw.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        match field.trim().to_ascii_lowercase().as_str() {
+            "main-is" if !value.is_empty() => main_is = Some(value.to_string()),
+            // `hs-source-dirs: src, other` states more than one root; the
+            // first is where a program's own module is looked for.
+            "hs-source-dirs" if !value.is_empty() => {
+                source_dir = value
+                    .split(',')
+                    .next()
+                    .map(str::trim)
+                    .filter(|directory| !directory.is_empty())
+                    .map(ToString::to_string);
+            }
+            _ => {}
+        }
+    }
+    finish(&stanza, &main_is, &source_dir, &mut entrypoints);
+    entrypoints
+}
+
 /// The programs a `dune` file declares. Dune is how OCaml projects state
 /// what they build: `(executable (name main))` in `bin/dune` is
 /// `bin/main.ml`, and `(executables (names a b))` states two. Without

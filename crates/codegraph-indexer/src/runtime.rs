@@ -1765,6 +1765,8 @@ pub(crate) fn manifest_entrypoints(path: &Path, source: &str) -> Vec<ManifestEnt
         Some("pubspec.yaml") => pubspec_entrypoints(path, source),
         // OCaml states what it builds in `dune` files, one per directory.
         Some("dune") => dune_entrypoints(source),
+        // Haskell states its programs in the package's `.cabal` file.
+        Some(name) if name.ends_with(".cabal") => cabal_entrypoints(source),
         _ => Vec::new(),
     }
 }

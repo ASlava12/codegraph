@@ -103,6 +103,10 @@ Implemented now:
   protobuf code no longer reports 3234 calls as unresolved, and `providers.SchemaCache.Set` reaches
   the in-repo package that declares it. Go's predeclared types count as the language's own when they
   are written as conversions -- `string(b)`, `int64(n)` -- rather than as functions nothing declares.
+- Haskell states its programs in the package's `.cabal` file, and they are read the same way:
+  `executable shellcheck` with `main-is: shellcheck.hs` is the program, a `test-suite` states a test
+  program under its own `hs-source-dirs`, and a `library` states none. shellcheck's coverage finding
+  is gone -- its entrypoints were its shell scripts and CI jobs.
 - OCaml states what it builds in `dune` files, one per directory, and they are read as the manifests
   they are: `(executable (name main))` in `bin/dune` is `bin/main.ml`, `(executables (names a b))`
   states two programs, and `(test ...)`/`(tests ...)` state the test programs. The dune repository

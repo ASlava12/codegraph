@@ -5692,6 +5692,71 @@ fn a_go_call_through_a_package_qualifier_reads_past_the_type() {
 }
 
 #[test]
+fn a_cabal_file_states_the_programs_it_builds() {
+    // Haskell states its programs in the package's `.cabal` file:
+    // `executable shellcheck` with `main-is: shellcheck.hs`. Without
+    // reading it, shellcheck's entrypoints were its shell scripts and CI
+    // jobs, and the coverage finding said so.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("test")).unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("shellcheck.hs"),
+        "main :: IO ()\nmain = return ()\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("test").join("run.hs"),
+        "main :: IO ()\nmain = return ()\n",
+    )
+    .unwrap();
+    fs::write(root.join("src").join("Lib.hs"), "module Lib where\n").unwrap();
+    fs::write(
+        root.join("ShellCheck.cabal"),
+        "name: ShellCheck\nversion: 0.1\n\nlibrary\n    hs-source-dirs: src\n    exposed-modules: Lib\n\nexecutable shellcheck\n    build-depends:\n      base\n    main-is: shellcheck.hs\n\ntest-suite spec\n    type: exitcode-stdio-1.0\n    hs-source-dirs: test\n    main-is: run.hs\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let entrypoint = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Entrypoint && node.label == label)
+    };
+    let program = entrypoint("cabal executable:shellcheck").expect("the program");
+    assert_eq!(
+        program.metadata.get("target").map(String::as_str),
+        Some("shellcheck.hs")
+    );
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.source == program.id
+                && edge.kind == EdgeKind::References
+                && graph.nodes.iter().any(|node| {
+                    node.id == edge.target
+                        && node.kind == NodeKind::File
+                        && node.label == "shellcheck.hs"
+                })
+        }),
+        "and it reaches the module it names"
+    );
+    // A test suite states a program too, under the source directory the
+    // stanza gives it.
+    let suite = entrypoint("cabal test:spec").expect("the test program");
+    assert_eq!(
+        suite.metadata.get("target").map(String::as_str),
+        Some("test/run.hs")
+    );
+    assert!(
+        entrypoint("cabal executable:library").is_none(),
+        "a library declares no program"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_dune_file_states_the_programs_it_builds() {
     // OCaml states what it builds in `dune` files, one per directory:
     // `(executable (name main))` in `bin/dune` is `bin/main.ml`. Without
