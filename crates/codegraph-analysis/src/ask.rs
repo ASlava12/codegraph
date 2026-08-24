@@ -310,6 +310,11 @@ pub(crate) fn natural_query_plan_with_anchor(
             "start",
             "main",
             "boot",
+            // "how do I run the tests" asks what starts the project, and
+            // reached a text search for the word `tests`.
+            "how do i run",
+            "how to run",
+            "как запус",
             "точк",
             "запуск",
             "старт",
@@ -393,6 +398,10 @@ pub(crate) fn natural_query_plan_with_anchor(
     } else if natural_query_mentions_any(
         &routing,
         &[
+            // "what does this project depend on" asks the same question as
+            // "what are its dependencies", and reached a text search for
+            // the word `depend`.
+            "depend",
             "dependency",
             "dependencies",
             "package",

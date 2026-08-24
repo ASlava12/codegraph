@@ -5155,6 +5155,31 @@ fn an_ambiguous_query_anchor_resolves_to_the_program() {
 }
 
 #[test]
+fn a_question_the_graph_answers_outright_reaches_its_query() {
+    let plan = |question: &str| natural_query_plan(question).expect("plan");
+
+    // These three fell through to a text search for one of their own words:
+    // `cycles` matched nothing, `depend` matched a dependabot file, and
+    // `tests` matched fifty nodes with the word in their name.
+    assert_eq!(plan("Show me the cycles").rule, "dependency_cycle");
+    assert_eq!(plan("Покажи циклы").rule, "dependency_cycle");
+    assert_eq!(
+        plan("What does this project depend on?").rule,
+        "package_or_import"
+    );
+    assert_eq!(
+        plan("How do I run the tests?").rule,
+        "entrypoint_or_startup"
+    );
+    assert_eq!(plan("Как запустить проект?").rule, "entrypoint_or_startup");
+    // A question that merely contains the word `run` is not one of them.
+    assert_ne!(
+        plan("What functions run in parallel?").rule,
+        "entrypoint_or_startup"
+    );
+}
+
+#[test]
 fn a_symbol_named_after_a_keyword_does_not_hijack_the_question() {
     let rule = |question: &str| natural_query_plan(question).expect("plan").rule;
 
