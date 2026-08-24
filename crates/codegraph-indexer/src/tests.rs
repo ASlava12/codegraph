@@ -1494,6 +1494,50 @@ fn a_computed_require_names_no_module() {
 }
 
 #[test]
+fn an_import_python_erases_is_not_a_runtime_dependency() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    // requests writes `_types.py` this way: the interpreter never runs the
+    // imports under `if TYPE_CHECKING:`, so they cannot close a cycle.
+    fs::write(
+        root.join("src").join("_types.py"),
+        "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    from .auth import AuthBase\n\n\ndef describe(value):\n    return value\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("auth.py"),
+        "from ._types import describe\n\n\nclass AuthBase:\n    pass\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let type_only: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata
+                .get("type_only")
+                .is_some_and(|value| value == "true")
+        })
+        .map(|node| node.label.as_str())
+        .collect();
+    assert_eq!(
+        type_only,
+        vec!["from .auth import AuthBase"],
+        "{type_only:?}"
+    );
+    // The import that does run is not marked.
+    assert!(
+        graph
+            .nodes
+            .iter()
+            .any(|node| node.label == "from ._types import describe"
+                && !node.metadata.contains_key("type_only"))
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn a_suggested_package_is_named_without_a_version() {
     // composer's `suggest` maps a package to a sentence about why to install
     // it. monolog suggests a dozen, one per optional handler.

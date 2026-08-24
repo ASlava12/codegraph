@@ -625,6 +625,18 @@ pub(crate) fn index_file(
                     };
                     let mut item_metadata = BTreeMap::new();
                     item_metadata.extend(item.metadata.clone());
+                    // `if TYPE_CHECKING:` holds imports a type checker reads
+                    // and the interpreter never runs, so what they name is
+                    // not a dependency at run time: requests writes its
+                    // `_types.py` that way and reads as a cycle otherwise.
+                    if item.kind == ParsedItemKind::Import
+                        && language == Language::Python
+                        && source_text.as_deref().is_some_and(|source| {
+                            line_is_type_checking_only(source, item.span.start_line)
+                        })
+                    {
+                        item_metadata.insert("type_only".to_string(), "true".to_string());
+                    }
                     item_metadata.insert("language".to_string(), language.to_string());
                     item_metadata.insert("parser".to_string(), "tree-sitter".to_string());
                     item_metadata.insert(

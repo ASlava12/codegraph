@@ -1133,3 +1133,33 @@ pub(crate) fn python_import_qualifier(import_label: &str) -> Option<String> {
     let head = first.split('.').next()?.trim();
     (!head.is_empty()).then(|| head.to_string())
 }
+
+/// Whether a line sits inside an `if TYPE_CHECKING:` block. Python erases
+/// those imports at run time - they exist for the type checker - so what
+/// they name is not something the module needs when it runs.
+pub(crate) fn line_is_type_checking_only(source: &str, line: u32) -> bool {
+    let mut block_indent: Option<usize> = None;
+    for (index, text) in source.lines().enumerate() {
+        let current = index as u32 + 1;
+        let indent = text.len() - text.trim_start().len();
+        let trimmed = text.trim();
+        if let Some(open_indent) = block_indent {
+            // The block ends at the first line indented no further than the
+            // `if` that opened it; blank lines belong to whatever follows.
+            if !trimmed.is_empty() && indent <= open_indent {
+                block_indent = None;
+            } else if current == line {
+                return true;
+            }
+        }
+        if block_indent.is_none()
+            && (trimmed == "if TYPE_CHECKING:" || trimmed == "if typing.TYPE_CHECKING:")
+        {
+            block_indent = Some(indent);
+        }
+        if current >= line && block_indent.is_none() {
+            return false;
+        }
+    }
+    false
+}

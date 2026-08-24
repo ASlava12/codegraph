@@ -312,7 +312,7 @@ Implemented now:
 - Dependency consistency insights for packages declared across multiple dependency scopes such as runtime and dev/build.
 - Dependency consistency insights for production imports of packages declared only in non-runtime scopes, including Go `// indirect` requirements.
 - Composer dependency consistency insights map common PHP namespace imports such as `Monolog\*`, `Symfony\Component\Console\*`, and `PHPUnit\Framework\*` back to package nodes.
-- Dependency consistency insights for production-like source files importing packages declared only in non-runtime scopes.
+- Dependency consistency insights for production-like source files importing packages declared only in non-runtime scopes. An import a language erases before anything runs is not one of them: TypeScript's `import type` and Python's `if TYPE_CHECKING:` block name what a type checker reads, so they neither make a dev dependency a runtime one nor close a dependency cycle — requests writes its `_types.py` that way.
 - Dart/Flutter `pubspec.yaml` dependencies participate in undeclared, unused, dev-only-in-production, and test-only runtime dependency insights.
 - Flutter `pubspec.yaml` assets are indexed, Dart asset reads are linked as config facts, missing asset declarations produce warnings, and Dart platform channels are surfaced as external boundary nodes.
 - Dart `package:` imports resolve through `pubspec.yaml` and `.dart_tool/package_config.json` package maps (workspace-relative `rootUri` only, with escape and absolute-URI guards), so path dependencies and monorepo packages link to their scanned files; generated files (`.g.dart`, `.freezed.dart`, protobuf, mocks, `.gen.dart`) carry `generated` metadata with a `generated_from` link to the source that produces them.

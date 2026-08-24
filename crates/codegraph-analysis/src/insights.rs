@@ -3707,7 +3707,13 @@ pub(crate) fn add_non_runtime_dependency_import_insights(
         // `import type { Program } from '@babel/types'` is erased before
         // anything runs, so it cannot make a dev dependency a runtime one.
         // Vue writes 651 such imports, and 33 of its findings were them.
-        if import_node.label.trim_start().starts_with("import type ") {
+        // Python writes the same thing as `if TYPE_CHECKING:`.
+        if import_node.label.trim_start().starts_with("import type ")
+            || import_node
+                .metadata
+                .get("type_only")
+                .is_some_and(|value| value == "true")
+        {
             continue;
         }
         let Some(language) = import_node.metadata.get("language").map(String::as_str) else {
@@ -4258,6 +4264,13 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
                 .metadata
                 .get("source")
                 .is_some_and(|source| source == "markdown")
+            // An import Python erases at run time - `if TYPE_CHECKING:` -
+            // is not a dependency that can close a cycle when the program
+            // runs: requests writes `_types.py` that way.
+            || edge
+                .metadata
+                .get("type_only")
+                .is_some_and(|value| value == "true")
         {
             continue;
         }

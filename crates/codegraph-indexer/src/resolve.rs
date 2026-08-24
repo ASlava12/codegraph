@@ -1893,6 +1893,18 @@ pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
             metadata.insert("relation".to_string(), "local_import_file".to_string());
             metadata.insert("source".to_string(), "syntax".to_string());
             metadata.insert("resolution".to_string(), "local_import_file".to_string());
+            // An import the interpreter never runs cannot be a runtime
+            // dependency of the file that writes it.
+            if context
+                .graph
+                .nodes
+                .iter()
+                .find(|node| node.id == import.import_node)
+                .and_then(|node| node.metadata.get("type_only"))
+                .is_some_and(|value| value == "true")
+            {
+                metadata.insert("type_only".to_string(), "true".to_string());
+            }
             metadata.insert("target".to_string(), import.target);
             add_edge_once_with_metadata(
                 context,
