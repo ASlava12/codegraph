@@ -674,7 +674,11 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
         || label.contains("config/routes/")
         || label.ends_with("/config/routes.rb");
     let mut routes = Vec::new();
+    // Each open block states a path segment and a module: `namespace
+    // :api` is both `/api` and `Api::`, and `scope module: :v1` is a
+    // module with no path of its own.
     let mut prefixes: Vec<String> = Vec::new();
+    let mut modules: Vec<String> = Vec::new();
     // The depth a `concern` block opened at, while one is open.
     let mut concern_depth: Option<usize> = None;
 
@@ -690,11 +694,13 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                 && trimmed.ends_with(" do")
                 && let Some(name) = ruby_symbol_name(rest)
             {
+                modules.push(rails_module_name(&name));
                 prefixes.push(name);
                 continue;
             }
             if trimmed == "end" {
                 prefixes.pop();
+                modules.pop();
                 if concern_depth.is_some_and(|depth| depth >= prefixes.len()) {
                     concern_depth = None;
                 }
@@ -712,7 +718,8 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                     },
                     handler: rails_route_handler(rest),
                     handler_qualifier: rails_route_target(rest)
-                        .and_then(|(_, controller)| controller),
+                        .and_then(|(_, controller)| controller)
+                        .and_then(|controller| qualified_rails_controller(&modules, &controller)),
                     expanded: false,
                     line: line_number,
                 });
@@ -728,6 +735,7 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
             {
                 concern_depth = Some(prefixes.len());
                 prefixes.push(String::new());
+                modules.push(String::new());
                 continue;
             }
             if let Some(rest) = trimmed
@@ -744,11 +752,15 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                     let segment = rails_option_value(rest, "path").unwrap_or_else(|| name.clone());
                     let controller =
                         rails_option_value(rest, "controller").unwrap_or_else(|| name.clone());
+                    // `namespace :api do namespace :v2 do resources
+                    // :search` is `Api::V2::SearchController`, and
+                    // mastodon declares one of those per version.
+                    let controller = qualified_rails_controller(&modules, &controller);
                     if concern_depth.is_none() {
                         routes.extend(rails_resource_routes(
                             &prefix,
                             &segment,
-                            rails_controller_class(&controller),
+                            controller.clone(),
                             singular,
                             &rails_resource_actions(rest),
                             line_number,
@@ -758,6 +770,7 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                     // nests: the inner routes live under the outer one's
                     // member path.
                     if trimmed.ends_with(" do") {
+                        modules.push(String::new());
                         let member = if singular {
                             segment.clone()
                         } else {
@@ -779,6 +792,7 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
         // as `/accounts`.
         if rails && opens_a_ruby_block(trimmed) {
             prefixes.push(rails_block_prefix(trimmed));
+            modules.push(rails_block_module(trimmed));
         }
 
         let Some((method, rest)) = METHODS
@@ -819,7 +833,9 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
             method: method.to_ascii_uppercase(),
             path: format!("{prefix}/{}", path.trim_start_matches('/')),
             handler: rails_route_handler(rest),
-            handler_qualifier: rails_route_target(rest).and_then(|(_, controller)| controller),
+            handler_qualifier: rails_route_target(rest)
+                .and_then(|(_, controller)| controller)
+                .and_then(|controller| qualified_rails_controller(&modules, &controller)),
             expanded: false,
             line: line_number,
         });
@@ -880,7 +896,15 @@ fn rails_controller_class(controller: &str) -> Option<String> {
             }
         })
         .collect();
-    (!camel.is_empty()).then(|| format!("{camel}Controller"))
+    // The name may already be a class: `rails_route_target` classifies
+    // what `to:` names before the namespaces are joined onto it.
+    (!camel.is_empty()).then(|| {
+        if camel.ends_with("Controller") {
+            camel
+        } else {
+            format!("{camel}Controller")
+        }
+    })
 }
 
 /// What `resources :users` declares: the seven routes Rails generates for
@@ -928,6 +952,47 @@ fn rails_resource_actions(rest: &str) -> RailsResourceActions {
         }
     }
     actions
+}
+
+/// The module a block states: `namespace :api` is `Api`, `scope module:
+/// :v1` is `V1`, and everything else states none.
+fn rails_block_module(line: &str) -> String {
+    let trimmed = line.trim();
+    let Some(rest) = trimmed.strip_prefix("scope ") else {
+        return String::new();
+    };
+    rails_option_value(rest, "module")
+        .map(|name| rails_module_name(&name))
+        .unwrap_or_default()
+}
+
+/// What Rails calls the module a symbol names: `v1_alpha` is `V1Alpha`,
+/// `activitypub` is `Activitypub` unless the project says otherwise.
+fn rails_module_name(name: &str) -> String {
+    name.split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut characters = part.chars();
+            match characters.next() {
+                Some(first) => format!("{}{}", first.to_ascii_uppercase(), characters.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
+/// The controller a route names, under the modules the open blocks state.
+fn qualified_rails_controller(modules: &[String], controller: &str) -> Option<String> {
+    let class = rails_controller_class(controller)?;
+    let path: Vec<&str> = modules
+        .iter()
+        .map(String::as_str)
+        .filter(|part| !part.is_empty())
+        .collect();
+    if path.is_empty() {
+        return Some(class);
+    }
+    Some(format!("{}::{class}", path.join("::")))
 }
 
 /// The singular Rails writes for a resource name: `statuses` is

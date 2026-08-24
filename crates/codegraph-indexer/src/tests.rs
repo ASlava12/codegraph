@@ -9348,7 +9348,7 @@ fn a_rails_resource_declares_what_it_says_it_declares() {
     // whole set of seven invented routes it does not serve.
     fs::write(
         root.join("config").join("routes.rb"),
-        "Rails.application.routes.draw do\n  concern :actor do\n    resource :outbox, only: [:show]\n  end\n\n  resources :accounts, path: 'users', only: [:show] do\n    resources :statuses, only: [:show]\n  end\n  resources :followers, only: [:index], controller: :follower_accounts\n  get '/about', to: 'about#show'\n  get :verify_credentials, to: 'credentials#show'\nend\n",
+        "Rails.application.routes.draw do\n  concern :actor do\n    resource :outbox, only: [:show]\n  end\n\n  resources :accounts, path: 'users', only: [:show] do\n    resources :statuses, only: [:show]\n  end\n  resources :followers, only: [:index], controller: :follower_accounts\n  get '/about', to: 'about#show'\n  get :verify_credentials, to: 'credentials#show'\n\n  namespace :api do\n    namespace :v2 do\n      get '/search', to: 'search#index'\n    end\n  end\nend\n",
     )
     .unwrap();
     fs::write(
@@ -9393,6 +9393,22 @@ fn a_rails_resource_declares_what_it_says_it_declares() {
     assert!(
         routes.contains(&("GET".to_string(), "/followers".to_string())),
         "{routes:?}"
+    );
+
+    // A namespace states a module as well as a path segment, so the
+    // route names `Api::V2::SearchController` rather than every
+    // `SearchController` in the project.
+    let search = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.metadata.get("item_kind").map(String::as_str) == Some("framework_route")
+                && node.metadata.get("path").map(String::as_str) == Some("/api/v2/search")
+        })
+        .expect("the namespaced route is in the graph");
+    assert_eq!(
+        search.metadata.get("handler_qualifier").map(String::as_str),
+        Some("Api::V2::SearchController")
     );
 
     // A symbol names the path as often as a string does, and the `to:`
