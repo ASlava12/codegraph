@@ -737,9 +737,9 @@ pub(crate) fn cabal_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
     let mut main_is: Option<String> = None;
     let mut source_dir: Option<String> = None;
     let finish = |stanza: &Option<(&'static str, String, u32)>,
-                      main_is: &Option<String>,
-                      source_dir: &Option<String>,
-                      entrypoints: &mut Vec<ManifestEntrypoint>| {
+                  main_is: &Option<String>,
+                  source_dir: &Option<String>,
+                  entrypoints: &mut Vec<ManifestEntrypoint>| {
         let (Some((kind, name, line)), Some(main)) = (stanza.as_ref(), main_is.as_ref()) else {
             return;
         };

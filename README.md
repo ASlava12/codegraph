@@ -103,6 +103,10 @@ Implemented now:
   protobuf code no longer reports 3234 calls as unresolved, and `providers.SchemaCache.Set` reaches
   the in-repo package that declares it. Go's predeclared types count as the language's own when they
   are written as conversions -- `string(b)`, `int64(n)` -- rather than as functions nothing declares.
+- Asking what breaks settles a question before any topic word does: "what breaks if I change the
+  SongResource endpoint" was answered with koel's HTTP routes and "what would break if I remove the
+  Setting config" with its configuration reads, because the topic rules key on nouns a symbol's name
+  may sit beside. Both now answer with what depends on the name.
 - Haskell states its programs in the package's `.cabal` file, and they are read the same way:
   `executable shellcheck` with `main-is: shellcheck.hs` is the program, a `test-suite` states a test
   program under its own `hs-source-dirs`, and a `library` states none. shellcheck's coverage finding

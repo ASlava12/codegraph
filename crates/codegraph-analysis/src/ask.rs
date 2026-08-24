@@ -254,6 +254,71 @@ pub(crate) fn natural_query_plan_with_anchor(
                 "low".to_string(),
             )
         }
+    // What breaks if a name changes is a question about that name, whatever
+    // the name is called: `what breaks if I change the router` asked about
+    // koel's `router.ts` and was answered with the project's HTTP routes,
+    // because the topic rules below key on nouns a symbol's own name may
+    // contain. Asking outright settles it first, the way naming calling
+    // does.
+    } else if natural_query_mentions_any(
+        &routing,
+        &[
+            "dependent",
+            "impact",
+            "who uses",
+            "used by",
+            "depends on",
+            "depend on",
+            // The question an agent asks before an edit: "what would break
+            // if I change X" is what depends on X.
+            "would break",
+            "will break",
+            "if i change",
+            "if i remove",
+            "if i rename",
+            // The same question in the present tense: "what changes when I
+            // edit the parser" is what depends on the parser.
+            "when i change",
+            "when i edit",
+            "when i touch",
+            "if i edit",
+            "if i touch",
+            "что сломает",
+            "если изменить",
+            "кто использ",
+            "кто завис",
+            "зависит от",
+            "зависят от",
+            "влияни",
+        ],
+    ) && !(routing.contains("does") && routing.contains("depend"))
+    {
+        // The subject of an impact question is a name even when it is
+        // spelled like a topic: `router`, `config`, `main`. The topic rules
+        // drop such a word to keep `routes handler:HTTP` from happening;
+        // here it is exactly what the question is about.
+        let subject = quoted_term.clone().or_else(|| {
+            candidates
+                .first()
+                .filter(|candidate| natural_query_token_looks_specific(candidate))
+                .map(|candidate| quote_query_value(candidate))
+        });
+        match subject {
+            Some(term) => (
+                format!("dependents label:{term} depth:4"),
+                "reverse_dependency_or_impact".to_string(),
+                if quoted_term.is_some() {
+                    "high".to_string()
+                } else {
+                    "medium".to_string()
+                },
+            ),
+            None => (
+                fallback.clone(),
+                "general_search".to_string(),
+                "low".to_string(),
+            ),
+        }
     } else if natural_query_mentions_any(
         &routing,
         &[
@@ -370,52 +435,6 @@ pub(crate) fn natural_query_plan_with_anchor(
                 "routes depth:4 edge_limit:300".to_string(),
                 "route_or_endpoint".to_string(),
                 "medium".to_string(),
-            )
-        }
-    } else if natural_query_mentions_any(
-        &routing,
-        &[
-            "dependent",
-            "impact",
-            "who uses",
-            "used by",
-            "depends on",
-            "depend on",
-            // The question an agent asks before an edit: "what would break
-            // if I change X" is what depends on X.
-            "would break",
-            "will break",
-            "if i change",
-            "if i remove",
-            "if i rename",
-            // The same question in the present tense: "what changes when I
-            // edit the parser" is what depends on the parser.
-            "when i change",
-            "when i edit",
-            "when i touch",
-            "if i edit",
-            "if i touch",
-            "что сломает",
-            "если изменить",
-            "кто использ",
-            "кто завис",
-            "зависит от",
-            "зависят от",
-            "влияни",
-        ],
-    ) && !(routing.contains("does") && routing.contains("depend"))
-    {
-        if let Some(term) = quoted_term.as_deref() {
-            (
-                format!("dependents label:{term} depth:4"),
-                "reverse_dependency_or_impact".to_string(),
-                "high".to_string(),
-            )
-        } else {
-            (
-                fallback.clone(),
-                "general_search".to_string(),
-                "low".to_string(),
             )
         }
     } else if natural_query_mentions_any(

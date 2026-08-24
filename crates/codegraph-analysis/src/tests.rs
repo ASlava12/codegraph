@@ -1973,6 +1973,30 @@ fn a_question_the_graph_cannot_answer_says_what_it_answers_instead() {
 }
 
 #[test]
+fn asking_what_breaks_settles_the_question_before_any_topic_word() {
+    // The topic rules key on nouns a symbol's own name may sit beside:
+    // "what breaks if I change the SongResource endpoint" was answered with
+    // koel's HTTP routes and "what would break if I remove the Setting
+    // config" with its configuration reads, neither of which is what was
+    // asked. Naming the impact settles it, the way naming calling does.
+    let plan = natural_query_plan("what breaks if I change the SongResource endpoint")
+        .expect("the question routes");
+    assert_eq!(
+        plan.generated_query,
+        "dependents label:SongResource depth:4"
+    );
+    assert_eq!(plan.rule, "reverse_dependency_or_impact");
+
+    let plan = natural_query_plan("what would break if I remove the Setting config")
+        .expect("the question routes");
+    assert_eq!(plan.generated_query, "dependents label:Setting depth:4");
+
+    // A question that only names a topic still asks about the topic.
+    let plan = natural_query_plan("what routes does the api expose").expect("the question routes");
+    assert_eq!(plan.rule, "route_or_endpoint");
+}
+
+#[test]
 fn a_verb_the_question_ends_on_is_not_what_it_asks_about() {
     let mut graph = CodeGraph::new("repo");
     // terraform has a function called `read`, and "what environment
