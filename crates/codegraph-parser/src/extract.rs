@@ -1805,6 +1805,31 @@ pub(crate) fn julia_short_function_definition(node: Node<'_>) -> bool {
             .is_some_and(|left| left.kind() == "call_expression")
 }
 
+/// The name a Julia definition binds: the callee of its signature, kept whole
+/// so that `Base.names` stays distinct from a local `names`, the way Lua keeps
+/// `Plugins:select_by_ca_certificate`.
+pub(crate) fn julia_definition_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let head = julia_definition_head(node, 0)?;
+    let callee = head.named_child(0)?;
+    node_text(callee, source)
+        .map(compact_label)
+        .filter(|name| !name.is_empty())
+}
+
+/// The signature of a definition can sit under a `where` clause or a return
+/// type, so walk down to the call that carries the name.
+fn julia_definition_head<'tree>(node: Node<'tree>, depth: usize) -> Option<Node<'tree>> {
+    if node.kind() == "call_expression" {
+        return Some(node);
+    }
+    if depth > 3 {
+        return None;
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find_map(|child| julia_definition_head(child, depth + 1))
+}
+
 /// The call-shaped left side of a short definition names the function being
 /// defined; it is not a call to it.
 pub(crate) fn julia_is_short_definition_head(node: Node<'_>) -> bool {
@@ -2142,6 +2167,16 @@ pub(crate) fn item_label(
 
     if kind == ParsedItemKind::Import {
         return node_text(node, source).map(compact_label);
+    }
+
+    // Julia writes the defined name as the callee of its signature, so the
+    // first identifier of `function Base.names(df, cols)` is the module it
+    // extends. DataFrames labels 536 methods `Base` without this.
+    if language == Language::Julia
+        && matches!(kind, ParsedItemKind::Function | ParsedItemKind::Entrypoint)
+        && let Some(name) = julia_definition_name(node, source)
+    {
+        return Some(name);
     }
 
     if language == Language::Dart

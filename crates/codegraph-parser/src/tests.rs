@@ -2674,6 +2674,33 @@ fn haskell_type_signatures_do_not_become_functions() {
 }
 
 #[test]
+fn julia_methods_keep_the_module_they_extend() {
+    // `function Base.names(df)` defines a method of Base.names, not of Base.
+    // DataFrames.jl labelled 536 of its methods `Base` before this.
+    let source = "Base.names(df::Frame, cols::Colon=:) = names(index(df))\n\
+                  function Base.getindex(df::Frame, i) where {T}\n  i\nend\n\
+                  function Tables.columns(df::Frame)\n  df\nend\n\
+                  function plain(x)\n  x\nend\n";
+    let parsed = parse_source("demo.jl", source.as_bytes(), Language::Julia).unwrap();
+    let functions: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Function)
+        .map(|item| item.label.as_str())
+        .collect();
+    for expected in ["Base.names", "Base.getindex", "Tables.columns", "plain"] {
+        assert!(
+            functions.contains(&expected),
+            "`{expected}` is a definition label: {functions:?}"
+        );
+    }
+    assert!(
+        !functions.contains(&"Base"),
+        "the extended module is not a function: {functions:?}"
+    );
+}
+
+#[test]
 fn julia_short_function_definitions_are_definitions_not_calls() {
     // `square(x) = x * x` parses as an assignment whose left side is a call
     // expression. It used to be no definition at all, and its left side was
