@@ -2323,11 +2323,9 @@ pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
     let files_by_name = files_by_name(&context.file_nodes);
 
     for import in pending_imports {
-        let source_path = context
-            .graph
-            .nodes
-            .iter()
-            .find(|node| node.id == import.import_node)
+        // The node's id is its position: walking every node to find it cost
+        // terraform's 19000 imports a pass over 133000 nodes each.
+        let source_path = graph_node(&context.graph, import.import_node)
             .and_then(|node| node.span.as_ref())
             .map(|span| span.path.clone());
         let resolved = resolve_local_import_candidate(
@@ -2372,8 +2370,15 @@ pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
             if context
                 .graph
                 .nodes
-                .iter()
-                .find(|node| node.id == import.import_node)
+                .get(
+                    import
+                        .import_node
+                        .0
+                        .checked_sub(1)
+                        .map(|index| index as usize)
+                        .unwrap_or(usize::MAX),
+                )
+                .filter(|node| node.id == import.import_node)
                 .and_then(|node| node.metadata.get("type_only"))
                 .is_some_and(|value| value == "true")
             {
@@ -4019,9 +4024,11 @@ pub(crate) fn resolve_local_function(
     symbols: &BTreeMap<String, NodeId>,
     label: &str,
 ) -> Option<NodeId> {
-    symbol_keys(label)
-        .into_iter()
-        .find_map(|key| symbols.get(&key).copied())
+    let (compact, simple) = symbol_key_parts(label);
+    symbols
+        .get(compact)
+        .or_else(|| symbols.get(simple))
+        .copied()
 }
 
 /// Split `Type::method` / `Type.method` into its owner and method name. Only
@@ -4046,8 +4053,15 @@ pub(crate) fn resolve_function_targets(
     label: &str,
 ) -> Vec<NodeId> {
     let mut targets = Vec::new();
-    for key in symbol_keys(label) {
-        if let Some(ids) = symbols.get(&key) {
+    // The keys are slices of the label the caller already holds: building
+    // them as owned strings cost terraform's 100000 calls two allocations
+    // each before a single map lookup happened.
+    let (compact, simple) = symbol_key_parts(label);
+    for key in [compact, simple] {
+        if key == simple && !std::ptr::eq(key, compact) && compact == simple {
+            continue;
+        }
+        if let Some(ids) = symbols.get(key) {
             for id in ids {
                 if !targets.contains(id) {
                     targets.push(*id);
@@ -4058,23 +4072,34 @@ pub(crate) fn resolve_function_targets(
     targets
 }
 
+/// The two names a label can be looked up under: what it says, and the
+/// last part of it. `Type::method` is also `method`.
+pub(crate) fn symbol_key_parts(label: &str) -> (&str, &str) {
+    let compact = label.trim().trim_end_matches('!');
+    (compact, simple_symbol_name_ref(compact))
+}
+
 pub(crate) fn symbol_keys(label: &str) -> Vec<String> {
-    let compact = label.trim().trim_end_matches('!').to_string();
-    let simple = simple_symbol_name(&compact);
+    let (compact, simple) = symbol_key_parts(label);
     if compact == simple {
-        vec![compact]
+        vec![compact.to_string()]
     } else {
-        vec![compact, simple]
+        vec![compact.to_string(), simple.to_string()]
     }
 }
 
-pub(crate) fn simple_symbol_name(label: &str) -> String {
+/// [`simple_symbol_name`] without the allocation: the answer is a slice of
+/// what was passed in.
+pub(crate) fn simple_symbol_name_ref(label: &str) -> &str {
     label
         .rsplit([':', '.', '\\', '>'])
         .find(|part| !part.is_empty() && *part != "-")
         .unwrap_or(label)
         .trim()
-        .to_string()
+}
+
+pub(crate) fn simple_symbol_name(label: &str) -> String {
+    simple_symbol_name_ref(label).to_string()
 }
 
 pub(crate) fn add_edge_once(
