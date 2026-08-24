@@ -260,9 +260,25 @@ pub(crate) fn parse_insight_severity(value: &str) -> Result<InsightSeverity, Api
 pub(crate) fn parse_node_id_param(value: &str) -> Result<codegraph_core::NodeId, ApiError> {
     codegraph_analysis::parse_node_id(value).map_err(|_| {
         ApiError::bad_request(format!(
-            "invalid node_id `{value}`; use a numeric id or the n-prefixed form such as n42"
+            "invalid node_id `{value}`; use a numeric id, the n-prefixed form such as n42, or the durable cg-* id"
         ))
     })
+}
+
+/// The node a `node_id` parameter names. The durable `cg-*` id is the one
+/// an agent saved, and only the graph can resolve it.
+pub(crate) fn resolve_node_id_param(
+    graph: &CodeGraph,
+    value: &str,
+) -> Result<codegraph_core::NodeId, ApiError> {
+    if let Some(node) = graph.nodes.iter().find(|node| {
+        node.metadata
+            .get("stable_id")
+            .is_some_and(|stable_id| stable_id == value)
+    }) {
+        return Ok(node.id);
+    }
+    parse_node_id_param(value)
 }
 
 pub(crate) fn parse_node_ids(value: Option<&str>) -> Result<Vec<codegraph_core::NodeId>, ApiError> {

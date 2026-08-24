@@ -294,7 +294,7 @@ pub(crate) async fn node_context_api(
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let context = node_context(
         &graph,
-        parse_node_id_param(&query.node_id)?,
+        resolve_node_id_param(&graph, &query.node_id)?,
         query.edge_limit.unwrap_or(DEFAULT_NODE_CONTEXT_EDGE_LIMIT),
     )
     .ok_or_else(|| ApiError::not_found("node not found"))?;
@@ -315,8 +315,8 @@ pub(crate) async fn node_card_api(
         .insight_limit
         .unwrap_or(DEFAULT_NODE_CARD_INSIGHT_LIMIT);
     let include_insights = query.include_insights.unwrap_or(false);
-    let node_id = parse_node_id_param(&query.node_id)?;
     let graph = scan_graph(&state, query.path.as_deref()).await?;
+    let node_id = resolve_node_id_param(&graph, &query.node_id)?;
     let card = tokio::task::spawn_blocking(move || {
         let card_builder = if include_insights {
             node_card
@@ -654,7 +654,7 @@ pub(crate) async fn trace_api(
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let target = query.label.clone();
     let start = match (query.node_id, query.label) {
-        (Some(id), _) => TraceStart::NodeId(parse_node_id_param(&id)?),
+        (Some(id), _) => TraceStart::NodeId(resolve_node_id_param(&graph, &id)?),
         (None, Some(label)) => TraceStart::Label(label),
         (None, None) => {
             return Err(ApiError::bad_request(
@@ -682,7 +682,7 @@ pub(crate) async fn workflow_api(
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let target = query.label.clone();
     let start = match (query.node_id, query.label) {
-        (Some(id), _) => TraceStart::NodeId(parse_node_id_param(&id)?),
+        (Some(id), _) => TraceStart::NodeId(resolve_node_id_param(&graph, &id)?),
         (None, Some(label)) => TraceStart::Label(label),
         (None, None) => {
             return Err(ApiError::bad_request(
@@ -981,7 +981,7 @@ pub(crate) async fn dependents_api(
     let graph = scan_graph(&state, query.path.as_deref()).await?;
     let target = query.label.clone();
     let start = match (query.node_id, query.label) {
-        (Some(id), _) => TraceStart::NodeId(parse_node_id_param(&id)?),
+        (Some(id), _) => TraceStart::NodeId(resolve_node_id_param(&graph, &id)?),
         (None, Some(label)) => TraceStart::Label(label),
         (None, None) => {
             return Err(ApiError::bad_request(

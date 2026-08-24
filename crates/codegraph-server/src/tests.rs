@@ -665,6 +665,49 @@ async fn every_answer_is_built_from_the_same_graph() {
 }
 
 #[tokio::test]
+async fn the_api_opens_a_node_by_its_durable_id() {
+    let root = temp_server_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("main.rs"),
+        "fn main() {\n    helper();\n}\n\nfn helper() {}\n",
+    )
+    .unwrap();
+    let state = test_state(root.clone(), vec![], true);
+
+    let graph = scan_graph(&state, Some(root.as_path()))
+        .await
+        .expect("graph");
+    let helper = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "helper")
+        .expect("missing helper");
+    let stable_id = helper
+        .metadata
+        .get("stable_id")
+        .expect("every node carries one")
+        .clone();
+
+    let Json(card) = node_card_api(
+        State(state),
+        ApiQuery(NodeCardQuery {
+            path: Some(root.clone()),
+            node_id: stable_id,
+            edge_limit: None,
+            source_context: None,
+            insight_limit: None,
+            include_insights: None,
+        }),
+    )
+    .await
+    .expect("the durable id is a node id");
+    assert_eq!(card.context.node.label, "helper");
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[tokio::test]
 async fn trace_apis_say_which_name_matched_nothing() {
     let root = temp_server_root();
     fs::create_dir_all(root.join("src")).unwrap();

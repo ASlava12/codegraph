@@ -1109,7 +1109,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Read selected node context with neighboring edges. Returned edges include metadata.edge_index for exact edge explanation and UI selection.",
                     vec![
                         path_param(),
-                        query_param("node_id", true, "string", None, "Node id, numeric or n-prefixed (42 or n42)."),
+                        query_param("node_id", true, "string", None, "Node id: numeric (42), n-prefixed (n42), or the durable cg-* id the scan stamps on every node."),
                         query_param(
                             "edge_limit",
                             false,
@@ -1129,7 +1129,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Read selected node investigation card with neighboring edges, dependency summary facets, file-level summaries, source preview, related risks including file-scoped contained-node risks, risk summaries, exact edge indexes, and suggested focused graph query actions.",
                     vec![
                         path_param(),
-                        query_param("node_id", true, "string", None, "Node id, numeric or n-prefixed (42 or n42)."),
+                        query_param("node_id", true, "string", None, "Node id: numeric (42), n-prefixed (n42), or the durable cg-* id the scan stamps on every node."),
                         query_param(
                             "edge_limit",
                             false,
