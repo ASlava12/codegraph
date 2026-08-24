@@ -9339,6 +9339,58 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn a_generate_directive_names_the_program_that_writes_the_code() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("graph")).unwrap();
+    fs::create_dir_all(root.join("testdata")).unwrap();
+    // gqlgen writes 58 of these and terraform 42.
+    fs::write(
+        root.join("testdata").join("gqlgen.go"),
+        "package main\n\nfunc main() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("graph").join("resolver.go"),
+        "//go:generate go run ../testdata/gqlgen.go\n\npackage graph\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let directive = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.metadata.get("item_kind").map(String::as_str) == Some("generate_directive")
+        })
+        .expect("the directive is in the graph");
+    assert_eq!(
+        directive
+            .span
+            .as_ref()
+            .map(|span| (span.path.as_str(), span.start_line)),
+        Some(("graph/resolver.go", 1))
+    );
+
+    // And it reaches the program it names.
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "testdata/gqlgen.go")
+        .expect("the generator is in the graph");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.source == directive.id
+                && edge.target == target.id
+                && edge.metadata.get("resolution").map(String::as_str)
+                    == Some("go_generate_command_path")
+        }),
+        "the directive reaches the program that writes the code"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_single_file_component_states_its_program_in_a_script_block() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();

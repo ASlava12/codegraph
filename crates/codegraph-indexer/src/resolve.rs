@@ -3710,6 +3710,18 @@ pub(crate) fn entrypoint_target_candidates(
             })
             .into_iter()
             .collect(),
+        // `//go:generate go run ../../testdata/gqlgen.go` names the
+        // program that writes the code beside it.
+        "go-generate" => command_path_candidate(pending)
+            .map(|path| EntrypointTargetCandidate {
+                path,
+                symbol: None,
+                file_confidence: Confidence::Heuristic,
+                function_confidence: Confidence::Heuristic,
+                resolution: "go_generate_command_path",
+            })
+            .into_iter()
+            .collect(),
         "docker" => command_path_candidate(pending)
             .map(|path| EntrypointTargetCandidate {
                 path,

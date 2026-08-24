@@ -17,6 +17,7 @@ pub(crate) fn index_manifest_facts(
     path: &Path,
     label: &str,
     source: &str,
+    language: Option<codegraph_parser::Language>,
 ) {
     index_manifest_dependencies(context, file_id, path, source);
     index_manifest_entrypoints(context, file_id, path, label, source);
@@ -30,6 +31,7 @@ pub(crate) fn index_manifest_facts(
     index_properties_settings(context, file_id, label, source);
     index_published_paths(context, file_id, path, source);
     index_php_schema_tables(context, file_id, label, source);
+    index_go_generate_directives(context, file_id, language, label, source);
 }
 
 /// What a package ships. npm's `files` field states it exactly --

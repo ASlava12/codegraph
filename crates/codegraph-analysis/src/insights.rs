@@ -4072,8 +4072,10 @@ pub(crate) fn is_repository_tooling_source_path(path: &str) -> bool {
             "scripts"
                 | "tools"
                 // `ci/` is the build and the test run: ripgrep keeps six
-                // shell scripts there and nothing else runs them.
+                // shell scripts there and nothing else runs them, and
+                // gqlgen keeps four more in `.github/`.
                 | "ci"
+                | ".github"
                 | "bench"
                 | "benchmarks"
                 | "__benchmarks__"

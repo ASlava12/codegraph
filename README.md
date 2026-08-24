@@ -71,6 +71,9 @@ Implemented now:
   template, a script and a style together, and the `<script>` block (TypeScript when it says `lang="ts"`)
   is parsed with every other line blanked, so a fact keeps the line of the component that holds it.
   koel's 337 components contribute 723 functions and 2460 imports that nothing held before.
+- `//go:generate` says how a package's code is produced, and the directive reaches the program it
+  names: gqlgen writes 58 of them and terraform 42, and 49 of gqlgen's resolve to
+  `testdata/gqlgen.go`.
 - A Laravel migration declares tables: `Schema::create('songs', ..)` is the schema koel states, and
   without it every query in the project referenced a table "without a matching indexed schema table".
 - A composer lockfile states which namespaces each package autoloads, and that is where the mapping

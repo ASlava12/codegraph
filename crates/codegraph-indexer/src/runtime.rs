@@ -92,6 +92,94 @@ pub(crate) fn index_makefile_entrypoints(
     }
 }
 
+/// The command as a label: long enough to read, short enough for a row.
+fn short_command_label(command: &str) -> String {
+    const MAX: usize = 80;
+    if command.chars().count() <= MAX {
+        return command.to_string();
+    }
+    let head: String = command.chars().take(MAX).collect();
+    format!("{head}…")
+}
+
+/// What `go generate` runs for a package. gqlgen writes 58 of these and
+/// terraform 42: `//go:generate go run ../../testdata/gqlgen.go` says
+/// where the generated code beside it comes from, and the graph held
+/// nothing about any of them.
+pub(crate) fn index_go_generate_directives(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    language: Option<codegraph_parser::Language>,
+    label: &str,
+    source: &str,
+) {
+    if language != Some(codegraph_parser::Language::Go) || !source.contains("//go:generate") {
+        return;
+    }
+    for (index, line) in source.lines().enumerate() {
+        // The directive is only a directive at the start of a line, with
+        // no space after the slashes: `// go:generate` is a comment.
+        let Some(command) = line.strip_prefix("//go:generate ") else {
+            continue;
+        };
+        let command = command.trim();
+        if command.is_empty() {
+            continue;
+        }
+        let line_number = index as u32 + 1;
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "generate_directive".to_string());
+        metadata.insert("entrypoint_kind".to_string(), "generate".to_string());
+        metadata.insert("ecosystem".to_string(), "go".to_string());
+        metadata.insert("source".to_string(), "go-generate".to_string());
+        metadata.insert("command".to_string(), command.to_string());
+        metadata.insert("line".to_string(), line_number.to_string());
+        if let Some(candidate) = normalized_command_path_candidate(label, command) {
+            insert_command_path(&mut metadata, candidate);
+        }
+        let entrypoint_id = context.graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            format!("go:generate {}", short_command_label(command)),
+            Some(line_span(label, source, line_number)),
+            metadata,
+        );
+        add_edge_once(
+            context,
+            file_id,
+            entrypoint_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+        );
+        let root_id = context.graph.root;
+        add_edge_once(
+            context,
+            root_id,
+            entrypoint_id,
+            EdgeKind::Entrypoint,
+            Confidence::Exact,
+        );
+        add_entrypoint_reference(
+            context,
+            entrypoint_id,
+            file_id,
+            "entrypoint_file",
+            "go_generate_directive",
+            Confidence::Exact,
+            None,
+        );
+        context
+            .pending_entrypoint_targets
+            .push(PendingEntrypointTarget {
+                entrypoint: entrypoint_id,
+                manifest_label: label.to_string(),
+                target: command.to_string(),
+                base_dir: None,
+                ecosystem: "go-generate".to_string(),
+                entrypoint_kind: "generate".to_string(),
+            });
+    }
+}
+
 pub(crate) fn index_dockerfile_entrypoints(
     context: &mut IndexContext,
     file_id: NodeId,

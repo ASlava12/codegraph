@@ -805,7 +805,7 @@ pub(crate) fn index_file(
             .unwrap_or_default();
         index_rationale_comments(context, file_id, label, language, source, string_lines);
         script_entrypoint = index_script_entrypoint(context, file_id, label, source);
-        index_manifest_facts(context, file_id, path, label, source);
+        index_manifest_facts(context, file_id, path, label, source, language);
         index_markdown_document(context, file_id, path, label, source);
         index_rst_document(context, file_id, path, label, source);
         index_plain_text_document(context, file_id, path, label, source);
