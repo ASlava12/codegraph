@@ -31,6 +31,7 @@ pub(crate) fn index_manifest_facts(
     index_properties_settings(context, file_id, label, source);
     index_published_paths(context, file_id, path, source);
     index_php_schema_tables(context, file_id, label, source);
+    index_ruby_schema_tables(context, file_id, label, source);
     index_go_generate_directives(context, file_id, language, label, source);
 }
 

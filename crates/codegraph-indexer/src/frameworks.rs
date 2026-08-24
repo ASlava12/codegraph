@@ -704,7 +704,8 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
                         prefix.clone()
                     },
                     handler: rails_route_handler(rest),
-                    handler_qualifier: None,
+                    handler_qualifier: rails_route_target(rest)
+                        .and_then(|(_, controller)| controller),
                     expanded: false,
                     line: line_number,
                 });
@@ -716,7 +717,22 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
             {
                 let singular = trimmed.starts_with("resource ");
                 if let Some(name) = ruby_symbol_name(rest) {
-                    routes.extend(rails_resource_routes(&prefix, &name, singular, line_number));
+                    // `resources :accounts, path: 'users', only: [:show]`
+                    // states one route, not seven, and states it under
+                    // `/users`. Mastodon writes 64 such lines, and reading
+                    // them as the whole set invented routes it does not
+                    // serve.
+                    let segment = rails_option_value(rest, "path").unwrap_or_else(|| name.clone());
+                    let controller =
+                        rails_option_value(rest, "controller").unwrap_or_else(|| name.clone());
+                    routes.extend(rails_resource_routes(
+                        &prefix,
+                        &segment,
+                        rails_controller_class(&controller),
+                        singular,
+                        &rails_resource_actions(rest),
+                        line_number,
+                    ));
                 }
                 continue;
             }
@@ -747,7 +763,7 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
             method: method.to_ascii_uppercase(),
             path: format!("{prefix}/{}", path.trim_start_matches('/')),
             handler: rails_route_handler(rest),
-            handler_qualifier: None,
+            handler_qualifier: rails_route_target(rest).and_then(|(_, controller)| controller),
             expanded: false,
             line: line_number,
         });
@@ -757,7 +773,7 @@ pub(crate) fn ruby_framework_routes(source: &str) -> Vec<FrameworkRoute> {
 }
 
 /// The name a Ruby symbol states: `:users` in `resources :users`.
-fn ruby_symbol_name(rest: &str) -> Option<String> {
+pub(crate) fn ruby_symbol_name(rest: &str) -> Option<String> {
     let value = rest.trim().strip_prefix(':')?;
     let name: String = value
         .chars()
@@ -769,18 +785,110 @@ fn ruby_symbol_name(rest: &str) -> Option<String> {
 /// The action a Rails route points at: `to: "health#show"` is `show` in the
 /// health controller.
 fn rails_route_handler(rest: &str) -> Option<String> {
+    rails_route_target(rest).map(|(action, _)| action)
+}
+
+/// The action a route names and the controller that serves it: `to:
+/// 'accounts#show'` is `show` on `AccountsController`, and mastodon
+/// declares 139 methods called `show`.
+fn rails_route_target(rest: &str) -> Option<(String, Option<String>)> {
     let value = rest.split("to:").nth(1)?;
     let target = first_quoted_value(value)?;
-    let (_, action) = target.split_once('#')?;
-    (!action.is_empty()).then(|| action.to_string())
+    let (controller, action) = target.split_once('#')?;
+    // `to: redirect { |_, request| "/authorize_interaction?#{..}" }` is a
+    // block, not a controller: the string it holds has a `#` in it and
+    // nothing that follows is a method name.
+    let names_a_method = !action.is_empty()
+        && action.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '?' | '!')
+        });
+    names_a_method.then(|| (action.to_string(), rails_controller_class(controller)))
+}
+
+/// The class Rails looks for: `follower_accounts` is
+/// `FollowerAccountsController`, and `api/v1/accounts` is
+/// `AccountsController` inside a module of its own.
+fn rails_controller_class(controller: &str) -> Option<String> {
+    let name = controller.rsplit('/').next()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let camel: String = name
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut characters = part.chars();
+            match characters.next() {
+                Some(first) => format!("{}{}", first.to_ascii_uppercase(), characters.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect();
+    (!camel.is_empty()).then(|| format!("{camel}Controller"))
 }
 
 /// What `resources :users` declares: the seven routes Rails generates for
 /// it, and six for a singular `resource` which has no id of its own.
+/// What `only:` and `except:` say a resource declares. Rails writes them
+/// as symbol lists -- `only: [:show]`, `except: :destroy` -- and without
+/// them every resource reads as the whole set of seven.
+#[derive(Default)]
+struct RailsResourceActions {
+    only: Vec<String>,
+    except: Vec<String>,
+}
+
+impl RailsResourceActions {
+    fn declares(&self, action: &str) -> bool {
+        if !self.only.is_empty() {
+            return self.only.iter().any(|name| name == action);
+        }
+        !self.except.iter().any(|name| name == action)
+    }
+}
+
+fn rails_resource_actions(rest: &str) -> RailsResourceActions {
+    let mut actions = RailsResourceActions::default();
+    for (option, target) in [("only:", true), ("except:", false)] {
+        let Some((_, after)) = rest.split_once(option) else {
+            continue;
+        };
+        let list = after.trim_start();
+        let names: Vec<String> = if let Some(inner) = list.strip_prefix('[') {
+            inner
+                .split(']')
+                .next()
+                .unwrap_or_default()
+                .split(',')
+                .filter_map(ruby_symbol_name)
+                .collect()
+        } else {
+            ruby_symbol_name(list).into_iter().collect()
+        };
+        if target {
+            actions.only.extend(names);
+        } else {
+            actions.except.extend(names);
+        }
+    }
+    actions
+}
+
+/// The value of a `key: 'value'` option on a route line.
+fn rails_option_value(rest: &str, key: &str) -> Option<String> {
+    let (_, after) = rest.split_once(&format!("{key}:"))?;
+    let after = after.trim_start();
+    first_quoted_value(after)
+        .or_else(|| ruby_symbol_name(after))
+        .filter(|value| !value.is_empty())
+}
+
 fn rails_resource_routes(
     prefix: &str,
     name: &str,
+    controller: Option<String>,
     singular: bool,
+    actions: &RailsResourceActions,
     line: u32,
 ) -> Vec<FrameworkRoute> {
     let base = format!("{prefix}/{name}");
@@ -803,6 +911,7 @@ fn rails_resource_routes(
         // A singular resource has no collection to list.
         declared.retain(|(_, _, action)| *action != "index");
     }
+    declared.retain(|(_, _, action)| actions.declares(action));
     declared
         .into_iter()
         .map(|(method, path, action)| FrameworkRoute {
@@ -810,7 +919,7 @@ fn rails_resource_routes(
             method: method.to_string(),
             path,
             handler: Some(action.to_string()),
-            handler_qualifier: None,
+            handler_qualifier: controller.clone(),
             expanded: true,
             line,
         })

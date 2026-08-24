@@ -438,6 +438,60 @@ pub(crate) fn index_inline_sql_queries(
     }
 }
 
+/// The tables a Rails schema declares. `db/schema.rb` is the dump Rails
+/// keeps of the database it built -- mastodon's states 116 tables with
+/// `create_table "accounts", force: :cascade do |t|` -- and a migration
+/// states the same thing as it changes.
+pub(crate) fn index_ruby_schema_tables(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    source: &str,
+) {
+    if !source.contains("create_table") {
+        return;
+    }
+    for (index, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed.strip_prefix("create_table ") else {
+            continue;
+        };
+        let Some(name) = first_quoted_value(rest)
+            .or_else(|| ruby_symbol_name(rest))
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        let table_key = sql_identifier_key(&name);
+        if table_key.is_empty() || context.sql_tables.contains_key(&table_key) {
+            continue;
+        }
+        let line_number = index as u32 + 1;
+        let mut metadata = BTreeMap::new();
+        metadata.insert("language".to_string(), "ruby".to_string());
+        metadata.insert("item_kind".to_string(), "sql_table".to_string());
+        metadata.insert("source".to_string(), "migration".to_string());
+        metadata.insert("table_name".to_string(), name.clone());
+        metadata.insert("table_key".to_string(), table_key.clone());
+        metadata.insert("line".to_string(), line_number.to_string());
+        let table_id = context.graph.add_node_with_metadata(
+            NodeKind::Type,
+            format!("sql table:{name}"),
+            Some(line_span(label, source, line_number)),
+            metadata,
+        );
+        context.sql_tables.insert(table_key, table_id);
+        add_edge_once_with_metadata(
+            context,
+            file_id,
+            table_id,
+            EdgeKind::Contains,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "sql_table".to_string())]),
+        );
+    }
+}
+
 /// The tables a Laravel migration declares. Koel writes its whole schema
 /// as `Schema::create('songs', function (Blueprint $table) { .. })`, and
 /// with no `CREATE TABLE` anywhere the graph held no table at all -- so

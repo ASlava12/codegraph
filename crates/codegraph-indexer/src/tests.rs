@@ -9339,6 +9339,90 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn a_rails_resource_declares_what_it_says_it_declares() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::create_dir_all(root.join("app").join("controllers")).unwrap();
+    fs::create_dir_all(root.join("db")).unwrap();
+    // mastodon writes 64 resources with `only:`, and reading them as the
+    // whole set of seven invented routes it does not serve.
+    fs::write(
+        root.join("config").join("routes.rb"),
+        "Rails.application.routes.draw do\n  resources :accounts, path: 'users', only: [:show]\n  resources :followers, only: [:index], controller: :follower_accounts\n  get '/about', to: 'about#show'\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app")
+            .join("controllers")
+            .join("accounts_controller.rb"),
+        "class AccountsController\n  def show\n    render :show\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("db").join("schema.rb"),
+        "ActiveRecord::Schema.define(version: 1) do\n  create_table \"accounts\", force: :cascade do |t|\n    t.string \"username\"\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let routes: Vec<(String, String)> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata.get("item_kind").map(String::as_str) == Some("framework_route")
+        })
+        .map(|node| {
+            (
+                node.metadata.get("method").cloned().unwrap_or_default(),
+                node.metadata.get("path").cloned().unwrap_or_default(),
+            )
+        })
+        .collect();
+
+    // `path: 'users'` renames the segment and `only: [:show]` is one route.
+    assert!(
+        routes.contains(&("GET".to_string(), "/users/:id".to_string())),
+        "{routes:?}"
+    );
+    assert!(
+        !routes
+            .iter()
+            .any(|(method, path)| method == "DELETE" && path == "/users/:id"),
+        "{routes:?}"
+    );
+    assert!(
+        routes.contains(&("GET".to_string(), "/followers".to_string())),
+        "{routes:?}"
+    );
+
+    // The controller the route names settles which `show` it means.
+    let show = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Function && node.label == "show")
+        .expect("the controller action is in the graph");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.target == show.id
+                && edge.metadata.get("resolution").map(String::as_str)
+                    == Some("framework_route_handler")
+        }),
+        "the route reaches the action it names"
+    );
+
+    // And `db/schema.rb` states the tables.
+    assert!(
+        graph
+            .nodes
+            .iter()
+            .any(|node| node.label == "sql table:accounts"),
+        "the schema declares the table"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_asciidoc_document_states_its_sections() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("contracts")).unwrap();
