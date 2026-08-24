@@ -6029,6 +6029,62 @@ fn a_module_calls_what_it_imports_or_declares() {
 }
 
 #[test]
+fn php_classes_are_reached_by_the_types_that_name_them() {
+    // Laravel builds a service from its constructor's type hints rather
+    // than with `new`, and a serializer states the interface it implements.
+    // Neither was read, so koel had two references pointing into its 1319
+    // classes and "what breaks if I change SongService" answered with
+    // nothing at all.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app")).unwrap();
+    fs::write(
+        root.join("composer.json"),
+        "{\n  \"name\": \"acme/app\"\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("SongService.php"),
+        "<?php\n\nnamespace App;\n\nclass SongService\n{\n    public function update(): bool\n    {\n        return true;\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("Serializer.php"),
+        "<?php\n\nnamespace App;\n\ninterface Serializer\n{\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("SongController.php"),
+        "<?php\n\nnamespace App;\n\nclass SongController implements Serializer\n{\n    public function __construct(private SongService $songs)\n    {\n    }\n\n    public function update(): bool\n    {\n        return $this->songs->update();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reaches = |label: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::References
+                && edge
+                    .metadata
+                    .get("relation")
+                    .is_some_and(|relation| relation == "type_reference")
+                && graph
+                    .nodes
+                    .iter()
+                    .any(|node| node.id == edge.target && node.label == label)
+        })
+    };
+    assert!(
+        reaches("SongService"),
+        "a constructor's type hint names the class it is given"
+    );
+    assert!(
+        reaches("Serializer"),
+        "and a class states the interface it implements"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_static_call_names_the_class_it_goes_through() {
     // `File::hash($path)` is Laravel's facade, and koel declares a `hash`
     // of its own in an authenticator: the label kept only the method, so

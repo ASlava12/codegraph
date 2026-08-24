@@ -178,6 +178,13 @@ Implemented now:
   require('./utils').compileETag`), and a file that states no import at all may be a classic script,
   where a bare name really can come from anywhere, so the rule asks only files that import
   something.
+- PHP classes are reached by the types that name them: `new SongService(..)` builds one, a
+  constructor's type hint states the one Laravel injects, a return type names what a method hands
+  back, and `extends`/`implements` name the class and interfaces a class states. None of those were
+  read -- koel had two references pointing into its 1319 classes, so `impact`, `refactor-context`
+  and "what breaks if I change this class" all answered with nothing. koel now holds 2796, guzzle
+  1901, monolog 697, and `refactor-context SongService` names twelve dependents, two routes and
+  three tests.
 - PHP resolves through the class a static call is written through. `Uuid::generate()` kept only
   `generate` in its label, so a class the project declares and a package's facade looked like one
   call: `File::hash($path)` was answered by koel's own authenticator and `Cache::put` by a

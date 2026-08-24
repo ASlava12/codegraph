@@ -200,6 +200,44 @@ fn collect_reference_facts(
         });
     }
 
+    // What a PHP declaration states about the classes it works with: the
+    // type of a parameter or property, the type it returns, the class it
+    // extends and the interfaces it implements. Laravel builds a service
+    // from its constructor's type hints rather than with `new`, so without
+    // these koel's 1319 classes had almost nothing pointing at them.
+    if language == Language::Php
+        && matches!(
+            node.kind(),
+            "named_type" | "base_clause" | "class_interface_clause"
+        )
+    {
+        let mut cursor = node.walk();
+        let names: Vec<Node<'_>> = if node.kind() == "named_type" {
+            vec![node]
+        } else {
+            node.named_children(&mut cursor).collect()
+        };
+        for name in names {
+            if let Some(label) = node_text(name, source) {
+                let label = label.trim().trim_start_matches('\\');
+                let label = label.rsplit('\\').next().unwrap_or(label).trim();
+                // A builtin type is the language's: `string`, `int`, `void`.
+                let names_a_class = !label.is_empty()
+                    && label
+                        .chars()
+                        .next()
+                        .is_some_and(|first| first.is_ascii_uppercase());
+                if names_a_class {
+                    facts.type_references.push(ParsedTypeReference {
+                        label: label.to_string(),
+                        span: span_for(path, name),
+                        parent: current_function.clone(),
+                    });
+                }
+            }
+        }
+    }
+
     // What one contract states of another: the contract it inherits, the
     // library it uses, the type it holds.
     if language == Language::Solidity
@@ -2362,9 +2400,16 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
         // `[manager GET:path parameters:nil]` is a call, and its selector
         // is the name being called.
         Language::ObjectiveC => matches!(node.kind(), "call_expression" | "message_expression"),
+        // `new SongService($repository)` names the class it builds, which is
+        // how a PHP project reaches most of its own types: without it koel
+        // had two references into 1319 class nodes, so "what breaks if I
+        // change this class" answered with nothing.
         Language::Php => matches!(
             node.kind(),
-            "function_call_expression" | "scoped_call_expression" | "member_call_expression"
+            "function_call_expression"
+                | "scoped_call_expression"
+                | "member_call_expression"
+                | "object_creation_expression"
         ),
         Language::Dart => matches!(node.kind(), "call_expression" | "constructor_invocation"),
         Language::Bash => {
