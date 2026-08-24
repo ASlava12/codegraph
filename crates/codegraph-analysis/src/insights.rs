@@ -2500,12 +2500,54 @@ fn every_read_is_vendored(graph: &CodeGraph, edges: impl IntoIterator<Item = usi
     }) && any
 }
 
+/// Whether every default the key is read with is a step of one chain: a
+/// script assigning the variable to itself, again, in the same file.
+fn states_one_fallback_chain(graph: &CodeGraph, reads: &ConfigKeyReads) -> bool {
+    let mut files = BTreeSet::new();
+    for index in reads.defaults.values().flat_map(|(_, edges)| edges.iter()) {
+        let Some(edge) = graph.edges.get(*index) else {
+            return false;
+        };
+        if edge.metadata.get("defaults_variable").map(String::as_str) != Some("true") {
+            return false;
+        }
+        let Some(file) = edge.metadata.get("file") else {
+            return false;
+        };
+        files.insert(file.clone());
+    }
+    !files.is_empty()
+}
+
+/// Whether every read of a key happens in a test: dune's blackbox setup
+/// script falls back to `$PWD` in one place and `.` in another, which is
+/// the suite's business rather than the program's.
+fn every_read_is_test_like(graph: &CodeGraph, edges: impl IntoIterator<Item = usize>) -> bool {
+    let mut files = edges.into_iter().filter_map(|index| {
+        graph
+            .edges
+            .get(index)
+            .and_then(|edge| edge.metadata.get("file"))
+    });
+    let mut any = false;
+    files.all(|file| {
+        any = true;
+        is_test_like_source_path(file)
+    }) && any
+}
+
 pub(crate) fn add_conflicting_config_default_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
 ) {
     for ((kind, label), reads) in config_key_reads(graph) {
         if reads.defaults.len() < 2 {
+            continue;
+        }
+        // `X=${X:-$(git config ...)}` followed by `X=${X:-origin}` is one
+        // chain of fallbacks, not two answers to the same question: dune
+        // writes exactly that in three release scripts.
+        if states_one_fallback_chain(graph, &reads) {
             continue;
         }
 
@@ -2521,7 +2563,8 @@ pub(crate) fn add_conflicting_config_default_insights(
             .collect();
         let values = format_backtick_list(reads.defaults.keys().map(String::as_str), 8);
 
-        let vendored = every_read_is_vendored(graph, edges.iter().copied());
+        let vendored = every_read_is_vendored(graph, edges.iter().copied())
+            || every_read_is_test_like(graph, edges.iter().copied());
         insights.push(Insight {
             kind: "conflicting_config_default".to_string(),
             severity: if vendored {
@@ -2534,6 +2577,67 @@ pub(crate) fn add_conflicting_config_default_insights(
             edges: edges.into_iter().collect(),
         });
     }
+}
+
+/// What each shell script sources, by file label. kong keeps its release
+/// defaults in `scripts/release-lib.sh` and `scripts/make-release` opens
+/// with `source "$(dirname "$0")/release-lib.sh"`: the reads below that
+/// line are answered by the file it pulled in, and the path is written
+/// with a shell expansion no scan can resolve, so the name it ends with
+/// is what identifies it.
+fn sourced_shell_files(graph: &CodeGraph) -> BTreeMap<String, BTreeSet<String>> {
+    let files: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::File)
+        .map(|node| node.label.as_str())
+        .collect();
+    let nodes_by_id = node_index(graph);
+    let mut sourced: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for edge in &graph.edges {
+        if edge.kind != EdgeKind::Imports {
+            continue;
+        }
+        let (Some(source), Some(import)) =
+            (nodes_by_id.get(&edge.source), nodes_by_id.get(&edge.target))
+        else {
+            continue;
+        };
+        if source.kind != NodeKind::File
+            || import.metadata.get("language").map(String::as_str) != Some("bash")
+        {
+            continue;
+        }
+        let statement = import.label.trim();
+        let Some(rest) = statement
+            .strip_prefix("source ")
+            .or_else(|| statement.strip_prefix(". "))
+        else {
+            continue;
+        };
+        let Some(name) = rest
+            .trim()
+            .trim_matches(['"', '\''])
+            .rsplit('/')
+            .next()
+            .map(str::trim)
+            .filter(|name| !name.is_empty() && !name.contains(['$', '*', '"']))
+        else {
+            continue;
+        };
+        let entry = sourced.entry(source.label.clone()).or_default();
+        entry.extend(
+            files
+                .iter()
+                .filter(|file| {
+                    file.rsplit('/')
+                        .next()
+                        .is_some_and(|candidate| candidate == name)
+                })
+                .map(|file| file.to_string()),
+        );
+    }
+    sourced
 }
 
 /// The first line in each file where a script gives the key a default by
@@ -2560,8 +2664,17 @@ fn defaulting_assignment_lines(graph: &CodeGraph, reads: &ConfigKeyReads) -> BTr
 }
 
 /// Whether a read comes after the line that gave the key a default in the
-/// same file.
-fn read_is_guarded(graph: &CodeGraph, index: usize, guarded: &BTreeMap<String, u32>) -> bool {
+/// same file. A read inside a function is not ordered against that line at
+/// all: dune declares `confirm ()` above the assignments and calls it
+/// below, so the body reads what the script put there however the file is
+/// laid out.
+fn read_is_guarded(
+    graph: &CodeGraph,
+    index: usize,
+    guarded: &BTreeMap<String, u32>,
+    sourced: &BTreeMap<String, BTreeSet<String>>,
+    nodes_by_id: &BTreeMap<NodeId, &Node>,
+) -> bool {
     let Some(edge) = graph.edges.get(index) else {
         return false;
     };
@@ -2573,13 +2686,25 @@ fn read_is_guarded(graph: &CodeGraph, index: usize, guarded: &BTreeMap<String, u
     ) else {
         return false;
     };
-    guarded.get(file).is_some_and(|guard| line > *guard)
+    let Some(guard) = guarded.get(file) else {
+        // A script the file sources may have answered for the key before
+        // this line ran.
+        return sourced
+            .get(file)
+            .is_some_and(|sourced| sourced.iter().any(|file| guarded.contains_key(file)));
+    };
+    let inside_a_function = nodes_by_id
+        .get(&edge.source)
+        .is_some_and(|node| node.kind == NodeKind::Function);
+    inside_a_function || line > *guard
 }
 
 pub(crate) fn add_mixed_config_requirement_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
 ) {
+    let sourced = sourced_shell_files(graph);
+    let nodes_by_id = node_index(graph);
     for ((kind, label), reads) in config_key_reads(graph) {
         if reads.required_edges.is_empty() || reads.defaults.is_empty() {
             continue;
@@ -2593,7 +2718,7 @@ pub(crate) fn add_mixed_config_requirement_insights(
             .required_edges
             .iter()
             .copied()
-            .filter(|index| !read_is_guarded(graph, *index, &guarded))
+            .filter(|index| !read_is_guarded(graph, *index, &guarded, &sourced, &nodes_by_id))
             .collect();
         if required_edges.is_empty() {
             continue;
@@ -2615,7 +2740,8 @@ pub(crate) fn add_mixed_config_requirement_insights(
         );
         let values = format_backtick_list(reads.defaults.keys().map(String::as_str), 8);
 
-        let vendored = every_read_is_vendored(graph, edges.iter().copied());
+        let vendored = every_read_is_vendored(graph, edges.iter().copied())
+            || every_read_is_test_like(graph, edges.iter().copied());
         insights.push(Insight {
             kind: "mixed_config_requirement".to_string(),
             severity: if vendored {

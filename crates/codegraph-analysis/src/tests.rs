@@ -9469,6 +9469,120 @@ fn insights_report_conflicting_config_defaults() {
 }
 
 #[test]
+fn a_shell_answers_for_a_variable_wherever_the_read_is_written() {
+    let mut graph = CodeGraph::new("repo");
+    // dune declares `confirm ()` above the assignments and calls it below;
+    // kong keeps its defaults in `release-lib.sh` and sources that file.
+    let library = graph.add_node(NodeKind::File, "scripts/release-lib.sh");
+    let script = graph.add_node(NodeKind::File, "scripts/make-release");
+    let cut = graph.add_node(NodeKind::File, "release-cut.sh");
+    let confirm = graph.add_node(NodeKind::Function, "confirm");
+    let import = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "source \"$(dirname \"$0\")/release-lib.sh\"",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "import".to_string()),
+            ("language".to_string(), "bash".to_string()),
+        ]),
+    );
+    graph.add_edge(script, import, EdgeKind::Imports, Confidence::Syntactic);
+
+    let org = graph.add_node(NodeKind::Environment, "GITHUB_ORG");
+    let remote = graph.add_node(NodeKind::Environment, "DUNE_REMOTE");
+    let read = |graph: &mut CodeGraph,
+                source: NodeId,
+                target: NodeId,
+                file: &str,
+                line: u32,
+                default: Option<&str>,
+                assigns: bool| {
+        let mut metadata = BTreeMap::from([
+            ("file".to_string(), file.to_string()),
+            ("line".to_string(), line.to_string()),
+        ]);
+        if let Some(default) = default {
+            metadata.insert("default_value".to_string(), default.to_string());
+        }
+        if assigns {
+            metadata.insert("defaults_variable".to_string(), "true".to_string());
+        }
+        graph.add_edge_with_metadata(
+            source,
+            target,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+            metadata,
+        );
+    };
+
+    // The library gives the variable a value; the script that sources it
+    // reads what the library put there.
+    read(
+        &mut graph,
+        library,
+        org,
+        "scripts/release-lib.sh",
+        9,
+        Some("Kong"),
+        true,
+    );
+    read(
+        &mut graph,
+        script,
+        org,
+        "scripts/make-release",
+        240,
+        None,
+        false,
+    );
+
+    // Two assignments in a row are one chain of fallbacks, and the
+    // function above them reads what the chain settled on.
+    read(
+        &mut graph,
+        cut,
+        remote,
+        "release-cut.sh",
+        84,
+        Some("$(git config remote.pushdefault)"),
+        true,
+    );
+    read(
+        &mut graph,
+        cut,
+        remote,
+        "release-cut.sh",
+        86,
+        Some("origin"),
+        true,
+    );
+    read(
+        &mut graph,
+        confirm,
+        remote,
+        "release-cut.sh",
+        70,
+        None,
+        false,
+    );
+
+    let report = insights(&graph);
+    let found: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| {
+            matches!(
+                insight.kind.as_str(),
+                "mixed_config_requirement" | "conflicting_config_default"
+            )
+        })
+        .map(|insight| insight.message.as_str())
+        .collect();
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
 fn a_script_that_gave_the_variable_a_value_still_has_it() {
     // `GOPATH=${GOPATH:-$(go env GOPATH)}` on line 65 hands the variable a
     // value, so `$GOPATH` on line 68 reads what the script itself put
