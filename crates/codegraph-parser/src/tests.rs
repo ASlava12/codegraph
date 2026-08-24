@@ -2247,6 +2247,25 @@ check x = error "negative"
 }
 
 #[test]
+fn a_nix_module_guards_itself_with_assert() {
+    // `assert cond; body` stops the evaluation, the role Lua's `assert`
+    // plays; home-manager guards its modules with 116 of them.
+    let source = r#"{ config, lib }:
+assert config.enable;
+{
+  value = if config.broken then throw "bad" else 1;
+}
+"#;
+    let parsed = parse_source("module.nix", source.as_bytes(), Language::Nix).unwrap();
+    let errors = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Error)
+        .count();
+    assert_eq!(errors, 2, "items: {:?}", parsed.items);
+}
+
+#[test]
 fn calls_on_literals_are_labeled_by_method_not_by_the_literal() {
     // `"x".to_string()` used to produce a call target carrying the whole
     // literal, so each distinct literal minted its own placeholder node

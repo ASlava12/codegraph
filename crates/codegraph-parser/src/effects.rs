@@ -386,6 +386,12 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
                     .is_some_and(|value| matches!(simple_name(value), "abort" | "exit"))
         }
         Language::Cpp => {
+            // The `throw` keyword only. C and C++ often wrap a throw in a
+            // macro -- nlohmann/json writes `JSON_THROW(...)` 155 times --
+            // but the names that look like one are mostly a test
+            // framework's (`CHECK_THROWS_AS`, `DOCTEST_WARN_THROWS_WITH`),
+            // and reading those as failure paths would fill a report with
+            // assertions about throwing rather than code that throws.
             node.kind() == "throw_statement"
                 || (is_call_node(language, node, source)
                     && call_label(language, node, source)
@@ -476,15 +482,19 @@ pub(crate) fn is_error_construct(language: Language, node: Node<'_>, source: &[u
                     .is_some_and(|value| matches!(value, "throw" | "error" | "exit"))
         }
         Language::Nix => {
-            is_call_node(language, node, source)
-                && call_label(language, node, source)
-                    .as_deref()
-                    .is_some_and(|value| {
-                        matches!(
-                            value,
-                            "throw" | "abort" | "builtins.throw" | "builtins.abort"
-                        )
-                    })
+            // `assert cond; body` stops the evaluation when the condition
+            // fails, the same role Lua's `assert` plays -- home-manager
+            // guards its modules with 116 of them.
+            node.kind() == "assert_expression"
+                || (is_call_node(language, node, source)
+                    && call_label(language, node, source)
+                        .as_deref()
+                        .is_some_and(|value| {
+                            matches!(
+                                value,
+                                "throw" | "abort" | "builtins.throw" | "builtins.abort"
+                            )
+                        }))
         }
         Language::R => {
             // `stop()` is base R; a package written this decade raises with
