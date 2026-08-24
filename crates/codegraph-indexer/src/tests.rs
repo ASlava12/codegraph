@@ -5692,6 +5692,69 @@ fn a_go_call_through_a_package_qualifier_reads_past_the_type() {
 }
 
 #[test]
+fn a_dune_file_states_the_programs_it_builds() {
+    // OCaml states what it builds in `dune` files, one per directory:
+    // `(executable (name main))` in `bin/dune` is `bin/main.ml`. Without
+    // reading them the dune repository showed eighteen entrypoints for a
+    // build system that declares three hundred.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("bin")).unwrap();
+    fs::create_dir_all(root.join("bench")).unwrap();
+    fs::write(
+        root.join("bin").join("dune"),
+        "(include_subdirs qualified)\n\n(executable\n (name main)\n (public_name dune)\n (libraries stdune))\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("bin").join("main.ml"),
+        "let () = print_endline \"hi\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("bench").join("dune"),
+        "; a comment (executable (name ignored))\n(executables\n (names bench gen_synthetic)\n (libraries unix))\n",
+    )
+    .unwrap();
+    fs::write(root.join("bench").join("bench.ml"), "let () = ()\n").unwrap();
+    fs::write(root.join("bench").join("gen_synthetic.ml"), "let () = ()\n").unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let entrypoints: BTreeSet<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == NodeKind::Entrypoint
+                && node.metadata.get("ecosystem").map(String::as_str) == Some("dune")
+        })
+        .map(|node| node.label.as_str())
+        .collect();
+    assert_eq!(
+        entrypoints,
+        BTreeSet::from([
+            "dune executable:main",
+            "dune executable:bench",
+            "dune executable:gen_synthetic",
+        ]),
+        "a comment states nothing, and `names` states each program"
+    );
+    let main = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "dune executable:main")
+        .expect("the program");
+    let reaches_file = graph.edges.iter().any(|edge| {
+        edge.source == main.id
+            && edge.kind == EdgeKind::References
+            && graph.nodes.iter().any(|node| {
+                node.id == edge.target && node.kind == NodeKind::File && node.label == "bin/main.ml"
+            })
+    });
+    assert!(reaches_file, "and it reaches the file beside the dune file");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_c_file_is_c_whatever_its_variables_are_called() {
     // `.h` is C's extension, C++'s and Objective-C's alike, so a header is
     // sniffed for what it declares. `.c` says C outright, and sniffing it

@@ -727,6 +727,137 @@ pub(crate) fn cmake_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
         .collect()
 }
 
+/// The programs a `dune` file declares. Dune is how OCaml projects state
+/// what they build: `(executable (name main))` in `bin/dune` is
+/// `bin/main.ml`, and `(executables (names a b))` states two. Without
+/// reading them, dune's own repository showed 1% of its functions as
+/// reachable from an entrypoint -- the compiler knows where its programs
+/// start and the graph did not.
+pub(crate) fn dune_entrypoints(source: &str) -> Vec<ManifestEntrypoint> {
+    let mut entrypoints = Vec::new();
+    for (head, body, line) in dune_stanzas(source) {
+        let kind = match head.as_str() {
+            "executable" | "executables" => "executable",
+            "test" | "tests" => "test",
+            _ => continue,
+        };
+        for name in dune_stanza_names(&body) {
+            entrypoints.push(manifest_entrypoint_at(
+                format!("dune {kind}:{name}"),
+                kind,
+                "dune",
+                Some(format!("{name}.ml")),
+                line,
+            ));
+        }
+    }
+    entrypoints
+}
+
+/// Every top-level stanza of a dune file: the symbol that opens it, the
+/// text inside its parentheses, and the line it starts on. A `;` comment
+/// runs to the end of its line, and a string can hold a parenthesis.
+fn dune_stanzas(source: &str) -> Vec<(String, String, u32)> {
+    let mut stanzas = Vec::new();
+    let mut depth = 0usize;
+    let mut line = 1u32;
+    let mut start_line = 1u32;
+    let mut body = String::new();
+    let mut in_comment = false;
+    let mut in_string = false;
+    let mut previous = ' ';
+    for character in source.chars() {
+        if character == '\n' {
+            line += 1;
+            in_comment = false;
+        }
+        if in_comment {
+            continue;
+        }
+        if in_string {
+            body.push(character);
+            if character == '"' && previous != '\\' {
+                in_string = false;
+            }
+            previous = character;
+            continue;
+        }
+        match character {
+            ';' if depth == 0 || !in_string => {
+                in_comment = true;
+                continue;
+            }
+            '"' => {
+                in_string = true;
+                body.push(character);
+            }
+            '(' => {
+                if depth == 0 {
+                    body.clear();
+                    start_line = line;
+                } else {
+                    body.push(character);
+                }
+                depth += 1;
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let head = body
+                        .split(|c: char| c.is_whitespace() || c == '(')
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
+                    stanzas.push((head, std::mem::take(&mut body), start_line));
+                } else {
+                    body.push(character);
+                }
+            }
+            _ if depth > 0 => body.push(character),
+            _ => {}
+        }
+        previous = character;
+    }
+    stanzas
+}
+
+/// The names a stanza states: `(name main)` gives one, `(names a b)` gives
+/// each. A name is a plain symbol -- a variable (`%{...}`) is not one.
+fn dune_stanza_names(body: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for field in ["name ", "names "] {
+        let mut rest = body;
+        while let Some(offset) = rest.find(field) {
+            let after = &rest[offset + field.len()..];
+            // The field has to open a form of its own: `(name main)`, not
+            // `public_name` or `root_module`.
+            let opens_the_field = rest[..offset]
+                .chars()
+                .next_back()
+                .is_some_and(|character| character == '(');
+            let value = after.split(')').next().unwrap_or("");
+            if opens_the_field {
+                names.extend(
+                    value
+                        .split_whitespace()
+                        .filter(|name| {
+                            !name.is_empty()
+                                && name.chars().all(|character| {
+                                    character.is_ascii_alphanumeric()
+                                        || matches!(character, '_' | '-' | '.')
+                                })
+                        })
+                        .map(ToString::to_string),
+                );
+            }
+            rest = after;
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
 pub(crate) fn cargo_dependencies(
     source: &str,
     cargo_workspace_dependencies: &BTreeMap<String, Option<String>>,

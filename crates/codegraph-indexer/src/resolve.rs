@@ -3881,6 +3881,19 @@ pub(crate) fn entrypoint_target_candidates(
         )
         .into_iter()
         .collect(),
+        // A `dune` file states the program a directory builds, and the
+        // module it names sits beside it: `(executable (name main))` in
+        // `bin/dune` is `bin/main.ml`.
+        "dune" => manifest_path_candidate(
+            pending,
+            &pending.target,
+            None,
+            Confidence::Exact,
+            Confidence::Syntactic,
+            "manifest_path",
+        )
+        .into_iter()
+        .collect(),
         "dart" | "flutter" => manifest_path_candidate(
             pending,
             &pending.target,

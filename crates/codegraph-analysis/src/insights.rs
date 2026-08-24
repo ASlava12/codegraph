@@ -923,9 +923,19 @@ pub(crate) fn add_unresolved_entrypoint_insights(graph: &CodeGraph, insights: &m
             continue;
         }
 
+        // A fixture states the program a test case builds, and the file it
+        // names is written by the test as it runs: dune keeps 32 of those
+        // under `test/blackbox-tests/`. What a test declares is not the
+        // program's own entrypoint, so a miss there is a note.
+        let declared_by_a_test = declared_in.as_deref().is_some_and(is_test_like_source_path)
+            || is_test_like_source_path(target);
         insights.push(Insight {
             kind: "unresolved_entrypoint_target".to_string(),
-            severity: InsightSeverity::Warning,
+            severity: if declared_by_a_test {
+                InsightSeverity::Info
+            } else {
+                InsightSeverity::Warning
+            },
             message: format!(
                 "Entrypoint `{}` declares target `{target}` but no matching file or function was found",
                 node.label

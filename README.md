@@ -103,6 +103,12 @@ Implemented now:
   protobuf code no longer reports 3234 calls as unresolved, and `providers.SchemaCache.Set` reaches
   the in-repo package that declares it. Go's predeclared types count as the language's own when they
   are written as conversions -- `string(b)`, `int64(n)` -- rather than as functions nothing declares.
+- OCaml states what it builds in `dune` files, one per directory, and they are read as the manifests
+  they are: `(executable (name main))` in `bin/dune` is `bin/main.ml`, `(executables (names a b))`
+  states two programs, and `(test ...)`/`(tests ...)` state the test programs. The dune repository
+  goes from eighteen entrypoints to 355, and the share of its functions an entrypoint reaches from
+  1% to 9%. A program a test fixture declares, whose module the test writes as it runs, reads as a
+  note rather than a warning -- as anything a test declares does.
 - A `.c` file is read as C. Only a header's extension is ambiguous -- `.h` is C's, C++'s and
   Objective-C's alike -- and sniffing a `.c` file for what it declares read redis's `class =
   getClientType(c)`, an assignment to a variable named `class`, as a C++ class: `networking.c` and

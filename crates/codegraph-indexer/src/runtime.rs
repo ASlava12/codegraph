@@ -1763,6 +1763,8 @@ pub(crate) fn manifest_entrypoints(path: &Path, source: &str) -> Vec<ManifestEnt
         Some("composer.json") => composer_entrypoints(source),
         Some("CMakeLists.txt") => cmake_entrypoints(source),
         Some("pubspec.yaml") => pubspec_entrypoints(path, source),
+        // OCaml states what it builds in `dune` files, one per directory.
+        Some("dune") => dune_entrypoints(source),
         _ => Vec::new(),
     }
 }
