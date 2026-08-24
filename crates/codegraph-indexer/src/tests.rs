@@ -1603,9 +1603,11 @@ fn an_import_python_erases_is_not_a_runtime_dependency() {
     fs::create_dir_all(root.join("src")).unwrap();
     // requests writes `_types.py` this way: the interpreter never runs the
     // imports under `if TYPE_CHECKING:`, so they cannot close a cycle.
+    // flask imports typing under an alias and writes `if t.TYPE_CHECKING:`,
+    // so what the module is called cannot be part of the test.
     fs::write(
         root.join("src").join("_types.py"),
-        "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    from .auth import AuthBase\n\n\ndef describe(value):\n    return value\n",
+        "import typing as t\n\nif t.TYPE_CHECKING:\n    from .auth import AuthBase\n\n\ndef describe(value):\n    return value\n",
     )
     .unwrap();
     fs::write(

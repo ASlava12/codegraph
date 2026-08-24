@@ -3225,6 +3225,7 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
     let nodes_by_id = node_index(graph);
     let own_packages = project_own_package_ids(graph);
     let mut grouped: BTreeMap<(String, String), UndeclaredImportGroup> = BTreeMap::new();
+    let mut optional_packages: BTreeSet<(String, String)> = BTreeSet::new();
     let declared = declared_package_ids(graph);
     let declared_ecosystems: BTreeSet<_> = declared
         .iter()
@@ -3257,13 +3258,6 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
             .metadata
             .get("import_scope")
             .is_some_and(|scope| scope == "local")
-            // `try: import simplejson as json / except ImportError: import
-            // json` is a project stating that it runs without the package,
-            // which is why it does not declare it.
-            || import_node
-                .metadata
-                .get("optional")
-                .is_some_and(|value| value == "true")
         {
             continue;
         }
@@ -3290,6 +3284,7 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
         if import_node.label.contains("${") {
             continue;
         }
+
         let imports = import_package_candidates(language, &import_node.label, &declared_ecosystems);
         if imports.is_empty() {
             continue;
@@ -3344,6 +3339,26 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
             continue;
         }
 
+        // An import the program erases or guards is not a package it has
+        // to declare: flask reads `typing_extensions` under
+        // `if TYPE_CHECKING:`, and requests opens with `try: import
+        // simplejson` to say outright that it runs without it. One such
+        // import settles it for the package, wherever else it is written:
+        // requests imports `simplejson` again under `if has_simplejson:`,
+        // which is the same statement made twice.
+        if import_node
+            .metadata
+            .get("type_only")
+            .is_some_and(|value| value == "true")
+            || import_node
+                .metadata
+                .get("optional")
+                .is_some_and(|value| value == "true")
+        {
+            optional_packages.insert((import.ecosystem.clone(), import.package.clone()));
+            continue;
+        }
+
         grouped
             .entry((import.ecosystem.clone(), import.package.clone()))
             .or_insert_with(|| UndeclaredImportGroup {
@@ -3359,6 +3374,9 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
     // `psr/http` from 169 places, and 169 identical findings say no more
     // than one that counts them.
     for ((ecosystem, package), group) in grouped {
+        if optional_packages.contains(&(ecosystem.clone(), package.clone())) {
+            continue;
+        }
         // `format_backtick_list` counts what it leaves out, so counting it
         // again here said "and 58 more and 58 more".
         let where_from = format_backtick_list(group.sources.iter().map(String::as_str), 3);

@@ -11699,6 +11699,62 @@ fn insights_report_mixed_dependency_scopes() {
     );
 }
 #[test]
+fn a_package_the_program_runs_without_need_not_be_declared() {
+    let mut graph = CodeGraph::new("repo");
+    let manifest = graph.add_node(NodeKind::File, "pyproject.toml");
+    let declared = dependency_node(&mut graph, "urllib3", "python:urllib3");
+    graph.add_edge_with_metadata(
+        manifest,
+        declared,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+    );
+    let compat = graph.add_node_with_metadata(
+        NodeKind::File,
+        "src/requests/compat.py",
+        None,
+        BTreeMap::from([("language".to_string(), "python".to_string())]),
+    );
+
+    // requests opens with `try: import simplejson`, and imports it again
+    // below under `if has_simplejson:`. The first says the program runs
+    // without it, which settles the package.
+    let guarded = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "import simplejson as json",
+        None,
+        BTreeMap::from([
+            ("item_kind".to_string(), "import".to_string()),
+            ("language".to_string(), "python".to_string()),
+            ("optional".to_string(), "true".to_string()),
+        ]),
+    );
+    let plain = import_node(
+        &mut graph,
+        "from simplejson import JSONDecodeError",
+        "python",
+    );
+    graph.add_edge(compat, guarded, EdgeKind::Imports, Confidence::Syntactic);
+    graph.add_edge(compat, plain, EdgeKind::Imports, Confidence::Syntactic);
+
+    // And a package nothing guards is still reported.
+    let missing = import_node(&mut graph, "import chardet", "python");
+    graph.add_edge(compat, missing, EdgeKind::Imports, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    let packages: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "undeclared_external_import")
+        .map(|insight| insight.message.as_str())
+        .collect();
+
+    assert_eq!(packages.len(), 1, "{packages:?}");
+    assert!(packages[0].contains("chardet"), "{packages:?}");
+}
+
+#[test]
 fn a_package_that_says_what_it_ships_is_believed_about_what_it_does_not() {
     let mut graph = CodeGraph::new("repo");
     // openzeppelin publishes its contracts and nothing else; its hardhat

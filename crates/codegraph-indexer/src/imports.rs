@@ -1243,8 +1243,13 @@ pub(crate) fn line_is_type_checking_only(source: &str, line: u32) -> bool {
                 return true;
             }
         }
+        // `import typing as t` then `if t.TYPE_CHECKING:` is how flask
+        // writes it, so what the module is called cannot be part of the
+        // test -- only that the block is opened by the flag.
         if block_indent.is_none()
-            && (trimmed == "if TYPE_CHECKING:" || trimmed == "if typing.TYPE_CHECKING:")
+            && trimmed.starts_with("if ")
+            && trimmed.ends_with("TYPE_CHECKING:")
+            && !trimmed.contains(" not ")
         {
             block_indent = Some(indent);
         }
