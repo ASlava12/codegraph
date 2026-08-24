@@ -1198,10 +1198,21 @@ pub(crate) fn workflow_with_insight_report(
         }
     }
 
-    let all_blocks = graph
-        .nodes
-        .iter()
-        .filter(|node| visited.contains(&node.id))
+    // A workflow is a flow, so its blocks come out in the order the flow
+    // reaches them: the target first, then each step away from it. Filtering
+    // the graph by the visited set returned them in file-walk order, which
+    // opened ripgrep's `main` workflow with `from_low_args`.
+    let mut visited_in_flow_order: Vec<NodeId> = visited.iter().copied().collect();
+    visited_in_flow_order.sort_by_key(|node_id| {
+        (
+            depths.get(node_id).copied().unwrap_or(usize::MAX),
+            node_id.0,
+        )
+    });
+    let nodes_in_flow_order = visited_in_flow_order
+        .into_iter()
+        .filter_map(|node_id| nodes_by_id.get(&node_id).copied());
+    let all_blocks = nodes_in_flow_order
         .map(|node| {
             let incoming_edge = incoming
                 .get(&node.id)

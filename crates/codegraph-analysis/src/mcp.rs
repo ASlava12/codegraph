@@ -11,7 +11,8 @@ use crate::{
     NodeCardRequest, ProjectReportLimits, RefactorContextRequest, SourceSearchRequest, TraceStart,
     WorkflowFilters, WorkflowRequest, compact_query_result, filter_insight_report, impact,
     impact_fast, insights, journey, memory, missing_node_error, natural_query, node_card,
-    node_card_fast, project_report, query_graph, refactor_context, search_source, workflow,
+    node_card_fast, project_report, query_graph, refactor_context, resolve_node_reference,
+    search_source, workflow,
 };
 use codegraph_core::{CodeGraph, NodeId};
 use serde_json::{Value, json};
@@ -493,24 +494,11 @@ impl McpEngine<'_> {
     }
 
     fn resolve_target(&self, target: &str) -> Option<NodeId> {
-        let trimmed = target.trim();
-        let id_text = trimmed.strip_prefix('n').unwrap_or(trimmed);
-        if let Ok(id) = id_text.parse::<u64>() {
-            let node_id = NodeId(id);
-            if self.graph.nodes.iter().any(|node| node.id == node_id) {
-                return Some(node_id);
-            }
-        }
-        self.graph
-            .nodes
-            .iter()
-            .find(|node| {
-                node.metadata
-                    .get("stable_id")
-                    .is_some_and(|stable_id| stable_id == trimmed)
-            })
-            .or_else(|| self.graph.nodes.iter().find(|node| node.label == trimmed))
-            .map(|node| node.id)
+        // The same ranking the queries use: an exact label can name many
+        // nodes — `main` names ripgrep's program and its Python benchmark
+        // script — and taking whichever the file walk reached first
+        // answered `workflow main` with 107 blocks of benchsuite.
+        resolve_node_reference(self.graph, target.trim())
     }
 }
 

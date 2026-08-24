@@ -2030,6 +2030,24 @@ fn workflow_builds_block_steps_with_risk_context() {
     .expect("workflow report");
 
     assert_eq!(report.start.id, entrypoint);
+    // A workflow is a flow: the block a reader sees first is where it
+    // starts, and each block after it is at least as far away.
+    assert_eq!(
+        report.blocks.first().map(|block| block.node.id),
+        Some(entrypoint)
+    );
+    assert!(
+        report
+            .blocks
+            .windows(2)
+            .all(|pair| pair[0].depth <= pair[1].depth),
+        "{:?}",
+        report
+            .blocks
+            .iter()
+            .map(|block| (block.depth, block.node.label.as_str()))
+            .collect::<Vec<_>>()
+    );
     assert_eq!(report.total_blocks, 7);
     assert_eq!(report.total_transitions, 6);
     assert!(report.blocks.iter().any(|block| {
