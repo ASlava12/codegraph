@@ -5692,6 +5692,71 @@ fn a_go_call_through_a_package_qualifier_reads_past_the_type() {
 }
 
 #[test]
+fn a_php_static_call_names_the_class_it_goes_through() {
+    // `File::hash($path)` is Laravel's facade, and koel declares a `hash`
+    // of its own in an authenticator: the label kept only the method, so
+    // eight call sites reached a method they never name. The class the call
+    // is written through is the evidence, and one the project declares
+    // settles which method is meant instead.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app").join("Models")).unwrap();
+    fs::create_dir_all(root.join("app").join("Auth")).unwrap();
+    fs::write(
+        root.join("composer.json"),
+        "{\n  \"name\": \"acme/app\"\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("Auth").join("Authenticator.php"),
+        "<?php\n\nnamespace App\\Auth;\n\nclass Authenticator\n{\n    public function hash(string $key): string\n    {\n        return $key;\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("Models").join("Song.php"),
+        "<?php\n\nnamespace App\\Models;\n\nclass Song\n{\n    public static function query(): string\n    {\n        return 'songs';\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("Reader.php"),
+        "<?php\n\nnamespace App;\n\nuse App\\Models\\Song;\nuse Illuminate\\Support\\Facades\\File;\n\nclass Reader\n{\n    public function read(string $path): string\n    {\n        Song::query();\n\n        return File::hash($path);\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reaches = |label: &str, path: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && graph.nodes.iter().any(|node| {
+                    node.id == edge.target
+                        && node.label == label
+                        && node
+                            .span
+                            .as_ref()
+                            .is_some_and(|span| span.path.ends_with(path))
+                })
+        })
+    };
+    assert!(
+        reaches("query", "Song.php"),
+        "the class the project declares settles which method is meant"
+    );
+    assert!(
+        !reaches("hash", "Authenticator.php"),
+        "and a facade the project does not declare is not one of its methods"
+    );
+    assert!(
+        graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::ExternalDependency
+                && node.label == "File::hash"
+                && node.metadata.get("resolution").map(String::as_str) == Some("external")
+        }),
+        "the facade call is recorded as leaving the project"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_makefile_is_read_as_make_and_not_as_shell() {
     // A Makefile's recipes are shell; the file around them is not. Reading
     // the whole file as shell made terraform's Makefile call `protobuf:`,

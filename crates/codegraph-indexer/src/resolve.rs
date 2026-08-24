@@ -1578,6 +1578,17 @@ fn one_methods_overloads(graph: &CodeGraph, targets: &[NodeId]) -> bool {
     owner.is_some()
 }
 
+/// The class name a PHP call writes, without the namespace it may spell in
+/// full: `\\App\\Models\\Song::find` and `Song::find` name one class.
+fn php_class_name(class: &str) -> &str {
+    class
+        .trim()
+        .trim_start_matches('\\')
+        .rsplit('\\')
+        .next()
+        .unwrap_or(class)
+}
+
 /// Whether the project declares the constant a ruby call is written through.
 /// A nested declaration answers a call written from inside its namespace:
 /// `Namespace.new` inside `module UserSettings` means the
@@ -1612,6 +1623,23 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         })
         .filter_map(|node| node.span.as_ref().map(|span| span.path.clone()))
         .collect();
+    // Every class this project declares, by the short name a call writes.
+    // A PHP static call names the class it goes through, and a class the
+    // project never declares is a package's or the language's.
+    let php_classes: BTreeSet<String> = context
+        .graph
+        .nodes
+        .iter()
+        .filter(|node| node.metadata.get("language").map(String::as_str) == Some("php"))
+        .filter_map(|node| {
+            if node.kind == NodeKind::Type {
+                Some(node.label.clone())
+            } else {
+                node.metadata.get("owner_type").cloned()
+            }
+        })
+        .map(|class| php_class_name(&class).to_string())
+        .collect();
     // Every constant this project declares. A ruby call names its receiver
     // and the label drops it, so the constant is the evidence that says
     // whose method is meant -- and a constant the project never declares
@@ -1636,6 +1664,18 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         .collect();
 
     for call in pending_calls {
+        // `Uuid::generate()` names the class the call goes through, and koel
+        // declares no `Uuid`: the class comes from a package, so its
+        // `generate` is not the `TestableIdentifier::generate` the project
+        // declares -- which 61 call sites reached. `self`, `static` and
+        // `parent` name the class the call is inside and never reach here.
+        if call.language == "php"
+            && let Some((owner, _)) = split_qualified_call(&call.label)
+            && !php_classes.contains(php_class_name(owner))
+        {
+            add_external_call_placeholder(context, call);
+            continue;
+        }
         // `Rails.application.configure` and mastodon's own
         // `UserSettings::Namespace#configure` share a name and nothing else,
         // and a ruby call's label keeps only the name. The constant the call

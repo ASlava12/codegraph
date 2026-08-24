@@ -103,6 +103,12 @@ Implemented now:
   protobuf code no longer reports 3234 calls as unresolved, and `providers.SchemaCache.Set` reaches
   the in-repo package that declares it. Go's predeclared types count as the language's own when they
   are written as conversions -- `string(b)`, `int64(n)` -- rather than as functions nothing declares.
+- PHP resolves through the class a static call is written through. `Uuid::generate()` kept only
+  `generate` in its label, so a class the project declares and a package's facade looked like one
+  call: `File::hash($path)` was answered by koel's own authenticator and `Cache::put` by a
+  controller's `put`. The class settles it -- `Song::query()` reaches the model that declares it,
+  and a class the project never declares leaves the project. Across koel that is 852 fewer ambiguous
+  calls, 505 more that reach the method they name, and 1405 recorded as leaving.
 - Ruby resolves through the constant a call is written through. A ruby call's label keeps only the
   method name, so `Addressable::URI.parse(href).normalize` and a project's own
   `HashtagNormalizer#normalize` looked like one call; the receiver's leading constant says which is

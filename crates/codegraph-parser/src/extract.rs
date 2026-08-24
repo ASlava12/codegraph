@@ -2720,6 +2720,30 @@ pub(crate) fn call_label(language: Language, node: Node<'_>, source: &[u8]) -> O
     // These grammars expose no named callee field; the callee is the first
     // named child (an identifier or dotted navigation), so the label is its
     // trailing path segment: `System.getenv(..)` -> `getenv`.
+    // PHP writes the class a static call goes through, and the label kept
+    // only the method: `Uuid::generate()` and koel's own
+    // `TestableIdentifier::generate` looked like one call, and 61 call sites
+    // reached a helper they never name. `self`, `static` and `parent` name
+    // the class the call is already inside, which the label cannot carry.
+    if language == Language::Php
+        && node.kind() == "scoped_call_expression"
+        && let Some(name) = named_child_text(node, "name", source)
+    {
+        let scope = named_child_text(node, "scope", source)
+            .map(|scope| scope.trim().trim_start_matches('\\').to_string())
+            .filter(|scope| {
+                !scope.is_empty()
+                    && !matches!(scope.as_str(), "self" | "static" | "parent")
+                    && scope.chars().all(|character| {
+                        character.is_alphanumeric() || matches!(character, '_' | '\\')
+                    })
+            });
+        return Some(match scope {
+            Some(scope) => clean_call_label(&format!("{scope}::{name}")),
+            None => clean_call_label(&name),
+        });
+    }
+
     if matches!(language, Language::Kotlin | Language::Swift)
         && let Some(callee) = node
             .named_child(0)
