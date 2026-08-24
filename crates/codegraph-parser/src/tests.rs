@@ -732,6 +732,76 @@ fn parses_environment_config_and_error_facts() {
 }
 
 #[test]
+fn setting_a_variable_is_not_reading_it() {
+    // oscar's conftest sets DATABASE_NAME for the suite, and sinatra's
+    // test helper sets APP_ENV. Reading those as unguarded environment
+    // reads made both projects look as if they required the variable.
+    let python = parse_source(
+        "conftest.py",
+        br#"import os
+os.environ["DATABASE_NAME"] = ":memory:"
+NAME = os.environ["OTHER_NAME"]
+"#,
+        Language::Python,
+    )
+    .unwrap();
+    let python_reads: Vec<&str> = python
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(python_reads, vec!["OTHER_NAME"], "{python_reads:?}");
+
+    let ruby = parse_source(
+        "test_helper.rb",
+        br#"ENV['APP_ENV'] = 'test'
+mode = ENV['RACK_ENV']
+"#,
+        Language::Ruby,
+    )
+    .unwrap();
+    let ruby_reads: Vec<&str> = ruby
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(ruby_reads, vec!["RACK_ENV"], "{ruby_reads:?}");
+}
+
+#[test]
+fn a_script_that_sets_a_variable_says_where() {
+    // gradlew builds APP_HOME from the script's own path on line 74 and
+    // reads it on line 81, long before the `${APP_HOME:-./}` that makes it
+    // an environment variable at all.
+    let parsed = parse_source(
+        "gradlew.sh",
+        br#"#!/usr/bin/env bash
+APP_HOME=/opt/app
+echo "$APP_HOME"
+APP_HOME="${APP_HOME:-./}"
+"#,
+        Language::Bash,
+    )
+    .unwrap();
+
+    let reads: Vec<&ParsedItem> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::EnvironmentRead && item.label == "APP_HOME")
+        .collect();
+    assert!(!reads.is_empty(), "missing APP_HOME env read");
+    for read in reads {
+        assert_eq!(
+            read.metadata.get("assigned_at_line").map(String::as_str),
+            Some("2"),
+            "{read:?}"
+        );
+    }
+}
+
+#[test]
 fn parses_python_environment_default_values() {
     let parsed = parse_source(
         "app.py",

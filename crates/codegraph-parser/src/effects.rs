@@ -16,6 +16,17 @@ fn bash_positional_parameter(name: &str) -> bool {
         || matches!(name, "@" | "*" | "#" | "?" | "$" | "!" | "-" | "_")
 }
 
+/// Whether the node is what an assignment writes to, rather than a value
+/// the code reads.
+fn is_assignment_target(node: Node<'_>) -> bool {
+    node.parent().is_some_and(|parent| {
+        matches!(
+            parent.kind(),
+            "assignment" | "operator_assignment" | "augmented_assignment"
+        ) && parent.child_by_field_name("left") == Some(node)
+    })
+}
+
 pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[u8]) -> bool {
     let text = short_node_text(node, source);
     let call = call_label(language, node, source);
@@ -34,7 +45,12 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
             "call" => call
                 .as_deref()
                 .is_some_and(|value| matches!(value, "os.getenv" | "os.environ.get")),
-            "subscript" => named_child_text(node, "value", source).as_deref() == Some("os.environ"),
+            // `os.environ["KEY"]`, but not `os.environ["KEY"] = value`:
+            // oscar's conftest sets DATABASE_NAME rather than reading it.
+            "subscript" => {
+                named_child_text(node, "value", source).as_deref() == Some("os.environ")
+                    && !is_assignment_target(node)
+            }
             _ => false,
         },
         Language::JavaScript | Language::TypeScript | Language::Tsx => match node.kind() {
@@ -108,9 +124,11 @@ pub(crate) fn is_environment_read(language: Language, node: Node<'_>, source: &[
                 && !node_text(node, source).is_some_and(|name| bash_positional_parameter(&name))
         }
         Language::Ruby => match node.kind() {
-            // `ENV['KEY']`
+            // `ENV['KEY']`, but not `ENV['KEY'] = value`: sinatra's test
+            // helper sets APP_ENV rather than asking for it.
             "element_reference" => {
                 named_child_text(node, "object", source).as_deref() == Some("ENV")
+                    && !is_assignment_target(node)
             }
             // `ENV.fetch('KEY', 'default')` / `ENV.key?('KEY')`
             "call" => named_child_text(node, "receiver", source).as_deref() == Some("ENV"),
@@ -824,6 +842,16 @@ pub(crate) fn effect_metadata(
         );
     }
 
+    // A script that writes the variable at all has answered for it:
+    // gradlew sets `APP_HOME` from the script's own path before anything
+    // reads it, and that is not a default so much as the value.
+    if language == Language::Bash
+        && let Some(name) = effect_label(language, kind, node, source)
+        && let Some(line) = bash_assignment_line(source, &name)
+    {
+        metadata.insert("assigned_at_line".to_string(), line.to_string());
+    }
+
     if let Some(default_value) = default_value {
         // `GOPATH=${GOPATH:-$(go env GOPATH)}` hands the variable a value
         // for the rest of the script, so a bare `$GOPATH` further down is
@@ -837,6 +865,32 @@ pub(crate) fn effect_metadata(
         );
     }
     metadata
+}
+
+/// The first line of a shell script that assigns the name, as
+/// `APP_HOME=...` or `export APP_HOME=...`. What follows it reads what
+/// the script put there rather than the environment.
+fn bash_assignment_line(source: &[u8], name: &str) -> Option<u32> {
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return None;
+    }
+    let text = std::str::from_utf8(source).ok()?;
+    text.lines().enumerate().find_map(|(index, line)| {
+        let trimmed = line.trim_start();
+        let trimmed = trimmed
+            .strip_prefix("export ")
+            .or_else(|| trimmed.strip_prefix("local "))
+            .or_else(|| trimmed.strip_prefix("declare "))
+            .unwrap_or(trimmed)
+            .trim_start();
+        let rest = trimmed.strip_prefix(name)?;
+        // `APP_HOME=x` assigns; `APP_HOME_DIR=x` and `APP_HOME=="x"` do not.
+        (rest.starts_with('=') && !rest.starts_with("==")).then_some(index as u32 + 1)
+    })
 }
 
 /// Whether a bash expansion is the value assigned to the very variable it

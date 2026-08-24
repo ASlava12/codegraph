@@ -2467,6 +2467,16 @@ fn config_key_reads(graph: &CodeGraph) -> BTreeMap<(String, String), ConfigKeyRe
                 .edges
                 .get(index)
                 .and_then(|edge| trimmed_default(&edge.metadata));
+            // A CI workflow's `env:` block with a value states what the
+            // job runs with: ripgrep writes `TARGET_DIR: ./target` there
+            // and every step below reads what the workflow set. An entry
+            // with no value does ask the runner for one.
+            if graph.edges.get(index).is_some_and(|edge| {
+                edge.metadata.get("relation").map(String::as_str) == Some("ci_environment")
+                    && edge.metadata.get("value_present").map(String::as_str) == Some("true")
+            }) {
+                continue;
+            }
             match edge_default.or_else(|| node_default.clone()) {
                 Some(default_value) => {
                     let slot = entry.defaults.entry(default_value).or_default();
@@ -2644,17 +2654,28 @@ fn sourced_shell_files(graph: &CodeGraph) -> BTreeMap<String, BTreeSet<String>> 
 /// assigning it to itself.
 fn defaulting_assignment_lines(graph: &CodeGraph, reads: &ConfigKeyReads) -> BTreeMap<String, u32> {
     let mut guarded: BTreeMap<String, u32> = BTreeMap::new();
-    for index in reads.defaults.values().flat_map(|(_, edges)| edges.iter()) {
+    let all_edges = reads
+        .defaults
+        .values()
+        .flat_map(|(_, edges)| edges.iter())
+        .chain(reads.required_edges.iter());
+    for index in all_edges {
         let Some(edge) = graph.edges.get(*index) else {
             continue;
         };
-        if edge.metadata.get("defaults_variable").map(String::as_str) != Some("true") {
+        let Some(file) = edge.metadata.get("file") else {
             continue;
-        }
-        let (Some(file), Some(line)) = (
-            edge.metadata.get("file"),
-            edge.metadata.get("line").and_then(|line| line.parse().ok()),
-        ) else {
+        };
+        // Either the read hands the variable its own default, or the file
+        // assigns the name outright somewhere above.
+        let line = if edge.metadata.get("defaults_variable").map(String::as_str) == Some("true") {
+            edge.metadata.get("line").and_then(|line| line.parse().ok())
+        } else {
+            edge.metadata
+                .get("assigned_at_line")
+                .and_then(|line| line.parse().ok())
+        };
+        let Some(line) = line else {
             continue;
         };
         let slot = guarded.entry(file.clone()).or_insert(line);

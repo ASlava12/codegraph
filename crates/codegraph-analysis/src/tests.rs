@@ -9469,6 +9469,54 @@ fn insights_report_conflicting_config_defaults() {
 }
 
 #[test]
+fn a_workflow_that_sets_a_variable_is_not_asking_for_one() {
+    let mut graph = CodeGraph::new("repo");
+    // ripgrep's workflow writes `TARGET_DIR: ./target` in its `env:` block
+    // and a script reads `${TARGET_DIR:-target}`. The block states the
+    // value; it does not ask the runner for one.
+    let job = graph.add_node(NodeKind::Entrypoint, "ci.yml#build");
+    let script = graph.add_node(NodeKind::File, "ci/test-complete");
+    let target = graph.add_node(NodeKind::Environment, "TARGET_DIR");
+    graph.add_edge_with_metadata(
+        job,
+        target,
+        EdgeKind::ReadsEnvironment,
+        Confidence::Exact,
+        BTreeMap::from([
+            ("relation".to_string(), "ci_environment".to_string()),
+            ("value_present".to_string(), "true".to_string()),
+            ("file".to_string(), ".github/workflows/ci.yml".to_string()),
+            ("line".to_string(), "42".to_string()),
+        ]),
+    );
+    graph.add_edge_with_metadata(
+        script,
+        target,
+        EdgeKind::ReadsEnvironment,
+        Confidence::Heuristic,
+        BTreeMap::from([
+            ("file".to_string(), "ci/test-complete".to_string()),
+            ("line".to_string(), "21".to_string()),
+            ("default_value".to_string(), "target".to_string()),
+        ]),
+    );
+
+    let report = insights(&graph);
+    assert!(
+        !report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "mixed_config_requirement"),
+        "{:?}",
+        report
+            .insights
+            .iter()
+            .map(|insight| insight.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn a_shell_answers_for_a_variable_wherever_the_read_is_written() {
     let mut graph = CodeGraph::new("repo");
     // dune declares `confirm ()` above the assignments and calls it below;
