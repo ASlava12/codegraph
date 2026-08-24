@@ -306,6 +306,8 @@ pub(crate) fn natural_query_plan_with_anchor(
         &routing,
         &[
             "entrypoint",
+            // Written as two words as often as one.
+            "entry point",
             "startup",
             "start",
             "main",
@@ -471,6 +473,34 @@ pub(crate) fn natural_query_plan_with_anchor(
             (
                 "unreachable".to_string(),
                 "unreachable_or_unused".to_string(),
+                "medium".to_string(),
+            )
+        }
+    } else if natural_query_mentions_any(
+        &routing,
+        &[
+            // The anchor is taken out of the question before routing, so
+            // "what are the public APIs" routes on "what are the public".
+            "public",
+            "api surface",
+            "exported",
+            "export",
+            "публичн",
+            "экспортир",
+        ],
+    ) {
+        // What a library offers outwards is what it declares public, and
+        // the graph records that wherever the language states it.
+        if let Some(term) = filter_term.as_deref() {
+            (
+                format!("symbols metadata.visibility:public search:{term} limit:50"),
+                "public_api_surface".to_string(),
+                "medium".to_string(),
+            )
+        } else {
+            (
+                "symbols metadata.visibility:public limit:50".to_string(),
+                "public_api_surface".to_string(),
                 "medium".to_string(),
             )
         }

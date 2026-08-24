@@ -5195,6 +5195,18 @@ fn a_question_the_graph_answers_outright_reaches_its_query() {
         plan("Which modules are most coupled?").rule,
         "hotspot_or_centrality"
     );
+
+    // An entry point is written as two words as often as one.
+    assert_eq!(
+        plan("Where is the entry point of the CLI?").rule,
+        "entrypoint_or_startup"
+    );
+    // What a library offers outwards is what it declares public.
+    assert_eq!(plan("What are the public APIs?").rule, "public_api_surface");
+    assert_eq!(
+        plan("What does this library export?").generated_query,
+        "symbols metadata.visibility:public limit:50"
+    );
 }
 
 #[test]
