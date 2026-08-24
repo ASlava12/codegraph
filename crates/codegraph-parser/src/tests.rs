@@ -271,6 +271,31 @@ enum Role { ADMIN }
 }
 
 #[test]
+fn a_jvm_system_property_is_configuration() {
+    let parsed = parse_source(
+        "src/main/java/com/google/gson/internal/JavaVersion.java",
+        b"class JavaVersion {\n  static String read() {\n    return System.getProperty(\"java.version\");\n  }\n}\n",
+        Language::Java,
+    )
+    .expect("parse java");
+
+    // A property key looks nothing like a file, and it is configuration all
+    // the same: gson and retrofit each read one.
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::ConfigRead && item.label == "java.version"),
+        "{:?}",
+        parsed
+            .items
+            .iter()
+            .map(|item| (item.kind, item.label.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn a_rubys_fallback_belongs_to_the_key_before_it() {
     // `ENV['APP_ENV'] || ENV['RACK_ENV'] || :development` gives APP_ENV a
     // fallback and RACK_ENV none; sinatra read RACK_ENV as its own default.

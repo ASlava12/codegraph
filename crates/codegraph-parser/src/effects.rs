@@ -249,6 +249,21 @@ pub(crate) fn is_config_read(language: Language, node: Node<'_>, source: &[u8]) 
     let Some(text) = short_node_text(node, source) else {
         return false;
     };
+    // A JVM system property is configuration by definition — the sibling of
+    // an environment variable — and its key looks nothing like a file:
+    // gson reads `System.getProperty("gson.allowCapturingTypeVariables")`
+    // and retrofit `System.getProperty("java.vm.name")`, neither of which
+    // the graph held.
+    if matches!(
+        language,
+        Language::Java | Language::Kotlin | Language::Scala
+    ) && call_label(language, node, source)
+        .as_deref()
+        .is_some_and(|value| simple_name(value) == "getProperty")
+        && first_string_literal(node, source).is_some_and(|key| !key.trim().is_empty())
+    {
+        return true;
+    }
     if !looks_like_config_text(&text) {
         return false;
     }
