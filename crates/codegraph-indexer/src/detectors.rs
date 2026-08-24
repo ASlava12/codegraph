@@ -194,6 +194,7 @@ pub(crate) fn framework_routes(language: Language, source: &str) -> Vec<Framewor
         Language::Php => php_framework_routes(source),
         Language::Ruby => ruby_framework_routes(source),
         Language::Java | Language::Kotlin => jvm_framework_routes(source),
+        Language::CSharp => csharp_framework_routes(source),
         Language::C
         | Language::Cpp
         | Language::ObjectiveC
@@ -203,7 +204,6 @@ pub(crate) fn framework_routes(language: Language, source: &str) -> Vec<Framewor
         | Language::Proto
         | Language::GraphQl
         | Language::Bash
-        | Language::CSharp
         | Language::Swift
         | Language::Scala
         | Language::Lua

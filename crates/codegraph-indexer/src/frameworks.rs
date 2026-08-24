@@ -703,6 +703,119 @@ pub(crate) fn php_framework_routes(source: &str) -> Vec<FrameworkRoute> {
     routes
 }
 
+/// ASP.NET writes a route as an attribute above the action that serves it,
+/// with the controller stating a template of its own —
+/// `[Route("[controller]/[action]")]` — and a minimal API writes
+/// `app.MapGet("/health", ..)`. eShopOnWeb declares 19 the first way.
+pub(crate) fn csharp_framework_routes(source: &str) -> Vec<FrameworkRoute> {
+    let mut routes = Vec::new();
+    let mut pending: Vec<FrameworkRoute> = Vec::new();
+    let mut class_prefix = String::new();
+    let mut prefix_for_next_class: Option<String> = None;
+    let mut controller: Option<String> = None;
+
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index as u32 + 1;
+        let trimmed = line.trim();
+        if trimmed.starts_with("//") || trimmed.starts_with('*') || trimmed.starts_with("/*") {
+            continue;
+        }
+        // `app.MapGet("/health", () => ..)` is the whole declaration.
+        if let Some(route) = route_from_call_line(
+            line,
+            line_number,
+            "asp.net",
+            &["app", "endpoints", "builder"],
+        ) && line.contains(".Map")
+        {
+            routes.push(route);
+            continue;
+        }
+        if trimmed.starts_with('[') {
+            if let Some((method, has_own_path)) = csharp_route_attribute(trimmed) {
+                let path = first_quoted_value(trimmed).unwrap_or_default();
+                // An attribute outside a member states where the
+                // controller's actions live.
+                if !has_own_path && !path.is_empty() {
+                    prefix_for_next_class = Some(path.clone());
+                    continue;
+                }
+                pending.push(FrameworkRoute {
+                    framework: "asp.net".to_string(),
+                    method: method.to_string(),
+                    path,
+                    handler: None,
+                    line: line_number,
+                });
+            }
+            continue;
+        }
+        if trimmed.contains("class ") {
+            class_prefix = prefix_for_next_class.take().unwrap_or_default();
+            controller = csharp_controller_name(trimmed);
+            pending.clear();
+            continue;
+        }
+        if let Some(name) = jvm_method_name(trimmed) {
+            for mut route in pending.drain(..) {
+                let path = join_jvm_route_path(&class_prefix, &route.path);
+                route.path = expand_csharp_route_tokens(&path, controller.as_deref(), &name);
+                route.handler = Some(name.clone());
+                routes.push(route);
+            }
+            continue;
+        }
+        if !trimmed.is_empty() && !trimmed.starts_with('}') && !trimmed.starts_with('{') {
+            pending.clear();
+        }
+    }
+
+    routes
+}
+
+/// The controller a class declares, without the suffix ASP.NET strips:
+/// `OrderController` serves `/Order`.
+fn csharp_controller_name(line: &str) -> Option<String> {
+    let rest = line.split("class ").nth(1)?;
+    let name = rest
+        .split([' ', ':', '{', '<', '('])
+        .find(|part| !part.is_empty())?;
+    let name = name.strip_suffix("Controller").unwrap_or(name);
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// What the framework fills into a route template: `[controller]` is the
+/// class's own name and `[action]` the method's, so eShopOnWeb's 25 actions
+/// serve 25 URLs rather than one written 25 times.
+fn expand_csharp_route_tokens(path: &str, controller: Option<&str>, action: &str) -> String {
+    let mut expanded = path.to_string();
+    if let Some(controller) = controller {
+        expanded = expanded.replace("[controller]", controller);
+    }
+    expanded.replace("[action]", action)
+}
+
+/// The method a C# route attribute states, and whether the attribute
+/// belongs to an action rather than to the controller: `[HttpGet]` and
+/// `[HttpGet("{id}")]` are an action's, `[Route("[controller]")]` above a
+/// class is the controller's.
+fn csharp_route_attribute(line: &str) -> Option<(&'static str, bool)> {
+    let name = line.trim_start_matches('[');
+    for (attribute, method) in [
+        ("HttpGet", "GET"),
+        ("HttpPost", "POST"),
+        ("HttpPut", "PUT"),
+        ("HttpDelete", "DELETE"),
+        ("HttpPatch", "PATCH"),
+        ("HttpHead", "HEAD"),
+    ] {
+        if name.starts_with(attribute) {
+            return Some((method, true));
+        }
+    }
+    name.starts_with("Route(").then_some(("ROUTE", false))
+}
+
 /// Spring and JAX-RS write a route as an annotation above the method that
 /// serves it, with the class stating a prefix of its own:
 /// `@RequestMapping("/owners")` on the class and `@GetMapping("/{id}")` on

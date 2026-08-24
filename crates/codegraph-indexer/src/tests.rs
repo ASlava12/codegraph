@@ -9173,6 +9173,42 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn aspnet_fills_in_the_route_template_it_writes() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("Controllers")).unwrap();
+    fs::write(
+        root.join("Controllers").join("OrderController.cs"),
+        "using Microsoft.AspNetCore.Mvc;\n\nnamespace Web.Controllers;\n\n[Authorize]\n[Route(\"[controller]/[action]\")]\npublic class OrderController : Controller\n{\n    [HttpGet]\n    public async Task<IActionResult> MyOrders()\n    {\n        return View();\n    }\n\n    [HttpGet(\"{orderId}\")]\n    public async Task<IActionResult> Detail(int orderId)\n    {\n        return View();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let routes = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata.get("item_kind").map(String::as_str) == Some("framework_route")
+        })
+        .map(|node| node.label.clone())
+        .collect::<Vec<_>>();
+
+    // `[controller]` is the class's own name without the suffix ASP.NET
+    // strips, and `[action]` is the method's: without filling them in, both
+    // actions serve one written path.
+    assert!(
+        routes.contains(&"route GET /Order/MyOrders".to_string()),
+        "{routes:?}"
+    );
+    assert!(
+        routes.contains(&"route GET /Order/Detail/{orderId}".to_string()),
+        "{routes:?}"
+    );
+    assert_eq!(routes.len(), 2, "{routes:?}");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn spring_states_its_routes_above_the_method_that_serves_them() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();
