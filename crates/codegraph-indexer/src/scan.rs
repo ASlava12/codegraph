@@ -1019,9 +1019,15 @@ pub(crate) fn index_file(
                         item_metadata
                             .insert("import_target".to_string(), local_import.target.clone());
                         item_metadata.insert("resolution".to_string(), "pending".to_string());
-                        if test_cutoff.is_some_and(|cutoff| item.span.start_line >= cutoff) {
-                            item_metadata.insert("test_context".to_string(), "true".to_string());
-                        }
+                    }
+                    // An import below `#[cfg(test)]` is written for the
+                    // test build, whether or not the scan could tell where
+                    // it points yet: ripgrep's `use crate::testutil::..`
+                    // is resolved later, through the module path.
+                    if item.kind == ParsedItemKind::Import
+                        && test_cutoff.is_some_and(|cutoff| item.span.start_line >= cutoff)
+                    {
+                        item_metadata.insert("test_context".to_string(), "true".to_string());
                     }
 
                     // A namespace declaration names one entity that many files

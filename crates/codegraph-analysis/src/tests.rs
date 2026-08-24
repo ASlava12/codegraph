@@ -10241,6 +10241,39 @@ fn a_cycle_among_test_files_is_the_suite_shape() {
 
     assert_eq!(severity_of(helper), Some(InsightSeverity::Info));
     assert_eq!(severity_of(application), Some(InsightSeverity::Warning));
+
+    // A ring needs every link: one written under `#[cfg(test)]` makes the
+    // whole cycle a test-build cycle, wherever its files live.
+    let searcher = placed(
+        &mut graph,
+        "searcher",
+        "crates/searcher/src/searcher/mod.rs",
+    );
+    let testutil = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "use crate::testutil::RegexMatcher;",
+        Some(SourceSpan {
+            path: "crates/searcher/src/searcher/mod.rs".to_string(),
+            start_line: 1048,
+            start_column: 1,
+            end_line: 1048,
+            end_column: 40,
+        }),
+        BTreeMap::from([
+            ("item_kind".to_string(), "import".to_string()),
+            ("test_context".to_string(), "true".to_string()),
+        ]),
+    );
+    graph.add_edge(searcher, testutil, EdgeKind::Imports, Confidence::Syntactic);
+    graph.add_edge(testutil, searcher, EdgeKind::Imports, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    let severity = report
+        .insights
+        .iter()
+        .find(|insight| insight.kind == "dependency_cycle" && insight.nodes.contains(&searcher))
+        .map(|insight| insight.severity);
+    assert_eq!(severity, Some(InsightSeverity::Info));
 }
 
 #[test]

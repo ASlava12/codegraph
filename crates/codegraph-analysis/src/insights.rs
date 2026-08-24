@@ -4963,10 +4963,19 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
         // files is the harness's: kong's `spec/helpers/perf.lua` and the
         // `spec/helpers/perf/git.lua` beside it require each other, and
         // that is the suite's shape rather than the program's.
-        let outside_the_program = !files.is_empty()
-            && files
-                .iter()
-                .all(|file| is_vendored_source_path(file) || is_test_like_source_path(file));
+        // A ring needs every one of its links, so a cycle one of whose
+        // imports is written under `#[cfg(test)]` exists only in the test
+        // build: ripgrep's searcher imports its own `testutil` there.
+        let closed_by_a_test = component.iter().any(|id| {
+            nodes_by_id.get(id).is_some_and(|node| {
+                node.metadata.get("test_context").map(String::as_str) == Some("true")
+            })
+        });
+        let outside_the_program = closed_by_a_test
+            || (!files.is_empty()
+                && files
+                    .iter()
+                    .all(|file| is_vendored_source_path(file) || is_test_like_source_path(file)));
         let severity = if crosses_files && !outside_the_program {
             InsightSeverity::Warning
         } else {

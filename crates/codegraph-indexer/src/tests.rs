@@ -9335,6 +9335,40 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn an_import_written_for_the_test_build_says_so() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("testutil.rs"),
+        "pub fn matcher() -> u8 {\n    1\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("lib.rs"),
+        "mod testutil;\n\npub fn search() -> u8 {\n    2\n}\n\n#[cfg(test)]\nmod tests {\n    use crate::testutil::matcher;\n\n    #[test]\n    fn works() {\n        assert_eq!(matcher(), 1);\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    // ripgrep resolves `use crate::testutil::..` through the module path
+    // rather than a relative one, and the marker used to be set only for
+    // the imports the scan placed straight away.
+    let import = graph
+        .nodes
+        .iter()
+        .find(|node| node.label.contains("use crate::testutil::matcher"))
+        .expect("the test module's import is in the graph");
+    assert_eq!(
+        import.metadata.get("test_context").map(String::as_str),
+        Some("true"),
+        "{:?}",
+        import.metadata
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_solidity_function_says_who_may_call_it() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();
