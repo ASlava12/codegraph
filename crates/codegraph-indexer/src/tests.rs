@@ -9173,6 +9173,59 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn django_states_its_routes_in_a_urlconf() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("shop")).unwrap();
+    fs::write(
+        root.join("shop").join("urls.py"),
+        "from django.urls import path, re_path, include\nfrom . import views\n\nurlpatterns = [\n    path(\"health/\", views.HealthView.as_view(), name=\"health\"),\n    re_path(\n        r\"^orders/(?P<pk>\\d+)/$\",\n        views.OrderView.as_view(),\n        name=\"order\",\n    ),\n    path(\"basket/\", include(\"shop.basket.urls\")),\n]\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let routes = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata.get("item_kind").map(String::as_str) == Some("framework_route")
+        })
+        .map(|node| {
+            (
+                node.label.clone(),
+                node.metadata.get("framework").cloned().unwrap_or_default(),
+                node.metadata.get("handler").cloned(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        routes.iter().any(|(label, framework, handler)| {
+            label == "route ROUTE /health/"
+                && framework == "django"
+                && handler.as_deref() == Some("HealthView")
+        }),
+        "{routes:?}"
+    );
+    // A `re_path` writes its pattern on a line of its own, and the pattern
+    // is a regular expression rather than a path.
+    assert!(
+        routes.iter().any(|(label, _, handler)| {
+            label.contains("^orders/(?P<pk>") && handler.as_deref() == Some("OrderView")
+        }),
+        "{routes:?}"
+    );
+    // `include(..)` names another URLconf, not a view.
+    assert!(
+        routes
+            .iter()
+            .any(|(label, _, handler)| label.contains("/basket/") && handler.is_none()),
+        "{routes:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scan_project_adds_framework_route_entrypoints() {
     let root = temp_project_root();
     fs::create_dir_all(&root).unwrap();

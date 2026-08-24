@@ -10216,6 +10216,48 @@ fn build_tooling_may_import_a_dev_dependency() {
 }
 
 #[test]
+fn a_django_app_mounts_its_urlconf_under_a_prefix_of_its_own() {
+    let mut graph = CodeGraph::new("repo");
+    let route = |graph: &mut CodeGraph, path: &str, file: &str| {
+        let node = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            format!("route ROUTE {path}"),
+            Some(SourceSpan {
+                path: file.to_string(),
+                start_line: 4,
+                start_column: 0,
+                end_line: 4,
+                end_column: 0,
+            }),
+            BTreeMap::from([
+                ("item_kind".to_string(), "framework_route".to_string()),
+                ("framework".to_string(), "django".to_string()),
+                ("method".to_string(), "ROUTE".to_string()),
+                ("path".to_string(), path.to_string()),
+            ]),
+        );
+        graph.add_edge(graph.root, node, EdgeKind::Entrypoint, Confidence::Exact);
+        node
+    };
+    // Two applications, each mounted under a prefix of its own: the same
+    // written path is two different URLs.
+    route(&mut graph, "/", "src/oscar/apps/basket/apps.py");
+    route(&mut graph, "/", "src/oscar/apps/catalogue/apps.py");
+    // Twice in one URLconf is still a collision.
+    route(&mut graph, "/orders/", "src/oscar/apps/order/apps.py");
+    route(&mut graph, "/orders/", "src/oscar/apps/order/apps.py");
+
+    let duplicates = insights(&graph)
+        .insights
+        .into_iter()
+        .filter(|insight| insight.kind == "duplicate_framework_route")
+        .map(|insight| insight.message)
+        .collect::<Vec<_>>();
+    assert_eq!(duplicates.len(), 1, "{duplicates:?}");
+    assert!(duplicates[0].contains("/orders/"), "{duplicates:?}");
+}
+
+#[test]
 fn a_workspace_script_runs_where_its_manifest_is() {
     let mut graph = CodeGraph::new("repo");
     graph.add_node(NodeKind::File, "packages/tsc/package.json");

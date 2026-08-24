@@ -4163,16 +4163,32 @@ pub(crate) fn add_duplicate_framework_route_insights(
             .filter(|method| !method.is_empty())
             .unwrap_or("ROUTE")
             .to_ascii_uppercase();
+        // Django mounts each application's URLconf under a prefix of its
+        // own, so `path("")` in twenty apps is twenty different URLs:
+        // django-oscar declares `/` twenty times and none of them collides.
+        // Within one URLconf it still would, so that is what is compared.
+        let scope = if node.metadata.get("framework").map(String::as_str) == Some("django") {
+            node.span
+                .as_ref()
+                .map(|span| span.path.clone())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         groups
-            .entry((method, path.to_string()))
+            .entry((method, format!("{scope}\u{1f}{path}")))
             .or_default()
             .push(node.id);
     }
 
-    for ((method, path), nodes) in groups {
+    for ((method, scoped_path), nodes) in groups {
         if nodes.len() < 2 {
             continue;
         }
+        let path = scoped_path
+            .split_once('\u{1f}')
+            .map(|(_, path)| path.to_string())
+            .unwrap_or(scoped_path);
 
         let handlers = nodes
             .iter()

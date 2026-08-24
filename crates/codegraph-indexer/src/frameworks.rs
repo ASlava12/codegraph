@@ -379,7 +379,7 @@ pub(crate) fn sourced_shell_config(line: &str) -> Option<String> {
 }
 
 pub(crate) fn python_framework_routes(source: &str) -> Vec<FrameworkRoute> {
-    let mut routes = Vec::new();
+    let mut routes = django_url_routes(source);
     let mut pending = Vec::new();
     let framework = python_route_framework(source);
 
@@ -409,6 +409,93 @@ pub(crate) fn python_framework_routes(source: &str) -> Vec<FrameworkRoute> {
     }
 
     routes
+}
+
+/// Django states its routes in a URLconf rather than on the handler:
+/// `path("", self.catalogue_view.as_view(), name="index")` and
+/// `re_path(r"^ranges/(?P<slug>[\w-]+)/$", view, name="range")`, the
+/// second of which is usually written across several lines. django-oscar
+/// declares 193 of them and the graph held none.
+fn django_url_routes(source: &str) -> Vec<FrameworkRoute> {
+    if !(source.contains("from django") || source.contains("import django")) {
+        return Vec::new();
+    }
+    let lines: Vec<&str> = source.lines().collect();
+    let mut routes = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start().trim_start_matches('[').trim_start();
+        let Some(rest) = ["path(", "re_path(", "url("]
+            .iter()
+            .find_map(|opener| trimmed.strip_prefix(opener))
+        else {
+            continue;
+        };
+        // The pattern is the first argument, on this line or the next one
+        // when the call is written across several.
+        let (path, handler_source) = match first_quoted_value(rest) {
+            Some(path) => (path, rest.to_string()),
+            None => {
+                let Some(next) = lines.get(index + 1).map(|line| line.trim()) else {
+                    continue;
+                };
+                let Some(path) = first_quoted_value(next) else {
+                    continue;
+                };
+                let handler_line = lines.get(index + 2).map(|line| line.trim()).unwrap_or("");
+                (path, format!("{next} {handler_line}"))
+            }
+        };
+        routes.push(FrameworkRoute {
+            framework: "django".to_string(),
+            // A URLconf entry answers whatever method its view allows, and
+            // the view is where that is written.
+            method: "ROUTE".to_string(),
+            path: normalize_django_route_path(&path),
+            handler: django_route_handler(&handler_source),
+            line: index as u32 + 1,
+        });
+    }
+    routes
+}
+
+/// The view a URLconf entry points at: `self.detail_view.as_view()` is
+/// `detail_view`, `views.IndexView.as_view()` is `IndexView`, and
+/// `include("oscar.apps.basket.urls")` names another URLconf rather than a
+/// view.
+fn django_route_handler(rest: &str) -> Option<String> {
+    let after_path = rest.split_once(',')?.1;
+    let candidate = after_path.split(',').next()?.trim();
+    // `self.detail_view.as_view()` names an attribute of the app config,
+    // whose value is assigned somewhere else entirely: django-oscar writes
+    // 124 of them, and claiming a function called `detail_view` is a guess
+    // the syntax cannot make good on.
+    if candidate.is_empty() || candidate.starts_with("include(") || candidate.starts_with("self.") {
+        return None;
+    }
+    let name = candidate
+        .trim_end_matches("()")
+        .trim_end_matches(".as_view")
+        .rsplit('.')
+        .next()?
+        .trim();
+    (!name.is_empty()
+        && name
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_'))
+    .then(|| name.to_string())
+}
+
+/// What a reader would call the path a URLconf states: Django writes it
+/// without a leading slash, and a `re_path` writes a regular expression.
+fn normalize_django_route_path(path: &str) -> String {
+    let path = path.trim();
+    if path.is_empty() {
+        return "/".to_string();
+    }
+    if path.starts_with('^') || path.starts_with('/') {
+        return path.to_string();
+    }
+    format!("/{path}")
 }
 
 /// Which Python web framework a file's routes belong to, as the file
