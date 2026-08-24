@@ -500,12 +500,12 @@ pub(crate) fn query_symbols(
         returned_node_ids.insert(edge.source);
         returned_node_ids.insert(edge.target);
     }
-    let nodes = graph
-        .nodes
+    let matched_ids: Vec<NodeId> = matched
         .iter()
-        .filter(|node| returned_node_ids.contains(&node.id))
-        .cloned()
-        .collect::<Vec<_>>();
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let nodes = matched_nodes_first(graph, &matched_ids, &returned_node_ids);
 
     Ok(QueryResult::new(
         graph,
@@ -612,12 +612,12 @@ pub(crate) fn query_files(
         returned_node_ids.insert(edge.source);
         returned_node_ids.insert(edge.target);
     }
-    let nodes = graph
-        .nodes
+    let matched_ids: Vec<NodeId> = matched
         .iter()
-        .filter(|node| returned_node_ids.contains(&node.id))
-        .cloned()
-        .collect::<Vec<_>>();
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let nodes = matched_nodes_first(graph, &matched_ids, &returned_node_ids);
 
     Ok(QueryResult::new(
         graph,
@@ -1754,12 +1754,12 @@ pub(crate) fn query_annotations(
         returned_node_ids.insert(edge.source);
         returned_node_ids.insert(edge.target);
     }
-    let nodes = graph
-        .nodes
+    let matched_ids: Vec<NodeId> = matched
         .iter()
-        .filter(|node| returned_node_ids.contains(&node.id))
-        .cloned()
-        .collect::<Vec<_>>();
+        .take(spec.limit)
+        .map(|node| node.id)
+        .collect();
+    let nodes = matched_nodes_first(graph, &matched_ids, &returned_node_ids);
 
     Ok(QueryResult::new(
         graph,
