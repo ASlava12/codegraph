@@ -68,6 +68,7 @@ pub(crate) fn index_manifest_dependencies(
             if package_name != dependency.name {
                 metadata.insert("declared_name".to_string(), dependency.name.clone());
             }
+
             let id = context.graph.add_node_with_metadata(
                 NodeKind::ExternalDependency,
                 package_name,
@@ -77,6 +78,17 @@ pub(crate) fn index_manifest_dependencies(
             context.external_dependencies.insert(package_id, id);
             id
         };
+        // The node is made the first time the package is named, which is
+        // usually the manifest; the lockfile beside it is what states the
+        // namespaces, so it has to reach a node that already exists.
+        if !dependency.namespaces.is_empty() {
+            add_node_metadata(
+                &mut context.graph,
+                dependency_id,
+                "autoloaded_namespaces",
+                dependency.namespaces.join(","),
+            );
+        }
 
         let mut edge_metadata = BTreeMap::new();
         edge_metadata.insert("dependency_kind".to_string(), dependency.kind);
@@ -1364,13 +1376,24 @@ pub(crate) fn collect_composer_lock_packages(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
-        dependencies.push(manifest_dependency_with_version_kind(
+        // The lockfile states which namespaces the package autoloads, and
+        // that is the only place the mapping is written down: koel imports
+        // `Illuminate\\Broadcasting\\..` and declares `laravel/framework`.
+        let namespaces = package
+            .get("autoload")
+            .and_then(|autoload| autoload.get("psr-4"))
+            .and_then(|psr4| psr4.as_object())
+            .map(|psr4| psr4.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let mut dependency = manifest_dependency_with_version_kind(
             name.to_string(),
             dependency_kind,
             "composer",
             version,
             Some("locked"),
-        ));
+        );
+        dependency.namespaces = namespaces;
+        dependencies.push(dependency);
     }
 }
 
@@ -3237,6 +3260,7 @@ pub(crate) fn manifest_dependency_with_version_kind(
         ecosystem: ecosystem.into(),
         version,
         version_kind,
+        namespaces: Vec::new(),
     }
 }
 

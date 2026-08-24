@@ -67,6 +67,9 @@ Implemented now:
   capitalised `NS`/`CF`/`CG`/`Sec`) as that framework's, and a message whose receiver names a
   framework class (`[NSURL URLWithString:]`) as Foundation's rather than as a selector nothing
   declares.
+- A composer lockfile states which namespaces each package autoloads, and that is where the mapping
+  is written down: `Illuminate\Broadcasting\Channel` comes from `laravel/framework` and
+  `Spatie\Permission\..` from `spatie/laravel-permission`, which no rule about names could work out.
 - An import written through a path alias reaches the file it names: `tsconfig.json`/`jsconfig.json`
   `compilerOptions.paths` is read the way every bundler reads it (comments and trailing commas
   included, `baseUrl` honoured, longest prefix winning), so koel's `@/stores/userStore` is

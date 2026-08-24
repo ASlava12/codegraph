@@ -536,6 +536,10 @@ pub(crate) struct ManifestDependency {
     pub(crate) ecosystem: String,
     pub(crate) version: Option<String>,
     pub(crate) version_kind: Option<String>,
+    /// The namespaces the package autoloads, when the lockfile states
+    /// them: `composer.lock` says `laravel/framework` answers to
+    /// `Illuminate\`, which no name-matching rule could work out.
+    pub(crate) namespaces: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

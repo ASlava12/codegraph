@@ -9339,6 +9339,87 @@ fn cross_module_route_handlers_resolve_through_function_registry() {
 }
 
 #[test]
+fn a_lockfile_says_which_package_autoloads_a_namespace() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app")).unwrap();
+    // koel imports `Illuminate\..` and declares `laravel/framework`; no
+    // rule about names could connect the two, and the lockfile states it.
+    fs::write(
+        root.join("composer.json"),
+        r#"{
+  "name": "koel/koel",
+  "require": {
+    "laravel/framework": "^11.0"
+  }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("composer.lock"),
+        r#"{
+  "packages": [
+    {
+      "name": "laravel/framework",
+      "version": "v11.0.0",
+      "autoload": {
+        "psr-4": {
+          "Illuminate\\": "src/Illuminate/"
+        }
+      }
+    }
+  ],
+  "packages-dev": []
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("Event.php"),
+        r#"<?php
+
+use Illuminate\Broadcasting\Channel;
+use Spatie\Permission\Models\Role;
+
+class Event
+{
+    public function channel(): Channel
+    {
+        return new Channel('events');
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let framework = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "laravel/framework")
+        .expect("the package is in the graph");
+    assert_eq!(
+        framework
+            .metadata
+            .get("autoloaded_namespaces")
+            .map(String::as_str),
+        Some("Illuminate\\")
+    );
+
+    // What the analysis reads: the framework states its namespace on the
+    // node, and nothing states one for `Spatie\Permission\..`.
+    let namespaces: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter_map(|node| node.metadata.get("autoloaded_namespaces"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(namespaces, vec!["Illuminate\\"], "{namespaces:?}");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_import_written_through_a_path_alias_reaches_the_file() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("resources").join("js").join("stores")).unwrap();

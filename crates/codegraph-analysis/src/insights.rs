@@ -3233,6 +3233,14 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
     let own_packages = project_own_package_ids(graph);
     let mut grouped: BTreeMap<(String, String), UndeclaredImportGroup> = BTreeMap::new();
     let mut optional_packages: BTreeSet<(String, String)> = BTreeSet::new();
+    let autoloaded_namespaces: Vec<String> = graph
+        .nodes
+        .iter()
+        .filter_map(|node| node.metadata.get("autoloaded_namespaces"))
+        .flat_map(|namespaces| namespaces.split(','))
+        .map(|namespace| namespace.trim().to_string())
+        .filter(|namespace| !namespace.is_empty())
+        .collect();
     let declared = declared_package_ids(graph);
     let declared_ecosystems: BTreeSet<_> = declared
         .iter()
@@ -3294,6 +3302,19 @@ pub(crate) fn add_undeclared_import_insights(graph: &CodeGraph, insights: &mut V
 
         let imports = import_package_candidates(language, &import_node.label, &declared_ecosystems);
         if imports.is_empty() {
+            continue;
+        }
+        // A composer lockfile states which namespaces each package
+        // autoloads, and that is the only place the mapping is written:
+        // `Illuminate\Broadcasting\Channel` comes from
+        // `laravel/framework`, and `Spatie\Permission\..` from
+        // `spatie/laravel-permission`.
+        if language == "php"
+            && let Some(class) = php_imported_class(&import_node.label)
+            && autoloaded_namespaces
+                .iter()
+                .any(|namespace| class.starts_with(namespace.as_str()))
+        {
             continue;
         }
         // `mod cli;` puts `cli` in the file's own scope, and `use cli::*`
@@ -5341,6 +5362,22 @@ fn python_distribution_name(module: &str) -> Option<&'static str> {
         "yaml" => "pyyaml",
         _ => return None,
     })
+}
+
+/// The class a PHP `use` statement names: `use App\Models\User as
+/// Account;` names `App\Models\User`.
+fn php_imported_class(label: &str) -> Option<String> {
+    let statement = label.trim().trim_end_matches(';');
+    let rest = statement
+        .strip_prefix("use function ")
+        .or_else(|| statement.strip_prefix("use const "))
+        .or_else(|| statement.strip_prefix("use "))?;
+    let class = rest
+        .split_once(" as ")
+        .map(|(class, _)| class)
+        .unwrap_or(rest)
+        .trim();
+    (!class.is_empty()).then(|| class.trim_start_matches('\\').to_string())
 }
 
 pub(crate) fn import_matches_package_id(package_id: &str, import: &ImportPackage) -> bool {

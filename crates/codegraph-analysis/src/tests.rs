@@ -11699,6 +11699,56 @@ fn insights_report_mixed_dependency_scopes() {
     );
 }
 #[test]
+fn a_package_that_autoloads_the_namespace_is_the_one_that_declares_it() {
+    let mut graph = CodeGraph::new("repo");
+    let manifest = graph.add_node(NodeKind::File, "composer.json");
+    let framework = dependency_node(
+        &mut graph,
+        "laravel/framework",
+        "composer:laravel/framework",
+    );
+    graph.nodes[framework.0 as usize - 1].metadata.insert(
+        "autoloaded_namespaces".to_string(),
+        "Illuminate\\".to_string(),
+    );
+    graph.add_edge_with_metadata(
+        manifest,
+        framework,
+        EdgeKind::DependsOn,
+        Confidence::Exact,
+        BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+    );
+    let source = graph.add_node_with_metadata(
+        NodeKind::File,
+        "app/Event.php",
+        None,
+        BTreeMap::from([("language".to_string(), "php".to_string())]),
+    );
+    let broadcasting = import_node(&mut graph, "use Illuminate\\Broadcasting\\Channel;", "php");
+    let permission = import_node(&mut graph, "use Spatie\\Permission\\Models\\Role;", "php");
+    graph.add_edge(
+        source,
+        broadcasting,
+        EdgeKind::Imports,
+        Confidence::Syntactic,
+    );
+    graph.add_edge(source, permission, EdgeKind::Imports, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    let undeclared: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "undeclared_external_import")
+        .map(|insight| insight.message.as_str())
+        .collect();
+
+    // The framework autoloads `Illuminate\`, and nothing autoloads
+    // `Spatie\Permission\`.
+    assert_eq!(undeclared.len(), 1, "{undeclared:?}");
+    assert!(undeclared[0].contains("spatie"), "{undeclared:?}");
+}
+
+#[test]
 fn a_package_the_program_runs_without_need_not_be_declared() {
     let mut graph = CodeGraph::new("repo");
     let manifest = graph.add_node(NodeKind::File, "pyproject.toml");
