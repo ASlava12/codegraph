@@ -7128,6 +7128,87 @@ fn insights_report_unresolved_github_actions_run_paths() {
 }
 
 #[test]
+fn insights_keep_quiet_about_installed_and_unscanned_command_paths() {
+    let mut graph = CodeGraph::new("repo");
+    let build = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "github workflow:CI/build",
+        None,
+        BTreeMap::from([("item_kind".to_string(), "github_actions_job".to_string())]),
+    );
+    // composer writes the first, a virtualenv the second, and no default scan
+    // walks the third; the repository is missing none of them.
+    let quiet = [
+        "vendor/bin/phpunit",
+        "docs/venv/bin/mkdocs",
+        ".buildscript/prepare.sh",
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, command_path)| {
+        graph.add_node_with_metadata(
+            NodeKind::Config,
+            format!("github run:CI/build/{index}"),
+            None,
+            BTreeMap::from([
+                (
+                    "item_kind".to_string(),
+                    "github_actions_run_step".to_string(),
+                ),
+                ("workflow".to_string(), "CI".to_string()),
+                ("job".to_string(), "build".to_string()),
+                ("command".to_string(), command_path.to_string()),
+                ("command_path".to_string(), command_path.to_string()),
+            ]),
+        )
+    })
+    .collect::<Vec<_>>();
+    // `make -C docs/mkdocs` runs in a directory the scan did walk.
+    let directory_step = graph.add_node_with_metadata(
+        NodeKind::Config,
+        "github run:CI/build/9",
+        None,
+        BTreeMap::from([
+            (
+                "item_kind".to_string(),
+                "github_actions_run_step".to_string(),
+            ),
+            ("workflow".to_string(), "CI".to_string()),
+            ("job".to_string(), "build".to_string()),
+            (
+                "command".to_string(),
+                "make build -C docs/mkdocs".to_string(),
+            ),
+            ("command_path".to_string(), "docs/mkdocs".to_string()),
+        ]),
+    );
+    graph.add_node(NodeKind::Directory, "docs/mkdocs");
+    for step in quiet.iter().copied().chain([directory_step]) {
+        graph.add_edge_with_metadata(
+            build,
+            step,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "github_actions_run".to_string())]),
+        );
+    }
+
+    let report = insights(&graph);
+    assert!(
+        !report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "unresolved_github_actions_run_path"),
+        "installed, unscanned and directory paths are not missing files: {:?}",
+        report
+            .insights
+            .iter()
+            .map(|insight| insight.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn insights_report_unresolved_gitlab_ci_script_paths() {
     let mut graph = CodeGraph::new("repo");
     let build = graph.add_node_with_metadata(

@@ -3218,6 +3218,9 @@ pub(crate) fn clean_command_token(token: &str) -> Option<String> {
 
 pub(crate) fn is_command_path_candidate(token: &str) -> bool {
     if token.starts_with('-')
+        // `dune build @doc/runtest` names a build alias, and a leading `@` in
+        // a Makefile recipe only says not to echo the line.
+        || token.starts_with('@')
         // `src/$(REDIS_BENCHMARK_NAME)` is whatever the make variable
         // holds, wherever the variable appears in the token.
         || token.contains('$')

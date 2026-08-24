@@ -969,7 +969,7 @@ pub(crate) fn add_unresolved_compose_volume_source_path_insights(
                     .get("resolution")
                     .is_some_and(|value| value == "compose_volume_source_path")
         });
-        if resolved {
+        if resolved || path_holds_an_unexpanded_variable(source_path) {
             continue;
         }
 
@@ -1169,6 +1169,11 @@ pub(crate) fn add_unresolved_github_actions_run_path_insights(
         else {
             continue;
         };
+        if scanned_directory_labels(graph).contains(command_path)
+            || command_path_is_installed_or_unscanned(command_path)
+        {
+            continue;
+        }
         let reader_ids = github_actions_run_step_reader_ids(graph, node.id);
         let resolved = github_actions_run_path_is_resolved(graph, &reader_ids, command_path);
         if resolved {
@@ -1322,6 +1327,11 @@ pub(crate) fn add_unresolved_gitlab_ci_script_path_insights(
         else {
             continue;
         };
+        if scanned_directory_labels(graph).contains(command_path)
+            || command_path_is_installed_or_unscanned(command_path)
+        {
+            continue;
+        }
         let reader_ids = gitlab_ci_script_reader_ids(graph, node.id);
         let resolved = gitlab_ci_script_path_is_resolved(graph, &reader_ids, command_path);
         if resolved {
@@ -1629,6 +1639,41 @@ pub(crate) fn add_unresolved_makefile_command_path_insights(
     );
 }
 
+/// The directories the scan walked, by their repository-relative label.
+///
+/// `(cd ../deps && $(MAKE) distclean)` names a directory, and `make -C
+/// docs/mkdocs` runs in one. Neither is a file, and neither is missing.
+pub(crate) fn scanned_directory_labels(graph: &CodeGraph) -> BTreeSet<&str> {
+    graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Directory)
+        .map(|node| node.label.as_str())
+        .collect()
+}
+
+/// A path a package manager fills in, or one no scan walks.
+///
+/// `vendor/bin/phpunit` arrives with composer, `node_modules/...` with npm,
+/// `venv/bin/mkdocs` with a virtualenv, and `build/`, `dist/` and `target/`
+/// hold what a build wrote. A repository is not missing them; whoever runs
+/// the job installs or builds them first. Hidden directories are skipped by
+/// every default scan, so their contents were never looked for either.
+pub(crate) fn command_path_is_installed_or_unscanned(command_path: &str) -> bool {
+    command_path.split('/').any(|segment| {
+        matches!(
+            segment,
+            "vendor" | "node_modules" | "venv" | "target" | "build" | "dist" | "_build"
+        ) || (segment.starts_with('.') && segment != "." && segment != "..")
+    })
+}
+
+/// `worktree/${OLD_KONG_VERSION}` is whatever the variable holds when the
+/// stack runs, so nothing can be said about whether it exists.
+pub(crate) fn path_holds_an_unexpanded_variable(path: &str) -> bool {
+    path.contains('$')
+}
+
 pub(crate) fn add_unresolved_workflow_command_path_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
@@ -1637,12 +1682,7 @@ pub(crate) fn add_unresolved_workflow_command_path_insights(
     insight_kind: &str,
     label_prefix: &str,
 ) {
-    let directories: BTreeSet<&str> = graph
-        .nodes
-        .iter()
-        .filter(|node| node.kind == NodeKind::Directory)
-        .map(|node| node.label.as_str())
-        .collect();
+    let directories = scanned_directory_labels(graph);
     for node in &graph.nodes {
         if node.kind != NodeKind::Entrypoint
             || node
@@ -1671,10 +1711,9 @@ pub(crate) fn add_unresolved_workflow_command_path_insights(
         if resolved {
             continue;
         }
-        // `(cd ../deps && $(MAKE) distclean)` names a directory, and
-        // `go run ./tools/protobuf-compile .` names a package directory.
-        // Neither is a file, and neither is missing.
-        if directories.contains(command_path) {
+        if directories.contains(command_path)
+            || command_path_is_installed_or_unscanned(command_path)
+        {
             continue;
         }
 
