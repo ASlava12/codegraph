@@ -389,7 +389,16 @@ function buildClientInsights(graph) {
   );
 
   graph.nodes.forEach((node) => {
-    if (node.metadata?.parse_error) {
+    // A file whose bytes never arrived holds no facts; without this it
+    // reads in the browser as a file that simply contains nothing.
+    if (node.metadata?.read_error) {
+      insights.push({
+        kind: "unreadable_file",
+        severity: "error",
+        message: `${node.label} could not be read: ${node.metadata.read_error}`,
+        nodeId: node.id,
+      });
+    } else if (node.metadata?.parse_error) {
       insights.push({
         kind: "parse_error",
         severity: "error",

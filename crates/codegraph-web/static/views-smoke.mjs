@@ -255,6 +255,12 @@ drive("client insights carry the CLI's severities", () => {
       { id: 4, kind: "function", label: "twin" },
       { id: 5, kind: "function", label: "twin" },
       { id: 6, kind: "file", label: "broken.py", metadata: { parse_error: "unexpected token" } },
+      {
+        id: 7,
+        kind: "file",
+        label: "secret.py",
+        metadata: { read_error: "Permission denied (os error 13)" },
+      },
     ],
     edges: [
       { kind: "may_error", source: 1, target: 2 },
@@ -272,6 +278,7 @@ drive("client insights carry the CLI's severities", () => {
     orphan_function: "info",
     duplicate_function_label: "info",
     parse_error: "error",
+    unreadable_file: "error",
   };
   for (const [kind, severity] of Object.entries(expected)) {
     if (bySeverity.get(kind) !== severity) {

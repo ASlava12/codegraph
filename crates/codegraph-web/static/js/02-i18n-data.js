@@ -763,6 +763,7 @@ const I18N = {
     "kind.unused_declared_dependency": "unused declared dependency",
     "kind.unreachable_error_flow": "unreachable error flow",
     "kind.unreachable_source_file": "unreachable source file",
+    "kind.unreadable_file": "unreadable file",
   },
   ru: {
     "root.empty": "Проект не загружен",
@@ -1547,5 +1548,6 @@ const I18N = {
     "kind.unused_declared_dependency": "неиспользуемая зависимость",
     "kind.unreachable_error_flow": "недостижимый поток ошибки",
     "kind.unreachable_source_file": "недостижимый файл с кодом",
+    "kind.unreadable_file": "нечитаемый файл",
   },
 };
