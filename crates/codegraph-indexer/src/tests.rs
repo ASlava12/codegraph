@@ -5692,6 +5692,55 @@ fn a_go_call_through_a_package_qualifier_reads_past_the_type() {
 }
 
 #[test]
+fn a_java_static_import_says_whose_method_a_bare_call_means() {
+    // `import static com.google.common.truth.Truth.assertThat` makes a bare
+    // `assertThat` Truth's, and retrofit declares an `assertThat` of its
+    // own in a test helper: 663 calls read as the helper's. The static
+    // import is the only thing that tells them apart -- and when it names
+    // the project's own class, the file it points at is the class, not a
+    // file named after the member.
+    let root = temp_project_root();
+    let src = root.join("src").join("main").join("java").join("app");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(
+        src.join("TestingUtils.java"),
+        "package app;\n\npublic final class TestingUtils {\n  public static String buildRequest(String path) {\n    return path;\n  }\n\n  public static String assertThat(String value) {\n    return value;\n  }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        src.join("RequestTest.java"),
+        "package app;\n\nimport static app.TestingUtils.buildRequest;\nimport static com.google.common.truth.Truth.assertThat;\n\npublic final class RequestTest {\n  public void run() {\n    assertThat(buildRequest(\"/x\"));\n  }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reaches = |label: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+                && graph.nodes.iter().any(|node| {
+                    node.id == edge.target
+                        && node.label == label
+                        && node
+                            .span
+                            .as_ref()
+                            .is_some_and(|span| span.path.ends_with("TestingUtils.java"))
+                })
+        })
+    };
+    assert!(
+        reaches("buildRequest"),
+        "a static import of the project's own class reaches the class's file"
+    );
+    assert!(
+        !reaches("assertThat"),
+        "and a static import from a package rules the project's own method out"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_module_calls_what_it_imports_or_declares() {
     // `const h = originalH` binds a name the file never imports, and
     // matching by name alone sent the call into the module that declares

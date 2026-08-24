@@ -1037,6 +1037,10 @@ pub(crate) fn index_file(
                         }
                         let bound_names = match language {
                             Language::Python => python_imported_names(&item.label),
+                            // `import static ..Truth.assertThat` binds a
+                            // bare name the same way python's `from x
+                            // import y` does.
+                            Language::Java => java_static_imported_names(&item.label),
                             _ => js_bindings
                                 .map(|bindings| bindings.names)
                                 .unwrap_or_default(),

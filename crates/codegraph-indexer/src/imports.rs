@@ -302,6 +302,7 @@ pub(crate) fn jvm_local_import_target(
     import_label: &str,
 ) -> Option<LocalImportTarget> {
     let rest = import_label.trim().strip_prefix("import")?.trim_start();
+    let is_static = rest.starts_with("static");
     let rest = rest.strip_prefix("static").map_or(rest, str::trim_start);
     let target = rest
         .split(|character: char| character.is_whitespace() || character == ';')
@@ -318,9 +319,19 @@ pub(crate) fn jvm_local_import_target(
         Language::Scala => "scala",
         _ => "java",
     };
-    let path = target.replace('.', "/");
+    // `import static retrofit2.TestingUtils.buildRequest` names a member of
+    // a class, so the file is the class -- `retrofit2/TestingUtils.java` --
+    // and reading the member as part of the path looked for a file no
+    // project has. A nested class is written the same way and lives in the
+    // outer class's file, so dropping the last segment is right either way.
+    let type_path = if is_static {
+        target.rsplit_once('.').map(|(head, _)| head)?
+    } else {
+        target
+    };
+    let path = type_path.replace('.', "/");
     Some(LocalImportTarget {
-        target: target.to_string(),
+        target: type_path.to_string(),
         candidates: vec![format!("{path}.{extension}")],
     })
 }
@@ -1268,6 +1279,23 @@ pub(crate) fn python_imported_names(import_label: &str) -> Vec<String> {
             (!name.is_empty() && name != "*").then(|| name.to_string())
         })
         .collect()
+}
+
+/// The name a Java static import binds. `import static
+/// com.google.common.truth.Truth.assertThat;` makes a bare `assertThat`
+/// Truth's, which is the only thing that tells it from the `assertThat`
+/// retrofit's own test helper declares -- 663 calls read as the helper's.
+/// A star import (`Truth.*`) binds names this cannot list.
+pub(crate) fn java_static_imported_names(import_label: &str) -> Vec<String> {
+    let statement = import_label.trim().trim_end_matches(';').trim();
+    let Some(rest) = statement.strip_prefix("import static ") else {
+        return Vec::new();
+    };
+    let name = rest.trim().rsplit('.').next().unwrap_or("").trim();
+    if name.is_empty() || name == "*" {
+        return Vec::new();
+    }
+    vec![name.to_string()]
 }
 
 pub(crate) fn python_import_qualifier(import_label: &str) -> Option<String> {

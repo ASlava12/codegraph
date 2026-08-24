@@ -103,6 +103,12 @@ Implemented now:
   protobuf code no longer reports 3234 calls as unresolved, and `providers.SchemaCache.Set` reaches
   the in-repo package that declares it. Go's predeclared types count as the language's own when they
   are written as conversions -- `string(b)`, `int64(n)` -- rather than as functions nothing declares.
+- A Java static import says whose method a bare call means: `import static
+  com.google.common.truth.Truth.assertThat` makes `assertThat` Truth's, which is the only thing that
+  tells it from the `assertThat` retrofit declares in a test helper -- 663 calls read as the
+  helper's. A static import names a member of a class, so the file it points at is the class
+  (`retrofit2/TestingUtils.java`), and the project's own static imports still reach what they name.
+  gson reclassifies 1749 calls as leaving the project, petclinic 97.
 - A call the resolver refuses says why: an edge to an unresolved placeholder carries
   `unresolved_reason=not_imported` when the module cannot reach the name at all, beside the
   `local_value` a call through a bound value already carried. 1445 of koel's calls say it.
