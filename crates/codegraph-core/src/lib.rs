@@ -76,8 +76,12 @@ pub fn is_test_like_source_path(path: &str) -> bool {
         .rev()
         .skip(1)
         .any(|part| {
+            // Go's tool ignores a directory whose name starts with an
+            // underscore, which is why gqlgen keeps its example apps in
+            // `_examples`: the convention says outright that the code is
+            // not part of the build.
             matches!(
-                part,
+                part.trim_start_matches('_'),
                 "testdata"
                     | "testing"
                     | "testthat"
@@ -598,6 +602,10 @@ mod test_path_words {
             "tests/test_basic.py",
             "src/foo_test.go",
             "web/browser.test.js",
+            // Go's tool ignores a directory that starts with an
+            // underscore: gqlgen keeps twenty example apps in `_examples`.
+            "_examples/chat/server.go",
+            "_testdata/schema.graphql",
         ] {
             assert!(is_test_like_source_path(path), "{path}");
         }
@@ -606,6 +614,9 @@ mod test_path_words {
             "src/manifest.py",
             "lib/contest/rules.rb",
             "src/protest.go",
+            // The underscore is only meaningful as the whole segment's
+            // prefix: `_internal` is not an example directory.
+            "_internal/registry.go",
             "crates/codegraph-core/src/lib.rs",
             "src/specify_options.ts",
             // Go compiles a test only from a file ending `_test.go`, so

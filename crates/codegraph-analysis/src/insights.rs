@@ -961,6 +961,10 @@ pub(crate) fn add_unresolved_compose_env_file_path_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
 ) {
+    // One missing file is one fact, however many services name it:
+    // gqlgen's compose file gives the same `.env` to five services and
+    // said so five times.
+    let mut missing: BTreeMap<String, MissingEnvFile> = BTreeMap::new();
     for node in &graph.nodes {
         if node.kind != NodeKind::Config
             || node
@@ -995,20 +999,62 @@ pub(crate) fn add_unresolved_compose_env_file_path_insights(
             .get("service")
             .map(String::as_str)
             .unwrap_or("unknown");
-        let mut nodes = vec![node.id];
-        nodes.extend(compose_env_file_reader_ids(graph, node.id));
-        nodes.sort();
-        nodes.dedup();
+        let entry = missing
+            .entry(env_file_path.to_string())
+            .or_insert_with(|| MissingEnvFile {
+                services: BTreeSet::new(),
+                nodes: BTreeSet::new(),
+                edges: Vec::new(),
+                // A compose file among the examples describes how to run an
+                // example, not how to run the project.
+                production: true,
+            });
+        entry.services.insert(service.to_string());
+        entry.nodes.insert(node.id);
+        entry
+            .nodes
+            .extend(compose_env_file_reader_ids(graph, node.id));
+        entry
+            .edges
+            .extend(incoming_edge_indexes(graph, node.id, EdgeKind::ReadsConfig));
+        entry.production &= !node
+            .span
+            .as_ref()
+            .is_some_and(|span| is_test_like_source_path(&span.path))
+            && !is_test_like_source_path(env_file_path);
+    }
+
+    for (env_file_path, entry) in missing {
+        let services = format_backtick_list(entry.services.iter().map(String::as_str), 3);
+        let verb = if entry.services.len() == 1 {
+            "references"
+        } else {
+            "reference"
+        };
+        let mut edges = entry.edges;
+        edges.sort_unstable();
+        edges.dedup();
         insights.push(Insight {
             kind: "unresolved_compose_env_file_path".to_string(),
-            severity: InsightSeverity::Warning,
+            severity: if entry.production {
+                InsightSeverity::Warning
+            } else {
+                InsightSeverity::Info
+            },
             message: format!(
-                "Compose service `{service}` references env_file `{env_file_path}` but the file was not found"
+                "Compose service {services} {verb} env_file `{env_file_path}` but the file was not found"
             ),
-            nodes,
-            edges: incoming_edge_indexes(graph, node.id, EdgeKind::ReadsConfig),
+            nodes: entry.nodes.into_iter().collect(),
+            edges,
         });
     }
+}
+
+struct MissingEnvFile {
+    services: BTreeSet<String>,
+    nodes: BTreeSet<NodeId>,
+    edges: Vec<usize>,
+    production: bool,
 }
 
 pub(crate) fn compose_env_file_reader_ids(graph: &CodeGraph, config: NodeId) -> Vec<NodeId> {
@@ -3555,6 +3601,24 @@ pub(crate) fn add_conflicting_dependency_insights(graph: &CodeGraph, insights: &
             ecosystem,
             &distinct_versions.iter().copied().collect::<Vec<_>>(),
         ) {
+            continue;
+        }
+
+        // Two Go modules resolve independently: `_examples/go.mod` asking
+        // for `golang.org/x/text v0.38.0` says nothing about the module
+        // beside it asking for `v0.41.0`, because neither build ever sees
+        // the other's requirement. Seven of gqlgen's eight findings were
+        // that.
+        let manifest_labels: BTreeSet<&str> = declarations
+            .iter()
+            .filter_map(|(index, _)| graph.edges.get(*index))
+            .filter_map(|edge| node_label(graph, edge.source))
+            .collect();
+        if manifest_labels.len() > 1
+            && manifest_labels
+                .iter()
+                .all(|label| label.ends_with("go.mod") || label.ends_with("go.sum"))
+        {
             continue;
         }
 

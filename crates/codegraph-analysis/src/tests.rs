@@ -10916,6 +10916,78 @@ fn insights_match_c_family_package_manager_includes() {
 }
 
 #[test]
+fn two_go_modules_do_not_disagree_with_each_other() {
+    let mut graph = CodeGraph::new("repo");
+    // gqlgen keeps a module per example, and each pins its own versions.
+    let root = graph.add_node(NodeKind::File, "go.mod");
+    let example = graph.add_node(NodeKind::File, "_examples/go.mod");
+    let text = dependency_node(&mut graph, "golang.org/x/text", "go:golang.org/x/text");
+    for (manifest, version) in [(root, "v0.41.0"), (example, "v0.38.0")] {
+        graph.add_edge_with_metadata(
+            manifest,
+            text,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([
+                ("dependency_kind".to_string(), "runtime".to_string()),
+                ("dependency_version".to_string(), version.to_string()),
+            ]),
+        );
+    }
+
+    let report = insights(&graph);
+    assert!(
+        !report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "conflicting_dependency_declaration"),
+        "neither build ever sees the other's requirement"
+    );
+}
+
+#[test]
+fn one_missing_env_file_is_one_finding() {
+    let mut graph = CodeGraph::new("repo");
+    let compose = graph.add_node(NodeKind::File, "docker-compose.yml");
+    for service in ["app", "db", "redis"] {
+        let env = graph.add_node_with_metadata(
+            NodeKind::Config,
+            format!("compose env_file:{service}"),
+            Some(SourceSpan {
+                path: "docker-compose.yml".to_string(),
+                start_line: 3,
+                start_column: 0,
+                end_line: 3,
+                end_column: 0,
+            }),
+            BTreeMap::from([
+                ("item_kind".to_string(), "compose_env_file".to_string()),
+                ("env_file_path".to_string(), ".env".to_string()),
+                ("service".to_string(), service.to_string()),
+            ]),
+        );
+        graph.add_edge_with_metadata(
+            compose,
+            env,
+            EdgeKind::ReadsConfig,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "compose_env_file".to_string())]),
+        );
+    }
+
+    let report = insights(&graph);
+    let findings: Vec<&Insight> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "unresolved_compose_env_file_path")
+        .collect();
+
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert!(findings[0].message.contains("`app`"), "{findings:?}");
+    assert!(findings[0].message.contains("`redis`"), "{findings:?}");
+}
+
+#[test]
 fn insights_report_conflicting_dependency_declarations() {
     let mut graph = CodeGraph::new("repo");
     let root_manifest = graph.add_node(NodeKind::File, "Cargo.toml");
