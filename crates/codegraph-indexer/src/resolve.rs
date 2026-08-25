@@ -675,6 +675,50 @@ fn test_runner_provides_call(language: &str, path: &str, label: &str) -> bool {
                     | "emit"
             ) || label.starts_with("vm.")
         }
+        // busted hands a Lua spec its cases and its assertions, and kong
+        // writes 1011 spec files: `describe`, `it`, `lazy_setup`,
+        // `assert.same`.
+        "lua" => {
+            matches!(
+                label,
+                "describe"
+                    | "it"
+                    | "pending"
+                    | "setup"
+                    | "teardown"
+                    | "lazy_setup"
+                    | "lazy_teardown"
+                    | "before_each"
+                    | "after_each"
+                    | "spy"
+                    | "stub"
+                    | "mock"
+                    | "finally"
+            ) || label == "assert"
+                || label.starts_with("assert.")
+                || label.starts_with("spy.")
+                || label.starts_with("stub.")
+                || label.starts_with("mock.")
+        }
+        // munit and ScalaCheck hand a Scala suite its cases and its
+        // properties: cats writes `test`, `checkAll` and `forAll` 433
+        // times in its own tests.
+        "scala" => {
+            matches!(
+                label,
+                "test"
+                    | "property"
+                    | "checkAll"
+                    | "forAll"
+                    | "assert"
+                    | "assertEquals"
+                    | "assertNotEquals"
+                    | "assume"
+                    | "intercept"
+                    | "beforeAll"
+                    | "afterAll"
+            )
+        }
         "javascript" | "typescript" | "tsx" => {
             matches!(
                 label,

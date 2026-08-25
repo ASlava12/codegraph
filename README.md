@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- busted hands a Lua spec its cases and its assertions -- `describe`, `it`, `lazy_setup`,
+  `assert.same` -- and munit and ScalaCheck do the same for a Scala suite with `test`, `checkAll` and
+  `forAll`. kong's unresolved calls fall from 14083 to 9942 and cats' from 2189 to 1654, which is
+  what the two projects really do reach for.
 - A Zig file is a struct and a Java file is its class, so a name can belong to a file rather than to
   anything the file declares: zls writes `Server` in `src/Server.zig`, and `impact Server` found
   nothing at all. A name that matches exactly one file's stem names that file -- 65 dependents for

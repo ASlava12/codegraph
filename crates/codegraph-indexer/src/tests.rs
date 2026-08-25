@@ -2305,6 +2305,64 @@ fn ruby_classes_are_reached_by_the_constants_that_name_them() {
 }
 
 #[test]
+fn busted_and_munit_hand_a_spec_its_cases() {
+    // kong writes 1011 spec files whose `describe`, `it`, `lazy_setup`
+    // and `assert.same` come from busted, and cats 255 whose `test`,
+    // `checkAll` and `forAll` come from munit and ScalaCheck.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("spec")).unwrap();
+    fs::create_dir_all(root.join("src/test/scala")).unwrap();
+    fs::write(
+        root.join("kong-1.0-0.rockspec"),
+        "package = \"kong\"\ndependencies = {\n  \"penlight == 1.14.0\",\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("spec").join("router_spec.lua"),
+        "describe(\"router\", function()\n  lazy_setup(function()\n    helpers.start_kong()\n  end)\n\n  it(\"routes\", function()\n    assert.same(1, 1)\n  end)\nend)\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("build.sbt"),
+        "libraryDependencies += \"org.typelevel\" %%% \"cats-core\" % catsVersion\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/test/scala").join("MonadSuite.scala"),
+        "class MonadSuite extends munit.FunSuite {\n  test(\"laws\") {\n    assertEquals(1, 1)\n  }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    for provided in [
+        "describe",
+        "it",
+        "lazy_setup",
+        "assert.same",
+        "test",
+        "assertEquals",
+    ] {
+        assert_eq!(
+            resolution(provided).as_deref(),
+            Some("builtin"),
+            "{provided} is the runner's"
+        );
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle
