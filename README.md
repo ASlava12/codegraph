@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A C# program is every statement its file writes outside a declaration, not the first of them: with
+  only the first in its span, the calls the rest make belonged to the file, and eShopOnWeb's three
+  programs reached nothing at all. Following one now walks 16 blocks deep into the services it
+  registers, and its entrypoints reach 115 of 471 functions rather than 103.
 - Every test framework writes its cases as callbacks -- `describe('x', () => { .. })` in JavaScript,
   `test("x", function() .. end)` in Lua, `test("x") { .. }` in Scala -- and a callback is otherwise
   a body that runs when something invokes it. In a test file the callback is the test: koel's 498

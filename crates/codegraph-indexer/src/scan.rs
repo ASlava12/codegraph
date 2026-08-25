@@ -1429,7 +1429,11 @@ pub(crate) fn index_file(
                     .filter(|item| item.kind == ParsedItemKind::Call)
                 {
                     // A call at module level has no enclosing definition;
-                    // the file itself is what runs it.
+                    // the file itself is what runs it -- unless a
+                    // definition's span covers it without the walk naming
+                    // it, which is what a C# file of top-level statements
+                    // is: the program is every statement outside a
+                    // declaration, and its calls are the program's.
                     let caller = item
                         .parent
                         .as_deref()
@@ -1437,6 +1441,7 @@ pub(crate) fn index_file(
                             enclosing_local_function(&local_function_spans, parent, &item.span)
                                 .or_else(|| resolve_local_function(&local_functions, parent))
                         })
+                        .or_else(|| covering_local_definition(&local_function_spans, &item.span))
                         .unwrap_or(file_id);
                     context.pending_calls.push(PendingCall {
                         caller,
@@ -1662,6 +1667,25 @@ fn path_extension_is_ambiguous(path: &Path) -> bool {
 /// The definition of `name` in this file whose body holds `span`. Several
 /// can share a name -- a Python `@t.overload` stub and the implementation
 /// under it -- and the fact belongs to the one it was written inside.
+/// The definition whose span covers a fact the walk could not name. A C#
+/// file of top-level statements declares no function around them, and the
+/// program the compiler generates from them is exactly that span: without
+/// this, eShopOnWeb's three programs reached nothing at all.
+fn covering_local_definition(
+    definitions: &[(String, NodeId, SourceSpan)],
+    span: &SourceSpan,
+) -> Option<NodeId> {
+    definitions
+        .iter()
+        .filter(|(_, _, definition)| {
+            definition.path == span.path
+                && definition.start_line <= span.start_line
+                && span.start_line <= definition.end_line
+        })
+        .min_by_key(|(_, _, definition)| definition.end_line - definition.start_line)
+        .map(|(_, id, _)| *id)
+}
+
 fn enclosing_local_function(
     definitions: &[(String, NodeId, SourceSpan)],
     name: &str,

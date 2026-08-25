@@ -67,12 +67,22 @@ pub fn parse_source(
             .items
             .iter()
             .any(|item| item.kind == ParsedItemKind::Entrypoint)
-        && let Some(statement) = csharp_top_level_statement(root)
+        && let Some((first, last)) = csharp_top_level_statements(root)
     {
         facts.items.push(ParsedItem {
             kind: ParsedItemKind::Entrypoint,
             label: "Program".to_string(),
-            span: span_for(&path.to_string_lossy(), statement),
+            // The program is every statement the file writes outside a
+            // declaration, not the first of them: with only the first, the
+            // calls that follow belonged to the file and eShopOnWeb's
+            // program reached nothing at all.
+            span: SourceSpan {
+                path: path.to_string_lossy().to_string(),
+                start_line: first.start_position().row as u32 + 1,
+                start_column: first.start_position().column as u32 + 1,
+                end_line: last.end_position().row as u32 + 1,
+                end_column: last.end_position().column as u32 + 1,
+            },
             parent: None,
             metadata: BTreeMap::from([(
                 "definition_form".to_string(),
@@ -95,13 +105,17 @@ pub fn parse_source(
     })
 }
 
-/// The first statement a C# file writes outside any declaration. The
-/// grammar wraps each one in a `global_statement`, and a file that has
-/// one is the entry point the compiler generates `Main` for.
-fn csharp_top_level_statement(root: Node<'_>) -> Option<Node<'_>> {
+/// The first and last statements a C# file writes outside any
+/// declaration. The grammar wraps each one in a `global_statement`, and a
+/// file that has one is the entry point the compiler generates `Main`
+/// for -- all of them together, so the calls they make belong to it.
+fn csharp_top_level_statements(root: Node<'_>) -> Option<(Node<'_>, Node<'_>)> {
     let mut cursor = root.walk();
-    root.named_children(&mut cursor)
-        .find(|child| child.kind() == "global_statement")
+    let statements: Vec<Node<'_>> = root
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "global_statement")
+        .collect();
+    Some((*statements.first()?, *statements.last()?))
 }
 
 /// The names a file binds to a string literal at its top level. A Go

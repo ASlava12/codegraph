@@ -8073,6 +8073,19 @@ fn a_csharp_file_of_top_level_statements_is_where_the_program_starts() {
             .any(|edge| { edge.kind == EdgeKind::Entrypoint && edge.target == program.id }),
         "and the repository starts there"
     );
+    // The program is every statement outside a declaration, so the calls
+    // those statements make are the program's: with only the first
+    // statement in its span, eShopOnWeb's three programs reached nothing.
+    let called: Vec<&str> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Calls && edge.source == program.id)
+        .filter_map(|edge| edge.metadata.get("call_label").map(String::as_str))
+        .collect();
+    assert!(
+        called.contains(&"builder.Build") && called.contains(&"app.Run"),
+        "the program makes the calls its statements write, got {called:?}"
+    );
     assert!(
         !graph.nodes.iter().any(|node| node.label == "Program"
             && node
