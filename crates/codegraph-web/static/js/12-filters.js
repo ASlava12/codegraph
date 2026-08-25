@@ -425,6 +425,10 @@ function buildClientInsights(graph) {
     if (
       node.kind === "function" &&
       !node.metadata?.enclosing_function &&
+      // `const onMounted = createHook(MOUNTED)` declares a value a factory
+      // built, and a value nobody calls is a value rather than a function
+      // nobody runs. The CLI skips these too.
+      node.metadata?.definition_form !== "value" &&
       !entrypointIds.has(node.id) &&
       !calledIds.has(node.id)
     ) {

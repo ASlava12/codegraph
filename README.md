@@ -232,6 +232,13 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- A value a factory builds is a declaration other files call: vue writes most of its public API as
+  `export const onMounted = createHook(MOUNTED)`, a component library its variants as
+  `const buttonVariants = cva(..)`. Neither was in the graph, so 523 of vue's calls resolved to
+  nothing and `impact onMounted` had nothing to answer with -- it now names 109 dependents and 94
+  affected tests. vue's functions went 5039 -> 5326 and its resolved calls 45% -> 48%, taxonomy's
+  170 -> 297 and 26% -> 36%. Only what a module declares counts: `const rows = getRows()` inside a
+  function body is a local variable, and the call that builds a value belongs to the value.
 - Building a class runs its constructor: `new SongService($repository)` reached the class and
   stopped there, so koel's 378 `__construct` methods had no caller between them -- and a
   constructor is where a framework hands a class what it needs. 237 of koel's construction sites now

@@ -715,6 +715,12 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
         if node.metadata.contains_key("enclosing_function") {
             continue;
         }
+        // `const onMounted = createHook(MOUNTED)` declares a value a
+        // factory built. It is callable when what it holds is, and a value
+        // nobody calls is a value rather than a function nobody runs.
+        if node.metadata.get("definition_form").map(String::as_str) == Some("value") {
+            continue;
+        }
         if node.kind == NodeKind::Function
             && !entrypoints.contains(&node.id)
             && !called.contains(&node.id)

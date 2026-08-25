@@ -683,6 +683,14 @@ pub(crate) fn classify_node(
             {
                 ParsedItemKind::Function
             }
+            // `export const onMounted = createHook(MOUNTED)` and `const
+            // buttonVariants = cva(..)`: a factory hands back a value the
+            // module exports and other files call. Vue declares most of
+            // its public API that way, and 523 calls into it resolved to
+            // nothing because the declaration was not in the graph.
+            "variable_declarator" if js_value_declaration_name(node, source).is_some() => {
+                ParsedItemKind::Function
+            }
             "class_declaration"
             | "interface_declaration"
             | "type_alias_declaration"
@@ -1010,6 +1018,12 @@ pub(crate) fn classify_node(
         // Saying so lets a reader tell `serverAssert` from a function.
         if node.kind() == "preproc_function_def" {
             metadata.insert("definition_form".to_string(), "macro".to_string());
+        }
+        // A value a factory built is callable when what it holds is, and a
+        // reader should be able to tell it from a function the file spells
+        // out.
+        if node.kind() == "variable_declarator" {
+            metadata.insert("definition_form".to_string(), "value".to_string());
         }
     }
 
@@ -3069,6 +3083,44 @@ fn elixir_definition_head(node: Node<'_>, source: &[u8]) -> Option<String> {
     }
 }
 
+/// The name a `const x = factory(..)` declaration binds, when the value is
+/// what a factory hands back. `export const onMounted = createHook(MOUNTED)`
+/// is how vue declares most of its public API, and `const buttonVariants =
+/// cva(..)` how a component library declares its variants: other files
+/// import the name and call it. A declaration whose value is a literal, an
+/// object or another name is not callable and is left alone.
+pub(crate) fn js_value_declaration_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let value = node.child_by_field_name("value")?;
+    if value.kind() != "call_expression" {
+        return None;
+    }
+    // Only what the module declares: `const rows = getRows()` inside a
+    // function body is a local variable, and reading those as declarations
+    // added 5442 nodes to vue alone.
+    let mut ancestor = node.parent();
+    while let Some(parent) = ancestor {
+        if matches!(
+            parent.kind(),
+            "function_declaration"
+                | "function_expression"
+                | "arrow_function"
+                | "method_definition"
+                | "generator_function_declaration"
+                | "class_body"
+        ) {
+            return None;
+        }
+        ancestor = parent.parent();
+    }
+    let name = node.child_by_field_name("name")?;
+    // A destructured binding names several things at once, and which of
+    // them the call hands back is not written down.
+    if name.kind() != "identifier" {
+        return None;
+    }
+    node_text(name, source).filter(|label| !label.is_empty())
+}
+
 /// The name a JS/TS function expression inherits from the binding it is
 /// assigned to: `const f = () => {}`, `{ key: () => {} }`, `obj.m = () => {}`.
 /// Returns None for a truly anonymous expression such as a bare callback.
@@ -3145,9 +3197,13 @@ pub(crate) fn item_label(
     if matches!(
         language,
         Language::JavaScript | Language::TypeScript | Language::Tsx
-    ) && matches!(node.kind(), "arrow_function" | "function_expression")
-    {
-        return js_bound_function_name(node, source);
+    ) {
+        if matches!(node.kind(), "arrow_function" | "function_expression") {
+            return js_bound_function_name(node, source);
+        }
+        if node.kind() == "variable_declarator" {
+            return js_value_declaration_name(node, source);
+        }
     }
 
     if language == Language::Lua && node.kind() == "function_definition" {

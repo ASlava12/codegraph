@@ -6529,6 +6529,61 @@ fn a_dockerfile_command_runs_from_the_build_context() {
 }
 
 #[test]
+fn a_value_a_factory_builds_is_a_declaration_other_files_call() {
+    // `export const onMounted = createHook(MOUNTED)` is how vue declares
+    // most of its public API, and `const buttonVariants = cva(..)` how a
+    // component library declares its variants. Neither was in the graph, so
+    // 523 of vue's calls resolved to nothing. A local `const rows =
+    // getRows()` inside a function is a variable, not a declaration.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("package.json"), "{\n  \"name\": \"app\"\n}\n").unwrap();
+    fs::write(
+        root.join("src").join("hooks.ts"),
+        "import { createHook } from './factory'\n\nexport const onMounted = createHook('mounted')\n\nexport function useIt() {\n  const rows = createHook('rows')\n  return rows\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("factory.ts"),
+        "export function createHook(name: string) {\n  return () => name\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("app.ts"),
+        "import { onMounted } from './hooks'\n\nexport function start() {\n  return onMounted()\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let value = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "onMounted" && node.kind == NodeKind::Function)
+        .expect("the value the factory builds is a declaration");
+    assert_eq!(
+        value.metadata.get("definition_form").map(String::as_str),
+        Some("value"),
+        "and it says it is a value rather than a function spelled out"
+    );
+    assert!(
+        graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Calls && edge.target == value.id),
+        "a file that imports it and calls it reaches it"
+    );
+    assert!(
+        !graph
+            .nodes
+            .iter()
+            .any(|node| node.label == "rows" && node.kind == NodeKind::Function),
+        "a local variable inside a function is not a declaration"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_component_is_used_where_jsx_renders_it_and_ts_and_tsx_are_one_project() {
     // `<TailwindIndicator />` is how a JSX runtime calls a component, and
     // it was not read at all: taxonomy's layout renders eleven components
@@ -13004,8 +13059,16 @@ fn module_level_calls_belong_to_the_file_but_callback_bodies_do_not() {
 
     let js = called_labels(file_id("app.js"));
     assert!(
-        js.contains(&"helper".to_string()) && js.contains(&"run".to_string()),
-        "both load-time calls are attributed to the file, got {js:?}"
+        js.contains(&"run".to_string()),
+        "a load-time call is attributed to the file, got {js:?}"
+    );
+    // `const value = helper()` declares a value the module exports, and the
+    // call that builds it belongs to that declaration -- which the file
+    // contains, so the chain still runs from the file.
+    let value_calls = called_labels(function_id_in_file(&graph, "value", "app.js"));
+    assert!(
+        value_calls.contains(&"helper".to_string()),
+        "the call that builds a value belongs to it, got {value_calls:?}"
     );
 
     // `helper` inside the arrow reaches the graph only through the
