@@ -1107,7 +1107,7 @@ fn is_deferred_body(language: Language, kind: &str, path: &str) -> bool {
     // and only the anonymous `function() end` is a `function_definition` —
     // a kind that names the ordinary declaration in Python and C.
     if language == Language::Lua && kind == "function_definition" {
-        return true;
+        return !is_test_like_source_path(path);
     }
     let anonymous = kind.contains("lambda")
         || kind.contains("closure")
@@ -1116,17 +1116,12 @@ fn is_deferred_body(language: Language, kind: &str, path: &str) -> bool {
             kind,
             "arrow_function" | "function_expression" | "func_literal" | "fn"
         );
-    // A JavaScript spec is written the same way as a Ruby one: `describe
-    // ('x', () => { it('y', () => { service.load() }) })` puts every call
-    // the test makes inside an anonymous function, and koel's 498 spec
-    // files made 1456 calls between them.
-    if anonymous
-        && matches!(
-            language,
-            Language::JavaScript | Language::TypeScript | Language::Tsx
-        )
-        && is_test_like_source_path(path)
-    {
+    // Every test framework writes its cases as callbacks: `describe('x',
+    // () => { .. })` in JavaScript, `test("x", function() .. end)` in
+    // Lua, `test('x', () { .. })` in Dart, `test_that("x", { .. })` in R.
+    // The callback is the test, and dropping it left koel's 498 spec
+    // files with 1456 calls between them and kong's 1011 with 5977.
+    if anonymous && is_test_like_source_path(path) {
         return false;
     }
     anonymous
