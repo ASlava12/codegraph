@@ -5197,6 +5197,18 @@ fn configuration_is_answered_with_what_the_program_reads() {
         },
     );
 
+    let example = graph.add_node_with_span(
+        NodeKind::Config,
+        "CELERY",
+        SourceSpan {
+            path: "examples/celery/src/task_app/__init__.py".to_string(),
+            start_line: 8,
+            start_column: 1,
+            end_line: 8,
+            end_column: 12,
+        },
+    );
+
     let result = query_graph(&graph, "configs limit:1").unwrap();
     let listed: Vec<&str> = result
         .nodes
@@ -5211,6 +5223,12 @@ fn configuration_is_answered_with_what_the_program_reads() {
     assert!(
         !result.nodes.iter().any(|node| node.id == workflow),
         "and how it is linted is not, got {listed:?}"
+    );
+    assert!(
+        !result.nodes.iter().any(|node| node.id == example),
+        "nor is what a demonstration of the library configures -- flask \
+         reads 35 values in `src/` and 22 in `examples/`, and the walk \
+         reaches the examples first: {listed:?}"
     );
 }
 

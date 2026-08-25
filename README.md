@@ -238,9 +238,12 @@ Implemented now:
   a literal. Those reads now say which variable they read: terraform's computed reads fall to 18 and
   the variables it is known to read rise from 102 to 124. A key a loop builds still names nothing to
   look up, and stays a hole, which is the honest answer.
-- What a program reads is its configuration, and how it is linted is not: "what configuration does
-  it read?" answered koel with twelve GitHub Actions run steps before naming a single Laravel config
-  key. The project's own configuration now comes first, and the CI steps after it.
+- What a program reads is its configuration; how it is linted is not, and neither is what a
+  demonstration of it configures. "What configuration does it read?" answered koel with twelve
+  GitHub Actions run steps before naming a single Laravel config key, and flask with its Celery
+  example -- flask reads 35 values in `src/` and 22 in `examples/`, and the walk reaches the
+  examples first. The program's own configuration comes first now, then the examples and tests,
+  then the repository's tooling.
 - A document is not code. A markdown file's headings look like the symbols a file holds, so every
   project in the corpus was told that its `README.md` "contains markdown code but is not reachable
   from any entrypoint", and "which code is unused?" answered koel with

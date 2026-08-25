@@ -1104,14 +1104,17 @@ pub(crate) fn query_configs(
     // comes first, in graph order inside a tier so the answer stays the
     // same between runs.
     matched_targets.sort_by_key(|node| {
-        (
-            u8::from(
-                node.span
-                    .as_ref()
-                    .is_some_and(|span| is_repository_tooling_source_path(&span.path)),
-            ),
-            node.id,
-        )
+        let path = node.span.as_ref().map(|span| span.path.as_str());
+        let rank = match path {
+            Some(path) if is_repository_tooling_source_path(path) => 2,
+            // flask reads 35 configuration values in `src/` and 22 in
+            // `examples/`, and the walk reaches the examples first: what a
+            // demonstration of the library configures is not what the
+            // library reads.
+            Some(path) if is_test_like_source_path(path) => 1,
+            _ => 0u8,
+        };
+        (rank, node.id)
     });
 
     let mut node_ids = BTreeSet::new();
