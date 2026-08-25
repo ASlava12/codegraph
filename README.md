@@ -232,6 +232,15 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- An Elixir module attribute is a declaration, not something the module does: the grammar reads what
+  follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
+  `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
+  nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Zig reaches its standard library through the constant a file binds with `@import("std")`: 775 of
+  zls's 2955 unresolved calls were `std.` -- `std.debug.assert`, `std.ArrayList` -- and 174 more
+  resolved into zls itself, so `std.debug.print` claimed the project's own `print` as its target and
+  `std.testing.expectEqual` claimed its `expectEqual`. The standard library answers for its own now,
+  and zls's unresolved calls fall to 2176.
 - `params.require(:source)` is how a Rails controller reads a parameter, not how a file requires a
   library: `require` is Kernel's, and a bare call is the only way to reach it. mastodon filed fifteen
   imports of things called `params.require(:post)`.

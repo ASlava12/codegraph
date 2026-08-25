@@ -1644,6 +1644,91 @@ fn an_import_python_erases_is_not_a_runtime_dependency() {
 }
 
 #[test]
+fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
+    // `@moduledoc false` and `@spec change(..) :: t` are module
+    // attributes, and the grammar reads what follows the `@` as a call:
+    // ecto filed 356 calls to things named `doc`, `type` and `spec`.
+    // `fun.(new, current)` invokes whatever the variable holds, and the
+    // label it produced -- `fun.` -- names nothing; ecto writes 82.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(
+        root.join("mix.exs"),
+        "defmodule App.MixProject do\n  use Mix.Project\n\n  defp deps do\n    [{:jason, \"~> 1.0\"}]\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib").join("relation.ex"),
+        "defmodule App.Relation do\n  @moduledoc false\n\n  @spec change(map, map) :: map\n  def change(new, current) do\n    apply_change(new, current)\n  end\n\n  defp single_change(new, current, fun) do\n    fun.(new, current)\n  end\n\n  defp apply_change(new, _current), do: new\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let called: Vec<&str> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Calls)
+        .filter_map(|edge| edge.metadata.get("call_label").map(String::as_str))
+        .collect();
+    assert!(
+        called.contains(&"apply_change"),
+        "a call the module makes is still a call, got {called:?}"
+    );
+    for attribute in ["moduledoc", "spec"] {
+        assert!(
+            !called.contains(&attribute),
+            "`@{attribute}` is a declaration, got {called:?}"
+        );
+    }
+    assert!(
+        !called.iter().any(|label| label.ends_with('.')),
+        "invoking a value names nothing to call, got {called:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn zigs_standard_library_is_the_languages_own() {
+    // zls reaches the standard library through the constant its files
+    // bind with `@import("std")`, and 775 of its 2955 unresolved calls
+    // were `std.` -- while 174 more resolved into zls itself, so
+    // `std.debug.print` claimed the project's own `print` as its target.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("build.zig.zon"), ".{\n    .name = .app,\n}\n").unwrap();
+    fs::write(
+        root.join("src").join("main.zig"),
+        "const std = @import(\"std\");\n\npub fn print(value: []const u8) void {\n    _ = value;\n}\n\npub fn main() void {\n    std.debug.print(\"hello\", .{});\n    print(\"hello\");\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    assert_eq!(
+        resolution("std.debug.print").as_deref(),
+        Some("builtin"),
+        "the standard library answers for its own"
+    );
+    assert_eq!(
+        resolution("print").as_deref(),
+        Some("resolved"),
+        "and the project's own function keeps its caller"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn asking_a_request_for_a_parameter_is_not_a_require() {
     // `params.require(:source)` is how a Rails controller reads a
     // parameter, and mastodon writes fifteen of them: each filed an import

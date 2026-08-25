@@ -1605,6 +1605,12 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
         "elixir" if base.contains('.') => base
             .split_once('.')
             .is_some_and(|(module, _)| elixir_standard_module(module)),
+        // Zig reaches its standard library through the constant a file
+        // binds with `@import("std")`, and `builtin` is the compiler's own
+        // description of the build. 775 of zls's 2955 unresolved calls are
+        // `std.` -- `std.debug.assert`, `std.ArrayList` -- and not one of
+        // them is a function zls failed to declare.
+        "zig" => base.starts_with("std.") || base.starts_with("builtin."),
         "elixir" | "erlang" => matches!(
             base.trim_end_matches('?'),
             "is_atom"

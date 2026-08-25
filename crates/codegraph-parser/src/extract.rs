@@ -2659,6 +2659,29 @@ fn hcl_module_source(node: Node<'_>, source: &[u8]) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+/// Whether this node is the `@` of an Elixir module attribute:
+/// `@moduledoc false`, `@spec change(..) :: t`, `@derive Jason.Encoder`.
+/// The grammar reads what follows the `@` as a call, and an attribute is a
+/// declaration rather than something the module does.
+fn elixir_module_attribute(node: Node<'_>, source: &[u8]) -> bool {
+    node.kind() == "unary_operator"
+        && node
+            .child(0)
+            .and_then(|operator| node_text(operator, source))
+            .as_deref()
+            .map(str::trim)
+            == Some("@")
+}
+
+/// Whether this Elixir call invokes a value rather than a name:
+/// `fun.(new, current)` calls whatever `fun` holds, and the target the
+/// grammar gives it ends in the dot.
+fn elixir_value_invocation(node: Node<'_>, source: &[u8]) -> bool {
+    node.child_by_field_name("target")
+        .and_then(|target| node_text(target, source))
+        .is_some_and(|target| target.trim_end().ends_with('.'))
+}
+
 pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) -> bool {
     match language {
         Language::Rust => matches!(node.kind(), "call_expression" | "macro_invocation"),
@@ -2720,6 +2743,17 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
                 && elixir_call_target(node, source)
                     .as_deref()
                     .is_some_and(|target| !ELIXIR_SPECIAL_FORMS.contains(&target))
+                // `@moduledoc false` and `@spec change(..) :: t` are module
+                // attributes: the grammar reads what follows the `@` as a
+                // call, and ecto filed 356 calls to things named `doc`,
+                // `type` and `spec`.
+                && !node
+                    .parent()
+                    .is_some_and(|parent| elixir_module_attribute(parent, source))
+                // `fun.(new, current)` invokes a value the body binds, and
+                // the label it produced -- `fun.` -- names nothing. ecto
+                // writes 82 of them.
+                && !elixir_value_invocation(node, source)
         }
         Language::Zig => node.kind() == "call_expression",
         // `f a b` nests as apply(apply(f, a), b); only the outermost node is
