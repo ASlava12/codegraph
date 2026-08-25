@@ -377,6 +377,53 @@ fn collect_reference_facts(
         }
     }
 
+    // What an Elixir module states about the modules it works with:
+    // `alias Ecto.Changeset`, `use Ecto.Schema`, `import Ecto.Query`, and
+    // the module a qualified call is written through --
+    // `Changeset.change(..)`. ecto declares 390 modules and nothing
+    // pointed at any of them.
+    if language == Language::Elixir && node.kind() == "call" {
+        let target = elixir_call_target(node, source);
+        let mut references: Vec<Node<'_>> = Vec::new();
+        if target
+            .as_deref()
+            .is_some_and(|target| matches!(target, "alias" | "import" | "use" | "require"))
+            && let Some(arguments) = node
+                .named_children(&mut node.walk())
+                .find(|child| child.kind() == "arguments")
+        {
+            let mut cursor = arguments.walk();
+            references.extend(
+                arguments
+                    .named_children(&mut cursor)
+                    .filter(|child| child.kind() == "alias"),
+            );
+        }
+        // `Changeset.change(x)` names the module on the left of the dot.
+        if let Some(dot) = node
+            .named_children(&mut node.walk())
+            .find(|child| child.kind() == "dot")
+            && let Some(left) = dot.named_child(0)
+            && left.kind() == "alias"
+        {
+            references.push(left);
+        }
+        for reference in references {
+            let Some(label) = node_text(reference, source) else {
+                continue;
+            };
+            let label = label.trim();
+            if label.is_empty() || !label.starts_with(char::is_uppercase) {
+                continue;
+            }
+            facts.type_references.push(ParsedTypeReference {
+                label: label.to_string(),
+                span: span_for(path, reference),
+                parent: current_function.clone(),
+            });
+        }
+    }
+
     // What a Kotlin declaration states about the types it works with: a
     // parameter's type, a property's, what a function returns, and what a
     // class extends or implements. okio declares 358 types and four
@@ -1048,7 +1095,11 @@ pub(crate) fn classify_node(
                 "def" | "defp" | "defmacro" | "defmacrop" | "defdelegate" | "defguard"
                 | "defguardp",
             ) => ParsedItemKind::Function,
-            Some("defprotocol" | "defimpl" | "defstruct") => ParsedItemKind::Type,
+            // `defstruct` states the shape of the module it sits in, and
+            // takes that module's name: ecto declared `Ecto.Changeset`
+            // twice, so every reference to it was ambiguous and dropped.
+            Some("defstruct") => return None,
+            Some("defprotocol" | "defimpl") => ParsedItemKind::Type,
             Some("import" | "require" | "use" | "alias") => ParsedItemKind::Import,
             _ => return None,
         },

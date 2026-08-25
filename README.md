@@ -236,6 +236,12 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- An Elixir module is reached by the alias that names it: `alias Ecto.Changeset`, `use Ecto.Schema`,
+  and the module on the left of a qualified call. ecto declares 390 modules and nothing pointed at
+  any of them; `impact Ecto.Changeset` now names 129 dependents and 99 affected tests, `Ecto.Query`
+  244 and 133. A `defstruct` states the shape of the module it sits in rather than a type of its
+  own, and naming it after that module declared `Ecto.Changeset` twice -- which is why every
+  reference to it was ambiguous.
 - Kotlin types are reached the same way: a parameter's type, a property's, what a function returns
   and what a class extends. okio declares 358 types and four references pointed into them, so "what
   breaks if I change `Buffer`" answered with nothing -- it now names 22 dependents, `Source` 274 and

@@ -1689,6 +1689,54 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn an_elixir_module_is_reached_by_the_alias_that_names_it() {
+    // ecto declares 390 modules and nothing pointed at any of them, so
+    // "what breaks if I change `Ecto.Changeset`" answered with nothing.
+    // An Elixir program names a module by its alias -- `alias
+    // Ecto.Changeset`, `use Ecto.Schema` -- and through the dot of a
+    // qualified call.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib/ecto")).unwrap();
+    fs::write(
+        root.join("mix.exs"),
+        "defmodule App.MixProject do\n  use Mix.Project\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib/ecto/changeset.ex"),
+        "defmodule Ecto.Changeset do\n  defstruct [:data, :changes]\n\n  def change(data), do: data\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib/ecto/repo.ex"),
+        "defmodule Ecto.Repo do\n  alias Ecto.Changeset\n\n  def insert(struct) do\n    Changeset.change(struct)\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let changeset: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.label == "Ecto.Changeset")
+        .collect();
+    assert_eq!(
+        changeset.len(),
+        1,
+        "a `defstruct` states the shape of the module it sits in, and the \
+         module already stands for it"
+    );
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.target == changeset[0].id
+                && edge.metadata.get("relation").map(String::as_str) == Some("type_reference")
+        }),
+        "and the module another file aliases is reached"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn kotlin_types_are_reached_by_the_declarations_that_name_them() {
     // okio declares 358 types and four references pointed into them, so
     // "what breaks if I change `Buffer`" -- the type its whole API is

@@ -2970,10 +2970,13 @@ fn an_erlang_record_and_type_are_types() {
 }
 
 #[test]
-fn an_elixir_struct_is_named_by_its_module() {
-    // `defstruct` names nothing; the struct is the module that declares
-    // it, which is how Elixir refers to it (`%Ecto.Changeset{}`). Ecto
-    // writes 25 and every one was dropped for want of a name.
+fn an_elixir_struct_is_the_module_that_declares_it() {
+    // `defstruct` names nothing of its own: the struct is the module that
+    // declares it, which is how Elixir refers to it (`%Ecto.Changeset{}`).
+    // Naming it after that module declared `Ecto.Changeset` twice, so
+    // every reference to the name was ambiguous and dropped -- `impact
+    // Ecto.Changeset` answered with nothing where it now names 129
+    // dependents.
     let source = r#"defmodule Ecto.Changeset do
   defstruct [:data, :changes]
 
@@ -2987,7 +2990,19 @@ end
         .filter(|item| item.kind == ParsedItemKind::Type)
         .map(|item| item.label.as_str())
         .collect();
-    assert_eq!(types, vec!["Ecto.Changeset"], "items: {:?}", parsed.items);
+    assert!(
+        types.is_empty(),
+        "the module already stands for the struct: {:?}",
+        parsed.items
+    );
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Module && item.label == "Ecto.Changeset"),
+        "and the module is what a reference reaches: {:?}",
+        parsed.items
+    );
 }
 
 #[test]

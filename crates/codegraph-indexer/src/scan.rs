@@ -1212,8 +1212,12 @@ pub(crate) fn index_file(
                     // A Ruby module is a constant other files name: `include
                     // Payloadable` and `Mastodon::CLI::Maintenance::Account`
                     // reach one the same way a class is reached.
+                    // A Ruby module and an Elixir one are constants other
+                    // files name: `include Payloadable` and `alias
+                    // Ecto.Changeset` reach one the way a class is reached.
                     if item.kind == ParsedItemKind::Type
-                        || (item.kind == ParsedItemKind::Module && language == Language::Ruby)
+                        || (item.kind == ParsedItemKind::Module
+                            && matches!(language, Language::Ruby | Language::Elixir))
                     {
                         register_function_symbol(&mut context.type_symbols, &item.label, item_id);
                     }
