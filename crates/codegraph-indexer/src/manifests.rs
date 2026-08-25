@@ -1532,6 +1532,56 @@ pub(crate) fn pnpm_clean_version(value: &str) -> String {
     value.split('(').next().unwrap_or(value).trim().to_string()
 }
 
+/// What a .NET project states: `<PackageReference Include="Azure.Identity"
+/// Version="1.10.4" />` names a package and, where the repository does not
+/// manage versions centrally, the version it wants. eShopOnWeb and
+/// Newtonsoft.Json declared nothing at all before this. A
+/// `<PackageVersion>` in `Directory.Packages.props` pins a version for
+/// whoever references the package, the way a Maven `<dependencyManagement>`
+/// block does, and references no package of its own.
+pub(crate) fn nuget_dependencies(path: &Path, source: &str) -> Vec<ManifestDependency> {
+    // A test project's packages are what its tests need, not what the
+    // program runs on: eShopOnWeb keeps five such projects under `tests/`.
+    let kind = if path
+        .to_str()
+        .is_some_and(codegraph_core::is_test_like_source_path)
+    {
+        "dev"
+    } else {
+        "runtime"
+    };
+    let mut dependencies = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed.strip_prefix("<PackageReference") else {
+            continue;
+        };
+        let Some(name) = xml_attribute(rest, "Include") else {
+            continue;
+        };
+        // `PrivateAssets="All"` marks a package that builds the project
+        // and ships with nothing: a source-link generator or an analyser.
+        let private = xml_attribute(rest, "PrivateAssets")
+            .is_some_and(|value| value.eq_ignore_ascii_case("all"));
+        dependencies.push(manifest_dependency(
+            name,
+            if private { "dev" } else { kind },
+            "nuget",
+            // `Version="$(AspNetVersion)"` names a property the build
+            // resolves, which is not a version the file states.
+            xml_attribute(rest, "Version").filter(|value| !value.starts_with("$(")),
+        ));
+    }
+    dependencies
+}
+
+/// The value an XML attribute holds: `Include="Azure.Identity"`.
+fn xml_attribute(rest: &str, name: &str) -> Option<String> {
+    let (_, after) = rest.split_once(&format!("{name}=\""))?;
+    let value = after.split('"').next()?.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
 /// What a Maven `pom.xml` states: a `<dependency>` names a group and an
 /// artifact, and `<scope>test</scope>` says it is not what the program
 /// runs on. gson declares 22 across four modules, and a JVM project's

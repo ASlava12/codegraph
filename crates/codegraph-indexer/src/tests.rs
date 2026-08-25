@@ -1644,6 +1644,49 @@ fn an_import_python_erases_is_not_a_runtime_dependency() {
 }
 
 #[test]
+fn a_dotnet_project_states_the_packages_it_references() {
+    // eShopOnWeb and Newtonsoft.Json declared nothing at all: a `.csproj`
+    // was read by nobody, so 49 and 13 packages were invisible.
+    let app = nuget_dependencies(
+        std::path::Path::new("src/Web/Web.csproj"),
+        "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <ItemGroup>\n    <PackageReference Include=\"Azure.Identity\" Version=\"1.10.4\" />\n    <PackageReference Include=\"Ardalis.Specification\" />\n    <PackageReference Include=\"Microsoft.SourceLink.GitHub\" Version=\"$(SourceLinkVersion)\" PrivateAssets=\"All\" />\n  </ItemGroup>\n</Project>\n",
+    );
+    let declared = |name: &str| {
+        app.iter()
+            .find(|dependency| dependency.name == name)
+            .map(|dependency| (dependency.kind.as_str(), dependency.version.clone()))
+    };
+    assert_eq!(
+        declared("Azure.Identity"),
+        Some(("runtime", Some("1.10.4".to_string())))
+    );
+    assert_eq!(
+        declared("Ardalis.Specification"),
+        Some(("runtime", None)),
+        "a repository that manages versions centrally states none here"
+    );
+    assert_eq!(
+        declared("Microsoft.SourceLink.GitHub"),
+        Some(("dev", None)),
+        "`PrivateAssets=\"All\"` builds the project and ships with nothing, \
+         and a property is not a version the file states"
+    );
+
+    let tests = nuget_dependencies(
+        std::path::Path::new("tests/UnitTests/UnitTests.csproj"),
+        "<Project>\n  <ItemGroup>\n    <PackageReference Include=\"xunit\" Version=\"2.4.2\" />\n  </ItemGroup>\n</Project>\n",
+    );
+    assert_eq!(
+        tests
+            .iter()
+            .find(|dependency| dependency.name == "xunit")
+            .map(|dependency| dependency.kind.as_str()),
+        Some("dev"),
+        "a test project's packages are what its tests need"
+    );
+}
+
+#[test]
 fn maven_and_gradle_state_what_a_jvm_project_needs() {
     // gson declares 19 dependencies across four `pom.xml` files, petclinic
     // 30 in a Gradle build and retrofit 50 in a version catalog, and none

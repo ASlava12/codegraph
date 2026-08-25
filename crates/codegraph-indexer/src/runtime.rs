@@ -1710,6 +1710,9 @@ pub(crate) fn manifest_dependencies(
         Some("composer.json") => composer_dependencies(source),
         Some("Gemfile") => gemfile_dependencies(source),
         Some("pom.xml") => maven_dependencies(source),
+        Some(name) if name.ends_with(".csproj") || name.ends_with(".fsproj") => {
+            nuget_dependencies(path, source)
+        }
         Some("build.gradle") | Some("build.gradle.kts") => gradle_dependencies(source),
         Some("libs.versions.toml") => gradle_version_catalog_dependencies(source),
         Some(name) if name.ends_with(".gemspec") => gemspec_dependencies(source),

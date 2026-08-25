@@ -232,6 +232,11 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- A .NET project was read by nobody either: eShopOnWeb and Newtonsoft.Json declared no dependency at
+  all, and now declare 49 and 13. A `<PackageReference>` names a package and, where the repository
+  does not manage versions centrally, the version it wants; `PrivateAssets="All"` marks a package
+  that builds the project and ships with nothing, and a test project's packages are what its tests
+  need.
 - Nor was a JVM manifest read: gson declares 19 dependencies across four `pom.xml` files, petclinic
   30 in a Gradle build, okio 22 and retrofit 50 in a Gradle version catalog. A `<dependency>` names
   a group and an artifact and `<scope>test</scope>` says what it is for, while a
