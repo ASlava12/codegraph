@@ -16106,3 +16106,41 @@ return { run = run }
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_bare_scala_call_stays_with_the_object_it_has() {
+    // `f(...)` inside a method is a function the body was handed, not the
+    // `def f` some other file wrote on a class of its own. cats declares
+    // one on `FlatMapped` in FreeT.scala and 833 calls across the
+    // repository read as that one method.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src/main/scala")).unwrap();
+    fs::write(root.join("build.sbt"), "name := \"app\"\n").unwrap();
+    fs::write(
+        root.join("src/main/scala/Free.scala"),
+        "package app\n\nfinal case class FlatMapped(f0: Int => Int) {\n  def f: Int => Int = f0\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main/scala/Chain.scala"),
+        "package app\n\nobject Chain {\n  def run(f: Int => Int, value: Int): Int = f(value)\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("f")
+        })
+        .expect("the call is recorded");
+    assert_ne!(
+        call.metadata.get("resolution").map(String::as_str),
+        Some("resolved"),
+        "a method of FlatMapped is not reachable from Chain without naming one"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

@@ -2488,6 +2488,45 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     .is_some_and(|node| !node.metadata.contains_key("owner_type"))
             });
         }
+        // A method is reached through an object even where the language
+        // lets `this` go unwritten -- and then the object is the caller's
+        // own. `f(...)` in cats' Chain.scala is a function the body was
+        // handed, not `FlatMapped#f` over in FreeT.scala, yet 833 calls
+        // across the repository read as that one method. A method the
+        // caller's file declares, or one its own type inherits, is still
+        // reachable without a receiver, and so is a name the file imports
+        // outright.
+        if bare_call_stays_with_its_object(&call.language)
+            && !call.label.contains('.')
+            && !call.label.contains("::")
+            && !context
+                .file_imported_names
+                .get(call.span.path.as_str())
+                .is_some_and(|names| names.contains_key(&call.label))
+        {
+            let reachable_owners: Vec<String> = graph_node(&context.graph, call.caller)
+                .and_then(|node| node.metadata.get("owner_type").cloned())
+                .map(|owner| {
+                    let mut names = ancestor_type_names(&context.graph, &owner);
+                    names.push(owner);
+                    names
+                })
+                .unwrap_or_default();
+            language_targets.retain(|target| {
+                let Some(node) = graph_node(&context.graph, *target) else {
+                    return true;
+                };
+                let Some(owner) = node.metadata.get("owner_type") else {
+                    return true;
+                };
+                // `new Context(...)` names a class, not a method of the
+                // caller's own: a constructor takes its class's name, and
+                // Polly builds 208 of its `Context` that way.
+                owner == &node.label
+                    || node.span.as_ref().map(|span| span.path.as_str()) == caller_path
+                    || reachable_owners.contains(owner)
+            });
+        }
         // A qualified call names where it comes from. When the calling file
         // imports that qualifier, the import list answers the question that
         // matching by name only guesses at: an in-repo package narrows the
@@ -4231,6 +4270,21 @@ pub(crate) fn resolve_pending_file_routes(context: &mut IndexContext) {
 /// AdditionalFooterTextsController < Admin::SettingsController` states
 /// where its `show` comes from, and a route naming it reaches nothing
 /// without following the chain.
+/// Whether a bare call in this language can only mean a method the caller
+/// already has: its own, one it inherits, or one its file declares.
+///
+/// Only a language whose call label keeps the receiver can be asked: Java,
+/// Kotlin, Swift and PHP write `pet.getName()` and the label keeps
+/// `getName` alone, so a label without a receiver does not mean the source
+/// had none. C# and Dart keep it, but lose it again on a fluent chain that
+/// starts `.AddRetry(` on its own line, and answer a bare name through
+/// `using static` besides -- so both would refuse calls that are real.
+/// Python and Ruby require the receiver outright and are answered earlier,
+/// and Go, Rust and the rest reach package-level functions by a bare name.
+fn bare_call_stays_with_its_object(language: &str) -> bool {
+    language == "scala"
+}
+
 fn ancestor_type_names(graph: &CodeGraph, owner: &str) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     let mut current = owner.to_string();

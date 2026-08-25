@@ -236,6 +236,9 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A bare Scala call means a method the caller already has -- its own, one it inherits, or one its
+  file declares. cats writes `def f` on a case class in `FreeT.scala`, and 833 bare `f(...)` calls
+  across the repository, each a function its own body was handed, read as that one method.
 - A Lua file says what a qualified call means where it binds the module: `local pl_path = require
   "pl.path"` is the only thing that tells `pl_path.exists` from any project function named `exists`.
   The name the require binds is now recorded and read, so a call through it reaches the module the
