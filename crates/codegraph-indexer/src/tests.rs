@@ -2126,6 +2126,59 @@ fn kotlin_types_are_reached_by_the_declarations_that_name_them() {
 }
 
 #[test]
+fn a_bare_go_call_means_its_own_package() {
+    // Go resolves an unqualified name inside its own package, and a
+    // package is a directory: gqlgen declares `is_bin_in_path` in several
+    // and every call to it was ambiguous.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("internal/code")).unwrap();
+    fs::create_dir_all(root.join("internal/tool")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
+    fs::write(
+        root.join("internal/code/paths.go"),
+        "package code\n\nfunc isBinInPath() bool {\n\treturn true\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("internal/code/run.go"),
+        "package code\n\nfunc Run() bool {\n\treturn isBinInPath()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("internal/tool/paths.go"),
+        "package tool\n\nfunc isBinInPath() bool {\n\treturn false\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("isBinInPath")
+        })
+        .expect("the call is recorded");
+    assert_eq!(
+        call.metadata.get("resolution").map(String::as_str),
+        Some("resolved"),
+        "a package's own declaration is what an unqualified name means"
+    );
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == call.target)
+        .expect("the target is a node");
+    assert_eq!(
+        target.span.as_ref().map(|span| span.path.as_str()),
+        Some("internal/code/paths.go"),
+        "and the package next door declares a different function"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_go_package_is_a_directory_and_a_type_written_in_one_is_its_own() {
     // terraform declares `Backend` in seventeen packages, one per remote
     // state backend, so every reference to it was ambiguous and `impact

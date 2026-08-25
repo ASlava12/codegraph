@@ -2898,6 +2898,39 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             }
         }
 
+        // Go resolves an unqualified name inside its own package, and a
+        // package is a directory: `is_bin_in_path()` in gqlgen names the
+        // one its own directory declares, whatever the other twenty are.
+        // That is the language's rule rather than a guess about where a
+        // name lives.
+        if targets.len() > 1
+            && call.language == "go"
+            && !call.label.contains('.')
+            && let Some(directory) = call
+                .span
+                .path
+                .rsplit_once('/')
+                .map(|(directory, _)| directory)
+        {
+            let in_package = targets
+                .iter()
+                .copied()
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.span.as_ref())
+                        .is_some_and(|span| {
+                            span.path
+                                .rsplit_once('/')
+                                .is_some_and(|(candidate, _)| candidate == directory)
+                        })
+                })
+                .collect::<Vec<_>>();
+            if !in_package.is_empty() && in_package.len() < targets.len() {
+                targets = in_package;
+                basis = "package";
+            }
+        }
+
         let overloads = targets.len() > 1 && one_methods_overloads(&context.graph, &targets);
         if overloads && basis == "name" {
             basis = "overload";

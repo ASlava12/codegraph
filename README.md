@@ -236,6 +236,9 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Go resolves an unqualified name inside its own package, and a package is a directory: gqlgen
+  declares `isBinInPath` in several and every call to it was ambiguous. That is the language's rule
+  rather than a guess about where a name lives.
 - busted hands a Lua spec its cases and its assertions -- `describe`, `it`, `lazy_setup`,
   `assert.same` -- and munit and ScalaCheck do the same for a Scala suite with `test`, `checkAll` and
   `forAll`. kong's unresolved calls fall from 14083 to 9942 and cats' from 2189 to 1654, which is
