@@ -421,6 +421,57 @@ fn rust_test_definition(node: Node<'_>, source: &[u8]) -> bool {
     false
 }
 
+/// The Rails registrations that name a method with a symbol: a filter, a
+/// model callback, a validation. `before_action :set_account` is the
+/// framework calling `set_account` on the controller that wrote it.
+fn ruby_callback_registration(method: &str) -> bool {
+    matches!(
+        method,
+        "before_action"
+            | "after_action"
+            | "around_action"
+            | "prepend_before_action"
+            | "append_before_action"
+            | "skip_before_action"
+            | "before_filter"
+            | "after_filter"
+            | "before_save"
+            | "after_save"
+            | "before_create"
+            | "after_create"
+            | "before_update"
+            | "after_update"
+            | "before_destroy"
+            | "after_destroy"
+            | "before_validation"
+            | "after_validation"
+            | "after_commit"
+            | "after_rollback"
+            | "after_initialize"
+            | "after_touch"
+            | "validate"
+            | "helper_method"
+            | "rescue_from"
+    )
+}
+
+/// The class or module a Ruby node sits in, by its constant path.
+fn elixir_or_ruby_enclosing_type(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut current = node.parent();
+    let mut depth = 0;
+    while let Some(candidate) = current {
+        depth += 1;
+        if depth > 32 {
+            break;
+        }
+        if matches!(candidate.kind(), "class" | "module") {
+            return ruby_constant_path(candidate, source);
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
 /// Whether a name is a type parameter rather than a type: `T`, `A`, `K`,
 /// `V`, `T1`. Every generic declaration writes them and no project means
 /// its own type by them -- reading them as references pointed 10756 of
@@ -780,6 +831,48 @@ fn collect_reference_facts(
                     parent: current_function.clone(),
                 });
             }
+        }
+    }
+
+    // `before_action :set_account` is Rails invoking a method of the
+    // controller it is written in, and the same holds for a model's
+    // `after_commit :notify` and a validation's `validate :check`.
+    // mastodon names 342 methods that way and every one read as a method
+    // nobody calls.
+    if language == Language::Ruby
+        && node.kind() == "call"
+        && node.child_by_field_name("receiver").is_none()
+        && let Some(method) = named_child_text(node, "method", source)
+        && ruby_callback_registration(&method)
+        && let Some(arguments) = node.child_by_field_name("arguments")
+    {
+        let owner = elixir_or_ruby_enclosing_type(node, source);
+        let mut cursor = arguments.walk();
+        for argument in arguments.named_children(&mut cursor) {
+            if argument.kind() != "simple_symbol" {
+                continue;
+            }
+            let Some(name) = node_text(argument, source) else {
+                continue;
+            };
+            let name = name.trim().trim_start_matches(':').to_string();
+            if name.is_empty() {
+                continue;
+            }
+            // The class the registration is written in is the one whose
+            // method Rails calls, which is what tells 129 of mastodon's
+            // `set_account` callbacks apart from each other.
+            let mut metadata = BTreeMap::new();
+            if let Some(owner) = owner.clone() {
+                metadata.insert("receiver_type".to_string(), owner);
+            }
+            facts.items.push(ParsedItem {
+                kind: ParsedItemKind::Call,
+                label: name,
+                span: span_for(path, argument),
+                parent: current_function.clone(),
+                metadata,
+            });
         }
     }
 

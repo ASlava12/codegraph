@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- `before_action :set_account` is Rails invoking a method of the controller that wrote it, and the
+  same holds for a model's `after_commit :notify` and a `validate :check`. mastodon names 342 methods
+  that way and every one read as a method nobody calls; eleven of its controllers declare
+  `set_account`, and the class the registration sits in is what tells them apart. Its orphan
+  functions fall from 5617 to 5109.
 - Building a class runs its constructor, and a framework builds most of them: koel's container
   instantiates 208 classes whose `__construct` no `new` in the repository names. A class a route, a
   type hint or a `new` reaches is built; one nothing points at is still worth reporting, and its

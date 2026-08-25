@@ -2126,6 +2126,53 @@ fn kotlin_types_are_reached_by_the_declarations_that_name_them() {
 }
 
 #[test]
+fn a_rails_callback_calls_the_method_its_class_declares() {
+    // `before_action :set_account` is Rails invoking a method of the
+    // controller that wrote it, and mastodon names 342 methods that way.
+    // Every one read as a method nobody calls, and the name alone chooses
+    // none of them: eleven controllers declare `set_account`.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app/controllers/admin")).unwrap();
+    fs::write(
+        root.join("Gemfile"),
+        "source 'https://rubygems.org'\n\ngem 'rails'\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/controllers/accounts_controller.rb"),
+        "class AccountsController < ApplicationController\n  before_action :set_account, only: [:show]\n\n  def show\n    render json: @account\n  end\n\n  private\n\n  def set_account\n    @account = Account.find(params[:id])\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/controllers/admin/accounts_controller.rb"),
+        "class Admin::AccountsController < ApplicationController\n  def set_account\n    @account = nil\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("set_account")
+        })
+        .expect("the registration calls the method");
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == call.target)
+        .expect("the target is a node");
+    assert_eq!(
+        target.metadata.get("owner_type").map(String::as_str),
+        Some("AccountsController"),
+        "the class the registration is written in is the one Rails calls"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_rust_test_is_run_by_the_harness_and_not_by_the_project() {
     // `#[test] fn a_call_edge_says_what_settled_it` is called by nobody,
     // and that is how a test works. A Rust crate keeps its tests beside
