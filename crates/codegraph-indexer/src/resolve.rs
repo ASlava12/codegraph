@@ -2375,6 +2375,20 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             };
             !patches_runtime_global(&call.language, owner) || call_owner == Some(owner)
         });
+        // And the other way round: a call written through the runtime's own
+        // namespace is answered by the runtime. `table.concat` is Lua's,
+        // whatever a project names its own helpers -- kong declares `concat`
+        // in kong/tools/table.lua and it answered 221 calls to it, `decode`
+        // in an LDAP plugin and it answered 291 calls to `cjson.decode`.
+        if let Some(owner) = call_owner
+            && patches_runtime_global(&call.language, owner)
+        {
+            language_targets.retain(|target| {
+                graph_node(&context.graph, *target)
+                    .and_then(|node| split_qualified_call(&node.label))
+                    .is_some_and(|(target_owner, _)| target_owner == owner)
+            });
+        }
         // `value.parse::<usize>()` is `str::parse`, and this repository has
         // a `pub(crate) fn parse` of its own; ripgrep's 374 `.unwrap()`
         // calls found its private `fn unwrap`. A Rust call written through a

@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- `table.concat` is Lua's, whatever a project names its own helpers. A call written through the
+  runtime's own namespace is now answered by the runtime rather than by a definition that shares
+  only the tail: kong's `kong/tools/table.lua` had 123 callers it never had, and 571 of its call
+  edges were resolved or weighed against the wrong definition.
 - A serializer's `attributes :actor, :object` names the methods it renders with, so mastodon's 35
   `def actor` are called by the class that lists them rather than by nobody. Its orphan functions
   fall from 5109 to 4672.
