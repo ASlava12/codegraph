@@ -178,6 +178,11 @@ Implemented now:
   require('./utils').compileETag`), and a file that states no import at all may be a classic script,
   where a bare name really can come from anywhere, so the rule asks only files that import
   something.
+- Go and C# too: a Go parameter, field or variable names the struct it holds, and C# writes its
+  types as plain identifiers, so what a declaration states sits in its `type` field and the classes
+  it derives from in its base list. gin's `Context` -- the type its whole framework is written
+  against -- goes from 27 references for 208 types to 660, and `impact` on it names 447 dependents,
+  twelve routes and 393 tests; Polly goes from 395 to 2253 and Newtonsoft.Json to 5984.
 - Java and Rust types are reached the same way -- a field's type, a parameter's, a return type, a
   generic argument, `extends`/`implements`, and the type an `impl` block is written for. gson goes
   from 236 references into its 763 classes to 4116, ripgrep from 63 to 1157, serde to 2146, and

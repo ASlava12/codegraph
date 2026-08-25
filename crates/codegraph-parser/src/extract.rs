@@ -209,7 +209,7 @@ fn collect_reference_facts(
     // of gson's classes and six sevenths of ripgrep's types.
     if matches!(
         language,
-        Language::TypeScript | Language::Tsx | Language::Java | Language::Rust
+        Language::TypeScript | Language::Tsx | Language::Java | Language::Rust | Language::Go
     ) && node.kind() == "type_identifier"
         // The name in `interface Foo {}` declares the type rather than
         // referring to one, and the declaration is already a node.
@@ -225,6 +225,49 @@ fn collect_reference_facts(
             span: span_for(path, node),
             parent: current_function.clone(),
         });
+    }
+
+    // C# writes its types as plain identifiers, so the node kind alone
+    // cannot find them: what a declaration states is in its `type` field --
+    // a field's, a property's, a parameter's, a method's return -- and the
+    // classes a type derives from are its base list.
+    if language == Language::CSharp {
+        let mut cursor = node.walk();
+        let named: Vec<Node<'_>> = if node.kind() == "base_list" {
+            node.named_children(&mut cursor).collect()
+        } else {
+            node.child_by_field_name("type").into_iter().collect()
+        };
+        for type_node in named {
+            // `int`, `string` and `var` are the language's own, and its
+            // grammar gives them a kind of their own.
+            if matches!(type_node.kind(), "predefined_type" | "implicit_type") {
+                continue;
+            }
+            if let Some(label) = node_text(type_node, source) {
+                // `List<Policy>` names the generic and its argument; the
+                // argument is what a reader follows, and the generic's own
+                // children are walked anyway.
+                let label = label
+                    .split(['<', '[', '?', '('])
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                let label = label.rsplit('.').next().unwrap_or(label).trim();
+                let names_a_type = !label.is_empty()
+                    && label
+                        .chars()
+                        .next()
+                        .is_some_and(|first| first.is_ascii_uppercase());
+                if names_a_type {
+                    facts.type_references.push(ParsedTypeReference {
+                        label: label.to_string(),
+                        span: span_for(path, type_node),
+                        parent: current_function.clone(),
+                    });
+                }
+            }
+        }
     }
 
     // What a PHP declaration states about the classes it works with: the

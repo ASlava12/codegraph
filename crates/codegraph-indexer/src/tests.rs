@@ -6140,6 +6140,71 @@ fn java_and_rust_types_are_reached_by_the_declarations_that_name_them() {
 }
 
 #[test]
+fn go_and_csharp_types_are_reached_by_the_declarations_that_name_them() {
+    // gin's `Context` is the type its whole framework is written against
+    // and had 27 references for 208 types; C# writes its types as plain
+    // identifiers, so what a declaration states is in its `type` field and
+    // the classes it derives from are its base list.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("go")).unwrap();
+    fs::create_dir_all(root.join("cs")).unwrap();
+    fs::write(
+        root.join("go").join("go.mod"),
+        "module example.com/app\n\ngo 1.22\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("go").join("context.go"),
+        "package app\n\ntype Context struct {\n\tPath string\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("go").join("router.go"),
+        "package app\n\nfunc Handle(c *Context) string {\n\treturn c.Path\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("cs").join("Context.cs"),
+        "namespace App;\n\npublic class ResilienceContext\n{\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("cs").join("Pipeline.cs"),
+        "namespace App;\n\npublic class Pipeline\n{\n    private ResilienceContext _context;\n\n    public void Run(ResilienceContext context) => _context = context;\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let references = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.kind == EdgeKind::References
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|relation| relation == "type_reference")
+                    && graph
+                        .nodes
+                        .iter()
+                        .any(|node| node.id == edge.target && node.label == label)
+            })
+            .count()
+    };
+    assert!(
+        references("Context") >= 1,
+        "a go parameter names the struct it takes"
+    );
+    assert!(
+        references("ResilienceContext") >= 1,
+        "and a C# field and parameter name the class they hold"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn php_classes_are_reached_by_the_types_that_name_them() {
     // Laravel builds a service from its constructor's type hints rather
     // than with `new`, and a serializer states the interface it implements.
