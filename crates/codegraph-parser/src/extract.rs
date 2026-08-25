@@ -452,6 +452,11 @@ fn ruby_callback_registration(method: &str) -> bool {
             | "validate"
             | "helper_method"
             | "rescue_from"
+            // `attributes :actor, :object` is a serializer naming the
+            // methods it renders with: mastodon writes 35 `def actor` and
+            // every one read as a method nobody calls.
+            | "attributes"
+            | "attribute"
     )
 }
 

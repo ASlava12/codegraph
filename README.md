@@ -236,6 +236,9 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A serializer's `attributes :actor, :object` names the methods it renders with, so mastodon's 35
+  `def actor` are called by the class that lists them rather than by nobody. Its orphan functions
+  fall from 5109 to 4672.
 - `before_action :set_account` is Rails invoking a method of the controller that wrote it, and the
   same holds for a model's `after_commit :notify` and a `validate :check`. mastodon names 342 methods
   that way and every one read as a method nobody calls; eleven of its controllers declare
