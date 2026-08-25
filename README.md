@@ -232,6 +232,9 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- `params.require(:source)` is how a Rails controller reads a parameter, not how a file requires a
+  library: `require` is Kernel's, and a bare call is the only way to reach it. mastodon filed fifteen
+  imports of things called `params.require(:post)`.
 - A flake states the flakes it is built from, flat -- `inputs.nixpkgs.url = "github:NixOS/nixpkgs"`
   -- or inside an `inputs = { .. }` block, and home-manager writes both across five files. It was the
   last project in the corpus whose dependencies came from nowhere; every one of the 44 now declares

@@ -3041,6 +3041,10 @@ pub(crate) fn ruby_require_call(node: Node<'_>, source: &[u8]) -> bool {
         && named_child_text(node, "method", source)
             .as_deref()
             .is_some_and(|method| matches!(method, "require" | "require_relative"))
+        // `require` is Kernel's, and a bare call is the only way to reach
+        // it: `params.require(:source)` is Rails asking a request for a
+        // parameter, and mastodon writes fifteen of those.
+        && node.child_by_field_name("receiver").is_none()
 }
 
 pub(crate) fn call_label(language: Language, node: Node<'_>, source: &[u8]) -> Option<String> {

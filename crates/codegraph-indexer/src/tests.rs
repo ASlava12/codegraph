@@ -1644,6 +1644,38 @@ fn an_import_python_erases_is_not_a_runtime_dependency() {
 }
 
 #[test]
+fn asking_a_request_for_a_parameter_is_not_a_require() {
+    // `params.require(:source)` is how a Rails controller reads a
+    // parameter, and mastodon writes fifteen of them: each filed an import
+    // of something called `params.require(:source)`.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app")).unwrap();
+    fs::write(
+        root.join("app").join("posts_controller.rb"),
+        "require 'json'\n\nclass PostsController < ApplicationController\n  def create\n    params.require(:post).permit(:title)\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let imports: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata.get("item_kind").map(String::as_str) == Some("import")
+                && node.metadata.get("language").map(String::as_str) == Some("ruby")
+        })
+        .map(|node| node.label.as_str())
+        .collect();
+    assert_eq!(
+        imports,
+        vec!["require 'json'"],
+        "`require` is Kernel's, and a bare call is the only way to reach it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_flake_states_the_flakes_it_is_built_from() {
     // home-manager was the last project in the corpus whose dependencies
     // came from nowhere: a flake states them as `inputs`, flat or in a
