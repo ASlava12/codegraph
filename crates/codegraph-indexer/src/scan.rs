@@ -161,6 +161,8 @@ pub(crate) fn scan_project_with_scope(
         pending_entrypoint_targets: Vec::new(),
         pending_route_handlers: Vec::new(),
         pending_file_routes: Vec::new(),
+        string_constants: BTreeMap::new(),
+        pending_computed_environment_reads: Vec::new(),
         pending_compose_config_targets: Vec::new(),
         pending_compose_volume_targets: Vec::new(),
         kubernetes_configs: BTreeMap::new(),
@@ -334,6 +336,7 @@ pub(crate) fn scan_project_with_scope(
     resolve_pending_entrypoint_targets(&mut context);
     resolve_pending_route_handlers(&mut context);
     resolve_pending_file_routes(&mut context);
+    resolve_pending_computed_environment_reads(&mut context);
     link_imports_to_package_hubs(&mut context);
     resolve_pending_compose_config_targets(&mut context);
     resolve_pending_compose_volume_targets(&mut context);
@@ -1243,6 +1246,22 @@ pub(crate) fn index_file(
                     );
                 }
 
+                // What the file binds a name to, for the environment reads
+                // that name a constant rather than a variable.
+                for (name, value) in &parsed.string_constants {
+                    match context.string_constants.get(name) {
+                        Some(Some(existing)) if existing != value => {
+                            context.string_constants.insert(name.clone(), None);
+                        }
+                        Some(_) => {}
+                        None => {
+                            context
+                                .string_constants
+                                .insert(name.clone(), Some(value.clone()));
+                        }
+                    }
+                }
+
                 if let Some(source) = source_text.as_deref() {
                     index_framework_routes(
                         context,
@@ -1341,6 +1360,27 @@ pub(crate) fn index_file(
                         );
                         continue;
                     };
+
+                    // A read whose key is a name waits for the file that
+                    // binds it: `os.Getenv(envLogFile)` is `TF_LOG_PATH`
+                    // wherever terraform declares that constant, and 45 of
+                    // its 62 computed reads name one.
+                    if entity_kind == "environment"
+                        && item.label == codegraph_core::COMPUTED_ENVIRONMENT_KEY
+                        && let Some(expression) = item.metadata.get("key_expression")
+                    {
+                        item_metadata.insert("file".to_string(), label.to_string());
+                        item_metadata.insert("line".to_string(), item.span.start_line.to_string());
+                        context.pending_computed_environment_reads.push(
+                            PendingComputedEnvironmentRead {
+                                source: source_id,
+                                span: item.span.clone(),
+                                metadata: item_metadata,
+                                key_expression: expression.clone(),
+                            },
+                        );
+                        continue;
+                    }
 
                     let item_id = shared_effect_entity(
                         context,

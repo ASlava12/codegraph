@@ -17,7 +17,7 @@ pub const DEFAULT_MAX_FILE_SIZE: u64 = 2 * 1024 * 1024;
 // dropping of call labels that name nothing all changed what a parse of an
 // unchanged file yields. The build identity below catches the changes
 // nobody remembers to record here.
-pub(crate) const PARSE_CACHE_SCHEMA_VERSION: u32 = 3;
+pub(crate) const PARSE_CACHE_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Error)]
 pub enum IndexError {

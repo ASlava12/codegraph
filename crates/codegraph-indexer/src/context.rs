@@ -90,6 +90,11 @@ pub(crate) struct IndexContext {
     /// in is stated in its manifest, which the walk may not have reached
     /// yet, so the routes are made once the scan is complete.
     pub(crate) pending_file_routes: Vec<PendingFileRoute>,
+    /// What a name is bound to, when a file binds it to a string literal
+    /// at the top level. `None` marks a name two files bind differently,
+    /// which answers nothing.
+    pub(crate) string_constants: BTreeMap<String, Option<String>>,
+    pub(crate) pending_computed_environment_reads: Vec<PendingComputedEnvironmentRead>,
     pub(crate) pending_compose_config_targets: Vec<PendingComposeConfigTarget>,
     pub(crate) pending_compose_volume_targets: Vec<PendingComposeVolumeTarget>,
     pub(crate) kubernetes_configs: BTreeMap<KubernetesConfigKey, NodeId>,
@@ -198,6 +203,17 @@ pub(crate) struct PendingCall {
     /// name (`accounts.each`), rather than bare (`each`, which means
     /// `self`) or through a constant (`Rails.application`).
     pub(crate) receiver_is_a_value: bool,
+}
+
+/// An environment read whose key is a name rather than a literal,
+/// waiting for the constant that name is bound to. The constant is
+/// declared in whichever file declares it, which the walk may not have
+/// reached yet.
+pub(crate) struct PendingComputedEnvironmentRead {
+    pub(crate) source: NodeId,
+    pub(crate) span: SourceSpan,
+    pub(crate) metadata: BTreeMap<String, String>,
+    pub(crate) key_expression: String,
 }
 
 /// A file whose path names a route, waiting for the manifest to say

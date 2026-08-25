@@ -37,6 +37,12 @@ pub struct ParsedFile {
     /// this repository.
     #[serde(default)]
     pub string_line_ranges: Vec<(u32, u32)>,
+    /// Names the file binds to a string literal at the top level:
+    /// `const envLogFile = "TF_LOG_PATH"` is how a Go program spells the
+    /// environment variables it reads, and the read names the constant
+    /// rather than the variable.
+    #[serde(default)]
+    pub string_constants: Vec<(String, String)>,
     pub has_error_nodes: bool,
     /// The line the parser first lost the thread on, when it did. A file
     /// with an error node still yields facts, and where the grammar

@@ -6724,6 +6724,58 @@ fn rails_says_which_actions_a_resource_declares_and_which_controller_serves_them
 }
 
 #[test]
+fn an_environment_read_named_by_a_constant_says_which_variable_it_reads() {
+    // `os.Getenv(envLogFile)` is how a Go program reads `TF_LOG_PATH`,
+    // and the constant is declared in whichever file declares it. 45 of
+    // terraform's 62 computed reads name one, and each read as a hole in
+    // the environment map. A loop variable names nothing to look up and
+    // stays a hole, which is the honest answer.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("internal")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
+    fs::write(
+        root.join("internal").join("names.go"),
+        "package internal\n\nconst (\n\tenvLogFile = \"TF_LOG_PATH\"\n\tenvLog     = \"TF_LOG\"\n)\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("main.go"),
+        "package main\n\nimport \"os\"\n\nfunc read(keys []string) (string, string, string) {\n\tvalue := \"\"\n\tfor _, key := range keys {\n\t\tvalue = os.Getenv(key)\n\t}\n\treturn os.Getenv(envLogFile), os.Getenv(\"TF_INPUT\"), value\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let read = |label: &str| {
+        graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::Environment
+                && node.label == label
+                && graph
+                    .edges
+                    .iter()
+                    .any(|edge| edge.kind == EdgeKind::ReadsEnvironment && edge.target == node.id)
+        })
+    };
+    assert!(
+        read("TF_LOG_PATH"),
+        "the constant says which variable the read names"
+    );
+    assert!(read("TF_INPUT"), "and a literal still names its own");
+    assert!(
+        read("<computed name>"),
+        "while a key the loop builds names nothing to look up"
+    );
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::ReadsEnvironment
+                && edge.metadata.get("resolution").map(String::as_str) == Some("named_constant")
+        }),
+        "and the read says what settled its name"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_csharp_file_of_top_level_statements_is_where_the_program_starts() {
     // .NET lets one file per project write statements outside any
     // declaration, and the compiler wraps them in `Program.Main`.

@@ -6,7 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use codegraph_core::{
-    CodeGraph, Confidence, EdgeKind, Node, NodeId, NodeKind, SourceSpan, is_test_like_source_path,
+    COMPUTED_ENVIRONMENT_KEY, CodeGraph, Confidence, EdgeKind, Node, NodeId, NodeKind, SourceSpan,
+    is_test_like_source_path,
 };
 
 #[allow(unused_imports)]
@@ -3589,6 +3590,76 @@ enum OwnerMatch {
 /// The manifest is what says the project is written that way -- `app/` is
 /// a PHP directory as often as a Next.js one -- so this runs once the scan
 /// has read every manifest.
+/// The environment reads whose key is a name the project binds to a
+/// string: `os.Getenv(envLogFile)` reads `TF_LOG_PATH` wherever terraform
+/// declares that constant, and 45 of its 62 computed reads name one. A
+/// name nothing binds -- a loop variable, a parameter -- still has no
+/// name to give, and stays computed.
+pub(crate) fn resolve_pending_computed_environment_reads(context: &mut IndexContext) {
+    let pending = std::mem::take(&mut context.pending_computed_environment_reads);
+    // The scan files one read per line, and so does this: reading the same
+    // variable twice in one function is two lines a reader may want to open.
+    let mut sites: BTreeSet<(NodeId, NodeId, u32)> = BTreeSet::new();
+    for read in pending {
+        let label = computed_environment_key_name(&read.key_expression)
+            .and_then(|name| context.string_constants.get(&name).cloned().flatten())
+            .filter(|value| environment_key_is_a_name(value))
+            .unwrap_or_else(|| COMPUTED_ENVIRONMENT_KEY.to_string());
+        let item_id = shared_effect_entity(
+            context,
+            "environment",
+            NodeKind::Environment,
+            &label,
+            read.span.clone(),
+            BTreeMap::from([
+                ("parser".to_string(), "tree-sitter".to_string()),
+                ("item_kind".to_string(), "environment_read".to_string()),
+            ]),
+        );
+        if !sites.insert((read.source, item_id, read.span.start_line)) {
+            continue;
+        }
+        let mut metadata = read.metadata;
+        if label != COMPUTED_ENVIRONMENT_KEY {
+            // What settled the name, so a reader can see why the key is
+            // not written on the line the span points at.
+            metadata.insert("resolution".to_string(), "named_constant".to_string());
+        }
+        context.graph.add_edge_with_metadata(
+            read.source,
+            item_id,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+            metadata,
+        );
+    }
+}
+
+/// The name a computed key is written as: `os.Getenv(envLogFile)` names
+/// `envLogFile`. A key built from anything else -- a call, an index, a
+/// concatenation -- names nothing to look up.
+fn computed_environment_key_name(expression: &str) -> Option<String> {
+    let (_, rest) = expression.rsplit_once('(')?;
+    let name = rest.split(')').next()?.trim();
+    (!name.is_empty()
+        && name
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_')
+        && !name.starts_with(|character: char| character.is_ascii_digit()))
+    .then(|| name.to_string())
+}
+
+/// Whether a constant's value could be an environment variable's name.
+/// terraform binds `name` to `"%s"` in a test helper, which names no
+/// variable however the read is written.
+fn environment_key_is_a_name(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_alphanumeric() || matches!(character, '_' | '.' | '-'))
+        && !value.starts_with(|character: char| character.is_ascii_digit())
+}
+
 pub(crate) fn resolve_pending_file_routes(context: &mut IndexContext) {
     let pending = std::mem::take(&mut context.pending_file_routes);
     if pending.is_empty() {

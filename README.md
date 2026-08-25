@@ -232,6 +232,12 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- A Go program spells the variables it reads as constants: `os.Getenv(envLogFile)` reads
+  `TF_LOG_PATH` wherever terraform declares that name. The read filed a hole -- `<computed name>` --
+  for 62 of terraform's 299 environment reads, and 45 of them named a constant the project binds to
+  a literal. Those reads now say which variable they read: terraform's computed reads fall to 18 and
+  the variables it is known to read rise from 102 to 124. A key a loop builds still names nothing to
+  look up, and stays a hole, which is the honest answer.
 - What a program reads is its configuration, and how it is linted is not: "what configuration does
   it read?" answered koel with twelve GitHub Actions run steps before naming a single Laravel config
   key. The project's own configuration now comes first, and the CI steps after it.

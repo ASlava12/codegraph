@@ -80,6 +80,7 @@ pub fn parse_source(
         language,
         items: facts.items,
         type_references: facts.type_references,
+        string_constants: string_constants(language, root, source_text.as_bytes()),
         quoted_line_ranges: line_ranges_of(root, source_text, QuotedKinds::StringsAndComments),
         string_line_ranges: line_ranges_of(root, source_text, QuotedKinds::StringsOnly),
         has_error_nodes: root.has_error(),
@@ -94,6 +95,67 @@ fn csharp_top_level_statement(root: Node<'_>) -> Option<Node<'_>> {
     let mut cursor = root.walk();
     root.named_children(&mut cursor)
         .find(|child| child.kind() == "global_statement")
+}
+
+/// The names a file binds to a string literal at its top level. A Go
+/// program spells the environment variables it reads as constants --
+/// `const envLogFile = "TF_LOG_PATH"` -- and the read names the constant,
+/// so 45 of terraform's 62 environment reads had no variable name to give.
+fn string_constants(language: Language, root: Node<'_>, source: &[u8]) -> Vec<(String, String)> {
+    if language != Language::Go {
+        return Vec::new();
+    }
+    let mut constants = Vec::new();
+    let mut cursor = root.walk();
+    for declaration in root.named_children(&mut cursor) {
+        if !matches!(declaration.kind(), "const_declaration" | "var_declaration") {
+            continue;
+        }
+        let mut specs = declaration.walk();
+        for spec in declaration.named_children(&mut specs) {
+            if !matches!(spec.kind(), "const_spec" | "var_spec") {
+                continue;
+            }
+            // `a, b = "x", "y"` binds two names at once, and which value
+            // belongs to which name is a question the field cannot answer.
+            let mut names = spec.walk();
+            if spec
+                .named_children(&mut names)
+                .filter(|child| child.kind() == "identifier")
+                .count()
+                != 1
+            {
+                continue;
+            }
+            let Some(name) = spec
+                .child_by_field_name("name")
+                .and_then(|name| node_text(name, source))
+            else {
+                continue;
+            };
+            let Some(value) = spec.child_by_field_name("value") else {
+                continue;
+            };
+            let literal = value.named_child(0).unwrap_or(value);
+            if !matches!(
+                literal.kind(),
+                "interpreted_string_literal" | "raw_string_literal"
+            ) {
+                continue;
+            }
+            let Some(text) = node_text(literal, source) else {
+                continue;
+            };
+            let text = text
+                .trim()
+                .trim_matches(|character| matches!(character, '"' | '`'));
+            if name.is_empty() || text.is_empty() {
+                continue;
+            }
+            constants.push((name, text.to_string()));
+        }
+    }
+    constants
 }
 
 /// The 1-based line of the first error or missing node in the tree. Only
