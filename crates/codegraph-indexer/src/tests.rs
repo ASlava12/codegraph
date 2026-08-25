@@ -1689,6 +1689,47 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn a_javascript_spec_is_the_callbacks_it_is_written_in() {
+    // `describe('x', () => { it('y', () => { service.load() }) })` puts
+    // every call a test makes inside an anonymous function, which is a
+    // callback everywhere else and the test itself here: koel's 498 spec
+    // files made 1456 calls between them.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("package.json"), "{\n  \"name\": \"app\"\n}\n").unwrap();
+    fs::write(
+        root.join("src").join("service.ts"),
+        "export function load() {\n  return 1\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("service.spec.ts"),
+        "import { load } from './service'\n\ndescribe('service', () => {\n  it('loads', () => {\n    expect(load()).toBe(1)\n  })\n})\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let spec = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "src/service.spec.ts")
+        .expect("the spec is indexed")
+        .id;
+    let called: Vec<&str> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Calls && edge.source == spec)
+        .filter_map(|edge| edge.metadata.get("call_label").map(String::as_str))
+        .collect();
+    assert!(
+        called.contains(&"load"),
+        "the call a test makes belongs to the file that runs it, got {called:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_spec_is_the_blocks_it_is_written_in() {
     // `describe .. do it .. do expect(described_class.new).to be end end`
     // is what a spec file runs, and a Ruby block is a callback that runs

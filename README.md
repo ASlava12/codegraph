@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- The same holds for a JavaScript spec: `describe('x', () => { it('y', () => { service.load() }) })`
+  puts every call a test makes inside an anonymous function, which is a callback everywhere else and
+  the test itself here. koel's 498 spec files made 1456 calls between them and now make 6504, vue's
+  248 make 7579 and zod's 194 make 6347.
 - A spec is the blocks it is written in. `describe .. do it .. do expect(subject.call).to be end
   end` is what the file runs, and a Ruby block is otherwise a callback that runs when something
   invokes it -- so mastodon's 1312 spec files had 3163 calls between them and "which tests cover

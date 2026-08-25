@@ -1109,13 +1109,27 @@ fn is_deferred_body(language: Language, kind: &str, path: &str) -> bool {
     if language == Language::Lua && kind == "function_definition" {
         return true;
     }
-    kind.contains("lambda")
+    let anonymous = kind.contains("lambda")
         || kind.contains("closure")
         || kind.contains("anonymous")
         || matches!(
             kind,
             "arrow_function" | "function_expression" | "func_literal" | "fn"
+        );
+    // A JavaScript spec is written the same way as a Ruby one: `describe
+    // ('x', () => { it('y', () => { service.load() }) })` puts every call
+    // the test makes inside an anonymous function, and koel's 498 spec
+    // files made 1456 calls between them.
+    if anonymous
+        && matches!(
+            language,
+            Language::JavaScript | Language::TypeScript | Language::Tsx
         )
+        && is_test_like_source_path(path)
+    {
+        return false;
+    }
+    anonymous
 }
 
 /// Whether a C/C++ declaration is named by a word the language reserves,
