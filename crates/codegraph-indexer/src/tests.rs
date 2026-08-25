@@ -1689,6 +1689,56 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
+    // `$this->assertSame(..)` is PHPUnit's, reached through the class the
+    // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle
+    // writes 1800 such calls and koel a thousand more. A project that
+    // declares an assertion helper of its own keeps its callers, which is
+    // why the runner is asked last.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("tests")).unwrap();
+    fs::write(
+        root.join("composer.json"),
+        "{\n  \"name\": \"acme/app\"\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tests").join("Helper.php"),
+        "<?php\n\nnamespace Tests;\n\nclass Helper\n{\n    public function assertSongMatches($song): void\n    {\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tests").join("SongTest.php"),
+        "<?php\n\nnamespace Tests;\n\nclass SongTest extends TestCase\n{\n    public function testItWorks(): void\n    {\n        $this->assertSame(1, 1);\n        $this->assertSongMatches(null);\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    assert_eq!(
+        resolution("assertSame").as_deref(),
+        Some("builtin"),
+        "the runner hands the test case its assertions"
+    );
+    assert_eq!(
+        resolution("assertSongMatches").as_deref(),
+        Some("resolved"),
+        "and a helper the project writes keeps its caller"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn solidity_states_its_own_primitives_and_a_test_gets_its_cheatcodes() {
     // `require` and `keccak256` are the language's, `abi.encode` is how a
     // contract encodes what it sends, and `assertEq` and `vm.` come from

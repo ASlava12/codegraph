@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A PHP test case gets its assertions from the class it extends: `$this->assertSame(..)` is
+  PHPUnit's and `$mock->shouldReceive(..)` is Mockery's, and guzzle writes 1800 such calls, koel a
+  thousand more and monolog nine hundred. The runner is asked last, so a project that writes an
+  assertion helper of its own keeps its callers -- guzzle declares 27 and koel 32. guzzle's
+  unresolved calls fall from 9391 to 5906, koel's from 9665 to 7124.
 - Solidity states its own primitives: `require` and `revert` state a condition the call has to meet,
   `keccak256` and `ecrecover` are the chain's, and `abi.encode` is how a contract encodes what it
   sends. A Foundry test inherits its assertions and cheatcodes from the base contract -- `assertEq`,

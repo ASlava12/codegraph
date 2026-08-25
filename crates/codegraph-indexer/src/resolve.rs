@@ -601,17 +601,14 @@ pub(crate) fn languages_share_symbols(one: &str, other: &str) -> bool {
         )
 }
 
-/// Names a file's environment hands it without an import. A `<script
-/// setup>` block is compiled rather than run, and `defineProps` is a
-/// macro that compiler expands -- nobody imports it, and koel writes 361
-/// of them. A test file's `describe` and `expect` arrive the same way,
-/// from the runner. Reading either as a call the resolver failed on buries
-/// the failures somebody can act on.
+/// A macro the compiler expands rather than a function anybody calls: a
+/// `<script setup>` block is compiled, and `defineProps` is expanded
+/// there. koel writes 361 of them. This is asked before resolution
+/// because the macro wins even where the repository exports a function by
+/// that name, which vue does.
 pub(crate) fn environment_provides_call(language: &str, path: &str, label: &str) -> bool {
-    if !matches!(language, "javascript" | "typescript" | "tsx" | "solidity") {
-        return false;
-    }
-    if path.ends_with(".vue")
+    matches!(language, "javascript" | "typescript" | "tsx")
+        && path.ends_with(".vue")
         && matches!(
             label,
             "defineProps"
@@ -622,49 +619,82 @@ pub(crate) fn environment_provides_call(language: &str, path: &str, label: &str)
                 | "defineModel"
                 | "withDefaults"
         )
-    {
-        return true;
+}
+
+/// Names a test file gets from the runner it is written for, when nothing
+/// in the project answered for them. `describe` and `expect` are a JS
+/// runner's, `assertSame` and `shouldReceive` come to a PHP test case
+/// through the class it extends and the doubles it builds, and `assertEq`
+/// and `vm.` reach a Solidity test the same way. This is asked last, so a
+/// project that writes an assertion helper of its own keeps its callers:
+/// guzzle declares 27 and koel 32.
+fn test_runner_provides_call(language: &str, path: &str, label: &str) -> bool {
+    if !is_test_like_source_path(path) {
+        return false;
     }
-    if is_test_like_source_path(path) && language == "solidity" {
-        // Foundry hands a test contract its assertions and its cheatcodes:
-        // `assertEq` and `bound` come from the `Test` base contract, and
-        // `vm.` is the cheatcode address. openzeppelin writes 400 of them.
-        return matches!(
-            label,
-            "assertEq"
-                | "assertNotEq"
-                | "assertTrue"
-                | "assertFalse"
-                | "assertGt"
-                | "assertGe"
-                | "assertLt"
-                | "assertLe"
-                | "assertApproxEqAbs"
-                | "assertApproxEqRel"
-                | "bound"
-                | "deal"
-                | "hoax"
-                | "fail"
-                | "emit"
-        ) || label.starts_with("vm.");
+    match language {
+        "php" => {
+            label.starts_with("assert")
+                || label.starts_with("expect")
+                || matches!(
+                    label,
+                    "fail"
+                        | "markTestSkipped"
+                        | "markTestIncomplete"
+                        | "createMock"
+                        | "createStub"
+                        | "createPartialMock"
+                        | "getMockBuilder"
+                        | "willReturn"
+                        | "willReturnCallback"
+                        | "willThrowException"
+                        | "shouldReceive"
+                        | "shouldNotReceive"
+                        | "andReturn"
+                        | "andThrow"
+                        | "andReturnUsing"
+                )
+        }
+        "solidity" => {
+            matches!(
+                label,
+                "assertEq"
+                    | "assertNotEq"
+                    | "assertTrue"
+                    | "assertFalse"
+                    | "assertGt"
+                    | "assertGe"
+                    | "assertLt"
+                    | "assertLe"
+                    | "assertApproxEqAbs"
+                    | "assertApproxEqRel"
+                    | "bound"
+                    | "deal"
+                    | "hoax"
+                    | "fail"
+                    | "emit"
+            ) || label.starts_with("vm.")
+        }
+        "javascript" | "typescript" | "tsx" => {
+            matches!(
+                label,
+                "describe"
+                    | "suite"
+                    | "it"
+                    | "test"
+                    | "expect"
+                    | "beforeEach"
+                    | "afterEach"
+                    | "beforeAll"
+                    | "afterAll"
+                    | "before"
+                    | "after"
+            ) || ["vi.", "jest.", "expect.", "describe.", "it.", "test."]
+                .iter()
+                .any(|prefix| label.starts_with(prefix))
+        }
+        _ => false,
     }
-    is_test_like_source_path(path)
-        && (matches!(
-            label,
-            "describe"
-                | "suite"
-                | "it"
-                | "test"
-                | "expect"
-                | "beforeEach"
-                | "afterEach"
-                | "beforeAll"
-                | "afterAll"
-                | "before"
-                | "after"
-        ) || ["vi.", "jest.", "expect.", "describe.", "it.", "test."]
-            .iter()
-            .any(|prefix| label.starts_with(prefix)))
 }
 
 /// Whether a call names a module the language ships, when nothing in the
@@ -2732,6 +2762,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             let is_builtin = builtin_call_target(&call.language, &call.label)
                 || objc_platform_receiver(&call.language, call.receiver.as_deref())
                 || environment_provides_call(&call.language, &call.span.path, &call.label)
+                || test_runner_provides_call(&call.language, &call.span.path, &call.label)
                 || standard_library_module_call(&call.language, &call.label);
             if type_targets.len() > 1 && !is_builtin {
                 targets = type_targets;
