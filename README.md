@@ -236,6 +236,12 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A module the language ships answers only where the project declares none. 1144 of dune's
+  unresolved calls named an OCaml module that comes with the compiler -- `Printf.sprintf`,
+  `Unix.getenv`, `Filename.concat` -- while dune's own `stdune` declares `String`, `List` and
+  `Array` of its own, and 19,897 of its qualified calls resolve into the project that way. Asking
+  the language only after resolution has failed keeps both answers right, and does the same for
+  Julia's `Base` and `Core`.
 - Zig reaches its standard library through the constant a file binds with `@import("std")`: 775 of
   zls's 2955 unresolved calls were `std.` -- `std.debug.assert`, `std.ArrayList` -- and 174 more
   resolved into zls itself, so `std.debug.print` claimed the project's own `print` as its target and

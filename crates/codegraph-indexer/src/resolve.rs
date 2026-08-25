@@ -644,6 +644,59 @@ pub(crate) fn environment_provides_call(language: &str, path: &str, label: &str)
             .any(|prefix| label.starts_with(prefix)))
 }
 
+/// Whether a call names a module the language ships, when nothing in the
+/// project answered for it. This is asked only after resolution has
+/// failed, because a project may declare a module of the same name and
+/// mean its own: dune writes `String.` and `List.` for the modules its
+/// own `stdune` library defines, and 19,897 of its qualified calls
+/// resolve into the project that way.
+fn standard_library_module_call(language: &str, label: &str) -> bool {
+    let Some((module, _)) = label.split_once('.') else {
+        return false;
+    };
+    match language {
+        "ocaml" => matches!(
+            module,
+            "Stdlib"
+                | "Printf"
+                | "Format"
+                | "Scanf"
+                | "Printexc"
+                | "Sys"
+                | "Unix"
+                | "Filename"
+                | "Arg"
+                | "Buffer"
+                | "Bytes"
+                | "Char"
+                | "Digest"
+                | "Either"
+                | "Fun"
+                | "Gc"
+                | "Hashtbl"
+                | "In_channel"
+                | "Int32"
+                | "Int64"
+                | "Lazy"
+                | "Marshal"
+                | "Mutex"
+                | "Nativeint"
+                | "Obj"
+                | "Out_channel"
+                | "Random"
+                | "Seq"
+                | "Stack"
+                | "Str"
+                | "Uchar"
+                | "Weak"
+        ),
+        // Julia's `Base` and `Core` are open in every module, and nothing
+        // outside the language declares them.
+        "julia" => matches!(module, "Base" | "Core"),
+        _ => false,
+    }
+}
+
 pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
     // PHP writes `\count(..)` to mean the global function rather than one
     // the current namespace might define, and monolog writes 273 of its
@@ -2623,7 +2676,8 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             // version, yet a bare `Seq(...)` is the standard library's.
             let is_builtin = builtin_call_target(&call.language, &call.label)
                 || objc_platform_receiver(&call.language, call.receiver.as_deref())
-                || environment_provides_call(&call.language, &call.span.path, &call.label);
+                || environment_provides_call(&call.language, &call.span.path, &call.label)
+                || standard_library_module_call(&call.language, &call.label);
             if type_targets.len() > 1 && !is_builtin {
                 targets = type_targets;
                 ambiguous_candidates_are_types = true;

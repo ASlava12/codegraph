@@ -1689,6 +1689,52 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn a_language_module_answers_only_where_the_project_declares_none() {
+    // 1144 of dune's unresolved calls named an OCaml module the language
+    // ships -- `Printf.sprintf`, `Unix.getenv`, `Filename.concat`. But
+    // dune's own `stdune` library declares `String`, `List` and `Array`
+    // of its own, and 19,897 of its qualified calls resolve into the
+    // project that way: the language answers only where nothing else did.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("dune-project"), "(lang dune 3.0)\n(name app)\n").unwrap();
+    fs::write(
+        root.join("src").join("string.ml"),
+        "let capitalize value = value\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("main.ml"),
+        "let run value =\n  let text = String.capitalize value in\n  Printf.sprintf \"%s\" text\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    assert_eq!(
+        resolution("String.capitalize").as_deref(),
+        Some("resolved"),
+        "a project that declares the module means its own"
+    );
+    assert_eq!(
+        resolution("Printf.sprintf").as_deref(),
+        Some("builtin"),
+        "and the language answers for the module it ships"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn zigs_standard_library_is_the_languages_own() {
     // zls reaches the standard library through the constant its files
     // bind with `@import("std")`, and 775 of its 2955 unresolved calls
