@@ -600,6 +600,49 @@ pub(crate) fn languages_share_symbols(one: &str, other: &str) -> bool {
         )
 }
 
+/// Names a file's environment hands it without an import. A `<script
+/// setup>` block is compiled rather than run, and `defineProps` is a
+/// macro that compiler expands -- nobody imports it, and koel writes 361
+/// of them. A test file's `describe` and `expect` arrive the same way,
+/// from the runner. Reading either as a call the resolver failed on buries
+/// the failures somebody can act on.
+pub(crate) fn environment_provides_call(language: &str, path: &str, label: &str) -> bool {
+    if !matches!(language, "javascript" | "typescript" | "tsx") {
+        return false;
+    }
+    if path.ends_with(".vue")
+        && matches!(
+            label,
+            "defineProps"
+                | "defineEmits"
+                | "defineExpose"
+                | "defineOptions"
+                | "defineSlots"
+                | "defineModel"
+                | "withDefaults"
+        )
+    {
+        return true;
+    }
+    is_test_like_source_path(path)
+        && (matches!(
+            label,
+            "describe"
+                | "suite"
+                | "it"
+                | "test"
+                | "expect"
+                | "beforeEach"
+                | "afterEach"
+                | "beforeAll"
+                | "afterAll"
+                | "before"
+                | "after"
+        ) || ["vi.", "jest.", "expect.", "describe.", "it.", "test."]
+            .iter()
+            .any(|prefix| label.starts_with(prefix)))
+}
+
 pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
     // PHP writes `\count(..)` to mean the global function rather than one
     // the current namespace might define, and monolog writes 273 of its
@@ -2104,8 +2147,13 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // the repository's `instance.create`, and matching on that tail
         // invented a dependency cycle between two files that never call
         // each other.
-        let all_targets = if (call.label.contains('.') || call.label.contains(':'))
-            && builtin_call_target(&call.language, &call.label)
+        // The same holds for a name the file's environment hands it:
+        // `defineProps` inside a `<script setup>` block is the macro that
+        // compiler expands, even in the repository that also exports a
+        // function by that name -- vue does.
+        let all_targets = if ((call.label.contains('.') || call.label.contains(':'))
+            && builtin_call_target(&call.language, &call.label))
+            || environment_provides_call(&call.language, &call.span.path, &call.label)
         {
             Vec::new()
         } else {
@@ -2567,7 +2615,8 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             // cross-built, so its `compat/Seq.scala` exists once per Scala
             // version, yet a bare `Seq(...)` is the standard library's.
             let is_builtin = builtin_call_target(&call.language, &call.label)
-                || objc_platform_receiver(&call.language, call.receiver.as_deref());
+                || objc_platform_receiver(&call.language, call.receiver.as_deref())
+                || environment_provides_call(&call.language, &call.span.path, &call.label);
             if type_targets.len() > 1 && !is_builtin {
                 targets = type_targets;
                 ambiguous_candidates_are_types = true;

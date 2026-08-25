@@ -232,6 +232,19 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- `import('./Home.vue')` loads a file; it is not a call to a function named `import`. That is how a
+  router reaches a page it loads on demand, and koel filed 168 of them as calls and reached none of
+  the pages -- 186 of its dynamic imports now reach the file they load, and the three that do not
+  name npm packages. A specifier the program builds -- ``import(`./pages/${name}.vue`)`` -- names
+  nothing to resolve and is left alone. Reading them found five true packaging faults nothing else
+  had: koel loads `pusher-js` and `laravel-echo` from its app while declaring both as dev
+  dependencies, vue's compiler does the same with `sass` and `@babel/types`, and mastodon imports
+  `tesseract.js-core`, which its `package.json` never mentions.
+- A name the file's environment hands it is provided, not missing: `defineProps` is expanded by the
+  compiler that reads a `<script setup>` block, and `describe` is handed to a test file by its
+  runner. Neither is imported, and reading them as resolver failures buried the ones somebody can
+  act on -- koel's unresolved calls drop from 1392 to 1027 and vue's from 1775 to 1410. The macro
+  wins even where the repository exports a function by that name, which vue does.
 - A value a factory builds is a declaration other files call: vue writes most of its public API as
   `export const onMounted = createHook(MOUNTED)`, a component library its variants as
   `const buttonVariants = cva(..)`. Neither was in the graph, so 523 of vue's calls resolved to

@@ -696,6 +696,11 @@ pub(crate) fn classify_node(
             | "type_alias_declaration"
             | "enum_declaration" => ParsedItemKind::Type,
             "import_statement" => ParsedItemKind::Import,
+            // A route loads its page with `import('./Home.vue')`, and that
+            // is an import like any other.
+            "call_expression" if js_dynamic_import_specifier(node, source).is_some() => {
+                ParsedItemKind::Import
+            }
             _ => return None,
         },
         Language::Go => match kind {
@@ -2500,13 +2505,18 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
         // it, every component in a React project was written and never
         // used -- taxonomy's layout renders eleven of them and reached
         // none.
-        Language::JavaScript | Language::TypeScript | Language::Tsx => matches!(
-            node.kind(),
-            "call_expression"
-                | "new_expression"
-                | "jsx_opening_element"
-                | "jsx_self_closing_element"
-        ),
+        // `import('./Home.vue')` is the file loading another module, not a
+        // call to a function named `import`.
+        Language::JavaScript | Language::TypeScript | Language::Tsx => {
+            !js_import_call(node, source)
+                && matches!(
+                    node.kind(),
+                    "call_expression"
+                        | "new_expression"
+                        | "jsx_opening_element"
+                        | "jsx_self_closing_element"
+                )
+        }
         Language::Go | Language::C | Language::Cpp => node.kind() == "call_expression",
         // `[manager GET:path parameters:nil]` is a call, and its selector
         // is the name being called.
@@ -3163,6 +3173,44 @@ pub(crate) fn binds_an_outer_name(language: Language, node: Node<'_>) -> bool {
             .is_some_and(|parent| parent.kind() == "assignment_expression")
 }
 
+/// Whether this is `import(..)`: the dynamic import, which reads as a
+/// call to a function named `import` and is nothing of the kind.
+pub(crate) fn js_import_call(node: Node<'_>, source: &[u8]) -> bool {
+    node.kind() == "call_expression"
+        && node
+            .child_by_field_name("function")
+            .and_then(|function| node_text(function, source))
+            .as_deref()
+            .map(str::trim)
+            == Some("import")
+}
+
+/// What `import('./Home.vue')` loads. A router writes one per page, and
+/// it is the only edge that reaches a lazily loaded one -- koel filed 168
+/// of them as calls to a function named `import` and reached none of the
+/// files. A specifier built at runtime -- `import(path)` -- names nothing
+/// to resolve.
+pub(crate) fn js_dynamic_import_specifier(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if !js_import_call(node, source) {
+        return None;
+    }
+    let arguments = node.child_by_field_name("arguments")?;
+    let mut cursor = arguments.walk();
+    let first = arguments.named_children(&mut cursor).next()?;
+    if !matches!(first.kind(), "string" | "template_string") {
+        return None;
+    }
+    let text = node_text(first, source)?;
+    let specifier = text
+        .trim()
+        .trim_matches(|character| matches!(character, '\'' | '"' | '`'));
+    // `import(`./pages/${name}.vue`)` is a path the program builds.
+    if specifier.is_empty() || specifier.contains(['$', '{', '\n']) {
+        return None;
+    }
+    Some(specifier.to_string())
+}
+
 pub(crate) fn js_bound_function_name(node: Node<'_>, source: &[u8]) -> Option<String> {
     let bound = node.parent().and_then(|parent| match parent.kind() {
         "variable_declarator" => named_child_text(parent, "name", source),
@@ -3203,6 +3251,12 @@ pub(crate) fn item_label(
         }
         if node.kind() == "variable_declarator" {
             return js_value_declaration_name(node, source);
+        }
+        // A dynamic import states what it loads the way a static one does,
+        // so every reader of an import label reads this one too.
+        if node.kind() == "call_expression" {
+            return js_dynamic_import_specifier(node, source)
+                .map(|specifier| format!("import(\"{specifier}\")"));
         }
     }
 

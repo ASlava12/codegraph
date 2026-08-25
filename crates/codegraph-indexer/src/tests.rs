@@ -6529,6 +6529,118 @@ fn a_dockerfile_command_runs_from_the_build_context() {
 }
 
 #[test]
+fn a_dynamic_import_loads_a_file_rather_than_calling_a_function_named_import() {
+    // `import('./Home.vue')` is how a router loads a page on demand, and
+    // it is the only edge that reaches one. koel filed 168 of them as
+    // calls to a function named `import` and reached none of the pages.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("package.json"),
+        "{\n  \"name\": \"app\",\n  \"dependencies\": { \"lodash\": \"^4\" }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("routes.js"),
+        "export const routes = [\n  { path: '/home', component: () => import('./Home.js') },\n]\n\nexport async function heavy(name) {\n  await import('lodash')\n  return import(`./pages/${name}.js`)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Home.js"),
+        "export function Home() {\n  return 'home'\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    assert!(
+        !graph.edges.iter().any(|edge| edge.kind == EdgeKind::Calls
+            && edge.metadata.get("call_label").map(String::as_str) == Some("import")),
+        "loading a module is not a call to a function named `import`"
+    );
+    let home = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::File && node.label == "src/Home.js")
+        .expect("the lazily loaded page is indexed")
+        .id;
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.target == home
+                && edge.metadata.get("relation").map(String::as_str) == Some("local_import_file")
+        }),
+        "the dynamic import reaches the file it loads"
+    );
+    let imported: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.label.starts_with("import(\""))
+        .map(|node| node.label.clone())
+        .collect();
+    assert!(
+        imported.contains(&"import(\"lodash\")".to_string()),
+        "a package loaded on demand is still that package, got {imported:?}"
+    );
+    assert_eq!(
+        imported.len(),
+        2,
+        "a path the program builds at runtime names nothing to resolve, got {imported:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_compiler_macro_and_a_test_runners_globals_are_provided_rather_than_missing() {
+    // `defineProps` is expanded by the compiler that reads a `<script
+    // setup>` block, and `describe` is handed to a test file by its
+    // runner. Neither is imported, and reading them as calls the resolver
+    // failed on buried the 1027 failures somebody can act on under 365
+    // that nobody can.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("package.json"), "{\n  \"name\": \"app\"\n}\n").unwrap();
+    fs::write(
+        root.join("src").join("Title.vue"),
+        "<script setup lang=\"ts\">\nconst props = defineProps<{ title: string }>()\n</script>\n\n<template>\n  <h1>{{ props.title }}</h1>\n</template>\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("title.test.ts"),
+        "describe('Title', () => {\n  it('renders', () => {\n    expect(1).toBe(1)\n  })\n})\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("helper.ts"),
+        "export function defineProps() {\n  return 1\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    assert_eq!(
+        resolution("defineProps").as_deref(),
+        Some("builtin"),
+        "a compiler macro is provided to the block the compiler reads"
+    );
+    assert_eq!(
+        resolution("describe").as_deref(),
+        Some("builtin"),
+        "a runner hands its test file `describe`"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_value_a_factory_builds_is_a_declaration_other_files_call() {
     // `export const onMounted = createHook(MOUNTED)` is how vue declares
     // most of its public API, and `const buttonVariants = cva(..)` how a
