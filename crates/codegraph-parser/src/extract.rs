@@ -320,15 +320,30 @@ fn collect_reference_facts(
     // extends and the interfaces it implements. Laravel builds a service
     // from its constructor's type hints rather than with `new`, so without
     // these koel's 1319 classes had almost nothing pointing at them.
+    // `AlbumController::class` is how PHP writes down a class it does not
+    // build: Laravel routes name their controller that way, a container
+    // names what it binds, and a config file names its providers. koel
+    // writes 111 of them in its routes alone, and nothing pointed at the
+    // classes they name.
     if language == Language::Php
         && matches!(
             node.kind(),
-            "named_type" | "base_clause" | "class_interface_clause"
+            "named_type"
+                | "base_clause"
+                | "class_interface_clause"
+                | "class_constant_access_expression"
         )
     {
         let mut cursor = node.walk();
         let names: Vec<Node<'_>> = if node.kind() == "named_type" {
             vec![node]
+        } else if node.kind() == "class_constant_access_expression" {
+            // `Foo::class` names Foo; `self::class` and `$this::class`
+            // name whatever is already being read.
+            node.named_child(0)
+                .filter(|name| matches!(name.kind(), "name" | "qualified_name"))
+                .into_iter()
+                .collect()
         } else {
             node.named_children(&mut cursor).collect()
         };

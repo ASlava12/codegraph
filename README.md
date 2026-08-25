@@ -232,6 +232,11 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- `AlbumController::class` is how PHP writes down a class it does not build, and koel writes 111 of
+  them in its routes alone -- every Laravel route names its controller that way, as does a container
+  binding and a config file's provider list. None was read, so "what breaks if I change
+  AlbumController" answered with the class and nothing else; it now names the route file and the 171
+  routes it holds. koel's type references go from 3798 to 4892.
 - A .NET program starts in a file of statements. C# lets one file per project write statements
   outside any declaration and the compiler wraps them in `Program.Main`, which is how eShopOnWeb
   starts all three of its programs -- and with no `Main` to find, nothing said where any of them

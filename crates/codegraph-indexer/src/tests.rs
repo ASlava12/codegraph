@@ -6324,6 +6324,11 @@ fn php_classes_are_reached_by_the_types_that_name_them() {
     )
     .unwrap();
     fs::write(
+        root.join("app").join("routes.php"),
+        "<?php\n\nnamespace App;\n\nRoute::apiResource('songs', SongController::class);\n",
+    )
+    .unwrap();
+    fs::write(
         root.join("app").join("SongController.php"),
         "<?php\n\nnamespace App;\n\nclass SongController implements Serializer\n{\n    public function __construct(private SongService $songs)\n    {\n    }\n\n    public function update(): bool\n    {\n        return $this->songs->update();\n    }\n}\n",
     )
@@ -6350,6 +6355,12 @@ fn php_classes_are_reached_by_the_types_that_name_them() {
     assert!(
         reaches("Serializer"),
         "and a class states the interface it implements"
+    );
+    assert!(
+        reaches("SongController"),
+        "and `SongController::class` names it without building it -- which is \
+         how a Laravel route, a container binding and a config file all name \
+         a class, 111 times in koel's routes alone"
     );
 
     fs::remove_dir_all(root).unwrap();
