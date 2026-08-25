@@ -15833,12 +15833,14 @@ fn an_ocaml_module_call_finds_the_file_that_is_that_module() {
         "{}",
         target_path("Json.assoc")
     );
+    // The file is the module, so `assoc` there belongs to `Json` outright
+    // and the owner settles the call before the file name has to.
     assert_eq!(
         call("Json.assoc")
             .metadata
             .get("resolution_basis")
             .map(String::as_str),
-        Some("module_file")
+        Some("owner_type")
     );
     // A path-qualified module is still that module.
     assert!(target_path("Stdune.Json.assoc").ends_with("json.ml"));
@@ -16379,6 +16381,56 @@ fn a_cpp_method_written_inside_its_class_knows_whose_it_is() {
         vec!["reader", "writer"],
         "each method belongs to the class body it is written in"
     );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_function_knows_the_module_its_file_declares() {
+    // Erlang states the module once at the top of the file and OCaml names
+    // one after the file itself, so neither encloses anything a walk up the
+    // tree can find: cowboy's 3924 functions and dune's 14636 belonged to
+    // nobody, and every name two files shared was a choice the graph could
+    // not make.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("rebar.config"), "{erl_opts, []}.\n").unwrap();
+    fs::write(
+        root.join("src/cowboy_req.erl"),
+        "-module(cowboy_req).\n-export([reply/1]).\n\nreply(Req) -> Req.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/path.ml"),
+        "let build parts = parts\n\nmodule Local = struct\n  let build parts = parts\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let owner = |label: &str, path: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == NodeKind::Function
+                    && node.label == label
+                    && node.span.as_ref().is_some_and(|span| span.path == path)
+            })
+            .and_then(|node| node.metadata.get("owner_type").cloned())
+    };
+    assert_eq!(
+        owner("reply", "src/cowboy_req.erl").as_deref(),
+        Some("cowboy_req")
+    );
+    // The file is the module, whether a binding sits at its top level or
+    // inside a `module ... = struct` written in it.
+    let builds: Vec<String> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Function && node.label == "build")
+        .filter_map(|node| node.metadata.get("owner_type").cloned())
+        .collect();
+    assert_eq!(builds, vec!["Path".to_string(), "Path".to_string()]);
 
     fs::remove_dir_all(root).unwrap();
 }

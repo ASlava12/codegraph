@@ -1757,7 +1757,7 @@ pub(crate) fn classify_node(
         item_kind,
         ParsedItemKind::Function | ParsedItemKind::Entrypoint
     ) {
-        if let Some(owner) = enclosing_type_label(language, node, source) {
+        if let Some(owner) = enclosing_type_label(language, node, source, path) {
             metadata.insert("owner_type".to_string(), owner);
         }
         if let Some(visibility) = visibility_label(language, node, source, &label) {
@@ -2113,6 +2113,56 @@ fn ruby_visibility_keyword(text: &str) -> Option<&'static str> {
     }
 }
 
+/// The module written around a definition: Julia's `module X ... end`.
+fn nested_module_name(language: Language, node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        let matched =
+            matches!(language, Language::Julia) && candidate.kind() == "module_definition";
+        if matched
+            && let Some(name) = named_child_text(candidate, "name", source)
+                .or_else(|| child_kind_text(candidate, "identifier", source))
+            && !name.trim().is_empty()
+        {
+            return Some(name.trim().to_string());
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+/// The module a file is, for a language that names one after the other:
+/// `path.ml` is `Path` and `iteration.jl` is `Iteration`.
+fn file_module_name(path: &str) -> Option<String> {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    let stem = file.split('.').next().unwrap_or(file);
+    if stem.is_empty() || !stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    let mut characters = stem.chars();
+    let first = characters.next()?.to_ascii_uppercase();
+    Some(std::iter::once(first).chain(characters).collect())
+}
+
+/// The module an Erlang file declares. `-module(cowboy_req).` sits at the
+/// top and encloses nothing, so a walk up the tree never reaches it.
+fn erlang_module_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut root = node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    let mut cursor = root.walk();
+    let attribute = root
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "module_attribute")?;
+    let name = attribute
+        .child_by_field_name("name")
+        .or_else(|| attribute.named_child(0))?;
+    node_text(name, source)
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+}
+
 /// The names an Erlang module lets out, or `None` when it lets out
 /// everything: a module with no `-export` attribute at all, or one that
 /// says `-compile(export_all)`. `-export_type` lists types, not functions.
@@ -2295,6 +2345,7 @@ pub(crate) fn enclosing_type_label(
     language: Language,
     node: Node<'_>,
     source: &[u8],
+    path: &str,
 ) -> Option<String> {
     // Go states the owner in the declaration itself, not in an enclosing
     // block: `func (b *Backend) Configure(...)` is top level, and its receiver
@@ -2323,6 +2374,31 @@ pub(crate) fn enclosing_type_label(
     // one knew which module it was in.
     if language == Language::Elixir {
         return elixir_enclosing_module(node, source);
+    }
+
+    // A julia function belongs to the module written around it. The file is
+    // not one -- DataFrames keeps a single `module DataFrames` and
+    // `include`s the rest -- so a file that states none leaves the question
+    // open rather than inventing a module from the file name.
+    if language == Language::Julia {
+        return nested_module_name(language, node, source);
+    }
+
+    // OCaml names a module after the file that holds it: `build` in path.ml
+    // is `Path.build`. That is the language's own rule, and the one calls
+    // are already resolved by; dune's 14636 functions belonged to nobody,
+    // so every name two files shared was a choice the graph could not make.
+    if language == Language::OCaml {
+        return file_module_name(path);
+    }
+
+    // An Erlang function belongs to the module the file declares, which is
+    // stated once at the top -- `-module(cowboy_req).` -- and encloses
+    // nothing. cowboy writes 3924 functions and every one belonged to
+    // nobody, so its two dozen `init/2` were one name with two dozen
+    // answers.
+    if language == Language::Erlang {
+        return erlang_module_name(node, source);
     }
 
     let mut current = node.parent();

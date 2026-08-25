@@ -236,6 +236,13 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A function knows the module its file declares. Erlang states it once at the top --
+  `-module(cowboy_req).` -- and OCaml names one after the file itself, so neither encloses anything
+  a walk up the tree can find: cowboy's 3924 functions and dune's 14636 belonged to nobody, and
+  every name two files shared was a choice the graph could not make. cowboy's ambiguous calls fall
+  from 2744 to 809 and dune's from 17791 to 12119. A julia module is written out, so only what one
+  encloses belongs to it -- a file that states none leaves the question open rather than inventing
+  a module from the file name.
 - A C++ method written inside its class body has only the class around it to say whose it is: a
   method defined outside names the owner in the declarator, but nlohmann and spdlog write nearly
   every one inline and 96% of their functions knew no owner. nlohmann's ambiguous calls fall from
