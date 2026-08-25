@@ -16641,3 +16641,54 @@ fn a_csharp_using_alias_names_the_type_a_call_goes_through() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_java_receiver_states_which_method_a_call_means() {
+    // `Gson gson = new Gson();` says which `fromJson` the call means, and
+    // gson declares fourteen of them. Java states the type of everything it
+    // binds, and none of it had ever been read.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src/main/java/app")).unwrap();
+    fs::write(root.join("pom.xml"), "<project></project>\n").unwrap();
+    fs::write(
+        root.join("src/main/java/app/Gson.java"),
+        "package app;\n\npublic final class Gson {\n  public String fromJson(String json) {\n    return json;\n  }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main/java/app/TypeAdapter.java"),
+        "package app;\n\npublic final class TypeAdapter {\n  public String fromJson(String json) {\n    return json;\n  }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main/java/app/Caller.java"),
+        "package app;\n\npublic final class Caller {\n  public String run() {\n    Gson gson = new Gson();\n    return gson.fromJson(\"{}\");\n  }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("fromJson")
+        })
+        .expect("the call is recorded");
+    assert_eq!(
+        call.metadata.get("resolution").map(String::as_str),
+        Some("resolved")
+    );
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == call.target)
+        .expect("the target is a node");
+    assert_eq!(
+        target.metadata.get("owner_type").map(String::as_str),
+        Some("Gson"),
+        "the declaration of the receiver says whose method is meant"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

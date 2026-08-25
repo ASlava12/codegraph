@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Java states the type of everything it binds -- `Gson gson = new Gson();`, `void check(JsonReader
+  reader)` -- and none of it had ever been read, so a call through a receiver had only its method
+  name to match on. gson declares fourteen `fromJson` and 563 calls chose between all fourteen; its
+  ambiguous calls fall from 4465 to 2146 with 2365 more resolved, and retrofit's from 3016 to 2560.
 - `using Assert = Newtonsoft.Json.Tests.XUnitAssert;` renames a type, and every call written
   through the alias means the type it stands for. Newtonsoft's tests write 2199 `Assert.AreEqual`,
   each a choice between the three `AreEqual` the project declares; its ambiguous calls fall from

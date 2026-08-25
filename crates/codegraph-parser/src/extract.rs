@@ -2705,6 +2705,12 @@ pub(crate) fn classify_call(
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || character == '_')
         {
+            // The signature or a declaration in the body may state what the
+            // receiver is: `Gson gson = new Gson()` says which `fromJson`
+            // the call means, and gson declares fourteen.
+            if let Some(receiver_type) = scope.variable_types.get(&text) {
+                metadata.insert("receiver_type".to_string(), receiver_type.clone());
+            }
             metadata.insert("receiver".to_string(), text);
         }
         metadata.insert("receiver_form".to_string(), "value".to_string());
@@ -2779,6 +2785,13 @@ pub(crate) fn declared_variable_types(
     source: &[u8],
 ) -> BTreeMap<String, String> {
     let mut declared = BTreeMap::new();
+    // Java states the type of everything it binds -- `Gson gson = new
+    // Gson();`, `void check(JsonReader reader)` -- and the receiver is the
+    // only thing that says which `fromJson` a call means. gson declares 14
+    // of them and 563 calls chose between all 14.
+    if language == Language::Java {
+        return java_declared_variable_types(node, source);
+    }
     if language != Language::Go {
         return declared;
     }
@@ -2822,6 +2835,75 @@ pub(crate) fn declared_variable_types(
     declared.extend(go_declared_var_types(node, source));
     declared.extend(go_composite_literal_types(node, source));
     declared
+}
+
+/// The names a Java definition binds with a type: its parameters and every
+/// local declaration in its body. A name bound twice to different types is
+/// left out rather than guessed at.
+fn java_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    let mut declared: BTreeMap<String, String> = BTreeMap::new();
+    let mut conflicting: BTreeSet<String> = BTreeSet::new();
+    let mut record = |name: String, type_name: String, declared: &mut BTreeMap<String, String>| {
+        if declared
+            .get(&name)
+            .is_some_and(|existing| existing != &type_name)
+        {
+            conflicting.insert(name);
+            return;
+        }
+        declared.insert(name, type_name);
+    };
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        let mut cursor = current.walk();
+        for child in current.named_children(&mut cursor) {
+            // A nested class or lambda body declares names of its own; they
+            // are still in scope for the calls written inside it.
+            stack.push(child);
+        }
+        if !matches!(
+            current.kind(),
+            "formal_parameter" | "local_variable_declaration" | "field_declaration"
+        ) {
+            continue;
+        }
+        let Some(type_name) = current
+            .child_by_field_name("type")
+            .and_then(|type_node| node_text(type_node, source))
+            .map(|name| java_type_name(&name))
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        if current.kind() == "formal_parameter" {
+            if let Some(name) = named_child_text(current, "name", source) {
+                record(name, type_name, &mut declared);
+            }
+            continue;
+        }
+        let mut declarators = current.walk();
+        for declarator in current.named_children(&mut declarators) {
+            if declarator.kind() != "variable_declarator" {
+                continue;
+            }
+            if let Some(name) = named_child_text(declarator, "name", source) {
+                record(name, type_name.clone(), &mut declared);
+            }
+        }
+    }
+    for name in conflicting {
+        declared.remove(&name);
+    }
+    declared
+}
+
+/// The bare name of a Java type, without its type arguments or array
+/// brackets: `List<String>` is `List` and `byte[]` is `byte`.
+fn java_type_name(name: &str) -> String {
+    let name = name.trim();
+    let name = name.split('<').next().unwrap_or(name);
+    let name = name.split('[').next().unwrap_or(name);
+    name.rsplit('.').next().unwrap_or(name).trim().to_string()
 }
 
 /// Types stated by `name := Type{...}` inside a body. The type is written
