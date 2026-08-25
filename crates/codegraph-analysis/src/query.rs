@@ -1089,7 +1089,7 @@ pub(crate) fn query_configs(
         .transpose()?
         .unwrap_or(6);
     let path_index = node_path_index(graph);
-    let matched_targets: Vec<_> = graph
+    let mut matched_targets: Vec<_> = graph
         .nodes
         .iter()
         .filter(|node| {
@@ -1098,6 +1098,21 @@ pub(crate) fn query_configs(
         })
         .cloned()
         .collect();
+    // "What configuration does it read?" is answered by this query, and
+    // koel's answer opened with twelve GitHub Actions run steps -- how the
+    // project is linted, not how it is configured. What the program reads
+    // comes first, in graph order inside a tier so the answer stays the
+    // same between runs.
+    matched_targets.sort_by_key(|node| {
+        (
+            u8::from(
+                node.span
+                    .as_ref()
+                    .is_some_and(|span| is_repository_tooling_source_path(&span.path)),
+            ),
+            node.id,
+        )
+    });
 
     let mut node_ids = BTreeSet::new();
     let mut edge_indexes = BTreeSet::new();

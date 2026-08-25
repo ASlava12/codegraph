@@ -5169,6 +5169,52 @@ fn query_insights_returns_sensitive_config_default_context() {
 }
 
 #[test]
+fn configuration_is_answered_with_what_the_program_reads() {
+    // "What configuration does it read?" runs the `configs` query, and
+    // koel's answer opened with twelve GitHub Actions run steps -- how the
+    // project is linted, not how it is configured.
+    let mut graph = CodeGraph::new("repo");
+    let workflow = graph.add_node_with_span(
+        NodeKind::Config,
+        "github run:Backend Lint/lint/40",
+        SourceSpan {
+            path: ".github/workflows/lint.yml".to_string(),
+            start_line: 40,
+            start_column: 1,
+            end_line: 40,
+            end_column: 8,
+        },
+    );
+    let key = graph.add_node_with_span(
+        NodeKind::Config,
+        "laravel config key:koel.storage_driver",
+        SourceSpan {
+            path: "app/Console/Commands/DoctorCommand.php".to_string(),
+            start_line: 12,
+            start_column: 1,
+            end_line: 12,
+            end_column: 30,
+        },
+    );
+
+    let result = query_graph(&graph, "configs limit:1").unwrap();
+    let listed: Vec<&str> = result
+        .nodes
+        .iter()
+        .map(|node| node.label.as_str())
+        .collect();
+
+    assert!(
+        result.nodes.iter().any(|node| node.id == key),
+        "what the program reads is the answer, got {listed:?}"
+    );
+    assert!(
+        !result.nodes.iter().any(|node| node.id == workflow),
+        "and how it is linted is not, got {listed:?}"
+    );
+}
+
+#[test]
 fn unused_code_is_answered_with_code_and_not_with_documents() {
     // "Which code is unused?" runs the `unreachable` query, and a
     // document's headings look like the symbols a file holds: koel's

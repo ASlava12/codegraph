@@ -232,6 +232,9 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- What a program reads is its configuration, and how it is linted is not: "what configuration does
+  it read?" answered koel with twelve GitHub Actions run steps before naming a single Laravel config
+  key. The project's own configuration now comes first, and the CI steps after it.
 - A document is not code. A markdown file's headings look like the symbols a file holds, so every
   project in the corpus was told that its `README.md` "contains markdown code but is not reachable
   from any entrypoint", and "which code is unused?" answered koel with
