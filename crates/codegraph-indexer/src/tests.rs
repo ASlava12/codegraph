@@ -1644,6 +1644,88 @@ fn an_import_python_erases_is_not_a_runtime_dependency() {
 }
 
 #[test]
+fn maven_and_gradle_state_what_a_jvm_project_needs() {
+    // gson declares 19 dependencies across four `pom.xml` files, petclinic
+    // 30 in a Gradle build and retrofit 50 in a version catalog, and none
+    // of them was read: a JVM project's dependencies came from nowhere.
+    let maven = maven_dependencies(
+        "<project>\n  <dependencyManagement>\n    <dependencies>\n      <dependency>\n        <groupId>com.example</groupId>\n        <artifactId>pinned</artifactId>\n        <version>1.0</version>\n      </dependency>\n    </dependencies>\n  </dependencyManagement>\n  <dependencies>\n    <dependency>\n      <groupId>com.google.code.gson</groupId>\n      <artifactId>gson</artifactId>\n      <version>${project.version}</version>\n    </dependency>\n    <dependency>\n      <groupId>junit</groupId>\n      <artifactId>junit</artifactId>\n      <version>4.13.2</version>\n      <scope>test</scope>\n    </dependency>\n  </dependencies>\n</project>\n",
+    );
+    let declared = |name: &str| {
+        maven
+            .iter()
+            .find(|dependency| dependency.name == name)
+            .map(|dependency| (dependency.kind.as_str(), dependency.version.clone()))
+    };
+    assert_eq!(
+        declared("com.google.code.gson:gson"),
+        Some(("runtime", None)),
+        "a property is not a version the file states"
+    );
+    assert_eq!(
+        declared("junit:junit"),
+        Some(("dev", Some("4.13.2".to_string()))),
+        "`<scope>test</scope>` says what the dependency is for"
+    );
+    assert!(
+        declared("com.example:pinned").is_none(),
+        "a `<dependencyManagement>` block pins a version for whoever \
+         declares the dependency, and declares none of its own"
+    );
+
+    let gradle = gradle_dependencies(
+        "dependencies {\n  implementation 'org.springframework.boot:spring-boot-starter-cache'\n  implementation(\"com.squareup.okio:okio:3.9.0\")\n  testImplementation 'org.junit.jupiter:junit-jupiter'\n  api libs.okhttp.client\n  implementation project(':shared')\n}\n",
+    );
+    let built = |name: &str| {
+        gradle
+            .iter()
+            .find(|dependency| dependency.name == name)
+            .map(|dependency| (dependency.kind.as_str(), dependency.version.clone()))
+    };
+    assert_eq!(
+        built("org.springframework.boot:spring-boot-starter-cache"),
+        Some(("runtime", None))
+    );
+    assert_eq!(
+        built("com.squareup.okio:okio"),
+        Some(("runtime", Some("3.9.0".to_string())))
+    );
+    assert_eq!(
+        built("org.junit.jupiter:junit-jupiter"),
+        Some(("dev", None))
+    );
+    assert_eq!(
+        gradle.len(),
+        3,
+        "a catalog reference names an entry the catalog declares, and \
+         `project(':shared')` is the repository's own module"
+    );
+
+    let catalog = gradle_version_catalog_dependencies(
+        "[versions]\nokhttp = \"5.5.0\"\n\n[libraries]\nandroidPlugin = \"com.android.tools.build:gradle:9.3.1\"\nokhttp-client = { module = \"com.squareup.okhttp3:okhttp\", version.ref = \"okhttp\" }\nbnd = { module = \"biz.aQute.bnd:biz.aQute.bnd.gradle\", version = \"7.4.0\" }\n",
+    );
+    let listed = |name: &str| {
+        catalog
+            .iter()
+            .find(|dependency| dependency.name == name)
+            .map(|dependency| dependency.version.clone())
+    };
+    assert_eq!(
+        listed("com.android.tools.build:gradle"),
+        Some(Some("9.3.1".to_string()))
+    );
+    assert_eq!(
+        listed("com.squareup.okhttp3:okhttp"),
+        Some(Some("5.5.0".to_string())),
+        "`version.ref` names an entry of the `[versions]` table"
+    );
+    assert_eq!(
+        listed("biz.aQute.bnd:biz.aQute.bnd.gradle"),
+        Some(Some("7.4.0".to_string()))
+    );
+}
+
+#[test]
 fn a_gemfile_and_a_gemspec_state_what_a_ruby_project_needs() {
     // Nothing read a Ruby manifest at all, so mastodon declared 154 gems
     // and the graph knew none of them: "which packages does it depend on"

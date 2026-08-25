@@ -232,6 +232,13 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- Nor was a JVM manifest read: gson declares 19 dependencies across four `pom.xml` files, petclinic
+  30 in a Gradle build, okio 22 and retrofit 50 in a Gradle version catalog. A `<dependency>` names
+  a group and an artifact and `<scope>test</scope>` says what it is for, while a
+  `<dependencyManagement>` block pins a version for whoever declares the dependency and declares
+  none of its own. A Gradle line states a coordinate as a string, or names an entry of
+  `gradle/libs.versions.toml`, whose `[libraries]` table states the coordinate and whose
+  `version.ref` names an entry of `[versions]`.
 - Nothing read a Ruby manifest, so a Ruby project's dependencies were known from nowhere: mastodon
   declares 154 gems in its `Gemfile` and sinatra 43 across a `Gemfile` and its gemspec, and "which
   packages does it depend on?" answered both with the GitHub Actions their workflows use. A `gem`

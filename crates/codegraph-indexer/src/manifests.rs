@@ -1532,6 +1532,216 @@ pub(crate) fn pnpm_clean_version(value: &str) -> String {
     value.split('(').next().unwrap_or(value).trim().to_string()
 }
 
+/// What a Maven `pom.xml` states: a `<dependency>` names a group and an
+/// artifact, and `<scope>test</scope>` says it is not what the program
+/// runs on. gson declares 22 across four modules, and a JVM project's
+/// dependencies were read from nowhere. A `<dependencyManagement>` block
+/// pins a version for whoever declares the dependency, so it states no
+/// dependency of its own.
+pub(crate) fn maven_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut managed_depth = 0usize;
+    let mut group: Option<String> = None;
+    let mut artifact: Option<String> = None;
+    let mut version: Option<String> = None;
+    let mut scope: Option<String> = None;
+    let mut inside = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("<dependencyManagement>") {
+            managed_depth += 1;
+        }
+        if trimmed.contains("</dependencyManagement>") {
+            managed_depth = managed_depth.saturating_sub(1);
+        }
+        if trimmed.starts_with("<dependency>") {
+            inside = true;
+            group = None;
+            artifact = None;
+            version = None;
+            scope = None;
+            continue;
+        }
+        if trimmed.starts_with("</dependency>") {
+            inside = false;
+            if managed_depth == 0
+                && let (Some(group), Some(artifact)) = (group.take(), artifact.take())
+            {
+                let kind = match scope.as_deref() {
+                    Some("test") | Some("provided") => "dev",
+                    _ => "runtime",
+                };
+                dependencies.push(manifest_dependency(
+                    format!("{group}:{artifact}"),
+                    kind,
+                    "maven",
+                    // `${revision}` is a property this file resolves
+                    // elsewhere, which is not a version anybody can read.
+                    version.take().filter(|value| !value.starts_with("${")),
+                ));
+            }
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        for (tag, slot) in [
+            ("groupId", &mut group),
+            ("artifactId", &mut artifact),
+            ("version", &mut version),
+            ("scope", &mut scope),
+        ] {
+            if let Some(value) = xml_element_text(trimmed, tag) {
+                *slot = Some(value);
+            }
+        }
+    }
+    dependencies
+}
+
+/// The text a one-line XML element holds: `<artifactId>gson</artifactId>`.
+fn xml_element_text(line: &str, tag: &str) -> Option<String> {
+    let rest = line.trim().strip_prefix(&format!("<{tag}>"))?;
+    let value = rest.strip_suffix(&format!("</{tag}>"))?.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// What a Gradle build states: `implementation 'org.springframework.boot:
+/// spring-boot-starter-cache'` names a coordinate, and a `test`
+/// configuration says it is not what the program runs on. A reference
+/// into a version catalog -- `api libs.okhttp.client` -- names an entry
+/// the catalog declares, which is read from the catalog itself.
+pub(crate) fn gradle_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("//") || trimmed.starts_with('*') || trimmed.starts_with("/*") {
+            continue;
+        }
+        let Some(configuration) = trimmed.split([' ', '(']).next() else {
+            continue;
+        };
+        let Some(kind) = gradle_configuration_kind(configuration) else {
+            continue;
+        };
+        let Some(coordinate) = first_quoted_value(trimmed) else {
+            continue;
+        };
+        let parts: Vec<&str> = coordinate.split(':').collect();
+        if parts.len() < 2 || parts.iter().any(|part| part.trim().is_empty()) {
+            continue;
+        }
+        dependencies.push(manifest_dependency(
+            format!("{}:{}", parts[0], parts[1]),
+            kind,
+            "maven",
+            parts.get(2).map(|version| version.trim().to_string()),
+        ));
+    }
+    dependencies
+}
+
+/// Which Gradle configurations declare what, and which say the dependency
+/// is only for the project's own tests.
+fn gradle_configuration_kind(configuration: &str) -> Option<&'static str> {
+    let lower = configuration.to_ascii_lowercase();
+    if lower.starts_with("test") || lower.contains("androidtest") {
+        return matches!(
+            lower.as_str(),
+            "testimplementation"
+                | "testapi"
+                | "testcompileonly"
+                | "testruntimeonly"
+                | "testfixturesimplementation"
+                | "androidtestimplementation"
+                | "androidtestruntimeonly"
+        )
+        .then_some("dev");
+    }
+    matches!(
+        lower.as_str(),
+        "implementation" | "api" | "compileonly" | "runtimeonly" | "annotationprocessor" | "kapt"
+    )
+    .then_some("runtime")
+}
+
+/// What a Gradle version catalog declares: every entry in `[libraries]` is
+/// a coordinate the build may use, written either as a string or as a
+/// table naming the module and its version.
+pub(crate) fn gradle_version_catalog_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut versions: BTreeMap<String, String> = BTreeMap::new();
+    let mut section = String::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed.starts_with('[') {
+            section = trimmed.trim_matches(['[', ']']).to_string();
+            continue;
+        }
+        let Some((name, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let name = name.trim();
+        let value = value.trim();
+        if section == "versions" {
+            if let Some(version) = first_quoted_value(value) {
+                versions.insert(name.to_string(), version);
+            }
+            continue;
+        }
+        if section != "libraries" || name.is_empty() {
+            continue;
+        }
+        // `name = "group:artifact:version"`.
+        if !value.starts_with('{') {
+            let Some(coordinate) = first_quoted_value(value) else {
+                continue;
+            };
+            let parts: Vec<&str> = coordinate.split(':').collect();
+            if parts.len() < 2 {
+                continue;
+            }
+            dependencies.push(manifest_dependency(
+                format!("{}:{}", parts[0], parts[1]),
+                "runtime",
+                "maven",
+                parts.get(2).map(|version| version.to_string()),
+            ));
+            continue;
+        }
+        // `name = { module = "group:artifact", version.ref = "okhttp" }`.
+        let Some(module) = value
+            .split_once("module")
+            .and_then(|(_, rest)| first_quoted_value(rest))
+        else {
+            continue;
+        };
+        let version = value
+            .split_once("version.ref")
+            .and_then(|(_, rest)| first_quoted_value(rest))
+            .and_then(|reference| versions.get(&reference).cloned())
+            .or_else(|| {
+                value
+                    .split_once("version")
+                    .and_then(|(_, rest)| first_quoted_value(rest))
+            });
+        let parts: Vec<&str> = module.split(':').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        dependencies.push(manifest_dependency(
+            format!("{}:{}", parts[0], parts[1]),
+            "runtime",
+            "maven",
+            version,
+        ));
+    }
+    dependencies
+}
+
 /// What a `Gemfile` states: `gem 'rails', '~> 8.1.0'` names a gem and the
 /// version it wants, and `group :development do` says the gems inside it
 /// are not what the program runs on. mastodon declares 98 of them, and a
