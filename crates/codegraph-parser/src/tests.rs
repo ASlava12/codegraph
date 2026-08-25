@@ -2970,6 +2970,23 @@ fn an_erlang_record_and_type_are_types() {
 }
 
 #[test]
+fn a_class_an_export_macro_stands_in_front_of_is_still_a_class() {
+    // `class SPDLOG_API logger { .. }` is how a C++ library exports a
+    // class, and the grammar reads the whole declaration as a function
+    // returning `class SPDLOG_API` called `logger`: the class had no node
+    // at all, and every member inside it read as a free function.
+    let source = "class SPDLOG_API logger {\npublic:\n    void info();\n};\n";
+    let parsed = parse_source("logger.h", source.as_bytes(), Language::Cpp).unwrap();
+    let types: Vec<&str> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Type)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(types, vec!["logger"], "items: {:?}", parsed.items);
+}
+
+#[test]
 fn an_elixir_struct_is_the_module_that_declares_it() {
     // `defstruct` names nothing of its own: the struct is the module that
     // declares it, which is how Elixir refers to it (`%Ecto.Changeset{}`).

@@ -308,6 +308,21 @@ fn python_builtin_type_name(label: &str) -> bool {
     )
 }
 
+/// Whether this `function_definition` is really a class an export macro
+/// stands in front of: its return type is a class or struct with no body
+/// of its own, and what follows is a plain name rather than a parameter
+/// list.
+fn names_an_exported_c_class(node: Node<'_>) -> bool {
+    node.child_by_field_name("type").is_some_and(|type_node| {
+        matches!(
+            type_node.kind(),
+            "class_specifier" | "struct_specifier" | "union_specifier"
+        ) && type_node.child_by_field_name("body").is_none()
+    }) && node
+        .child_by_field_name("declarator")
+        .is_some_and(|declarator| declarator.kind() == "identifier")
+}
+
 /// Whether a name is a type parameter rather than a type: `T`, `A`, `K`,
 /// `V`, `T1`. Every generic declaration writes them and no project means
 /// its own type by them -- reading them as references pointed 10756 of
@@ -1195,6 +1210,12 @@ pub(crate) fn classify_node(
             // `namespace` covering 574 lines. No C++ declaration is named by
             // a reserved word, so that is a misparse rather than a fact.
             "function_definition" if names_a_c_keyword(node, source) => return None,
+            // `class SPDLOG_API logger { .. }` puts an export macro where
+            // the grammar expects the name, and the whole declaration
+            // reads as a function returning `class SPDLOG_API` called
+            // `logger`. spdlog's central class had no node at all, and
+            // every class a library exports this way is written like it.
+            "function_definition" if names_an_exported_c_class(node) => ParsedItemKind::Type,
             "function_definition" => ParsedItemKind::Function,
             // `#define serverAssert(x) …` defines something the code calls
             // like a function, and redis calls 7300 of them. An object-like
@@ -3859,6 +3880,33 @@ pub(crate) fn item_label(
     // `AccountsController` classes were one name for two classes.
     if language == Language::Ruby && matches!(node.kind(), "class" | "module") {
         return ruby_constant_path(node, source);
+    }
+
+    // `class SPDLOG_API logger { .. }` puts an export macro where the
+    // grammar expects the name, so spdlog's central class -- and every
+    // class a library exports this way -- had no node at all. The name is
+    // the last type identifier before the body.
+    if matches!(language, Language::C | Language::Cpp)
+        && matches!(
+            node.kind(),
+            "class_specifier" | "struct_specifier" | "union_specifier"
+        )
+        && node.child_by_field_name("name").is_none()
+        && node.child_by_field_name("body").is_some()
+    {
+        let mut cursor = node.walk();
+        let candidates: Vec<Node<'_>> = node
+            .named_children(&mut cursor)
+            .take_while(|child| child.kind() != "field_declaration_list")
+            .filter(|child| matches!(child.kind(), "type_identifier" | "identifier"))
+            .collect();
+        let name = candidates
+            .last()
+            .and_then(|child| node_text(*child, source))
+            .filter(|label| !label.is_empty());
+        if name.is_some() {
+            return name;
+        }
     }
 
     if language == Language::Lua && node.kind() == "function_definition" {

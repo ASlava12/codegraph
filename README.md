@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- `class SPDLOG_API logger { .. }` is how a C++ library exports a class, and the grammar reads the
+  whole declaration as a function returning `class SPDLOG_API` called `logger`: the class had no node
+  at all and every member inside it read as a free function. A class or struct with no body of its
+  own, followed by a plain name rather than a parameter list, is a class an export macro stands in
+  front of.
 - A Python class is reached by what it inherits and what annotates it. django-oscar declares 1697
   classes and 14% of them had anything pointing at them, because a Django project states its
   structure through inheritance -- `class Basket(AbstractBasket)` -- and nothing read it. Its
