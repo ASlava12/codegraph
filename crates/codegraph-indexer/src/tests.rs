@@ -6529,6 +6529,109 @@ fn a_dockerfile_command_runs_from_the_build_context() {
 }
 
 #[test]
+fn rails_says_which_actions_a_resource_declares_and_which_controller_serves_them() {
+    // Four things a Rails router states that the graph read wrong on
+    // mastodon: `only: []` declares none of the seven, a singular
+    // `resource :setup` is served by `SetupsController`, `module:` puts
+    // the controller one module deeper without moving the path, and `get
+    // :export` inside a resource block is that resource's action. A route
+    // written inside a `concern` block is a template served wherever
+    // `concerns:` names it, not where it is written.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("config/routes")).unwrap();
+    fs::create_dir_all(root.join("app/controllers/admin/email_subscriptions")).unwrap();
+    fs::create_dir_all(root.join("app/controllers/admin/terms_of_service")).unwrap();
+    fs::write(
+        root.join("config/routes.rb"),
+        "Rails.application.routes.draw do\n  namespace :admin do\n    concern :approvable do\n      collection do\n        post :approve\n      end\n    end\n\n    resources :users, only: [] do\n      member do\n        get :download\n      end\n    end\n\n    resources :export_domain_allows, only: [:new] do\n      collection do\n        get :export\n      end\n    end\n\n    namespace :email_subscriptions do\n      resource :setup, only: [:show, :create]\n    end\n\n    resources :terms_of_service, only: [:index] do\n      resource :preview, only: [:show], module: :terms_of_service\n    end\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/controllers/admin/users_controller.rb"),
+        "class Admin::UsersController < ApplicationController\n  def download\n    head :ok\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/controllers/admin/export_domain_allows_controller.rb"),
+        "class Admin::ExportDomainAllowsController < ApplicationController\n  def export\n    head :ok\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/controllers/admin/email_subscriptions/setups_controller.rb"),
+        "class Admin::EmailSubscriptions::SetupsController < ApplicationController\n  def show\n    head :ok\n  end\n\n  def create\n    head :ok\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/controllers/admin/terms_of_service/previews_controller.rb"),
+        "class Admin::TermsOfService::PreviewsController < ApplicationController\n  def show\n    head :ok\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let routes: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Entrypoint && node.label.starts_with("route "))
+        .collect();
+    let labels: Vec<&str> = routes.iter().map(|node| node.label.as_str()).collect();
+    assert!(
+        !labels.contains(&"route GET /admin/users"),
+        "`only: []` declares none of the seven, got {labels:?}"
+    );
+    assert!(
+        !labels.iter().any(|label| label.ends_with("/admin/approve")),
+        "a route inside a concern is served where `concerns:` names it, got {labels:?}"
+    );
+    let qualifier = |label: &str| -> Option<String> {
+        routes
+            .iter()
+            .find(|node| node.label == label)
+            .and_then(|node| node.metadata.get("handler_qualifier").cloned())
+    };
+    assert_eq!(
+        qualifier("route GET /admin/users/:id/download").as_deref(),
+        Some("Admin::UsersController"),
+        "an action written inside a resource block is that resource's"
+    );
+    assert_eq!(
+        qualifier("route GET /admin/export_domain_allows/export").as_deref(),
+        Some("Admin::ExportDomainAllowsController"),
+        "and a collection block does not change which controller serves it"
+    );
+    assert_eq!(
+        qualifier("route POST /admin/email_subscriptions/setup").as_deref(),
+        Some("Admin::EmailSubscriptions::SetupsController"),
+        "a singular resource is served by the controller named for the set"
+    );
+    assert_eq!(
+        qualifier("route GET /admin/terms_of_service/:terms_of_service_id/preview").as_deref(),
+        Some("Admin::TermsOfService::PreviewsController"),
+        "`module:` moves the controller without moving the path"
+    );
+
+    let handled = |label: &str| -> Option<String> {
+        let route = routes.iter().find(|node| node.label == label)?.id;
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.source == route
+                    && edge.metadata.get("relation").map(String::as_str)
+                        == Some("entrypoint_function")
+            })
+            .and_then(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+            .map(|node| node.label.clone())
+    };
+    assert_eq!(
+        handled("route GET /admin/export_domain_allows/export").as_deref(),
+        Some("export"),
+        "and the action it names is reached"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_minimal_api_declares_a_route_and_a_razor_page_serves_where_it_sits() {
     // `app.MapGet("api/catalog-items", ..)` writes the verb into the
     // method name, so the `.get(` every other route call ends in never
@@ -7094,8 +7197,8 @@ fn rails_reads_a_collection_block_and_a_namespaced_controller() {
             .collect::<Vec<_>>()
     );
     assert!(
-        route("POST /requests/:request_id/dismiss").is_some(),
-        "a member route keeps it"
+        route("POST /requests/:id/dismiss").is_some(),
+        "a member route keeps an id, and Rails names it `:id` --          `:request_id` is what a resource nested inside gets"
     );
     let invite = route("GET /invite/:code").expect("the invite route");
     assert_eq!(

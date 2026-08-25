@@ -232,6 +232,16 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- What a Rails router states about its resources, read five ways it was not. `only: []` declares
+  none of the seven, and reading it as "no restriction" had mastodon serving 33 routes it does not
+  -- `/admin/users`, `/backups/:id`, a whole `/api/v1_alpha/accounts` set. A singular `resource
+  :setup` is served by `SetupsController`, named for the set. `module: :terms_of_service` puts the
+  controller one module deeper without moving the path. `get :export` inside a resource block is
+  that resource's `export` action, which the line never names. And a route written inside a
+  `concern` block is a template served wherever `concerns:` names it, not where it is written. A
+  member route's id is `:id` -- `:backup_id` is what a resource nested inside one is given -- which
+  corrected 75 of mastodon's paths. Its routes that reach the code serving them went from 457 to
+  620.
 - ASP.NET declares a route three ways, and two of them were invisible. A minimal API writes the verb
   into the method name -- `app.MapGet("api/catalog-items", ..)` -- so the `.get(` every other route
   call ends in never appeared. A Razor Page states its URL by where it sits: `Pages/Basket/Index`

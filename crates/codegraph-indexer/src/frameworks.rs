@@ -683,6 +683,11 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
     // module with no path of its own.
     let mut prefixes: Vec<String> = Vec::new();
     let mut modules: Vec<String> = Vec::new();
+    // The controller each open block belongs to, when it is a resource:
+    // `get :export` inside `resources :export_domain_allows do` is the
+    // `export` action of that resource's controller, and the line names
+    // neither.
+    let mut controllers: Vec<Option<String>> = Vec::new();
     // The depth a `concern` block opened at, while one is open.
     let mut concern_depth: Option<usize> = None;
     // How deep the innermost `constraints .. do` block sits, when one is
@@ -703,11 +708,13 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
             {
                 modules.push(rails_module_name(&name));
                 prefixes.push(name);
+                controllers.push(None);
                 continue;
             }
             if trimmed == "end" {
                 prefixes.pop();
                 modules.pop();
+                controllers.pop();
                 if concern_depth.is_some_and(|depth| depth >= prefixes.len()) {
                     concern_depth = None;
                 }
@@ -747,6 +754,7 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                 concern_depth = Some(prefixes.len());
                 prefixes.push(String::new());
                 modules.push(String::new());
+                controllers.push(None);
                 continue;
             }
             if let Some(rest) = trimmed
@@ -761,12 +769,33 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                     // them as the whole set invented routes it does not
                     // serve.
                     let segment = rails_option_value(rest, "path").unwrap_or_else(|| name.clone());
-                    let controller =
-                        rails_option_value(rest, "controller").unwrap_or_else(|| name.clone());
+                    // A singular `resource :setup` is served by
+                    // `SetupsController`: the resource is one, the
+                    // controller is named for the set. mastodon writes 26
+                    // of them and every route they declare pointed at a
+                    // controller that does not exist.
+                    let controller = rails_option_value(rest, "controller").unwrap_or_else(|| {
+                        if singular {
+                            rails_plural(&name)
+                        } else {
+                            name.clone()
+                        }
+                    });
                     // `namespace :api do namespace :v2 do resources
                     // :search` is `Api::V2::SearchController`, and
                     // mastodon declares one of those per version.
-                    let controller = qualified_rails_controller(&modules, &controller);
+                    // `resource :preview, module: :terms_of_service` puts
+                    // the controller one module deeper without changing
+                    // the path: mastodon serves nine routes that way, and
+                    // each pointed at a class that does not exist.
+                    let controller = match rails_option_value(rest, "module") {
+                        Some(module) => {
+                            let mut nested = modules.clone();
+                            nested.push(rails_module_name(&module));
+                            qualified_rails_controller(&nested, &controller)
+                        }
+                        None => qualified_rails_controller(&modules, &controller),
+                    };
                     if concern_depth.is_none() {
                         routes.extend(rails_resource_routes(
                             &prefix,
@@ -782,6 +811,7 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                     // member path.
                     if trimmed.ends_with(" do") {
                         modules.push(String::new());
+                        controllers.push(controller.clone());
                         let member = if singular {
                             segment.clone()
                         } else {
@@ -807,6 +837,7 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
             }
             prefixes.push(rails_block_prefix(trimmed));
             modules.push(rails_block_module(trimmed));
+            controllers.push(None);
         }
 
         let Some((method, rest)) = METHODS
@@ -825,8 +856,14 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
         // `verify_credentials`, and reading the first quoted value on the
         // line took the controller as the path.
         let before_target = rest.split("to:").next().unwrap_or(rest);
+        // `get :export` inside a resource block is that resource's
+        // `export` action: the line names the action and the block names
+        // the controller. mastodon writes 208 routes that way, and each
+        // of them reached no code at all.
+        let action =
+            ruby_symbol_name(before_target).filter(|_| first_quoted_value(before_target).is_none());
         let Some(path) = first_quoted_value(before_target)
-            .or_else(|| ruby_symbol_name(before_target).map(|name| format!("/{name}")))
+            .or_else(|| action.clone().map(|name| format!("/{name}")))
             .or_else(|| first_quoted_value(rest))
         else {
             continue;
@@ -849,15 +886,35 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
         if !rails && !opens_a_block {
             continue;
         }
+        // A route written inside a `concern` block is a template: it is
+        // served wherever `concerns:` names it, not where it is written.
+        // mastodon writes `post :approve` inside `concern :approvable`,
+        // and reading it here served `/api/v1/admin/trends/approve`,
+        // which the program does not.
+        if concern_depth.is_some() {
+            continue;
+        }
         let prefix = joined_route_prefix(&prefixes);
         routes.push(FrameworkRoute {
             framework: if rails { "rails" } else { "sinatra" }.to_string(),
             method: method.to_ascii_uppercase(),
             path: format!("{prefix}/{}", path.trim_start_matches('/')),
-            handler: rails_route_handler(rest),
+            handler: rails_route_handler(rest).or_else(|| {
+                action
+                    .clone()
+                    .filter(|_| controllers.iter().any(Option::is_some))
+            }),
             handler_qualifier: rails_route_target(rest)
                 .and_then(|(_, controller)| controller)
-                .and_then(|controller| qualified_rails_controller(&modules, &controller)),
+                .and_then(|controller| qualified_rails_controller(&modules, &controller))
+                .or_else(|| {
+                    action.as_ref().and_then(|_| {
+                        controllers
+                            .iter()
+                            .rev()
+                            .find_map(|controller| controller.clone())
+                    })
+                }),
             expanded: false,
             // `constraints:` states a condition the request has to meet, so
             // the same path can be declared beside itself: mastodon serves
@@ -953,14 +1010,18 @@ fn rails_controller_class(controller: &str) -> Option<String> {
 /// them every resource reads as the whole set of seven.
 #[derive(Default)]
 struct RailsResourceActions {
-    only: Vec<String>,
+    /// The actions `only:` names, when the line states it. `only: []`
+    /// declares none of the seven -- mastodon writes `resources :users,
+    /// only: [] do` and serves nothing at `/admin/users` -- which is not
+    /// the same as a line that says nothing about actions.
+    only: Option<Vec<String>>,
     except: Vec<String>,
 }
 
 impl RailsResourceActions {
     fn declares(&self, action: &str) -> bool {
-        if !self.only.is_empty() {
-            return self.only.iter().any(|name| name == action);
+        if let Some(only) = &self.only {
+            return only.iter().any(|name| name == action);
         }
         !self.except.iter().any(|name| name == action)
     }
@@ -985,7 +1046,7 @@ fn rails_resource_actions(rest: &str) -> RailsResourceActions {
             ruby_symbol_name(list).into_iter().collect()
         };
         if target {
-            actions.only.extend(names);
+            actions.only.get_or_insert_default().extend(names);
         } else {
             actions.except.extend(names);
         }
@@ -1034,6 +1095,27 @@ fn qualified_rails_controller(modules: &[String], controller: &str) -> Option<St
     Some(format!("{}::{class}", path.join("::")))
 }
 
+/// The plural Rails names a controller with: `resource :setup` is served
+/// by `SetupsController` and `resource :additional_footer_text` by
+/// `AdditionalFooterTextsController`. Only the endings a route key can
+/// carry are covered -- the inflector is a table nobody can hold.
+fn rails_plural(name: &str) -> String {
+    if name.ends_with('s')
+        || name.ends_with('x')
+        || name.ends_with('z')
+        || name.ends_with("ch")
+        || name.ends_with("sh")
+    {
+        return format!("{name}es");
+    }
+    if let Some(stem) = name.strip_suffix('y')
+        && !stem.ends_with(['a', 'e', 'i', 'o', 'u'])
+    {
+        return format!("{stem}ies");
+    }
+    format!("{name}s")
+}
+
 /// The singular Rails writes for a resource name: `statuses` is
 /// `status` and `policies` is `policy`. Only the endings that matter to
 /// a route key are covered -- the inflector is a table nobody can carry.
@@ -1060,8 +1142,13 @@ fn rails_singular(name: &str) -> String {
 /// set's, not one member's".
 const RAILS_COLLECTION_BLOCK: &str = "\u{1}collection";
 
+/// The stack entry a `member do` block pushes. The routes inside serve
+/// one member of the set, and Rails names its id `:id` -- `:user_id` is
+/// what a resource nested inside one is given.
+const RAILS_MEMBER_BLOCK: &str = "\u{1}member";
+
 fn joined_route_prefix(prefixes: &[String]) -> String {
-    let mut parts: Vec<&str> = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
     for prefix in prefixes.iter().map(String::as_str) {
         // A `collection do` block holds routes for the set, not for one of
         // its members: `post :accept` there is
@@ -1070,12 +1157,26 @@ fn joined_route_prefix(prefixes: &[String]) -> String {
         // and for `member do`, so a collection block takes the id back off.
         if prefix == RAILS_COLLECTION_BLOCK {
             if let Some(member) = parts.pop() {
-                parts.push(member.split("/:").next().unwrap_or(member));
+                let head = member.split("/:").next().unwrap_or(&member).to_string();
+                parts.push(head);
+            }
+            continue;
+        }
+        // `member do get :download end` under `resources :backups` is
+        // `/backups/:id/download`: the enclosing block hands down the name
+        // a resource nested inside it would use, and a member route of the
+        // resource itself uses `:id`.
+        if prefix == RAILS_MEMBER_BLOCK {
+            if let Some(member) = parts.pop() {
+                match member.split_once("/:") {
+                    Some((head, _)) => parts.push(format!("{head}/:id")),
+                    None => parts.push(member),
+                }
             }
             continue;
         }
         if !prefix.is_empty() {
-            parts.push(prefix);
+            parts.push(prefix.to_string());
         }
     }
     if parts.is_empty() {
@@ -1104,6 +1205,9 @@ fn rails_block_prefix(line: &str) -> String {
     let trimmed = line.trim();
     if trimmed == "collection do" {
         return RAILS_COLLECTION_BLOCK.to_string();
+    }
+    if trimmed == "member do" {
+        return RAILS_MEMBER_BLOCK.to_string();
     }
     let Some(rest) = trimmed.strip_prefix("scope ") else {
         return String::new();
