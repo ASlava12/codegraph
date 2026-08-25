@@ -2970,6 +2970,32 @@ fn an_erlang_record_and_type_are_types() {
 }
 
 #[test]
+fn a_namespace_a_macro_opens_leaves_what_follows_readable() {
+    // `SPDLOG_NAMESPACE_BEGIN` opens a namespace through a macro the
+    // grammar has never seen, and everything after it is read as
+    // something else: spdlog's central `logger` class had no node at all,
+    // and 169 files across spdlog and nlohmann/json are written this way.
+    let source = "SPDLOG_NAMESPACE_BEGIN\n\nclass logger {\npublic:\n    void info();\n};\n\nSPDLOG_NAMESPACE_END\n";
+    let parsed = parse_source("logger.h", source.as_bytes(), Language::Cpp).unwrap();
+    let types: Vec<&str> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Type)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(types, vec!["logger"], "items: {:?}", parsed.items);
+    let logger = parsed
+        .items
+        .iter()
+        .find(|item| item.kind == ParsedItemKind::Type)
+        .expect("the class is a declaration");
+    assert_eq!(
+        logger.span.start_line, 3,
+        "and blanking the macro keeps every other line where it was"
+    );
+}
+
+#[test]
 fn a_class_an_export_macro_stands_in_front_of_is_still_a_class() {
     // `class SPDLOG_API logger { .. }` is how a C++ library exports a
     // class, and the grammar reads the whole declaration as a function

@@ -24,6 +24,13 @@ pub fn parse_source(
             message: error.to_string(),
         })?;
 
+    // `SPDLOG_NAMESPACE_BEGIN` and `NLOHMANN_JSON_NAMESPACE_BEGIN` open a
+    // namespace through a macro the grammar has never seen, and what
+    // follows -- 169 files across spdlog and nlohmann/json -- is read as
+    // something else entirely: spdlog's central `logger` class had no node
+    // at all. Blanking the line keeps every other line where it was.
+    let masked = mask_macro_namespace_lines(language, source_text);
+    let source_text = masked.as_deref().unwrap_or(source_text);
     let tree = parser
         .parse(source_text, None)
         .ok_or(ParseError::ParseFailed { language })?;
@@ -156,6 +163,46 @@ fn string_constants(language: Language, root: Node<'_>, source: &[u8]) -> Vec<(S
         }
     }
     constants
+}
+
+/// A C or C++ line that is a bare uppercase macro opening or closing a
+/// namespace -- `SPDLOG_NAMESPACE_BEGIN`, `NLOHMANN_JSON_NAMESPACE_END`.
+/// Returns the source with those lines blanked, or `None` when the file
+/// has none, so nothing is copied for the files that do not need it.
+fn mask_macro_namespace_lines(language: Language, source: &str) -> Option<String> {
+    if !matches!(language, Language::C | Language::Cpp) {
+        return None;
+    }
+    let names_a_namespace_macro = |line: &str| {
+        let trimmed = line.trim();
+        (trimmed.ends_with("_BEGIN") || trimmed.ends_with("_END"))
+            && trimmed.chars().all(|character| {
+                character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
+            })
+            && trimmed
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_uppercase())
+    };
+    if !source.lines().any(names_a_namespace_macro) {
+        return None;
+    }
+    let mut masked = String::with_capacity(source.len());
+    for line in source.split_inclusive('\n') {
+        if names_a_namespace_macro(line.trim_end_matches(['\n', '\r'])) {
+            // Keep the line, and the file's length, without its content.
+            for character in line.chars() {
+                masked.push(if character == '\n' || character == '\r' {
+                    character
+                } else {
+                    ' '
+                });
+            }
+        } else {
+            masked.push_str(line);
+        }
+    }
+    Some(masked)
 }
 
 /// The 1-based line of the first error or missing node in the tree. Only

@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- `SPDLOG_NAMESPACE_BEGIN` opens a namespace through a macro the grammar has never seen, and
+  everything after it is read as something else: 169 files across spdlog and nlohmann/json are
+  written that way, and spdlog's central `logger` class had no node at all. Blanking a line that is
+  a bare uppercase macro ending in `_BEGIN` or `_END` keeps every other line where it was, and
+  `impact logger` names 175 dependents and 75 affected tests.
 - `class SPDLOG_API logger { .. }` is how a C++ library exports a class, and the grammar reads the
   whole declaration as a function returning `class SPDLOG_API` called `logger`: the class had no node
   at all and every member inside it read as a free function. A class or struct with no body of its
