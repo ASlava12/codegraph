@@ -236,6 +236,13 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- `struct client { .. }` declares a type and `struct client *c` names one: reading both as
+  declarations gave redis 183 nodes for `redisCommand` and 3635 types for its 1492 names, so no
+  reference could choose a target. `typedef struct client { .. } client;` is one declaration written
+  twice, and the name a program uses is the typedef's. C and C++ now read a type the way every other
+  language does -- redis's references go from 39 to 11241, nlohmann/json's from 87 to 798, spdlog's
+  from 75 to 672 -- and `impact robj` names 1583 dependents where it named none. Where two files
+  declare the same name, "what breaks if I change it" means the declaration something depends on.
 - An Elixir module is reached by the alias that names it: `alias Ecto.Changeset`, `use Ecto.Schema`,
   and the module on the left of a qualified call. ecto declares 390 modules and nothing pointed at
   any of them; `impact Ecto.Changeset` now names 129 dependents and 99 affected tests, `Ecto.Query`

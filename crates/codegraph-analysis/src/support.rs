@@ -139,6 +139,22 @@ pub(crate) fn best_labelled_node<'a>(graph: &'a CodeGraph, label: &str) -> Optio
         .filter(|edge| entrypoint_nodes.contains(&edge.source))
         .map(|edge| edge.target)
         .collect();
+    // "What breaks if I change `client`?" means the declaration something
+    // depends on: redis declares one in `server.h` and another in
+    // `redis-benchmark.c`, and 12 files reach the first and none the
+    // second.
+    let candidates: BTreeSet<NodeId> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.label == label)
+        .map(|node| node.id)
+        .collect();
+    let mut dependents: BTreeMap<NodeId, usize> = BTreeMap::new();
+    for edge in &graph.edges {
+        if edge.kind != EdgeKind::Contains && candidates.contains(&edge.target) {
+            *dependents.entry(edge.target).or_default() += 1;
+        }
+    }
     graph
         .nodes
         .iter()
@@ -150,6 +166,7 @@ pub(crate) fn best_labelled_node<'a>(graph: &'a CodeGraph, label: &str) -> Optio
                 u8::from(path.is_some_and(is_test_like_source_path)),
                 u8::from(!declared_ids.contains(&node.id)),
                 u8::from(!entrypoint_ids.contains(&node.id)),
+                std::cmp::Reverse(dependents.get(&node.id).copied().unwrap_or(0)),
                 path.map_or(usize::MAX, |path| path.matches('/').count()),
                 node.id,
             )

@@ -316,14 +316,31 @@ fn collect_reference_facts(
     // of gson's classes and six sevenths of ripgrep's types.
     if matches!(
         language,
-        Language::TypeScript | Language::Tsx | Language::Java | Language::Rust | Language::Go
+        Language::TypeScript
+            | Language::Tsx
+            | Language::Java
+            | Language::Rust
+            | Language::Go
+            // C and C++ name a type the same way: `struct client *c`, a
+            // parameter's type, what a function returns. redis declares
+            // 3635 types and 39 references pointed into them, and
+            // nlohmann/json 940 with 87.
+            | Language::C
+            | Language::Cpp
     ) && node.kind() == "type_identifier"
         // The name in `interface Foo {}` declares the type rather than
-        // referring to one, and the declaration is already a node.
-        && !node
-            .parent()
-            .and_then(|parent| parent.child_by_field_name("name"))
-            .is_some_and(|name| name == node)
+        // referring to one, and the declaration is already a node. In C
+        // the same shape says both: `struct client { .. }` declares the
+        // type and `struct client *c` names it, and only the body tells
+        // them apart -- without that, every use of redis's `client`,
+        // `robj` and `redisCommand` read as another declaration.
+        && !node.parent().is_some_and(|parent| {
+            parent.child_by_field_name("name") == Some(node)
+                && (!matches!(
+                    parent.kind(),
+                    "struct_specifier" | "union_specifier" | "enum_specifier" | "class_specifier"
+                ) || parent.child_by_field_name("body").is_some())
+        })
         && let Some(label) = node_text(node, source)
         && !names_a_type_parameter(&label)
     {
@@ -980,6 +997,24 @@ pub(crate) fn classify_node(
             // like a function, and redis calls 7300 of them. An object-like
             // `#define LIMIT 10` is a value, not a callable, and stays out.
             "preproc_function_def" => ParsedItemKind::Function,
+            // `struct client *c;` names a type; `struct client { .. }`
+            // declares one. Reading both as declarations gave redis 183
+            // nodes for `redisCommand` and 3635 types for its 1492 names,
+            // so no reference to any of them could choose a target.
+            "struct_specifier" | "union_specifier" | "enum_specifier" | "class_specifier"
+                if node.child_by_field_name("body").is_none() =>
+            {
+                return None;
+            }
+            // `typedef struct client { .. } client;` is one declaration
+            // written twice, and the name a program uses is the typedef's.
+            "struct_specifier" | "union_specifier" | "enum_specifier"
+                if node
+                    .parent()
+                    .is_some_and(|parent| parent.kind() == "type_definition") =>
+            {
+                return None;
+            }
             "struct_specifier" | "union_specifier" | "enum_specifier" | "class_specifier"
             | "type_definition" => ParsedItemKind::Type,
             "namespace_definition" => ParsedItemKind::Module,

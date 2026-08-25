@@ -1689,6 +1689,59 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn a_c_struct_declares_a_type_only_where_it_has_a_body() {
+    // `struct client { .. }` declares a type and `struct client *c` names
+    // one, and reading both as declarations gave redis 183 nodes for
+    // `redisCommand` and 3635 types for its 1492 names -- so no reference
+    // could choose a target and `impact robj` answered with nothing.
+    // `typedef struct client { .. } client;` is one declaration written
+    // twice, and the name a program uses is the typedef's.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("server.h"),
+        "#ifndef SERVER_H\n#define SERVER_H\n\ntypedef struct client {\n    int fd;\n} client;\n\nstruct command {\n    char *name;\n};\n\n#endif\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("networking.c"),
+        "#include \"server.h\"\n\nvoid readQuery(struct client *c, struct command *cmd) {\n    c->fd = 0;\n    (void)cmd;\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let nodes_named = |label: &str| -> Vec<&str> {
+        graph
+            .nodes
+            .iter()
+            .filter(|node| node.kind == NodeKind::Type && node.label == label)
+            .filter_map(|node| node.span.as_ref().map(|span| span.path.as_str()))
+            .collect()
+    };
+    assert_eq!(
+        nodes_named("client"),
+        vec!["src/server.h"],
+        "the typedef declares it once, and the use in another file names it"
+    );
+    assert_eq!(nodes_named("command"), vec!["src/server.h"]);
+    let references_into = |label: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.metadata.get("relation").map(String::as_str) == Some("type_reference")
+                && graph
+                    .nodes
+                    .iter()
+                    .any(|node| node.id == edge.target && node.label == label)
+        })
+    };
+    assert!(
+        references_into("client") && references_into("command"),
+        "a parameter's type names the struct it is given"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_elixir_module_is_reached_by_the_alias_that_names_it() {
     // ecto declares 390 modules and nothing pointed at any of them, so
     // "what breaks if I change `Ecto.Changeset`" answered with nothing.

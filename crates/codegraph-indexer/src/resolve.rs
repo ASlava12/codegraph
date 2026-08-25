@@ -2969,6 +2969,47 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     }
 }
 
+/// Which files each file includes, read from the imports the scan
+/// resolved. A C translation unit reaches a declaration only through a
+/// header it includes, and that is what tells two types of the same name
+/// apart.
+fn included_files(graph: &CodeGraph) -> BTreeMap<String, BTreeSet<String>> {
+    let mut by_id: BTreeMap<NodeId, &str> = BTreeMap::new();
+    for node in &graph.nodes {
+        if node.kind == NodeKind::File {
+            by_id.insert(node.id, node.label.as_str());
+        }
+    }
+    // An import node sits between the file and what it imports.
+    let mut import_targets: BTreeMap<NodeId, &str> = BTreeMap::new();
+    for edge in &graph.edges {
+        if edge
+            .metadata
+            .get("relation")
+            .is_some_and(|relation| relation == "local_import_file")
+            && let Some(path) = by_id.get(&edge.target)
+        {
+            import_targets.insert(edge.source, path);
+        }
+    }
+    let mut included: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for edge in &graph.edges {
+        if edge.kind != EdgeKind::Imports {
+            continue;
+        }
+        let (Some(source), Some(target)) =
+            (by_id.get(&edge.source), import_targets.get(&edge.target))
+        else {
+            continue;
+        };
+        included
+            .entry((*source).to_string())
+            .or_default()
+            .insert((*target).to_string());
+    }
+    included
+}
+
 /// Whether a file describes the database schema at a point in time
 /// rather than the program: a Rails migration declares the model classes
 /// it touches so that the data it moves keeps working, and a Laravel or
@@ -2986,6 +3027,11 @@ fn declares_a_schema_snapshot(path: &str) -> bool {
 pub(crate) fn resolve_pending_type_references(context: &mut IndexContext) {
     let pending = std::mem::take(&mut context.pending_type_references);
     let mut seen = BTreeSet::new();
+    // What each file includes, for the languages where a header is how a
+    // file reaches a declaration: redis declares `client` in `server.h`
+    // and again in `redis-benchmark.c`, and only the include says which
+    // one a file means.
+    let included = included_files(&context.graph);
 
     for reference in pending {
         let source_path = graph_node(&context.graph, reference.source)
@@ -3043,6 +3089,34 @@ pub(crate) fn resolve_pending_type_references(context: &mut IndexContext) {
                 targets
             } else {
                 neighbours
+            }
+        } else {
+            targets
+        };
+
+        // A C file reaches a declaration by including the header that
+        // holds it: redis declares `client` in `server.h` and again in
+        // `redis-benchmark.c`, and the file that includes one of them
+        // means that one.
+        let targets = if matches!(reference.language.as_str(), "c" | "cpp") && targets.len() > 1 {
+            let reachable: Vec<NodeId> = source_path
+                .and_then(|path| included.get(path))
+                .map(|headers| {
+                    targets
+                        .iter()
+                        .copied()
+                        .filter(|target| {
+                            graph_node(&context.graph, *target)
+                                .and_then(|node| node.span.as_ref())
+                                .is_some_and(|span| headers.contains(&span.path))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if reachable.len() == 1 {
+                reachable
+            } else {
+                targets
             }
         } else {
             targets
