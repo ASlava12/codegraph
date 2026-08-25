@@ -6205,6 +6205,53 @@ fn go_and_csharp_types_are_reached_by_the_declarations_that_name_them() {
 }
 
 #[test]
+fn a_type_parameter_is_not_a_type_the_project_declares() {
+    // Every generic declaration writes `T`, `A`, `K`, `V`, and no project
+    // means its own type by them: reading them as references pointed 10756
+    // of cats' 13896 at whatever happened to be called `A`.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("package.json"), "{\n  \"name\": \"app\"\n}\n").unwrap();
+    fs::write(
+        root.join("src").join("types.ts"),
+        "export interface A {\n  id: number\n}\n\nexport interface Item {\n  id: number\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("box.ts"),
+        "import type { Item } from './types'\n\nexport function unwrap<A>(values: A[], item: Item): A {\n  return values[0]\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let references = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.kind == EdgeKind::References
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|relation| relation == "type_reference")
+                    && graph
+                        .nodes
+                        .iter()
+                        .any(|node| node.id == edge.target && node.label == label)
+            })
+            .count()
+    };
+    assert_eq!(
+        references("A"),
+        0,
+        "the interface named `A` is not what `<A>` means"
+    );
+    assert!(references("Item") >= 1, "a real type is still reached");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn php_classes_are_reached_by_the_types_that_name_them() {
     // Laravel builds a service from its constructor's type hints rather
     // than with `new`, and a serializer states the interface it implements.

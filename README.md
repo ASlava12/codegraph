@@ -178,6 +178,11 @@ Implemented now:
   require('./utils').compileETag`), and a file that states no import at all may be a classic script,
   where a bare name really can come from anywhere, so the rule asks only files that import
   something.
+- A type parameter is not a type: every generic declaration writes `T`, `A`, `K`, `V`, and no
+  project means its own type by them. Reading them as references pointed 10756 of cats' 13896 at
+  whatever happened to be called `A`, which is why Scala and Objective-C are left out of this
+  reading altogether -- Scala writes type parameters everywhere, and Objective-C's references land
+  on the platform's `NSString` and `NSURL` rather than on a project's own classes.
 - Go and C# too: a Go parameter, field or variable names the struct it holds, and C# writes its
   types as plain identifiers, so what a declaration states sits in its `type` field and the classes
   it derives from in its base list. gin's `Context` -- the type its whole framework is written

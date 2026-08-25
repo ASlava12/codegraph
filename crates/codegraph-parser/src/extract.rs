@@ -170,6 +170,20 @@ pub(crate) struct WalkContext<'a> {
     pub(crate) config_aliases: &'a BTreeMap<String, String>,
 }
 
+/// Whether a name is a type parameter rather than a type: `T`, `A`, `K`,
+/// `V`, `T1`. Every generic declaration writes them and no project means
+/// its own type by them -- reading them as references pointed 10756 of
+/// cats' 13896 at whatever happened to be called `A`.
+fn names_a_type_parameter(label: &str) -> bool {
+    let label = label.trim();
+    if label.is_empty() {
+        return true;
+    }
+    let mut characters = label.chars();
+    let first = characters.next().unwrap_or(' ');
+    first.is_ascii_uppercase() && characters.all(|character| character.is_ascii_digit())
+}
+
 /// The names one declaration writes to reach another: a Dart type, a
 /// Terraform address, a Nix option, a schema's field type. Kept out of
 /// [`collect_items`] so its stack frame stays small enough for the depth
@@ -218,7 +232,7 @@ fn collect_reference_facts(
             .and_then(|parent| parent.child_by_field_name("name"))
             .is_some_and(|name| name == node)
         && let Some(label) = node_text(node, source)
-        && !label.is_empty()
+        && !names_a_type_parameter(&label)
     {
         facts.type_references.push(ParsedTypeReference {
             label,
