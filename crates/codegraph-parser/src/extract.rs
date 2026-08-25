@@ -2317,6 +2317,14 @@ pub(crate) fn enclosing_type_label(
         return Some(owner);
     }
 
+    // An Elixir function belongs to the module that declares it, and the
+    // module is a `defmodule` call rather than a block the grammar names,
+    // so the walk below never saw one: ecto declares 3029 functions and not
+    // one knew which module it was in.
+    if language == Language::Elixir {
+        return elixir_enclosing_module(node, source);
+    }
+
     let mut current = node.parent();
     while let Some(candidate) = current {
         let kind = candidate.kind();

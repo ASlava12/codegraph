@@ -16309,3 +16309,44 @@ fn a_bare_ocaml_call_needs_an_open_to_leave_its_file() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn an_elixir_function_belongs_to_the_module_that_declares_it() {
+    // A module is a `defmodule` call rather than a block the grammar names,
+    // so the walk that finds a class or an impl block never saw one: ecto
+    // declares 3029 functions and not one knew its module. Two modules that
+    // write the same name are then one name with two answers, and 5000 of
+    // ecto's calls were reported ambiguous.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib/app")).unwrap();
+    fs::write(
+        root.join("mix.exs"),
+        "defmodule App.MixProject do\n  use Mix.Project\n\n  def project, do: [app: :app]\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib/app/builder.ex"),
+        "defmodule App.Builder do\n  def escape(value), do: value\n\n  def escape(value, _opts), do: value\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib/app/planner.ex"),
+        "defmodule App.Planner do\n  def escape(value), do: value\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let owners: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Function && node.label == "escape")
+        .filter_map(|node| node.metadata.get("owner_type").map(String::as_str))
+        .collect();
+    assert_eq!(
+        owners,
+        vec!["App.Builder", "App.Builder", "App.Planner"],
+        "each clause belongs to the module that declares it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

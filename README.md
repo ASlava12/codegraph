@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- An Elixir function belongs to the module that declares it, and a module is a `defmodule` call
+  rather than a block the grammar names -- so the walk that finds a class or an impl block never saw
+  one, and ecto's 3029 functions knew no module at all. Two modules writing the same name were one
+  name with two answers: ecto's ambiguous calls fall from 5000 to 1692 and its resolved calls rise
+  from 2068 to 5294.
 - OCaml has no global namespace: a bare name is the standard library's, the file's own, or one an
   `open` brought into scope. Nobody in dune opens `Predicate_lang`, yet the `not` it declares
   answered 436 calls to the language's; `open Dune_sexp.Decoder` is read now, so the names that
