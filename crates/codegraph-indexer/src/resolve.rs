@@ -5,7 +5,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, is_test_like_source_path};
+use codegraph_core::{
+    CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan, is_test_like_source_path,
+};
 
 #[allow(unused_imports)]
 use crate::*;
@@ -3465,6 +3467,125 @@ enum OwnerMatch {
     Exact,
     Tail,
     TailIgnoringCase,
+}
+
+/// The routes a project's own layout declares. Next.js, Nuxt and
+/// SvelteKit name a URL by where a file sits, so a project written that
+/// way had no entrypoints at all: no routes, and nothing for `workflow`,
+/// `journey` or the coverage finding to start from.
+///
+/// The manifest is what says the project is written that way -- `app/` is
+/// a PHP directory as often as a Next.js one -- so this runs once the scan
+/// has read every manifest.
+pub(crate) fn resolve_pending_file_routes(context: &mut IndexContext) {
+    let pending = std::mem::take(&mut context.pending_file_routes);
+    if pending.is_empty() {
+        return;
+    }
+    let declared: BTreeSet<String> = context
+        .graph
+        .nodes
+        .iter()
+        .filter_map(|node| node.metadata.get("package_id").cloned())
+        .collect();
+    for route_file in pending {
+        let Some(route) = file_based_route(&route_file.label) else {
+            continue;
+        };
+        if !declared.contains(&format!("npm:{}", route.package)) {
+            continue;
+        }
+        // A handler module names each method it serves with a function of
+        // that name; a page is served on GET.
+        let handlers: Vec<(String, NodeId)> = match route.shape {
+            FileRouteShape::Handler => context
+                .graph
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.kind == NodeKind::Function
+                        && node
+                            .span
+                            .as_ref()
+                            .is_some_and(|span| span.path == route_file.label)
+                })
+                .filter_map(|node| {
+                    file_route_method(&node.label).map(|method| (method.to_string(), node.id))
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let methods: Vec<(String, Option<NodeId>)> = if handlers.is_empty() {
+            let method = match route.shape {
+                FileRouteShape::AnyMethod => "ANY",
+                _ => "GET",
+            };
+            vec![(method.to_string(), None)]
+        } else {
+            handlers
+                .into_iter()
+                .map(|(method, id)| (method, Some(id)))
+                .collect()
+        };
+        for (method, handler) in methods {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("item_kind".to_string(), "framework_route".to_string());
+            metadata.insert("entrypoint_kind".to_string(), "route".to_string());
+            metadata.insert("source".to_string(), "framework".to_string());
+            metadata.insert("framework".to_string(), route.framework.to_string());
+            metadata.insert("route_form".to_string(), "file_path".to_string());
+            metadata.insert("method".to_string(), method.clone());
+            metadata.insert("path".to_string(), route.path.clone());
+            metadata.insert("target".to_string(), route_file.label.clone());
+            let entrypoint_id = context.graph.add_node_with_metadata(
+                NodeKind::Entrypoint,
+                format!("route {method} {}", route.path),
+                Some(SourceSpan {
+                    path: route_file.label.clone(),
+                    start_line: 1,
+                    start_column: 1,
+                    end_line: 1,
+                    end_column: 1,
+                }),
+                metadata,
+            );
+            add_edge_once(
+                context,
+                route_file.file,
+                entrypoint_id,
+                EdgeKind::Contains,
+                Confidence::Syntactic,
+            );
+            let root_id = context.graph.root;
+            add_edge_once(
+                context,
+                root_id,
+                entrypoint_id,
+                EdgeKind::Entrypoint,
+                Confidence::Syntactic,
+            );
+            add_entrypoint_reference(
+                context,
+                entrypoint_id,
+                route_file.file,
+                "entrypoint_file",
+                "framework_route_file",
+                Confidence::Exact,
+                None,
+            );
+            if let Some(handler) = handler {
+                add_entrypoint_reference(
+                    context,
+                    entrypoint_id,
+                    handler,
+                    "entrypoint_function",
+                    "framework_route_handler",
+                    Confidence::Exact,
+                    Some(&method),
+                );
+            }
+        }
+    }
 }
 
 pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {

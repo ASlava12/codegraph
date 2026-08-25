@@ -1954,3 +1954,157 @@ pub(crate) fn find_unquoted(value: &str, needle: &str) -> Option<usize> {
 pub(crate) fn route_methods() -> &'static [&'static str] {
     &["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
 }
+
+/// A route a JavaScript framework declares by where the file sits rather
+/// than by a call in it: Next.js, Nuxt and SvelteKit all do this, and a
+/// project written that way had no entrypoints at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileRoute {
+    pub(crate) framework: &'static str,
+    /// The npm package whose presence says the project really is written
+    /// this way. `app/` is a PHP directory as often as a Next.js one.
+    pub(crate) package: &'static str,
+    pub(crate) path: String,
+    pub(crate) shape: FileRouteShape,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileRouteShape {
+    /// A page: the framework serves it on GET.
+    Page,
+    /// A handler module: each exported HTTP verb is a route of its own.
+    Handler,
+    /// A handler that serves every method, which is what Next.js's pages
+    /// API routes do.
+    AnyMethod,
+}
+
+/// The route a file's own path declares, when its project is written that
+/// way. The path is the evidence: `app/api/users/route.ts` is
+/// `/api/users`, `app/blog/[slug]/page.tsx` is `/blog/:slug`, and a
+/// `(marketing)` segment groups files without naming a URL.
+pub(crate) fn file_based_route(label: &str) -> Option<FileRoute> {
+    let normalized = label.replace('\\', "/");
+    let mut segments: Vec<&str> = normalized
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    let file = segments.pop()?;
+    let (stem, extension) = file.rsplit_once('.')?;
+    // A `src/` wrapper is the same layout one directory down.
+    if segments.first() == Some(&"src") {
+        segments.remove(0);
+    }
+    let root = *segments.first()?;
+
+    let js_module = matches!(extension, "ts" | "tsx" | "js" | "jsx" | "mts" | "mjs");
+    match root {
+        // Next.js's app router: a directory is a URL segment, `route` is a
+        // handler module and `page` is a page.
+        "app" if js_module && matches!(stem, "route" | "page") => {
+            let path = url_path_from_segments(&segments[1..])?;
+            Some(FileRoute {
+                framework: "next",
+                package: "next",
+                path,
+                shape: if stem == "route" {
+                    FileRouteShape::Handler
+                } else {
+                    FileRouteShape::Page
+                },
+            })
+        }
+        // Next.js's pages router, and Nuxt's, which writes `.vue` pages.
+        "pages" if (js_module || extension == "vue") && !stem.starts_with('_') => {
+            let mut parts: Vec<&str> = segments[1..].to_vec();
+            // `pages/blog/index.tsx` serves `/blog`.
+            if stem != "index" {
+                parts.push(stem);
+            }
+            let path = url_path_from_segments(&parts)?;
+            let api = segments.get(1) == Some(&"api");
+            Some(FileRoute {
+                framework: if extension == "vue" { "nuxt" } else { "next" },
+                package: if extension == "vue" { "nuxt" } else { "next" },
+                path,
+                shape: if api {
+                    FileRouteShape::AnyMethod
+                } else {
+                    FileRouteShape::Page
+                },
+            })
+        }
+        // SvelteKit: `+page.svelte` is a page and `+server.ts` a handler.
+        "routes" if matches!(file, "+page.svelte") || (js_module && stem == "+server") => {
+            let path = url_path_from_segments(&segments[1..])?;
+            Some(FileRoute {
+                framework: "sveltekit",
+                package: "@sveltejs/kit",
+                path,
+                shape: if file == "+page.svelte" {
+                    FileRouteShape::Page
+                } else {
+                    FileRouteShape::Handler
+                },
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The URL a directory path names. A `(group)` segment organises files
+/// without naming a URL, a `@slot` segment is a parallel route rather than
+/// a page, `[slug]` is a parameter and `[...rest]` catches what is left.
+fn url_path_from_segments(segments: &[&str]) -> Option<String> {
+    let mut parts = Vec::new();
+    for segment in segments {
+        // A private folder and a parallel route are not URL segments.
+        if segment.starts_with('_') || segment.starts_with('@') {
+            return None;
+        }
+        if segment.starts_with('(') && segment.ends_with(')') {
+            continue;
+        }
+        let part = if let Some(inner) = segment
+            .strip_prefix("[[...")
+            .and_then(|rest| rest.strip_suffix("]]"))
+        {
+            format!("*{inner}")
+        } else if let Some(inner) = segment
+            .strip_prefix("[...")
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            format!("*{inner}")
+        } else if let Some(inner) = segment
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            // SvelteKit writes `[slug=integer]` when it matches a pattern.
+            let inner = inner.split('=').next().unwrap_or(inner);
+            format!(":{inner}")
+        } else {
+            (*segment).to_string()
+        };
+        parts.push(part);
+    }
+    Some(if parts.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", parts.join("/"))
+    })
+}
+
+/// The HTTP methods a handler module exports. Next.js and SvelteKit both
+/// name the function after the method it serves.
+pub(crate) fn file_route_method(name: &str) -> Option<&'static str> {
+    match name {
+        "GET" => Some("GET"),
+        "POST" => Some("POST"),
+        "PUT" => Some("PUT"),
+        "PATCH" => Some("PATCH"),
+        "DELETE" => Some("DELETE"),
+        "HEAD" => Some("HEAD"),
+        "OPTIONS" => Some("OPTIONS"),
+        _ => None,
+    }
+}

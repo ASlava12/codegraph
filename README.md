@@ -87,6 +87,14 @@ Implemented now:
   from its `WORKDIR`, which is the repository, not `streaming/streaming/index.js`.
 - A compose `env_file` the repository's own `.gitignore` keeps out is a note rather than a warning:
   `.env.production` is written by whoever deploys, from the `.sample` the project ships beside it.
+- Next.js, Nuxt and SvelteKit declare a route by where the file sits, and a project written that way
+  had no entrypoints at all -- no routes, and nothing for a workflow, a journey or the coverage
+  finding to start from. The layout is read as the framework reads it: `app/api/users/route.ts`
+  exporting `GET` and `POST` is two routes, `app/blog/[slug]/page.tsx` is `GET /blog/:slug`, a
+  `(marketing)` segment groups files without naming a URL, `[...rest]` catches what is left, a
+  `pages/api` handler serves whatever method it is sent, and SvelteKit's `+page.svelte` and
+  `+server.ts` work the same way. Which framework the project uses is read from its manifest --
+  `app/` is a PHP directory as often as a Next.js one.
 - A ruby route is a declaration, not a call: sinatra states the block that serves the route on the
   line that opens it (`get '/x' do`, `get('/x') {`), so a request spec's `post '/accounts', params:
   { id: 1 }` is a call to a route rather than one of the program's own. 148 of mastodon's specs read

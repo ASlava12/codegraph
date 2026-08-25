@@ -85,6 +85,11 @@ pub(crate) struct IndexContext {
     pub(crate) pending_namespace_imports: Vec<PendingNamespaceImport>,
     pub(crate) pending_entrypoint_targets: Vec<PendingEntrypointTarget>,
     pub(crate) pending_route_handlers: Vec<PendingRouteHandler>,
+    /// Files whose own path declares a route -- Next.js, Nuxt and
+    /// SvelteKit all work that way. Which framework the project is written
+    /// in is stated in its manifest, which the walk may not have reached
+    /// yet, so the routes are made once the scan is complete.
+    pub(crate) pending_file_routes: Vec<PendingFileRoute>,
     pub(crate) pending_compose_config_targets: Vec<PendingComposeConfigTarget>,
     pub(crate) pending_compose_volume_targets: Vec<PendingComposeVolumeTarget>,
     pub(crate) kubernetes_configs: BTreeMap<KubernetesConfigKey, NodeId>,
@@ -193,6 +198,13 @@ pub(crate) struct PendingCall {
     /// name (`accounts.each`), rather than bare (`each`, which means
     /// `self`) or through a constant (`Rails.application`).
     pub(crate) receiver_is_a_value: bool,
+}
+
+/// A file whose path names a route, waiting for the manifest to say
+/// whether the project is written that way.
+pub(crate) struct PendingFileRoute {
+    pub(crate) file: NodeId,
+    pub(crate) label: String,
 }
 
 pub(crate) struct PendingTypeReference {

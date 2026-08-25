@@ -160,6 +160,7 @@ pub(crate) fn scan_project_with_scope(
         pending_local_imports: Vec::new(),
         pending_entrypoint_targets: Vec::new(),
         pending_route_handlers: Vec::new(),
+        pending_file_routes: Vec::new(),
         pending_compose_config_targets: Vec::new(),
         pending_compose_volume_targets: Vec::new(),
         kubernetes_configs: BTreeMap::new(),
@@ -332,6 +333,7 @@ pub(crate) fn scan_project_with_scope(
     resolve_pending_namespace_imports(&mut context);
     resolve_pending_entrypoint_targets(&mut context);
     resolve_pending_route_handlers(&mut context);
+    resolve_pending_file_routes(&mut context);
     link_imports_to_package_hubs(&mut context);
     resolve_pending_compose_config_targets(&mut context);
     resolve_pending_compose_volume_targets(&mut context);
@@ -795,6 +797,15 @@ pub(crate) fn index_file(
         .graph
         .add_node_with_metadata(NodeKind::File, label, None, metadata);
     context.file_nodes.insert(label.to_string(), file_id);
+    // Next.js, Nuxt and SvelteKit declare a route by where the file sits.
+    // Whether the project is written that way is stated in its manifest,
+    // which the walk may not have reached yet.
+    if file_based_route(label).is_some() {
+        context.pending_file_routes.push(PendingFileRoute {
+            file: file_id,
+            label: label.to_string(),
+        });
+    }
     context.graph.add_edge(
         context.graph.root,
         file_id,

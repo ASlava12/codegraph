@@ -6481,6 +6481,116 @@ fn a_dockerfile_command_runs_from_the_build_context() {
 }
 
 #[test]
+fn a_next_js_project_declares_its_routes_by_where_its_files_sit() {
+    // Next.js, Nuxt and SvelteKit name a URL by the path of the file that
+    // serves it, so a project written that way had no entrypoints at all --
+    // no routes, and nothing for a workflow or a journey to start from.
+    // The manifest is what says the project is written that way: `app/` is
+    // a PHP directory as often as a Next.js one.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app").join("api").join("users")).unwrap();
+    fs::create_dir_all(
+        root.join("app")
+            .join("(marketing)")
+            .join("blog")
+            .join("[slug]"),
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("pages").join("api")).unwrap();
+    fs::write(
+        root.join("package.json"),
+        "{\n  \"name\": \"shop\",\n  \"dependencies\": { \"next\": \"^15.0.0\" }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("api").join("users").join("route.ts"),
+        "export async function GET(request: Request) {\n  return null\n}\n\nexport async function POST(request: Request) {\n  return null\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app")
+            .join("(marketing)")
+            .join("blog")
+            .join("[slug]")
+            .join("page.tsx"),
+        "export default function Post() {\n  return null\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("pages").join("api").join("legacy.ts"),
+        "export default function handler(req: any, res: any) {\n  return null\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let routes: BTreeSet<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Entrypoint)
+        .map(|node| node.label.as_str())
+        .collect();
+    assert_eq!(
+        routes,
+        BTreeSet::from([
+            "route GET /api/users",
+            "route POST /api/users",
+            // A `(marketing)` segment groups files without naming a URL.
+            "route GET /blog/:slug",
+            // A pages API handler serves whatever method it is sent.
+            "route ANY /api/legacy",
+        ]),
+        "the layout states the routes"
+    );
+    // The exported verb is the handler the route reaches.
+    let get = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "route GET /api/users")
+        .expect("the GET route");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.source == get.id
+                && edge
+                    .metadata
+                    .get("resolution")
+                    .is_some_and(|resolution| resolution == "framework_route_handler")
+        }),
+        "and it reaches the function that serves it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_directory_named_app_is_not_a_route_unless_the_project_says_so() {
+    // koel keeps its PHP in `app/`, and a `route.ts` shape means nothing
+    // there. The manifest is the evidence.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app").join("api").join("users")).unwrap();
+    fs::write(
+        root.join("package.json"),
+        "{\n  \"name\": \"tool\",\n  \"dependencies\": { \"express\": \"^4.0.0\" }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("api").join("users").join("route.ts"),
+        "export function GET() {\n  return null\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    assert!(
+        !graph
+            .nodes
+            .iter()
+            .any(|node| node.kind == NodeKind::Entrypoint && node.label.starts_with("route ")),
+        "nothing says this project routes by file path"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_spec_that_calls_a_route_is_not_a_route() {
     // `post '/accounts', params: { id: 1 }` in a request spec calls a route;
     // it does not declare one. Sinatra declares a route with the block that
