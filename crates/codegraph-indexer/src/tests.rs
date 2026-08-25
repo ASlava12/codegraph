@@ -1689,6 +1689,55 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn solidity_states_its_own_primitives_and_a_test_gets_its_cheatcodes() {
+    // `require` and `keccak256` are the language's, `abi.encode` is how a
+    // contract encodes what it sends, and `assertEq` and `vm.` come from
+    // the Foundry base contract a test inherits. 887 of openzeppelin's
+    // 3012 unresolved Solidity calls were one of those.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("contracts")).unwrap();
+    fs::create_dir_all(root.join("test")).unwrap();
+    fs::write(
+        root.join("contracts").join("Vault.sol"),
+        "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\n\ncontract Vault {\n    function store(uint256 amount) public {\n        require(amount > 0, \"empty\");\n        bytes32 key = keccak256(abi.encode(amount));\n        emit Stored(key);\n    }\n\n    event Stored(bytes32 key);\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("test").join("Vault.t.sol"),
+        "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\n\ncontract VaultTest {\n    function testStore() public {\n        vm.assume(true);\n        assertEq(uint256(1), uint256(1));\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    for builtin in ["require", "keccak256", "abi.encode"] {
+        assert_eq!(
+            resolution(builtin).as_deref(),
+            Some("builtin"),
+            "{builtin} is the language's own"
+        );
+    }
+    for cheatcode in ["assertEq", "vm.assume"] {
+        assert_eq!(
+            resolution(cheatcode).as_deref(),
+            Some("builtin"),
+            "{cheatcode} is what a Foundry test inherits"
+        );
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_table_is_a_sql_entity_wherever_it_is_declared() {
     // mastodon writes its schema in Ruby migrations and some of its
     // indexes in raw SQL, and each table took the language of the file

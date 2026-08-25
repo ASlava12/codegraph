@@ -608,7 +608,7 @@ pub(crate) fn languages_share_symbols(one: &str, other: &str) -> bool {
 /// from the runner. Reading either as a call the resolver failed on buries
 /// the failures somebody can act on.
 pub(crate) fn environment_provides_call(language: &str, path: &str, label: &str) -> bool {
-    if !matches!(language, "javascript" | "typescript" | "tsx") {
+    if !matches!(language, "javascript" | "typescript" | "tsx" | "solidity") {
         return false;
     }
     if path.ends_with(".vue")
@@ -624,6 +624,29 @@ pub(crate) fn environment_provides_call(language: &str, path: &str, label: &str)
         )
     {
         return true;
+    }
+    if is_test_like_source_path(path) && language == "solidity" {
+        // Foundry hands a test contract its assertions and its cheatcodes:
+        // `assertEq` and `bound` come from the `Test` base contract, and
+        // `vm.` is the cheatcode address. openzeppelin writes 400 of them.
+        return matches!(
+            label,
+            "assertEq"
+                | "assertNotEq"
+                | "assertTrue"
+                | "assertFalse"
+                | "assertGt"
+                | "assertGe"
+                | "assertLt"
+                | "assertLe"
+                | "assertApproxEqAbs"
+                | "assertApproxEqRel"
+                | "bound"
+                | "deal"
+                | "hoax"
+                | "fail"
+                | "emit"
+        ) || label.starts_with("vm.");
     }
     is_test_like_source_path(path)
         && (matches!(
@@ -1664,6 +1687,38 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
         // `std.` -- `std.debug.assert`, `std.ArrayList` -- and not one of
         // them is a function zls failed to declare.
         "zig" => base.starts_with("std.") || base.starts_with("builtin."),
+        // Solidity's own: `require`/`revert` state a condition the call
+        // has to meet, `keccak256` and `ecrecover` are the chain's
+        // primitives, and `abi.` is how a contract encodes what it sends.
+        "solidity" => {
+            matches!(
+                base,
+                "require"
+                    | "revert"
+                    | "assert"
+                    | "keccak256"
+                    | "sha256"
+                    | "ripemd160"
+                    | "ecrecover"
+                    | "addmod"
+                    | "mulmod"
+                    | "selfdestruct"
+                    | "blockhash"
+                    | "blobhash"
+                    | "gasleft"
+                    | "type"
+                    | "payable"
+            ) || [
+                "abi.",
+                "bytes.concat",
+                "string.concat",
+                "msg.",
+                "block.",
+                "tx.",
+            ]
+            .iter()
+            .any(|prefix| base.starts_with(prefix))
+        }
         "elixir" | "erlang" => matches!(
             base.trim_end_matches('?'),
             "is_atom"

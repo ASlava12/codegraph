@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Solidity states its own primitives: `require` and `revert` state a condition the call has to meet,
+  `keccak256` and `ecrecover` are the chain's, and `abi.encode` is how a contract encodes what it
+  sends. A Foundry test inherits its assertions and cheatcodes from the base contract -- `assertEq`,
+  `bound`, `vm.assume`. 887 of openzeppelin's 3012 unresolved Solidity calls were one of those.
 - An entrypoint reaching the code that serves it is the architecture, not a surprise: a route sits
   in `routes/` and its controller in `app/`, so the link crosses an area by construction, and eight
   of koel's top ten "surprising links" were a route reaching its own `__invoke`. What ranks now is a
