@@ -16504,3 +16504,40 @@ fn the_two_arms_of_one_macro_are_one_macro() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_call_through_a_type_parameter_names_no_definition() {
+    // `F.map(fa)(f)` goes through a value whose type is a type parameter,
+    // so nothing the project declares can be named by it. cats writes 178
+    // of those and each was a choice between every `map` in the repository.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src/main/scala")).unwrap();
+    fs::write(root.join("build.sbt"), "name := \"app\"\n").unwrap();
+    fs::write(
+        root.join("src/main/scala/Chain.scala"),
+        "package app\n\nfinal class Chain {\n  def map(f: Int => Int): Chain = this\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main/scala/Ops.scala"),
+        "package app\n\nobject Ops {\n  def run[F[_]](F: Functor[F], fa: F[Int]): F[Int] = F.map(fa)(x => x)\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("F.map")
+        })
+        .expect("the call is recorded");
+    assert_eq!(
+        call.metadata.get("resolution").map(String::as_str),
+        Some("unresolved"),
+        "a type parameter names no type the project declares"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

@@ -2183,6 +2183,18 @@ fn module_named_file(language: &str, path: &str, module: &str) -> bool {
 /// more than once in one file, which is how a header writes `#ifdef` /
 /// `#else`. nlohmann defines `JSON_THROW` twice in each copy of its
 /// header, and the caller means the macro, not one of the two arms.
+/// Whether a name is a type parameter rather than a value the project
+/// declares: `F`, `G`, `M`, `A1`. Scala and Java write them constantly,
+/// and a call through one names a type the syntax does not.
+fn names_a_type_parameter(name: &str) -> bool {
+    let name = name.trim();
+    let mut characters = name.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    first.is_ascii_uppercase() && characters.all(|character| character.is_ascii_digit())
+}
+
 fn one_macros_arms(graph: &CodeGraph, targets: &[NodeId]) -> bool {
     let mut label: Option<String> = None;
     let mut path: Option<String> = None;
@@ -2584,6 +2596,16 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     || node.span.as_ref().map(|span| span.path.as_str()) == caller_path
                     || reachable_owners.contains(owner)
             });
+        }
+        // `F.map(fa)(f)`: the receiver is a value whose type is a type
+        // parameter, so no definition in the project can be named by it.
+        // cats writes 178 of those, and each was reported as a choice
+        // between every `map` the repository declares.
+        if matches!(call.language.as_str(), "scala" | "kotlin" | "java")
+            && let Some((owner, _)) = split_qualified_call(&call.label)
+            && names_a_type_parameter(owner)
+        {
+            language_targets.clear();
         }
         // A nix file's `let` bindings are its own, and the language has no
         // global namespace to reach another file's through: a bare name is

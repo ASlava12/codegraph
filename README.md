@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- `F.map(fa)(f)` goes through a value whose type is a type parameter, so nothing the project
+  declares can be named by it. cats writes 178 of those and each was reported as a choice between
+  every `map` in the repository; 744 of its ambiguous calls stop claiming a choice that was never
+  there.
 - A header defines a macro once per side of an `#ifdef`, and a caller means the macro rather than
   one of the two arms. nlohmann keeps three copies of its header, so `JSON_THROW` was a choice
   between six definitions of one name; 487 of its calls, 594 of redis's and 95 of spdlog's now
