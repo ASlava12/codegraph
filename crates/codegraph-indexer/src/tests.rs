@@ -16350,3 +16350,35 @@ fn an_elixir_function_belongs_to_the_module_that_declares_it() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_cpp_method_written_inside_its_class_knows_whose_it_is() {
+    // A method defined outside its class names the owner in the declarator
+    // -- `void file_helper::open(..)` -- but one written inside the class
+    // body has only the class around it to say so. nlohmann and spdlog
+    // write nearly every method that way, and 96% of their functions knew
+    // no owner at all.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(root.join("CMakeLists.txt"), "project(app)\n").unwrap();
+    fs::write(
+        root.join("include/reader.hpp"),
+        "#pragma once\n\nclass reader {\npublic:\n  int parse() { return 1; }\n};\n\nstruct writer {\n  int parse() { return 2; }\n};\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let owners: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Function && node.label == "parse")
+        .filter_map(|node| node.metadata.get("owner_type").map(String::as_str))
+        .collect();
+    assert_eq!(
+        owners,
+        vec!["reader", "writer"],
+        "each method belongs to the class body it is written in"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

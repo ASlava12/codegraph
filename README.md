@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A C++ method written inside its class body has only the class around it to say whose it is: a
+  method defined outside names the owner in the declarator, but nlohmann and spdlog write nearly
+  every one inline and 96% of their functions knew no owner. nlohmann's ambiguous calls fall from
+  6895 to 6422 and its resolved calls rise by 470.
 - An Elixir function belongs to the module that declares it, and a module is a `defmodule` call
   rather than a block the grammar names -- so the walk that finds a class or an impl block never saw
   one, and ecto's 3029 functions knew no module at all. Two modules writing the same name were one

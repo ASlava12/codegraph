@@ -2362,6 +2362,18 @@ pub(crate) fn enclosing_type_label(
                 .then(|| named_child_text(candidate, "name", source))
                 .flatten()
             }
+            // A C++ method written inside its class body has nothing in the
+            // declarator to say whose it is -- only the class around it.
+            // nlohmann and spdlog write nearly every method that way, and
+            // 96% of their functions knew no owner.
+            Language::C | Language::Cpp
+                if matches!(
+                    kind,
+                    "class_specifier" | "struct_specifier" | "union_specifier"
+                ) =>
+            {
+                named_child_text(candidate, "name", source)
+            }
             Language::Swift if kind == "class_declaration" || kind == "protocol_declaration" => {
                 named_child_text(candidate, "name", source)
             }
