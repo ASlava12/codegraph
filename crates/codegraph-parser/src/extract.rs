@@ -1634,11 +1634,15 @@ pub(crate) fn classify_call(
     }
 
     let label = call_label(language, node, source)?;
-    // A name cannot hold a block, a statement separator or a line break.
-    // When one of those survives, the callee was an expression rather than
-    // a name — or the parser recovered from a syntax error mid-file — and
-    // the label is a fragment of source, not something to put in a graph.
-    if label.is_empty() || label.contains(['{', '}', ';', '\n']) {
+    // A name cannot hold a block, a statement separator, a line break, a
+    // quote, a parenthesis or a space. When one of those survives, the
+    // callee was an expression rather than a name -- terraform's
+    // `(*StackChangeProgress_Hook)(x)`, nlohmann's `(std::numeric_limits`
+    // and `j.template get`, redis's `"/sbin/$sysctl"`, vue's `(transformSrcset
+    // as Function)` -- or the parser recovered from a syntax error
+    // mid-file, and the label is a fragment of source rather than something
+    // to put in a graph. 812 of terraform's call nodes were of that kind.
+    if label.is_empty() || label.contains(['{', '}', '(', ')', ';', '\n', '"', '\'', ' ', '\t']) {
         return None;
     }
 

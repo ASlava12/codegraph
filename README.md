@@ -178,6 +178,14 @@ Implemented now:
   require('./utils').compileETag`), and a file that states no import at all may be a classic script,
   where a bare name really can come from anywhere, so the rule asks only files that import
   something.
+- A call's name cannot hold a parenthesis, a quote or a space. When one survives, the callee was an
+  expression rather than a name -- terraform's `(*StackChangeProgress_Hook)(x)`, nlohmann's
+  `(std::numeric_limits` and `j.template get`, redis's `"/sbin/$sysctl"`, vue's `(transformSrcset as
+  Function)` -- and the label is a fragment of source. 812 of terraform's call nodes were of that
+  kind, and no resolved edge is lost by refusing them.
+- A C++ cast is written like a call and is the language's own: nlohmann/json writes 437
+  `static_cast` and 70 `reinterpret_cast`, which read as calls the scan had failed to resolve, along
+  with `strcasecmp`, `qsort`, `strtol` and the rest of the C library it leans on.
 - A type parameter is not a type: every generic declaration writes `T`, `A`, `K`, `V`, and no
   project means its own type by them. Reading them as references pointed 10756 of cats' 13896 at
   whatever happened to be called `A`, which is why Scala and Objective-C are left out of this

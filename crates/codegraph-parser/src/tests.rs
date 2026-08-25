@@ -271,6 +271,38 @@ enum Role { ADMIN }
 }
 
 #[test]
+fn an_expression_in_the_callee_is_not_a_name() {
+    // `(*StackChangeProgress_Hook)(x)` in terraform, `(std::numeric_limits`
+    // and `j.template get` in nlohmann/json, `(transformSrcset as Function)`
+    // in vue: when the callee is an expression rather than a name, the
+    // label is a fragment of source. 812 of terraform's call nodes were of
+    // that kind.
+    let parsed = parse_source(
+        "main.go",
+        b"package main\n\nfunc run(x any) {\n\t_ = (*Hook)(x)\n\tdo(x)\n}\n",
+        Language::Go,
+    )
+    .expect("parse go");
+
+    let calls: Vec<&str> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Call)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert!(
+        calls.contains(&"do"),
+        "the call by name is still read: {calls:?}"
+    );
+    for label in &calls {
+        assert!(
+            !label.contains(['(', ')', ' ', '"']),
+            "an expression is not a name: {label}"
+        );
+    }
+}
+
+#[test]
 fn a_parse_error_says_where_the_parser_lost_the_thread() {
     // A file with an error node still yields facts, and an error node says
     // the grammar did not cover something rather than that the code is

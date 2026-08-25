@@ -772,6 +772,36 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
                     | "fwrite"
                     | "fgets"
                     | "fputs"
+                    // A cast is written like a call and is the language's
+                    // own: nlohmann/json writes 437 `static_cast` and 70
+                    // `reinterpret_cast`, and reporting them as unresolved
+                    // claims the scan looked for a function nobody wrote.
+                    | "static_cast"
+                    | "dynamic_cast"
+                    | "const_cast"
+                    | "reinterpret_cast"
+                    | "alignof"
+                    | "typeid"
+                    | "decltype"
+                    | "offsetof"
+                    | "va_start"
+                    | "va_end"
+                    | "va_arg"
+                    | "strcasecmp"
+                    | "strncasecmp"
+                    | "snprintf_s"
+                    | "qsort"
+                    | "bsearch"
+                    | "abs"
+                    | "labs"
+                    | "strtol"
+                    | "strtoul"
+                    | "strtod"
+                    | "isdigit"
+                    | "isalpha"
+                    | "isspace"
+                    | "toupper"
+                    | "tolower"
             ) || base.starts_with("std::")
         }
         "php" => matches!(
