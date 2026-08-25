@@ -2918,6 +2918,16 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         if let Some((owner, _)) = split_qualified_call(&call.label)
             && targets.len() > 1
         {
+            // The file may have renamed the type the call is written
+            // through: `using Assert = ..XUnitAssert;` makes every
+            // `Assert.AreEqual` that class's, and Newtonsoft's tests write
+            // 2199 of them.
+            let owner = context
+                .file_type_aliases
+                .get(call.span.path.as_str())
+                .and_then(|aliases| aliases.get(owner))
+                .map(String::as_str)
+                .unwrap_or(owner);
             let owned = targets
                 .iter()
                 .copied()

@@ -16590,3 +16590,54 @@ fn an_expect_declaration_and_its_actual_are_one_declaration() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_csharp_using_alias_names_the_type_a_call_goes_through() {
+    // `using Assert = Newtonsoft.Json.Tests.XUnitAssert;` renames a type,
+    // and every call written through the alias means the type it stands
+    // for. Newtonsoft's tests write 2199 `Assert.AreEqual` and each was a
+    // choice between three `AreEqual` the project declares.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("App.sln"),
+        "Microsoft Visual Studio Solution File\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/Asserts.cs"),
+        "namespace App\n{\n    public class XUnitAssert\n    {\n        public static void AreEqual(object a, object b) { }\n    }\n\n    public class StringAssert\n    {\n        public static void AreEqual(string a, string b) { }\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/Tests.cs"),
+        "using Assert = App.XUnitAssert;\n\nnamespace App\n{\n    public class Tests\n    {\n        public void Check()\n        {\n            Assert.AreEqual(1, 1);\n        }\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("Assert.AreEqual")
+        })
+        .expect("the call is recorded");
+    assert_eq!(
+        call.metadata.get("resolution").map(String::as_str),
+        Some("resolved")
+    );
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == call.target)
+        .expect("the target is a node");
+    assert_eq!(
+        target.metadata.get("owner_type").map(String::as_str),
+        Some("XUnitAssert"),
+        "the alias names which of the two `AreEqual` is meant"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

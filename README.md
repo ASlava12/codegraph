@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- `using Assert = Newtonsoft.Json.Tests.XUnitAssert;` renames a type, and every call written
+  through the alias means the type it stands for. Newtonsoft's tests write 2199 `Assert.AreEqual`,
+  each a choice between the three `AreEqual` the project declares; its ambiguous calls fall from
+  6579 to 4295 and 2284 more resolve.
 - `expect class Buffer` in commonMain and `actual class Buffer` in jvmMain are one class written
   twice, and a source set is a directory of its own -- so what tells the two halves apart is exactly
   what the overload test asked them to share. okio's ambiguous calls fall from 5749 to 5403 and 346

@@ -48,6 +48,10 @@ pub(crate) struct IndexContext {
     /// package it names, so a qualified call can be answered by the import
     /// list instead of by every same-named declaration in the project.
     pub(crate) file_import_qualifiers: BTreeMap<String, BTreeMap<String, ImportedPackage>>,
+    /// The types a file renames, by file: C# writes `using Assert =
+    /// Newtonsoft.Json.Tests.XUnitAssert;` and every call through `Assert`
+    /// means that type.
+    pub(crate) file_type_aliases: BTreeMap<String, BTreeMap<String, String>>,
     /// The modules a file `open`s, by file. OCaml has no global namespace:
     /// a bare name is the standard library's, this file's, or one an
     /// `open` brought into scope.

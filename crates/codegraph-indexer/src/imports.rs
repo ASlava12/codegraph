@@ -1303,6 +1303,28 @@ pub(crate) fn java_static_imported_names(import_label: &str) -> Vec<String> {
     vec![name.to_string()]
 }
 
+/// The type a C# `using Assert = Newtonsoft.Json.Tests.XUnitAssert;`
+/// renames, as the pair the call site needs: the alias a call is written
+/// through, and the type it stands for. Newtonsoft's tests write 2199
+/// `Assert.AreEqual` and every one is that project's own `XUnitAssert`.
+/// A plain `using System.Text;` names a namespace and renames nothing.
+pub(crate) fn csharp_type_alias(import_label: &str) -> Option<(String, String)> {
+    let statement = import_label.trim().trim_end_matches(';').trim();
+    let rest = statement
+        .strip_prefix("global using ")
+        .or_else(|| statement.strip_prefix("using "))?;
+    let rest = rest.trim().strip_prefix("static ").unwrap_or(rest).trim();
+    let (alias, target) = rest.split_once('=')?;
+    let alias = alias.trim();
+    let target = target.trim();
+    if alias.is_empty() || target.is_empty() || alias.contains(['.', ' ']) {
+        return None;
+    }
+    let target = target.split('<').next().unwrap_or(target).trim();
+    let name = target.rsplit('.').next().unwrap_or(target).trim();
+    (!name.is_empty() && name != alias).then(|| (alias.to_string(), name.to_string()))
+}
+
 /// The modules an OCaml `open` or `include` brings into scope. Every
 /// segment counts: `open Fiber.O` puts names that live in fiber.ml within
 /// reach, and `open Dune_sexp.Decoder` names decoder.ml.

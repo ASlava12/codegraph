@@ -138,6 +138,7 @@ pub(crate) fn scan_project_with_scope(
         effect_entities: BTreeMap::new(),
         file_import_qualifiers: BTreeMap::new(),
         file_open_modules: BTreeMap::new(),
+        file_type_aliases: BTreeMap::new(),
         file_imported_names: BTreeMap::new(),
         file_wildcard_imports: BTreeSet::new(),
         type_symbols: BTreeMap::new(),
@@ -1059,6 +1060,18 @@ pub(crate) fn index_file(
                                 .entry(label.to_string())
                                 .or_default()
                                 .insert(qualifier, package.clone());
+                        }
+                        // `using Assert = ..XUnitAssert;` renames a type,
+                        // and every call written through the alias means
+                        // the type it stands for.
+                        if language == Language::CSharp
+                            && let Some((alias, target)) = csharp_type_alias(&item.label)
+                        {
+                            context
+                                .file_type_aliases
+                                .entry(label.to_string())
+                                .or_default()
+                                .insert(alias, target);
                         }
                         // `open Dune_sexp.Decoder` is what makes a bare
                         // `located` mean that module's; without it the name
