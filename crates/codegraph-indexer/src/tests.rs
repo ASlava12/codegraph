@@ -1689,6 +1689,74 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn swift_and_erlang_reach_what_they_name() {
+    // Alamofire's `Session` -- the type its whole API is written around --
+    // had nothing pointing at it and four declarations, because every
+    // `extension Session { .. }` read as another one. cowboy's modules
+    // were reached by nothing at all, and a `cowboy_req:reply(..)` names
+    // the module on the left of the colon.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("Sources")).unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("Sources").join("Session.swift"),
+        "public class Session {\n    public let identifier: String\n\n    init(identifier: String) {\n        self.identifier = identifier\n    }\n}\n\nextension Session {\n    func reset() {}\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("Sources").join("Request.swift"),
+        "public class Request {\n    let session: Session\n\n    init(session: Session) {\n        self.session = session\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("cowboy_req.erl"),
+        "-module(cowboy_req).\n-export([reply/2]).\n\nreply(Status, Req) ->\n    {Status, Req}.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("cowboy_handler.erl"),
+        "-module(cowboy_handler).\n-export([execute/2]).\n\nexecute(Req, State) ->\n    cowboy_req:reply(200, Req),\n    {ok, State}.\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let named = |label: &str| -> Vec<&str> {
+        graph
+            .nodes
+            .iter()
+            .filter(|node| {
+                matches!(node.kind, NodeKind::Type | NodeKind::Module) && node.label == label
+            })
+            .filter_map(|node| node.span.as_ref().map(|span| span.path.as_str()))
+            .collect()
+    };
+    assert_eq!(
+        named("Session"),
+        vec!["Sources/Session.swift"],
+        "an extension adds to a type declared elsewhere and declares none"
+    );
+    let reached = |label: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.metadata.get("relation").map(String::as_str) == Some("type_reference")
+                && graph
+                    .nodes
+                    .iter()
+                    .any(|node| node.id == edge.target && node.label == label)
+        })
+    };
+    assert!(
+        reached("Session"),
+        "a property's type names the class it holds"
+    );
+    assert!(
+        reached("cowboy_req"),
+        "and `cowboy_req:reply(..)` names the module it calls into"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_c_struct_declares_a_type_only_where_it_has_a_body() {
     // `struct client { .. }` declares a type and `struct client *c` names
     // one, and reading both as declarations gave redis 183 nodes for

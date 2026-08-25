@@ -394,6 +394,63 @@ fn collect_reference_facts(
         }
     }
 
+    // What a Swift declaration states about the types it works with: a
+    // property's type, a parameter's, what a function returns, and what a
+    // type conforms to. Alamofire declares `Session` -- the type its whole
+    // API is written around -- and nothing pointed at it.
+    if language == Language::Swift
+        && node.kind() == "type_identifier"
+        && let Some(label) = node_text(node, source)
+        && !names_a_type_parameter(&label)
+        // The name in `struct Session { .. }` declares the type.
+        && !node
+            .parent()
+            .and_then(|parent| parent.child_by_field_name("name"))
+            .is_some_and(|name| name == node)
+    {
+        facts.type_references.push(ParsedTypeReference {
+            label,
+            span: span_for(path, node),
+            parent: current_function.clone(),
+        });
+    }
+
+    // What an Erlang module states about the modules it calls:
+    // `cowboy_req:reply(..)` names the module on the left of the colon,
+    // and `-behaviour(cowboy_handler)` names the one it implements.
+    if language == Language::Erlang {
+        let mut references: Vec<Node<'_>> = Vec::new();
+        if node.kind() == "remote"
+            && let Some(module) = node.child_by_field_name("module")
+        {
+            references.push(module);
+        }
+        // `-behaviour(cowboy_handler).` names the module it implements.
+        if node.kind() == "behaviour_attribute"
+            && let Some(name) = node.named_child(0)
+        {
+            references.push(name);
+        }
+        for reference in references {
+            let Some(label) = node_text(reference, source) else {
+                continue;
+            };
+            let label = label.trim().trim_end_matches(':').trim();
+            if label.is_empty()
+                || !label
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || character == '_')
+            {
+                continue;
+            }
+            facts.type_references.push(ParsedTypeReference {
+                label: label.to_string(),
+                span: span_for(path, reference),
+                parent: current_function.clone(),
+            });
+        }
+    }
+
     // What an Elixir module states about the modules it works with:
     // `alias Ecto.Changeset`, `use Ecto.Schema`, `import Ecto.Query`, and
     // the module a qualified call is written through --
@@ -1096,6 +1153,21 @@ pub(crate) fn classify_node(
         Language::Swift => match kind {
             "function_declaration" | "protocol_function_declaration" | "init_declaration" => {
                 ParsedItemKind::Function
+            }
+            // `extension Session { .. }` adds to a type declared
+            // elsewhere; it does not declare one. Alamofire writes three
+            // for `Session` alone, so the type its whole API is written
+            // around had four declarations and no reference could choose
+            // between them.
+            "class_declaration"
+                if node
+                    .child_by_field_name("declaration_kind")
+                    .and_then(|kind| node_text(kind, source))
+                    .as_deref()
+                    .map(str::trim)
+                    == Some("extension") =>
+            {
+                return None;
             }
             // The grammar folds struct/enum into class_declaration.
             "class_declaration" | "protocol_declaration" => ParsedItemKind::Type,

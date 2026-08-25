@@ -1217,7 +1217,10 @@ pub(crate) fn index_file(
                     // Ecto.Changeset` reach one the way a class is reached.
                     if item.kind == ParsedItemKind::Type
                         || (item.kind == ParsedItemKind::Module
-                            && matches!(language, Language::Ruby | Language::Elixir))
+                            && matches!(
+                                language,
+                                Language::Ruby | Language::Elixir | Language::Erlang
+                            ))
                     {
                         register_function_symbol(&mut context.type_symbols, &item.label, item_id);
                     }

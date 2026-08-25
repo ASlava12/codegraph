@@ -236,6 +236,13 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Swift and Erlang reach what they name too. `extension Session { .. }` adds to a type declared
+  elsewhere and declares none, so Alamofire's `Session` -- the type its whole API is written around
+  -- had four declarations and nothing pointing at any of them; `impact Session` now names 497
+  dependents and 476 affected tests, and Alamofire's type nodes fall from 595 to 399 while its
+  references rise to 3413. An Erlang module is named by the remote call that reaches it --
+  `cowboy_req:reply(..)` -- and by `-behaviour(cowboy_handler)`: cowboy's references go from 134 to
+  1023 and `impact cowboy_req` names 294 dependents.
 - `struct client { .. }` declares a type and `struct client *c` names one: reading both as
   declarations gave redis 183 nodes for `redisCommand` and 3635 types for its 1492 names, so no
   reference could choose a target. `typedef struct client { .. } client;` is one declaration written
