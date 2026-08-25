@@ -5169,6 +5169,28 @@ fn query_insights_returns_sensitive_config_default_context() {
 }
 
 #[test]
+fn a_name_that_matches_a_file_stem_finds_that_file() {
+    // A Zig file is a struct: zls writes `Server` in `src/Server.zig` and
+    // nothing else answers to that name, so `impact Server` found nothing
+    // at all. A Java file is its class the same way.
+    let mut graph = CodeGraph::new("repo");
+    let file = graph.add_node(NodeKind::File, "src/Server.zig");
+    graph.add_node(NodeKind::File, "src/analysis/Config.zig");
+    graph.add_node(NodeKind::File, "src/build/Config.zig");
+
+    assert_eq!(
+        resolve_node_reference(&graph, "Server"),
+        Some(file),
+        "a name matching one file's stem names that file"
+    );
+    assert_eq!(
+        resolve_node_reference(&graph, "Config"),
+        None,
+        "and a stem two files share names neither"
+    );
+}
+
+#[test]
 fn an_entrypoint_reaching_its_own_handler_is_not_a_surprise() {
     // A route sits in `routes/` and the controller it names in `app/`, so
     // the link crosses an area by construction: eight of koel's top ten

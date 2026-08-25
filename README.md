@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A Zig file is a struct and a Java file is its class, so a name can belong to a file rather than to
+  anything the file declares: zls writes `Server` in `src/Server.zig`, and `impact Server` found
+  nothing at all. A name that matches exactly one file's stem names that file -- 65 dependents for
+  `Server`, 81 for `DocumentStore`.
 - A C# program is every statement its file writes outside a declaration, not the first of them: with
   only the first in its span, the calls the rest make belonged to the file, and eShopOnWeb's three
   programs reached nothing at all. Following one now walks 16 blocks deep into the services it

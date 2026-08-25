@@ -4122,6 +4122,22 @@ pub(crate) fn resolve_node_reference(graph: &CodeGraph, value: &str) -> Option<N
         // An exact label can name many nodes (`main` names 15 on terraform);
         // rank them instead of taking whichever the file walk reached first.
         .or_else(|| best_labelled_node(graph, value))
+        // A Zig file is a struct and a Java file is its class: `Server`
+        // names `src/Server.zig`, which no label matches. Only an
+        // unambiguous stem counts, and only when nothing else answered.
+        .or_else(|| {
+            let mut matches = graph.nodes.iter().filter(|node| {
+                node.kind == NodeKind::File
+                    && node
+                        .label
+                        .rsplit('/')
+                        .next()
+                        .and_then(|file| file.split_once('.'))
+                        .is_some_and(|(stem, _)| stem == value)
+            });
+            let first = matches.next()?;
+            matches.next().is_none().then_some(first)
+        })
         .or_else(|| {
             // Substring fallback only when it is unambiguous: with several
             // candidates the winner would be whichever node happens to come
