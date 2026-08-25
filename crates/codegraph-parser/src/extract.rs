@@ -2690,6 +2690,29 @@ pub(crate) fn classify_call(
             }
         }
     }
+    // Kotlin writes the callee as one navigation expression and the label
+    // keeps only its last segment: `sink.writeUtf8(..)` is `writeUtf8`.
+    // What the call was written through is the only thing that says which
+    // of okio's three `writeUtf8` is meant.
+    if language == Language::Kotlin
+        && let Some(callee) = node
+            .named_child(0)
+            .and_then(|child| node_text(child, source))
+        && let Some((receiver, _)) = callee.trim().rsplit_once('.')
+    {
+        let receiver = receiver.trim();
+        if !receiver.is_empty()
+            && !matches!(receiver, "this" | "self" | "super")
+            && receiver
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
+            if let Some(receiver_type) = scope.variable_types.get(receiver) {
+                metadata.insert("receiver_type".to_string(), receiver_type.clone());
+            }
+            metadata.insert("receiver".to_string(), receiver.to_string());
+        }
+    }
     // Java keeps the receiver in a field of its own -- `pet.getName()` is
     // `object: pet`, `name: getName` -- so the label is the method alone and
     // cannot say whether the source named an object at all. `this` and
@@ -2791,6 +2814,12 @@ pub(crate) fn declared_variable_types(
     // of them and 563 calls chose between all 14.
     if language == Language::Java {
         return java_declared_variable_types(node, source);
+    }
+    // Kotlin states the type of a parameter always and of a binding often:
+    // `fun write(sink: BufferedSink)` and `val buffer: Buffer = Buffer()`.
+    // okio declares three `writeUtf8` and 503 calls chose between them.
+    if language == Language::Kotlin {
+        return kotlin_declared_variable_types(node, source);
     }
     if language != Language::Go {
         return declared;
@@ -2895,6 +2924,93 @@ fn java_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<Strin
         declared.remove(&name);
     }
     declared
+}
+
+/// The names a Kotlin definition binds with a type: its parameters, which
+/// always state one, and the bindings that do. `val gson = Gson()` states
+/// none, but what it builds is written right there.
+fn kotlin_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    let mut declared: BTreeMap<String, String> = BTreeMap::new();
+    let mut conflicting: BTreeSet<String> = BTreeSet::new();
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        let mut cursor = current.walk();
+        for child in current.named_children(&mut cursor) {
+            stack.push(child);
+        }
+        if !matches!(
+            current.kind(),
+            "parameter" | "variable_declaration" | "class_parameter"
+        ) {
+            continue;
+        }
+        let Some(name) = child_kind_text(current, "identifier", source) else {
+            continue;
+        };
+        let type_name = kotlin_stated_type(current, source).or_else(|| {
+            current
+                .parent()
+                .and_then(|parent| kotlin_built_type(parent, source))
+        });
+        let Some(type_name) = type_name else {
+            continue;
+        };
+        if declared
+            .get(&name)
+            .is_some_and(|existing| existing != &type_name)
+        {
+            conflicting.insert(name);
+            continue;
+        }
+        declared.insert(name, type_name);
+    }
+    for name in conflicting {
+        declared.remove(&name);
+    }
+    declared
+}
+
+/// The type a Kotlin binding writes after its colon, as a bare name:
+/// `sink: BufferedSink` and `parts: List<String>` both state one.
+fn kotlin_stated_type(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    let type_node = node.named_children(&mut cursor).find(|child| {
+        matches!(
+            child.kind(),
+            "user_type" | "nullable_type" | "non_nullable_type" | "parenthesized_type"
+        )
+    })?;
+    let text = node_text(type_node, source)?;
+    let name = text
+        .trim()
+        .trim_end_matches('?')
+        .split('<')
+        .next()
+        .unwrap_or_default()
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+/// The type a Kotlin binding builds when it states none: `val gson =
+/// Gson()` names the class on the right of the `=`.
+fn kotlin_built_type(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if node.kind() != "property_declaration" {
+        return None;
+    }
+    let mut cursor = node.walk();
+    let call = node
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "call_expression")?;
+    let callee = call
+        .named_child(0)
+        .and_then(|child| node_text(child, source))?;
+    let name = callee.trim().rsplit('.').next().unwrap_or_default().trim();
+    (!name.is_empty() && name.chars().next().is_some_and(|c| c.is_uppercase()))
+        .then(|| name.to_string())
 }
 
 /// The bare name of a Java type, without its type arguments or array

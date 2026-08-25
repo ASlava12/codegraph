@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Kotlin writes the callee as one navigation expression, so `sink.writeUtf8(..)` reaches the graph
+  as `writeUtf8` and what it was written through is lost. The receiver is now recorded and read
+  against what the file states -- a parameter always names its type, and `val buffer: Buffer =
+  Buffer()` names one twice. okio's ambiguous calls fall from 5403 to 4863 with 603 more resolved.
 - Java states the type of everything it binds -- `Gson gson = new Gson();`, `void check(JsonReader
   reader)` -- and none of it had ever been read, so a call through a receiver had only its method
   name to match on. gson declares fourteen `fromJson` and 563 calls chose between all fourteen; its

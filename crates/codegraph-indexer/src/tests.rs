@@ -16692,3 +16692,48 @@ fn a_java_receiver_states_which_method_a_call_means() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_kotlin_receiver_states_which_method_a_call_means() {
+    // `sink.writeUtf8(..)` reaches the graph as `writeUtf8`, because Kotlin
+    // writes the callee as one navigation expression and the label keeps
+    // its last segment. okio declares three `writeUtf8` and 503 calls chose
+    // between them; what the call was written through is the only thing
+    // that says which.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src/main/kotlin/app")).unwrap();
+    fs::write(
+        root.join("build.gradle.kts"),
+        "plugins { kotlin(\"jvm\") }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main/kotlin/app/Types.kt"),
+        "package app\n\nclass Buffer {\n  fun writeUtf8(text: String): Buffer = this\n}\n\nclass BufferedSink {\n  fun writeUtf8(text: String): BufferedSink = this\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main/kotlin/app/Writer.kt"),
+        "package app\n\nfun write(sink: BufferedSink) {\n  sink.writeUtf8(\"hi\")\n}\n\nfun local() {\n  val buffer: Buffer = Buffer()\n  buffer.writeUtf8(\"hi\")\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let owners: Vec<&str> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("writeUtf8")
+        })
+        .filter_map(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+        .filter_map(|node| node.metadata.get("owner_type").map(String::as_str))
+        .collect();
+    assert_eq!(
+        owners,
+        vec!["BufferedSink", "Buffer"],
+        "the parameter and the binding each say whose method is meant"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
