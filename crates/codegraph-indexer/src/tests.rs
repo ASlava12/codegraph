@@ -1689,6 +1689,62 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn haskell_and_julia_reach_the_types_their_signatures_name() {
+    // shellcheck writes `runChecker :: Parameters -> Checker ->
+    // [TokenComment]` and nothing pointed at any of those types;
+    // DataFrames.jl writes `df::AbstractDataFrame` and `struct DataFrame
+    // <: AbstractDataFrame` and the same held.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("ShellCheck.cabal"),
+        "name: ShellCheck\nversion: 0.10.0\n\nlibrary\n    build-depends:\n      base\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Lib.hs"),
+        "module Lib where\n\ndata Parameters = Parameters { shellType :: Int }\n\nrunChecker :: Parameters -> Int\nrunChecker p = shellType p\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("Project.toml"),
+        "name = \"DataFrames\"\n\n[deps]\nCompat = \"34da2185\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("abstract.jl"),
+        "abstract type AbstractDataFrame end\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("frame.jl"),
+        "struct DataFrame\n    columns::Vector\nend\n\nfunction nrow(df::AbstractDataFrame)\n    length(df.columns)\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reached = |label: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.metadata.get("relation").map(String::as_str) == Some("type_reference")
+                && graph
+                    .nodes
+                    .iter()
+                    .any(|node| node.id == edge.target && node.label == label)
+        })
+    };
+    assert!(
+        reached("Parameters"),
+        "a Haskell signature names the types the function works with"
+    );
+    assert!(
+        reached("AbstractDataFrame"),
+        "and a Julia annotation names the type a value has"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn swift_and_erlang_reach_what_they_name() {
     // Alamofire's `Session` -- the type its whole API is written around --
     // had nothing pointing at it and four declarations, because every

@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A Haskell signature names the types a function works with -- `runChecker :: Parameters -> Checker
+  -> [TokenComment]` -- and a Julia annotation the type a value has: `df::AbstractDataFrame`. Neither
+  was read, so shellcheck's `Parameters` and DataFrames.jl's `AbstractDataFrame` had nothing pointing
+  at them; `impact Token` now names 179 dependents, `Parameters` 37 and `AbstractDataFrame` 394.
 - Swift and Erlang reach what they name too. `extension Session { .. }` adds to a type declared
   elsewhere and declares none, so Alamofire's `Session` -- the type its whole API is written around
   -- had four declarations and nothing pointing at any of them; `impact Session` now names 497

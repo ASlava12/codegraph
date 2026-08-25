@@ -394,6 +394,49 @@ fn collect_reference_facts(
         }
     }
 
+    // What a Haskell signature states: `checkX :: Parameters -> Token ->
+    // [TokenComment]` names the types the function works with, and a type
+    // is an uppercase constructor. shellcheck writes 3663 definitions and
+    // nothing pointed at any of its types.
+    if language == Language::Haskell
+        && node.kind() == "name"
+        && let Some(label) = node_text(node, source)
+        && label.starts_with(char::is_uppercase)
+        && !names_a_type_parameter(&label)
+        // The name in `data Parameters = ..` declares the type.
+        && !node
+            .parent()
+            .and_then(|parent| parent.child_by_field_name("name"))
+            .is_some_and(|name| name == node)
+    {
+        facts.type_references.push(ParsedTypeReference {
+            label,
+            span: span_for(path, node),
+            parent: current_function.clone(),
+        });
+    }
+
+    // What a Julia declaration states: `df::AbstractDataFrame` names the
+    // type a value has, and `struct DataFrame <: AbstractDataFrame` the
+    // type it specialises.
+    if language == Language::Julia && matches!(node.kind(), "typed_expression" | "subtype_clause") {
+        let mut cursor = node.walk();
+        let children: Vec<Node<'_>> = node.named_children(&mut cursor).collect();
+        if let Some(last) = children.last()
+            && matches!(last.kind(), "identifier" | "field_expression")
+            && let Some(label) = node_text(*last, source)
+        {
+            let label = label.trim();
+            if label.starts_with(char::is_uppercase) && !names_a_type_parameter(label) {
+                facts.type_references.push(ParsedTypeReference {
+                    label: label.to_string(),
+                    span: span_for(path, *last),
+                    parent: current_function.clone(),
+                });
+            }
+        }
+    }
+
     // What a Swift declaration states about the types it works with: a
     // property's type, a parameter's, what a function returns, and what a
     // type conforms to. Alamofire declares `Session` -- the type its whole
