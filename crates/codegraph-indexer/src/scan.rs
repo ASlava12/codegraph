@@ -137,6 +137,7 @@ pub(crate) fn scan_project_with_scope(
         pending_namespace_imports: Vec::new(),
         effect_entities: BTreeMap::new(),
         file_import_qualifiers: BTreeMap::new(),
+        file_open_modules: BTreeMap::new(),
         file_imported_names: BTreeMap::new(),
         file_wildcard_imports: BTreeSet::new(),
         type_symbols: BTreeMap::new(),
@@ -1058,6 +1059,19 @@ pub(crate) fn index_file(
                                 .entry(label.to_string())
                                 .or_default()
                                 .insert(qualifier, package.clone());
+                        }
+                        // `open Dune_sexp.Decoder` is what makes a bare
+                        // `located` mean that module's; without it the name
+                        // is the standard library's or this file's.
+                        if language == Language::OCaml {
+                            let opened = ocaml_open_modules(&item.label);
+                            if !opened.is_empty() {
+                                context
+                                    .file_open_modules
+                                    .entry(label.to_string())
+                                    .or_default()
+                                    .extend(opened);
+                            }
                         }
                         // `from x import *` binds every name the other
                         // module defines, so this file's import list can

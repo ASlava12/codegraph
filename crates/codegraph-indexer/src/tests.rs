@@ -16259,3 +16259,53 @@ fn a_nix_let_binding_stays_in_its_own_file() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_bare_ocaml_call_needs_an_open_to_leave_its_file() {
+    // Nobody in dune opens `Predicate_lang`, yet the `not` it declares
+    // answered 436 calls to the standard library's. A module a file does
+    // open is a different matter: `open Decoder` is what makes a bare
+    // `located` mean that module's.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("dune-project"), "(lang dune 3.0)\n").unwrap();
+    fs::write(
+        root.join("src/predicate_lang.ml"),
+        "let not t = t\n\nlet union ts = ts\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/decoder.ml"),
+        "let located t = t\n\nlet enter t = t\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/reader.ml"),
+        "open Decoder\n\nlet run flag t = if not flag then located t else enter t\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    assert_ne!(
+        resolution("not").as_deref(),
+        Some("resolved"),
+        "no file opens Predicate_lang, so its `not` is out of reach"
+    );
+    assert_eq!(
+        resolution("located").as_deref(),
+        Some("resolved"),
+        "`open Decoder` is what puts `located` within reach"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

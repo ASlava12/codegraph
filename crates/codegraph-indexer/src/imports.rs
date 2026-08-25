@@ -1303,6 +1303,34 @@ pub(crate) fn java_static_imported_names(import_label: &str) -> Vec<String> {
     vec![name.to_string()]
 }
 
+/// The modules an OCaml `open` or `include` brings into scope. Every
+/// segment counts: `open Fiber.O` puts names that live in fiber.ml within
+/// reach, and `open Dune_sexp.Decoder` names decoder.ml.
+pub(crate) fn ocaml_open_modules(import_label: &str) -> Vec<String> {
+    let statement = import_label.trim();
+    let Some(rest) = statement
+        .strip_prefix("open ")
+        .or_else(|| statement.strip_prefix("include "))
+    else {
+        return Vec::new();
+    };
+    let Some(path) = rest
+        .trim()
+        .trim_start_matches('!')
+        .split_whitespace()
+        .next()
+    else {
+        return Vec::new();
+    };
+    path.split('.')
+        .map(str::trim)
+        .filter(|segment| {
+            !segment.is_empty() && segment.chars().next().is_some_and(char::is_uppercase)
+        })
+        .map(str::to_string)
+        .collect()
+}
+
 /// The name a Java import binds as a call qualifier. `import
 /// java.util.Arrays;` makes `Arrays.asList(..)` the standard library's,
 /// and the label keeps only `asList` -- gson has an `asList` of its own

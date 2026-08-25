@@ -2571,6 +2571,27 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     == caller_path
             });
         }
+        // OCaml has no global namespace either: a bare name is the standard
+        // library's, this file's, or one an `open` brought into scope.
+        // Nobody in dune opens `Predicate_lang`, yet the `not` it declares
+        // answered 436 calls to the language's own.
+        if call.language == "ocaml" && !call.label.contains('.') {
+            let opened = context.file_open_modules.get(call.span.path.as_str());
+            language_targets.retain(|target| {
+                let Some(path) = graph_node(&context.graph, *target)
+                    .and_then(|node| node.span.as_ref())
+                    .map(|span| span.path.as_str())
+                else {
+                    return true;
+                };
+                Some(path) == caller_path
+                    || opened.is_some_and(|modules| {
+                        modules
+                            .iter()
+                            .any(|module| module_named_file("ocaml", path, module))
+                    })
+            });
+        }
         // A qualified call names where it comes from. When the calling file
         // imports that qualifier, the import list answers the question that
         // matching by name only guesses at: an in-repo package narrows the

@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- OCaml has no global namespace: a bare name is the standard library's, the file's own, or one an
+  `open` brought into scope. Nobody in dune opens `Predicate_lang`, yet the `not` it declares
+  answered 436 calls to the language's; `open Dune_sexp.Decoder` is read now, so the names that
+  really do come from a module still find it. 2772 of dune's ambiguous calls resolve or stop
+  claiming a choice that was not there.
 - A nix file's `let` bindings are its own: the language has no global namespace to reach another
   file's through, and `lib`, `pkgs` and `builtins` are what the evaluator hands a module rather than
   anything the project declares. home-manager's `modules/lib/dag.nix` had answered 132 calls to the
