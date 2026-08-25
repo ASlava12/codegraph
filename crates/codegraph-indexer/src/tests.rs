@@ -16434,3 +16434,35 @@ fn a_function_knows_the_module_its_file_declares() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_zig_function_belongs_to_the_container_that_holds_it() {
+    // A zig type is a constant bound to a container, and a zig file is a
+    // container too: `analysis.zig` is what `const analysis = @import(..)`
+    // binds. zls declares 1215 functions and not one knew whose it was.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("build.zig"),
+        "pub fn build(b: *Builder) void {}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/analysis.zig"),
+        "pub fn getPositionContext() u32 {\n    return 1;\n}\n\npub const Server = struct {\n    pub fn init() u32 {\n        return 2;\n    }\n};\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let owner = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == label)
+            .and_then(|node| node.metadata.get("owner_type").cloned())
+    };
+    assert_eq!(owner("getPositionContext").as_deref(), Some("analysis"));
+    assert_eq!(owner("init").as_deref(), Some("Server"));
+
+    fs::remove_dir_all(root).unwrap();
+}

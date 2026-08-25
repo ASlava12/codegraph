@@ -2113,6 +2113,34 @@ fn ruby_visibility_keyword(text: &str) -> Option<&'static str> {
     }
 }
 
+/// The zig container a definition is written inside: `const Server =
+/// struct { pub fn init(..) }`. zls declares 1215 functions and none knew
+/// which container it belonged to.
+fn zig_container_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if candidate.kind() == "variable_declaration"
+            && zig_container_declaration(candidate)
+            && let Some(name) = named_child_text(candidate, "name", source)
+                .or_else(|| child_kind_text(candidate, "identifier", source))
+            && !name.trim().is_empty()
+        {
+            return Some(name.trim().to_string());
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+/// The name a file gives what it holds, as written: `analysis.zig` is
+/// `analysis`.
+fn file_stem_name(path: &str) -> Option<String> {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    let stem = file.split('.').next().unwrap_or(file);
+    (!stem.is_empty() && stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .then(|| stem.to_string())
+}
+
 /// The module written around a definition: Julia's `module X ... end`.
 fn nested_module_name(language: Language, node: Node<'_>, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
@@ -2382,6 +2410,15 @@ pub(crate) fn enclosing_type_label(
     // open rather than inventing a module from the file name.
     if language == Language::Julia {
         return nested_module_name(language, node, source);
+    }
+
+    // A zig file is a struct too, and the functions at its top level are
+    // that struct's: `analysis.zig` is what `const analysis = @import(..)`
+    // binds, and `analysis.getPositionContext` is how they are called. A
+    // container written inside the file is nearer, and is what a call
+    // names.
+    if language == Language::Zig {
+        return zig_container_name(node, source).or_else(|| file_stem_name(path));
     }
 
     // OCaml names a module after the file that holds it: `build` in path.ml

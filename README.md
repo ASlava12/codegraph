@@ -236,6 +236,9 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A zig function belongs to the container that holds it -- `const Server = struct { pub fn init }`
+  -- and a zig file is a container too, which is what `const analysis = @import("analysis.zig")`
+  binds. All 1215 of zls's functions now say whose they are.
 - A function knows the module its file declares. Erlang states it once at the top --
   `-module(cowboy_req).` -- and OCaml names one after the file itself, so neither encloses anything
   a walk up the tree can find: cowboy's 3924 functions and dune's 14636 belonged to nobody, and
