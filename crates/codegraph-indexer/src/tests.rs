@@ -1689,6 +1689,75 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn a_go_package_is_a_directory_and_a_type_written_in_one_is_its_own() {
+    // terraform declares `Backend` in seventeen packages, one per remote
+    // state backend, so every reference to it was ambiguous and `impact
+    // Backend` answered with nothing. A Go package is a directory, and a
+    // name written inside one means what that directory declares.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("internal/backend/azure")).unwrap();
+    fs::create_dir_all(root.join("internal/backend/gcs")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
+    fs::write(
+        root.join("internal/backend/azure/backend.go"),
+        "package azure\n\ntype Backend struct {\n\tName string\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("internal/backend/azure/state.go"),
+        "package azure\n\nfunc Load(b *Backend) string {\n\treturn b.Name\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("internal/backend/gcs/backend.go"),
+        "package gcs\n\ntype Backend struct {\n\tBucket string\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let azure = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "Backend"
+                && node
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.path == "internal/backend/azure/backend.go")
+        })
+        .expect("the azure backend is declared")
+        .id;
+    let gcs = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "Backend"
+                && node
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.path == "internal/backend/gcs/backend.go")
+        })
+        .expect("the gcs backend is declared")
+        .id;
+    let references = |target: NodeId| {
+        graph.edges.iter().any(|edge| {
+            edge.target == target
+                && edge.metadata.get("relation").map(String::as_str) == Some("type_reference")
+        })
+    };
+    assert!(
+        references(azure),
+        "the package's own file names the type its package declares"
+    );
+    assert!(
+        !references(gcs),
+        "and a package next door declares a different type of the same name"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn ruby_classes_are_reached_by_the_constants_that_name_them() {
     // mastodon declares 2083 classes and modules and nothing pointed at
     // any of them: "what breaks if I change `Account`" answered with

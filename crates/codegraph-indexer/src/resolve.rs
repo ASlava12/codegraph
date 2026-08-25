@@ -3015,11 +3015,12 @@ pub(crate) fn resolve_pending_type_references(context: &mut IndexContext) {
             })
             .collect::<Vec<_>>();
 
-        // A Terraform module is a directory, and a name written inside one
-        // means what that directory declares: terraform's fixtures declare
-        // `var.input` in 40 directories, and only the one next door is the
-        // variable this expression reads.
-        let targets = if reference.language == "hcl" && targets.len() > 1 {
+        // A Terraform module is a directory, and so is a Go package: a
+        // name written inside one means what that directory declares.
+        // terraform's fixtures declare `var.input` in 40 directories and
+        // its backends declare `Backend` in seventeen, and only the one
+        // next door is what the expression means.
+        let targets = if matches!(reference.language.as_str(), "hcl" | "go") && targets.len() > 1 {
             let directory = source_path
                 .and_then(|path| path.rsplit_once('/'))
                 .map(|(dir, _)| dir);

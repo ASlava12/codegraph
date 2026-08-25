@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A Go package is a directory, and a type written inside one is its own: terraform declares
+  `Backend` in seventeen packages, one per remote state backend, so every reference was ambiguous
+  and `impact Backend` answered with nothing. It now names 142 dependents and 134 affected tests,
+  and terraform's Go type references go from 10446 to 14488.
 - Ruby classes are reached by the constants that name them. mastodon declares 2083 classes and
   modules and nothing pointed at any of them, so "what breaks if I change `Account`" answered with
   nothing at all: `impact Account` now names 536 dependents and 56 affected tests, `Status` 213 and
