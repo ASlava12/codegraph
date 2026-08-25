@@ -387,6 +387,20 @@ function buildClientInsights(graph) {
       )
       .map((edge) => edge.target),
   );
+  // The types something points at, and where each name is declared: a
+  // class a route or a type hint reaches is built, and building it runs
+  // its constructor.
+  const typeIdsByLabel = new Map(
+    graph.nodes
+      .filter((node) => node.kind === "type" || node.kind === "module")
+      .map((node) => [node.label, node.id]),
+  );
+  const typeIds = new Set(typeIdsByLabel.values());
+  const reachedTypeIds = new Set(
+    graph.edges
+      .filter((edge) => edge.kind !== "contains" && typeIds.has(edge.target))
+      .map((edge) => edge.target),
+  );
 
   graph.nodes.forEach((node) => {
     // A file whose bytes never arrived holds no facts; without this it
@@ -422,6 +436,13 @@ function buildClientInsights(graph) {
     // holds it: shellcheck names 167 `where` bindings `f`, and "nothing calls
     // f" is not news about a local helper. The CLI skips these; the browser
     // reported 58 of them on this repository until it did the same.
+    // Building a class runs its constructor, and a framework builds most
+    // of them: koel's container instantiates 208 classes whose
+    // `__construct` no `new` in the repository names. The CLI skips those
+    // whose class something points at.
+    const builtByItsClass =
+      ["__construct", "constructor", "__init__"].includes(node.label) &&
+      reachedTypeIds.has(typeIdsByLabel.get(node.metadata?.owner_type));
     // A test is run by its runner, which no edge records: the CLI skips a
     // function declared in a test-like file and one a `#[test]` attribute
     // marks, and 3160 of vue's 3937 orphan functions were of that kind.
@@ -431,6 +452,7 @@ function buildClientInsights(graph) {
     if (
       node.kind === "function" &&
       !testRun &&
+      !builtByItsClass &&
       !node.metadata?.enclosing_function &&
       // `const onMounted = createHook(MOUNTED)` declares a value a factory
       // built, and a value nobody calls is a value rather than a function

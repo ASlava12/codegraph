@@ -701,6 +701,25 @@ pub(crate) fn add_ambiguous_entrypoint_target_insights(
     }
 }
 
+/// The types something in the repository points at, other than the file
+/// that holds them. A class nobody names may be dead; one a route, a type
+/// hint or a `new` reaches is built, and building it runs its
+/// constructor.
+fn reached_types(graph: &CodeGraph) -> BTreeSet<NodeId> {
+    let types: BTreeSet<NodeId> = graph
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, NodeKind::Type | NodeKind::Module))
+        .map(|node| node.id)
+        .collect();
+    graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind != EdgeKind::Contains && types.contains(&edge.target))
+        .map(|edge| edge.target)
+        .collect()
+}
+
 pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let entrypoints: BTreeSet<NodeId> = graph
         .edges
@@ -722,7 +741,30 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
         .map(|edge| edge.target)
         .collect();
 
+    let reached = reached_types(graph);
+    let type_ids: BTreeMap<&str, NodeId> = graph
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, NodeKind::Type | NodeKind::Module))
+        .map(|node| (node.label.as_str(), node.id))
+        .collect();
+
     for node in &graph.nodes {
+        // Building a class runs its constructor, and a framework builds
+        // most of them: koel's container instantiates 208 classes whose
+        // `__construct` no `new` in the repository names. A class nothing
+        // points at is still worth reporting, and its constructor with it.
+        if matches!(
+            node.label.as_str(),
+            "__construct" | "constructor" | "__init__"
+        ) && node
+            .metadata
+            .get("owner_type")
+            .and_then(|owner| type_ids.get(owner.as_str()))
+            .is_some_and(|owner| reached.contains(owner))
+        {
+            continue;
+        }
         // A definition written inside another is reached through the one
         // that holds it: shellcheck names 167 `where` bindings `f`, and
         // "nothing calls f" is not news about a local helper.

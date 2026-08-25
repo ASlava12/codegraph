@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Building a class runs its constructor, and a framework builds most of them: koel's container
+  instantiates 208 classes whose `__construct` no `new` in the repository names. A class a route, a
+  type hint or a `new` reaches is built; one nothing points at is still worth reporting, and its
+  constructor with it. koel's orphan functions fall from 2085 to 1877.
 - A test is run by its runner, and no edge records that: 3160 of vue's 3937 orphan functions, 4381
   of terraform's 12120 and 684 of this repository's own 1018 were tests, burying the code somebody
   could actually delete. A function in a test-like file is one, and so is a Rust `#[test]` -- or a

@@ -5169,6 +5169,55 @@ fn query_insights_returns_sensitive_config_default_context() {
 }
 
 #[test]
+fn a_constructor_runs_when_something_builds_its_class() {
+    // koel's container instantiates 208 classes whose `__construct` no
+    // `new` in the repository names: a class a route or a type hint
+    // reaches is built, and building it runs the constructor. A class
+    // nothing points at is still worth reporting, and its constructor
+    // with it.
+    let mut graph = CodeGraph::new("repo");
+    let used = graph.add_node(NodeKind::Type, "SongService");
+    graph.add_node(NodeKind::Type, "ForgottenService");
+    let caller = graph.add_node(NodeKind::Function, "handle");
+    graph.add_edge_with_metadata(
+        caller,
+        used,
+        EdgeKind::References,
+        Confidence::Syntactic,
+        BTreeMap::from([("relation".to_string(), "type_reference".to_string())]),
+    );
+    let built = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "__construct",
+        None,
+        BTreeMap::from([("owner_type".to_string(), "SongService".to_string())]),
+    );
+    let forgotten = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "__construct",
+        None,
+        BTreeMap::from([("owner_type".to_string(), "ForgottenService".to_string())]),
+    );
+
+    let report = insights(&graph);
+    let orphans: Vec<NodeId> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "orphan_function")
+        .flat_map(|insight| insight.nodes.clone())
+        .collect();
+
+    assert!(
+        !orphans.contains(&built),
+        "the class is reached, so something builds it"
+    );
+    assert!(
+        orphans.contains(&forgotten),
+        "and a class nothing points at is still worth reporting"
+    );
+}
+
+#[test]
 fn a_test_is_not_a_function_nobody_calls() {
     // A test is run by its runner, which no edge records: 3160 of vue's
     // 3937 orphan functions and 684 of this repository's 1018 were tests,
