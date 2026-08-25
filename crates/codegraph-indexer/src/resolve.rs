@@ -453,6 +453,135 @@ fn objc_platform_receiver(language: &str, receiver: Option<&str>) -> bool {
     })
 }
 
+/// Modules OTP ships with every Erlang release. A call through one is the
+/// platform's, whatever the project declares.
+fn otp_standard_module(module: &str) -> bool {
+    matches!(
+        module,
+        "erlang"
+            | "lists"
+            | "maps"
+            | "dict"
+            | "sets"
+            | "ordsets"
+            | "orddict"
+            | "gb_trees"
+            | "gb_sets"
+            | "queue"
+            | "array"
+            | "binary"
+            | "string"
+            | "io"
+            | "io_lib"
+            | "file"
+            | "filename"
+            | "filelib"
+            | "os"
+            | "timer"
+            | "proplists"
+            | "ets"
+            | "dets"
+            | "mnesia"
+            | "gen_server"
+            | "gen_statem"
+            | "gen_event"
+            | "gen_fsm"
+            | "gen_tcp"
+            | "gen_udp"
+            | "gen_sctp"
+            | "inet"
+            | "ssl"
+            | "supervisor"
+            | "application"
+            | "code"
+            | "crypto"
+            | "public_key"
+            | "logger"
+            | "error_logger"
+            | "rand"
+            | "math"
+            | "re"
+            | "unicode"
+            | "calendar"
+            | "base64"
+            | "zlib"
+            | "erl_eval"
+            | "erl_scan"
+            | "erl_parse"
+            | "erl_anno"
+            | "beam_lib"
+            | "sys"
+            | "persistent_term"
+            | "counters"
+            | "atomics"
+            | "process"
+            | "global"
+            | "net_kernel"
+            | "httpc"
+            | "ssh"
+            | "xmerl"
+            | "ct"
+            | "eunit"
+    )
+}
+
+/// Modules Elixir ships with the language.
+fn elixir_standard_module(module: &str) -> bool {
+    matches!(
+        module,
+        "Kernel"
+            | "Enum"
+            | "Stream"
+            | "Map"
+            | "MapSet"
+            | "List"
+            | "Keyword"
+            | "Tuple"
+            | "Atom"
+            | "String"
+            | "Integer"
+            | "Float"
+            | "Range"
+            | "Regex"
+            | "IO"
+            | "File"
+            | "Path"
+            | "URI"
+            | "Base"
+            | "Bitwise"
+            | "Process"
+            | "Task"
+            | "Agent"
+            | "GenServer"
+            | "Supervisor"
+            | "DynamicSupervisor"
+            | "Registry"
+            | "Application"
+            | "System"
+            | "Code"
+            | "Module"
+            | "Macro"
+            | "Access"
+            | "Date"
+            | "Time"
+            | "DateTime"
+            | "NaiveDateTime"
+            | "Calendar"
+            | "Logger"
+            | "Exception"
+            | "Version"
+            | "Port"
+            | "Node"
+            | "Function"
+            | "Record"
+            | "Protocol"
+            | "Inspect"
+            | "Enumerable"
+            | "Collectable"
+            | "String.Chars"
+    )
+}
+
 pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
     // PHP writes `\count(..)` to mean the global function rather than one
     // the current namespace might define, and monolog writes 273 of its
@@ -1403,6 +1532,17 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
                 | "IOException"
                 | "InterruptedException"
         ),
+        // A call into OTP or Elixir's standard library is the platform's:
+        // cowboy calls `gen_tcp:recv` 283 times and `lists:keyfind` 238,
+        // ecto `Enum.reverse` 79 and `Enum.reduce` 72, and reporting those
+        // as unresolved reads as a resolver that failed rather than a
+        // dependency that was never in this repository.
+        "erlang" if base.contains(':') => base
+            .split_once(':')
+            .is_some_and(|(module, _)| otp_standard_module(module)),
+        "elixir" if base.contains('.') => base
+            .split_once('.')
+            .is_some_and(|(module, _)| elixir_standard_module(module)),
         "elixir" | "erlang" => matches!(
             base.trim_end_matches('?'),
             "is_atom"
@@ -1920,12 +2060,13 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // the repository's `instance.create`, and matching on that tail
         // invented a dependency cycle between two files that never call
         // each other.
-        let all_targets =
-            if call.label.contains('.') && builtin_call_target(&call.language, &call.label) {
-                Vec::new()
-            } else {
-                resolve_function_targets(&context.function_symbols, &call.label)
-            };
+        let all_targets = if (call.label.contains('.') || call.label.contains(':'))
+            && builtin_call_target(&call.language, &call.label)
+        {
+            Vec::new()
+        } else {
+            resolve_function_targets(&context.function_symbols, &call.label)
+        };
         let caller_path = graph_node(&context.graph, call.caller)
             .and_then(|node| node.span.as_ref())
             .map(|span| span.path.as_str());

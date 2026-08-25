@@ -6678,6 +6678,50 @@ fn a_js_call_on_a_value_is_not_a_project_function_of_the_same_name() {
 }
 
 #[test]
+fn a_call_into_otp_is_the_platforms() {
+    // cowboy calls `gen_tcp:recv` 283 times and `lists:keyfind` 238, ecto
+    // `Enum.reverse` 79: a module the platform ships is not a dependency
+    // this repository failed to hold, and reporting those as unresolved
+    // reads as a resolver that failed.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("server.erl"),
+        "-module(server).\n-export([start/0]).\n\nstart() ->\n    Sorted = lists:sort([2, 1]),\n    own_helper(Sorted).\n\nown_helper(X) -> X.\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == label
+                    && node.metadata.get("item_kind").map(String::as_str) == Some("call")
+            })
+            .and_then(|node| node.metadata.get("resolution").cloned())
+    };
+    assert_eq!(
+        resolution("lists:sort").as_deref(),
+        Some("builtin"),
+        "OTP's `lists` is the platform's"
+    );
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && graph
+                    .nodes
+                    .iter()
+                    .any(|node| node.id == edge.target && node.label == "own_helper")
+        }),
+        "and the module's own function still resolves"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_ruby_call_on_a_value_is_not_a_project_method_every_value_has() {
     // `params.each`, `@queue.empty?`, `formats.include?`: ruby writes the
     // receiver and the label keeps only the method, so a project method

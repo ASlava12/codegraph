@@ -183,6 +183,10 @@ Implemented now:
   `(std::numeric_limits` and `j.template get`, redis's `"/sbin/$sysctl"`, vue's `(transformSrcset as
   Function)` -- and the label is a fragment of source. 812 of terraform's call nodes were of that
   kind, and no resolved edge is lost by refusing them.
+- A call into OTP or Elixir's standard library is the platform's: cowboy calls `gen_tcp:recv` 283
+  times and `lists:keyfind` 238, ecto `Enum.reverse` 79 and `Enum.reduce` 72. Those read as calls
+  the resolver had failed on; a module the platform ships is not a dependency the repository failed
+  to hold.
 - A C++ cast is written like a call and is the language's own: nlohmann/json writes 437
   `static_cast` and 70 `reinterpret_cast`, which read as calls the scan had failed to resolve, along
   with `strcasecmp`, `qsort`, `strtol` and the rest of the C library it leans on.
