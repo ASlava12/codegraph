@@ -6252,6 +6252,54 @@ fn a_type_parameter_is_not_a_type_the_project_declares() {
 }
 
 #[test]
+fn building_a_class_runs_its_constructor() {
+    // `new SongService($repository)` reached the class and stopped there,
+    // so koel's 378 `__construct` methods had no caller between them --
+    // and a constructor is where a framework hands a class what it needs.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app")).unwrap();
+    fs::write(
+        root.join("composer.json"),
+        "{\n  \"name\": \"acme/app\"\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("SongService.php"),
+        "<?php\n\nnamespace App;\n\nclass SongService\n{\n    public function __construct(private string $name)\n    {\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("Controller.php"),
+        "<?php\n\nnamespace App;\n\nclass Controller\n{\n    public function index(): SongService\n    {\n        return new SongService('x');\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let constructor = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.kind == NodeKind::Function
+                && node.label == "__construct"
+                && node
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.path.ends_with("SongService.php"))
+        })
+        .expect("the constructor");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.target == constructor.id
+                && edge.metadata.get("resolution").map(String::as_str) == Some("constructor")
+        }),
+        "building the class calls what it declares as its constructor"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn php_classes_are_reached_by_the_types_that_name_them() {
     // Laravel builds a service from its constructor's type hints rather
     // than with `new`, and a serializer states the interface it implements.

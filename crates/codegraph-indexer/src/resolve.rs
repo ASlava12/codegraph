@@ -1979,6 +1979,32 @@ fn declares_ruby_constant(declared: &BTreeSet<String>, receiver: &str) -> bool {
     declared.iter().any(|constant| constant.ends_with(&suffix))
 }
 
+/// The constructor a class declares, when it declares one. Every language
+/// names it in its own way, and it is the method building the class runs.
+fn class_constructor(graph: &CodeGraph, class: NodeId) -> Option<NodeId> {
+    let class_node = graph_node(graph, class)?;
+    let class_name = class_node.label.as_str();
+    let class_path = class_node.span.as_ref().map(|span| span.path.as_str());
+    graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.kind == NodeKind::Function
+                && matches!(
+                    node.label.as_str(),
+                    "__construct" | "constructor" | "__init__" | "new"
+                )
+                && node
+                    .metadata
+                    .get("owner_type")
+                    .is_some_and(|owner| owner == class_name || owner.ends_with(class_name))
+                // The class and its constructor are written in one file in
+                // every language that names it this way.
+                && node.span.as_ref().map(|span| span.path.as_str()) == class_path
+        })
+        .map(|node| node.id)
+}
+
 pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     let pending_calls = std::mem::take(&mut context.pending_calls);
     // What the scan holds does not change while calls are resolved, so each
@@ -2490,6 +2516,27 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 })
                 .collect::<Vec<_>>();
             if type_targets.len() == 1 {
+                // Building a class runs its constructor, and that is where
+                // a framework hands it what it needs: koel writes 391
+                // `__construct` methods and nothing called any of them,
+                // because `new SongService($repository)` reached the class
+                // and stopped there.
+                if let Some(constructor) = class_constructor(&context.graph, type_targets[0]) {
+                    add_edge_once_with_metadata(
+                        context,
+                        call.caller,
+                        constructor,
+                        EdgeKind::Calls,
+                        Confidence::Syntactic,
+                        BTreeMap::from([
+                            ("call_label".to_string(), call.label.clone()),
+                            ("resolution".to_string(), "constructor".to_string()),
+                            ("language".to_string(), call.language.clone()),
+                            ("file".to_string(), call.span.path.clone()),
+                            ("line".to_string(), call.span.start_line.to_string()),
+                        ]),
+                    );
+                }
                 add_edge_once_with_metadata(
                     context,
                     call.caller,

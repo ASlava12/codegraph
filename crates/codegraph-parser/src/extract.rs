@@ -3122,7 +3122,16 @@ pub(crate) fn js_bound_function_name(node: Node<'_>, source: &[u8]) -> Option<St
     // `new Promise(function dispatchXhrRequest(resolve) {...})` are
     // functions with names of their own and nothing to bind them to. A
     // binding still wins, since that is the name callers use.
-    bound.or_else(|| named_child_text(node, "name", source))
+    bound
+        .or_else(|| named_child_text(node, "name", source))
+        // An object key may be written as a string -- `{ 'onUpdate:folderId':
+        // () => {} }` -- and the quotes are the syntax, not the name.
+        .map(|name| {
+            name.trim()
+                .trim_matches(|character| matches!(character, '\'' | '"' | '`'))
+                .to_string()
+        })
+        .filter(|name| !name.is_empty())
 }
 
 pub(crate) fn item_label(

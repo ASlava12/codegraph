@@ -232,6 +232,12 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- Building a class runs its constructor: `new SongService($repository)` reached the class and
+  stopped there, so koel's 378 `__construct` methods had no caller between them -- and a
+  constructor is where a framework hands a class what it needs. 237 of koel's construction sites now
+  reach one, and the same holds for `constructor`, `__init__` and `new` wherever a language names it
+  that way. An object key written as a string is a name with quotes around it, and the quotes are
+  syntax: `{ 'onUpdate:folderId': () => {} }` declares `onUpdate:folderId`.
 - PHP classes are reached by the types that name them: `new SongService(..)` builds one, a
   constructor's type hint states the one Laravel injects, a return type names what a method hands
   back, and `extends`/`implements` name the class and interfaces a class states. None of those were
