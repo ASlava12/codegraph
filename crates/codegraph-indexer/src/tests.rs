@@ -6529,6 +6529,97 @@ fn a_dockerfile_command_runs_from_the_build_context() {
 }
 
 #[test]
+fn a_minimal_api_declares_a_route_and_a_razor_page_serves_where_it_sits() {
+    // `app.MapGet("api/catalog-items", ..)` writes the verb into the
+    // method name, so the `.get(` every other route call ends in never
+    // appeared and eShopOnWeb's minimal API endpoints were missing from a
+    // graph that found its attribute routes. A Razor Page states its URL
+    // by sitting under `Pages/`, and the `.cshtml.cs` beside it says
+    // which methods it serves.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src/Web/Pages/Basket")).unwrap();
+    fs::create_dir_all(root.join("src/Web/Areas/Identity/Pages/Account")).unwrap();
+    fs::create_dir_all(root.join("src/Blazor/Pages")).unwrap();
+    fs::write(
+        root.join("src/Web/Endpoints.cs"),
+        "public static class Endpoints\n{\n    public static void AddRoutes(IEndpointRouteBuilder app)\n    {\n        app.MapGet(\"api/catalog-items\",\n            async (IRepository repository) => await ListAsync(repository));\n        app.MapDelete(\"/api/catalog-items/{id}\", DeleteAsync);\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/Web/Pages/Basket/Index.cshtml"),
+        "\u{feff}@page \"{handler?}\"\n@model IndexModel\n<h1>Basket</h1>\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/Web/Pages/Basket/Index.cshtml.cs"),
+        "public class IndexModel : PageModel\n{\n    public async Task OnGet()\n    {\n        Load();\n    }\n\n    public async Task OnPost(CatalogItemViewModel product)\n    {\n        Add(product);\n    }\n\n    public async Task OnPostUpdate(IEnumerable<BasketItemViewModel> items)\n    {\n        Update(items);\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/Web/Areas/Identity/Pages/Account/Login.cshtml"),
+        "@page\n@model LoginModel\n<h1>Login</h1>\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/Blazor/Pages/List.razor"),
+        "@page \"/admin\"\n<h1>Admin</h1>\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let routes: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Entrypoint && node.label.starts_with("route "))
+        .map(|node| node.label.as_str())
+        .collect();
+    for expected in [
+        "route GET /api/catalog-items",
+        "route DELETE /api/catalog-items/{id}",
+        "route GET /Basket/{handler?}",
+        "route POST /Basket/{handler?}",
+        "route GET /Identity/Account/Login",
+        "route GET /admin",
+    ] {
+        assert!(
+            routes.contains(&expected),
+            "{expected} is a route the project serves, got {routes:?}"
+        );
+    }
+    assert_eq!(
+        routes
+            .iter()
+            .filter(|label| **label == "route POST /Basket/{handler?}")
+            .count(),
+        1,
+        "two handlers for one method are one route the page serves, got {routes:?}"
+    );
+
+    let post = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "route POST /Basket/{handler?}")
+        .expect("the page serves POST")
+        .id;
+    let handler = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.source == post
+                && edge.metadata.get("relation").map(String::as_str) == Some("entrypoint_function")
+        })
+        .map(|edge| edge.target)
+        .and_then(|id| graph.nodes.iter().find(|node| node.id == id))
+        .expect("the code behind handles it");
+    assert_eq!(
+        handler.label, "OnPost",
+        "the handler is the method named for the verb"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_dynamic_import_loads_a_file_rather_than_calling_a_function_named_import() {
     // `import('./Home.vue')` is how a router loads a page on demand, and
     // it is the only edge that reaches one. koel filed 168 of them as

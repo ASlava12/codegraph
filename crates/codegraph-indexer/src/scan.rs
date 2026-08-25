@@ -800,10 +800,15 @@ pub(crate) fn index_file(
     // Next.js, Nuxt and SvelteKit declare a route by where the file sits.
     // Whether the project is written that way is stated in its manifest,
     // which the walk may not have reached yet.
-    if file_based_route(label).is_some() {
+    let declared_route = source_bytes
+        .as_deref()
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .and_then(|source| razor_page_route(label, source));
+    if declared_route.is_some() || file_based_route(label).is_some() {
         context.pending_file_routes.push(PendingFileRoute {
             file: file_id,
             label: label.to_string(),
+            declared: declared_route,
         });
     }
     context.graph.add_edge(

@@ -232,6 +232,14 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- ASP.NET declares a route three ways, and two of them were invisible. A minimal API writes the verb
+  into the method name -- `app.MapGet("api/catalog-items", ..)` -- so the `.get(` every other route
+  call ends in never appeared. A Razor Page states its URL by where it sits: `Pages/Basket/Index`
+  serves `/Basket`, `Areas/Identity/Pages/Account/Login` serves `/Identity/Account/Login`, and the
+  `.cshtml.cs` beside it says which methods it serves, `OnGet` and `OnPost` at a time. A Blazor
+  component writes the path out: `@page "/admin"`. eShopOnWeb went from 25 routes to 52, and its
+  entrypoints now reach 100 of its 468 functions rather than 37. Nothing needs a manifest to confirm
+  a Razor Page, because `@page` at the top of the file states it.
 - A step of a flow says where it happens. One node stands for every call to a name the resolver
   cannot place, and it carries the span of whichever call site minted it -- 14620 of koel's 17732
   calls into such a node named a file other than the one the call is written in, so following a

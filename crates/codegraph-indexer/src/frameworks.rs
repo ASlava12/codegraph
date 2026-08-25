@@ -1492,14 +1492,12 @@ pub(crate) fn csharp_framework_routes(source: &str) -> Vec<FrameworkRoute> {
         if trimmed.starts_with("//") || trimmed.starts_with('*') || trimmed.starts_with("/*") {
             continue;
         }
-        // `app.MapGet("/health", () => ..)` is the whole declaration.
-        if let Some(route) = route_from_call_line(
-            line,
-            line_number,
-            "asp.net",
-            &["app", "endpoints", "builder"],
-        ) && line.contains(".Map")
-        {
+        // `app.MapGet("/health", () => ..)` is the whole declaration. The
+        // verb is part of the method name, so the `.get(` a route call
+        // usually ends in never appears and eShopOnWeb's nineteen minimal
+        // API endpoints were missing from a graph that found its
+        // attribute routes.
+        if let Some(route) = csharp_minimal_api_route(line, line_number) {
             routes.push(route);
             continue;
         }
@@ -1720,6 +1718,39 @@ fn join_jvm_route_path(prefix: &str, path: &str) -> String {
     } else {
         format!("/{joined}")
     }
+}
+
+/// `app.MapGet("api/catalog-items/{id}", ..)`: the minimal API way to
+/// declare a route, where the verb is part of the method name. The path
+/// is written without a leading slash as often as with one, and the URL
+/// is the same either way.
+fn csharp_minimal_api_route(line: &str, line_number: u32) -> Option<FrameworkRoute> {
+    if !line.contains(".Map") {
+        return None;
+    }
+    let method = route_methods().iter().find(|method| {
+        let mut needle = String::from(".Map");
+        needle.push_str(&method[..1]);
+        needle.push_str(&method[1..].to_ascii_lowercase());
+        needle.push('(');
+        line.contains(&needle)
+    })?;
+    let path = first_quoted_value(line)?;
+    let path = if path.starts_with('/') {
+        path
+    } else {
+        format!("/{path}")
+    };
+    Some(FrameworkRoute {
+        framework: "asp.net".to_string(),
+        method: (*method).to_string(),
+        path,
+        handler: handler_after_first_comma(line),
+        handler_qualifier: None,
+        expanded: false,
+        constrained: false,
+        line: line_number,
+    })
 }
 
 pub(crate) fn route_from_call_line(
@@ -1977,6 +2008,9 @@ pub(crate) enum FileRouteShape {
     /// A handler that serves every method, which is what Next.js's pages
     /// API routes do.
     AnyMethod,
+    /// A Razor Page: the `.cshtml` file states the URL and the `.cshtml.cs`
+    /// beside it holds the handlers, one `OnGet`/`OnPost` per method.
+    PageModel,
     /// A file the framework runs rather than serves: a layout, an error
     /// boundary, middleware. It has no URL of its own, and everything it
     /// renders runs on every request that passes through it.
@@ -1987,6 +2021,115 @@ pub(crate) enum FileRouteShape {
 /// way. The path is the evidence: `app/api/users/route.ts` is
 /// `/api/users`, `app/blog/[slug]/page.tsx` is `/blog/:slug`, and a
 /// `(marketing)` segment groups files without naming a URL.
+/// A Razor Page says so itself: `@page` at the top of a `.cshtml` file
+/// means ASP.NET serves it at the path the file sits on under the
+/// `Pages/` directory holding it, and an area names itself first --
+/// `Areas/Identity/Pages/Account/Login.cshtml` is `/Identity/Account/Login`.
+/// A Blazor component writes the URL out: `@page "/admin"`. Neither needs
+/// a manifest to confirm it, because the file states it.
+/// The method a Razor Page handler serves: `OnGet`, `OnPostAsync`,
+/// `OnGetDeleteAsync` -- the verb follows `On`, and anything after it
+/// names the handler rather than the method.
+pub(crate) fn razor_handler_method(name: &str) -> Option<&'static str> {
+    let rest = name.strip_prefix("On")?;
+    route_methods()
+        .iter()
+        .find(|method| {
+            let mut verb = String::from(&method[..1]);
+            verb.push_str(&method[1..].to_ascii_lowercase());
+            rest.strip_prefix(&verb).is_some_and(|tail| {
+                tail.is_empty() || tail.starts_with(|character: char| character.is_uppercase())
+            })
+        })
+        .copied()
+}
+
+pub(crate) fn razor_page_route(label: &str, source: &str) -> Option<FileRoute> {
+    let normalized = label.replace('\\', "/");
+    let blazor = normalized.ends_with(".razor");
+    if !blazor && !normalized.ends_with(".cshtml") {
+        return None;
+    }
+    // The directive opens the file, ahead of anything but a byte-order
+    // mark, `@using` lines and blanks.
+    let template = source
+        .lines()
+        .take(20)
+        .map(|line| line.trim_start_matches('\u{feff}').trim())
+        .find(|line| line == &"@page" || line.starts_with("@page "))
+        .map(|line| first_quoted_value(line).unwrap_or_default())?;
+    if blazor {
+        // A Blazor page with no path states nothing to serve.
+        let path = template.trim();
+        if !path.starts_with('/') {
+            return None;
+        }
+        return Some(FileRoute {
+            framework: "asp.net",
+            package: "",
+            path: path.to_string(),
+            shape: FileRouteShape::Page,
+        });
+    }
+    // `@page "/custom"` replaces the conventional path; anything else --
+    // `@page "{handler?}"`, `@page "{id:int}"` -- extends it.
+    if template.starts_with('/') {
+        return Some(FileRoute {
+            framework: "asp.net",
+            package: "",
+            path: template,
+            shape: FileRouteShape::PageModel,
+        });
+    }
+    let mut path = razor_conventional_path(&normalized)?;
+    if !template.is_empty() {
+        if !path.ends_with('/') {
+            path.push('/');
+        }
+        path.push_str(&template);
+    }
+    Some(FileRoute {
+        framework: "asp.net",
+        package: "",
+        path,
+        shape: FileRouteShape::PageModel,
+    })
+}
+
+/// The URL a Razor Page sits on: what follows the `Pages/` directory,
+/// with the area that holds it in front and `Index` standing for the
+/// directory itself.
+fn razor_conventional_path(normalized: &str) -> Option<String> {
+    let stem = normalized.strip_suffix(".cshtml")?;
+    let (before, rest) = stem.split_once("/Pages/").or_else(|| {
+        stem.strip_prefix("Pages/")
+            .map(|rest| ("", rest))
+            .or_else(|| stem.strip_prefix("Pages").map(|rest| ("", rest)))
+    })?;
+    let area = before
+        .rsplit_once("/Areas/")
+        .map(|(_, area)| area)
+        .or_else(|| before.strip_prefix("Areas/"))
+        .filter(|area| !area.is_empty() && !area.contains('/'));
+    // A page named `Index` is the directory it sits in.
+    let rest = rest
+        .strip_suffix("Index")
+        .map_or(rest, |head| head.strip_suffix('/').unwrap_or(head));
+    let mut path = String::new();
+    if let Some(area) = area {
+        path.push('/');
+        path.push_str(area);
+    }
+    if !rest.is_empty() {
+        path.push('/');
+        path.push_str(rest.trim_start_matches('/'));
+    }
+    if path.is_empty() {
+        path.push('/');
+    }
+    Some(path)
+}
+
 pub(crate) fn file_based_route(label: &str) -> Option<FileRoute> {
     let normalized = label.replace('\\', "/");
     let mut segments: Vec<&str> = normalized

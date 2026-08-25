@@ -205,6 +205,11 @@ pub(crate) struct PendingCall {
 pub(crate) struct PendingFileRoute {
     pub(crate) file: NodeId,
     pub(crate) label: String,
+    /// The route the file states about itself, when it does: a Razor Page
+    /// opens with `@page`, and no manifest has to confirm it. `None`
+    /// means the route follows from the path alone, which only a project
+    /// whose manifest names the framework is written that way.
+    pub(crate) declared: Option<FileRoute>,
 }
 
 pub(crate) struct PendingTypeReference {

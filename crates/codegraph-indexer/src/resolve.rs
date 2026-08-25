@@ -3601,10 +3601,17 @@ pub(crate) fn resolve_pending_file_routes(context: &mut IndexContext) {
         .filter_map(|node| node.metadata.get("package_id").cloned())
         .collect();
     for route_file in pending {
-        let Some(route) = file_based_route(&route_file.label) else {
+        // A file that states its own route needs nothing else to confirm
+        // it; a route that follows from the path alone does.
+        let stated = route_file.declared.is_some();
+        let Some(route) = route_file
+            .declared
+            .clone()
+            .or_else(|| file_based_route(&route_file.label))
+        else {
             continue;
         };
-        if !declared.contains(&format!("npm:{}", route.package)) {
+        if !stated && !declared.contains(&format!("npm:{}", route.package)) {
             continue;
         }
         // A file the framework runs has no URL: it is an entrypoint of its
@@ -3657,7 +3664,28 @@ pub(crate) fn resolve_pending_file_routes(context: &mut IndexContext) {
         }
         // A handler module names each method it serves with a function of
         // that name; a page is served on GET.
+        // A Razor Page's handlers live in the `.cshtml.cs` beside it,
+        // named for the method they serve: `OnGet`, `OnPostAsync`.
+        let handler_path = match route.shape {
+            FileRouteShape::PageModel => format!("{}.cs", route_file.label),
+            _ => route_file.label.clone(),
+        };
         let handlers: Vec<(String, NodeId)> = match route.shape {
+            FileRouteShape::PageModel => context
+                .graph
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.kind == NodeKind::Function
+                        && node
+                            .span
+                            .as_ref()
+                            .is_some_and(|span| span.path == handler_path)
+                })
+                .filter_map(|node| {
+                    razor_handler_method(&node.label).map(|method| (method.to_string(), node.id))
+                })
+                .collect(),
             FileRouteShape::Handler => context
                 .graph
                 .nodes
@@ -3674,6 +3702,18 @@ pub(crate) fn resolve_pending_file_routes(context: &mut IndexContext) {
                 })
                 .collect(),
             _ => Vec::new(),
+        };
+        // Two handlers can serve one method -- a Razor Page writes
+        // `OnPost` and `OnPostUpdate` -- and that is one route the page
+        // serves, reached by both, not two routes with the same name.
+        let handlers: Vec<(String, NodeId)> = if route.shape == FileRouteShape::PageModel {
+            let mut seen: BTreeSet<String> = BTreeSet::new();
+            handlers
+                .into_iter()
+                .filter(|(method, _)| seen.insert(method.clone()))
+                .collect()
+        } else {
+            handlers
         };
         let methods: Vec<(String, Option<NodeId>)> = if handlers.is_empty() {
             let method = match route.shape {
