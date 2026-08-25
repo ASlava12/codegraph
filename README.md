@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Java writes a call's receiver in a field of its own, so `Arrays.asList(..)` reaches the graph as
+  `asList` and the class it was written through is lost. The receiver is now recorded and read
+  against the file's imports the way Go's and Python's qualifiers already are: 201 of gson's calls
+  and 160 of retrofit's stop landing on a project method that shares only a name.
 - A bare Scala call means a method the caller already has -- its own, one it inherits, or one its
   file declares. cats writes `def f` on a case class in `FreeT.scala`, and 833 bare `f(...)` calls
   across the repository, each a function its own body was handed, read as that one method.

@@ -1036,6 +1036,7 @@ pub(crate) fn index_file(
                     let import_qualifier = match language {
                         Language::Go => go_import_qualifier(&item.label),
                         Language::Python => python_import_qualifier(&item.label),
+                        Language::Java => java_import_qualifier(&item.label),
                         // A Lua require is an expression, so the name it
                         // binds is written to its left rather than in the
                         // call: the parser records it.

@@ -2497,6 +2497,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // reachable without a receiver, and so is a name the file imports
         // outright.
         if bare_call_stays_with_its_object(&call.language)
+            && !call.receiver_is_a_value
             && !call.label.contains('.')
             && !call.label.contains("::")
             && !context
@@ -2553,6 +2554,20 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                             .map(|(head, _)| head)?;
                         (head != owner).then(|| qualifiers.get(head))?
                     })
+                })
+                .cloned(),
+            // Java writes the receiver in a field of its own, so the
+            // qualifier a call is written through never reaches the label:
+            // `Arrays.asList(..)` keeps only `asList`, and gson declares an
+            // `asList` that answered 77 of them.
+            None if call.language == "java" && call.receiver.is_some() => call
+                .receiver
+                .as_deref()
+                .and_then(|receiver| {
+                    context
+                        .file_import_qualifiers
+                        .get(call.span.path.as_str())
+                        .and_then(|qualifiers| qualifiers.get(receiver))
                 })
                 .cloned(),
             // `from collections import OrderedDict` binds a bare name, so
@@ -4282,7 +4297,7 @@ pub(crate) fn resolve_pending_file_routes(context: &mut IndexContext) {
 /// Python and Ruby require the receiver outright and are answered earlier,
 /// and Go, Rust and the rest reach package-level functions by a bare name.
 fn bare_call_stays_with_its_object(language: &str) -> bool {
-    language == "scala"
+    matches!(language, "scala" | "java")
 }
 
 fn ancestor_type_names(graph: &CodeGraph, owner: &str) -> Vec<String> {

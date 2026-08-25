@@ -1303,6 +1303,22 @@ pub(crate) fn java_static_imported_names(import_label: &str) -> Vec<String> {
     vec![name.to_string()]
 }
 
+/// The name a Java import binds as a call qualifier. `import
+/// java.util.Arrays;` makes `Arrays.asList(..)` the standard library's,
+/// and the label keeps only `asList` -- gson has an `asList` of its own
+/// that answered 77 of those. A static import binds a bare name rather
+/// than a qualifier, which [`java_static_imported_names`] already records,
+/// and a star import names no single class.
+pub(crate) fn java_import_qualifier(import_label: &str) -> Option<String> {
+    let statement = import_label.trim().trim_end_matches(';').trim();
+    let rest = statement.strip_prefix("import ")?;
+    if rest.trim_start().starts_with("static ") {
+        return None;
+    }
+    let name = rest.trim().rsplit('.').next().unwrap_or("").trim();
+    (!name.is_empty() && name != "*").then(|| name.to_string())
+}
+
 pub(crate) fn python_import_qualifier(import_label: &str) -> Option<String> {
     let statement = import_label.trim();
     if let Some(rest) = statement.strip_prefix("from ") {

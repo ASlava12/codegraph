@@ -16144,3 +16144,40 @@ fn a_bare_scala_call_stays_with_the_object_it_has() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_java_call_is_answered_by_the_class_its_file_imports() {
+    // `Arrays.asList(..)` keeps only `asList` in its label, because Java
+    // writes the receiver in a field of its own. gson declares an `asList`
+    // that answered 77 of the standard library's.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src/main/java/app")).unwrap();
+    fs::write(root.join("pom.xml"), "<project></project>\n").unwrap();
+    fs::write(
+        root.join("src/main/java/app/Lists.java"),
+        "package app;\n\npublic final class Lists {\n  public static String asList(String value) {\n    return value;\n  }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main/java/app/Caller.java"),
+        "package app;\n\nimport java.util.Arrays;\n\npublic final class Caller {\n  public Object run() {\n    return Arrays.asList(\"a\", \"b\");\n  }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("asList")
+        })
+        .expect("the call is recorded");
+    assert_eq!(
+        call.metadata.get("resolution").map(String::as_str),
+        Some("external"),
+        "`java.util.Arrays` is not this project's `Lists`"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

@@ -2511,6 +2511,25 @@ pub(crate) fn classify_call(
             }
         }
     }
+    // Java keeps the receiver in a field of its own -- `pet.getName()` is
+    // `object: pet`, `name: getName` -- so the label is the method alone and
+    // cannot say whether the source named an object at all. `this` and
+    // `super` name the caller itself, which is the same as naming nothing.
+    if language == Language::Java
+        && node.kind() == "method_invocation"
+        && let Some(object) = node.child_by_field_name("object")
+        && let Some(text) = node_text(object, source)
+        && !matches!(text.trim(), "this" | "super")
+    {
+        let text = text.trim().to_string();
+        if text
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
+            metadata.insert("receiver".to_string(), text);
+        }
+        metadata.insert("receiver_form".to_string(), "value".to_string());
+    }
     // `done()` where the body wrote `runningCtx, done := context.WithCancel(…)`
     // calls a value, not a definition. Saying so separates a call that has
     // nothing to find from one the resolver failed on: 1499 of terraform's
