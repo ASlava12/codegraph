@@ -1689,6 +1689,25 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn prose_before_a_colon_is_not_a_make_target() {
+    // requests writes `$(error The '$(SPHINXBUILD)' command was not
+    // found. .. https://www.sphinx-doc.org/)` in its docs Makefile, and
+    // the URL's colon turned the sentence in front of it into make
+    // targets called `The`, `command` and `was`. Every word before a
+    // rule's colon is one of its targets, so a word that is not a target
+    // means the line is not a rule.
+    let targets = makefile_targets(
+        "html dirhtml: deps\n\techo build\n\n$(error The '$(SPHINXBUILD)' command was not found. See https://www.sphinx-doc.org/)\n\nclean:\n\trm -rf build\n",
+    );
+    let names: Vec<&str> = targets.iter().map(|target| target.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["html", "dirhtml", "clean"],
+        "a rule names every word before its colon"
+    );
+}
+
+#[test]
 fn a_python_class_is_reached_by_what_it_inherits_and_annotates() {
     // django-oscar declares 1697 classes and 14% of them had anything
     // pointing at them: a Django project states its structure through

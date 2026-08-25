@@ -3556,12 +3556,16 @@ pub(crate) fn makefile_target_line(line: &str) -> Option<(Vec<String>, Option<St
         return None;
     }
 
+    // `a b c: deps` names three targets, and every word before the colon
+    // is one of them. A line where any word is not a target is not a rule:
+    // requests writes `$(error The '$(SPHINXBUILD)' command was not
+    // found. .. https://www.sphinx-doc.org/)`, whose prose gave it make
+    // targets called `The`, `command` and `was`.
     let names = before
         .split_whitespace()
-        .filter(|name| is_makefile_task_target(name))
         .map(str::to_string)
         .collect::<Vec<_>>();
-    if names.is_empty() {
+    if names.is_empty() || !names.iter().all(|name| is_makefile_task_target(name)) {
         return None;
     }
 

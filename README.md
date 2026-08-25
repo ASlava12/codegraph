@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Every word before a make rule's colon is one of its targets, so a word that is not a target means
+  the line is not a rule: requests writes `$(error The '$(SPHINXBUILD)' command was not found. ..
+  https://www.sphinx-doc.org/)` in its docs Makefile, and the URL's colon turned the sentence in
+  front of it into make targets called `The`, `command` and `was`.
 - `SPDLOG_NAMESPACE_BEGIN` opens a namespace through a macro the grammar has never seen, and
   everything after it is read as something else: 169 files across spdlog and nlohmann/json are
   written that way, and spdlog's central `logger` class had no node at all. Blanking a line that is
