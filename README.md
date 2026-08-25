@@ -232,6 +232,13 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- A step of a flow says where it happens. One node stands for every call to a name the resolver
+  cannot place, and it carries the span of whichever call site minted it -- 14620 of koel's 17732
+  calls into such a node named a file other than the one the call is written in, so following a
+  route in Flow opened somebody else's file. The edge that reached the step answers it: the caller's
+  file, at the line the call is written on. Reading `route POST /api/posts` in taxonomy now points
+  `db.post.count` at `app/api/posts/route.ts:55`, where it is written, rather than at a sibling
+  route.
 - `import('./Home.vue')` loads a file; it is not a call to a function named `import`. That is how a
   router reaches a page it loads on demand, and koel filed 168 of them as calls and reached none of
   the pages -- 186 of its dynamic imports now reach the file they load, and the three that do not

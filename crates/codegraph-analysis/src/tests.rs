@@ -2239,6 +2239,82 @@ fn an_ambiguous_start_label_picks_the_declared_program() {
 }
 
 #[test]
+fn a_step_into_an_unplaceable_call_opens_the_file_the_call_is_written_in() {
+    // One node stands for every call to a name the resolver cannot place,
+    // and it carries the span of whichever call site minted it: 14620 of
+    // koel's 17732 calls into such a node name a file other than the one
+    // the call is written in. A step that opens the wrong file is worse
+    // than one that opens none, and the edge says where the step is.
+    let mut graph = CodeGraph::new("repo");
+    let caller = graph.add_node_with_span(
+        NodeKind::Function,
+        "handle",
+        SourceSpan {
+            path: "app/api/posts/route.ts".to_string(),
+            start_line: 40,
+            start_column: 1,
+            end_line: 90,
+            end_column: 2,
+        },
+    );
+    let elsewhere = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "Response",
+        Some(SourceSpan {
+            path: "app/api/posts/[postId]/route.ts".to_string(),
+            start_line: 12,
+            start_column: 5,
+            end_line: 12,
+            end_column: 20,
+        }),
+        BTreeMap::from([
+            ("item_kind".to_string(), "call".to_string()),
+            ("resolution".to_string(), "builtin".to_string()),
+        ]),
+    );
+    graph.add_edge_with_metadata(
+        caller,
+        elsewhere,
+        EdgeKind::Calls,
+        Confidence::Heuristic,
+        BTreeMap::from([
+            ("call_label".to_string(), "Response".to_string()),
+            ("line".to_string(), "46".to_string()),
+            ("column".to_string(), "14".to_string()),
+        ]),
+    );
+
+    let report = workflow(
+        &graph,
+        WorkflowRequest {
+            start: TraceStart::Label("handle".to_string()),
+            max_depth: 3,
+            block_limit: 20,
+            filters: WorkflowFilters::default(),
+            compact: false,
+            max_fanout: None,
+        },
+    )
+    .expect("workflow report");
+
+    let step = report
+        .blocks
+        .iter()
+        .find(|block| block.node.label == "Response")
+        .expect("the call is a step of the flow");
+    let span = step.node.span.as_ref().expect("the step says where it is");
+    assert_eq!(
+        span.path, "app/api/posts/route.ts",
+        "the step opens the file the reader is following"
+    );
+    assert_eq!(span.start_line, 46, "at the line the call is written on");
+    assert_eq!(
+        step.node.id, elsewhere,
+        "and it is still the same node it always was"
+    );
+}
+
+#[test]
 fn workflow_builds_block_steps_with_risk_context() {
     let mut graph = CodeGraph::new("repo");
     let entrypoint = graph.add_node(NodeKind::Entrypoint, "cargo bin:api");

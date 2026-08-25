@@ -1,7 +1,7 @@
 //! The refactoring product: journeys, component dependencies and
 //! contracts, refactor-context bundles, seams, and impact reports.
 
-use codegraph_core::{CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind};
+use codegraph_core::{CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind, SourceSpan};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[allow(unused_imports)]
@@ -82,7 +82,7 @@ pub(crate) fn journey_with_insights(
                 explanation: None,
                 fragile: false,
                 fragile_reasons: Vec::new(),
-                block: journey_block(insight_report, &start_node, None, true, 0),
+                block: journey_block(insight_report, graph, &start_node, None, true, 0),
             });
             for (offset, edge_index) in edge_indexes.iter().enumerate() {
                 let Some(edge) = graph.edges.get(*edge_index) else {
@@ -109,7 +109,8 @@ pub(crate) fn journey_with_insights(
                     compacted: false,
                     compacted_count: 1,
                 };
-                let block = journey_block(insight_report, node, Some(edge), false, offset + 1);
+                let block =
+                    journey_block(insight_report, graph, node, Some(edge), false, offset + 1);
                 let fragile_reasons = journey_fragile_reasons(edge, &transition, &block);
                 steps.push(JourneyStep {
                     step: offset + 2,
@@ -1026,17 +1027,61 @@ pub(crate) fn journey_hop_explanation(edge: &Edge) -> JourneyHopExplanation {
     }
 }
 
+/// Where a step happens. A call the resolver could not place -- one a
+/// dependency or the platform answers -- has no definition to open, so
+/// its placeholder carries the span of whichever call site minted it:
+/// 14620 of koel's 17732 calls into such a node name a file other than
+/// the one the call is written in, and a step that opens the wrong file
+/// is worse than one that opens none. The edge that reached it says where
+/// this step is -- the caller's file, at the line the call is written on.
+fn workflow_step_node(node: &Node, incoming_edge: Option<&Edge>, caller: Option<&Node>) -> Node {
+    let mut step = node.clone();
+    if node.kind != NodeKind::ExternalDependency {
+        return step;
+    }
+    let Some(edge) = incoming_edge else {
+        return step;
+    };
+    let (Some(line), Some(column)) = (
+        edge.metadata
+            .get("line")
+            .and_then(|line| line.parse::<u32>().ok()),
+        edge.metadata
+            .get("column")
+            .and_then(|column| column.parse::<u32>().ok()),
+    ) else {
+        return step;
+    };
+    let Some(path) = caller
+        .and_then(|caller| caller.span.as_ref())
+        .map(|span| span.path.clone())
+    else {
+        return step;
+    };
+    step.span = Some(SourceSpan {
+        path,
+        start_line: line,
+        start_column: column,
+        end_line: line,
+        end_column: column,
+    });
+    step
+}
+
 pub(crate) fn journey_block(
     insight_report: &InsightReport,
+    graph: &CodeGraph,
     node: &Node,
     incoming_edge: Option<&Edge>,
     is_start: bool,
     depth: usize,
 ) -> WorkflowBlock {
+    let caller =
+        incoming_edge.and_then(|edge| graph.nodes.iter().find(|node| node.id == edge.source));
     WorkflowBlock {
         id: workflow_block_id(node.id),
         kind: workflow_block_kind(node, incoming_edge, is_start),
-        node: node.clone(),
+        node: workflow_step_node(node, incoming_edge, caller),
         depth,
         source_node_ids: vec![node.id],
         risk_refs: workflow_risk_refs_for_node(insight_report, node.id),
@@ -1251,10 +1296,11 @@ pub(crate) fn workflow_with_insight_report(
             let incoming_edge = incoming
                 .get(&node.id)
                 .and_then(|edge_index| graph.edges.get(*edge_index));
+            let caller = incoming_edge.and_then(|edge| nodes_by_id.get(&edge.source).copied());
             WorkflowBlock {
                 id: workflow_block_id(node.id),
                 kind: workflow_block_kind(node, incoming_edge, node.id == start.id),
-                node: node.clone(),
+                node: workflow_step_node(node, incoming_edge, caller),
                 depth: depths.get(&node.id).copied().unwrap_or(0),
                 source_node_ids: vec![node.id],
                 risk_refs: workflow_risk_refs_for_node(insight_report, node.id),
