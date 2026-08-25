@@ -4018,6 +4018,16 @@ struct ScopeDeclaration {
     scope: String,
 }
 
+/// Whether a manifest states its dependencies once per stanza rather than
+/// once for the project: a `.cabal` file lists what each library, test
+/// suite and benchmark needs, and a Gradle build or an sbt file lists what
+/// each configuration needs.
+fn manifest_declares_per_stanza(label: &str) -> bool {
+    let file = label.replace('\\', "/");
+    let file = file.rsplit('/').next().unwrap_or(&file);
+    file.ends_with(".cabal") || matches!(file, "build.sbt" | "build.gradle" | "build.gradle.kts")
+}
+
 pub(crate) fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let nodes_by_id = node_index(graph);
     // Keyed by the manifest that declares it, because a workspace where one
@@ -4079,6 +4089,14 @@ pub(crate) fn add_mixed_dependency_scope_insights(graph: &CodeGraph, insights: &
         // development dependency of another is the normal shape of the file
         // rather than a disagreement anybody wrote down.
         if is_dependency_lockfile(manifest_label) {
+            continue;
+        }
+        // A manifest that declares its dependencies per stanza states the
+        // same package in each stanza that needs it: shellcheck's
+        // `ShellCheck.cabal` lists `aeson` for the library and again for
+        // the test suite, which is how the format works rather than a
+        // disagreement anybody wrote down.
+        if manifest_declares_per_stanza(manifest_label) {
             continue;
         }
 

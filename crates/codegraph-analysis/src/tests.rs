@@ -5169,6 +5169,44 @@ fn query_insights_returns_sensitive_config_default_context() {
 }
 
 #[test]
+fn a_manifest_that_declares_per_stanza_states_no_disagreement() {
+    // shellcheck's `ShellCheck.cabal` lists `aeson` for the library and
+    // again for the test suite, which is how the format works: sixteen of
+    // its stanza pairs read as a project contradicting itself.
+    let mut graph = CodeGraph::new("repo");
+    let manifest = graph.add_node(NodeKind::File, "ShellCheck.cabal");
+    let package = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "aeson",
+        None,
+        BTreeMap::from([
+            ("ecosystem".to_string(), "hackage".to_string()),
+            ("item_kind".to_string(), "dependency".to_string()),
+            ("package_id".to_string(), "hackage:aeson".to_string()),
+        ]),
+    );
+    for scope in ["runtime", "dev"] {
+        graph.add_edge_with_metadata(
+            manifest,
+            package,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), scope.to_string())]),
+        );
+    }
+
+    let report = insights(&graph);
+
+    assert!(
+        !report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "mixed_dependency_scope"),
+        "a stanza states what it needs even when another stanza needs it too"
+    );
+}
+
+#[test]
 fn packages_are_answered_with_what_the_program_is_built_on() {
     // "Which packages does it depend on?" runs the `packages` query, and
     // mastodon's answer opened with the GitHub Actions its workflows use:

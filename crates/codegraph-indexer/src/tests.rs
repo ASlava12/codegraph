@@ -1644,6 +1644,129 @@ fn an_import_python_erases_is_not_a_runtime_dependency() {
 }
 
 #[test]
+fn every_other_ecosystem_states_what_it_needs_in_its_own_way() {
+    // cowboy declared nothing at all, and ecto, kong, shellcheck,
+    // DataFrames.jl, dplyr, cats and zls declared only the GitHub Actions
+    // their workflows use.
+    let mix = mix_dependencies(
+        "  defp deps do\n    [\n      {:telemetry, \"~> 1.0\"},\n      {:jason, \"~> 1.0\", optional: true},\n      {:ex_doc, \"~> 0.38\", only: :docs}\n    ]\n  end\n",
+    );
+    let elixir = |name: &str| {
+        mix.iter()
+            .find(|dependency| dependency.name == name)
+            .map(|dependency| (dependency.kind.as_str(), dependency.version.clone()))
+    };
+    assert_eq!(
+        elixir("telemetry"),
+        Some(("runtime", Some("~> 1.0".to_string())))
+    );
+    assert_eq!(
+        elixir("ex_doc"),
+        Some(("dev", Some("~> 0.38".to_string()))),
+        "`only: :docs` says what the dependency is for"
+    );
+
+    let rebar = rebar_dependencies(
+        "{deps, [\n{cowlib,\".*\",{git,\"https://github.com/ninenines/cowlib\",{tag,\"2.19.0\"}}},{ranch,\".*\",{git,\"https://github.com/ninenines/ranch\",{tag,\"1.8.1\"}}}\n]}.\n{erl_opts, [debug_info]}.\n",
+    );
+    assert_eq!(
+        rebar
+            .iter()
+            .map(|dependency| dependency.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["cowlib", "ranch"],
+        "a dependency tuple holds tuples of its own, and only the outermost names one"
+    );
+
+    let rockspec = rockspec_dependencies(
+        "dependencies = {\n  \"lua >= 5.1\",\n  \"lua-resty-http == 0.17.2\",\n  \"penlight == 1.14.0\",\n}\n",
+    );
+    assert_eq!(
+        rockspec
+            .iter()
+            .find(|dependency| dependency.name == "lua-resty-http")
+            .and_then(|dependency| dependency.version.clone()),
+        Some("== 0.17.2".to_string())
+    );
+    assert!(
+        !rockspec.iter().any(|dependency| dependency.name == "lua"),
+        "the language a rock runs on is not a rock"
+    );
+
+    let cabal = cabal_dependencies(
+        "library\n    build-depends:\n      aeson >= 1.4.0 && < 2.3,\n      base >= 4.8.0.0 && < 5\n    ghc-options: -Wall\n\ntest-suite check\n    build-depends:\n      QuickCheck,\n      base\n",
+    );
+    let haskell = |name: &str| {
+        cabal
+            .iter()
+            .filter(|dependency| dependency.name == name)
+            .map(|dependency| dependency.kind.as_str())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(haskell("aeson"), vec!["runtime"]);
+    assert_eq!(
+        haskell("QuickCheck"),
+        vec!["dev"],
+        "a `test-suite` stanza states what the tests need"
+    );
+    assert_eq!(
+        haskell("base"),
+        vec!["runtime", "dev"],
+        "and a stanza states what it needs even when another stanza needs it too"
+    );
+
+    let julia = julia_project_dependencies(
+        "[deps]\nCompat = \"34da2185\"\nDataAPI = \"9a962f9c\"\n\n[extras]\nTest = \"8dfed614\"\n",
+    );
+    assert_eq!(
+        julia
+            .iter()
+            .find(|dependency| dependency.name == "Test")
+            .map(|dependency| dependency.kind.as_str()),
+        Some("dev")
+    );
+
+    let description = r_description_dependencies(
+        "Depends:\n    R (>= 4.1.0)\nImports:\n    cli (>= 3.6.2),\n    generics,\nSuggests:\n    covr,\n",
+    );
+    let r = |name: &str| {
+        description
+            .iter()
+            .find(|dependency| dependency.name == name)
+            .map(|dependency| (dependency.kind.as_str(), dependency.version.clone()))
+    };
+    assert_eq!(r("cli"), Some(("runtime", Some(">= 3.6.2".to_string()))));
+    assert_eq!(r("generics"), Some(("runtime", None)));
+    assert_eq!(r("covr"), Some(("dev", None)));
+    assert!(
+        r("R").is_none(),
+        "the language a package runs on is not a package"
+    );
+
+    let sbt = sbt_dependencies(
+        "  libraryDependencies ++= Seq(\n    \"org.typelevel\" %%% \"discipline-core\" % disciplineVersion,\n    \"org.scalameta\" %%% \"munit\" % munitVersion % Test\n  )\n",
+    );
+    let scala = |name: &str| {
+        sbt.iter()
+            .find(|dependency| dependency.name == name)
+            .map(|dependency| dependency.kind.as_str())
+    };
+    assert_eq!(scala("org.typelevel:discipline-core"), Some("runtime"));
+    assert_eq!(scala("org.scalameta:munit"), Some("dev"));
+
+    let zon = zig_zon_dependencies(
+        ".{\n    .name = .zls,\n    .dependencies = .{\n        .known_folders = .{\n            .url = \"https://example.com/known-folders.tar.gz\",\n        },\n        .diffz = .{\n            .url = \"https://example.com/diffz.tar.gz\",\n        },\n    },\n}\n",
+    );
+    assert_eq!(
+        zon.iter()
+            .map(|dependency| dependency.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["known_folders", "diffz"],
+        "a dependency is a field of `.dependencies`, and its url is not one"
+    );
+}
+
+#[test]
 fn a_dotnet_project_states_the_packages_it_references() {
     // eShopOnWeb and Newtonsoft.Json declared nothing at all: a `.csproj`
     // was read by nobody, so 49 and 13 packages were invisible.

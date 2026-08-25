@@ -1532,6 +1532,396 @@ pub(crate) fn pnpm_clean_version(value: &str) -> String {
     value.split('(').next().unwrap_or(value).trim().to_string()
 }
 
+/// What a `mix.exs` states: `{:telemetry, "~> 1.0"}` names a hex package
+/// and the version it wants, and `only: :test` says the dependency is for
+/// the project's own tests rather than for the program.
+pub(crate) fn mix_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        let Some(rest) = trimmed.strip_prefix("{:") else {
+            continue;
+        };
+        let name: String = rest
+            .chars()
+            .take_while(|character| character.is_alphanumeric() || *character == '_')
+            .collect();
+        if name.is_empty() {
+            continue;
+        }
+        let only = rest
+            .split_once("only:")
+            .map(|(_, tail)| ruby_symbol_list(tail))
+            .unwrap_or_default();
+        let kind = if !only.is_empty()
+            && only
+                .iter()
+                .all(|environment| matches!(environment.as_str(), "dev" | "test" | "docs"))
+        {
+            "dev"
+        } else {
+            "runtime"
+        };
+        let version = first_quoted_value(rest).filter(|value| {
+            value.starts_with(|character: char| {
+                character.is_ascii_digit() || matches!(character, '~' | '>' | '<' | '=')
+            })
+        });
+        dependencies.push(manifest_dependency(name, kind, "hex", version));
+    }
+    dependencies
+}
+
+/// What a `rebar.config` states: `{deps, [{cowlib, ".*", {git, ..}}]}`
+/// names each dependency by the atom that opens its tuple. cowboy declared
+/// nothing at all before this.
+pub(crate) fn rebar_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Some((_, rest)) = source.split_once("{deps,") else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+    let mut depth = 0i32;
+    // `{cowlib, ".*", {git, "..", {tag, "2.19.0"}}}` holds tuples of its
+    // own, and only the outermost one names a dependency.
+    let mut braces = 0i32;
+    let mut expecting_name = false;
+    let mut name = String::new();
+    for character in rest.chars() {
+        match character {
+            '[' => {
+                depth += 1;
+            }
+            ']' => {
+                depth -= 1;
+                if depth <= 0 {
+                    break;
+                }
+            }
+            '{' => {
+                if depth == 1 && braces == 0 {
+                    expecting_name = true;
+                    name.clear();
+                }
+                braces += 1;
+            }
+            '}' => {
+                braces -= 1;
+            }
+            _ if expecting_name => {
+                if character.is_alphanumeric() || character == '_' {
+                    name.push(character);
+                } else {
+                    expecting_name = false;
+                    if !name.is_empty() {
+                        dependencies.push(manifest_dependency(
+                            std::mem::take(&mut name),
+                            "runtime",
+                            "hex",
+                            None,
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // `{deps, [cowlib, ranch]}` names them bare, which is the older form.
+    if dependencies.is_empty() {
+        for part in rest.split(['[', ']', ',']) {
+            let name = part.trim();
+            if !name.is_empty()
+                && name
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || character == '_')
+            {
+                dependencies.push(manifest_dependency(name, "runtime", "hex", None));
+            }
+        }
+    }
+    dependencies
+}
+
+/// What a `.rockspec` states: `dependencies = { "lua-resty-http ==
+/// 0.17.2" }` names a rock and the version it wants in one string.
+pub(crate) fn rockspec_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut inside = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("--") {
+            continue;
+        }
+        if trimmed.starts_with("dependencies") && trimmed.contains('{') {
+            inside = true;
+            continue;
+        }
+        if inside && trimmed.starts_with('}') {
+            inside = false;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        let Some(entry) = first_quoted_value(trimmed) else {
+            continue;
+        };
+        let mut parts = entry.split_whitespace();
+        let Some(name) = parts.next() else {
+            continue;
+        };
+        // `lua >= 5.1` is the language the rock runs on.
+        if name.eq_ignore_ascii_case("lua") {
+            continue;
+        }
+        let version = parts
+            .next()
+            .map(|constraint| {
+                let rest: Vec<&str> = std::iter::once(constraint).chain(parts).collect();
+                rest.join(" ")
+            })
+            .filter(|value| !value.is_empty());
+        dependencies.push(manifest_dependency(name, "runtime", "luarocks", version));
+    }
+    dependencies
+}
+
+/// What a `.cabal` file states: a `build-depends:` field lists the
+/// packages its stanza needs, and a `test-suite` stanza's are what the
+/// tests need rather than what the program runs on.
+pub(crate) fn cabal_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut kind = "runtime";
+    let mut inside = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("--") || trimmed.is_empty() {
+            continue;
+        }
+        // A stanza opens at the left margin.
+        if !line.starts_with(char::is_whitespace) {
+            inside = false;
+            let head = trimmed.split_whitespace().next().unwrap_or_default();
+            kind = match head {
+                "test-suite" | "benchmark" => "dev",
+                _ => "runtime",
+            };
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("build-depends:") {
+            inside = true;
+            collect_cabal_dependency_line(rest, kind, &mut dependencies);
+            continue;
+        }
+        if trimmed.contains(':') && !trimmed.starts_with(',') {
+            inside = false;
+            continue;
+        }
+        if inside {
+            collect_cabal_dependency_line(trimmed, kind, &mut dependencies);
+        }
+    }
+    dependencies
+}
+
+fn collect_cabal_dependency_line(
+    line: &str,
+    kind: &str,
+    dependencies: &mut Vec<ManifestDependency>,
+) {
+    for entry in line.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() || entry.starts_with("--") {
+            continue;
+        }
+        let mut parts = entry.split_whitespace();
+        let Some(name) = parts.next() else {
+            continue;
+        };
+        if !name
+            .chars()
+            .all(|character| character.is_alphanumeric() || matches!(character, '-' | '_'))
+        {
+            continue;
+        }
+        let constraint = parts.collect::<Vec<_>>().join(" ");
+        dependencies.push(manifest_dependency(
+            name,
+            kind,
+            "hackage",
+            (!constraint.is_empty()).then_some(constraint),
+        ));
+    }
+}
+
+/// What a Julia `Project.toml` states: every name in `[deps]` is a package
+/// the project uses, and the ones in `[extras]` are for its tests.
+pub(crate) fn julia_project_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut section = String::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed.starts_with('[') {
+            section = trimmed.trim_matches(['[', ']']).to_string();
+            continue;
+        }
+        let kind = match section.as_str() {
+            "deps" => "runtime",
+            "extras" => "dev",
+            _ => continue,
+        };
+        let Some((name, _)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        dependencies.push(manifest_dependency(name, kind, "julia", None));
+    }
+    dependencies
+}
+
+/// What an R `DESCRIPTION` states: `Imports:` and `Depends:` are what the
+/// package needs to run, and `Suggests:` what its tests and vignettes use.
+pub(crate) fn r_description_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut kind: Option<&str> = None;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !line.starts_with(char::is_whitespace) {
+            kind = match trimmed.split(':').next().unwrap_or_default() {
+                "Imports" | "Depends" | "LinkingTo" => Some("runtime"),
+                "Suggests" | "Enhances" => Some("dev"),
+                _ => None,
+            };
+            // `Imports: cli, glue` states them on the field's own line.
+            if let Some(kind) = kind
+                && let Some((_, rest)) = trimmed.split_once(':')
+            {
+                collect_r_dependency_line(rest, kind, &mut dependencies);
+            }
+            continue;
+        }
+        if let Some(kind) = kind {
+            collect_r_dependency_line(trimmed, kind, &mut dependencies);
+        }
+    }
+    dependencies
+}
+
+fn collect_r_dependency_line(line: &str, kind: &str, dependencies: &mut Vec<ManifestDependency>) {
+    for entry in line.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let (name, constraint) = match entry.split_once('(') {
+            Some((name, rest)) => (name.trim(), Some(rest.trim_end_matches(')').trim())),
+            None => (entry, None),
+        };
+        // `R (>= 4.1.0)` is the language the package runs on.
+        if name.is_empty()
+            || name == "R"
+            || !name
+                .chars()
+                .all(|character| character.is_alphanumeric() || matches!(character, '.' | '_'))
+        {
+            continue;
+        }
+        dependencies.push(manifest_dependency(
+            name,
+            kind,
+            "cran",
+            constraint
+                .map(str::to_string)
+                .filter(|value| !value.is_empty()),
+        ));
+    }
+}
+
+/// What a `build.sbt` states: `"org.typelevel" %%% "cats-core" % version`
+/// names a Maven coordinate, and `% Test` says the dependency is for the
+/// project's own tests. Scala publishes to Maven Central, so the
+/// coordinate is the same one a `pom.xml` would name.
+pub(crate) fn sbt_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        let Some((group, rest)) = trimmed.split_once("%") else {
+            continue;
+        };
+        let Some(group) = first_quoted_value(group) else {
+            continue;
+        };
+        let rest = rest.trim_start_matches('%');
+        let Some(artifact) = first_quoted_value(rest) else {
+            continue;
+        };
+        if group.is_empty() || artifact.is_empty() || group.contains(' ') {
+            continue;
+        }
+        let kind = if trimmed.contains("% Test") || trimmed.contains("% \"test\"") {
+            "dev"
+        } else {
+            "runtime"
+        };
+        dependencies.push(manifest_dependency(
+            format!("{group}:{artifact}"),
+            kind,
+            "maven",
+            None,
+        ));
+    }
+    dependencies
+}
+
+/// What a `build.zig.zon` states: each field of `.dependencies` names a
+/// package the build fetches.
+pub(crate) fn zig_zon_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let Some((_, rest)) = source.split_once(".dependencies") else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
+    let mut depth = 0i32;
+    for line in rest.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        // A dependency is a field of the outermost table.
+        if depth == 1
+            && let Some(name) = trimmed.strip_prefix('.').and_then(|rest| {
+                rest.split_once('=')
+                    .map(|(name, _)| name.trim().to_string())
+            })
+            && !name.is_empty()
+            && name
+                .chars()
+                .all(|character| character.is_alphanumeric() || character == '_')
+        {
+            dependencies.push(manifest_dependency(name, "runtime", "zig", None));
+        }
+        depth += trimmed.matches('{').count() as i32;
+        depth -= trimmed.matches('}').count() as i32;
+        if depth <= 0 {
+            break;
+        }
+    }
+    dependencies
+}
+
 /// What a .NET project states: `<PackageReference Include="Azure.Identity"
 /// Version="1.10.4" />` names a package and, where the repository does not
 /// manage versions centrally, the version it wants. eShopOnWeb and

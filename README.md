@@ -232,6 +232,17 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- The rest of the ecosystems state it their own way, and each was read by nobody: cowboy declared
+  nothing at all, and ecto, kong, shellcheck, DataFrames.jl, dplyr, cats and zls declared only the
+  GitHub Actions their workflows use. A `mix.exs` writes `{:telemetry, "~> 1.0"}` with `only: :test`
+  saying what a dependency is for; a `rebar.config` names each one by the atom that opens its tuple,
+  and the tuples inside it -- `{git, ..}`, `{tag, ..}` -- name nothing; a `.rockspec` writes the
+  rock and its version in one string; a `.cabal` file lists what each stanza needs, so a package can
+  be a library's and a test suite's at once; a Julia `Project.toml` names its `[deps]` and its
+  `[extras]`; an R `DESCRIPTION` separates `Imports:` from `Suggests:`; `build.sbt` names Maven
+  coordinates with `% Test` marking the tests'; and `build.zig.zon` names a dependency by the field
+  that holds it. Between them: ecto 7, cowboy 2, kong 33, shellcheck 17, DataFrames.jl 41, dplyr 29,
+  cats 10, zls 4.
 - A .NET project was read by nobody either: eShopOnWeb and Newtonsoft.Json declared no dependency at
   all, and now declare 49 and 13. A `<PackageReference>` names a package and, where the repository
   does not manage versions centrally, the version it wants; `PrivateAssets="All"` marks a package
