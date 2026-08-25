@@ -200,6 +200,29 @@ fn collect_reference_facts(
         });
     }
 
+    // What a TypeScript declaration states about the types it works with: a
+    // parameter's annotation, a property's, a return type, a generic
+    // argument, and the interfaces a class extends or implements. Without
+    // them vue's `ComponentInternalInstance` -- the interface its whole
+    // runtime is written against -- had nothing pointing at it.
+    if matches!(language, Language::TypeScript | Language::Tsx)
+        && node.kind() == "type_identifier"
+        // The name in `interface Foo {}` declares the type rather than
+        // referring to one, and the declaration is already a node.
+        && !node
+            .parent()
+            .and_then(|parent| parent.child_by_field_name("name"))
+            .is_some_and(|name| name == node)
+        && let Some(label) = node_text(node, source)
+        && !label.is_empty()
+    {
+        facts.type_references.push(ParsedTypeReference {
+            label,
+            span: span_for(path, node),
+            parent: current_function.clone(),
+        });
+    }
+
     // What a PHP declaration states about the classes it works with: the
     // type of a parameter or property, the type it returns, the class it
     // extends and the interfaces it implements. Laravel builds a service

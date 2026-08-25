@@ -178,6 +178,11 @@ Implemented now:
   require('./utils').compileETag`), and a file that states no import at all may be a classic script,
   where a bare name really can come from anywhere, so the rule asks only files that import
   something.
+- TypeScript types are reached the same way: a parameter's annotation, a property's, a return type,
+  a generic argument, and the interfaces a class extends or implements. vue's
+  `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
+  pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
+  affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
 - PHP classes are reached by the types that name them: `new SongService(..)` builds one, a
   constructor's type hint states the one Laravel injects, a return type names what a method hands
   back, and `extends`/`implements` name the class and interfaces a class states. None of those were

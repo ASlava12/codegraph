@@ -6029,6 +6029,56 @@ fn a_module_calls_what_it_imports_or_declares() {
 }
 
 #[test]
+fn typescript_types_are_reached_by_the_annotations_that_name_them() {
+    // vue's `ComponentInternalInstance` is the interface its whole runtime
+    // is written against, and nothing pointed at it: a type is named by
+    // annotations, generic arguments and heritage clauses, none of which
+    // were read. `impact` on it answered with nothing.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("package.json"), "{\n  \"name\": \"app\"\n}\n").unwrap();
+    fs::write(
+        root.join("src").join("types.ts"),
+        "export interface Instance {\n  uid: number\n}\n\nexport interface Renderer {\n  render(): void\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("runtime.ts"),
+        "import type { Instance, Renderer } from './types'\n\nexport class Runtime implements Renderer {\n  render(): void {}\n}\n\nexport function mount(instance: Instance): Array<Instance> {\n  return [instance]\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let references = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.kind == EdgeKind::References
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|relation| relation == "type_reference")
+                    && graph
+                        .nodes
+                        .iter()
+                        .any(|node| node.id == edge.target && node.label == label)
+            })
+            .count()
+    };
+    assert!(
+        references("Instance") >= 1,
+        "a parameter's annotation names the type it is given"
+    );
+    assert!(
+        references("Renderer") >= 1,
+        "and a class states the interface it implements"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn php_classes_are_reached_by_the_types_that_name_them() {
     // Laravel builds a service from its constructor's type hints rather
     // than with `new`, and a serializer states the interface it implements.
