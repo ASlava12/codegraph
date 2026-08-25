@@ -896,13 +896,22 @@ pub(crate) fn is_utility_hotspot(hotspot: &Hotspot) -> bool {
             .is_some_and(|resolution| resolution == "unresolved")
 }
 
+/// What the graph calls an entrypoint: whatever an `Entrypoint` edge
+/// points at. A program the parser recognised is a Function node --
+/// Rust's `main`, a C# file of top-level statements -- so asking for
+/// `kind == Entrypoint` instead answers every question about where a
+/// program starts without the programs.
+pub(crate) fn entrypoint_node_ids(graph: &CodeGraph) -> BTreeSet<NodeId> {
+    graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Entrypoint)
+        .map(|edge| edge.target)
+        .collect()
+}
+
 pub fn entrypoints(graph: &CodeGraph) -> Vec<Node> {
-    let mut ids = BTreeSet::new();
-    for edge in &graph.edges {
-        if edge.kind == EdgeKind::Entrypoint {
-            ids.insert(edge.target);
-        }
-    }
+    let ids = entrypoint_node_ids(graph);
 
     let mut matched: Vec<Node> = graph
         .nodes

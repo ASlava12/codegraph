@@ -5169,6 +5169,48 @@ fn query_insights_returns_sensitive_config_default_context() {
 }
 
 #[test]
+fn the_entrypoints_query_answers_with_the_programs_too() {
+    // A program the parser recognised is a Function node an `Entrypoint`
+    // edge points at -- Rust's `main`, a C# file written as top-level
+    // statements -- so a query asking for the node kind alone answered
+    // "where does the program start" with everything except the programs.
+    // The `entrypoints` command and the report already read it this way.
+    let mut graph = CodeGraph::new("repo");
+    let route = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "route GET /health",
+        None,
+        BTreeMap::from([
+            ("entrypoint_kind".to_string(), "route".to_string()),
+            ("source".to_string(), "framework".to_string()),
+        ]),
+    );
+    let program = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "main",
+        None,
+        BTreeMap::from([
+            ("entrypoint_kind".to_string(), "program".to_string()),
+            ("source".to_string(), "code".to_string()),
+        ]),
+    );
+    graph.add_edge(graph.root, route, EdgeKind::Entrypoint, Confidence::Exact);
+    graph.add_edge(graph.root, program, EdgeKind::Entrypoint, Confidence::Exact);
+
+    let result = query_graph(&graph, "entrypoints").unwrap();
+
+    assert!(
+        result.nodes.iter().any(|node| node.id == program),
+        "the program is an entrypoint"
+    );
+    assert_eq!(
+        result.nodes.first().map(|node| node.id),
+        Some(program),
+        "and a reader asking where the program starts is answered with it first"
+    );
+}
+
+#[test]
 fn query_entrypoints_returns_start_context() {
     let mut graph = CodeGraph::new("repo");
     let cargo = graph.add_node_with_metadata(

@@ -51,6 +51,28 @@ pub fn parse_source(
     if language == Language::Bash {
         drop_bash_local_variable_reads(&mut facts.items, root, source_text.as_bytes());
     }
+    // A C# file with top-level statements IS the program: the language
+    // allows them in one file per project and the compiler wraps them in
+    // `Program.Main`. eShopOnWeb starts its three programs that way, and
+    // with no `Main` to find, nothing said where any of them begins.
+    if language == Language::CSharp
+        && !facts
+            .items
+            .iter()
+            .any(|item| item.kind == ParsedItemKind::Entrypoint)
+        && let Some(statement) = csharp_top_level_statement(root)
+    {
+        facts.items.push(ParsedItem {
+            kind: ParsedItemKind::Entrypoint,
+            label: "Program".to_string(),
+            span: span_for(&path.to_string_lossy(), statement),
+            parent: None,
+            metadata: BTreeMap::from([(
+                "definition_form".to_string(),
+                "top_level_statements".to_string(),
+            )]),
+        });
+    }
     dedupe_items(&mut facts.items);
     dedupe_type_references(&mut facts.type_references);
 
@@ -63,6 +85,15 @@ pub fn parse_source(
         has_error_nodes: root.has_error(),
         first_error_line: first_error_line(root),
     })
+}
+
+/// The first statement a C# file writes outside any declaration. The
+/// grammar wraps each one in a `global_statement`, and a file that has
+/// one is the entry point the compiler generates `Main` for.
+fn csharp_top_level_statement(root: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = root.walk();
+    root.named_children(&mut cursor)
+        .find(|child| child.kind() == "global_statement")
 }
 
 /// The 1-based line of the first error or missing node in the tree. Only

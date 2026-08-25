@@ -4212,6 +4212,16 @@ pub(crate) fn is_repository_tooling_source_path(path: &str) -> bool {
     {
         return true;
     }
+    // A build script written in the project's own language is the build,
+    // not the program: Polly drives its release from `cake.cs`, which
+    // reads as a C# program because that is what Cake runs.
+    if normalized
+        .rsplit('/')
+        .next()
+        .is_some_and(|file| matches!(file, "cake.cs") || file.ends_with(".cake"))
+    {
+        return true;
+    }
     normalized.split('/').any(|segment| {
         matches!(
             segment,

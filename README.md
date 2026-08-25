@@ -232,6 +232,13 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- A .NET program starts in a file of statements. C# lets one file per project write statements
+  outside any declaration and the compiler wraps them in `Program.Main`, which is how eShopOnWeb
+  starts all three of its programs -- and with no `Main` to find, nothing said where any of them
+  begins. And "where does the program start" was answered with everything except the programs: a
+  program the parser recognises is a Function node an `Entrypoint` edge points at, so the
+  `entrypoints` query, which `ask` runs, filtered every `main` out while the `entrypoints` command
+  and the report listed them. Both read it the same way now.
 - A class says what it inherits from, and a route reaches the action its parent declares. Eleven of
   mastodon's settings pages declare no action of their own -- `class BrandingController <
   Admin::SettingsController` inherits `show` and `update` -- so the route reached nothing and the

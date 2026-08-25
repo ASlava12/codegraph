@@ -802,11 +802,17 @@ pub(crate) fn query_entrypoints(
     validate_entrypoint_terms(&spec)?;
 
     let path_index = node_path_index(graph);
+    // A program the parser recognised is a Function node an `Entrypoint`
+    // edge points at -- Rust's `main`, a C# file written as top-level
+    // statements -- and asking for the node kind alone answered "where
+    // does the program start" with everything except the programs.
+    let entrypoints = entrypoint_node_ids(graph);
     let mut matched: Vec<_> = graph
         .nodes
         .iter()
         .filter(|node| {
-            node.kind == NodeKind::Entrypoint && entrypoint_query_matches(node, &spec, &path_index)
+            (node.kind == NodeKind::Entrypoint || entrypoints.contains(&node.id))
+                && entrypoint_query_matches(node, &spec, &path_index)
         })
         .cloned()
         .collect();

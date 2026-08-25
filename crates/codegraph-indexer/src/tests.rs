@@ -6713,6 +6713,58 @@ fn rails_says_which_actions_a_resource_declares_and_which_controller_serves_them
 }
 
 #[test]
+fn a_csharp_file_of_top_level_statements_is_where_the_program_starts() {
+    // .NET lets one file per project write statements outside any
+    // declaration, and the compiler wraps them in `Program.Main`.
+    // eShopOnWeb starts all three of its programs that way, and with no
+    // `Main` to find, nothing said where any of them begins.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("Program.cs"),
+        "using System;\n\nvar builder = WebApplication.CreateBuilder(args);\nvar app = builder.Build();\napp.Run();\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Catalog.cs"),
+        "namespace Shop;\n\npublic class Catalog\n{\n    public int Count()\n    {\n        return 0;\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let program = graph
+        .nodes
+        .iter()
+        .find(|node| node.metadata.get("entrypoint_kind").map(String::as_str) == Some("program"))
+        .expect("the file of statements is the program");
+    assert_eq!(
+        program.label, "Program",
+        "which is what the compiler calls it"
+    );
+    assert_eq!(
+        program.span.as_ref().map(|span| span.path.as_str()),
+        Some("src/Program.cs")
+    );
+    assert!(
+        graph
+            .edges
+            .iter()
+            .any(|edge| { edge.kind == EdgeKind::Entrypoint && edge.target == program.id }),
+        "and the repository starts there"
+    );
+    assert!(
+        !graph.nodes.iter().any(|node| node.label == "Program"
+            && node
+                .span
+                .as_ref()
+                .is_some_and(|span| span.path == "src/Catalog.cs")),
+        "a file that only declares types starts nothing"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_minimal_api_declares_a_route_and_a_razor_page_serves_where_it_sits() {
     // `app.MapGet("api/catalog-items", ..)` writes the verb into the
     // method name, so the `.get(` every other route call ends in never
