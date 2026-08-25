@@ -236,6 +236,9 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Swift loses its receiver the same way, and states its types the same way: a parameter always
+  names one and `let manager = Manager()` names what it builds. Alamofire's ambiguous calls fall
+  from 2143 to 2032 with 123 more resolved.
 - Kotlin writes the callee as one navigation expression, so `sink.writeUtf8(..)` reaches the graph
   as `writeUtf8` and what it was written through is lost. The receiver is now recorded and read
   against what the file states -- a parameter always names its type, and `val buffer: Buffer =

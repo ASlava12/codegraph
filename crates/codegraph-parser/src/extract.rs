@@ -2690,11 +2690,11 @@ pub(crate) fn classify_call(
             }
         }
     }
-    // Kotlin writes the callee as one navigation expression and the label
-    // keeps only its last segment: `sink.writeUtf8(..)` is `writeUtf8`.
-    // What the call was written through is the only thing that says which
-    // of okio's three `writeUtf8` is meant.
-    if language == Language::Kotlin
+    // Kotlin and Swift write the callee as one navigation expression and
+    // the label keeps only its last segment: `sink.writeUtf8(..)` is
+    // `writeUtf8`. What the call was written through is the only thing that
+    // says which of okio's three `writeUtf8` is meant.
+    if matches!(language, Language::Kotlin | Language::Swift)
         && let Some(callee) = node
             .named_child(0)
             .and_then(|child| node_text(child, source))
@@ -2821,6 +2821,11 @@ pub(crate) fn declared_variable_types(
     if language == Language::Kotlin {
         return kotlin_declared_variable_types(node, source);
     }
+    // Swift states a parameter's type always and a property's often:
+    // `func request(_ session: Session)` and `let request: Request`.
+    if language == Language::Swift {
+        return swift_declared_variable_types(node, source);
+    }
     if language != Language::Go {
         return declared;
     }
@@ -2924,6 +2929,85 @@ fn java_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<Strin
         declared.remove(&name);
     }
     declared
+}
+
+/// The names a Swift definition binds with a type: its parameters, which
+/// always state one, and the properties that do. `let session = Session()`
+/// states none, but what it builds is written right there.
+fn swift_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    let mut declared: BTreeMap<String, String> = BTreeMap::new();
+    let mut conflicting: BTreeSet<String> = BTreeSet::new();
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        let mut cursor = current.walk();
+        for child in current.named_children(&mut cursor) {
+            stack.push(child);
+        }
+        if !matches!(current.kind(), "parameter" | "property_declaration") {
+            continue;
+        }
+        let Some(name) = named_child_text(current, "name", source).filter(|name| {
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || character == '_')
+        }) else {
+            continue;
+        };
+        let stated = named_child_text(current, "type", source)
+            .or_else(|| child_kind_text(current, "type_annotation", source))
+            .map(|text| swift_type_name(&text))
+            .filter(|name| !name.is_empty());
+        let type_name = stated.or_else(|| swift_built_type(current, source));
+        let Some(type_name) = type_name else {
+            continue;
+        };
+        if declared
+            .get(&name)
+            .is_some_and(|existing| existing != &type_name)
+        {
+            conflicting.insert(name);
+            continue;
+        }
+        declared.insert(name, type_name);
+    }
+    for name in conflicting {
+        declared.remove(&name);
+    }
+    declared
+}
+
+/// The bare name of a Swift type as written after a colon: `: Session`,
+/// `: Request?`, `: [Element]` and `: Result<T, Error>` all reduce to the
+/// name a declaration can be found under.
+fn swift_type_name(text: &str) -> String {
+    text.trim()
+        .trim_start_matches(':')
+        .trim()
+        .trim_end_matches(['?', '!'])
+        .split('<')
+        .next()
+        .unwrap_or_default()
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+/// The type a Swift property builds when it states none: `let session =
+/// Session()` names the type on the right of the `=`.
+fn swift_built_type(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let value = node.child_by_field_name("value")?;
+    if value.kind() != "call_expression" {
+        return None;
+    }
+    let callee = value
+        .named_child(0)
+        .and_then(|child| node_text(child, source))?;
+    let name = callee.trim().rsplit('.').next().unwrap_or_default().trim();
+    (!name.is_empty() && name.chars().next().is_some_and(char::is_uppercase))
+        .then(|| name.to_string())
 }
 
 /// The names a Kotlin definition binds with a type: its parameters, which

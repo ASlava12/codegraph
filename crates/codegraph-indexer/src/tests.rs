@@ -16737,3 +16737,43 @@ fn a_kotlin_receiver_states_which_method_a_call_means() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_swift_receiver_states_which_method_a_call_means() {
+    // `session.request(..)` reaches the graph as `request`, and Alamofire
+    // declares one on `Session` and one on `Manager`. A Swift parameter
+    // always states its type, and `let manager = Manager()` names what it
+    // builds.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("Sources/App")).unwrap();
+    fs::write(
+        root.join("Package.swift"),
+        "// swift-tools-version:5.5\nimport PackageDescription\nlet package = Package(name: \"App\")\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("Sources/App/Types.swift"),
+        "public class Session {\n    public func request(_ url: String) -> String { return url }\n}\n\npublic class Manager {\n    public func request(_ url: String) -> String { return url }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("Sources/App/Caller.swift"),
+        "public func run(session: Session) -> String {\n    return session.request(\"u\")\n}\n\npublic func runLocal() -> String {\n    let manager = Manager()\n    return manager.request(\"u\")\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let owners: Vec<&str> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("request")
+        })
+        .filter_map(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+        .filter_map(|node| node.metadata.get("owner_type").map(String::as_str))
+        .collect();
+    assert_eq!(owners, vec!["Session", "Manager"]);
+
+    fs::remove_dir_all(root).unwrap();
+}
