@@ -5169,6 +5169,54 @@ fn query_insights_returns_sensitive_config_default_context() {
 }
 
 #[test]
+fn unused_code_is_answered_with_code_and_not_with_documents() {
+    // "Which code is unused?" runs the `unreachable` query, and a
+    // document's headings look like the symbols a file holds: koel's
+    // answer opened with `.github/copilot-instructions.md` and four of
+    // its headings, and every project in the corpus was told that its
+    // `README.md` "contains markdown code but is not reachable from any
+    // entrypoint", which nothing can act on.
+    let mut graph = CodeGraph::new("repo");
+    let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:api");
+    graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+    let document = graph.add_node_with_metadata(
+        NodeKind::File,
+        "README.md",
+        None,
+        BTreeMap::from([
+            ("language".to_string(), "markdown".to_string()),
+            ("item_kind".to_string(), "document".to_string()),
+        ]),
+    );
+    let heading = graph.add_node(NodeKind::Module, "README.md#Install");
+    graph.add_edge(document, heading, EdgeKind::Contains, Confidence::Exact);
+    let file = graph.add_node_with_metadata(
+        NodeKind::File,
+        "src/forgotten.rs",
+        None,
+        BTreeMap::from([("language".to_string(), "rust".to_string())]),
+    );
+    let forgotten = graph.add_node(NodeKind::Function, "forgotten");
+    graph.add_edge(file, forgotten, EdgeKind::Contains, Confidence::Exact);
+
+    let result = query_graph(&graph, "unreachable").unwrap();
+    let listed: Vec<&str> = result
+        .nodes
+        .iter()
+        .map(|node| node.label.as_str())
+        .collect();
+
+    assert!(
+        result.nodes.iter().any(|node| node.id == file),
+        "the file of code nothing reaches is the answer, got {listed:?}"
+    );
+    assert!(
+        !result.nodes.iter().any(|node| node.id == document),
+        "and a document is not code, got {listed:?}"
+    );
+}
+
+#[test]
 fn the_entrypoints_query_answers_with_the_programs_too() {
     // A program the parser recognised is a Function node an `Entrypoint`
     // edge points at -- Rust's `main`, a C# file written as top-level

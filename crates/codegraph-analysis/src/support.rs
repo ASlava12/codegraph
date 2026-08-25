@@ -582,6 +582,14 @@ pub(crate) fn entrypoint_reachable_nodes_from(
 pub(crate) fn is_source_file_candidate(graph: &CodeGraph, node: &Node) -> bool {
     node.kind == NodeKind::File
         && node.metadata.contains_key("language")
+        // A document is not code, and its headings are not symbols the
+        // program runs: every project in the corpus was told that its
+        // `README.md` "contains markdown code but is not reachable from
+        // any entrypoint", which nothing can act on.
+        && node
+            .metadata
+            .get("item_kind")
+            .is_none_or(|kind| kind != "document")
         && !node.metadata.contains_key("skipped_reason")
         && !is_test_like_source_path(&node.label)
         && graph.edges.iter().any(|edge| {

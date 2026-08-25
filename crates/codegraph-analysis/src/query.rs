@@ -1505,7 +1505,7 @@ pub(crate) fn query_unreachable(
             scope,
         ));
     }
-    let matched: Vec<_> = graph
+    let mut matched: Vec<&Node> = graph
         .nodes
         .iter()
         .filter(|node| {
@@ -1523,8 +1523,14 @@ pub(crate) fn query_unreachable(
                 .get("path_prefix")
                 .is_none_or(|expected| node_path_matches(node, &path_index, expected))
         })
-        .map(|node| node.id)
         .collect();
+    // "Which code is unused?" is answered by this query, and a document
+    // was never going to be reached by running the program: koel's answer
+    // opened with `.github/copilot-instructions.md` and four of its
+    // headings. Code first, then what sits around it, in graph order
+    // inside a tier so the answer stays the same between runs.
+    matched.sort_by_key(|node| (unreachable_rank(node), node.id));
+    let matched: Vec<NodeId> = matched.into_iter().map(|node| node.id).collect();
     let total_matches = matched.len();
     let selected: BTreeSet<_> = matched.iter().take(spec.limit).copied().collect();
     let edge_limit = spec.limit.saturating_mul(4).clamp(1, 1000);
@@ -1564,6 +1570,30 @@ pub(crate) fn query_unreachable(
         total_edges,
         truncated,
     ))
+}
+
+/// What a reader asking "which code is unused" wants first. Code that
+/// nothing reaches is the answer; a document, a configuration value or a
+/// dependency was never reached by running the program, so it is context
+/// rather than a finding.
+fn unreachable_rank(node: &Node) -> u8 {
+    if node
+        .metadata
+        .get("item_kind")
+        .is_some_and(|kind| kind.starts_with("document"))
+        || node
+            .metadata
+            .get("language")
+            .is_some_and(|language| language == "markdown")
+    {
+        return 3;
+    }
+    match node.kind {
+        NodeKind::Function | NodeKind::Type => 0,
+        NodeKind::File | NodeKind::Module | NodeKind::Entrypoint => 1,
+        NodeKind::Directory | NodeKind::Config | NodeKind::Environment => 2,
+        _ => 3,
+    }
 }
 
 pub(crate) fn query_unreachable_flow_scope(

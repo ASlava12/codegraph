@@ -232,6 +232,12 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- A document is not code. A markdown file's headings look like the symbols a file holds, so every
+  project in the corpus was told that its `README.md` "contains markdown code but is not reachable
+  from any entrypoint", and "which code is unused?" answered koel with
+  `.github/copilot-instructions.md` and four of its headings before naming a single PHP file. The
+  answer now opens with the code, and where the question is asked of every node rather than of
+  files, code is ranked ahead of the documents and configuration around it.
 - `AlbumController::class` is how PHP writes down a class it does not build, and koel writes 111 of
   them in its routes alone -- every Laravel route names its controller that way, as does a container
   binding and a config file's provider list. None was read, so "what breaks if I change
