@@ -16541,3 +16541,52 @@ fn a_call_through_a_type_parameter_names_no_definition() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn an_expect_declaration_and_its_actual_are_one_declaration() {
+    // `expect class Buffer` in commonMain and `actual class Buffer` in
+    // jvmMain are one class written twice, and a source set is a directory
+    // of its own -- so what tells two halves of one declaration apart is
+    // exactly what the overload test asks them to share. okio spreads 768
+    // calls over pairs like that.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src/commonMain/kotlin/app")).unwrap();
+    fs::create_dir_all(root.join("src/jvmMain/kotlin/app")).unwrap();
+    fs::write(
+        root.join("build.gradle.kts"),
+        "plugins { kotlin(\"multiplatform\") }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/commonMain/kotlin/app/Buffer.kt"),
+        "package app\n\nexpect class Buffer() {\n  fun writeUtf8(text: String): Buffer\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/jvmMain/kotlin/app/Buffer.kt"),
+        "package app\n\nactual class Buffer {\n  actual fun writeUtf8(text: String): Buffer {\n    return this\n  }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/commonMain/kotlin/app/Writer.kt"),
+        "package app\n\nfun write(buffer: Buffer) {\n  buffer.writeUtf8(\"hi\")\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("writeUtf8")
+        })
+        .expect("the call is recorded");
+    assert_eq!(
+        call.metadata.get("resolution").map(String::as_str),
+        Some("resolved"),
+        "both halves are the same method of the same class"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

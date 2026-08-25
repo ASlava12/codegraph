@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- `expect class Buffer` in commonMain and `actual class Buffer` in jvmMain are one class written
+  twice, and a source set is a directory of its own -- so what tells the two halves apart is exactly
+  what the overload test asked them to share. okio's ambiguous calls fall from 5749 to 5403 and 346
+  more resolve.
 - `F.map(fa)(f)` goes through a value whose type is a type parameter, so nothing the project
   declares can be named by it. cats writes 178 of those and each was reported as a choice between
   every `map` in the repository; 744 of its ambiguous calls stop claiming a choice that was never

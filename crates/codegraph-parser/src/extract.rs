@@ -1777,6 +1777,15 @@ pub(crate) fn classify_node(
         if node.kind() == "preproc_function_def" {
             metadata.insert("definition_form".to_string(), "macro".to_string());
         }
+        // `expect class Buffer` in commonMain and `actual class Buffer` in
+        // jvmMain are one class written twice, and so is every method
+        // inside them. okio spreads 768 calls over pairs like that, and
+        // each read as a choice between two declarations.
+        if language == Language::Kotlin
+            && let Some(form) = kotlin_platform_form(node, source)
+        {
+            metadata.insert("platform_form".to_string(), form.to_string());
+        }
         // A value a factory built is callable when what it holds is, and a
         // reader should be able to tell it from a function the file spells
         // out.
@@ -2111,6 +2120,43 @@ fn ruby_visibility_keyword(text: &str) -> Option<&'static str> {
         "public" => Some("public"),
         _ => None,
     }
+}
+
+/// Whether a Kotlin declaration is one half of a multiplatform pair:
+/// `expect class Buffer` states it and `actual class Buffer` supplies it.
+/// A member of an expect class carries no modifier of its own, so the
+/// class around it answers for it.
+fn kotlin_platform_form(node: Node<'_>, source: &[u8]) -> Option<&'static str> {
+    let mut current = Some(node);
+    let mut depth = 0;
+    while let Some(candidate) = current {
+        depth += 1;
+        if depth > 8 {
+            break;
+        }
+        if matches!(
+            candidate.kind(),
+            "function_declaration"
+                | "class_declaration"
+                | "object_declaration"
+                | "property_declaration"
+        ) {
+            let mut cursor = candidate.walk();
+            let modifiers = candidate
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "modifiers")
+                .and_then(|child| node_text(child, source))
+                .unwrap_or_default();
+            if modifiers.split_whitespace().any(|word| word == "expect") {
+                return Some("expect");
+            }
+            if modifiers.split_whitespace().any(|word| word == "actual") {
+                return Some("actual");
+            }
+        }
+        current = candidate.parent();
+    }
+    None
 }
 
 /// The zig container a definition is written inside: `const Server =

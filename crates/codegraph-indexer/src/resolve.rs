@@ -2222,6 +2222,13 @@ fn one_methods_overloads(graph: &CodeGraph, targets: &[NodeId]) -> bool {
     let mut owner: Option<String> = None;
     let mut label: Option<String> = None;
     let mut directory: Option<String> = None;
+    // `expect class Buffer` in commonMain and `actual class Buffer` in
+    // jvmMain are one class written twice, and a source set is a directory
+    // of its own -- so the directory two halves of one declaration sit in
+    // is exactly what differs. okio spreads 768 calls over pairs like that.
+    let across_platforms = targets.iter().all(|target| {
+        graph_node(graph, *target).is_some_and(|node| node.metadata.contains_key("platform_form"))
+    });
     for target in targets {
         let Some(node) = graph_node(graph, *target) else {
             return false;
@@ -2243,7 +2250,9 @@ fn one_methods_overloads(graph: &CodeGraph, targets: &[NodeId]) -> bool {
         if label.get_or_insert_with(|| node.label.clone()) != &node.label {
             return false;
         }
-        if directory.get_or_insert_with(|| node_directory.to_string()) != node_directory {
+        if !across_platforms
+            && directory.get_or_insert_with(|| node_directory.to_string()) != node_directory
+        {
             return false;
         }
     }
