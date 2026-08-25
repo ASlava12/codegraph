@@ -468,7 +468,13 @@ pub(crate) fn index_ruby_schema_tables(
         }
         let line_number = index as u32 + 1;
         let mut metadata = BTreeMap::new();
-        metadata.insert("language".to_string(), "ruby".to_string());
+        // A table is a SQL entity wherever it is declared: mastodon writes
+        // its schema in Ruby migrations and its indexes in raw SQL, and
+        // giving each the language of the file that declared it made an
+        // index and the table it belongs to look like a link across
+        // languages.
+        metadata.insert("language".to_string(), "sql".to_string());
+        metadata.insert("declared_in".to_string(), "ruby".to_string());
         metadata.insert("item_kind".to_string(), "sql_table".to_string());
         metadata.insert("source".to_string(), "migration".to_string());
         metadata.insert("table_name".to_string(), name.clone());
@@ -524,7 +530,8 @@ pub(crate) fn index_php_schema_tables(
         }
         let line_number = index as u32 + 1;
         let mut metadata = BTreeMap::new();
-        metadata.insert("language".to_string(), "php".to_string());
+        metadata.insert("language".to_string(), "sql".to_string());
+        metadata.insert("declared_in".to_string(), "php".to_string());
         metadata.insert("item_kind".to_string(), "sql_table".to_string());
         metadata.insert("source".to_string(), "migration".to_string());
         metadata.insert("table_name".to_string(), name.clone());

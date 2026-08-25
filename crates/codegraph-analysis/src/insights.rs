@@ -479,6 +479,20 @@ pub(crate) fn add_cross_language_heuristic_edge_insights(
         {
             continue;
         }
+        // Code reaching a table is a link from a program to its data, and
+        // every project that keeps a schema writes it in a language of its
+        // own: mastodon declares its tables in Ruby migrations and its
+        // indexes in SQL, and reading `accounts` from Ruby is what the
+        // program is for rather than a name matched across languages.
+        if [edge.source, edge.target].iter().any(|node| {
+            nodes_by_id.get(node).is_some_and(|node| {
+                node.metadata
+                    .get("item_kind")
+                    .is_some_and(|kind| kind.starts_with("sql_") || kind.starts_with("app_sql_"))
+            })
+        }) {
+            continue;
+        }
         let source = nodes_by_id
             .get(&edge.source)
             .map(|node| node.label.as_str())

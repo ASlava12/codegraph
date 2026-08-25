@@ -350,6 +350,18 @@ pub fn surprising_links(graph: &CodeGraph, limit: usize) -> SurprisingLinkReport
         if is_document_query_node(source) {
             continue;
         }
+        // An entrypoint reaching the code that serves it is the
+        // architecture, not a surprise: it crosses an area by
+        // construction -- a route sits in `routes/` and its controller in
+        // `app/` -- and eight of koel's top ten links were a route
+        // reaching its own `__invoke`.
+        if edge
+            .metadata
+            .get("relation")
+            .is_some_and(|relation| relation.starts_with("entrypoint_"))
+        {
+            continue;
+        }
         let source_area = node_areas
             .get(&edge.source)
             .cloned()

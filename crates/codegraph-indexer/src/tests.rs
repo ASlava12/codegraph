@@ -1689,6 +1689,41 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn a_table_is_a_sql_entity_wherever_it_is_declared() {
+    // mastodon writes its schema in Ruby migrations and some of its
+    // indexes in raw SQL, and each table took the language of the file
+    // that declared it: an index and the table it belongs to then looked
+    // like a link across languages, which is what `surprising-links`
+    // ranked above every real one.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("db")).unwrap();
+    fs::write(
+        root.join("db").join("schema.rb"),
+        "ActiveRecord::Schema[8.0].define(version: 2024_01_01_000000) do\n  create_table \"accounts\", force: :cascade do |t|\n    t.string \"username\"\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let table = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "sql table:accounts")
+        .expect("the migration declares the table");
+    assert_eq!(
+        table.metadata.get("language").map(String::as_str),
+        Some("sql"),
+        "a table is a SQL entity"
+    );
+    assert_eq!(
+        table.metadata.get("declared_in").map(String::as_str),
+        Some("ruby"),
+        "and the language that declares it is a fact of its own"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_language_module_answers_only_where_the_project_declares_none() {
     // 1144 of dune's unresolved calls named an OCaml module the language
     // ships -- `Printf.sprintf`, `Unix.getenv`, `Filename.concat`. But

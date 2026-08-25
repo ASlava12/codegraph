@@ -5169,6 +5169,55 @@ fn query_insights_returns_sensitive_config_default_context() {
 }
 
 #[test]
+fn an_entrypoint_reaching_its_own_handler_is_not_a_surprise() {
+    // A route sits in `routes/` and the controller it names in `app/`, so
+    // the link crosses an area by construction: eight of koel's top ten
+    // surprising links were a route reaching its own `__invoke`.
+    let mut graph = CodeGraph::new("repo");
+    let route = graph.add_node_with_span(
+        NodeKind::Entrypoint,
+        "route POST /api/me",
+        SourceSpan {
+            path: "routes/api.php".to_string(),
+            start_line: 12,
+            start_column: 1,
+            end_line: 12,
+            end_column: 40,
+        },
+    );
+    let handler = graph.add_node_with_span(
+        NodeKind::Function,
+        "__invoke",
+        SourceSpan {
+            path: "app/Http/Controllers/MeController.php".to_string(),
+            start_line: 8,
+            start_column: 1,
+            end_line: 20,
+            end_column: 2,
+        },
+    );
+    graph.add_edge_with_metadata(
+        route,
+        handler,
+        EdgeKind::References,
+        Confidence::Heuristic,
+        BTreeMap::from([("relation".to_string(), "entrypoint_function".to_string())]),
+    );
+
+    let report = surprising_links(&graph, 10);
+
+    assert!(
+        report.links.is_empty(),
+        "an entrypoint reaching the code that serves it is the architecture, got {:?}",
+        report
+            .links
+            .iter()
+            .map(|link| link.source.label.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn a_manifest_that_declares_per_stanza_states_no_disagreement() {
     // shellcheck's `ShellCheck.cabal` lists `aeson` for the library and
     // again for the test suite, which is how the format works: sixteen of

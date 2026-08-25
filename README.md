@@ -236,6 +236,15 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- An entrypoint reaching the code that serves it is the architecture, not a surprise: a route sits
+  in `routes/` and its controller in `app/`, so the link crosses an area by construction, and eight
+  of koel's top ten "surprising links" were a route reaching its own `__invoke`. What ranks now is a
+  real crossing -- koel's `config/koel.php` calling `find_ffmpeg_path`.
+- A table is a SQL entity wherever it is declared. mastodon writes its schema in Ruby migrations and
+  some of its indexes in raw SQL, and each table took the language of the file that declared it, so
+  an index and the table it belongs to looked like a link across languages. Code reaching a table is
+  a link from a program to its data rather than a name matched across languages, and mastodon's
+  cross-language findings fall from 436 to 427 with the nine false ones gone.
 - A module the language ships answers only where the project declares none. 1144 of dune's
   unresolved calls named an OCaml module that comes with the compiler -- `Printf.sprintf`,
   `Unix.getenv`, `Filename.concat` -- while dune's own `stdune` declares `String`, `List` and
