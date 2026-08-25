@@ -377,6 +377,32 @@ fn collect_reference_facts(
         }
     }
 
+    // What a Kotlin declaration states about the types it works with: a
+    // parameter's type, a property's, what a function returns, and what a
+    // class extends or implements. okio declares 358 types and four
+    // references pointed into them, so "what breaks if I change `Buffer`"
+    // -- the type its whole API is written around -- answered with
+    // nothing.
+    if language == Language::Kotlin && node.kind() == "user_type" {
+        let mut cursor = node.walk();
+        if let Some(name) = node
+            .named_children(&mut cursor)
+            .find(|child| child.kind() == "identifier")
+            && let Some(label) = node_text(name, source)
+        {
+            let label = label.trim();
+            // `T`, `R`, `K1` name a type parameter, and every generic
+            // declaration writes one.
+            if !label.is_empty() && !names_a_type_parameter(label) {
+                facts.type_references.push(ParsedTypeReference {
+                    label: label.to_string(),
+                    span: span_for(path, name),
+                    parent: current_function.clone(),
+                });
+            }
+        }
+    }
+
     // What a Ruby class states about the classes it works with: the class
     // it inherits from, the modules it mixes in, and the constant a call
     // is written through. mastodon declares 2083 classes and modules and

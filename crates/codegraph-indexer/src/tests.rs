@@ -1689,6 +1689,61 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn kotlin_types_are_reached_by_the_declarations_that_name_them() {
+    // okio declares 358 types and four references pointed into them, so
+    // "what breaks if I change `Buffer`" -- the type its whole API is
+    // written around -- answered with nothing. A source set is a
+    // directory, and okio declares `Buffer` once per platform it builds
+    // for, so a name written in one means that directory's.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("okio/src/commonMain/kotlin/okio")).unwrap();
+    fs::create_dir_all(root.join("okio/src/jvmMain/kotlin/okio")).unwrap();
+    fs::write(
+        root.join("okio/src/commonMain/kotlin/okio/Buffer.kt"),
+        "package okio\n\nclass Buffer : Sink {\n  fun clear() {}\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("okio/src/commonMain/kotlin/okio/Sink.kt"),
+        "package okio\n\ninterface Sink {\n  fun write(source: Buffer, count: Long)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("okio/src/jvmMain/kotlin/okio/Buffer.kt"),
+        "package okio\n\nclass Buffer {\n  fun readUtf8(): String = \"\"\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let buffer_at = |path: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == "Buffer" && node.span.as_ref().is_some_and(|span| span.path == path)
+            })
+            .unwrap_or_else(|| panic!("Buffer is declared in {path}"))
+            .id
+    };
+    let referenced = |target: NodeId| {
+        graph.edges.iter().any(|edge| {
+            edge.target == target
+                && edge.metadata.get("relation").map(String::as_str) == Some("type_reference")
+        })
+    };
+    assert!(
+        referenced(buffer_at("okio/src/commonMain/kotlin/okio/Buffer.kt")),
+        "a parameter's type names the class it is given"
+    );
+    assert!(
+        !referenced(buffer_at("okio/src/jvmMain/kotlin/okio/Buffer.kt")),
+        "and the platform beside it declares a Buffer of its own"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_go_package_is_a_directory_and_a_type_written_in_one_is_its_own() {
     // terraform declares `Backend` in seventeen packages, one per remote
     // state backend, so every reference to it was ambiguous and `impact

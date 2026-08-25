@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Kotlin types are reached the same way: a parameter's type, a property's, what a function returns
+  and what a class extends. okio declares 358 types and four references pointed into them, so "what
+  breaks if I change `Buffer`" answered with nothing -- it now names 22 dependents, `Source` 274 and
+  140 affected tests. okio's references go from 4 to 875 and retrofit's to 1912. A Kotlin source set
+  is a directory too, and okio declares `Buffer` once per platform it builds for.
 - A Go package is a directory, and a type written inside one is its own: terraform declares
   `Backend` in seventeen packages, one per remote state backend, so every reference was ambiguous
   and `impact Backend` answered with nothing. It now names 142 dependents and 134 affected tests,

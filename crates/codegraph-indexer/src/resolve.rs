@@ -3015,12 +3015,16 @@ pub(crate) fn resolve_pending_type_references(context: &mut IndexContext) {
             })
             .collect::<Vec<_>>();
 
-        // A Terraform module is a directory, and so is a Go package: a
-        // name written inside one means what that directory declares.
+        // A Terraform module is a directory, and so is a Go package and a
+        // Kotlin source set: a name written inside one means what that
+        // directory declares. okio declares `Buffer` three times -- once
+        // for every platform it builds for -- in a directory each.
         // terraform's fixtures declare `var.input` in 40 directories and
         // its backends declare `Backend` in seventeen, and only the one
         // next door is what the expression means.
-        let targets = if matches!(reference.language.as_str(), "hcl" | "go") && targets.len() > 1 {
+        let targets = if matches!(reference.language.as_str(), "hcl" | "go" | "kotlin")
+            && targets.len() > 1
+        {
             let directory = source_path
                 .and_then(|path| path.rsplit_once('/'))
                 .map(|(dir, _)| dir);
