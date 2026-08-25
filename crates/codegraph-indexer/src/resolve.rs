@@ -2139,6 +2139,16 @@ fn patches_runtime_global(language: &str, owner: &str) -> bool {
                 | "Date"
         ),
         "python" => matches!(owner, "os" | "sys" | "json" | "re" | "time" | "logging"),
+        // A nix module is a function of what the evaluator hands it, and
+        // those names are nixpkgs': `lib.optionalString` is not the
+        // `optionalString` home-manager's termite module binds in a `let`,
+        // and `builtins.typeOf` is the language itself. A name the project
+        // does add under one of them -- `lib.hm.booleans.yesNo` -- keeps
+        // the whole prefix as its owner and is left alone.
+        "nix" => matches!(
+            owner,
+            "builtins" | "lib" | "pkgs" | "config" | "options" | "stdenv" | "inputs"
+        ),
         _ => false,
     }
 }
@@ -2546,6 +2556,19 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 owner == &node.label
                     || node.span.as_ref().map(|span| span.path.as_str()) == caller_path
                     || reachable_owners.contains(owner)
+            });
+        }
+        // A nix file's `let` bindings are its own, and the language has no
+        // global namespace to reach another file's through: a bare name is
+        // a primop, a `with` scope's, or this file's. home-manager binds
+        // `map` in modules/lib/dag.nix and it answered 132 calls to the
+        // primop, and termite.nix's `optionalString` answered 27 more.
+        if call.language == "nix" && !call.label.contains('.') {
+            language_targets.retain(|target| {
+                graph_node(&context.graph, *target)
+                    .and_then(|node| node.span.as_ref())
+                    .map(|span| span.path.as_str())
+                    == caller_path
             });
         }
         // A qualified call names where it comes from. When the calling file

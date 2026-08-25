@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A nix file's `let` bindings are its own: the language has no global namespace to reach another
+  file's through, and `lib`, `pkgs` and `builtins` are what the evaluator hands a module rather than
+  anything the project declares. home-manager's `modules/lib/dag.nix` had answered 132 calls to the
+  `map` primop and its termite module 27 to nixpkgs' `optionalString`; 290 such edges go.
 - A callee that navigates through an expression -- `args.into_iter().map(..)` -- reaches the graph
   as the name alone, because the receiver is not part of what is called. A call now says when its
   receiver was dropped that way, so a method every value has is still read as the language's:

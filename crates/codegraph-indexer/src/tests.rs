@@ -16218,3 +16218,44 @@ fn a_chained_call_says_it_went_through_a_value() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_nix_let_binding_stays_in_its_own_file() {
+    // A nix file's `let` bindings are its own, and the language has no
+    // global namespace to reach another file's through. home-manager binds
+    // `map` in modules/lib/dag.nix and it answered 132 calls to the
+    // primop; `lib` is what the evaluator hands the module, not a name any
+    // file here declares.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("modules/lib")).unwrap();
+    fs::write(root.join("flake.nix"), "{ outputs = { self }: { }; }\n").unwrap();
+    fs::write(
+        root.join("modules/lib/dag.nix"),
+        "{ lib }:\nrec {\n  map = f: xs: builtins.map f xs;\n  optionalString = c: s: if c then s else \"\";\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("modules/other.nix"),
+        "{ lib, config }:\nlet\n  names = map (x: x) [ 1 2 ];\n  text = lib.optionalString true \"on\";\nin { inherit names text; }\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolved_to_dag = |label: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+                && edge.metadata.get("resolution").map(String::as_str) == Some("resolved")
+        })
+    };
+    assert!(
+        !resolved_to_dag("map"),
+        "a bare `map` is the primop, not the binding another file made"
+    );
+    assert!(
+        !resolved_to_dag("lib.optionalString"),
+        "`lib` is nixpkgs', not a name this project declares"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
