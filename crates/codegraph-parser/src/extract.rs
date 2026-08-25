@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use codegraph_core::SourceSpan;
+use codegraph_core::{SourceSpan, is_test_like_source_path};
 use tree_sitter::{Node, Parser};
 
 use crate::*;
@@ -999,7 +999,7 @@ pub(crate) fn collect_items(
     }
 
     let next_scope = next_scope.as_ref().unwrap_or(scope);
-    let next_deferred = deferred || is_deferred_body(language, node.kind());
+    let next_deferred = deferred || is_deferred_body(language, node.kind(), path);
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         collect_items(
@@ -1091,13 +1091,17 @@ fn haskell_data_constructors(node: Node<'_>, source: &[u8], path: &str) -> Vec<P
 /// inside it belongs to that unnamed function — not to the file that
 /// happens to hold it. Named callables never reach here, because a call
 /// inside one already carries that name as its parent.
-fn is_deferred_body(language: Language, kind: &str) -> bool {
+fn is_deferred_body(language: Language, kind: &str, path: &str) -> bool {
     // Ruby writes callbacks as blocks, and only Ruby calls those nodes
     // `block` — elsewhere `block` is an ordinary statement list, and a
     // Python `if __name__ == "__main__":` body is exactly the load-time
     // code this must keep.
     if language == Language::Ruby && matches!(kind, "block" | "do_block") {
-        return true;
+        // A spec IS its blocks: `describe .. do it .. do expect(..) end
+        // end` is what the file runs, and dropping them left mastodon's
+        // 1312 spec files with 1897 calls between them -- so "which tests
+        // cover this" had almost nothing to answer with.
+        return !is_test_like_source_path(path);
     }
     // Lua splits the two: `function foo() end` is a `function_declaration`,
     // and only the anonymous `function() end` is a `function_definition` —
@@ -2269,7 +2273,7 @@ pub(crate) fn classify_call(
     // 179 calls to a function named `func`. The body's own calls already
     // carry their real caller, so there is nothing to record here.
     if let Some(callee) = call_callee(language, node)
-        && is_deferred_body(language, callee.kind())
+        && is_deferred_body(language, callee.kind(), path)
     {
         return None;
     }

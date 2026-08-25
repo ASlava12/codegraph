@@ -1689,6 +1689,48 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn a_spec_is_the_blocks_it_is_written_in() {
+    // `describe .. do it .. do expect(described_class.new).to be end end`
+    // is what a spec file runs, and a Ruby block is a callback that runs
+    // when something invokes it -- so mastodon's 1312 spec files had 3163
+    // calls between them and "which tests cover this" had almost nothing
+    // to answer with.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app/services")).unwrap();
+    fs::create_dir_all(root.join("spec/services")).unwrap();
+    fs::write(
+        root.join("app/services/suspend_service.rb"),
+        "class SuspendService\n  def call(account)\n    account\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("spec/services/suspend_service_spec.rb"),
+        "require 'rails_helper'\n\nRSpec.describe SuspendService do\n  it 'suspends' do\n    expect(subject.call(nil)).to be_nil\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let spec = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "spec/services/suspend_service_spec.rb")
+        .expect("the spec is indexed")
+        .id;
+    let called: Vec<&str> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Calls && edge.source == spec)
+        .filter_map(|edge| edge.metadata.get("call_label").map(String::as_str))
+        .collect();
+    assert!(
+        called.contains(&"call"),
+        "the call a test makes belongs to the file that runs it, got {called:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn prose_before_a_colon_is_not_a_make_target() {
     // requests writes `$(error The '$(SPHINXBUILD)' command was not
     // found. .. https://www.sphinx-doc.org/)` in its docs Makefile, and

@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A spec is the blocks it is written in. `describe .. do it .. do expect(subject.call).to be end
+  end` is what the file runs, and a Ruby block is otherwise a callback that runs when something
+  invokes it -- so mastodon's 1312 spec files had 3163 calls between them and "which tests cover
+  this" had almost nothing to answer with. Its spec files now make 25410 calls, and `impact Account`
+  names 83 affected tests rather than 56.
 - Every word before a make rule's colon is one of its targets, so a word that is not a target means
   the line is not a rule: requests writes `$(error The '$(SPHINXBUILD)' command was not found. ..
   https://www.sphinx-doc.org/)` in its docs Makefile, and the URL's colon turned the sentence in
