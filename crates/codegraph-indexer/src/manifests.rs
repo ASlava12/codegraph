@@ -2672,12 +2672,9 @@ pub(crate) fn typescript_path_aliases(
             continue;
         };
         let options_value = value.get("compilerOptions");
-        let Some(paths) = options_value
+        let paths = options_value
             .and_then(|options| options.get("paths"))
-            .and_then(|paths| paths.as_object())
-        else {
-            continue;
-        };
+            .and_then(|paths| paths.as_object());
         let directory = path
             .parent()
             .and_then(|parent| parent.strip_prefix(root).ok())
@@ -2688,7 +2685,43 @@ pub(crate) fn typescript_path_aliases(
             .and_then(|base| base.as_str())
             .map(|base| join_path(Some(&directory), base))
             .unwrap_or(directory);
-        for (pattern, targets) in paths {
+        // `baseUrl` alone makes every directory under it importable by
+        // name: taxonomy writes `import { User } from "types"` in eleven
+        // files, and that is the `types/` directory beside its tsconfig.
+        // Only the directories that are really there become aliases, so a
+        // package name still reads as a package.
+        if options_value
+            .and_then(|options| options.get("baseUrl"))
+            .and_then(|base| base.as_str())
+            .is_some()
+        {
+            let base_directory = path.parent().map(|parent| parent.join(&base));
+            if let Some(entries) = base_directory.and_then(|base| fs::read_dir(base).ok()) {
+                for entry in entries.filter_map(Result::ok) {
+                    if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                        continue;
+                    }
+                    let Some(name) = entry.file_name().to_str().map(ToString::to_string) else {
+                        continue;
+                    };
+                    if name.starts_with('.') || name == "node_modules" {
+                        continue;
+                    }
+                    let target = join_path(Some(&base), &name);
+                    if let Some(existing) = aliases.iter_mut().find(|alias| alias.prefix == name) {
+                        if !existing.targets.contains(&target) {
+                            existing.targets.push(target);
+                        }
+                    } else {
+                        aliases.push(PathAlias {
+                            prefix: name,
+                            targets: vec![target],
+                        });
+                    }
+                }
+            }
+        }
+        for (pattern, targets) in paths.into_iter().flatten() {
             // Only the `prefix/*` form names a directory; an exact mapping
             // names one module, which the same substitution covers.
             let Some(prefix) = pattern.strip_suffix('*') else {

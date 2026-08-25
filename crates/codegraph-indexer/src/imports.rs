@@ -635,9 +635,14 @@ fn aliased_js_import_target(module: &str, path_aliases: &[PathAlias]) -> Option<
     let extensions = [
         "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "vue", "d.ts",
     ];
-    let alias = path_aliases
-        .iter()
-        .find(|alias| module.starts_with(&alias.prefix))?;
+    // A prefix matches at a path boundary: `types` is an alias for the
+    // `types/` directory and says nothing about `typescript`.
+    let alias = path_aliases.iter().find(|alias| {
+        module.starts_with(&alias.prefix)
+            && (alias.prefix.ends_with('/')
+                || module.len() == alias.prefix.len()
+                || module[alias.prefix.len()..].starts_with('/'))
+    })?;
     let rest = module.strip_prefix(&alias.prefix)?;
     let rest = rest.split('?').next().unwrap_or(rest);
     let mut candidates = Vec::new();

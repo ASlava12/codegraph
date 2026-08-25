@@ -3511,6 +3511,54 @@ pub(crate) fn resolve_pending_file_routes(context: &mut IndexContext) {
         if !declared.contains(&format!("npm:{}", route.package)) {
             continue;
         }
+        // A file the framework runs has no URL: it is an entrypoint of its
+        // own, and what it renders is reached through it.
+        if route.shape == FileRouteShape::Entry {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("item_kind".to_string(), "framework_entry".to_string());
+            metadata.insert("entrypoint_kind".to_string(), "framework_entry".to_string());
+            metadata.insert("source".to_string(), "framework".to_string());
+            metadata.insert("framework".to_string(), route.framework.to_string());
+            metadata.insert("path".to_string(), route.path.clone());
+            metadata.insert("target".to_string(), route_file.label.clone());
+            let entrypoint_id = context.graph.add_node_with_metadata(
+                NodeKind::Entrypoint,
+                format!("{} entry:{}", route.framework, route_file.label),
+                Some(SourceSpan {
+                    path: route_file.label.clone(),
+                    start_line: 1,
+                    start_column: 1,
+                    end_line: 1,
+                    end_column: 1,
+                }),
+                metadata,
+            );
+            add_edge_once(
+                context,
+                route_file.file,
+                entrypoint_id,
+                EdgeKind::Contains,
+                Confidence::Syntactic,
+            );
+            let root_id = context.graph.root;
+            add_edge_once(
+                context,
+                root_id,
+                entrypoint_id,
+                EdgeKind::Entrypoint,
+                Confidence::Syntactic,
+            );
+            add_entrypoint_reference(
+                context,
+                entrypoint_id,
+                route_file.file,
+                "entrypoint_file",
+                "framework_entry_file",
+                Confidence::Exact,
+                None,
+            );
+            continue;
+        }
         // A handler module names each method it serves with a function of
         // that name; a page is served on GET.
         let handlers: Vec<(String, NodeId)> = match route.shape {

@@ -87,6 +87,14 @@ Implemented now:
   from its `WORKDIR`, which is the repository, not `streaming/streaming/index.js`.
 - A compose `env_file` the repository's own `.gitignore` keeps out is a note rather than a warning:
   `.env.production` is written by whoever deploys, from the `.sample` the project ships beside it.
+- A layout is an entrypoint of its own. Next.js runs `layout`, `template`, `error`, `loading`,
+  `not-found` and `default` around the routes beneath them, and SvelteKit its `+layout` and
+  `+error`: none has a URL, and without them the components a layout renders -- eleven in taxonomy
+  -- are reached by nothing.
+- `baseUrl` in a tsconfig makes every directory under it importable by name: `import { User } from
+  "types"` is the `types/` directory beside the tsconfig, which eleven of taxonomy's files write.
+  Only the directories that are really there become aliases, so a package name still reads as a
+  package, and an alias matches at a path boundary -- `types` says nothing about `typescript`.
 - `<TailwindIndicator />` is how a JSX runtime calls a component -- it compiles to
   `jsx(TailwindIndicator, props)` -- and rendering one is now using it. A lower-case tag is the
   platform's and a dashed name a custom element, so neither is read as a component the project

@@ -1977,6 +1977,10 @@ pub(crate) enum FileRouteShape {
     /// A handler that serves every method, which is what Next.js's pages
     /// API routes do.
     AnyMethod,
+    /// A file the framework runs rather than serves: a layout, an error
+    /// boundary, middleware. It has no URL of its own, and everything it
+    /// renders runs on every request that passes through it.
+    Entry,
 }
 
 /// The route a file's own path declares, when its project is written that
@@ -1999,6 +2003,31 @@ pub(crate) fn file_based_route(label: &str) -> Option<FileRoute> {
 
     let js_module = matches!(extension, "ts" | "tsx" | "js" | "jsx" | "mts" | "mjs");
     match root {
+        // What Next.js runs around a page: a layout wraps every route
+        // beneath it, an error boundary catches what they throw, and
+        // `middleware` runs on every request. None has a URL of its own,
+        // and without them the components a layout renders -- eleven in
+        // taxonomy -- are reached by nothing.
+        "app"
+            if js_module
+                && matches!(
+                    stem,
+                    "layout"
+                        | "template"
+                        | "error"
+                        | "global-error"
+                        | "loading"
+                        | "not-found"
+                        | "default"
+                ) =>
+        {
+            Some(FileRoute {
+                framework: "next",
+                package: "next",
+                path: url_path_from_segments(&segments[1..])?,
+                shape: FileRouteShape::Entry,
+            })
+        }
         // Next.js's app router: a directory is a URL segment, `route` is a
         // handler module and `page` is a page.
         "app" if js_module && matches!(stem, "route" | "page") => {
@@ -2032,6 +2061,19 @@ pub(crate) fn file_based_route(label: &str) -> Option<FileRoute> {
                 } else {
                     FileRouteShape::Page
                 },
+            })
+        }
+        // SvelteKit runs a layout and an error page around its routes the
+        // same way.
+        "routes"
+            if matches!(file, "+layout.svelte" | "+error.svelte")
+                || (js_module && matches!(stem, "+layout" | "+layout.server" | "+page.server")) =>
+        {
+            Some(FileRoute {
+                framework: "sveltekit",
+                package: "@sveltejs/kit",
+                path: url_path_from_segments(&segments[1..])?,
+                shape: FileRouteShape::Entry,
             })
         }
         // SvelteKit: `+page.svelte` is a page and `+server.ts` a handler.

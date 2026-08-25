@@ -6626,6 +6626,61 @@ fn a_next_js_project_declares_its_routes_by_where_its_files_sit() {
 }
 
 #[test]
+fn a_layout_is_an_entrypoint_and_base_url_names_a_directory() {
+    // A Next.js layout wraps every route beneath it and has no URL of its
+    // own, so the eleven components taxonomy's layout renders were reached
+    // by nothing. And `baseUrl` makes every directory under it importable
+    // by name: `import { User } from "types"` is the `types/` directory
+    // beside the tsconfig, which eleven of taxonomy's files write.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app")).unwrap();
+    fs::create_dir_all(root.join("types")).unwrap();
+    fs::write(
+        root.join("package.json"),
+        "{\n  \"name\": \"shop\",\n  \"dependencies\": { \"next\": \"^15.0.0\" }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tsconfig.json"),
+        "{\n  \"compilerOptions\": { \"baseUrl\": \".\" }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("types").join("index.ts"),
+        "export function formatUser(name: string) {\n  return name\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("layout.tsx"),
+        "import { formatUser } from \"types\"\n\nexport default function Layout() {\n  return formatUser(\"x\")\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    assert!(
+        graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::Entrypoint
+                && node.metadata.get("entrypoint_kind").map(String::as_str)
+                    == Some("framework_entry")
+        }),
+        "the layout is an entrypoint of its own"
+    );
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && graph.nodes.iter().any(|node| {
+                    node.id == edge.target
+                        && node.label == "formatUser"
+                        && node.kind == NodeKind::Function
+                })
+        }),
+        "and `types` names the directory the tsconfig's baseUrl points at"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_directory_named_app_is_not_a_route_unless_the_project_says_so() {
     // koel keeps its PHP in `app/`, and a `route.ts` shape means nothing
     // there. The manifest is the evidence.
