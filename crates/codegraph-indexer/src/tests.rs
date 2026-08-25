@@ -6079,6 +6079,67 @@ fn typescript_types_are_reached_by_the_annotations_that_name_them() {
 }
 
 #[test]
+fn java_and_rust_types_are_reached_by_the_declarations_that_name_them() {
+    // The same holds wherever a type is written down: a Java field's type
+    // and a Rust `impl` block name the type as plainly as a call does. Two
+    // thirds of gson's classes and six sevenths of ripgrep's types had
+    // nothing pointing at them.
+    let root = temp_project_root();
+    let java = root.join("src").join("main").join("java").join("app");
+    fs::create_dir_all(&java).unwrap();
+    fs::create_dir_all(root.join("rust").join("src")).unwrap();
+    fs::write(
+        java.join("Reader.java"),
+        "package app;\n\npublic final class Reader {\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        java.join("Parser.java"),
+        "package app;\n\npublic final class Parser {\n  private final Reader reader;\n\n  Parser(Reader reader) {\n    this.reader = reader;\n  }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("rust").join("Cargo.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("rust").join("src").join("lib.rs"),
+        "pub struct Matcher {\n    pub pattern: String,\n}\n\nimpl Matcher {\n    pub fn new(pattern: String) -> Matcher {\n        Matcher { pattern }\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let references = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.kind == EdgeKind::References
+                    && edge
+                        .metadata
+                        .get("relation")
+                        .is_some_and(|relation| relation == "type_reference")
+                    && graph
+                        .nodes
+                        .iter()
+                        .any(|node| node.id == edge.target && node.label == label)
+            })
+            .count()
+    };
+    assert!(
+        references("Reader") >= 1,
+        "a java field and constructor parameter name the class"
+    );
+    assert!(
+        references("Matcher") >= 1,
+        "and a rust `impl` block names the type it is written for"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn php_classes_are_reached_by_the_types_that_name_them() {
     // Laravel builds a service from its constructor's type hints rather
     // than with `new`, and a serializer states the interface it implements.

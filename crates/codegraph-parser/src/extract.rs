@@ -200,13 +200,17 @@ fn collect_reference_facts(
         });
     }
 
-    // What a TypeScript declaration states about the types it works with: a
+    // What a declaration states about the types it works with: a
     // parameter's annotation, a property's, a return type, a generic
-    // argument, and the interfaces a class extends or implements. Without
-    // them vue's `ComponentInternalInstance` -- the interface its whole
-    // runtime is written against -- had nothing pointing at it.
-    if matches!(language, Language::TypeScript | Language::Tsx)
-        && node.kind() == "type_identifier"
+    // argument, the interfaces a class extends or implements, and the type
+    // an `impl` block is written for. Without them vue's
+    // `ComponentInternalInstance` -- the interface its whole runtime is
+    // written against -- had nothing pointing at it, and so did two thirds
+    // of gson's classes and six sevenths of ripgrep's types.
+    if matches!(
+        language,
+        Language::TypeScript | Language::Tsx | Language::Java | Language::Rust
+    ) && node.kind() == "type_identifier"
         // The name in `interface Foo {}` declares the type rather than
         // referring to one, and the declaration is already a node.
         && !node

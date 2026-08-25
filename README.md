@@ -178,6 +178,10 @@ Implemented now:
   require('./utils').compileETag`), and a file that states no import at all may be a classic script,
   where a bare name really can come from anywhere, so the rule asks only files that import
   something.
+- Java and Rust types are reached the same way -- a field's type, a parameter's, a return type, a
+  generic argument, `extends`/`implements`, and the type an `impl` block is written for. gson goes
+  from 236 references into its 763 classes to 4116, ripgrep from 63 to 1157, serde to 2146, and
+  `impact Gson` names 824 dependents and 720 affected tests where it named none.
 - TypeScript types are reached the same way: a parameter's annotation, a property's, a return type,
   a generic argument, and the interfaces a class extends or implements. vue's
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
