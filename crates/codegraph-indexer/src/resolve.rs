@@ -82,6 +82,19 @@ fn ruby_method_of_every_value(method: &str) -> bool {
     )
 }
 
+/// Whether the name is a method every value in the language already has,
+/// whatever the receiver is. Asked when the receiver is known to be a
+/// value but never reached the label.
+fn method_of_every_value(language: &str, method: &str) -> bool {
+    match language {
+        "rust" => rust_method_is_std(method),
+        "javascript" | "typescript" | "tsx" => js_member_of_every_value(method),
+        "python" => python_method_of_every_value(method),
+        "csharp" => csharp_member_of_every_value(method),
+        _ => false,
+    }
+}
+
 pub(crate) fn receiver_call_is_universal(language: &str, label: &str) -> bool {
     let (receiver, method) = match label.rsplit_once('.') {
         Some((receiver, method)) => (receiver.trim(), method.trim()),
@@ -2417,7 +2430,14 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         {
             language_targets.clear();
         }
-        if receiver_call_is_universal(&call.language, &call.label) {
+        // The same holds when the receiver never reached the label: a chain
+        // reduces `args.into_iter().map` to `map`, and the call is still on
+        // a value of the language's own.
+        if receiver_call_is_universal(&call.language, &call.label)
+            || (call.receiver_is_a_value
+                && call.language != "ruby"
+                && method_of_every_value(&call.language, &call.label))
+        {
             language_targets.clear();
         } else if call.language == "rust" && call.label.contains('.') {
             language_targets.retain(|target| {

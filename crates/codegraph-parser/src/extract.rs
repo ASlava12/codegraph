@@ -2530,6 +2530,23 @@ pub(crate) fn classify_call(
         }
         metadata.insert("receiver_form".to_string(), "value".to_string());
     }
+    // A callee that navigates through an expression -- `args.into_iter().map`,
+    // `graph.nodes.iter().find` -- reaches the graph as the name alone,
+    // because the receiver is not part of what is called. A name that lost
+    // its receiver then looks exactly like one the source wrote bare, and
+    // ripgrep's `Match::map` collected 101 iterator `map`s that way.
+    if !metadata.contains_key("receiver_form")
+        && let Some(callee) = call_callee(language, node)
+        && let Some(text) = node_text(callee, source)
+    {
+        let text = text.trim();
+        if let Some(head) = text.strip_suffix(label.as_str())
+            && !head.is_empty()
+            && head.trim_end().ends_with(['.', '>'])
+        {
+            metadata.insert("receiver_form".to_string(), "value".to_string());
+        }
+    }
     // `done()` where the body wrote `runningCtx, done := context.WithCancel(…)`
     // calls a value, not a definition. Saying so separates a call that has
     // nothing to find from one the resolver failed on: 1499 of terraform's

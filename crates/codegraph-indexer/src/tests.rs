@@ -16181,3 +16181,40 @@ fn a_java_call_is_answered_by_the_class_its_file_imports() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_chained_call_says_it_went_through_a_value() {
+    // `args.into_iter().map(..)` reaches the graph as `map`, because the
+    // receiver is not part of what is called -- and a name that lost its
+    // receiver then looks exactly like one written bare. ripgrep declares
+    // `Match::map` and it collected 101 iterator `map`s.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub struct Match(pub u32);\n\nimpl Match {\n    pub fn map<F: FnOnce(u32) -> u32>(self, f: F) -> Match {\n        Match(f(self.0))\n    }\n}\n\npub fn shout(words: Vec<String>) -> Vec<String> {\n    words.into_iter().map(|word| word.to_uppercase()).collect()\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("map")
+        })
+        .expect("the call is recorded");
+    assert_ne!(
+        call.metadata.get("resolution").map(String::as_str),
+        Some("resolved"),
+        "an iterator's `map` is the standard library's, not this crate's"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

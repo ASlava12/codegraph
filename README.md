@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A callee that navigates through an expression -- `args.into_iter().map(..)` -- reaches the graph
+  as the name alone, because the receiver is not part of what is called. A call now says when its
+  receiver was dropped that way, so a method every value has is still read as the language's:
+  ripgrep's `Match::map` loses the 101 iterator `map`s it had collected, along with `is_empty`,
+  `unwrap` and `parse`.
 - Java writes a call's receiver in a field of its own, so `Arrays.asList(..)` reaches the graph as
   `asList` and the class it was written through is lost. The receiver is now recorded and read
   against the file's imports the way Go's and Python's qualifiers already are: 201 of gson's calls
