@@ -1716,6 +1716,7 @@ pub(crate) fn manifest_dependencies(
         Some("build.gradle") | Some("build.gradle.kts") => gradle_dependencies(source),
         Some("libs.versions.toml") => gradle_version_catalog_dependencies(source),
         Some("mix.exs") => mix_dependencies(source),
+        Some("flake.nix") => nix_flake_dependencies(source),
         Some("rebar.config") => rebar_dependencies(source),
         Some(name) if name.ends_with(".rockspec") => rockspec_dependencies(source),
         Some(name) if name.ends_with(".cabal") => cabal_dependencies(source),

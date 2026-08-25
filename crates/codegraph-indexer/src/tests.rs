@@ -1644,6 +1644,34 @@ fn an_import_python_erases_is_not_a_runtime_dependency() {
 }
 
 #[test]
+fn a_flake_states_the_flakes_it_is_built_from() {
+    // home-manager was the last project in the corpus whose dependencies
+    // came from nowhere: a flake states them as `inputs`, flat or in a
+    // block, and both forms sit in that one repository.
+    let flat = nix_flake_dependencies(
+        "{\n  description = \"Home Manager for Nix\";\n\n  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixpkgs-unstable\";\n\n  outputs = { self, nixpkgs, ... }: { };\n}\n",
+    );
+    assert_eq!(
+        flat.iter()
+            .map(|dependency| dependency.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["nixpkgs"]
+    );
+
+    let block = nix_flake_dependencies(
+        "{\n  inputs = {\n    nixpkgs.url = \"github:NixOS/nixpkgs\";\n    scss-reset = {\n      url = \"github:andreymatin/scss-reset/1.4.2\";\n      inputs.nixpkgs.follows = \"nixpkgs\";\n    };\n  };\n\n  outputs = { self, nixpkgs, scss-reset }: { };\n}\n",
+    );
+    assert_eq!(
+        block
+            .iter()
+            .map(|dependency| dependency.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["nixpkgs", "scss-reset"],
+        "an input names itself once, however many times the file follows it"
+    );
+}
+
+#[test]
 fn every_other_ecosystem_states_what_it_needs_in_its_own_way() {
     // cowboy declared nothing at all, and ecto, kong, shellcheck,
     // DataFrames.jl, dplyr, cats and zls declared only the GitHub Actions

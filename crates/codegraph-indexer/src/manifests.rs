@@ -1532,6 +1532,55 @@ pub(crate) fn pnpm_clean_version(value: &str) -> String {
     value.split('(').next().unwrap_or(value).trim().to_string()
 }
 
+/// What a `flake.nix` states: every entry of `inputs` is another flake
+/// this one is built from, written either flat --
+/// `inputs.nixpkgs.url = "github:NixOS/nixpkgs"` -- or inside an `inputs =
+/// { .. }` block. home-manager was the last project in the corpus whose
+/// dependencies came from nowhere.
+pub(crate) fn nix_flake_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut block_depth: Option<i32> = None;
+    let mut depth = 0i32;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        // `inputs.nixpkgs.url = "github:NixOS/nixpkgs";`
+        if let Some(rest) = trimmed.strip_prefix("inputs.")
+            && let Some(name) = rest.split(['.', ' ', '=']).next()
+            && !name.is_empty()
+            && seen.insert(name.to_string())
+        {
+            dependencies.push(manifest_dependency(name, "runtime", "nix", None));
+        }
+        if block_depth.is_none() && trimmed.starts_with("inputs") && trimmed.contains('{') {
+            block_depth = Some(depth);
+        } else if let Some(opened) = block_depth {
+            // A name inside the block: `nixpkgs.url = ..` or `nixpkgs = {`.
+            if depth == opened + 1
+                && let Some(name) = trimmed
+                    .split(['.', ' ', '='])
+                    .next()
+                    .filter(|name| !name.is_empty())
+                && name
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || matches!(character, '-' | '_'))
+                && seen.insert(name.to_string())
+            {
+                dependencies.push(manifest_dependency(name, "runtime", "nix", None));
+            }
+        }
+        depth += trimmed.matches('{').count() as i32;
+        depth -= trimmed.matches('}').count() as i32;
+        if block_depth.is_some_and(|opened| depth <= opened) {
+            block_depth = None;
+        }
+    }
+    dependencies
+}
+
 /// What a `mix.exs` states: `{:telemetry, "~> 1.0"}` names a hex package
 /// and the version it wants, and `only: :test` says the dependency is for
 /// the project's own tests rather than for the program.
