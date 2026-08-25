@@ -1689,6 +1689,61 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn a_python_class_is_reached_by_what_it_inherits_and_annotates() {
+    // django-oscar declares 1697 classes and 14% of them had anything
+    // pointing at them: a Django project states its structure through
+    // inheritance -- `class Basket(AbstractBasket)` -- and nothing read
+    // it, nor the annotations beside it.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src/oscar/apps/basket")).unwrap();
+    fs::write(
+        root.join("setup.py"),
+        "from setuptools import setup\n\nsetup(name='oscar')\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/oscar/apps/basket/abstract_models.py"),
+        "from django.db import models\n\n\nclass AbstractBasket(models.Model):\n    def add(self, product):\n        return product\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/oscar/apps/basket/models.py"),
+        "from oscar.apps.basket.abstract_models import AbstractBasket\n\n\nclass Basket(AbstractBasket):\n    pass\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/oscar/apps/basket/views.py"),
+        "from oscar.apps.basket.models import Basket\n\n\ndef summary(basket: Basket) -> str:\n    return str(basket)\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reached = |label: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.metadata.get("relation").map(String::as_str) == Some("type_reference")
+                && graph
+                    .nodes
+                    .iter()
+                    .any(|node| node.id == edge.target && node.label == label)
+        })
+    };
+    assert!(reached("AbstractBasket"), "a class states what it inherits");
+    assert!(
+        reached("Basket"),
+        "and an annotation states the class a value has"
+    );
+    assert!(
+        !graph
+            .edges
+            .iter()
+            .any(|edge| { edge.metadata.get("type_label").map(String::as_str) == Some("str") }),
+        "a name the language provides is not a class the project declares"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn haskell_and_julia_reach_the_types_their_signatures_name() {
     // shellcheck writes `runChecker :: Parameters -> Checker ->
     // [TokenComment]` and nothing pointed at any of those types;

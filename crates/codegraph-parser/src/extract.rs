@@ -263,6 +263,51 @@ pub(crate) struct WalkContext<'a> {
     pub(crate) config_aliases: &'a BTreeMap<String, String>,
 }
 
+/// Names the Python language provides, which no project declares: a
+/// project's own `Basket` is worth an edge and `str` is not.
+fn python_builtin_type_name(label: &str) -> bool {
+    matches!(
+        label,
+        "str"
+            | "int"
+            | "float"
+            | "bool"
+            | "bytes"
+            | "list"
+            | "dict"
+            | "set"
+            | "tuple"
+            | "frozenset"
+            | "object"
+            | "type"
+            | "None"
+            | "Any"
+            | "Optional"
+            | "Union"
+            | "List"
+            | "Dict"
+            | "Set"
+            | "Tuple"
+            | "Callable"
+            | "Iterable"
+            | "Iterator"
+            | "Sequence"
+            | "Mapping"
+            | "Awaitable"
+            | "Self"
+            | "Literal"
+            | "TypeVar"
+            | "Generic"
+            | "Protocol"
+            | "Enum"
+            | "Exception"
+            | "BaseException"
+            | "ValueError"
+            | "TypeError"
+            | "KeyError"
+    )
+}
+
 /// Whether a name is a type parameter rather than a type: `T`, `A`, `K`,
 /// `V`, `T1`. Every generic declaration writes them and no project means
 /// its own type by them -- reading them as references pointed 10756 of
@@ -391,6 +436,64 @@ fn collect_reference_facts(
                     });
                 }
             }
+        }
+    }
+
+    // What a Python declaration states about the classes it works with:
+    // the classes it inherits and the types it annotates. django-oscar
+    // declares 1697 classes and 14% of them had anything pointing at
+    // them, because a Django project states its structure through
+    // inheritance -- `class Basket(AbstractBasket)` -- and nothing read
+    // it.
+    if language == Language::Python {
+        let mut references: Vec<Node<'_>> = Vec::new();
+        if node.kind() == "class_definition"
+            && let Some(bases) = node.child_by_field_name("superclasses")
+        {
+            let mut cursor = bases.walk();
+            references.extend(
+                bases
+                    .named_children(&mut cursor)
+                    .filter(|child| matches!(child.kind(), "identifier" | "attribute")),
+            );
+        }
+        // `def add(self, product: Product) -> Line:` names both.
+        if node.kind() == "type" {
+            let mut stack = vec![node];
+            let mut visited = 0;
+            while let Some(current) = stack.pop() {
+                visited += 1;
+                if visited > 64 {
+                    break;
+                }
+                if matches!(current.kind(), "identifier" | "attribute") {
+                    references.push(current);
+                    continue;
+                }
+                let mut cursor = current.walk();
+                stack.extend(current.named_children(&mut cursor));
+            }
+        }
+        for reference in references {
+            let Some(label) = node_text(reference, source) else {
+                continue;
+            };
+            // `models.Model` names `Model`, the way a namespace does.
+            let label = label
+                .trim()
+                .rsplit('.')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if label.is_empty() || python_builtin_type_name(&label) {
+                continue;
+            }
+            facts.type_references.push(ParsedTypeReference {
+                label,
+                span: span_for(path, reference),
+                parent: current_function.clone(),
+            });
         }
     }
 

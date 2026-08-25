@@ -236,6 +236,12 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A Python class is reached by what it inherits and what annotates it. django-oscar declares 1697
+  classes and 14% of them had anything pointing at them, because a Django project states its
+  structure through inheritance -- `class Basket(AbstractBasket)` -- and nothing read it. Its
+  reached classes go from 248 to 415, requests' from 48 to 63 of 96, and `impact Session` on
+  requests names 81 dependents and 72 affected tests. `str`, `Optional` and `Exception` are the
+  language's, not a class the project declares.
 - A Haskell signature names the types a function works with -- `runChecker :: Parameters -> Checker
   -> [TokenComment]` -- and a Julia annotation the type a value has: `df::AbstractDataFrame`. Neither
   was read, so shellcheck's `Parameters` and DataFrames.jl's `AbstractDataFrame` had nothing pointing
