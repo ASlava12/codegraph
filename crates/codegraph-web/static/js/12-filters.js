@@ -422,8 +422,15 @@ function buildClientInsights(graph) {
     // holds it: shellcheck names 167 `where` bindings `f`, and "nothing calls
     // f" is not news about a local helper. The CLI skips these; the browser
     // reported 58 of them on this repository until it did the same.
+    // A test is run by its runner, which no edge records: the CLI skips a
+    // function declared in a test-like file and one a `#[test]` attribute
+    // marks, and 3160 of vue's 3937 orphan functions were of that kind.
+    const testRun =
+      node.metadata?.invoked_by === "test_runner" ||
+      (node.span?.path && isTestLikeSourcePath(node.span.path));
     if (
       node.kind === "function" &&
+      !testRun &&
       !node.metadata?.enclosing_function &&
       // `const onMounted = createHook(MOUNTED)` declares a value a factory
       // built, and a value nobody calls is a value rather than a function
@@ -840,35 +847,69 @@ function isProductionSourcePath(path) {
     segments.some((segment) =>
       ["scripts", "tools", "ci", ".github", "metrics", "cmake", "bench", "benchmarks", "__benchmarks__", "doc", "docs"].includes(segment),
     );
-  const tests =
-    segments.slice(0, -1).some((segment) =>
-      [
-        "test",
-        "tests",
-        "testdata",
-        "testing",
-        "testthat",
-        "fixture",
-        "fixtures",
-        "example",
-        "examples",
-        "sample",
-        "samples",
-        "mock",
-        "mocks",
-        "spec",
-        "specs",
-      ].includes(segment),
-    ) ||
+  return !carried && !tooling && !isTestLikeSourcePath(path);
+}
+
+// Whether a path belongs to tests, examples, fixtures or generated code
+// rather than to the program itself. The CLI asks exactly this before
+// reading a function nobody calls as dead code, since a test is run by its
+// runner and no edge records that.
+function isTestLikeSourcePath(path) {
+  const original = String(path || "").replace(/\\/g, "/");
+  const normalized = original.toLowerCase();
+  const file = normalized.split("/").pop() || "";
+  const originalFile = original.split("/").pop() || "";
+  const stem = file.includes(".") ? file.slice(0, file.lastIndexOf(".")) : file;
+  const namesTests = (part) =>
+    String(part)
+      // `jvmTest` and `BufferedSourceTest.kt` only give up their words
+      // before they are lowercased.
+      .split(/[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])/)
+      .some((word) => ["test", "tests", "spec", "specs"].includes(word.toLowerCase()));
+  const inTestDirectory =
+    normalized
+      .split("/")
+      .slice(0, -1)
+      .some((segment) =>
+        [
+          "testdata",
+          "testing",
+          "testthat",
+          "fixture",
+          "fixtures",
+          "example",
+          "examples",
+          "sample",
+          "samples",
+          "mock",
+          "mocks",
+        ].includes(segment.replace(/^_+|_+$/g, "")),
+      ) || original.split("/").slice(0, -1).some(namesTests);
+  // Go compiles a test only from a file whose name ends `_test.go`.
+  if (file.endsWith(".go")) return inTestDirectory || stem.endsWith("_test");
+  return (
+    inTestDirectory ||
+    namesTests(originalFile) ||
     stem === "test" ||
     stem === "tests" ||
     stem.startsWith("test_") ||
     stem.endsWith("_test") ||
     stem.endsWith("_tests") ||
     stem.endsWith("_spec") ||
+    stem.endsWith("_specs") ||
     file.includes(".test.") ||
-    file.includes(".spec.");
-  return !carried && !tooling && !tests;
+    file.includes(".spec.") ||
+    file.endsWith(".bats") ||
+    originalFile.endsWith("Test.php") ||
+    originalFile.endsWith("Spec.php") ||
+    file.endsWith("_test.dart") ||
+    file.endsWith(".g.dart") ||
+    file.endsWith(".freezed.dart") ||
+    file.endsWith(".mocks.dart") ||
+    file.endsWith(".gen.dart") ||
+    normalized.includes("/.dart_tool/") ||
+    normalized.includes("/generated/")
+  );
 }
 
 // The distribution a Python module comes from, where the two names differ.

@@ -5169,6 +5169,69 @@ fn query_insights_returns_sensitive_config_default_context() {
 }
 
 #[test]
+fn a_test_is_not_a_function_nobody_calls() {
+    // A test is run by its runner, which no edge records: 3160 of vue's
+    // 3937 orphan functions and 684 of this repository's 1018 were tests,
+    // and they buried the code somebody could delete.
+    let mut graph = CodeGraph::new("repo");
+    let dead = graph.add_node_with_span(
+        NodeKind::Function,
+        "never_called",
+        SourceSpan {
+            path: "src/lib.rs".to_string(),
+            start_line: 5,
+            start_column: 1,
+            end_line: 7,
+            end_column: 2,
+        },
+    );
+    let spec = graph.add_node_with_span(
+        NodeKind::Function,
+        "renders",
+        SourceSpan {
+            path: "src/button.spec.ts".to_string(),
+            start_line: 3,
+            start_column: 1,
+            end_line: 6,
+            end_column: 2,
+        },
+    );
+    let unit = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "it_works",
+        Some(SourceSpan {
+            path: "src/lib.rs".to_string(),
+            start_line: 12,
+            start_column: 1,
+            end_line: 15,
+            end_column: 2,
+        }),
+        BTreeMap::from([("invoked_by".to_string(), "test_runner".to_string())]),
+    );
+
+    let report = insights(&graph);
+    let orphans: Vec<NodeId> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "orphan_function")
+        .flat_map(|insight| insight.nodes.clone())
+        .collect();
+
+    assert!(
+        orphans.contains(&dead),
+        "a function nothing calls is the finding"
+    );
+    assert!(
+        !orphans.contains(&spec),
+        "a test file's function is run by its runner"
+    );
+    assert!(
+        !orphans.contains(&unit),
+        "and so is one the attribute marks, wherever it sits"
+    );
+}
+
+#[test]
 fn a_name_that_matches_a_file_stem_finds_that_file() {
     // A Zig file is a struct: zls writes `Server` in `src/Server.zig` and
     // nothing else answers to that name, so `impact Server` found nothing

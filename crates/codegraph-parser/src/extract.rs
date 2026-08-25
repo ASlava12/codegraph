@@ -384,6 +384,43 @@ fn names_an_exported_c_class(node: Node<'_>) -> bool {
         .is_some_and(|declarator| declarator.kind() == "identifier")
 }
 
+/// Whether a Rust definition is a test the harness runs: the attribute
+/// says so -- `#[test]`, `#[tokio::test]`, `#[bench]` -- or it sits inside
+/// the `#[cfg(test)] mod tests` a crate keeps beside its code.
+fn rust_test_definition(node: Node<'_>, source: &[u8]) -> bool {
+    let attributes_say_test = |item: Node<'_>| {
+        let mut sibling = item.prev_named_sibling();
+        while let Some(current) = sibling {
+            if current.kind() != "attribute_item" {
+                return false;
+            }
+            if node_text(current, source)
+                .is_some_and(|text| text.contains("test") || text.contains("bench"))
+            {
+                return true;
+            }
+            sibling = current.prev_named_sibling();
+        }
+        false
+    };
+    if attributes_say_test(node) {
+        return true;
+    }
+    let mut current = node.parent();
+    let mut depth = 0;
+    while let Some(candidate) = current {
+        depth += 1;
+        if depth > 16 {
+            break;
+        }
+        if candidate.kind() == "mod_item" && attributes_say_test(candidate) {
+            return true;
+        }
+        current = candidate.parent();
+    }
+    false
+}
+
 /// Whether a name is a type parameter rather than a type: `T`, `A`, `K`,
 /// `V`, `T1`. Every generic declaration writes them and no project means
 /// its own type by them -- reading them as references pointed 10756 of
@@ -1616,6 +1653,14 @@ pub(crate) fn classify_node(
         }
         if let Some(visibility) = visibility_label(language, node, source, &label) {
             metadata.insert("visibility".to_string(), visibility.to_string());
+        }
+        // `#[test] fn a_call_edge_says_what_settled_it` is run by the test
+        // harness, which no edge records, and a Rust project keeps its
+        // tests beside the code in `#[cfg(test)] mod tests`. Reading them
+        // as functions nobody calls buried the code somebody could delete:
+        // 684 of this repository's 1018 orphan functions were tests.
+        if language == Language::Rust && rust_test_definition(node, source) {
+            metadata.insert("invoked_by".to_string(), "test_runner".to_string());
         }
         // A function-like macro is called like a function and resolves like
         // one, but it is not one: it has no address, no types and no scope.

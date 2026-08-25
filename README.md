@@ -236,6 +236,12 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A test is run by its runner, and no edge records that: 3160 of vue's 3937 orphan functions, 4381
+  of terraform's 12120 and 684 of this repository's own 1018 were tests, burying the code somebody
+  could actually delete. A function in a test-like file is one, and so is a Rust `#[test]` -- or a
+  helper inside the `#[cfg(test)] mod tests` a crate keeps beside its code, where the path says
+  nothing. The corpus's orphan functions fall from 106357 to 62758, and this repository's from 1018
+  to 225, which are the functions it passes as values.
 - Go resolves an unqualified name inside its own package, and a package is a directory: gqlgen
   declares `isBinInPath` in several and every call to it was ambiguous. That is the language's rule
   rather than a guess about where a name lives.

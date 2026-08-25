@@ -2126,6 +2126,52 @@ fn kotlin_types_are_reached_by_the_declarations_that_name_them() {
 }
 
 #[test]
+fn a_rust_test_is_run_by_the_harness_and_not_by_the_project() {
+    // `#[test] fn a_call_edge_says_what_settled_it` is called by nobody,
+    // and that is how a test works. A Rust crate keeps its tests beside
+    // its code in `#[cfg(test)] mod tests`, so the path says nothing: 684
+    // of this repository's own 1018 orphan functions were its tests.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("lib.rs"),
+        "pub fn used() -> u32 {\n    1\n}\n\npub fn never_called() -> u32 {\n    2\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn helper() -> u32 {\n        used()\n    }\n\n    #[test]\n    fn it_works() {\n        assert_eq!(helper(), 1);\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let marked = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == label)
+            .and_then(|node| node.metadata.get("invoked_by").cloned())
+    };
+    assert_eq!(
+        marked("it_works").as_deref(),
+        Some("test_runner"),
+        "the attribute says the harness runs it"
+    );
+    assert_eq!(
+        marked("helper").as_deref(),
+        Some("test_runner"),
+        "and a helper inside `#[cfg(test)] mod tests` is test code too"
+    );
+    assert_eq!(
+        marked("never_called"),
+        None,
+        "while the crate's own function is the project's"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_bare_go_call_means_its_own_package() {
     // Go resolves an unqualified name inside its own package, and a
     // package is a directory: gqlgen declares `is_bin_in_path` in several

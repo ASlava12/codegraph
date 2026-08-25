@@ -735,6 +735,19 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
         if node.metadata.get("definition_form").map(String::as_str) == Some("value") {
             continue;
         }
+        // A test is run by its runner, which no edge records: `#[test]
+        // fn a_call_edge_says_what_settled_it` is called by nobody and
+        // that is how a test works. 3160 of vue's 3937 orphan functions
+        // and 4381 of terraform's 12120 are of that kind, and they bury
+        // the code somebody could actually delete.
+        if node
+            .span
+            .as_ref()
+            .is_some_and(|span| is_test_like_source_path(&span.path))
+            || node.metadata.get("invoked_by").map(String::as_str) == Some("test_runner")
+        {
+            continue;
+        }
         if node.kind == NodeKind::Function
             && !entrypoints.contains(&node.id)
             && !called.contains(&node.id)
