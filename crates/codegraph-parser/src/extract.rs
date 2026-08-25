@@ -1742,6 +1742,17 @@ pub(crate) fn classify_node(
     {
         metadata.insert("extends".to_string(), base);
     }
+    // `local pl_path = require "pl.path"` is the only place a Lua file says
+    // what `pl_path.exists(...)` means. Without the name the binding gives
+    // it, a qualified call has nothing but its tail to match on, and kong's
+    // `kong/tools/queue.lua` answered every `pl_path.exists` in the
+    // repository.
+    if item_kind == ParsedItemKind::Import
+        && language == Language::Lua
+        && let Some(name) = lua_binding_name(node, source)
+    {
+        metadata.insert("binds".to_string(), name);
+    }
     if matches!(
         item_kind,
         ParsedItemKind::Function | ParsedItemKind::Entrypoint
@@ -3656,6 +3667,57 @@ pub(crate) fn elixir_call_target(node: Node<'_>, source: &[u8]) -> Option<String
         return None;
     }
     named_child_text(node, "target", source)
+}
+
+/// The name a Lua `local x = require "m"` binds, so a call written through
+/// it can be answered by the module the file names rather than by whatever
+/// shares the tail. A require that binds nothing -- `require "resty.core"`
+/// for its side effects -- has no name to give, and neither does
+/// `local a, b = require "x", require "y"`, where which name belongs to
+/// which require is not the syntax's to say.
+fn lua_binding_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        match parent.kind() {
+            "variable_declaration"
+            | "assignment_statement"
+            | "expression_list"
+            | "variable_list"
+            | "local_declaration"
+            | "assignment_expression" => {
+                current = parent;
+            }
+            _ => break,
+        }
+        if matches!(
+            current.kind(),
+            "variable_declaration" | "assignment_statement"
+        ) {
+            break;
+        }
+    }
+    if !matches!(
+        current.kind(),
+        "variable_declaration" | "assignment_statement"
+    ) {
+        return None;
+    }
+    let mut cursor = current.walk();
+    let names: Vec<Node<'_>> = current
+        .named_children(&mut cursor)
+        .filter(|child| matches!(child.kind(), "variable_list" | "assignment_statement"))
+        .flat_map(|child| {
+            let mut inner = child.walk();
+            child
+                .named_children(&mut inner)
+                .filter(|name| name.kind() == "identifier")
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let [name] = names.as_slice() else {
+        return None;
+    };
+    node_text(*name, source).filter(|name| !name.is_empty())
 }
 
 /// A Lua `require("module")` call: an import fact, not a call fact.

@@ -16038,3 +16038,71 @@ fn an_include_resolves_along_the_projects_own_header_tree() {
         "a header the repository does not contain stays unresolved"
     );
 }
+
+#[test]
+fn a_lua_call_is_answered_by_the_module_its_file_requires() {
+    // `local pl_path = require "pl.path"` is the only place a Lua file says
+    // what `pl_path.exists(...)` means, and matching on the tail alone gave
+    // kong's `kong/tools/queue.lua` every one of them.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("myproj/tools")).unwrap();
+    fs::write(
+        root.join("init.lua"),
+        r#"
+local pl_path = require "pl.path"
+local tbl = require("myproj.tools.table")
+
+local function run()
+  local ok = pl_path.exists("/tmp")
+  return tbl.concat({ok})
+end
+
+return { run = run }
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("myproj/tools/table.lua"),
+        "local _M = {}\nfunction _M.concat(t)\n  return t\nend\nreturn _M\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call_edge = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .unwrap_or_else(|| panic!("no call edge for {label}"))
+    };
+
+    // `pl.path` is a package outside the repository, so nothing here can be
+    // what `pl_path.exists` means -- the tail alone used to hand it to any
+    // project function named `exists`.
+    let external = call_edge("pl_path.exists");
+    assert_eq!(
+        external.metadata.get("resolution").map(String::as_str),
+        Some("external")
+    );
+
+    // `tbl` names a module the repository holds, so the call goes there.
+    let local = call_edge("tbl.concat");
+    assert_eq!(
+        local.metadata.get("resolution").map(String::as_str),
+        Some("resolved")
+    );
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == local.target)
+        .expect("target node");
+    assert_eq!(
+        target.span.as_ref().map(|span| span.path.as_str()),
+        Some("myproj/tools/table.lua")
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

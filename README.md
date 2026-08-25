@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A Lua file says what a qualified call means where it binds the module: `local pl_path = require
+  "pl.path"` is the only thing that tells `pl_path.exists` from any project function named `exists`.
+  The name the require binds is now recorded and read, so a call through it reaches the module the
+  file named or nothing at all — 1219 of kong's calls are outside the repository and said so, and its
+  LDAP plugin's `decode` loses the 291 callers it had from `cjson.decode`.
 - `table.concat` is Lua's, whatever a project names its own helpers. A call written through the
   runtime's own namespace is now answered by the runtime rather than by a definition that shares
   only the tail: kong's `kong/tools/table.lua` had 123 callers it never had, and 571 of its call
