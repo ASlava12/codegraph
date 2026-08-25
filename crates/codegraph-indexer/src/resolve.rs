@@ -2179,6 +2179,33 @@ fn module_named_file(language: &str, path: &str, module: &str) -> bool {
 /// name, and Go has no overloads at all. Where a language does overload,
 /// the signatures sit together — a C# partial class or a Swift extension
 /// splits a type across files, not across packages.
+/// Whether every candidate is an arm of one macro: the same name defined
+/// more than once in one file, which is how a header writes `#ifdef` /
+/// `#else`. nlohmann defines `JSON_THROW` twice in each copy of its
+/// header, and the caller means the macro, not one of the two arms.
+fn one_macros_arms(graph: &CodeGraph, targets: &[NodeId]) -> bool {
+    let mut label: Option<String> = None;
+    let mut path: Option<String> = None;
+    for target in targets {
+        let Some(node) = graph_node(graph, *target) else {
+            return false;
+        };
+        if node.metadata.get("definition_form").map(String::as_str) != Some("macro") {
+            return false;
+        }
+        let Some(node_path) = node.span.as_ref().map(|span| span.path.clone()) else {
+            return false;
+        };
+        if label.get_or_insert_with(|| node.label.clone()) != &node.label {
+            return false;
+        }
+        if path.get_or_insert_with(|| node_path.clone()) != &node_path {
+            return false;
+        }
+    }
+    label.is_some()
+}
+
 fn one_methods_overloads(graph: &CodeGraph, targets: &[NodeId]) -> bool {
     let mut owner: Option<String> = None;
     let mut label: Option<String> = None;
@@ -3063,7 +3090,9 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             }
         }
 
-        let overloads = targets.len() > 1 && one_methods_overloads(&context.graph, &targets);
+        let overloads = targets.len() > 1
+            && (one_methods_overloads(&context.graph, &targets)
+                || one_macros_arms(&context.graph, &targets));
         if overloads && basis == "name" {
             basis = "overload";
         }

@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A header defines a macro once per side of an `#ifdef`, and a caller means the macro rather than
+  one of the two arms. nlohmann keeps three copies of its header, so `JSON_THROW` was a choice
+  between six definitions of one name; 487 of its calls, 594 of redis's and 95 of spdlog's now
+  resolve.
 - A zig function belongs to the container that holds it -- `const Server = struct { pub fn init }`
   -- and a zig file is a container too, which is what `const analysis = @import("analysis.zig")`
   binds. All 1215 of zls's functions now say whose they are.

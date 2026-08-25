@@ -16466,3 +16466,41 @@ fn a_zig_function_belongs_to_the_container_that_holds_it() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn the_two_arms_of_one_macro_are_one_macro() {
+    // A header defines `JSON_THROW` twice, once per side of an `#ifdef`,
+    // and a caller means the macro rather than one of the two arms.
+    // nlohmann keeps three copies of its header and 290 calls reported a
+    // choice between six definitions of the same name.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(root.join("CMakeLists.txt"), "project(app)\n").unwrap();
+    fs::write(
+        root.join("include/macro_scope.hpp"),
+        "#pragma once\n\n#if defined(APP_NOEXCEPTION)\n    #define APP_THROW(exception) std::abort()\n#else\n    #define APP_THROW(exception) throw exception\n#endif\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("include/reader.hpp"),
+        "#pragma once\n#include \"macro_scope.hpp\"\n\nint read(int value) {\n  if (value < 0) { APP_THROW(1); }\n  return value;\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("APP_THROW")
+        })
+        .expect("the call is recorded");
+    assert_ne!(
+        call.metadata.get("resolution").map(String::as_str),
+        Some("ambiguous"),
+        "both definitions are the same macro under different conditions"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
