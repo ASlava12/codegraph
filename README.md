@@ -236,6 +236,16 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Ruby classes are reached by the constants that name them. mastodon declares 2083 classes and
+  modules and nothing pointed at any of them, so "what breaks if I change `Account`" answered with
+  nothing at all: `impact Account` now names 536 dependents and 56 affected tests, `Status` 213 and
+  32, `User` 161 and 51. A Ruby program names a class by its constant -- `Account.where(..)`, `class
+  X < ApplicationRecord`, `include Payloadable` -- and a class states the constant path it answers
+  to, so `module Admin; class AccountsController` is `Admin::AccountsController` and not the
+  `AccountsController` beside it. A name written on its own means the class that answers to exactly
+  that name: mastodon's `Account` is the model, not one of the fifteen stubs its migrations declare
+  or the one its maintenance task does, all of which end with the same word. References into its
+  Ruby classes and modules go from none to 5628.
 - A PHP test case gets its assertions from the class it extends: `$this->assertSame(..)` is
   PHPUnit's and `$mock->shouldReceive(..)` is Mockery's, and guzzle writes 1800 such calls, koel a
   thousand more and monolog nine hundred. The runner is asked last, so a project that writes an

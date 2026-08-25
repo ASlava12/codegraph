@@ -2314,7 +2314,14 @@ end
             .any(|item| item.kind == kind && item.label == label)
     };
     assert!(has(ParsedItemKind::Module, "Billing"), "{:?}", parsed.items);
-    assert!(has(ParsedItemKind::Type, "Invoice"));
+    // A Ruby class states a constant path: `module Billing; class Invoice`
+    // is `Billing::Invoice`, which is the name its methods carry as their
+    // owner and the name another file writes to reach it.
+    assert!(
+        has(ParsedItemKind::Type, "Billing::Invoice"),
+        "{:?}",
+        parsed.items
+    );
     assert!(has(ParsedItemKind::Function, "total"));
     assert!(has(ParsedItemKind::Import, "require 'json'"));
     assert!(has(ParsedItemKind::Call, "compute"));

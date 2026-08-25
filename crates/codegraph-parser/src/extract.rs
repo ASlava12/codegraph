@@ -377,6 +377,67 @@ fn collect_reference_facts(
         }
     }
 
+    // What a Ruby class states about the classes it works with: the class
+    // it inherits from, the modules it mixes in, and the constant a call
+    // is written through. mastodon declares 2083 classes and modules and
+    // nothing pointed at any of them, so "what breaks if I change
+    // `Account`" answered with nothing at all.
+    if language == Language::Ruby {
+        let mut references: Vec<Node<'_>> = Vec::new();
+        if node.kind() == "superclass" {
+            let mut cursor = node.walk();
+            references.extend(
+                node.named_children(&mut cursor)
+                    .filter(|child| matches!(child.kind(), "constant" | "scope_resolution")),
+            );
+        }
+        // `include Rememberable`, `extend Forwardable`, `prepend Sanitize`.
+        if node.kind() == "call"
+            && named_child_text(node, "method", source)
+                .as_deref()
+                .is_some_and(|method| matches!(method, "include" | "extend" | "prepend"))
+            && node.child_by_field_name("receiver").is_none()
+            && let Some(arguments) = node.child_by_field_name("arguments")
+        {
+            let mut cursor = arguments.walk();
+            references.extend(
+                arguments
+                    .named_children(&mut cursor)
+                    .filter(|child| matches!(child.kind(), "constant" | "scope_resolution")),
+            );
+        }
+        // `Account.find(id)` reaches the class through its name, which is
+        // the way a Ruby program names most of the classes it uses.
+        if node.kind() == "call"
+            && let Some(receiver) = node.child_by_field_name("receiver")
+            && matches!(receiver.kind(), "constant" | "scope_resolution")
+        {
+            references.push(receiver);
+        }
+        for reference in references {
+            let Some(label) = node_text(reference, source) else {
+                continue;
+            };
+            // `Admin::AccountsController` names that class and not the
+            // `AccountsController` beside it; the resolver matches the
+            // tail as well, so a bare name still finds a nested class.
+            let label = label.trim();
+            if label.is_empty()
+                || !label
+                    .chars()
+                    .next()
+                    .is_some_and(|character| character.is_ascii_uppercase())
+            {
+                continue;
+            }
+            facts.type_references.push(ParsedTypeReference {
+                label: label.to_string(),
+                span: span_for(path, reference),
+                parent: current_function.clone(),
+            });
+        }
+    }
+
     // What a PHP declaration states about the classes it works with: the
     // type of a parameter or property, the type it returns, the class it
     // extends and the interfaces it implements. Laravel builds a service
@@ -3459,6 +3520,15 @@ pub(crate) fn item_label(
             return js_dynamic_import_specifier(node, source)
                 .map(|specifier| format!("import(\"{specifier}\")"));
         }
+    }
+
+    // A Ruby class states a constant path: `module Admin; class
+    // AccountsController` is `Admin::AccountsController`, which is the
+    // name its own methods already carry as their owner and the name a
+    // route means. Without the modules, mastodon's two
+    // `AccountsController` classes were one name for two classes.
+    if language == Language::Ruby && matches!(node.kind(), "class" | "module") {
+        return ruby_constant_path(node, source);
     }
 
     if language == Language::Lua && node.kind() == "function_definition" {

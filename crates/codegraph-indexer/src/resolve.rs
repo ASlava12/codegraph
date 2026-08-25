@@ -2969,6 +2969,20 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     }
 }
 
+/// Whether a file describes the database schema at a point in time
+/// rather than the program: a Rails migration declares the model classes
+/// it touches so that the data it moves keeps working, and a Laravel or
+/// Django migration does the same.
+fn declares_a_schema_snapshot(path: &str) -> bool {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    normalized.split('/').any(|segment| {
+        matches!(
+            segment,
+            "migrate" | "post_migrate" | "migrations" | "versions"
+        )
+    })
+}
+
 pub(crate) fn resolve_pending_type_references(context: &mut IndexContext) {
     let pending = std::mem::take(&mut context.pending_type_references);
     let mut seen = BTreeSet::new();
@@ -3025,6 +3039,44 @@ pub(crate) fn resolve_pending_type_references(context: &mut IndexContext) {
             } else {
                 neighbours
             }
+        } else {
+            targets
+        };
+
+        // A name written on its own means the declaration that answers to
+        // exactly that name: mastodon's `Account` is the model, not the
+        // `Mastodon::CLI::Maintenance::Account` stub or the fifteen a
+        // migration declares, all of which end with the same word.
+        let targets = if targets.len() > 1 {
+            let exact: Vec<NodeId> = targets
+                .iter()
+                .copied()
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .is_some_and(|node| node.label == reference.label)
+                })
+                .collect();
+            if exact.len() == 1 { exact } else { targets }
+        } else {
+            targets
+        };
+
+        // A migration declares the class it needs to describe the schema
+        // at that point in time: mastodon writes `class Account <
+        // ApplicationRecord; end` in fifteen of them, so the model every
+        // other file means had sixteen declarations and no reference could
+        // choose one.
+        let targets = if targets.len() > 1 {
+            let outside: Vec<NodeId> = targets
+                .iter()
+                .copied()
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.span.as_ref())
+                        .is_some_and(|span| !declares_a_schema_snapshot(&span.path))
+                })
+                .collect();
+            if outside.len() == 1 { outside } else { targets }
         } else {
             targets
         };

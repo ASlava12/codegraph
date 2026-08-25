@@ -1209,7 +1209,12 @@ pub(crate) fn index_file(
                         register_local_function(&mut local_functions, &item.label, item_id);
                         local_function_spans.push((item.label.clone(), item_id, item.span.clone()));
                     }
-                    if item.kind == ParsedItemKind::Type {
+                    // A Ruby module is a constant other files name: `include
+                    // Payloadable` and `Mastodon::CLI::Maintenance::Account`
+                    // reach one the same way a class is reached.
+                    if item.kind == ParsedItemKind::Type
+                        || (item.kind == ParsedItemKind::Module && language == Language::Ruby)
+                    {
                         register_function_symbol(&mut context.type_symbols, &item.label, item_id);
                     }
                     // A configuration's declarations are what its facts sit

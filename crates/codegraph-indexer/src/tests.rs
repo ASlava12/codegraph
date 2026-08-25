@@ -1689,6 +1689,116 @@ fn an_elixir_attribute_is_not_a_call_and_neither_is_invoking_a_value() {
 }
 
 #[test]
+fn ruby_classes_are_reached_by_the_constants_that_name_them() {
+    // mastodon declares 2083 classes and modules and nothing pointed at
+    // any of them: "what breaks if I change `Account`" answered with
+    // nothing at all. A Ruby program names a class by its constant --
+    // `Account.find(id)`, `class X < ApplicationRecord`, `include
+    // Payloadable` -- and a name written on its own means the class that
+    // answers to exactly that name, not the stub a migration or a
+    // maintenance task declares under a module of its own.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app/models")).unwrap();
+    fs::create_dir_all(root.join("app/services")).unwrap();
+    fs::create_dir_all(root.join("db/migrate")).unwrap();
+    fs::create_dir_all(root.join("lib/tasks")).unwrap();
+    fs::write(
+        root.join("app/models/account.rb"),
+        "class Account < ApplicationRecord\n  include Payloadable\n\n  def suspend!\n    update!(suspended: true)\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/models/application_record.rb"),
+        "class ApplicationRecord < ActiveRecord::Base\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/models/payloadable.rb"),
+        "module Payloadable\n  def payload\n    {}\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/services/suspend_service.rb"),
+        "class SuspendService\n  def call(id)\n    account = Account.where(id: id).first\n    account.suspend!\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("db/migrate/20240101000000_backfill_accounts.rb"),
+        "class BackfillAccounts < ActiveRecord::Migration[8.0]\n  class Account < ApplicationRecord\n  end\n\n  def up\n    Account.find_each { |account| account.touch }\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib/tasks/maintenance.rb"),
+        "module Maintenance\n  class Account < ApplicationRecord\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let node_at = |label: &str, path: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                matches!(node.kind, NodeKind::Type | NodeKind::Module)
+                    && node.label == label
+                    && node.span.as_ref().is_some_and(|span| span.path == path)
+            })
+            .unwrap_or_else(|| panic!("{label} is declared in {path}"))
+            .id
+    };
+    let model = node_at("Account", "app/models/account.rb");
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .filter(|node| node.label == "Maintenance::Account")
+            .count(),
+        1,
+        "a class inside a module states the constant path it answers to"
+    );
+    let references_into = |target: NodeId| -> Vec<String> {
+        graph
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.target == target
+                    && edge.metadata.get("relation").map(String::as_str) == Some("type_reference")
+            })
+            .filter_map(|edge| {
+                graph
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == edge.source)
+                    .map(|node| node.label.clone())
+            })
+            .collect()
+    };
+    assert!(
+        references_into(model).contains(&"call".to_string()),
+        "the service that writes `Account.where` reaches the model, got {:?}",
+        references_into(model)
+    );
+    assert!(
+        !references_into(model).is_empty(),
+        "and the migration's own stub does not take the reference"
+    );
+    assert!(
+        !references_into(node_at("Payloadable", "app/models/payloadable.rb")).is_empty(),
+        "`include Payloadable` names the module it mixes in"
+    );
+    assert!(
+        !references_into(node_at(
+            "ApplicationRecord",
+            "app/models/application_record.rb"
+        ))
+        .is_empty(),
+        "and `< ApplicationRecord` names the class it inherits"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle
