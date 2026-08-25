@@ -5169,6 +5169,53 @@ fn query_insights_returns_sensitive_config_default_context() {
 }
 
 #[test]
+fn packages_are_answered_with_what_the_program_is_built_on() {
+    // "Which packages does it depend on?" runs the `packages` query, and
+    // mastodon's answer opened with the GitHub Actions its workflows use:
+    // how the project is built, not what the program is built on.
+    let mut graph = CodeGraph::new("repo");
+    let action = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "github action:actions/checkout",
+        None,
+        BTreeMap::from([
+            ("ecosystem".to_string(), "github-actions".to_string()),
+            ("item_kind".to_string(), "dependency".to_string()),
+            (
+                "package_id".to_string(),
+                "github-actions:actions/checkout".to_string(),
+            ),
+        ]),
+    );
+    let gem = graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "rails",
+        None,
+        BTreeMap::from([
+            ("ecosystem".to_string(), "rubygems".to_string()),
+            ("item_kind".to_string(), "dependency".to_string()),
+            ("package_id".to_string(), "rubygems:rails".to_string()),
+        ]),
+    );
+
+    let result = query_graph(&graph, "packages limit:1").unwrap();
+    let listed: Vec<&str> = result
+        .nodes
+        .iter()
+        .map(|node| node.label.as_str())
+        .collect();
+
+    assert!(
+        result.nodes.iter().any(|node| node.id == gem),
+        "what the program is built on is the answer, got {listed:?}"
+    );
+    assert!(
+        !result.nodes.iter().any(|node| node.id == action),
+        "and what builds it is not, got {listed:?}"
+    );
+}
+
+#[test]
 fn configuration_is_answered_with_what_the_program_reads() {
     // "What configuration does it read?" runs the `configs` query, and
     // koel's answer opened with twelve GitHub Actions run steps -- how the

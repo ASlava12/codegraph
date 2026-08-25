@@ -997,7 +997,7 @@ pub(crate) fn query_packages(
         .transpose()?
         .unwrap_or(500);
     let path_index = node_path_index(graph);
-    let matched: Vec<_> = graph
+    let mut matched: Vec<_> = graph
         .nodes
         .iter()
         .filter(|node| {
@@ -1005,6 +1005,18 @@ pub(crate) fn query_packages(
         })
         .cloned()
         .collect();
+    // "Which packages does it depend on?" is answered by this query, and
+    // mastodon's answer opened with the GitHub Actions its workflows use
+    // -- how the project is built, not what the program is built on. A
+    // workflow's action comes last, in graph order inside a tier so the
+    // answer stays the same between runs.
+    matched.sort_by_key(|node| {
+        let action = node
+            .metadata
+            .get("ecosystem")
+            .is_some_and(|ecosystem| ecosystem == "github-actions");
+        (u8::from(action), node.id)
+    });
 
     let mut selected_ids: BTreeSet<_> = matched
         .iter()

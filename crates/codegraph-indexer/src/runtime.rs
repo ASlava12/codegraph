@@ -1708,6 +1708,8 @@ pub(crate) fn manifest_dependencies(
         Some("setup.cfg") => setup_cfg_dependencies(source),
         Some("Pipfile") => pipfile_dependencies(source),
         Some("composer.json") => composer_dependencies(source),
+        Some("Gemfile") => gemfile_dependencies(source),
+        Some(name) if name.ends_with(".gemspec") => gemspec_dependencies(source),
         Some("composer.lock") => composer_lock_dependencies(source),
         Some("vcpkg.json") => vcpkg_dependencies(source),
         Some("conanfile.txt") => conanfile_txt_dependencies(source),

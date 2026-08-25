@@ -1644,6 +1644,75 @@ fn an_import_python_erases_is_not_a_runtime_dependency() {
 }
 
 #[test]
+fn a_gemfile_and_a_gemspec_state_what_a_ruby_project_needs() {
+    // Nothing read a Ruby manifest at all, so mastodon declared 154 gems
+    // and the graph knew none of them: "which packages does it depend on"
+    // answered with the GitHub Actions its workflows use.
+    let dependencies = gemfile_dependencies(
+        "# frozen_string_literal: true\n\nsource 'https://rubygems.org'\nruby '>= 3.3.0'\n\ngem 'rails', '~> 8.1.0'\ngem 'bootsnap', require: false\ngem 'aws-sdk-s3', '~> 1.123', require: false\n\ngroup :development, :test do\n  gem 'rspec-rails'\nend\n\ngroup :opentelemetry do\n  gem 'opentelemetry-sdk', '~> 1.4'\nend\n\ngem 'brakeman', group: :development\n",
+    );
+    let declared = |name: &str| {
+        dependencies
+            .iter()
+            .find(|dependency| dependency.name == name)
+            .map(|dependency| (dependency.kind.as_str(), dependency.version.clone()))
+    };
+    assert_eq!(
+        declared("rails"),
+        Some(("runtime", Some("~> 8.1.0".to_string()))),
+        "a gem states the version it wants second"
+    );
+    assert_eq!(
+        declared("bootsnap"),
+        Some(("runtime", None)),
+        "`require: false` is not a version"
+    );
+    assert_eq!(
+        declared("aws-sdk-s3"),
+        Some(("runtime", Some("~> 1.123".to_string())))
+    );
+    assert_eq!(
+        declared("rspec-rails"),
+        Some(("dev", None)),
+        "a gem inside `group :development, :test` is not what the program runs on"
+    );
+    assert_eq!(
+        declared("brakeman"),
+        Some(("dev", None)),
+        "and a group stated on the line says the same"
+    );
+    assert_eq!(
+        declared("opentelemetry-sdk"),
+        Some(("runtime", Some("~> 1.4".to_string()))),
+        "while a group of its own is a choice about how the program runs"
+    );
+    assert!(
+        declared("ruby").is_none() && declared("https://rubygems.org").is_none(),
+        "the language and the source are not gems"
+    );
+
+    let gemspec = gemspec_dependencies(
+        "Gem::Specification.new do |s|\n  s.add_dependency 'rack', '>= 3.0.0', '< 4'\n  s.add_dependency 'rack-protection', version\n  s.add_development_dependency 'rake'\nend\n",
+    );
+    let spec_declared = |name: &str| {
+        gemspec
+            .iter()
+            .find(|dependency| dependency.name == name)
+            .map(|dependency| (dependency.kind.as_str(), dependency.version.clone()))
+    };
+    assert_eq!(
+        spec_declared("rack"),
+        Some(("runtime", Some(">= 3.0.0".to_string())))
+    );
+    assert_eq!(
+        spec_declared("rack-protection"),
+        Some(("runtime", None)),
+        "a version held in a variable is not one the file states"
+    );
+    assert_eq!(spec_declared("rake"), Some(("dev", None)));
+}
+
+#[test]
 fn a_suggested_package_is_named_without_a_version() {
     // composer's `suggest` maps a package to a sentence about why to install
     // it. monolog suggests a dozen, one per optional handler.

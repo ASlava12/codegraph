@@ -1532,6 +1532,127 @@ pub(crate) fn pnpm_clean_version(value: &str) -> String {
     value.split('(').next().unwrap_or(value).trim().to_string()
 }
 
+/// What a `Gemfile` states: `gem 'rails', '~> 8.1.0'` names a gem and the
+/// version it wants, and `group :development do` says the gems inside it
+/// are not what the program runs on. mastodon declares 98 of them, and a
+/// Ruby project's dependencies were read from nowhere at all.
+pub(crate) fn gemfile_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    // Which groups are open, innermost last. A gem inside `group :test`
+    // is a test dependency however deep the block sits.
+    let mut groups: Vec<Vec<String>> = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("group ")
+            && trimmed.ends_with(" do")
+        {
+            groups.push(ruby_symbol_list(rest));
+            continue;
+        }
+        if trimmed == "end" {
+            groups.pop();
+            continue;
+        }
+        let Some(rest) = trimmed.strip_prefix("gem ") else {
+            continue;
+        };
+        let Some(name) = first_quoted_value(rest) else {
+            continue;
+        };
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        // `gem 'x', group: :development` states the group on the line.
+        let mut open: Vec<String> = groups.iter().flatten().cloned().collect();
+        open.extend(ruby_symbol_list(
+            rest.split_once("group:")
+                .or_else(|| rest.split_once("groups:"))
+                .map(|(_, tail)| tail)
+                .unwrap_or_default(),
+        ));
+        let kind = if !open.is_empty()
+            && open
+                .iter()
+                .all(|group| matches!(group.as_str(), "development" | "test"))
+        {
+            "dev"
+        } else {
+            "runtime"
+        };
+        dependencies.push(manifest_dependency(
+            name,
+            kind,
+            "rubygems",
+            gem_version_constraint(rest),
+        ));
+    }
+    dependencies
+}
+
+/// What a `.gemspec` states: `s.add_dependency 'rack', '>= 3.0.0'` is what
+/// the gem needs to run, and `add_development_dependency` what its own
+/// tests need.
+pub(crate) fn gemspec_dependencies(source: &str) -> Vec<ManifestDependency> {
+    let mut dependencies = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((_, rest)) = trimmed.split_once("add_") else {
+            continue;
+        };
+        let kind = if rest.starts_with("development_dependency") {
+            "dev"
+        } else if rest.starts_with("dependency") || rest.starts_with("runtime_dependency") {
+            "runtime"
+        } else {
+            continue;
+        };
+        let Some(name) = first_quoted_value(rest) else {
+            continue;
+        };
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        dependencies.push(manifest_dependency(
+            name,
+            kind,
+            "rubygems",
+            gem_version_constraint(rest),
+        ));
+    }
+    dependencies
+}
+
+/// The version a gem line asks for, when it asks for one. The name comes
+/// first and the constraint second -- `gem 'rails', '~> 8.1.0'` -- while
+/// `gem 'x', require: false` states no version at all.
+fn gem_version_constraint(rest: &str) -> Option<String> {
+    let (_, after_name) = rest.split_once(['\'', '"'])?;
+    let after_name = after_name.split_once(['\'', '"']).map(|(_, tail)| tail)?;
+    let value = first_quoted_value(after_name)?;
+    let value = value.trim();
+    value
+        .starts_with(|character: char| {
+            character.is_ascii_digit() || matches!(character, '~' | '>' | '<' | '=' | '!')
+        })
+        .then(|| value.to_string())
+}
+
+/// The symbols a Ruby argument list names: `group :development, :test do`
+/// is two of them.
+fn ruby_symbol_list(rest: &str) -> Vec<String> {
+    rest.split(',')
+        .filter_map(|part| ruby_symbol_name(part.trim()))
+        .collect()
+}
+
 pub(crate) fn composer_dependencies(source: &str) -> Vec<ManifestDependency> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
         return Vec::new();

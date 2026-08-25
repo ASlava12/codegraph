@@ -232,6 +232,13 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- Nothing read a Ruby manifest, so a Ruby project's dependencies were known from nowhere: mastodon
+  declares 154 gems in its `Gemfile` and sinatra 43 across a `Gemfile` and its gemspec, and "which
+  packages does it depend on?" answered both with the GitHub Actions their workflows use. A `gem`
+  line states a name and, second, the version it wants; a `group :development, :test do` block says
+  the gems inside it are not what the program runs on, and so does `group: :development` on the line
+  itself. A workflow's action is now ranked last in that answer -- it is how the project is built,
+  not what the program is built on.
 - A Go program spells the variables it reads as constants: `os.Getenv(envLogFile)` reads
   `TF_LOG_PATH` wherever terraform declares that name. The read filed a hole -- `<computed name>` --
   for 62 of terraform's 299 environment reads, and 45 of them named a constant the project binds to
