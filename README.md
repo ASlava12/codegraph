@@ -232,6 +232,15 @@ Implemented now:
   `ComponentInternalInstance` -- the interface its whole runtime is written against -- had nothing
   pointing at it and now has 150 references, and `impact` on it names 1339 dependents and 486
   affected tests. The name in `interface Foo {}` declares the type rather than referring to one.
+- A class says what it inherits from, and a route reaches the action its parent declares. Eleven of
+  mastodon's settings pages declare no action of their own -- `class BrandingController <
+  Admin::SettingsController` inherits `show` and `update` -- so the route reached nothing and the
+  flow stopped there. Every class node now carries `extends` (Ruby, PHP, JS/TS, Python, C#, Java:
+  923 of koel's classes, 1469 of django-oscar's), and route resolution follows the chain. And
+  `with_options only: [:index] do` hands its options to every resource inside it, which mastodon
+  writes six times: reading the resources without them claimed 42 routes it does not serve.
+  mastodon's routes that reach code go from 620 to 648, and 781 routes remain of the 856 first
+  counted -- the difference is what it never served.
 - What a Rails router states about its resources, read five ways it was not. `only: []` declares
   none of the seven, and reading it as "no restriction" had mastodon serving 33 routes it does not
   -- `/admin/users`, `/backups/:id`, a whole `/api/v1_alpha/accounts` set. A singular `resource

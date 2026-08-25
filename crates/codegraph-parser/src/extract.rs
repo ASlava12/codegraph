@@ -1008,6 +1008,11 @@ pub(crate) fn classify_node(
     };
 
     let mut metadata = BTreeMap::new();
+    if item_kind == ParsedItemKind::Type
+        && let Some(base) = base_type_label(language, node, source)
+    {
+        metadata.insert("extends".to_string(), base);
+    }
     if matches!(
         item_kind,
         ParsedItemKind::Function | ParsedItemKind::Entrypoint
@@ -1488,6 +1493,56 @@ fn leading_keyword(node: Node<'_>, source: &[u8]) -> Option<String> {
 /// Rust `impl` block). Recorded as `owner_type` so a qualified call such as
 /// `CodeGraph::new` or `Foo.bar` can be matched against the method declared
 /// inside that type, which a bare `new` label could never satisfy.
+/// What a class inherits from, as the source writes it: `class
+/// AlbumController extends Controller` and `class
+/// AdditionalFooterTextsController < Admin::SettingsController`. A route
+/// whose action the class itself does not declare is served by the one
+/// its parent declares, and without this the graph could not say so.
+pub(crate) fn base_type_label(language: Language, node: Node<'_>, source: &[u8]) -> Option<String> {
+    let text = match language {
+        // The grammar gives each of these a child of its own holding the
+        // whole clause: `< Foo`, `extends Foo`, `: Foo, IBar`, `(Base)`.
+        Language::Ruby => child_kind_text(node, "superclass", source),
+        Language::Php => child_kind_text(node, "base_clause", source),
+        Language::JavaScript | Language::TypeScript | Language::Tsx => {
+            child_kind_text(node, "class_heritage", source)
+        }
+        Language::Python => node
+            .child_by_field_name("superclasses")
+            .and_then(|list| node_text(list, source)),
+        Language::CSharp => child_kind_text(node, "base_list", source),
+        Language::Java | Language::Kotlin => node
+            .child_by_field_name("superclass")
+            .and_then(|parent| node_text(parent, source)),
+        _ => None,
+    }?;
+    // Whatever states the relation is not part of the name.
+    let text = text.trim();
+    let text = text
+        .strip_prefix("extends")
+        .or_else(|| text.strip_prefix('<'))
+        .or_else(|| text.strip_prefix(':'))
+        .unwrap_or(text)
+        .trim_start_matches('(')
+        .trim();
+    // `extends Foo implements Bar` and `(Base, Mixin)` name more than the
+    // parent, and the parent is the first of them.
+    let first = text
+        .split([',', ')'])
+        .next()
+        .unwrap_or(text)
+        .split_whitespace()
+        .next()
+        .unwrap_or_default();
+    // A generic argument is not part of the name a declaration answers to.
+    let first = first.split(['<', '(']).next().unwrap_or(first).trim();
+    (!first.is_empty()
+        && first.chars().all(|character| {
+            character.is_alphanumeric() || matches!(character, '_' | ':' | '.' | '\\')
+        }))
+    .then(|| first.to_string())
+}
+
 pub(crate) fn enclosing_type_label(
     language: Language,
     node: Node<'_>,

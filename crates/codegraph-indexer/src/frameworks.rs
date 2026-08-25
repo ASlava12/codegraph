@@ -688,6 +688,11 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
     // `export` action of that resource's controller, and the line names
     // neither.
     let mut controllers: Vec<Option<String>> = Vec::new();
+    // `with_options only: [:index], concerns: :batch do` hands its options
+    // to every call inside it: mastodon writes six such blocks, and
+    // reading the resources inside them without the options claimed 20
+    // routes it does not serve.
+    let mut inherited_options: Vec<Option<String>> = Vec::new();
     // The depth a `concern` block opened at, while one is open.
     let mut concern_depth: Option<usize> = None;
     // How deep the innermost `constraints .. do` block sits, when one is
@@ -709,12 +714,14 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                 modules.push(rails_module_name(&name));
                 prefixes.push(name);
                 controllers.push(None);
+                inherited_options.push(None);
                 continue;
             }
             if trimmed == "end" {
                 prefixes.pop();
                 modules.pop();
                 controllers.pop();
+                inherited_options.pop();
                 if concern_depth.is_some_and(|depth| depth >= prefixes.len()) {
                     concern_depth = None;
                 }
@@ -755,6 +762,7 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                 prefixes.push(String::new());
                 modules.push(String::new());
                 controllers.push(None);
+                inherited_options.push(None);
                 continue;
             }
             if let Some(rest) = trimmed
@@ -762,6 +770,8 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                 .or_else(|| trimmed.strip_prefix("resource "))
             {
                 let singular = trimmed.starts_with("resource ");
+                let with_options = rails_line_with_inherited_options(rest, &inherited_options);
+                let rest = with_options.as_str();
                 if let Some(name) = ruby_symbol_name(rest) {
                     // `resources :accounts, path: 'users', only: [:show]`
                     // states one route, not seven, and states it under
@@ -812,6 +822,7 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
                     if trimmed.ends_with(" do") {
                         modules.push(String::new());
                         controllers.push(controller.clone());
+                        inherited_options.push(None);
                         let member = if singular {
                             segment.clone()
                         } else {
@@ -838,6 +849,12 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
             prefixes.push(rails_block_prefix(trimmed));
             modules.push(rails_block_module(trimmed));
             controllers.push(None);
+            inherited_options.push(
+                trimmed
+                    .strip_prefix("with_options ")
+                    .and_then(|rest| rest.strip_suffix(" do"))
+                    .map(|options| options.trim().to_string()),
+            );
         }
 
         let Some((method, rest)) = METHODS
@@ -851,6 +868,10 @@ pub(crate) fn ruby_framework_routes(label: &str, source: &str) -> Vec<FrameworkR
         if !rest.starts_with(char::is_whitespace) && !rest.starts_with('(') {
             continue;
         }
+        // `with_options to: 'streaming#index' do get '/streaming' end`
+        // says which action serves the routes inside it.
+        let with_options = rails_line_with_inherited_options(rest, &inherited_options);
+        let rest = with_options.as_str();
         // Rails names the path with a symbol as often as with a string:
         // `get :verify_credentials, to: 'credentials#show'` is the path
         // `verify_credentials`, and reading the first quoted value on the
@@ -1222,6 +1243,18 @@ fn rails_block_prefix(line: &str) -> String {
                 .and_then(ruby_symbol_name)
         })
         .unwrap_or_default()
+}
+
+/// A route line read together with the options the blocks around it hand
+/// down. The line's own options come first, and every reader here takes
+/// the first spelling of a key, so what the line states still wins.
+fn rails_line_with_inherited_options(rest: &str, inherited: &[Option<String>]) -> String {
+    let mut line = rest.to_string();
+    for options in inherited.iter().rev().flatten() {
+        line.push_str(", ");
+        line.push_str(options);
+    }
+    line
 }
 
 /// The value of a `key: 'value'` option on a route line.

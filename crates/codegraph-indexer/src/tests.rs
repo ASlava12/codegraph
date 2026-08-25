@@ -6529,6 +6529,87 @@ fn a_dockerfile_command_runs_from_the_build_context() {
 }
 
 #[test]
+fn a_route_reaches_the_action_its_controllers_parent_declares() {
+    // Eleven of mastodon's settings pages declare no action of their own:
+    // `class BrandingController < Admin::SettingsController` inherits
+    // `show` and `update`, and a route that reaches nothing is where a
+    // flow stops. `with_options only: [:index] do` hands its options to
+    // every resource inside it, and reading them without it claimed 42
+    // routes mastodon does not serve.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::create_dir_all(root.join("app/controllers/admin")).unwrap();
+    fs::write(
+        root.join("config/routes.rb"),
+        "Rails.application.routes.draw do\n  namespace :admin do\n    resource :branding, only: [:show, :update]\n\n    with_options only: [:index] do\n      resources :links\n    end\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/controllers/admin/settings_controller.rb"),
+        "class Admin::SettingsController < ApplicationController\n  def show\n    render :show\n  end\n\n  def update\n    redirect_to admin_root_path\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/controllers/admin/brandings_controller.rb"),
+        "class Admin::BrandingsController < Admin::SettingsController\n  private\n\n  def after_update_redirect_path\n    admin_root_path\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/controllers/admin/links_controller.rb"),
+        "class Admin::LinksController < ApplicationController\n  def index\n    render :index\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let branding = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Type && node.label == "Admin::BrandingsController")
+        .expect("the controller is indexed");
+    assert_eq!(
+        branding.metadata.get("extends").map(String::as_str),
+        Some("Admin::SettingsController"),
+        "a class states what it inherits from"
+    );
+
+    let route = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "route GET /admin/branding")
+        .expect("the page is served")
+        .id;
+    let handler = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.source == route
+                && edge.metadata.get("relation").map(String::as_str) == Some("entrypoint_function")
+        })
+        .map(|edge| edge.target)
+        .and_then(|id| graph.nodes.iter().find(|node| node.id == id))
+        .expect("the route reaches the action serving it");
+    assert_eq!(
+        handler.metadata.get("owner_type").map(String::as_str),
+        Some("Admin::SettingsController"),
+        "which its parent declares"
+    );
+
+    let links: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.label.starts_with("route ") && node.label.contains("/admin/links"))
+        .map(|node| node.label.as_str())
+        .collect();
+    assert_eq!(
+        links,
+        vec!["route GET /admin/links"],
+        "`with_options only: [:index]` states what the resources inside it declare"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn rails_says_which_actions_a_resource_declares_and_which_controller_serves_them() {
     // Four things a Rails router states that the graph read wrong on
     // mastodon: `only: []` declares none of the seven, a singular

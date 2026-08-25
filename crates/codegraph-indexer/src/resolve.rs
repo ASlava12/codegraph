@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use codegraph_core::{
-    CodeGraph, Confidence, EdgeKind, NodeId, NodeKind, SourceSpan, is_test_like_source_path,
+    CodeGraph, Confidence, EdgeKind, Node, NodeId, NodeKind, SourceSpan, is_test_like_source_path,
 };
 
 #[allow(unused_imports)]
@@ -3788,6 +3788,47 @@ pub(crate) fn resolve_pending_file_routes(context: &mut IndexContext) {
     }
 }
 
+/// The classes a name inherits from, nearest first. `class
+/// AdditionalFooterTextsController < Admin::SettingsController` states
+/// where its `show` comes from, and a route naming it reaches nothing
+/// without following the chain.
+fn ancestor_type_names(graph: &CodeGraph, owner: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let mut current = owner.to_string();
+    // A hierarchy this deep is already unusual, and a cycle cannot be one.
+    for _ in 0..8 {
+        let Some(parent) =
+            type_node_named(graph, &current).and_then(|node| node.metadata.get("extends").cloned())
+        else {
+            break;
+        };
+        if parent == current || names.contains(&parent) {
+            break;
+        }
+        names.push(parent.clone());
+        current = parent;
+    }
+    names
+}
+
+/// The class a name states, matched as written and then by what it ends
+/// with: a Rails route names `Admin::SettingsController` and the file
+/// declares exactly that, while a PHP route names `AlbumController` for a
+/// class the file writes under a namespace.
+fn type_node_named<'graph>(graph: &'graph CodeGraph, name: &str) -> Option<&'graph Node> {
+    let tail = name.rsplit(['\\', ':']).next().unwrap_or(name);
+    graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Type && node.label == name)
+        .or_else(|| {
+            graph.nodes.iter().find(|node| {
+                node.kind == NodeKind::Type
+                    && node.label.rsplit(['\\', ':']).next().unwrap_or(&node.label) == tail
+            })
+        })
+}
+
 pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
     let pending = std::mem::take(&mut context.pending_route_handlers);
     for reference in pending {
@@ -3817,8 +3858,8 @@ pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
             // the controller path, which the inflector turns into that
             // name. Comparing what the two end with settles the method
             // without knowing the project's namespaces.
-            let owner_tail = owner.rsplit("::").next().unwrap_or(owner);
-            let owner_is = |target: &NodeId, match_kind: OwnerMatch| {
+            let owner_is = |target: &NodeId, owner: &str, match_kind: OwnerMatch| {
+                let owner_tail = owner.rsplit("::").next().unwrap_or(owner);
                 graph_node(&context.graph, *target)
                     .and_then(|node| node.metadata.get("owner_type"))
                     .is_some_and(|declared| {
@@ -3856,8 +3897,24 @@ pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
                 owned = targets
                     .iter()
                     .copied()
-                    .filter(|target| owner_is(target, match_kind))
+                    .filter(|target| owner_is(target, owner, match_kind))
                     .collect();
+            }
+            // A controller that declares no `show` is served by the one
+            // its parent declares: mastodon writes eleven settings pages
+            // whose actions are all `Admin::SettingsController`'s, and a
+            // route that reaches nothing is where a flow stops.
+            if owned.is_empty() {
+                for ancestor in ancestor_type_names(&context.graph, owner) {
+                    owned = targets
+                        .iter()
+                        .copied()
+                        .filter(|target| owner_is(target, &ancestor, OwnerMatch::Exact))
+                        .collect();
+                    if !owned.is_empty() {
+                        break;
+                    }
+                }
             }
             if !owned.is_empty() {
                 targets = owned;
