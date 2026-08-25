@@ -584,6 +584,22 @@ fn elixir_standard_module(module: &str) -> bool {
     )
 }
 
+/// Whether two languages share one set of symbols. A TypeScript project
+/// with React components is written in two of them -- `.ts` and `.tsx` --
+/// and every import from a module into a component crosses the line:
+/// taxonomy resolved 32 of its 494 calls because of it, and every Next.js,
+/// Remix or React project is shaped the same way.
+pub(crate) fn languages_share_symbols(one: &str, other: &str) -> bool {
+    one == other
+        || matches!(
+            (one, other),
+            ("typescript", "tsx")
+                | ("tsx", "typescript")
+                | ("javascript", "jsx")
+                | ("jsx", "javascript")
+        )
+}
+
 pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
     // PHP writes `\count(..)` to mean the global function rather than one
     // the current namespace might define, and monolog writes 273 of its
@@ -2079,7 +2095,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         language_targets.retain(|target| {
             graph_node(&context.graph, *target)
                 .and_then(|node| node.metadata.get("language"))
-                .is_some_and(|language| language == &call.language)
+                .is_some_and(|language| languages_share_symbols(language, &call.language))
         });
         // A definition that patches a runtime global answers only calls
         // written through that global. kong replaces `ngx.exit` in
@@ -2727,7 +2743,7 @@ pub(crate) fn resolve_pending_type_references(context: &mut IndexContext) {
                 let same_language = node
                     .metadata
                     .get("language")
-                    .is_some_and(|language| language == &reference.language);
+                    .is_some_and(|language| languages_share_symbols(language, &reference.language));
                 let same_file = source_path
                     .is_some_and(|path| node.span.as_ref().is_some_and(|span| span.path == path));
                 // A configuration's declarations refer to each other inside
@@ -3604,7 +3620,7 @@ pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
                 language.as_deref().is_none_or(|language| {
                     graph_node(&context.graph, *target)
                         .and_then(|node| node.metadata.get("language"))
-                        .is_some_and(|declared| declared == language)
+                        .is_some_and(|declared| languages_share_symbols(declared, language))
                 })
             })
             .collect::<Vec<_>>();

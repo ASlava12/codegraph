@@ -6481,6 +6481,70 @@ fn a_dockerfile_command_runs_from_the_build_context() {
 }
 
 #[test]
+fn a_component_is_used_where_jsx_renders_it_and_ts_and_tsx_are_one_project() {
+    // `<TailwindIndicator />` is how a JSX runtime calls a component, and
+    // it was not read at all: taxonomy's layout renders eleven components
+    // and reached none. And a TypeScript project with React components is
+    // written in two languages -- `.ts` and `.tsx` -- so every import from
+    // a module into a component crossed a line the resolver would not: 32
+    // of taxonomy's 494 calls resolved.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::create_dir_all(root.join("components")).unwrap();
+    fs::write(root.join("package.json"), "{\n  \"name\": \"app\"\n}\n").unwrap();
+    fs::write(
+        root.join("lib").join("utils.ts"),
+        "export function cn(...inputs: string[]) {\n  return inputs.join(' ')\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("components").join("indicator.tsx"),
+        "export function TailwindIndicator() {\n  return null\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("components").join("layout.tsx"),
+        "import { cn } from \"../lib/utils\"\nimport { TailwindIndicator } from \"./indicator\"\n\nexport function Layout() {\n  return <div className={cn(\"a\")}><TailwindIndicator /><span /></div>\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reaches = |label: &str, file: &str| {
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && graph.nodes.iter().any(|node| {
+                    node.id == edge.target
+                        && node.label == label
+                        && node.kind == NodeKind::Function
+                        && node
+                            .span
+                            .as_ref()
+                            .is_some_and(|span| span.path.ends_with(file))
+                })
+        })
+    };
+    assert!(
+        reaches("TailwindIndicator", "indicator.tsx"),
+        "rendering a component is using it"
+    );
+    assert!(
+        reaches("cn", "utils.ts"),
+        "and a `.tsx` file reaches the `.ts` module it imports"
+    );
+    // A lower-case tag is the platform's, not a component this project
+    // declares.
+    assert!(
+        !graph
+            .nodes
+            .iter()
+            .any(|node| node.label == "span" || node.label == "div"),
+        "an html tag is not a component"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_next_js_project_declares_its_routes_by_where_its_files_sit() {
     // Next.js, Nuxt and SvelteKit name a URL by the path of the file that
     // serves it, so a project written that way had no entrypoints at all --

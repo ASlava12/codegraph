@@ -2481,9 +2481,18 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
     match language {
         Language::Rust => matches!(node.kind(), "call_expression" | "macro_invocation"),
         Language::Python => node.kind() == "call",
-        Language::JavaScript | Language::TypeScript | Language::Tsx => {
-            matches!(node.kind(), "call_expression" | "new_expression")
-        }
+        // `<TailwindIndicator />` is how a JSX runtime calls a component:
+        // it compiles to `jsx(TailwindIndicator, props)`. Without reading
+        // it, every component in a React project was written and never
+        // used -- taxonomy's layout renders eleven of them and reached
+        // none.
+        Language::JavaScript | Language::TypeScript | Language::Tsx => matches!(
+            node.kind(),
+            "call_expression"
+                | "new_expression"
+                | "jsx_opening_element"
+                | "jsx_self_closing_element"
+        ),
         Language::Go | Language::C | Language::Cpp => node.kind() == "call_expression",
         // `[manager GET:path parameters:nil]` is a call, and its selector
         // is the name being called.
@@ -2857,6 +2866,22 @@ pub(crate) fn call_label(language: Language, node: Node<'_>, source: &[u8]) -> O
         && let Some(method) = named_child_text(node, "method", source)
     {
         return Some(clean_call_label(&method));
+    }
+
+    // A JSX element names the component it renders. A lower-case name is
+    // an HTML tag the platform provides, and a name with a dash is a
+    // custom element registered at runtime; neither is a component this
+    // project declares.
+    if matches!(
+        node.kind(),
+        "jsx_opening_element" | "jsx_self_closing_element"
+    ) {
+        let name = named_child_text(node, "name", source)?;
+        let first = name.chars().next()?;
+        if !first.is_ascii_uppercase() || name.contains('-') {
+            return None;
+        }
+        return Some(clean_call_label(&name));
     }
 
     // These grammars expose no named callee field; the callee is the first

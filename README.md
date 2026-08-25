@@ -87,6 +87,13 @@ Implemented now:
   from its `WORKDIR`, which is the repository, not `streaming/streaming/index.js`.
 - A compose `env_file` the repository's own `.gitignore` keeps out is a note rather than a warning:
   `.env.production` is written by whoever deploys, from the `.sample` the project ships beside it.
+- `<TailwindIndicator />` is how a JSX runtime calls a component -- it compiles to
+  `jsx(TailwindIndicator, props)` -- and rendering one is now using it. A lower-case tag is the
+  platform's and a dashed name a custom element, so neither is read as a component the project
+  declares.
+- A TypeScript project with React components is written in two languages, `.ts` and `.tsx`, and they
+  share one set of symbols: every import from a module into a component crossed a line the resolver
+  would not, so a Next.js app resolved 32 of its 494 calls. The same holds for `.js` and `.jsx`.
 - Next.js, Nuxt and SvelteKit declare a route by where the file sits, and a project written that way
   had no entrypoints at all -- no routes, and nothing for a workflow, a journey or the coverage
   finding to start from. The layout is read as the framework reads it: `app/api/users/route.ts`
