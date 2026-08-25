@@ -2915,7 +2915,13 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // A qualified call (`CodeGraph::new`, `Foo.bar`) matches many bare
         // `new`/`bar` declarations; keep only methods whose owning type is the
         // one named in the call, which turns an ambiguous set into one edge.
-        if let Some((owner, _)) = split_qualified_call(&call.label)
+        // A ruby call keeps only the method in its label and states the
+        // constant it was written through beside it, so the owner has to be
+        // asked for rather than read off the label.
+        let named_owner = split_qualified_call(&call.label)
+            .map(|(owner, _)| owner.to_string())
+            .or_else(|| call.receiver.clone());
+        if let Some(owner) = named_owner.as_deref()
             && targets.len() > 1
         {
             // The file may have renamed the type the call is written
@@ -2940,6 +2946,13 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             if !owned.is_empty() {
                 basis = "owner_type";
                 targets = owned;
+            } else if type_node_named(&context.graph, owner).is_some() {
+                // The project declares the class the call names, and none
+                // of these methods is one of its: `Account.new` is not the
+                // `new` action of the twenty-three controllers that have
+                // one. What the call means is the class itself, which the
+                // constructor path below answers.
+                targets.clear();
             }
         }
         let mut ambiguous_candidates_are_types = false;

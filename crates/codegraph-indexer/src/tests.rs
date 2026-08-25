@@ -16777,3 +16777,52 @@ fn a_swift_receiver_states_which_method_a_call_means() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_call_through_a_class_is_not_a_method_of_another() {
+    // `Account.new` is not the `new` action twenty-three of mastodon's
+    // controllers declare. Ruby keeps only the method in the label and
+    // states the constant beside it, so the owner has to be asked for
+    // rather than read off the label -- and when the project declares that
+    // class and none of the candidates is its, the call means the class.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app/controllers")).unwrap();
+    fs::create_dir_all(root.join("app/models")).unwrap();
+    fs::write(
+        root.join("Gemfile"),
+        "source 'https://rubygems.org'\n\ngem 'rails'\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/models/account.rb"),
+        "class Account\n  def initialize(name)\n    @name = name\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/controllers/accounts_controller.rb"),
+        "class AccountsController\n  def new\n    @account = Account.new('a')\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/controllers/sessions_controller.rb"),
+        "class SessionsController\n  def new\n    nil\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("new")
+        })
+        .expect("the call is recorded");
+    assert_ne!(
+        call.metadata.get("resolution").map(String::as_str),
+        Some("ambiguous"),
+        "neither controller's `new` is what `Account.new` means"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

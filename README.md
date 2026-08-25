@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A ruby call keeps only the method in its label and states the constant it was written through
+  beside it, so the class a call names has to be asked for rather than read off the label. When the
+  project declares that class and none of the candidates is one of its methods, the call means the
+  class itself: `Account.new` is not the `new` action twenty-three of mastodon's controllers
+  declare. Its ambiguous calls fall from 13988 to 12107, with 722 more resolved and none lost.
 - Swift loses its receiver the same way, and states its types the same way: a parameter always
   names one and `let manager = Manager()` names what it builds. Alamofire's ambiguous calls fall
   from 2143 to 2032 with 123 more resolved.
