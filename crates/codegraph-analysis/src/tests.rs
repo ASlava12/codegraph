@@ -3690,7 +3690,18 @@ fn impact_reports_blast_radius_with_risk_weighted_score() {
             .iter()
             .any(|dependent| dependent.node.id == unrelated)
     );
-    assert!(report.impact_score > report.total_dependents + 5);
+    // The score counts what the change reaches of the program. The one test
+    // among the three dependents is coverage, so it is not scored.
+    let severity_weight =
+        |name: &str, weight: usize| report.severity_counts.get(name).copied().unwrap_or(0) * weight;
+    assert_eq!(
+        report.impact_score,
+        report.total_dependents - report.affected_tests
+            + report.affected_entrypoints.len() * 5
+            + severity_weight("error", 5)
+            + severity_weight("warning", 2)
+            + severity_weight("info", 1),
+    );
     assert_eq!(report.dependents[0].distance, 1);
     assert_eq!(report.schema, IMPACT_SCHEMA);
     assert_eq!(

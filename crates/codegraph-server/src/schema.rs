@@ -3963,7 +3963,7 @@ pub(crate) fn impact_response_fields() -> Vec<ApiParameterSpec> {
             "impact_score",
             true,
             "usize",
-            "Risk-weighted score: dependents + 5 per entrypoint + 1 per test + 5/2/1 per error/warning/info risk.",
+            "Risk-weighted score: program dependents (total minus affected_tests) + 5 per entrypoint + 5/2/1 per error/warning/info risk. Reaching a test is coverage, not risk, so the suite is not scored.",
         ),
         response_field(
             "dependents",

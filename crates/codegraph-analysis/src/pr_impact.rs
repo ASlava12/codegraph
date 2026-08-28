@@ -62,6 +62,10 @@ pub struct AffectedHotspot {
 #[derive(Debug, Serialize)]
 pub struct PrBlastRadius {
     pub dependents: usize,
+    /// The dependents that are the program rather than its suite. This is
+    /// what the risk score counts: a change reaching more tests is better
+    /// covered, not more dangerous.
+    pub program_dependents: usize,
     pub affected_entrypoints: usize,
     pub affected_tests: usize,
     pub affected_routes: usize,
@@ -257,6 +261,7 @@ pub fn pr_impact(
     let affected: BTreeSet<NodeId> = dependents.union(&changed_nodes).copied().collect();
     let mut affected_entrypoints = 0usize;
     let mut affected_tests = 0usize;
+    let mut suite_dependents = 0usize;
     let mut affected_routes = 0usize;
     let mut sample_entrypoints = Vec::new();
     for id in &affected {
@@ -287,6 +292,9 @@ pub fn pr_impact(
         // no convention spells its suites with that substring.
         if is_test_like_source_path(path) || names_tests(&node.label) {
             affected_tests += 1;
+            if dependents.contains(id) {
+                suite_dependents += 1;
+            }
         }
     }
 
@@ -354,8 +362,14 @@ pub fn pr_impact(
     }
 
     let matched_files = changed_files.iter().filter(|file| file.in_graph).count();
-    let risk_score =
-        dependents.len() + 5 * affected_entrypoints + affected_tests + 5 * errors + 2 * warnings;
+    // A suite in the blast radius was counted twice -- once inside
+    // `dependents`, once again as `affected_tests` -- so flask, whose reach is
+    // 78% its own tests, drew more than half its merge-gate risk from being
+    // well covered. Risk is how much program the change can reach; the suite
+    // it also reaches is the answer to what to run, not to how dangerous this
+    // is.
+    let program_dependents = dependents.len().saturating_sub(suite_dependents);
+    let risk_score = program_dependents + 5 * affected_entrypoints + 5 * errors + 2 * warnings;
 
     let mut touched_communities = touched_communities;
     touched_communities.sort_by(|a, b| b.changed_files.cmp(&a.changed_files).then(a.id.cmp(&b.id)));
@@ -373,6 +387,7 @@ pub fn pr_impact(
         affected_hotspots,
         blast: PrBlastRadius {
             dependents: dependents.len(),
+            program_dependents,
             affected_entrypoints,
             affected_tests,
             affected_routes,
@@ -454,6 +469,28 @@ mod tests {
             report.blast.affected_tests >= 1,
             "a .spec.js suite is the suite: {:?}",
             report.blast
+        );
+        // The suite is in the blast radius and is not scored for it.
+        assert!(
+            report.blast.program_dependents < report.blast.dependents,
+            "the spec file is a dependent that is not program: {:?}",
+            report.blast
+        );
+        let weigh = |severity: &str, weight: usize| {
+            report
+                .risks
+                .iter()
+                .filter(|risk| risk.severity == severity)
+                .count()
+                * weight
+        };
+        assert_eq!(
+            report.risk_score,
+            report.blast.program_dependents
+                + 5 * report.blast.affected_entrypoints
+                + weigh("error", 5)
+                + weigh("warning", 2),
+            "risk counts the program the change reaches, not its coverage"
         );
 
         let program = temp_dir("program");
