@@ -17455,3 +17455,41 @@ fn a_dart_getter_is_read_rather_than_called() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_property_is_read_rather_than_called() {
+    // `@property def description` is reached by writing `obj.description`
+    // and `get inSFCRoot()` by writing `parser.inSFCRoot`, so no call edge
+    // can ever point at either. 232 of django-oscar's 3312 functions with
+    // no caller are properties.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("pyproject.toml"), "[project]\nname = \"app\"\n").unwrap();
+    fs::write(
+        root.join("src/models.py"),
+        "class Address:\n    @property\n    def description(self):\n        return self.city\n\n    @description.setter\n    def description(self, value):\n        self._description = value\n\n    def save(self):\n        return None\n",
+    )
+    .unwrap();
+    fs::write(root.join("package.json"), "{\"name\": \"app\"}\n").unwrap();
+    fs::write(
+        root.join("src/parser.ts"),
+        "export class Parser {\n  private root = true;\n\n  public get inSFCRoot(): boolean {\n    return this.root;\n  }\n\n  set prop(value: boolean) {\n    this.root = value;\n  }\n\n  parse(): boolean {\n    return this.root;\n  }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let form = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == label)
+            .and_then(|node| node.metadata.get("definition_form").cloned())
+    };
+    assert_eq!(form("description").as_deref(), Some("accessor"));
+    assert_eq!(form("inSFCRoot").as_deref(), Some("accessor"));
+    assert_eq!(form("prop").as_deref(), Some("accessor"));
+    assert_eq!(form("save"), None, "a method is still a method");
+    assert_eq!(form("parse"), None, "a method is still a method");
+
+    fs::remove_dir_all(root).unwrap();
+}

@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A Python property and a JavaScript accessor are read the same way: `@property def description` is
+  reached by writing `obj.description` and `get inSFCRoot()` by writing `parser.inSFCRoot`.
+  django-oscar's functions with no caller fall from 1270 to 1032, vue's from 351 to 338 and
+  requests' from 121 to 109.
 - A Dart getter is read rather than called: `bool get isEmpty => length == 0` is written as a method
   and reached by writing `x.isEmpty`, so no call edge can ever point at one and "nothing calls it"
   says nothing about it -- the same reasoning that already leaves a value a factory built alone. The

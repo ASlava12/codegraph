@@ -1210,6 +1210,45 @@ const MAX_PARENTHESIS_DEPTH: usize = 8;
 /// carrying the type it builds. Only the subtree under the declaration's
 /// constructor field is read, so the names in a `deriving` clause are not
 /// mistaken for constructors.
+/// Whether a Python definition is a property. `@property def description`
+/// is reached by writing `obj.description`, so no call ever names it --
+/// 232 of django-oscar's 3312 functions with no caller are properties.
+fn python_property_definition(node: Node<'_>, source: &[u8]) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    if parent.kind() != "decorated_definition" {
+        return false;
+    }
+    let mut cursor = parent.walk();
+    parent
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "decorator")
+        .filter_map(|child| node_text(child, source))
+        .any(|text| {
+            let text = text.trim().trim_start_matches('@');
+            let name = text.split('(').next().unwrap_or(text).trim();
+            let tail = name.rsplit('.').next().unwrap_or(name);
+            matches!(
+                tail,
+                "property" | "setter" | "getter" | "deleter" | "cached_property"
+            )
+        })
+}
+
+/// Whether a JavaScript or TypeScript definition is an accessor: `get
+/// inSFCRoot()` is written as a method and read as a field.
+fn js_accessor_definition(node: Node<'_>, source: &[u8]) -> bool {
+    if node.kind() != "method_definition" {
+        return false;
+    }
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .take_while(|child| !child.is_named() || child.kind() == "accessibility_modifier")
+        .filter_map(|child| node_text(child, source))
+        .any(|text| matches!(text.trim(), "get" | "set"))
+}
+
 /// Whether a Dart declaration is a property accessor. `bool get isEmpty
 /// => length == 0` is written as a method and read as a field, so no call
 /// ever names it.
@@ -2125,7 +2164,13 @@ pub(crate) fn classify_node(
         // is reached by writing `x.isEmpty`, and no call edge can ever
         // point at it. 608 of the http package's 3238 functions with no
         // caller are accessors.
-        if language == Language::Dart && dart_accessor_declaration(node) {
+        if (language == Language::Dart && dart_accessor_declaration(node))
+            || (language == Language::Python && python_property_definition(node, source))
+            || (matches!(
+                language,
+                Language::TypeScript | Language::Tsx | Language::JavaScript
+            ) && js_accessor_definition(node, source))
+        {
             metadata.insert("definition_form".to_string(), "accessor".to_string());
         }
         // A value a factory built is callable when what it holds is, and a
