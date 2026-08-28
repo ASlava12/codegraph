@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- An edge explanation says why the edge is there, not only how: `references` covers a type
+  reference, an import that resolved to a file, an entrypoint's handler and a function that writes
+  another inside it, and only the relation tells them apart. It sat in the evidence list rather than
+  in the sentence a reader reads first, so `create_app references index` now reads `create_app
+  references (encloses) index`.
 - A definition written inside another is reached through the one that holds it, and only the
   metadata said so: flask's `route` returns a `decorator` that calls `add_url_rule`, and asking for
   the way from `route` to `add_url_rule` found no path at all. Every decorator, factory and

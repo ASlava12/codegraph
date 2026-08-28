@@ -88,10 +88,21 @@ pub fn explain_edge(
         .find(|node| node.id == edge.target)
         .cloned()
         .ok_or_else(|| QueryError::new(format!("edge target {} was not found", edge.target)))?;
+    // The kind says how the two are linked and the relation says why:
+    // `references` covers a type reference, an import that resolved to a
+    // file, an entrypoint's handler and a function that writes another
+    // inside it, and only the relation tells them apart. It was in the
+    // evidence list and not in the sentence a reader reads first.
+    let relation = edge
+        .metadata
+        .get("relation")
+        .map(|relation| format!(" ({relation})"))
+        .unwrap_or_default();
     let summary = format!(
-        "{} {} {} with {} confidence",
+        "{} {}{} {} with {} confidence",
         source.label,
         edge_kind_name(&edge.kind),
+        relation,
         target.label,
         confidence_name(edge.confidence)
     );

@@ -15762,3 +15762,67 @@ fn a_boundary_with_the_suite_is_not_a_seam() {
         "the suite is still listed, only later: {needed:?}"
     );
 }
+
+#[test]
+fn an_edge_explanation_says_why_the_edge_is_there() {
+    // The kind says how two nodes are linked and the relation says why:
+    // `references` covers a type reference, an import that resolved to a
+    // file, an entrypoint's handler and a function that writes another
+    // inside it. Only the relation tells them apart, and it was in the
+    // evidence list rather than in the sentence a reader reads first.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(codegraph_core::SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 9,
+            end_column: 1,
+        })
+    };
+    let outer = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "route",
+        span("src/scaffold.py"),
+        BTreeMap::from([("language".to_string(), "python".to_string())]),
+    );
+    let inner = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "decorator",
+        span("src/scaffold.py"),
+        BTreeMap::from([
+            ("language".to_string(), "python".to_string()),
+            ("enclosing_function".to_string(), "route".to_string()),
+        ]),
+    );
+    graph.add_edge_with_metadata(
+        outer,
+        inner,
+        EdgeKind::References,
+        Confidence::Exact,
+        BTreeMap::from([("relation".to_string(), "encloses".to_string())]),
+    );
+
+    let explanation = explain_edge(
+        &graph,
+        ExplainEdgeRequest {
+            edge_index: Some(0),
+            source: None,
+            target: None,
+            kind: None,
+        },
+    )
+    .unwrap()
+    .expect("missing explanation");
+
+    assert!(
+        explanation.summary.contains("encloses"),
+        "the summary says why: {}",
+        explanation.summary
+    );
+    assert!(
+        explanation.summary.contains("references"),
+        "and still says how: {}",
+        explanation.summary
+    );
+}
