@@ -11,7 +11,9 @@
 use crate::{
     InsightSeverity, ProjectAreas, QueryError, communities, entrypoints, hotspots, insights,
 };
-use codegraph_core::{CodeGraph, EdgeKind, NodeId, NodeKind};
+use codegraph_core::{
+    CodeGraph, EdgeKind, NodeId, NodeKind, is_test_like_source_path, names_tests,
+};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
@@ -270,12 +272,20 @@ pub fn pr_impact(
                 affected_routes += 1;
             }
         }
+        // A file or a directory carries no span -- its label is its path.
         let path = node
             .span
             .as_ref()
             .map(|span| span.path.as_str())
-            .unwrap_or("");
-        if path.contains("test") || node.label.contains("test") {
+            .unwrap_or(match node.kind {
+                NodeKind::File | NodeKind::Directory => node.label.as_str(),
+                _ => "",
+            });
+        // Asking whether "test" appears anywhere counted `latest_admin_action_log`
+        // and terraform's own `moduletest` package as suite code, and never once
+        // counted mastodon's 2741 `spec/` nodes or koel's `.spec.ts` files, because
+        // no convention spells its suites with that substring.
+        if is_test_like_source_path(path) || names_tests(&node.label) {
             affected_tests += 1;
         }
     }
@@ -414,6 +424,60 @@ mod tests {
         assert!(
             !std::path::Path::new("/tmp/should-not-be-written").exists(),
             "git must not have run"
+        );
+    }
+
+    #[test]
+    fn the_blast_radius_counts_a_spec_suite_and_not_a_name_holding_test() {
+        // Two conventions the old substring rule got backwards: a `.spec.js`
+        // suite spells none of its paths with "test", and `latest` spells it
+        // without being one.
+        let suite = temp_dir("suite");
+        fs::create_dir_all(suite.join("src")).unwrap();
+        fs::write(
+            suite.join("src").join("util.js"),
+            "export function helper() {\n  return 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            suite.join("src").join("util.spec.js"),
+            "import { helper } from './util.js';\n\nit('works', () => {\n  helper();\n});\n",
+        )
+        .unwrap();
+        let graph = scan_project(&suite, &IndexOptions::default()).expect("scan");
+        let report = pr_impact(
+            &graph,
+            &["src/util.js".to_string()],
+            PrImpactContext::default(),
+        );
+        assert!(
+            report.blast.affected_tests >= 1,
+            "a .spec.js suite is the suite: {:?}",
+            report.blast
+        );
+
+        let program = temp_dir("program");
+        fs::create_dir_all(program.join("src")).unwrap();
+        fs::write(
+            program.join("src").join("util.js"),
+            "export function helper() {\n  return 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            program.join("src").join("latest.js"),
+            "import { helper } from './util.js';\n\nexport function latestManifest() {\n  return helper();\n}\n",
+        )
+        .unwrap();
+        let graph = scan_project(&program, &IndexOptions::default()).expect("scan");
+        let report = pr_impact(
+            &graph,
+            &["src/util.js".to_string()],
+            PrImpactContext::default(),
+        );
+        assert_eq!(
+            report.blast.affected_tests, 0,
+            "`latest` and `latestManifest` name no test: {:?}",
+            report.blast
         );
     }
 

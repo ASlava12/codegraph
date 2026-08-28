@@ -31,7 +31,10 @@ pub const COMPUTED_ENVIRONMENT_KEY: &str = "<computed name>";
 /// makes it safe: `blackbox-tests`, `jvmTest`, `Newtonsoft.Json.Tests` and
 /// `BufferedSourceTest` all name tests, while `latest` and `manifest` do
 /// not, and a rule matching bare substrings cannot tell them apart.
-fn names_tests(part: &str) -> bool {
+///
+/// Public because a symbol can be a test where its file is not: Rust keeps
+/// `mod tests` inside the module it exercises.
+pub fn names_tests(part: &str) -> bool {
     let mut word = String::new();
     let mut found = false;
     let mut previous_lowercase = false;
