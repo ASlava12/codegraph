@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- `SearcherBuilder::new()` names the type outright, so the three `new` that ripgrep's JSON printer
+  declares for types of its own are not it, however near they sit. The escape that keeps a
+  definition in the caller's own file reachable is for a module the graph could not name -- OCaml's
+  and julia's -- not for a language where every definition carries the type it belongs to. ripgrep's
+  ambiguous calls fall from 1982 to 1596 and serde's from 1071 to 951, at the cost of two edges.
 - A C or C++ file reaches a declaration through the headers it includes, and nothing else.
   nlohmann keeps its sources under `include/` and an amalgamated copy under `single_include/`, so
   every macro and method is declared several times; a caller under `include/` includes only the

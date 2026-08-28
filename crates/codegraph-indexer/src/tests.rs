@@ -17093,3 +17093,56 @@ fn a_c_file_reaches_a_declaration_through_the_headers_it_includes() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_constructor_of_another_type_in_the_same_file_is_not_the_answer() {
+    // `SearcherBuilder::new()` names the type outright, so the three `new`
+    // that ripgrep's JSON printer declares for types of its own are not it,
+    // however near they sit. The escape that keeps a definition in the
+    // caller's own file reachable is for a module the graph could not name
+    // -- OCaml's and julia's -- not for a language where every definition
+    // carries the type it belongs to.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub mod printer;\npub mod searcher;\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/searcher.rs"),
+        // `SearcherBuilder` is a type the project declares and whose `new`
+        // the graph never sees -- ripgrep derives it. The name is known;
+        // the constructor is not.
+        "pub struct Searcher;\n\nimpl Searcher {\n    pub fn run(&self) -> u32 {\n        1\n    }\n}\n\npub struct SearcherBuilder;\n\nimpl SearcherBuilder {\n    pub fn build(&self) -> Searcher {\n        Searcher\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/printer.rs"),
+        "pub struct JsonSink;\n\nimpl JsonSink {\n    pub fn new() -> JsonSink {\n        JsonSink\n    }\n}\n\npub struct JsonBuilder;\n\nimpl JsonBuilder {\n    pub fn new() -> JsonBuilder {\n        JsonBuilder\n    }\n}\n\npub fn build() -> u32 {\n    let searcher = SearcherBuilder::new();\n    searcher.run()\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str)
+                    == Some("SearcherBuilder::new")
+        })
+        .expect("the call is recorded");
+    assert_ne!(
+        call.metadata.get("resolution").map(String::as_str),
+        Some("ambiguous"),
+        "neither `JsonSink::new` nor `JsonBuilder::new` is what the call names"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

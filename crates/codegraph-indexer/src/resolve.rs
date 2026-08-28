@@ -3122,16 +3122,21 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                             .is_some_and(|declared| reachable.contains(declared))
                     })
                     .collect::<Vec<_>>();
-                // A definition the caller's own file writes is reachable
-                // whatever module path the call spells: dune's
+                // A module written inside the caller's file is reachable
+                // whatever the graph managed to name it: dune's
                 // memo_tests_env.ml declares a `module Memo` of its own,
-                // and `Memo.of_thunk` there is that one.
-                let in_file = targets.iter().copied().any(|target| {
-                    graph_node(&context.graph, target)
-                        .and_then(|node| node.span.as_ref())
-                        .map(|span| span.path.as_str())
-                        == caller_path
-                });
+                // and `Memo.of_thunk` there is that one. Only OCaml and
+                // julia need the escape -- everywhere else a definition
+                // carries the type it belongs to, so a `new` of another
+                // type in the same file is not what `SearcherBuilder::new`
+                // means, and ripgrep's printer declares three of those.
+                let in_file = matches!(call.language.as_str(), "ocaml" | "julia")
+                    && targets.iter().copied().any(|target| {
+                        graph_node(&context.graph, target)
+                            .and_then(|node| node.span.as_ref())
+                            .map(|span| span.path.as_str())
+                            == caller_path
+                    });
                 if !inherited.is_empty() {
                     basis = "owner_type";
                     targets = inherited;
