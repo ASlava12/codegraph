@@ -3186,9 +3186,14 @@ pub(crate) fn add_rationale_risk_comment_insights(graph: &CodeGraph, insights: &
         // jemalloc's FIXMEs and dune carries opam's, and reading them as
         // loudly as a project's own buries the ones somebody here can act
         // on. A note in a fixture or a test is about that test — 44 of the
-        // corpus's 207 — and the same reasoning applies.
-        let elsewhere = path
-            .is_some_and(|path| is_vendored_source_path(path) || is_test_like_source_path(path));
+        // corpus's 207 — and one in a build script is about the build:
+        // terraform's `scripts/goimportscheck.sh` says a Bash 4 feature is
+        // missing on macOS, which is a fact about the script.
+        let elsewhere = path.is_some_and(|path| {
+            is_vendored_source_path(path)
+                || is_test_like_source_path(path)
+                || is_repository_tooling_source_path(path)
+        });
         let severity = match kind {
             "security" if !elsewhere => InsightSeverity::Error,
             "security" => InsightSeverity::Warning,

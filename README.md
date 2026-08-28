@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A note left in a build script is about the build. terraform's `scripts/goimportscheck.sh` says a
+  Bash 4 feature is missing on macOS and swift-argument-parser's `Tools/generate-manual/` carries
+  three of its own; reading them as loudly as a note in the program buries the ones somebody can
+  act on, the same reasoning that already quiets vendored code and tests. Eight findings across the
+  corpus become notes.
 - PHP keeps the receiver in a field of its own too, and states its types where the class is
   written: `public function handle(LogRecord $record)`, `private FormatterInterface $formatter`,
   `$handler = new StreamHandler(..)`. monolog declares nine `handle` and 170 calls chose between
