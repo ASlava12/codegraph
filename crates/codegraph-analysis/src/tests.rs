@@ -15235,3 +15235,70 @@ fn impact_on_a_directory_counts_what_the_files_under_it_hold() {
         "a package's own definition is not a dependent of it"
     );
 }
+
+#[test]
+fn a_package_answers_by_the_name_calls_write_it_with() {
+    // `addrs.NewDefaultProvider` is the most-called name in terraform, and
+    // `internal/addrs` is what it names -- a go package is a directory and
+    // is written by its last segment. A fixture of the same name is not
+    // what the question means: terraform keeps a `tfdiags.go` and a
+    // `tfdiags` directory under `tools/defect-detector/testdata`.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(codegraph_core::SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    let directory = graph.add_node(NodeKind::Directory, "internal/tfdiags");
+    let fixture_dir = graph.add_node(
+        NodeKind::Directory,
+        "tools/defect-detector/testdata/internal/tfdiags",
+    );
+    let file = graph.add_node(NodeKind::File, "internal/tfdiags/diagnostics.go");
+    let fixture = graph.add_node(
+        NodeKind::File,
+        "tools/defect-detector/testdata/internal/tfdiags/tfdiags.go",
+    );
+    let other = graph.add_node(NodeKind::File, "internal/backend/local.go");
+    let has_errors = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "HasErrors",
+        span("internal/tfdiags/diagnostics.go"),
+        BTreeMap::from([("language".to_string(), "go".to_string())]),
+    );
+    let caller = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "Backend",
+        span("internal/backend/local.go"),
+        BTreeMap::from([("language".to_string(), "go".to_string())]),
+    );
+    for (parent, child) in [
+        (graph.root, directory),
+        (graph.root, fixture_dir),
+        (graph.root, file),
+        (graph.root, fixture),
+        (graph.root, other),
+        (file, has_errors),
+        (other, caller),
+    ] {
+        graph.add_edge(parent, child, EdgeKind::Contains, Confidence::Exact);
+    }
+    graph.add_edge(caller, has_errors, EdgeKind::Calls, Confidence::Syntactic);
+
+    let report = impact(
+        &graph,
+        ImpactRequest {
+            target: "tfdiags".to_string(),
+            max_depth: 8,
+            limit: 100,
+        },
+    )
+    .expect("impact report");
+
+    assert_eq!(report.target.label, "internal/tfdiags");
+    assert_eq!(report.total_dependents, 1);
+}

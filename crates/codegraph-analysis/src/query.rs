@@ -4128,12 +4128,34 @@ pub(crate) fn resolve_node_reference(graph: &CodeGraph, value: &str) -> Option<N
         .or_else(|| {
             let mut matches = graph.nodes.iter().filter(|node| {
                 node.kind == NodeKind::File
+                    // A fixture is not what the name means: terraform keeps
+                    // a `tfdiags.go` under `tools/defect-detector/testdata`
+                    // and the package `internal/tfdiags` is what a reader
+                    // asking about `tfdiags` wants.
+                    && !is_test_like_source_path(&node.label)
                     && node
                         .label
                         .rsplit('/')
                         .next()
                         .and_then(|file| file.split_once('.'))
                         .is_some_and(|(stem, _)| stem == value)
+            });
+            let first = matches.next()?;
+            matches.next().is_none().then_some(first)
+        })
+        // A go package is a directory and is written by its last segment:
+        // `addrs.NewDefaultProvider` is the most-called name in terraform,
+        // and `internal/addrs` is what it names. Only an unambiguous
+        // segment counts, and a file answers first.
+        .or_else(|| {
+            let mut matches = graph.nodes.iter().filter(|node| {
+                node.kind == NodeKind::Directory
+                    && !is_test_like_source_path(&node.label)
+                    && node
+                        .label
+                        .rsplit('/')
+                        .next()
+                        .is_some_and(|name| name == value)
             });
             let first = matches.next()?;
             matches.next().is_none().then_some(first)
