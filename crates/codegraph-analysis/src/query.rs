@@ -4153,7 +4153,10 @@ pub(crate) fn resolve_node_reference(graph: &CodeGraph, value: &str) -> Option<N
                         .rsplit('/')
                         .next()
                         .and_then(|file| file.split_once('.'))
-                        .is_some_and(|(stem, _)| stem == value)
+                        // Zig binds `const server = @import("Server.zig")`
+                        // and writes `server.` at every call: the name a
+                        // reader asks with is the one the code writes.
+                        .is_some_and(|(stem, _)| stem.eq_ignore_ascii_case(value))
             });
             let first = matches.next()?;
             matches.next().is_none().then_some(first)

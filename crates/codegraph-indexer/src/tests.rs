@@ -17279,3 +17279,41 @@ fn a_file_carries_the_name_its_importers_call_it_by() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_files_own_name_is_not_a_module_name() {
+    // Zig writes `@import("Server.zig")`, which calls the file by the name
+    // its label already carries. Recording that as the module name says
+    // nothing new; a dotted module path does.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("build.zig"),
+        "pub fn build(b: *Builder) void {}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/Server.zig"),
+        "pub fn run() u32 {\n    return 1;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main.zig"),
+        "const server = @import(\"Server.zig\");\n\npub fn main() void {\n    _ = server.run();\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let file = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::File && node.label == "src/Server.zig")
+        .expect("the file is scanned");
+    assert_eq!(
+        file.metadata.get("module_name"),
+        None,
+        "the import names the file by its own filename"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

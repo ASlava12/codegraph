@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Zig binds `const server = @import("Server.zig")` and writes `server.` at every call, so the name
+  a reader asks with differs from the file's only in case; an unambiguous stem now answers either
+  way, and `server` reaches `src/Server.zig` with 243 dependents. The same import names the file by
+  the name its label already carries, which is not a module name and is no longer recorded as one.
 - A lua file is a module and so is a python one, and neither states its own name: `require
   "kong.tools.table"` and `import oscar.core.loading` do. A file now carries the name its importers
   call it by -- the one most of them write, when they disagree -- so `kong.tools.table` reaches the

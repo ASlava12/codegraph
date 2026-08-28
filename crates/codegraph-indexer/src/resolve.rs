@@ -2353,6 +2353,14 @@ pub(crate) fn name_files_by_their_imports(context: &mut IndexContext) {
         {
             continue;
         }
+        // Zig writes `@import("Server.zig")`, which names the file by the
+        // name the label already carries. That is not a module name.
+        if graph_node(&context.graph, edge.target)
+            .map(|node| node.label.rsplit('/').next().unwrap_or(&node.label))
+            .is_some_and(|basename| basename == target)
+        {
+            continue;
+        }
         *named
             .entry(edge.target)
             .or_default()
