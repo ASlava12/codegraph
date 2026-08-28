@@ -236,6 +236,13 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- `module ShellCheck.Analytics where` states the name every import and every qualified call writes,
+  and nothing recorded it -- nor did any of shellcheck's 5985 functions know which module it was in.
+  Both are read now: its ambiguous calls fall from 308 to 11, and asking about the module answers
+  with 714 dependents instead of nothing.
+- A module that *is* the file holds everything the file declares, which a module written inside a
+  file cannot claim. A Haskell type carries no owner, and shellcheck's `Analytics` is reached
+  through its types as much as through its functions.
 - An OCaml file is a module, and nothing in the graph said so: only `module X = struct` was read,
   and that produced no label either, so dune had no OCaml module node at all and `Path` answered as
   something in dune-rpc. A file now declares the module it is -- `path.ml` is `Path` -- and a module

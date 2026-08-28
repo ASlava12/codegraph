@@ -1606,6 +1606,10 @@ pub(crate) fn classify_node(
             }
             "data_type" | "newtype" | "type_synonym" | "class" => ParsedItemKind::Type,
             "import" => ParsedItemKind::Import,
+            // `module ShellCheck.Analytics where` states the name every
+            // import and every qualified call writes, and nothing recorded
+            // it: asking about `ShellCheck.Analytics` found nothing at all.
+            "header" => ParsedItemKind::Module,
             _ => return None,
         },
         Language::OCaml => match kind {
@@ -1747,6 +1751,20 @@ pub(crate) fn classify_node(
         && let Some(base) = base_type_label(language, node, source)
     {
         metadata.insert("extends".to_string(), base);
+    }
+    // Some modules are the file: OCaml names one after the file itself,
+    // Haskell states it in the header and Erlang in an attribute at the
+    // top. What such a module holds is what the file declares, which a
+    // module written *inside* a file cannot claim.
+    if item_kind == ParsedItemKind::Module
+        && matches!(
+            (language, node.kind()),
+            (Language::OCaml, "compilation_unit")
+                | (Language::Haskell, "header")
+                | (Language::Erlang, "module_attribute")
+        )
+    {
+        metadata.insert("module_scope".to_string(), "file".to_string());
     }
     // `local pl_path = require "pl.path"` is the only place a Lua file says
     // what `pl_path.exists(...)` means. Without the name the binding gives
@@ -2224,6 +2242,25 @@ fn file_module_name(path: &str) -> Option<String> {
     Some(std::iter::once(first).chain(characters).collect())
 }
 
+/// The module a Haskell file declares. `module ShellCheck.Analytics
+/// where` sits at the top and encloses nothing, so a walk up the tree
+/// never reaches it.
+fn haskell_module_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut root = node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    let mut cursor = root.walk();
+    let header = root
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "header")?;
+    header
+        .child_by_field_name("module")
+        .and_then(|module| node_text(module, source))
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+}
+
 /// The module an Erlang file declares. `-module(cowboy_req).` sits at the
 /// top and encloses nothing, so a walk up the tree never reaches it.
 fn erlang_module_name(node: Node<'_>, source: &[u8]) -> Option<String> {
@@ -2479,6 +2516,14 @@ pub(crate) fn enclosing_type_label(
     // so every name two files shared was a choice the graph could not make.
     if language == Language::OCaml {
         return file_module_name(path);
+    }
+
+    // A Haskell function belongs to the module its file declares, stated
+    // once in the header -- `module ShellCheck.Analytics where` -- which
+    // encloses nothing. shellcheck writes 5985 functions and not one knew
+    // its module.
+    if language == Language::Haskell {
+        return haskell_module_name(node, source);
     }
 
     // An Erlang function belongs to the module the file declares, which is
@@ -4837,6 +4882,16 @@ pub(crate) fn item_label(
 
     if language == Language::Nix && kind == ParsedItemKind::Type {
         return nix_option_path(node, source);
+    }
+
+    // A Haskell file states its module in the header: `module
+    // ShellCheck.Analytics where`.
+    if language == Language::Haskell && kind == ParsedItemKind::Module {
+        return node
+            .child_by_field_name("module")
+            .and_then(|module| node_text(module, source))
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty());
     }
 
     // OCaml states a module's name in a `module_binding` under the

@@ -712,10 +712,19 @@ pub(crate) fn impact_with_insights_mode(
     if target_node.kind == NodeKind::Module
         && let Some(module_path) = target_node.span.as_ref().map(|span| span.path.as_str())
     {
+        // A module that *is* the file holds everything the file declares:
+        // a Haskell module's types carry no owner, and shellcheck's
+        // `ShellCheck.Analytics` is reached through those as much as
+        // through its functions. A module written inside a file can claim
+        // only what names it.
+        let whole_file =
+            target_node.metadata.get("module_scope").map(String::as_str) == Some("file");
         for node in &graph.nodes {
             if node.id == target_id
-                || node.metadata.get("owner_type").map(String::as_str) != Some(&target_node.label)
                 || node.span.as_ref().map(|span| span.path.as_str()) != Some(module_path)
+                || (!whole_file
+                    && node.metadata.get("owner_type").map(String::as_str)
+                        != Some(&target_node.label))
             {
                 continue;
             }

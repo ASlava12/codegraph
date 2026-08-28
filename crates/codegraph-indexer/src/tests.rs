@@ -17192,3 +17192,56 @@ fn an_ocaml_file_is_a_module_and_says_so() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_haskell_file_states_the_module_its_definitions_belong_to() {
+    // `module ShellCheck.Analytics where` states the name every import and
+    // every qualified call writes, and nothing recorded it: asking about
+    // the module found nothing, and none of shellcheck's 5985 functions
+    // knew which module it was in.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src/ShellCheck")).unwrap();
+    fs::write(
+        root.join("shellcheck.cabal"),
+        "name: shellcheck\nversion: 0.1.0\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/ShellCheck/Analytics.hs"),
+        "module ShellCheck.Analytics where\n\ndata Severity = Warning | Error\n\nchecker :: Int -> Int\nchecker n = n + 1\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/ShellCheck/Analyzer.hs"),
+        "module ShellCheck.Analyzer where\n\nimport ShellCheck.Analytics\n\nrun :: Int -> Int\nrun n = checker n\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let module = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Module && node.label == "ShellCheck.Analytics")
+        .expect("the header declares the module");
+    assert_eq!(
+        module.span.as_ref().map(|span| span.path.as_str()),
+        Some("src/ShellCheck/Analytics.hs")
+    );
+    // The module is the file, so what the file declares is what it holds.
+    assert_eq!(
+        module.metadata.get("module_scope").map(String::as_str),
+        Some("file")
+    );
+    let checker = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Function && node.label == "checker")
+        .expect("the function is recorded");
+    assert_eq!(
+        checker.metadata.get("owner_type").map(String::as_str),
+        Some("ShellCheck.Analytics"),
+        "a definition belongs to the module its file declares"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
