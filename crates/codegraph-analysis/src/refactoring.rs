@@ -670,6 +670,26 @@ pub(crate) fn impact_with_insights_mode(
 
     let mut visited = BTreeSet::from([target_id]);
     let mut queue = VecDeque::from([(target_id, 0usize)]);
+    // Changing a module means changing what it declares. Nothing points at
+    // an OCaml module node -- a call reaches the function, not the module
+    // around it -- so asking what depends on `Path` answered nothing at all
+    // while hundreds of files used what path.ml holds. The members seed the
+    // walk without being dependents of themselves.
+    if target_node.kind == NodeKind::Module
+        && let Some(module_path) = target_node.span.as_ref().map(|span| span.path.as_str())
+    {
+        for node in &graph.nodes {
+            if node.id == target_id
+                || node.metadata.get("owner_type").map(String::as_str) != Some(&target_node.label)
+                || node.span.as_ref().map(|span| span.path.as_str()) != Some(module_path)
+            {
+                continue;
+            }
+            if visited.insert(node.id) {
+                queue.push_back((node.id, 0));
+            }
+        }
+    }
     let mut reached: Vec<(NodeId, usize)> = Vec::new();
     let mut truncated = false;
     while let Some((node_id, depth)) = queue.pop_front() {

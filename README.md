@@ -236,6 +236,14 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- An OCaml file is a module, and nothing in the graph said so: only `module X = struct` was read,
+  and that produced no label either, so dune had no OCaml module node at all and `Path` answered as
+  something in dune-rpc. A file now declares the module it is -- `path.ml` is `Path` -- and a module
+  written inside a file gets its name from the binding. dune gains 5737 module nodes.
+- Changing a module means changing what it declares. A call reaches the function, not the module
+  around it, so `impact Path` had nothing to report while 2725 things used what path.ml holds; a
+  module's own definitions now seed the walk without counting as dependents of themselves. The same
+  answers which of twenty-two modules named `Path` the question means.
 - `SearcherBuilder::new()` names the type outright, so the three `new` that ripgrep's JSON printer
   declares for types of its own are not it, however near they sit. The escape that keeps a
   definition in the caller's own file reachable is for a module the graph could not name -- OCaml's

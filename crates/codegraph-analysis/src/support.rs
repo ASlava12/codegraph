@@ -155,6 +155,45 @@ pub(crate) fn best_labelled_node<'a>(graph: &'a CodeGraph, label: &str) -> Optio
             *dependents.entry(edge.target).or_default() += 1;
         }
     }
+    // A module is reached through what it holds: nothing points at `Path`
+    // itself, and hundreds of things point at the functions path.ml
+    // declares. Without counting those, dune's twenty-two modules named
+    // `Path` tie at zero and the shallowest path wins -- a nested module
+    // in `bin/arg.ml` rather than stdune's.
+    let mut member_dependents: BTreeMap<NodeId, usize> = BTreeMap::new();
+    if graph
+        .nodes
+        .iter()
+        .any(|node| node.label == label && node.kind == NodeKind::Module)
+    {
+        let mut direct: BTreeMap<NodeId, usize> = BTreeMap::new();
+        for edge in &graph.edges {
+            if edge.kind != EdgeKind::Contains {
+                *direct.entry(edge.target).or_default() += 1;
+            }
+        }
+        for module in graph
+            .nodes
+            .iter()
+            .filter(|node| node.label == label && node.kind == NodeKind::Module)
+        {
+            let Some(path) = module.span.as_ref().map(|span| span.path.as_str()) else {
+                continue;
+            };
+            let total = graph
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.metadata
+                        .get("owner_type")
+                        .is_some_and(|owner| owner == label)
+                        && node.span.as_ref().is_some_and(|span| span.path == path)
+                })
+                .map(|node| direct.get(&node.id).copied().unwrap_or(0))
+                .sum();
+            member_dependents.insert(module.id, total);
+        }
+    }
     graph
         .nodes
         .iter()
@@ -166,7 +205,10 @@ pub(crate) fn best_labelled_node<'a>(graph: &'a CodeGraph, label: &str) -> Optio
                 u8::from(path.is_some_and(is_test_like_source_path)),
                 u8::from(!declared_ids.contains(&node.id)),
                 u8::from(!entrypoint_ids.contains(&node.id)),
-                std::cmp::Reverse(dependents.get(&node.id).copied().unwrap_or(0)),
+                std::cmp::Reverse(
+                    dependents.get(&node.id).copied().unwrap_or(0)
+                        + member_dependents.get(&node.id).copied().unwrap_or(0),
+                ),
                 path.map_or(usize::MAX, |path| path.matches('/').count()),
                 node.id,
             )

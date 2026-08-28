@@ -15095,3 +15095,77 @@ fn one_undeclared_package_is_one_finding() {
     );
     assert_eq!(undeclared[0].edges.len(), 4, "every site stays as evidence");
 }
+
+#[test]
+fn impact_on_a_module_counts_what_the_module_holds() {
+    // Changing a module means changing what it declares. Nothing points at
+    // an OCaml module node -- a call reaches the function, not the module
+    // around it -- so asking what depends on `Path` answered nothing while
+    // hundreds of files used what path.ml holds.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(codegraph_core::SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    let file = graph.add_node(NodeKind::File, "src/path.ml");
+    let module = graph.add_node_with_metadata(
+        NodeKind::Module,
+        "Path",
+        span("src/path.ml"),
+        BTreeMap::from([("language".to_string(), "ocaml".to_string())]),
+    );
+    let build = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "build",
+        span("src/path.ml"),
+        BTreeMap::from([
+            ("language".to_string(), "ocaml".to_string()),
+            ("owner_type".to_string(), "Path".to_string()),
+        ]),
+    );
+    let caller = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "run",
+        span("src/user.ml"),
+        BTreeMap::from([("language".to_string(), "ocaml".to_string())]),
+    );
+    graph.add_edge(graph.root, file, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(file, module, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(file, build, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(caller, build, EdgeKind::Calls, Confidence::Syntactic);
+
+    let report = impact(
+        &graph,
+        ImpactRequest {
+            target: "Path".to_string(),
+            max_depth: 8,
+            limit: 100,
+        },
+    )
+    .expect("impact report");
+
+    assert_eq!(report.target.label, "Path");
+    assert_eq!(
+        report.total_dependents, 1,
+        "what calls the module's function depends on the module"
+    );
+    assert!(
+        report
+            .dependents
+            .iter()
+            .any(|entry| entry.node.label == "run"),
+        "the caller is the dependent, and the member it called is not"
+    );
+    assert!(
+        !report
+            .dependents
+            .iter()
+            .any(|entry| entry.node.label == "build"),
+        "a module's own definition is not a dependent of it"
+    );
+}

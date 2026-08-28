@@ -17146,3 +17146,49 @@ fn a_constructor_of_another_type_in_the_same_file_is_not_the_answer() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn an_ocaml_file_is_a_module_and_says_so() {
+    // A file is a module, and that is how every call written through it
+    // spells the name: `build` in path.ml is `Path.build`. Only `module X =
+    // struct` was read, and that yielded no label either, so dune had no
+    // OCaml module node at all and `Path` answered as something in
+    // dune-rpc.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("dune-project"), "(lang dune 3.0)\n").unwrap();
+    fs::write(
+        root.join("src/path.ml"),
+        "let build parts = parts\n\nmodule Local = struct\n  let relative a b = (a, b)\nend\n",
+    )
+    .unwrap();
+    fs::write(root.join("src/path.mli"), "val build : 'a -> 'a\n").unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let modules: Vec<(&str, &str)> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Module)
+        .filter_map(|node| {
+            node.span
+                .as_ref()
+                .map(|span| (node.label.as_str(), span.path.as_str()))
+        })
+        .collect();
+    assert!(
+        modules.contains(&("Path", "src/path.ml")),
+        "the file is a module named after it: {modules:?}"
+    );
+    assert!(
+        modules.contains(&("Local", "src/path.ml")),
+        "a module written inside the file is one too: {modules:?}"
+    );
+    // The interface beside it is the same module, not a second one.
+    assert_eq!(
+        modules.iter().filter(|(label, _)| *label == "Path").count(),
+        1,
+        "{modules:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

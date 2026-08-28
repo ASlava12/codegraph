@@ -1615,6 +1615,12 @@ pub(crate) fn classify_node(
             "type_binding" => ParsedItemKind::Type,
             "module_definition" => ParsedItemKind::Module,
             "open_module" | "include_module" => ParsedItemKind::Import,
+            // A file is a module, and that is how every call written
+            // through it spells the name: `build` in path.ml is
+            // `Path.build`. Only `module X = struct` was read, and it
+            // yielded no label either, so dune had no module node at all
+            // and `Path` answered as a type in dune-rpc.
+            "compilation_unit" if path.ends_with(".ml") => ParsedItemKind::Module,
             _ => return None,
         },
         Language::Erlang => match kind {
@@ -1729,7 +1735,7 @@ pub(crate) fn classify_node(
         },
     };
 
-    let label = item_label(language, item_kind, node, source)?;
+    let label = item_label(language, item_kind, node, source, path)?;
     let item_kind = if item_kind == ParsedItemKind::Function && is_entrypoint(language, &label) {
         ParsedItemKind::Entrypoint
     } else {
@@ -4767,6 +4773,7 @@ pub(crate) fn item_label(
     kind: ParsedItemKind,
     node: Node<'_>,
     source: &[u8],
+    path: &str,
 ) -> Option<String> {
     // A function expression takes the name it is bound to, or the one it
     // was given.
@@ -4830,6 +4837,20 @@ pub(crate) fn item_label(
 
     if language == Language::Nix && kind == ParsedItemKind::Type {
         return nix_option_path(node, source);
+    }
+
+    // OCaml states a module's name in a `module_binding` under the
+    // definition, and the file itself is a module named after it.
+    if language == Language::OCaml && kind == ParsedItemKind::Module {
+        if node.kind() == "compilation_unit" {
+            return file_module_name(path);
+        }
+        let mut cursor = node.walk();
+        return node
+            .named_children(&mut cursor)
+            .find(|child| child.kind() == "module_binding")
+            .and_then(|binding| child_kind_text(binding, "module_name", source))
+            .filter(|name| !name.trim().is_empty());
     }
 
     // `import {Ownable} from "../access/Ownable.sol";` names a file; the
