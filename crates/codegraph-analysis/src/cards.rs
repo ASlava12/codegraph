@@ -722,7 +722,25 @@ pub(crate) fn query_trace_with(
         .map(|value| parse_limit(value).map(|value| value.clamp(1, 8)))
         .transpose()?
         .unwrap_or(2);
-    let start = if let Some(id) = spec.terms.get("id").or_else(|| spec.terms.get("node_id")) {
+    // The durable handle a card or a suggested command hands back. Every
+    // other query kind takes it; a trace asked for `label:` or a number and
+    // said "invalid node id" to the one the answer before it offered.
+    let start = if let Some(stable_id) = spec.terms.get("stable_id") {
+        TraceStart::NodeId(
+            graph
+                .nodes
+                .iter()
+                .find(|node| {
+                    node.metadata
+                        .get("stable_id")
+                        .is_some_and(|candidate| candidate == stable_id)
+                })
+                .map(|node| node.id)
+                .ok_or_else(|| {
+                    QueryError::new(format!("trace start `{stable_id}` did not match a node"))
+                })?,
+        )
+    } else if let Some(id) = spec.terms.get("id").or_else(|| spec.terms.get("node_id")) {
         TraceStart::NodeId(parse_node_id(id)?)
     } else if let Some(label) = spec
         .terms
@@ -733,7 +751,7 @@ pub(crate) fn query_trace_with(
         TraceStart::Label(label.clone())
     } else {
         return Err(QueryError::new(
-            "trace query requires `label:<value>`, `id:<node-id>`, or a positional label",
+            "trace query requires `label:<value>`, `stable_id:<cg-id>`, `id:<node-id>`, or a positional label",
         ));
     };
 

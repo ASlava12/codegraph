@@ -31,6 +31,7 @@ codegraph query 'edges kind:calls source:main' /repo --compact --no-cache
 codegraph query 'calls(function:main)' /repo --compact --no-cache
 codegraph query 'trace label:main depth:3' /repo --compact --no-cache
 codegraph query 'dependents label:load_config depth:3' /repo --compact --no-cache
+codegraph query 'dependents stable_id:cg-247915e1e8c9f999 depth:3' /repo --compact --no-cache
 codegraph query 'path from:main to:load_config depth:6' /repo --compact --no-cache
 codegraph query 'configs target:DATABASE_URL depth:6' /repo --compact --no-cache
 codegraph query 'routes method:GET path:/health depth:3 edge_limit:100' /repo --compact --no-cache
@@ -40,7 +41,11 @@ codegraph query 'unreachable kind:function label:legacy_worker' /repo --compact 
 codegraph query 'insights severity:error kind:dependency' /repo --compact --no-cache
 ```
 
-If a label resolves to several nodes, use the returned id in subsequent calls. Keep heuristic edges visible in the answer and verify important claims against source.
+If a label resolves to several nodes, use the returned id in subsequent calls. Prefer the durable
+`cg-*` id over the numeric one: every query kind takes a `stable_id:<cg-id>` term and every
+command takes `cg-*` where it takes a node, and the numeric id is only that node's position in
+one scan, so it moves when a file above it changes. Keep heuristic edges visible in the answer
+and verify important claims against source.
 
 ## Cache and writes
 

@@ -3651,6 +3651,45 @@ fn seams_rank_safe_and_needed_boundaries() {
 }
 
 #[test]
+fn a_trace_starts_from_the_durable_handle_too() {
+    // Every other query kind takes `stable_id:`. A trace asked for a label
+    // or a number and answered "invalid node id" to the very handle the
+    // card before it had offered.
+    let mut graph = CodeGraph::new("repo");
+    let caller = graph.add_node(NodeKind::Function, "handler");
+    let target = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "load_config",
+        None,
+        BTreeMap::from([("stable_id".to_string(), "cg-target".to_string())]),
+    );
+    graph.add_edge(caller, target, EdgeKind::Calls, Confidence::Syntactic);
+
+    let by_durable =
+        query_graph(&graph, "dependents stable_id:cg-target depth:2").expect("durable");
+    let by_number =
+        query_graph(&graph, &format!("dependents id:{} depth:2", target.0)).expect("numeric");
+    assert_eq!(by_durable.total_nodes, by_number.total_nodes);
+    assert_eq!(by_durable.total_edges, by_number.total_edges);
+    assert!(
+        by_durable.nodes.iter().any(|node| node.id == caller),
+        "the caller is the dependent: {:?}",
+        by_durable
+            .nodes
+            .iter()
+            .map(|n| &n.label)
+            .collect::<Vec<_>>()
+    );
+
+    let missing = query_graph(&graph, "dependents stable_id:cg-nothing depth:2")
+        .expect_err("an unknown handle is an error, not an empty answer");
+    assert!(
+        missing.to_string().contains("cg-nothing"),
+        "and it names what it could not find: {missing}"
+    );
+}
+
+#[test]
 fn a_command_handed_back_names_a_node_by_the_handle_that_survives() {
     // A numeric id is a node's position in one scan: inserting a function
     // above a file's others moved `target` from 9 to 10, and a saved
