@@ -331,6 +331,9 @@ pub(crate) fn scan_project_with_scope(
         let root_id = context.graph.root;
         add_node_metadata(&mut context.graph, root_id, "own_package_ids", own);
     }
+    // A julia function belongs to the module of the file that included
+    // its file, which the include list says and nothing else does.
+    assign_julia_included_modules(&mut context);
     resolve_pending_calls(&mut context);
     resolve_pending_type_references(&mut context);
     resolve_pending_local_imports(&mut context);

@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A julia file is not a module: DataFrames writes `module DataFrames` once and `include`s the rest,
+  so only 98 of its 1387 functions sat inside the block that names them all. The include list is the
+  only thing that says which module an included file's functions belong to, and following it settles
+  them honestly -- its ambiguous calls fall from 2995 to 1697 with 1259 more resolved.
 - A note left in a build script is about the build. terraform's `scripts/goimportscheck.sh` says a
   Bash 4 feature is missing on macOS and swift-argument-parser's `Tools/generate-manual/` carries
   three of its own; reading them as loudly as a note in the program buries the ones somebody can

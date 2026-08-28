@@ -2,7 +2,7 @@
 //! entrypoint targets, compose/Kubernetes/CI references, documents, SQL,
 //! and the function symbol registry.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use codegraph_core::{
@@ -2306,6 +2306,100 @@ fn class_constructor(graph: &CodeGraph, class: NodeId) -> Option<NodeId> {
                 && node.span.as_ref().map(|span| span.path.as_str()) == class_path
         })
         .map(|node| node.id)
+}
+
+/// A julia file is not a module. `module DataFrames` is written once and
+/// `include`s the rest, so the functions in an included file belong to the
+/// module of the file that included it -- DataFrames declares 1289 of them
+/// and only 98 sat inside the `module` block that names them all. Every
+/// name two of its files shared was then a choice the graph could not
+/// make, though multiple dispatch means they are one function.
+pub(crate) fn assign_julia_included_modules(context: &mut IndexContext) {
+    let mut module_of_file: BTreeMap<String, String> = BTreeMap::new();
+    let mut ambiguous: BTreeSet<String> = BTreeSet::new();
+    for node in &context.graph.nodes {
+        if node.kind != NodeKind::Module
+            || node.metadata.get("language").map(String::as_str) != Some("julia")
+        {
+            continue;
+        }
+        let Some(path) = node.span.as_ref().map(|span| span.path.clone()) else {
+            continue;
+        };
+        // A file that writes two modules says nothing about which one an
+        // include belongs to.
+        if module_of_file
+            .insert(path.clone(), node.label.clone())
+            .is_some_and(|existing| existing != node.label)
+        {
+            ambiguous.insert(path);
+        }
+    }
+    for path in &ambiguous {
+        module_of_file.remove(path);
+    }
+
+    let scanned: BTreeSet<&str> = context
+        .graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::File)
+        .map(|node| node.label.as_str())
+        .collect();
+    let mut includes: Vec<(String, String)> = Vec::new();
+    for pending in &context.pending_local_imports {
+        let Some(node) = graph_node(&context.graph, pending.import_node) else {
+            continue;
+        };
+        if node.metadata.get("language").map(String::as_str) != Some("julia") {
+            continue;
+        }
+        let Some(includer) = node.span.as_ref().map(|span| span.path.clone()) else {
+            continue;
+        };
+        for candidate in &pending.candidates {
+            if scanned.contains(candidate.as_str()) {
+                includes.push((includer.clone(), candidate.clone()));
+                break;
+            }
+        }
+    }
+
+    // An include chain is a tree from the file that states the module, and
+    // a file included from two modules is left alone.
+    let mut queue: VecDeque<String> = module_of_file.keys().cloned().collect();
+    let mut settled: BTreeSet<String> = module_of_file.keys().cloned().collect();
+    while let Some(includer) = queue.pop_front() {
+        let Some(module) = module_of_file.get(&includer).cloned() else {
+            continue;
+        };
+        for (from, to) in &includes {
+            if from != &includer || settled.contains(to) {
+                continue;
+            }
+            settled.insert(to.clone());
+            module_of_file.insert(to.clone(), module.clone());
+            queue.push_back(to.clone());
+        }
+    }
+
+    for node in &mut context.graph.nodes {
+        if node.kind != NodeKind::Function
+            || node.metadata.contains_key("owner_type")
+            || node.metadata.get("language").map(String::as_str) != Some("julia")
+        {
+            continue;
+        }
+        let Some(module) = node
+            .span
+            .as_ref()
+            .and_then(|span| module_of_file.get(&span.path))
+        else {
+            continue;
+        };
+        node.metadata
+            .insert("owner_type".to_string(), module.clone());
+    }
 }
 
 pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {

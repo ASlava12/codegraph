@@ -16874,3 +16874,49 @@ fn a_php_receiver_states_which_method_a_call_means() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_julia_function_belongs_to_the_module_that_included_its_file() {
+    // A julia file is not a module: DataFrames writes `module DataFrames`
+    // once and `include`s the rest, so only 98 of its 1387 functions sat
+    // inside the block that names them all. Every name two of its files
+    // shared was then a choice the graph could not make, though multiple
+    // dispatch means they are one function.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src/other")).unwrap();
+    fs::write(
+        root.join("Project.toml"),
+        "name = \"Frames\"\nuuid = \"a93c6f00-0000-0000-0000-000000000000\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/Frames.jl"),
+        "module Frames\n\ninclude(\"other/iteration.jl\")\ninclude(\"other/metadata.jl\")\n\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/other/iteration.jl"),
+        "function nrow(df)\n    return 1\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/other/metadata.jl"),
+        "function nrow(df, cols)\n    return 2\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let owners: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Function && node.label == "nrow")
+        .filter_map(|node| node.metadata.get("owner_type").map(String::as_str))
+        .collect();
+    assert_eq!(
+        owners,
+        vec!["Frames", "Frames"],
+        "an included file's functions belong to the module that included it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
