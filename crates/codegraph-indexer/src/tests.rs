@@ -16970,3 +16970,75 @@ fn a_go_method_comes_from_a_package_the_file_imports() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_module_the_project_declares_answers_only_with_its_own() {
+    // dune's `List.map` is the standard library's: stdune's list.ml
+    // declares plenty but not `map`, and matching on the name alone
+    // offered fifty-nine other modules' `map` instead. A nested path is
+    // read from its head -- `Path.Build.append_source` sits in path.ml --
+    // and a definition the caller's own file writes is reachable whatever
+    // module path the call spells. The question only arises where the name
+    // is shared: one definition and one name is not a choice.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("dune-project"), "(lang dune 3.0)\n").unwrap();
+    fs::write(
+        root.join("src/list.ml"),
+        "let filter_map f t = (f, t)\n\nlet rev t = t\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/other.ml"),
+        "let map f t = (f, t)\n\nlet append_source a b = (a, b)\n",
+    )
+    .unwrap();
+    fs::write(root.join("src/seq.ml"), "let map f t = (f, t)\n").unwrap();
+    fs::write(
+        root.join("src/path.ml"),
+        "let append_source a b = (a, b)\n\nlet relative a b = (a, b)\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/user.ml"),
+        "let run xs = List.map (fun x -> x) xs\n\nlet build a b = Path.Build.append_source a b\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .unwrap_or_else(|| panic!("the call to {label} is recorded"))
+    };
+    assert_ne!(
+        call("List.map")
+            .metadata
+            .get("resolution")
+            .map(String::as_str),
+        Some("resolved"),
+        "the project's `List` has no `map`, so other.ml's is not it"
+    );
+    let nested = call("Path.Build.append_source");
+    assert_eq!(
+        nested.metadata.get("resolution").map(String::as_str),
+        Some("resolved")
+    );
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == nested.target)
+        .expect("the target is a node");
+    assert_eq!(
+        target.span.as_ref().map(|span| span.path.as_str()),
+        Some("src/path.ml"),
+        "the head of the module path says where the definition lives"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

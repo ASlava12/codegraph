@@ -236,6 +236,12 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A module the project declares answers only with what belongs to it. dune's `List.map` is the
+  standard library's -- stdune's list.ml declares plenty but not `map` -- and matching on the name
+  alone offered fifty-nine other modules' `map` instead. A nested path is read from its head, so
+  `Path.Build.append_source` still finds path.ml, a method the named class inherits still answers,
+  and a definition the caller's own file writes is reachable whatever module path the call spells.
+  dune's ambiguous calls fall from 11905 to 4353 with 2090 more resolved.
 - A method on a type from a package the file never imports cannot be the one meant. terraform
   declares `Diagnostics.HasErrors` in `internal/policy` and in `internal/tfdiags`, and every file
   that calls it imports exactly one of the two. Its ambiguous calls fall from 18005 to 13019 with

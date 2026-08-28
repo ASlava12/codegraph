@@ -2407,6 +2407,16 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     // What the scan holds does not change while calls are resolved, so each
     // candidate path is looked for once.
     let mut scanned_candidates: BTreeMap<String, bool> = BTreeMap::new();
+    // Every class, module or container the project declares something in.
+    // A call written through one of these names is answered by what belongs
+    // to it and by nothing else: dune's `List.map` is `Stdlib`'s, however
+    // many other `map` the repository has.
+    let declared_owners: BTreeSet<String> = context
+        .graph
+        .nodes
+        .iter()
+        .filter_map(|node| node.metadata.get("owner_type").cloned())
+        .collect();
     // The files that export something. Only there does "not exported"
     // mean private: a CommonJS file hands its functions out through
     // `module.exports`, which is not an export statement, so nothing in it
@@ -3040,13 +3050,62 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             if !owned.is_empty() {
                 basis = "owner_type";
                 targets = owned;
-            } else if type_node_named(&context.graph, owner).is_some() {
-                // The project declares the class the call names, and none
-                // of these methods is one of its: `Account.new` is not the
-                // `new` action of the twenty-three controllers that have
-                // one. What the call means is the class itself, which the
-                // constructor path below answers.
-                targets.clear();
+            } else {
+                // A method the named class inherits is still reached
+                // through it, so the parents answer before the name does.
+                // `Path.Build.append_source` names a module written inside
+                // path.ml, whose definitions belong to `Path`: the head of
+                // the path answers when the whole of it does not.
+                let mut reachable = ancestor_type_names(&context.graph, owner);
+                // The owner is the last segment of what the call writes, so
+                // a nested module path has to be read from the label: the
+                // definitions of `Path.Build.append_source` sit in path.ml
+                // and belong to `Path`.
+                if let Some((prefix, _)) = call
+                    .label
+                    .rsplit_once("::")
+                    .or_else(|| call.label.rsplit_once('.'))
+                    && let Some((head, _)) = prefix.split_once(['.', ':'])
+                    && !head.is_empty()
+                {
+                    reachable.push(head.to_string());
+                }
+                let inherited = targets
+                    .iter()
+                    .copied()
+                    .filter(|target| {
+                        graph_node(&context.graph, *target)
+                            .and_then(|node| node.metadata.get("owner_type"))
+                            .is_some_and(|declared| reachable.contains(declared))
+                    })
+                    .collect::<Vec<_>>();
+                // A definition the caller's own file writes is reachable
+                // whatever module path the call spells: dune's
+                // memo_tests_env.ml declares a `module Memo` of its own,
+                // and `Memo.of_thunk` there is that one.
+                let in_file = targets.iter().copied().any(|target| {
+                    graph_node(&context.graph, target)
+                        .and_then(|node| node.span.as_ref())
+                        .map(|span| span.path.as_str())
+                        == caller_path
+                });
+                if !inherited.is_empty() {
+                    basis = "owner_type";
+                    targets = inherited;
+                } else if !in_file
+                    && (declared_owners.contains(owner)
+                        || type_node_named(&context.graph, owner).is_some())
+                {
+                    // The project declares the class or module the call
+                    // names, and none of these definitions belongs to it:
+                    // `Account.new` is not the `new` action of the
+                    // twenty-three controllers that have one, and dune's
+                    // `List.map` is not the `map` of fifty-nine other
+                    // modules. What the call means is either the class
+                    // itself, which the constructor path below answers, or
+                    // something outside the project.
+                    targets.clear();
+                }
             }
         }
         let mut ambiguous_candidates_are_types = false;
