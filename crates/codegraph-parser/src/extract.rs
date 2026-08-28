@@ -2127,6 +2127,18 @@ pub(crate) fn classify_node(
     {
         metadata.insert("binds".to_string(), name);
     }
+    // A type declared inside another one is asked the same question a
+    // method is. `object Ior { final case class Right[+B](b: B) }` declares
+    // a `Right` that is not scala's `Either.Right`, and with nothing to say
+    // so, 134 of the 151 references cats makes to its own `Ior.Right` are
+    // written in files about `Either` -- enough to make it and `Ior.Left`
+    // the project's two largest architectural hubs.
+    if item_kind == ParsedItemKind::Type
+        && let Some(owner) = enclosing_type_label(language, node, source, path)
+        && owner != label
+    {
+        metadata.insert("owner_type".to_string(), owner);
+    }
     if matches!(
         item_kind,
         ParsedItemKind::Function | ParsedItemKind::Entrypoint

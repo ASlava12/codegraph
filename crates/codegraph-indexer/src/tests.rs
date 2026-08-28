@@ -6420,6 +6420,56 @@ fn dart_type_references_link_consumers_without_fanout() {
 }
 
 #[test]
+fn a_type_nested_in_another_is_not_what_a_bare_name_elsewhere_means() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src/main/scala")).unwrap();
+    // `Right` here is `Ior.Right`, which is not scala's `Either.Right`.
+    fs::write(
+        root.join("src/main/scala").join("Ior.scala"),
+        "object Ior {\n  final case class Right[+B](b: B)\n}\n\nobject IorOps {\n  def wrap[B](b: B) = Right(b)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main/scala").join("EitherOps.scala"),
+        "object EitherOps {\n  def wrap[B](b: B) = Right(b)\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let nested = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Type && node.label == "Right")
+        .expect("the nested case class is a type");
+    assert_eq!(
+        nested.metadata.get("owner_type").map(String::as_str),
+        Some("Ior"),
+        "a type written inside another one records its owner"
+    );
+
+    let sources = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.target == nested.id
+                && edge.kind == EdgeKind::References
+                && edge.metadata.get("relation").map(String::as_str) == Some("constructor_reference")
+        })
+        .filter_map(|edge| edge.metadata.get("file").cloned())
+        .collect::<Vec<_>>();
+    assert!(
+        sources.iter().any(|file| file.ends_with("Ior.scala")),
+        "the file that declares it still reaches it: {sources:?}"
+    );
+    assert!(
+        !sources.iter().any(|file| file.ends_with("EitherOps.scala")),
+        "a bare `Right` in another file is not `Ior.Right`: {sources:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn stable_ids_survive_unrelated_file_additions() {
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();

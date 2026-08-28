@@ -3290,6 +3290,36 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                         .and_then(|node| node.metadata.get("language"))
                         .is_some_and(|language| language == &call.language)
                 })
+                // A type written inside another one is not what a bare name
+                // in a different file means. `object Ior { case class Right }`
+                // was the only `Right` cats declares, so every `Right(...)`
+                // built for scala's `Either` reached it -- 134 of its 151
+                // references -- and made `Ior.Right` and `Ior.Left` the two
+                // largest hubs in the project. Reaching it by its bare name
+                // takes an import that names it, which the qualified path
+                // below answers instead.
+                .filter(|target| {
+                    let Some(node) = graph_node(&context.graph, *target) else {
+                        return false;
+                    };
+                    if !node.metadata.contains_key("owner_type") {
+                        return true;
+                    }
+                    let same_file = node
+                        .span
+                        .as_ref()
+                        .is_some_and(|span| span.path == call.span.path);
+                    // `import cats.data.Validated.{Valid, Invalid}` binds the
+                    // bare name, and then it does mean the nested type. A
+                    // file whose import list cannot be complete is given the
+                    // benefit of the doubt rather than a wrong answer.
+                    same_file
+                        || context
+                            .file_imported_names
+                            .get(call.span.path.as_str())
+                            .is_some_and(|names| names.contains_key(&call.label))
+                        || context.file_wildcard_imports.contains(&call.span.path)
+                })
                 .collect::<Vec<_>>();
             if type_targets.len() == 1 {
                 // Building a class runs its constructor, and that is where
