@@ -2187,8 +2187,20 @@ pub(crate) fn classify_node(
         }
         // A value a factory built is callable when what it holds is, and a
         // reader should be able to tell it from a function the file spells
-        // out.
-        if node.kind() == "variable_declarator" {
+        // out. A function written as an object's property, or assigned to
+        // one, is bound the same way and read the same way: mastodon's
+        // `{ 'ACCOUNT_FIELD_OVERFLOW': () => import(...) }` is a table the
+        // program indexes by a key it computes, and lint-staged's
+        // `{ '**/*.ts?(x)': () => 'yarn tsc' }` is a glob with a command
+        // behind it. Neither is a name anybody writes a call to.
+        if node.kind() == "variable_declarator"
+            || (matches!(
+                language,
+                Language::JavaScript | Language::TypeScript | Language::Tsx
+            ) && node
+                .parent()
+                .is_some_and(|parent| matches!(parent.kind(), "pair" | "assignment_expression")))
+        {
             metadata.insert("definition_form".to_string(), "value".to_string());
         }
     }

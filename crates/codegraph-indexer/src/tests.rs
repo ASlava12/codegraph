@@ -8557,6 +8557,47 @@ fn a_compiler_macro_and_a_test_runners_globals_are_provided_rather_than_missing(
 }
 
 #[test]
+fn a_function_an_object_holds_is_a_value_the_program_indexes() {
+    // mastodon writes its modals as `{ 'ACCOUNT_NOTE': () => import(..) }`
+    // and picks one by a key it computes, and lint-staged writes
+    // `{ '**/*.ts?(x)': () => 'yarn tsc' }`. Neither key is a name anybody
+    // writes a call to, so "has no incoming call edge" was said about 214 of
+    // mastodon's functions and about a glob.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("package.json"), "{\n  \"name\": \"app\"\n}\n").unwrap();
+    fs::write(
+        root.join("src").join("modals.js"),
+        "const MODALS = {\n  'ACCOUNT_NOTE': () => loadNote(),\n};\n\nexport function open(kind) {\n  return MODALS[kind]();\n}\n\nexport function spelledOut() {\n  return 1;\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let held = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "ACCOUNT_NOTE" && node.kind == NodeKind::Function)
+        .expect("the function the object holds is in the graph");
+    assert_eq!(
+        held.metadata.get("definition_form").map(String::as_str),
+        Some("value"),
+        "a function an object holds is a value"
+    );
+    let spelled = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "spelledOut" && node.kind == NodeKind::Function)
+        .expect("a function the file spells out");
+    assert_eq!(
+        spelled.metadata.get("definition_form"),
+        None,
+        "a function the file spells out is not one"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_value_a_factory_builds_is_a_declaration_other_files_call() {
     // `export const onMounted = createHook(MOUNTED)` is how vue declares
     // most of its public API, and `const buttonVariants = cva(..)` how a
