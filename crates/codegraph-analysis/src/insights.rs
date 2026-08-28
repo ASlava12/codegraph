@@ -5228,6 +5228,32 @@ fn component_is_one_method(nodes_by_id: &BTreeMap<NodeId, &Node>, component: &[N
     label.is_some()
 }
 
+/// Whether these files are one header written in two halves. A
+/// header-only library puts the declarations in `x.h` and the definitions
+/// in `x-inl.h`, and each names the other by definition, the way a Dart
+/// `part` and its library do.
+fn one_header_in_two_halves(files: &BTreeSet<&str>) -> bool {
+    if files.len() < 2 {
+        return false;
+    }
+    let mut stems: BTreeSet<&str> = BTreeSet::new();
+    for path in files {
+        let Some((stem, extension)) = path.rsplit_once('.') else {
+            return false;
+        };
+        if !matches!(extension, "h" | "hpp" | "hh" | "hxx" | "inl" | "ipp") {
+            return false;
+        }
+        let stem = stem
+            .strip_suffix("-inl")
+            .or_else(|| stem.strip_suffix("_inl"))
+            .or_else(|| stem.strip_suffix("-inline"))
+            .unwrap_or(stem);
+        stems.insert(stem);
+    }
+    stems.len() == 1
+}
+
 pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     const MAX_CYCLE_INSIGHTS: usize = 50;
 
@@ -5341,7 +5367,14 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
         // `PolicyBuilder.OrSyntax.cs`, and its methods calling each other is
         // not coupling between parts of the program.
         let one_type = component_is_one_type(&nodes_by_id, &component);
-        let crosses_files = !(one_type || (files.len() == 1 && placed.len() == component.len()));
+        // A header-only library writes one header in two halves: the
+        // declarations in `x.h` and the definitions in `x-inl.h`, which
+        // include each other by design -- the header pulls the
+        // implementation in at the bottom and the implementation names the
+        // header it belongs to. spdlog writes 22 of those pairs.
+        let one_header = one_header_in_two_halves(&files);
+        let crosses_files =
+            !(one_type || one_header || (files.len() == 1 && placed.len() == component.len()));
         // A cycle among vendored files is upstream's shape: redis carries
         // jemalloc's and lua's, and dune carries re's. A cycle among test
         // files is the harness's: kong's `spec/helpers/perf.lua` and the

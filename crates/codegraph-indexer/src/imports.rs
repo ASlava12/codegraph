@@ -780,6 +780,21 @@ pub(crate) fn dedup_preserving_order(values: &mut Vec<String>) {
     values.retain(|value| seen.insert(value.clone()));
 }
 
+/// The header an `#include <a/b.h>` names. A bracketed include is
+/// searched for on the compiler's path rather than beside the file, which
+/// says nothing about whether the repository ships it -- nlohmann writes
+/// `<nlohmann/detail/macro_scope.hpp>` for a file of its own.
+///
+/// Only a header written as a path is read this way. `<algorithm>` and
+/// `<stdio.h>` name the toolchain's, and a repository that happens to hold
+/// a file by that name is not what the compiler would find.
+fn angle_bracket_value(import_label: &str) -> Option<String> {
+    let (_, rest) = import_label.split_once('<')?;
+    let (value, _) = rest.split_once('>')?;
+    let value = value.trim();
+    (!value.is_empty() && value.contains('/')).then(|| value.to_string())
+}
+
 pub(crate) fn c_local_import_target(
     source_label: &str,
     import_label: &str,
@@ -884,8 +899,26 @@ pub(crate) fn is_c_system_header(header: &str) -> bool {
 /// is still worth resolving -- quietly, because a miss is the toolchain's
 /// copy rather than a file the project failed to ship.
 fn c_system_header_target(source_label: &str, import_label: &str) -> Option<LocalImportTarget> {
-    let header = first_quoted_value(import_label).filter(|header| is_c_system_header(header))?;
+    let header = first_quoted_value(import_label)
+        .filter(|header| is_c_system_header(header))
+        // `#include <nlohmann/detail/macro_scope.hpp>` names a file this
+        // repository ships: the build puts `include/` on the compiler's
+        // path, and the brackets say only that the header is searched for
+        // there rather than beside the file. nlohmann and spdlog write
+        // every one of their own includes that way, so no header of either
+        // reached another. It stays a *possible* local import: `<fmt/format.h>`
+        // is written the same way and belongs to a library.
+        .or_else(|| angle_bracket_value(import_label))?;
     let mut candidates = vec![join_path(path_dir(source_label).as_deref(), &header)];
+    // A build gives the compiler its own directories with `-I`, and walking
+    // out through the directories the file sits in finds them without
+    // knowing which flags the build passes.
+    let mut directory = path_dir(source_label);
+    while let Some(current) = directory {
+        let parent = path_dir(&current);
+        candidates.push(join_path(parent.as_deref(), &header));
+        directory = parent;
+    }
     candidates.push(header.clone());
     dedup_preserving_order(&mut candidates);
     Some(LocalImportTarget {

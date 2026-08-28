@@ -2417,6 +2417,49 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         .iter()
         .filter_map(|node| node.metadata.get("owner_type").cloned())
         .collect();
+    // What each file includes, for the languages where a header is how a
+    // file reaches a declaration. nlohmann keeps three copies of its
+    // library -- the sources, the amalgamated `single_include`, and an ABI
+    // fixture -- so every macro and every method is declared several times
+    // and only the include says which copy a caller means.
+    let mut included = included_files(&context.graph);
+    // A header that the walk had not reached yet when the including file
+    // was read is still on the pending list rather than in the graph, and
+    // calls resolve before that list does. nlohmann's headers include each
+    // other in both directions, so most of them are of this kind.
+    {
+        let scanned: BTreeSet<&str> = context
+            .graph
+            .nodes
+            .iter()
+            .filter(|node| node.kind == NodeKind::File)
+            .map(|node| node.label.as_str())
+            .collect();
+        let mut pending_includes: Vec<(String, String)> = Vec::new();
+        for pending in &context.pending_local_imports {
+            let Some(node) = graph_node(&context.graph, pending.import_node) else {
+                continue;
+            };
+            if !matches!(
+                node.metadata.get("language").map(String::as_str),
+                Some("c") | Some("cpp")
+            ) {
+                continue;
+            }
+            let Some(source) = node.span.as_ref().map(|span| span.path.clone()) else {
+                continue;
+            };
+            for candidate in &pending.candidates {
+                if let Some(path) = scanned.get(candidate.as_str()) {
+                    pending_includes.push((source, (*path).to_string()));
+                    break;
+                }
+            }
+        }
+        for (source, header) in pending_includes {
+            included.entry(source).or_default().insert(header);
+        }
+    }
     // The files that export something. Only there does "not exported"
     // mean private: a CommonJS file hands its functions out through
     // `module.exports`, which is not an export statement, so nothing in it
@@ -3297,6 +3340,35 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             }
         }
 
+        // A C or C++ file reaches a declaration through the headers it
+        // includes, and nothing else: nlohmann's `JSON_THROW` is declared
+        // in `detail/macro_scope.hpp` and again in the amalgamated
+        // `single_include/nlohmann/json.hpp`, and a caller under
+        // `include/` includes only the first.
+        if matches!(call.language.as_str(), "c" | "cpp") && targets.len() > 1 {
+            let reachable = targets
+                .iter()
+                .copied()
+                .filter(|target| {
+                    let Some(path) = graph_node(&context.graph, *target)
+                        .and_then(|node| node.span.as_ref())
+                        .map(|span| span.path.as_str())
+                    else {
+                        return false;
+                    };
+                    Some(path) == caller_path
+                        || caller_path.is_some_and(|caller| {
+                            included
+                                .get(caller)
+                                .is_some_and(|headers| headers.contains(path))
+                        })
+                })
+                .collect::<Vec<_>>();
+            if !reachable.is_empty() && reachable.len() < targets.len() {
+                targets = reachable;
+                basis = "include";
+            }
+        }
         // A method on a type from a package the file never imports cannot
         // be the one meant. terraform declares `Diagnostics.HasErrors` in
         // `internal/policy` and in `internal/tfdiags`, and every file that

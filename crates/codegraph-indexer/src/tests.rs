@@ -17042,3 +17042,54 @@ fn a_module_the_project_declares_answers_only_with_its_own() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_c_file_reaches_a_declaration_through_the_headers_it_includes() {
+    // nlohmann keeps its sources under `include/` and an amalgamated copy
+    // under `single_include/`, so every macro is declared twice and only
+    // the include says which copy a caller means. It writes its own
+    // includes in angle brackets -- `#include <nlohmann/detail/x.hpp>` --
+    // because the build puts `include/` on the compiler's path, and none
+    // of them reached another header at all.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("include/app/detail")).unwrap();
+    fs::create_dir_all(root.join("single_include/app")).unwrap();
+    fs::write(root.join("CMakeLists.txt"), "project(app)\n").unwrap();
+    fs::write(
+        root.join("include/app/detail/macro_scope.hpp"),
+        "#pragma once\n#define APP_THROW(e) throw e\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("include/app/json.hpp"),
+        "#pragma once\n#include <app/detail/macro_scope.hpp>\n\nint parse(int value) {\n  if (value < 0) { APP_THROW(1); }\n  return value;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("single_include/app/json.hpp"),
+        "#pragma once\n#define APP_THROW(e) throw e\n\nint parse_amalgamated(int value) {\n  return value;\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("APP_THROW")
+        })
+        .expect("the call is recorded");
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == call.target)
+        .expect("the target is a node");
+    assert_eq!(
+        target.span.as_ref().map(|span| span.path.as_str()),
+        Some("include/app/detail/macro_scope.hpp"),
+        "the header the file includes is the one it reaches"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

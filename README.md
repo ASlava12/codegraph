@@ -236,6 +236,16 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A C or C++ file reaches a declaration through the headers it includes, and nothing else.
+  nlohmann keeps its sources under `include/` and an amalgamated copy under `single_include/`, so
+  every macro and method is declared several times; a caller under `include/` includes only the
+  first. Its own includes are written in angle brackets -- the build puts `include/` on the
+  compiler's path -- and none of them reached another header, so a bracketed header written as a
+  path is now looked for in the repository as well. `<fmt/format.h>` is written the same way and
+  belongs to a library, so a miss stays quiet. nlohmann's ambiguous calls fall from 5830 to 5264,
+  redis's from 2294 to 1796 and spdlog's from 1691 to 1598.
+- A header-only library writes one header in two halves -- `x.h` and `x-inl.h`, each including the
+  other by design -- which is one unit rather than a cycle, as a Dart `part` and its library are.
 - A module the project declares answers only with what belongs to it. dune's `List.map` is the
   standard library's -- stdune's list.ml declares plenty but not `map` -- and matching on the name
   alone offered fifty-nine other modules' `map` instead. A nested path is read from its head, so
