@@ -3108,6 +3108,20 @@ pub(crate) fn classify_call(
     if label.is_empty() || label.contains(['{', '}', '(', ')', ';', '\n', '"', '\'', ' ', '\t']) {
         return None;
     }
+    // A javascript name cannot hold a slash, so one that does came out of a
+    // regular expression the callee was written on: `/^\s*$/.test(value)`
+    // left `/^\s*$/.test`, and mastodon reported `+\.json$/.exec` as a call
+    // nobody could resolve. All 60 such labels in the corpus are of that
+    // kind. A shell script naming the program it runs is not -- `./configure`
+    // and `/usr/bin/env` are calls, and the 44 of those are why this asks
+    // the language first.
+    if matches!(
+        language,
+        Language::JavaScript | Language::TypeScript | Language::Tsx
+    ) && label.contains('/')
+    {
+        return None;
+    }
 
     // `b.Configure()` says nothing about which `Configure` it means, but the
     // enclosing signature does: `b` is declared there with a type. Only a

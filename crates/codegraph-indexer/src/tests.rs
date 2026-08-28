@@ -8557,6 +8557,52 @@ fn a_compiler_macro_and_a_test_runners_globals_are_provided_rather_than_missing(
 }
 
 #[test]
+fn a_slash_in_a_javascript_call_is_a_regular_expression_not_a_name() {
+    // `/^\s*$/.test(value)` left `/^\s*$/.test` as a call target, and
+    // mastodon reported `+\.json$/.exec` among the calls nothing resolved.
+    // A shell script naming the program it runs is a call, which is why the
+    // rule asks the language first.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("package.json"), "{\n  \"name\": \"app\"\n}\n").unwrap();
+    fs::write(
+        root.join("src").join("check.js"),
+        "export function blank(value) {\n  return /^\\s*$/.test(value) && trimmed(value);\n}\n\nexport function trimmed(value) {\n  return value;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("build.sh"),
+        "#!/bin/sh\n./configure\n/usr/bin/env node src/check.js\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call_labels = graph
+        .edges
+        .iter()
+        .filter_map(|edge| edge.metadata.get("call_label").cloned())
+        .collect::<Vec<_>>();
+    assert!(
+        !call_labels.iter().any(|label| label.contains('/')
+            && graph.edges.iter().any(|edge| {
+                edge.metadata.get("call_label") == Some(label)
+                    && edge.metadata.get("language").map(String::as_str) == Some("javascript")
+            })),
+        "a javascript name holds no slash: {call_labels:?}"
+    );
+    assert!(
+        call_labels.iter().any(|label| label == "trimmed"),
+        "the real call beside it is still read: {call_labels:?}"
+    );
+    assert!(
+        call_labels.iter().any(|label| label == "./configure"),
+        "a shell script names the program it runs: {call_labels:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_function_an_object_holds_is_a_value_the_program_indexes() {
     // mastodon writes its modals as `{ 'ACCOUNT_NOTE': () => import(..) }`
     // and picks one by a key it computes, and lint-staged writes
