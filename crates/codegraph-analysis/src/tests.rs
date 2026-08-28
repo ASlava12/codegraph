@@ -633,6 +633,38 @@ fn insights_report_cross_language_heuristic_edges() {
         Confidence::Exact,
     );
 
+    // `.tsx` is typescript with markup in it, so this crosses nothing.
+    let component = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "About",
+        None,
+        BTreeMap::from([("language".to_string(), "tsx".to_string())]),
+    );
+    let hook = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "useAppDispatch",
+        None,
+        BTreeMap::from([("language".to_string(), "typescript".to_string())]),
+    );
+    graph.add_edge(component, hook, EdgeKind::Calls, Confidence::Heuristic);
+
+    // Prose naming a symbol is the docs link the ingest was asked to make.
+    let section = graph.add_node_with_metadata(
+        NodeKind::Module,
+        "CHANGELOG.md#Features",
+        None,
+        BTreeMap::from([
+            ("language".to_string(), "markdown".to_string()),
+            ("item_kind".to_string(), "document_section".to_string()),
+        ]),
+    );
+    graph.add_edge(
+        section,
+        rust_helper,
+        EdgeKind::References,
+        Confidence::Heuristic,
+    );
+
     let report = insights(&graph);
     let insight = report
         .insights

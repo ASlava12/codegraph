@@ -456,6 +456,17 @@ fn names_a_project_table(table: &str) -> bool {
         && !matches!(lowered.as_str(), "current_timestamp" | "dual")
 }
 
+/// The language a dialect is. Tree-sitter needs its own grammar for `.tsx`,
+/// and the graph records what parsed the file, but nobody writing typescript
+/// changes language by adding markup to it.
+fn one_language(language: &str) -> &str {
+    match language {
+        "tsx" => "typescript",
+        "jsx" => "javascript",
+        other => other,
+    }
+}
+
 pub(crate) fn add_cross_language_heuristic_edge_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
@@ -475,8 +486,25 @@ pub(crate) fn add_cross_language_heuristic_edge_insights(
         let target_language = node_language(&nodes_by_id, edge.target);
         if source_language == "unknown"
             || target_language == "unknown"
-            || source_language == target_language
+            // A dialect is not another language: `.tsx` is typescript with
+            // markup in it, and mastodon's `About` calling `useAppDispatch`
+            // crosses nothing. 82 of the corpus's findings were this pair.
+            || one_language(&source_language) == one_language(&target_language)
         {
+            continue;
+        }
+        // Prose naming a symbol is what reading the documentation is for.
+        // `CHANGELOG.md#Features` referencing gin's `With` is the docs link
+        // the ingest was asked to make, not a name matched between two
+        // programs -- and it is 1298 of the corpus's 1380 findings, which
+        // left nothing else visible.
+        if [edge.source, edge.target].iter().any(|node| {
+            nodes_by_id.get(node).is_some_and(|node| {
+                node.metadata
+                    .get("item_kind")
+                    .is_some_and(|kind| kind == "document" || kind == "document_section")
+            })
+        }) {
             continue;
         }
         // Code reaching a table is a link from a program to its data, and
