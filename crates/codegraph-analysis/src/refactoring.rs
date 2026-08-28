@@ -857,8 +857,15 @@ pub(crate) fn impact_with_insights_mode(
     // well-covered area scored as the more dangerous one. What a change can
     // reach of the program is the risk; the tests it also reaches say what to
     // run. `total_dependents - affected_tests` is the program's share.
+    // A library declares its routes in its tests -- flask 297 of 307, express
+    // 205 of 218 -- so weighting every affected entrypoint at five let the
+    // suite back in after the line above took it out of the dependents.
+    let program_entrypoints = affected_entrypoints
+        .iter()
+        .filter(|entrypoint| entrypoint_rank(&entrypoint.node) < TEST_ENTRYPOINT_RANK)
+        .count();
     let impact_score = total_dependents.saturating_sub(affected_tests)
-        + affected_entrypoints.len() * 5
+        + program_entrypoints * 5
         + severity_counts.get("error").copied().unwrap_or(0) * 5
         + severity_counts.get("warning").copied().unwrap_or(0) * 2
         + severity_counts.get("info").copied().unwrap_or(0);

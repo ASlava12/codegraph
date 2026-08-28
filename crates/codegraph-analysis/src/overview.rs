@@ -983,6 +983,11 @@ pub fn entrypoints(graph: &CodeGraph) -> Vec<Node> {
 /// How likely an entrypoint is to be the one someone means: a declared program
 /// first, then the routes a server exposes, then scripts and build targets,
 /// then CI and container declarations — and tests last, whatever declares them.
+/// The rank `entrypoint_rank` gives a test, which is last whatever declares
+/// it. Named because the risk scores ask the same question of an entrypoint
+/// that they ask of a dependent: is this the program, or its suite?
+pub(crate) const TEST_ENTRYPOINT_RANK: u8 = 5;
+
 pub(crate) fn entrypoint_rank(node: &Node) -> u8 {
     let kind = node
         .metadata
@@ -1004,7 +1009,7 @@ pub(crate) fn entrypoint_rank(node: &Node) -> u8 {
             .get("target")
             .is_some_and(|target| is_test_like_source_path(target));
     if test_like {
-        return 5;
+        return TEST_ENTRYPOINT_RANK;
     }
     // A script whose shebang says how to run it is a program too, unless
     // it sits where the repository keeps its build: koel's `artisan` at

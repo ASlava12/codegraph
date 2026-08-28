@@ -9,7 +9,8 @@
 //! stamp their context into the `codegraph.pr_impact.v1` artifact.
 
 use crate::{
-    InsightSeverity, ProjectAreas, QueryError, communities, entrypoints, hotspots, insights,
+    InsightSeverity, ProjectAreas, QueryError, TEST_ENTRYPOINT_RANK, communities, entrypoint_rank,
+    entrypoints, hotspots, insights,
 };
 use codegraph_core::{
     CodeGraph, EdgeKind, NodeId, NodeKind, is_test_like_source_path, names_tests,
@@ -67,6 +68,10 @@ pub struct PrBlastRadius {
     /// covered, not more dangerous.
     pub program_dependents: usize,
     pub affected_entrypoints: usize,
+    /// The affected entrypoints that start the program rather than a test.
+    /// This is what the risk score counts, for the reason `program_dependents`
+    /// is: express declares 205 of its 218 entrypoints inside its own tests.
+    pub program_entrypoints: usize,
     pub affected_tests: usize,
     pub affected_routes: usize,
     pub sample_entrypoints: Vec<String>,
@@ -260,6 +265,7 @@ pub fn pr_impact(
     let entrypoint_ids: BTreeSet<NodeId> = entrypoints(graph).iter().map(|node| node.id).collect();
     let affected: BTreeSet<NodeId> = dependents.union(&changed_nodes).copied().collect();
     let mut affected_entrypoints = 0usize;
+    let mut program_entrypoints = 0usize;
     let mut affected_tests = 0usize;
     let mut suite_dependents = 0usize;
     let mut affected_routes = 0usize;
@@ -270,6 +276,12 @@ pub fn pr_impact(
         };
         if entrypoint_ids.contains(id) {
             affected_entrypoints += 1;
+            // `entrypoint_rank` puts a test last whatever declares it, and a
+            // library's routes live in its tests: flask writes 297 of its 307
+            // entrypoints there, express 205 of 218, sinatra 236 of 240.
+            if entrypoint_rank(node) < TEST_ENTRYPOINT_RANK {
+                program_entrypoints += 1;
+            }
             if sample_entrypoints.len() < SAMPLE_ENTRYPOINT_LIMIT {
                 sample_entrypoints.push(node.label.clone());
             }
@@ -369,7 +381,10 @@ pub fn pr_impact(
     // it also reaches is the answer to what to run, not to how dangerous this
     // is.
     let program_dependents = dependents.len().saturating_sub(suite_dependents);
-    let risk_score = program_dependents + 5 * affected_entrypoints + 5 * errors + 2 * warnings;
+    // The suite came back through the entrypoint term after being taken out of
+    // the dependents, and at five times the weight: 192 of express's 194
+    // affected entrypoints are its own test routes, which was 97% of its score.
+    let risk_score = program_dependents + 5 * program_entrypoints + 5 * errors + 2 * warnings;
 
     let mut touched_communities = touched_communities;
     touched_communities.sort_by(|a, b| b.changed_files.cmp(&a.changed_files).then(a.id.cmp(&b.id)));
@@ -389,6 +404,7 @@ pub fn pr_impact(
             dependents: dependents.len(),
             program_dependents,
             affected_entrypoints,
+            program_entrypoints,
             affected_tests,
             affected_routes,
             sample_entrypoints,
@@ -443,6 +459,52 @@ mod tests {
     }
 
     #[test]
+    fn a_route_a_test_declares_is_not_an_entrypoint_the_program_offers() {
+        // A library writes its routes in its tests: flask declares 297 of its
+        // 307 entrypoints there, express 205 of 218. Weighting every affected
+        // entrypoint at five let the suite back into the score after the
+        // dependents had been cleared of it -- 192 of express's 194 were its
+        // own test routes, and 97% of its risk.
+        let root = temp_dir("routes");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("tests")).unwrap();
+        fs::write(
+            root.join("src").join("util.js"),
+            "export function helper() {\n  return 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src").join("server.js"),
+            "import express from 'express';\nimport { helper } from './util.js';\n\nconst app = express();\napp.get('/health', () => helper());\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("tests").join("server_test.js"),
+            "import express from 'express';\nimport { helper } from '../src/util.js';\n\nconst app = express();\napp.get('/fixture', () => helper());\n",
+        )
+        .unwrap();
+        let graph = scan_project(&root, &IndexOptions::default()).expect("scan");
+        let report = pr_impact(
+            &graph,
+            &["src/util.js".to_string()],
+            PrImpactContext::default(),
+        );
+        assert!(
+            report.blast.program_entrypoints <= report.blast.affected_entrypoints,
+            "the program's entrypoints are some of the affected ones: {:?}",
+            report.blast
+        );
+        assert_eq!(
+            report.risk_score,
+            report.blast.program_dependents + 5 * report.blast.program_entrypoints,
+            "and only those are scored: {:?}",
+            report.blast
+        );
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn the_blast_radius_counts_a_spec_suite_and_not_a_name_holding_test() {
         // Two conventions the old substring rule got backwards: a `.spec.js`
         // suite spells none of its paths with "test", and `latest` spells it
@@ -487,7 +549,7 @@ mod tests {
         assert_eq!(
             report.risk_score,
             report.blast.program_dependents
-                + 5 * report.blast.affected_entrypoints
+                + 5 * report.blast.program_entrypoints
                 + weigh("error", 5)
                 + weigh("warning", 2),
             "risk counts the program the change reaches, not its coverage"
