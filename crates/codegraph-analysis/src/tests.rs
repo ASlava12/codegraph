@@ -13791,6 +13791,85 @@ fn filter_insight_report_filters_and_limits_results() {
 }
 
 #[test]
+fn a_bounded_insight_list_hears_from_every_kind() {
+    // Sorted by severity and then by the kind's name, so `ambiguous...`
+    // crowds out `unresolved...` however many there are of each. mastodon
+    // showed all 388 of the first and none of its 4985 of the second.
+    let mut insights = Vec::new();
+    for index in 0..50 {
+        insights.push(Insight {
+            kind: "ambiguous_call_resolution".to_string(),
+            severity: InsightSeverity::Info,
+            message: format!("ambiguous {index:03}"),
+            nodes: vec![NodeId(index + 1)],
+            edges: Vec::new(),
+        });
+    }
+    for index in 0..50 {
+        insights.push(Insight {
+            kind: "unresolved_call".to_string(),
+            severity: InsightSeverity::Info,
+            message: format!("unresolved {index:03}"),
+            nodes: vec![NodeId(index + 100)],
+            edges: Vec::new(),
+        });
+    }
+    // A warning of a late-sorting kind is still heard before any of them.
+    insights.push(Insight {
+        kind: "undeclared_external_import".to_string(),
+        severity: InsightSeverity::Warning,
+        message: "imports express".to_string(),
+        nodes: vec![NodeId(999)],
+        edges: Vec::new(),
+    });
+    let report = InsightReport {
+        total: insights.len(),
+        by_severity: BTreeMap::new(),
+        by_kind: BTreeMap::new(),
+        insights,
+    };
+
+    let filtered = filter_insight_report(
+        report,
+        &InsightFilter {
+            severity: None,
+            kind: None,
+            search: None,
+            limit: 21,
+        },
+    );
+
+    assert_eq!(filtered.insights.len(), 21);
+    let by_kind: BTreeMap<&str, usize> =
+        filtered
+            .insights
+            .iter()
+            .fold(BTreeMap::new(), |mut counts, insight| {
+                *counts.entry(insight.kind.as_str()).or_insert(0) += 1;
+                counts
+            });
+    assert_eq!(by_kind.get("undeclared_external_import"), Some(&1));
+    assert_eq!(by_kind.get("ambiguous_call_resolution"), Some(&10));
+    assert_eq!(
+        by_kind.get("unresolved_call"),
+        Some(&10),
+        "the late-sorting kind is heard from too: {by_kind:?}"
+    );
+    // The chosen findings still read by severity, then kind, then message.
+    assert_eq!(filtered.insights[0].severity, InsightSeverity::Warning);
+    assert!(filtered.insights.windows(2).all(|pair| (
+        pair[0].severity,
+        &pair[0].kind,
+        &pair[0].message
+    ) >= (
+        pair[1].severity,
+        &pair[1].kind,
+        &pair[1].message
+    ) || pair[0].severity > pair[1].severity
+        || (pair[0].severity == pair[1].severity && pair[0].kind <= pair[1].kind)));
+}
+
+#[test]
 fn check_insights_respects_severity_thresholds() {
     let report = InsightReport {
         total: 6,

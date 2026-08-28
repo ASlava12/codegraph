@@ -90,13 +90,94 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     }
 }
 
+/// The first `limit` findings, chosen so that every kind is heard from
+/// before any kind repeats.
+///
+/// The list is sorted by severity and then by the kind's *name*, so cutting
+/// it at 500 kept whatever sorted early in the alphabet. mastodon has 12215
+/// findings, and its report showed all 388 `ambiguous_call_resolution` and
+/// not one of its 4985 `unresolved_call`, 3434 `orphan_function` or 2114
+/// `unreachable_source_file`: three of its four largest categories were
+/// absent, so a reader would conclude the project has no orphans at all.
+/// Severity still decides first -- every error is heard before any warning
+/// -- and the chosen findings are handed back in the order they were sorted
+/// in, so the list still reads by severity and kind.
+fn represent_every_kind(mut insights: Vec<Insight>, limit: usize) -> Vec<Insight> {
+    if insights.len() <= limit {
+        return insights;
+    }
+    // `insights()` hands back a sorted report, but this is reachable with any
+    // report, and grouping by a run of equal kinds silently depends on that.
+    insights.sort_by(|left, right| {
+        right
+            .severity
+            .cmp(&left.severity)
+            .then_with(|| left.kind.cmp(&right.kind))
+            .then_with(|| left.message.cmp(&right.message))
+    });
+    let mut by_kind: Vec<(InsightSeverity, Vec<Insight>)> = Vec::new();
+    for insight in insights {
+        match by_kind.last_mut() {
+            Some((severity, group))
+                if *severity == insight.severity
+                    && group.last().is_some_and(|last| last.kind == insight.kind) =>
+            {
+                group.push(insight);
+            }
+            _ => by_kind.push((insight.severity, vec![insight])),
+        }
+    }
+
+    let mut chosen: Vec<Insight> = Vec::with_capacity(limit);
+    let mut start = 0usize;
+    while start < by_kind.len() && chosen.len() < limit {
+        // One severity at a time: a warning never gives up its place to an
+        // informational finding of another kind.
+        let severity = by_kind[start].0;
+        let end = by_kind[start..]
+            .iter()
+            .position(|(other, _)| *other != severity)
+            .map(|offset| start + offset)
+            .unwrap_or(by_kind.len());
+        let mut taken = vec![0usize; end - start];
+        let mut round = 0usize;
+        loop {
+            let mut moved = false;
+            for (offset, group) in by_kind[start..end].iter().enumerate() {
+                if chosen.len() >= limit {
+                    break;
+                }
+                if let Some(insight) = group.1.get(round) {
+                    chosen.push(insight.clone());
+                    taken[offset] += 1;
+                    moved = true;
+                }
+            }
+            if !moved || chosen.len() >= limit {
+                break;
+            }
+            round += 1;
+        }
+        start = end;
+    }
+
+    chosen.sort_by(|left, right| {
+        right
+            .severity
+            .cmp(&left.severity)
+            .then_with(|| left.kind.cmp(&right.kind))
+            .then_with(|| left.message.cmp(&right.message))
+    });
+    chosen
+}
+
 pub fn filter_insight_report(report: InsightReport, filter: &InsightFilter) -> InsightReport {
     let kind = filter.kind.as_ref().map(|value| value.to_ascii_lowercase());
     let search = filter
         .search
         .as_ref()
         .map(|value| value.to_ascii_lowercase());
-    let mut insights: Vec<_> = report
+    let insights: Vec<_> = report
         .insights
         .into_iter()
         .filter(|insight| {
@@ -113,7 +194,7 @@ pub fn filter_insight_report(report: InsightReport, filter: &InsightFilter) -> I
         .collect();
     let total = insights.len();
     let (by_severity, by_kind) = insight_breakdowns(&insights);
-    insights.truncate(filter.limit.clamp(1, 500));
+    let insights = represent_every_kind(insights, filter.limit.clamp(1, 500));
 
     InsightReport {
         total,
