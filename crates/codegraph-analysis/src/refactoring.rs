@@ -675,6 +675,40 @@ pub(crate) fn impact_with_insights_mode(
     // around it -- so asking what depends on `Path` answered nothing at all
     // while hundreds of files used what path.ml holds. The members seed the
     // walk without being dependents of themselves.
+    // The same holds for a directory or a file: nothing points at a Go
+    // package, so asking what depends on `internal/addrs` answered nothing
+    // while its `NewDefaultProvider` alone is called 1139 times. What a
+    // container holds is what changing it changes.
+    if matches!(target_node.kind, NodeKind::Directory | NodeKind::File) {
+        let mut contained: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+        for edge in &graph.edges {
+            if edge.kind == EdgeKind::Contains {
+                contained.entry(edge.source).or_default().push(edge.target);
+            }
+        }
+        // The repository holds every file directly, so a directory node
+        // holds nothing to walk down from: the files it stands for are the
+        // ones whose path it prefixes.
+        let mut walk = VecDeque::from([target_id]);
+        if target_node.kind == NodeKind::Directory {
+            let prefix = format!("{}/", target_node.label);
+            for node in &graph.nodes {
+                if node.kind == NodeKind::File && node.label.starts_with(&prefix) {
+                    walk.push_back(node.id);
+                    visited.insert(node.id);
+                }
+            }
+        }
+        while let Some(current) = walk.pop_front() {
+            for held in contained.get(&current).map(Vec::as_slice).unwrap_or(&[]) {
+                if !visited.insert(*held) {
+                    continue;
+                }
+                queue.push_back((*held, 0));
+                walk.push_back(*held);
+            }
+        }
+    }
     if target_node.kind == NodeKind::Module
         && let Some(module_path) = target_node.span.as_ref().map(|span| span.path.as_str())
     {

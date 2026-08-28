@@ -240,6 +240,11 @@ Implemented now:
   and that produced no label either, so dune had no OCaml module node at all and `Path` answered as
   something in dune-rpc. A file now declares the module it is -- `path.ml` is `Path` -- and a module
   written inside a file gets its name from the binding. dune gains 5737 module nodes.
+- A go package is a directory, and nothing points at one: asking what depends on `internal/addrs`
+  answered nothing while the `NewDefaultProvider` it holds is called 1139 times. The repository
+  holds every file directly, so a directory stands for the files whose path it prefixes, and a file
+  for what it declares. `internal/addrs` reports 4244 dependents, `internal/tfdiags` 5021,
+  `kong/tools` 2125, and oscar's `loading.py` rises from 1476 to 1751.
 - Changing a module means changing what it declares. A call reaches the function, not the module
   around it, so `impact Path` had nothing to report while 2725 things used what path.ml holds; a
   module's own definitions now seed the walk without counting as dependents of themselves. The same

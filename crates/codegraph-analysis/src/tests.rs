@@ -15169,3 +15169,69 @@ fn impact_on_a_module_counts_what_the_module_holds() {
         "a module's own definition is not a dependent of it"
     );
 }
+
+#[test]
+fn impact_on_a_directory_counts_what_the_files_under_it_hold() {
+    // A go package is a directory, and nothing points at one: asking what
+    // depends on `internal/addrs` answered nothing while the functions it
+    // holds are called thousands of times. The repository holds every file
+    // directly, so the directory stands for the files whose path it
+    // prefixes.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(codegraph_core::SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    let directory = graph.add_node(NodeKind::Directory, "internal/addrs");
+    let file = graph.add_node(NodeKind::File, "internal/addrs/provider.go");
+    let other = graph.add_node(NodeKind::File, "internal/backend/local.go");
+    let provider = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "NewDefaultProvider",
+        span("internal/addrs/provider.go"),
+        BTreeMap::from([("language".to_string(), "go".to_string())]),
+    );
+    let caller = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "Backend",
+        span("internal/backend/local.go"),
+        BTreeMap::from([("language".to_string(), "go".to_string())]),
+    );
+    graph.add_edge(graph.root, directory, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(graph.root, file, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(graph.root, other, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(file, provider, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(other, caller, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(caller, provider, EdgeKind::Calls, Confidence::Syntactic);
+
+    let report = impact(
+        &graph,
+        ImpactRequest {
+            target: "internal/addrs".to_string(),
+            max_depth: 8,
+            limit: 100,
+        },
+    )
+    .expect("impact report");
+
+    assert_eq!(report.total_dependents, 1);
+    assert!(
+        report
+            .dependents
+            .iter()
+            .any(|entry| entry.node.label == "Backend"),
+        "what calls into the package depends on the package"
+    );
+    assert!(
+        !report
+            .dependents
+            .iter()
+            .any(|entry| entry.node.label == "NewDefaultProvider"),
+        "a package's own definition is not a dependent of it"
+    );
+}
