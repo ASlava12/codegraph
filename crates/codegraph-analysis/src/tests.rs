@@ -15574,3 +15574,62 @@ fn a_directory_of_assets_does_not_decide_where_the_areas_are() {
         "a directory with nothing of the program in it stays one area: {labels:?}"
     );
 }
+
+#[test]
+fn the_architecture_map_leads_with_the_program() {
+    // An area matters by how much of the program it holds, and the order
+    // decides what survives `--group-limit` as well as what a reader sees
+    // first. mastodon's `public/` is 3949 files with four symbols among
+    // them and it led the map; flask's tests hold 1395 symbols against its
+    // `src`'s 443, and a reader asking what the areas of flask are means
+    // the library.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(codegraph_core::SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    let add = |graph: &mut CodeGraph, area: &str, count: usize| {
+        for index in 0..count {
+            let path = format!("{area}/file{index}.py");
+            let file = graph.add_node(NodeKind::File, path.clone());
+            graph.add_edge(graph.root, file, EdgeKind::Contains, Confidence::Exact);
+            let symbol = graph.add_node_with_metadata(
+                NodeKind::Function,
+                format!("{area}_symbol{index}"),
+                span(&path),
+                BTreeMap::from([("language".to_string(), "python".to_string())]),
+            );
+            graph.add_edge(file, symbol, EdgeKind::Contains, Confidence::Exact);
+        }
+    };
+    // Assets: many files, nothing of the program.
+    for index in 0..30 {
+        let asset = graph.add_node(NodeKind::File, format!("public/asset{index}.png"));
+        graph.add_edge(graph.root, asset, EdgeKind::Contains, Confidence::Exact);
+    }
+    add(&mut graph, "tests", 12);
+    add(&mut graph, "src", 6);
+
+    let map = architecture_map(&graph, 10, 10);
+    let labels: Vec<&str> = map
+        .groups
+        .iter()
+        .map(|group| group.label.as_str())
+        .collect();
+    assert_eq!(
+        labels.first().copied(),
+        Some("src"),
+        "the program's own area leads, whatever the suite weighs: {labels:?}"
+    );
+    let tests = labels.iter().position(|label| *label == "tests");
+    let public = labels.iter().position(|label| *label == "public");
+    assert!(
+        tests > Some(0) && public > tests,
+        "a suite follows the program, and an area holding none of it follows both: {labels:?}"
+    );
+}

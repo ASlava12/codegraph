@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- An architecture area matters by how much of the program it holds, and the order decides what
+  survives `--group-limit` as well as what a reader sees first. It was ranked by file count, so
+  mastodon's `public/` -- 3949 files, four symbols -- led the map. Areas holding none of the program
+  now come last and a suite follows the program whatever it weighs: flask's tests hold 1395 symbols
+  against its `src`'s 443, and the map leads with `src`.
 - Which directory is a container and which is an architecture area is a question about the program,
   so it is asked of the files that hold some of it. mastodon keeps 3949 static assets under
   `public/` and four symbols among them, and counting those hid the fact that `app/` -- 3219 files

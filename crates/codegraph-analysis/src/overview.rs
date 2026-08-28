@@ -197,11 +197,27 @@ pub fn architecture_map(
     let total_groups = groups.len();
     let total_edges = edges.len();
     let mut groups: Vec<_> = groups.into_values().collect();
+    // An area matters by how much of the program it holds, and the order
+    // decides what survives `--group-limit` as well as what a reader sees
+    // first: mastodon's `public/` is 3949 files with four symbols among
+    // them, and it led the map ahead of the 3676 symbols in
+    // `app/javascript`.
     groups.sort_by(|left, right| {
-        right
-            .files
-            .cmp(&left.files)
+        // An area that holds none of the program -- mastodon's `public/`
+        // is 3949 static assets and four symbols -- says least of all, and
+        // a suite is not the program whatever it weighs: flask's tests
+        // hold 1395 symbols against its `src`'s 443, and a reader asking
+        // what the areas of flask are means the library.
+        let rank = |group: &ArchitectureGroup| {
+            (
+                u8::from(group.symbols == 0),
+                u8::from(is_test_like_source_path(&group.id)),
+            )
+        };
+        rank(left)
+            .cmp(&rank(right))
             .then_with(|| right.symbols.cmp(&left.symbols))
+            .then_with(|| right.files.cmp(&left.files))
             .then_with(|| left.label.cmp(&right.label))
     });
     let mut edges: Vec<_> = edges.into_values().collect();
