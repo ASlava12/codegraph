@@ -236,6 +236,12 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Only so many dependency cycles are worth listing, and which ones survive the cap matters: the
+  fiftieth found was the last kept, so a cycle across files -- the kind the finding exists to
+  surface -- was dropped while ones inside a single file stayed. The most severe survive now, which
+  brings back seven warnings the corpus always had: three in terraform's `jsonformat/differ`, two in
+  gqlgen, one in dune and one in mastodon. The edges that close a cycle are collected once, for the
+  cycles that are kept, rather than once per component.
 - A haskell data constructor is named after itself rather than after a keyword -- `data
   VariableState = Dead Token String | Alive` -- and building a value of a type something reaches
   uses them, the same way building a class runs its constructor. shellcheck's orphan functions fall

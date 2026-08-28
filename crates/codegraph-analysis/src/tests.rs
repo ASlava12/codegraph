@@ -15436,3 +15436,86 @@ fn a_data_constructor_is_used_when_its_type_is() {
         "the type is reached, so its constructors are used: {orphans:?}"
     );
 }
+
+#[test]
+fn the_cycles_that_survive_the_cap_are_the_worst_ones() {
+    // Only so many cycles are worth listing, and which ones survive
+    // matters: mastodon has fifty, and stopping at the first fifty found
+    // dropped a cycle across files -- the kind the finding exists to
+    // surface -- while keeping ones that sit inside a single file.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(codegraph_core::SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    // Sixty cycles inside one file each, which are mutual recursion.
+    for index in 0..60 {
+        let path = format!("src/local{index}.rs");
+        let file = graph.add_node(NodeKind::File, &path);
+        let first = graph.add_node_with_metadata(
+            NodeKind::Function,
+            format!("first{index}"),
+            span(&path),
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        let second = graph.add_node_with_metadata(
+            NodeKind::Function,
+            format!("second{index}"),
+            span(&path),
+            BTreeMap::from([("language".to_string(), "rust".to_string())]),
+        );
+        graph.add_edge(graph.root, file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(file, first, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(file, second, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(first, second, EdgeKind::Calls, Confidence::Syntactic);
+        graph.add_edge(second, first, EdgeKind::Calls, Confidence::Syntactic);
+    }
+    // One that crosses files, which is the coupling worth reporting.
+    let left_file = graph.add_node(NodeKind::File, "src/left.rs");
+    let right_file = graph.add_node(NodeKind::File, "src/right.rs");
+    let left = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "crosses_left",
+        span("src/left.rs"),
+        BTreeMap::from([("language".to_string(), "rust".to_string())]),
+    );
+    let right = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "crosses_right",
+        span("src/right.rs"),
+        BTreeMap::from([("language".to_string(), "rust".to_string())]),
+    );
+    graph.add_edge(graph.root, left_file, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(
+        graph.root,
+        right_file,
+        EdgeKind::Contains,
+        Confidence::Exact,
+    );
+    graph.add_edge(left_file, left, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(right_file, right, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(left, right, EdgeKind::Calls, Confidence::Syntactic);
+    graph.add_edge(right, left, EdgeKind::Calls, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    let cycles: Vec<&Insight> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "dependency_cycle")
+        .collect();
+    assert_eq!(cycles.len(), 50, "the cap still holds");
+    let crossing = cycles
+        .iter()
+        .find(|insight| insight.message.contains("crosses_left"))
+        .expect("the cycle across files survives the cap");
+    assert_eq!(crossing.severity, InsightSeverity::Warning);
+    assert!(
+        !crossing.edges.is_empty(),
+        "a surviving cycle still carries the edges that close it"
+    );
+}

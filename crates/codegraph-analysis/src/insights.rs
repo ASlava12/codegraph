@@ -5314,6 +5314,7 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
     }
 
     let mut assigned = BTreeSet::new();
+    let mut found: Vec<Insight> = Vec::new();
     for node in order.into_iter().rev() {
         if assigned.contains(&node) {
             continue;
@@ -5322,26 +5323,7 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
         if component.len() < 2 {
             continue;
         }
-        // Collect edges only for real cycles: singleton components are the
-        // overwhelming majority, and a full edge scan per component made
-        // cycle detection quadratic (audit F11).
         let component_nodes: BTreeSet<_> = component.iter().copied().collect();
-        let component_edges: Vec<_> = graph
-            .edges
-            .iter()
-            .enumerate()
-            .filter_map(|(index, edge)| {
-                if is_cycle_edge(&edge.kind)
-                    && component_nodes.contains(&edge.source)
-                    && component_nodes.contains(&edge.target)
-                {
-                    Some(index)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
         if component_is_one_method(&nodes_by_id, &component) {
             continue;
         }
@@ -5418,23 +5400,51 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
         } else {
             "inside one file"
         };
-        insights.push(Insight {
+        found.push(Insight {
             kind: "dependency_cycle".to_string(),
             severity,
             message: format!("Directed dependency cycle {scope} involving {labels}{suffix}"),
             nodes: component,
-            edges: component_edges,
+            edges: Vec::new(),
         });
+    }
 
-        if insights
-            .iter()
-            .filter(|insight| insight.kind == "dependency_cycle")
-            .count()
-            >= MAX_CYCLE_INSIGHTS
-        {
-            return;
+    // Only so many cycles are worth listing, and which ones survive the cap
+    // matters: mastodon has 50 of them, and stopping at the first fifty
+    // found dropped a cycle across files -- the kind the finding exists to
+    // surface -- while keeping 43 that sit inside one file. A stable sort
+    // keeps the order they were found in within a severity.
+    found.sort_by_key(|insight| match insight.severity {
+        InsightSeverity::Error => 0u8,
+        InsightSeverity::Warning => 1,
+        InsightSeverity::Info => 2,
+    });
+    found.truncate(MAX_CYCLE_INSIGHTS);
+
+    // The edges are collected once, for the cycles that survived: a scan
+    // per component made cycle detection quadratic (audit F11).
+    let mut membership: BTreeMap<NodeId, Vec<usize>> = BTreeMap::new();
+    for (index, insight) in found.iter().enumerate() {
+        for node in &insight.nodes {
+            membership.entry(*node).or_default().push(index);
         }
     }
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if !is_cycle_edge(&edge.kind) {
+            continue;
+        }
+        let (Some(sources), Some(targets)) =
+            (membership.get(&edge.source), membership.get(&edge.target))
+        else {
+            continue;
+        };
+        for component in sources {
+            if targets.contains(component) {
+                found[*component].edges.push(index);
+            }
+        }
+    }
+    insights.extend(found);
 }
 
 pub(crate) fn fill_finish_order(
