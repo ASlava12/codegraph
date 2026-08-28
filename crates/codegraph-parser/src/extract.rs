@@ -1210,6 +1210,40 @@ const MAX_PARENTHESIS_DEPTH: usize = 8;
 /// carrying the type it builds. Only the subtree under the declaration's
 /// constructor field is read, so the names in a `deriving` clause are not
 /// mistaken for constructors.
+/// Whether a Dart declaration is a property accessor. `bool get isEmpty
+/// => length == 0` is written as a method and read as a field, so no call
+/// ever names it.
+fn dart_accessor_declaration(node: Node<'_>) -> bool {
+    if matches!(
+        node.kind(),
+        "getter_declaration"
+            | "setter_declaration"
+            | "external_getter_declaration"
+            | "external_setter_declaration"
+    ) {
+        return true;
+    }
+    // The signature can sit a level or two under the declaration the walk
+    // reaches, so the search goes down rather than across.
+    let mut stack = vec![(node, 0u8)];
+    while let Some((current, depth)) = stack.pop() {
+        if depth > 3 {
+            continue;
+        }
+        if matches!(
+            current.kind(),
+            "getter_signature" | "setter_signature" | "getter_declaration" | "setter_declaration"
+        ) {
+            return true;
+        }
+        let mut cursor = current.walk();
+        for child in current.named_children(&mut cursor) {
+            stack.push((child, depth + 1));
+        }
+    }
+    false
+}
+
 /// The functions a C file hands over by name rather than calling:
 /// `iter->_next_fp = all_values_iter_next` stores one and
 /// `aeCreateFileEvent(.., redisAeReadEvent, ..)` passes one, and both make
@@ -2086,6 +2120,13 @@ pub(crate) fn classify_node(
             && let Some(form) = kotlin_platform_form(node, source)
         {
             metadata.insert("platform_form".to_string(), form.to_string());
+        }
+        // A getter is read, not called: `bool get isEmpty => length == 0`
+        // is reached by writing `x.isEmpty`, and no call edge can ever
+        // point at it. 608 of the http package's 3238 functions with no
+        // caller are accessors.
+        if language == Language::Dart && dart_accessor_declaration(node) {
+            metadata.insert("definition_form".to_string(), "accessor".to_string());
         }
         // A value a factory built is callable when what it holds is, and a
         // reader should be able to tell it from a function the file spells

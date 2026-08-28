@@ -17417,3 +17417,41 @@ fn a_c_file_hands_a_function_over_by_name() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_dart_getter_is_read_rather_than_called() {
+    // `bool get isEmpty => length == 0` is written as a method and read as
+    // a field, so no call edge can ever point at one and "nothing calls
+    // it" says nothing. 608 of the http package's 3238 functions with no
+    // caller are accessors.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(
+        root.join("pubspec.yaml"),
+        "name: app\nenvironment:\n  sdk: \">=3.0.0 <4.0.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib/box.dart"),
+        "class Box {\n  int _length = 0;\n\n  bool get isEmpty => _length == 0;\n\n  set length(int value) => _length = value;\n\n  int size() => _length;\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let form = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == label)
+            .and_then(|node| node.metadata.get("definition_form").cloned())
+    };
+    assert_eq!(form("isEmpty").as_deref(), Some("accessor"));
+    assert_eq!(form("length").as_deref(), Some("accessor"));
+    assert_eq!(
+        form("size"),
+        None,
+        "a method is still a method, whatever sits beside it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

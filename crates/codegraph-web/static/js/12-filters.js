@@ -462,6 +462,9 @@ function buildClientInsights(graph) {
       // built, and a value nobody calls is a value rather than a function
       // nobody runs. The CLI skips these too.
       node.metadata?.definition_form !== "value" &&
+      // A getter is read rather than called, so no call edge can ever
+      // point at one. The CLI skips those too.
+      node.metadata?.definition_form !== "accessor" &&
       !entrypointIds.has(node.id) &&
       !calledIds.has(node.id)
     ) {

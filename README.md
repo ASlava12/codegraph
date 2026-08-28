@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A Dart getter is read rather than called: `bool get isEmpty => length == 0` is written as a method
+  and reached by writing `x.isEmpty`, so no call edge can ever point at one and "nothing calls it"
+  says nothing about it -- the same reasoning that already leaves a value a factory built alone. The
+  http package's functions with no caller fall from 3086 to 2185.
 - A C file hands a function over by writing its name: `iter->_next_fp = all_values_iter_next`
   stores one and `aeCreateFileEvent(.., redisAeReadEvent, ..)` passes one, and both make it run when
   the time comes. Only a function the same file declares counts, so nothing is guessed at. redis's

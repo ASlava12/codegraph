@@ -779,7 +779,13 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
         // `const onMounted = createHook(MOUNTED)` declares a value a
         // factory built. It is callable when what it holds is, and a value
         // nobody calls is a value rather than a function nobody runs.
-        if node.metadata.get("definition_form").map(String::as_str) == Some("value") {
+        // A getter is read rather than called -- `bool get isEmpty =>
+        // length == 0` is reached by writing `x.isEmpty` -- so no call
+        // edge can ever point at one, and "nothing calls it" says nothing.
+        if matches!(
+            node.metadata.get("definition_form").map(String::as_str),
+            Some("value") | Some("accessor")
+        ) {
             continue;
         }
         // A test is run by its runner, which no edge records: `#[test]
