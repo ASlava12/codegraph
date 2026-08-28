@@ -3062,12 +3062,23 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 .iter()
                 .copied()
                 .filter(|target| {
-                    let Some(enclosing) = graph_node(&context.graph, *target)
-                        .and_then(|node| node.metadata.get("enclosing_function"))
-                    else {
+                    let Some(node) = graph_node(&context.graph, *target) else {
+                        return true;
+                    };
+                    let Some(enclosing) = node.metadata.get("enclosing_function") else {
                         // Top level: visible to the whole module.
                         return true;
                     };
+                    // A definition whose enclosing declaration is its own type
+                    // is not hidden by it. Solidity writes a contract's methods
+                    // inside the contract, and `contract Child is Base` calls
+                    // `Base`'s by their bare names from another contract
+                    // entirely: openzeppelin declares 3477 methods that way and
+                    // 2150 of its calls could reach none of them. C++ writes a
+                    // method in its class body and it is still `obj.method()`.
+                    if node.metadata.get("owner_type") == Some(enclosing) {
+                        return true;
+                    }
                     caller_scope
                         .as_ref()
                         .is_some_and(|(label, caller_enclosing)| {

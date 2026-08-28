@@ -8557,6 +8557,59 @@ fn a_compiler_macro_and_a_test_runners_globals_are_provided_rather_than_missing(
 }
 
 #[test]
+fn a_contract_is_not_a_function_its_methods_are_local_to() {
+    // A solidity method carries `enclosing_function: <its contract>`, which
+    // is how a reference written inside the contract knows whose it is. The
+    // rule that a definition nested in another is visible only inside it
+    // then read that as a hiding scope and dropped every inherited call:
+    // openzeppelin declares 3477 methods that way and 2150 of its calls
+    // reached none of them. A definition's own type does not hide it.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("contracts")).unwrap();
+    fs::write(
+        root.join("contracts").join("Base.sol"),
+        "pragma solidity ^0.8.0;\n\nabstract contract Base {\n    function plainHelper() internal pure returns (uint256) {\n        return 1;\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("contracts").join("Child.sol"),
+        "pragma solidity ^0.8.0;\n\nimport {Base} from \"./Base.sol\";\n\ncontract Child is Base {\n    function run() public pure returns (uint256) {\n        return plainHelper();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let helper = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "plainHelper" && node.kind == NodeKind::Function)
+        .expect("the base declares it");
+    assert_eq!(
+        helper.metadata.get("owner_type").map(String::as_str),
+        Some("Base"),
+        "the contract that declares it is its owner"
+    );
+    assert_eq!(
+        helper
+            .metadata
+            .get("enclosing_function")
+            .map(String::as_str),
+        Some("Base"),
+        "the contract it is written in is still recorded, which is what a \
+         reference inside it is attributed to"
+    );
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.target == helper.id
+                && edge.metadata.get("resolution").map(String::as_str) == Some("resolved")
+        }),
+        "so the inherited call reaches it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_contract_states_every_base_it_names() {
     // Solidity composes rather than descends: `abstract contract
     // PaymasterSigner is AbstractSigner, EIP712, Paymaster` reaches
