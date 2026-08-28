@@ -17374,3 +17374,46 @@ fn ruby_calls_a_method_by_writing_its_name() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_c_file_hands_a_function_over_by_name() {
+    // `iter->_next_fp = all_values_iter_next` stores a function and
+    // `aeCreateFileEvent(.., redisAeReadEvent, ..)` passes one, and both
+    // make it run when the time comes -- neither is a call the syntax
+    // records. 2543 of redis's 4619 functions with no caller are named
+    // this way in the file that declares them.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("Makefile"), "all:\n\tcc src/ae.c\n").unwrap();
+    fs::write(
+        root.join("src/ae.c"),
+        "#include <stddef.h>\n\ntypedef struct iter { int (*next_fp)(void); } iter;\n\nstatic int all_values_iter_next(void) { return 1; }\n\nstatic int read_event(void) { return 2; }\n\nvoid create_event(int fd, int (*proc)(void), void *data);\n\nvoid setup(iter *it) {\n    it->next_fp = all_values_iter_next;\n    create_event(1, read_event, NULL);\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let callers_of = |label: &str| {
+        let target = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == label)
+            .unwrap_or_else(|| panic!("{label} is declared"));
+        graph
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == EdgeKind::Calls && edge.target == target.id)
+            .filter_map(|edge| graph.nodes.iter().find(|node| node.id == edge.source))
+            .map(|node| node.label.clone())
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        callers_of("all_values_iter_next").contains(&"setup".to_string()),
+        "a function stored in a field is handed over by the code that stores it"
+    );
+    assert!(
+        callers_of("read_event").contains(&"setup".to_string()),
+        "a function passed as an argument is handed over too"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A C file hands a function over by writing its name: `iter->_next_fp = all_values_iter_next`
+  stores one and `aeCreateFileEvent(.., redisAeReadEvent, ..)` passes one, and both make it run when
+  the time comes. Only a function the same file declares counts, so nothing is guessed at. redis's
+  functions with no caller fall from 4620 to 3280, and 2900 more calls resolve across redis,
+  nlohmann and spdlog.
 - Ruby calls a method by writing its name, with no parentheses and no receiver to tell it from a
   variable: `filtered_statuses` calls `default_statuses` and `hashtag_scope`, and nothing recorded
   any of it. Only a name the same class declares counts, so nothing is guessed at, and a name the
