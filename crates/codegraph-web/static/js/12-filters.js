@@ -370,6 +370,19 @@ function clientHeuristicSeverity(graph) {
   return (graph.edges || []).some((edge) => edge.confidence === "semantic") ? "warning" : "info";
 }
 
+// Mirrors `reachability_is_worth_reporting`: when entrypoints reach under
+// half the functions, "nothing reaches this" is a statement about how
+// little the scan could start from. mastodon's reach 18% because Rails
+// loads `app/` by convention, and 2114 of its 3127 source files read as
+// unreachable. `low_entrypoint_coverage` says it once instead.
+function clientReachabilityIsWorthReporting(graph, reachableIds) {
+  if (reachableIds.size === 0) return false;
+  const functions = (graph.nodes || []).filter((node) => node.kind === "function");
+  if (functions.length < 20) return true;
+  const reached = functions.filter((node) => reachableIds.has(node.id)).length;
+  return reached * 2 >= functions.length;
+}
+
 function buildClientInsights(graph) {
   const nodesById = new Map((graph.nodes || []).map((node) => [node.id, node]));
   const insights = [];
@@ -378,6 +391,7 @@ function buildClientInsights(graph) {
     graph.edges.filter((edge) => edge.kind === "entrypoint").map((edge) => edge.target),
   );
   const reachableIds = clientEntrypointReachableIds(graph, entrypointIds);
+  const reachabilityIsWorthReporting = clientReachabilityIsWorthReporting(graph, reachableIds);
   const calledIds = new Set(
     graph.edges
       .filter(
@@ -641,7 +655,7 @@ function buildClientInsights(graph) {
     .forEach((edge) => {
       const source = nodesById.get(edge.source);
       const target = nodesById.get(edge.target);
-      if (reachableIds.size > 0 && !reachableIds.has(edge.source)) {
+      if (reachabilityIsWorthReporting && !reachableIds.has(edge.source)) {
         insights.push({
           kind: "unreachable_error_flow",
           // Reachability is heuristic on a syntax-only scan and error

@@ -1015,7 +1015,7 @@ pub(crate) fn add_error_flow_insights(
         // places in a bounded list to say one thing. An empty set is the
         // reachability walk saying it found no entrypoint to start from,
         // and then the other rule stays quiet and this one is all there is.
-        if !reachable.is_empty() && !reachable.contains(&edge.source) {
+        if reachability_is_worth_reporting(graph, reachable) && !reachable.contains(&edge.source) {
             continue;
         }
         let source = labels.get(&edge.source).copied().unwrap_or("unknown");
@@ -2509,6 +2509,23 @@ fn starts_in_its_own_code(graph: &CodeGraph) -> bool {
 /// claim about the code. Below half, [`add_entrypoint_coverage_insights`]
 /// says so once, and what every other unreachability finding describes is
 /// that gap rather than dead code.
+/// Whether "nothing reaches this" says something about the code rather than
+/// about how little of the program the scan could start from.
+///
+/// The coverage finding already says it once, and says it better: mastodon's
+/// entrypoints reach 18% of its functions because Rails loads `app/` by
+/// convention and no edge records that, so "not reachable from any
+/// entrypoint" was true of 2114 of its 3127 source files. Across the corpus
+/// 35 of 44 projects are in that state and carried 36,719 `unreachable_*`
+/// findings between them -- a quarter of everything they reported -- while
+/// the 9 projects whose entrypoints do reach their code carried 625, which
+/// are the ones worth reading. `low_entrypoint_coverage` tells the reader
+/// this in one line, and its own words are to treat `unreachable_*`
+/// findings as gaps in call resolution.
+fn reachability_is_worth_reporting(graph: &CodeGraph, reachable: &BTreeSet<NodeId>) -> bool {
+    !reachable.is_empty() && !entrypoint_coverage_is_low(graph, reachable)
+}
+
 fn entrypoint_coverage_is_low(graph: &CodeGraph, reachable: &BTreeSet<NodeId>) -> bool {
     let functions = graph
         .nodes
@@ -2616,7 +2633,7 @@ pub(crate) fn add_unreachable_error_flow_insights(
     reachable: &BTreeSet<NodeId>,
     insights: &mut Vec<Insight>,
 ) {
-    if reachable.is_empty() {
+    if !reachability_is_worth_reporting(graph, reachable) {
         return;
     }
 
@@ -2664,7 +2681,7 @@ pub(crate) fn add_unreachable_source_file_insights(
     reachable: &BTreeSet<NodeId>,
     insights: &mut Vec<Insight>,
 ) {
-    if reachable.is_empty() {
+    if !reachability_is_worth_reporting(graph, reachable) {
         return;
     }
 
