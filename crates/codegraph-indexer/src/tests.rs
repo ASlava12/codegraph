@@ -17568,3 +17568,36 @@ fn a_jsx_file_is_javascript_and_is_read() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn scan_coverage_says_what_it_passed_over() {
+    // "5757 files were not indexed" says nothing a reader can act on.
+    // mastodon's are 4276 `.svg` -- the assets, rightly left alone -- and
+    // 310 `.haml`, a language this scan does not read, and only the
+    // breakdown tells one from the other.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app/views")).unwrap();
+    fs::create_dir_all(root.join("public")).unwrap();
+    fs::write(root.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
+    fs::write(root.join("app/views/show.haml"), "%h1 Title\n").unwrap();
+    fs::write(root.join("app/views/index.haml"), "%h1 Index\n").unwrap();
+    fs::write(root.join("public/logo.svg"), "<svg></svg>\n").unwrap();
+    fs::write(root.join("app/account.rb"), "class Account\nend\n").unwrap();
+
+    let report = scan_coverage(&root, &IndexOptions::default()).unwrap();
+
+    assert_eq!(report.non_index_extensions.get("haml"), Some(&2));
+    assert_eq!(report.non_index_extensions.get("svg"), Some(&1));
+    assert_eq!(
+        report.non_index_extensions.get("rb"),
+        None,
+        "a file the scan reads is not among the ones it passed over"
+    );
+    assert_eq!(
+        report.non_index_files,
+        report.non_index_extensions.values().sum::<usize>(),
+        "every file passed over is accounted for by an extension"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

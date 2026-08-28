@@ -81,6 +81,10 @@ pub struct ScanCoverageReport {
     pub skipped_ignored_name_entries: usize,
     pub skipped_ignored_glob_entries: usize,
     pub non_index_files: usize,
+    /// What the files it passed over were, by extension. "5757 files were
+    /// not indexed" says nothing a reader can act on; `svg: 4276` is the
+    /// assets and `haml: 310` is a language this scan does not read.
+    pub non_index_extensions: BTreeMap<String, usize>,
     pub seen_bytes: u64,
     pub indexed_bytes: u64,
     pub skipped_large_bytes: u64,

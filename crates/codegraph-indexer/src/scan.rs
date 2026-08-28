@@ -443,6 +443,7 @@ pub fn scan_coverage(
         skipped_ignored_name_entries: 0,
         skipped_ignored_glob_entries: 0,
         non_index_files: 0,
+        non_index_extensions: BTreeMap::new(),
         seen_bytes: 0,
         indexed_bytes: 0,
         skipped_large_bytes: 0,
@@ -495,6 +496,25 @@ pub fn scan_coverage(
         report.seen_bytes += bytes;
         if !is_index_relevant_file(path) {
             report.non_index_files += 1;
+            // Which kinds were passed over, so a reader can tell the
+            // assets from a language this scan does not read. A repository
+            // with a great many distinct suffixes counts the rest together
+            // rather than growing without bound.
+            let extension = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(|extension| extension.to_ascii_lowercase())
+                .filter(|extension| extension.len() <= 16)
+                .unwrap_or_else(|| "(none)".to_string());
+            let known = report.non_index_extensions.contains_key(&extension);
+            if known || report.non_index_extensions.len() < 200 {
+                *report.non_index_extensions.entry(extension).or_default() += 1;
+            } else {
+                *report
+                    .non_index_extensions
+                    .entry("(other)".to_string())
+                    .or_default() += 1;
+            }
             continue;
         }
 

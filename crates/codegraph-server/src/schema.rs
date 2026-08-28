@@ -2778,6 +2778,12 @@ pub(crate) fn scan_coverage_response_fields() -> Vec<ApiParameterSpec> {
             "usize",
             "Files the indexer has no adapter or rule for.",
         ),
+        response_field(
+            "non_index_extensions",
+            true,
+            "object",
+            "How many of those files each extension accounts for, so the assets can be told from a language this scan does not read.",
+        ),
         response_field("seen_bytes", true, "u64", "Bytes across every file met."),
         response_field("indexed_bytes", true, "u64", "Bytes actually read."),
         response_field(

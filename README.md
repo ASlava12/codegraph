@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- The coverage report says what it passed over, by extension. "5757 files were not indexed" says
+  nothing a reader can act on; mastodon's are 4276 `.svg` -- the assets, rightly left alone -- and
+  310 `.haml`, a language this scan does not read, and only the breakdown tells one from the other.
+  A repository with a great many distinct suffixes counts the rest together rather than growing
+  without bound.
 - A `.jsx` file is javascript and is read. The extension was not among those any adapter claimed,
   so the file was walked and never parsed: mastodon's hundred components held nothing at all, and
   414 functions in 3140 nodes were invisible. The javascript grammar reads JSX -- the same component
