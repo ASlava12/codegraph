@@ -1,7 +1,9 @@
 //! The refactoring product: journeys, component dependencies and
 //! contracts, refactor-context bundles, seams, and impact reports.
 
-use codegraph_core::{CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind, SourceSpan};
+use codegraph_core::{
+    CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind, SourceSpan, is_test_like_area,
+};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[allow(unused_imports)]
@@ -575,8 +577,7 @@ pub fn seams(graph: &CodeGraph, request: SeamRequest) -> SeamReport {
     // lists.
     let touches_a_suite = |candidate: &SeamCandidate| {
         u8::from(
-            is_test_like_source_path(&candidate.source_area)
-                || is_test_like_source_path(&candidate.target_area),
+            is_test_like_area(&candidate.source_area) || is_test_like_area(&candidate.target_area),
         )
     };
     let mut safest = candidates.clone();

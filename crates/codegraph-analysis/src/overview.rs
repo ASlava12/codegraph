@@ -2,7 +2,8 @@
 //! dependencies, surprising links, hotspots, communities, entrypoints.
 
 use codegraph_core::{
-    CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind, is_vendored_source_path,
+    CodeGraph, Confidence, Edge, EdgeKind, Node, NodeId, NodeKind, is_test_like_area,
+    is_vendored_source_path,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -211,7 +212,7 @@ pub fn architecture_map(
         let rank = |group: &ArchitectureGroup| {
             (
                 u8::from(group.symbols == 0),
-                u8::from(is_test_like_source_path(&group.id)),
+                u8::from(is_test_like_area(&group.id)),
             )
         };
         rank(left)
@@ -222,9 +223,18 @@ pub fn architecture_map(
     });
     let mut edges: Vec<_> = edges.into_values().collect();
     edges.sort_by(|left, right| {
-        right
-            .count
-            .cmp(&left.count)
+        // Ranked for the reason the groups above are: a suite touches
+        // everything, so its edges weigh the most. mastodon's two heaviest
+        // were `spec -> app/models` (937) and `spec -> app/lib` (832), and
+        // they answered "how is this organised" ahead of `app/controllers ->
+        // app/models`. The dependency is real and still reported, after the
+        // ones between parts of the program.
+        let rank = |edge: &ArchitectureEdge| {
+            u8::from(is_test_like_area(&edge.source) || is_test_like_area(&edge.target))
+        };
+        rank(left)
+            .cmp(&rank(right))
+            .then_with(|| right.count.cmp(&left.count))
             .then_with(|| left.source.cmp(&right.source))
             .then_with(|| left.target.cmp(&right.target))
     });
@@ -604,7 +614,7 @@ pub fn communities(graph: &CodeGraph, limit: usize) -> CommunityReport {
         let rank = |community: &GraphCommunity| {
             (
                 u8::from(community.internal_edges == 0),
-                u8::from(is_test_like_source_path(&community.label)),
+                u8::from(is_test_like_area(&community.label)),
             )
         };
         rank(left)

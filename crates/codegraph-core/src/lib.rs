@@ -135,6 +135,18 @@ pub fn is_test_like_source_path(path: &str) -> bool {
         || normalized.contains("/generated/")
 }
 
+/// Whether an area is a suite, asked of a directory rather than a file.
+///
+/// `is_test_like_source_path` looks past the last segment on purpose: there
+/// it is a file name, and `example.rs` is not an example directory. An area
+/// id is a directory all the way down, so its last segment is a directory
+/// name too -- flask's `examples` holds 98 symbols the library does not
+/// offer, and it sorted above `.github` among the areas of the project.
+pub fn is_test_like_area(area: &str) -> bool {
+    let area = area.trim_end_matches('/');
+    is_test_like_source_path(area) || is_test_like_source_path(&format!("{area}/x"))
+}
+
 /// Whether a path holds code the project vendored rather than wrote: redis
 /// carries jemalloc, lua and hiredis under `deps/`, and dune keeps `re` and
 /// `opam` under `vendor/`. A FIXME or a cycle in there is upstream's, and
@@ -547,6 +559,23 @@ impl CodeGraph {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_area_is_a_directory_all_the_way_down() {
+        // `is_test_like_source_path` looks past the last segment because
+        // there it is a file name. An area id has no file name in it, so
+        // flask's `examples` sorted above `.github` among the areas of the
+        // project, and `examples -> src` above `tests -> src`.
+        assert!(!is_test_like_source_path("examples"));
+        assert!(is_test_like_area("examples"));
+        assert!(is_test_like_area("tests"));
+        assert!(is_test_like_area("spec"));
+        assert!(is_test_like_area("app/javascript/__tests__"));
+        assert!(!is_test_like_area("src"));
+        assert!(!is_test_like_area("app/models"));
+        // And it stays the file question for a file: `example.rs` is code.
+        assert!(!is_test_like_area("src/example.rs"));
+    }
     #[test]
     fn vendored_paths_are_the_ones_a_project_carries() {
         for path in [
