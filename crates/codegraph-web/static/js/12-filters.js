@@ -440,8 +440,12 @@ function buildClientInsights(graph) {
     // of them: koel's container instantiates 208 classes whose
     // `__construct` no `new` in the repository names. The CLI skips those
     // whose class something points at.
+    // A haskell data constructor is named after itself rather than after a
+    // keyword, and building a value of a type something reaches uses them
+    // the same way. The CLI skips those too.
     const builtByItsClass =
-      ["__construct", "constructor", "__init__"].includes(node.label) &&
+      (["__construct", "constructor", "__init__"].includes(node.label) ||
+        node.metadata?.definition_form === "constructor") &&
       reachedTypeIds.has(typeIdsByLabel.get(node.metadata?.owner_type));
     // A test is run by its runner, which no edge records: the CLI skips a
     // function declared in a test-like file and one a `#[test]` attribute

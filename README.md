@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A haskell data constructor is named after itself rather than after a keyword -- `data
+  VariableState = Dead Token String | Alive` -- and building a value of a type something reaches
+  uses them, the same way building a class runs its constructor. shellcheck's orphan functions fall
+  from 3101 to 2968.
 - Zig binds `const server = @import("Server.zig")` and writes `server.` at every call, so the name
   a reader asks with differs from the file's only in case; an unambiguous stem now answers either
   way, and `server` reaches `src/Server.zig` with 243 dependents. The same import names the file by

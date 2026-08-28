@@ -754,14 +754,19 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
         // most of them: koel's container instantiates 208 classes whose
         // `__construct` no `new` in the repository names. A class nothing
         // points at is still worth reporting, and its constructor with it.
-        if matches!(
+        // A haskell data constructor is named after itself rather than
+        // after a keyword -- `data VariableState = Dead Token String |
+        // Alive` -- and building a value of a type something reaches uses
+        // them the same way. shellcheck declares 1474 of them.
+        if (matches!(
             node.label.as_str(),
             "__construct" | "constructor" | "__init__"
-        ) && node
-            .metadata
-            .get("owner_type")
-            .and_then(|owner| type_ids.get(owner.as_str()))
-            .is_some_and(|owner| reached.contains(owner))
+        ) || node.metadata.get("definition_form").map(String::as_str) == Some("constructor"))
+            && node
+                .metadata
+                .get("owner_type")
+                .and_then(|owner| type_ids.get(owner.as_str()))
+                .is_some_and(|owner| reached.contains(owner))
         {
             continue;
         }

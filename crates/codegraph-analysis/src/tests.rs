@@ -15360,3 +15360,79 @@ fn a_module_answers_by_the_name_its_importers_write() {
     assert_eq!(report.target.label, "kong/tools/table.lua");
     assert_eq!(report.total_dependents, 1);
 }
+
+#[test]
+fn a_data_constructor_is_used_when_its_type_is() {
+    // `data VariableState = Dead Token String | Alive` declares
+    // constructors that code applies like functions, which is why they are
+    // recorded as functions at all. Building a value of a type something
+    // reaches uses them, the same way building a class runs its
+    // constructor -- and a constructor is named after itself rather than
+    // after a keyword.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(codegraph_core::SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    let file = graph.add_node(NodeKind::File, "src/Types.hs");
+    let state = graph.add_node_with_metadata(
+        NodeKind::Type,
+        "VariableState",
+        span("src/Types.hs"),
+        BTreeMap::from([("language".to_string(), "haskell".to_string())]),
+    );
+    let alive = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "Alive",
+        span("src/Types.hs"),
+        BTreeMap::from([
+            ("language".to_string(), "haskell".to_string()),
+            ("owner_type".to_string(), "VariableState".to_string()),
+            ("definition_form".to_string(), "constructor".to_string()),
+        ]),
+    );
+    let lonely = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "unusedHelper",
+        span("src/Types.hs"),
+        BTreeMap::from([("language".to_string(), "haskell".to_string())]),
+    );
+    let user = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "run",
+        span("src/Main.hs"),
+        BTreeMap::from([("language".to_string(), "haskell".to_string())]),
+    );
+    for (parent, child) in [
+        (graph.root, file),
+        (file, state),
+        (file, alive),
+        (file, lonely),
+    ] {
+        graph.add_edge(parent, child, EdgeKind::Contains, Confidence::Exact);
+    }
+    graph.add_edge(user, state, EdgeKind::References, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    let orphans: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "orphan_function")
+        .map(|insight| insight.message.as_str())
+        .collect();
+    assert!(
+        orphans
+            .iter()
+            .any(|message| message.contains("unusedHelper")),
+        "a function nothing reaches is still reported: {orphans:?}"
+    );
+    assert!(
+        !orphans.iter().any(|message| message.contains("Alive")),
+        "the type is reached, so its constructors are used: {orphans:?}"
+    );
+}

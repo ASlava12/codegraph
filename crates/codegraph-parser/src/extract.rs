@@ -1224,7 +1224,10 @@ fn haskell_data_constructors(node: Node<'_>, source: &[u8], path: &str) -> Vec<P
                 label,
                 span: span_for(path, current),
                 parent: None,
-                metadata: BTreeMap::from([("owner_type".to_string(), owner.clone())]),
+                metadata: BTreeMap::from([
+                    ("owner_type".to_string(), owner.clone()),
+                    ("definition_form".to_string(), "constructor".to_string()),
+                ]),
             });
             continue;
         }
@@ -1601,7 +1604,10 @@ pub(crate) fn classify_node(
             // `function` kind also spells a function *type* (`Token -> m ()`)
             // inside a signature — that node has no `name` field, and without
             // this guard its first type identifier was recorded as a function.
-            "function" | "bind" if node.child_by_field_name("name").is_some() => {
+            "function" | "bind"
+                if node.child_by_field_name("name").is_some()
+                    && !inside_haskell_data_declaration(node) =>
+            {
                 ParsedItemKind::Function
             }
             "data_type" | "newtype" | "type_synonym" | "class" => ParsedItemKind::Type,
@@ -2240,6 +2246,30 @@ fn file_module_name(path: &str) -> Option<String> {
     let mut characters = stem.chars();
     let first = characters.next()?.to_ascii_uppercase();
     Some(std::iter::once(first).chain(characters).collect())
+}
+
+/// Whether a node sits inside a `data` or `newtype` declaration. `data
+/// VariableState = Dead Token String | Alive` reads like an application
+/// and a bare name, so shellcheck's constructors were recorded as
+/// functions -- and as functions nobody calls, since a constructor is
+/// written in a pattern or an expression rather than applied by name.
+fn inside_haskell_data_declaration(node: Node<'_>) -> bool {
+    let mut current = node.parent();
+    let mut depth = 0;
+    while let Some(candidate) = current {
+        depth += 1;
+        if depth > 8 {
+            break;
+        }
+        if matches!(
+            candidate.kind(),
+            "data_type" | "newtype" | "data_constructors" | "data_constructor"
+        ) {
+            return true;
+        }
+        current = candidate.parent();
+    }
+    false
 }
 
 /// The module a Haskell file declares. `module ShellCheck.Analytics
