@@ -127,7 +127,11 @@ static PYTHON_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
 };
 static JAVASCRIPT_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {
     language: Language::JavaScript,
-    extensions: &["js", "mjs", "cjs"],
+    // A `.jsx` file is javascript, and the grammar reads JSX: the same
+    // component saved as `.js` parses without a syntax error. Without the
+    // extension the file was walked and never read, so mastodon's hundred
+    // components held nothing at all.
+    extensions: &["js", "mjs", "cjs", "jsx"],
     file_names: &[],
 };
 static TYPESCRIPT_ADAPTER: BuiltinLanguageAdapter = BuiltinLanguageAdapter {

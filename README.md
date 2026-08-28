@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A `.jsx` file is javascript and is read. The extension was not among those any adapter claimed,
+  so the file was walked and never parsed: mastodon's hundred components held nothing at all, and
+  414 functions in 3140 nodes were invisible. The javascript grammar reads JSX -- the same component
+  saved as `.js` parses without a syntax error -- so the extension belongs to it rather than to a
+  dialect of its own.
 - A configuration trace shows the program's own readers first. The order was the file walk and
   `.github/` sorts early, so mastodon's `RAILS_ENV` -- read by six workflow jobs, one spec helper,
   `bin/dev` and `config/boot.rb` -- answered with the jobs and none of the program under the default

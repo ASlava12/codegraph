@@ -17533,3 +17533,38 @@ fn a_definition_is_linked_to_the_one_that_holds_it() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_jsx_file_is_javascript_and_is_read() {
+    // `.jsx` was not among the extensions any adapter claimed, so the file
+    // was walked and never parsed: mastodon's hundred components held
+    // nothing at all. The javascript grammar reads JSX -- the same
+    // component saved as `.js` parses without a syntax error -- so a
+    // `.jsx` file is javascript and says so.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("package.json"), "{\"name\": \"app\"}\n").unwrap();
+    fs::write(
+        root.join("src/Button.jsx"),
+        "export function Button({ label }) {\n  return <button onClick={label}>{label}</button>;\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let button = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Function && node.label == "Button")
+        .expect("the component is read");
+    assert_eq!(
+        button.metadata.get("language").map(String::as_str),
+        Some("javascript"),
+        "a .jsx file is javascript, not a dialect of its own"
+    );
+    assert_eq!(
+        button.span.as_ref().map(|span| span.path.as_str()),
+        Some("src/Button.jsx")
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
