@@ -15633,3 +15633,69 @@ fn the_architecture_map_leads_with_the_program() {
         "a suite follows the program, and an area holding none of it follows both: {labels:?}"
     );
 }
+
+#[test]
+fn a_subsystem_is_ranked_by_what_refers_to_itself() {
+    // What makes a subsystem is that its parts refer to each other.
+    // mastodon's `public/` held 3953 nodes and four edges among them, and
+    // led every subsystem of the program on node count alone; flask's
+    // one-node `<computed name>` refers to nothing at all.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(codegraph_core::SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    let add = |graph: &mut CodeGraph, area: &str, count: usize, link: bool| {
+        let mut symbols = Vec::new();
+        for index in 0..count {
+            let path = format!("{area}/file{index}.py");
+            let file = graph.add_node(NodeKind::File, path.clone());
+            graph.add_edge(graph.root, file, EdgeKind::Contains, Confidence::Exact);
+            let symbol = graph.add_node_with_metadata(
+                NodeKind::Function,
+                format!("{area}_symbol{index}"),
+                span(&path),
+                BTreeMap::from([("language".to_string(), "python".to_string())]),
+            );
+            graph.add_edge(file, symbol, EdgeKind::Contains, Confidence::Exact);
+            symbols.push(symbol);
+        }
+        if link {
+            for pair in symbols.windows(2) {
+                graph.add_edge(pair[0], pair[1], EdgeKind::Calls, Confidence::Syntactic);
+            }
+        }
+    };
+    // Many files holding nothing, as a directory of assets does.
+    for index in 0..20 {
+        let asset = graph.add_node(NodeKind::File, format!("public/asset{index}.png"));
+        graph.add_edge(graph.root, asset, EdgeKind::Contains, Confidence::Exact);
+    }
+    // A suite that refers to itself a great deal.
+    add(&mut graph, "tests", 12, true);
+    // The program, smaller but connected.
+    add(&mut graph, "src", 6, true);
+
+    let report = communities(&graph, 10);
+    let labels: Vec<&str> = report
+        .communities
+        .iter()
+        .map(|community| community.label.as_str())
+        .collect();
+    assert_eq!(
+        labels.first().copied(),
+        Some("src"),
+        "the program leads, whatever the suite weighs: {labels:?}"
+    );
+    let tests = labels.iter().position(|label| *label == "tests");
+    let public = labels.iter().position(|label| *label == "public");
+    assert!(
+        tests > Some(0) && public > tests,
+        "the suite follows the program, and a group referring to nothing follows both: {labels:?}"
+    );
+}

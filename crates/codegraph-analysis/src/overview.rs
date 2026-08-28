@@ -592,11 +592,25 @@ pub fn communities(graph: &CodeGraph, limit: usize) -> CommunityReport {
             (source_community != target_community).then_some(())
         })
         .count();
+    // What makes a subsystem is that its parts refer to each other, so
+    // that is what ranks them: mastodon's `public/` held 3953 nodes and
+    // four edges among them, and led every subsystem of the program on
+    // node count alone. A suite follows the program here as it does in the
+    // architecture map.
     communities.sort_by(|left, right| {
-        right
-            .node_count
-            .cmp(&left.node_count)
+        // A group whose parts refer to nothing, not even each other, is
+        // not a subsystem at all -- flask's one-node `<computed name>` --
+        // and follows even the suite.
+        let rank = |community: &GraphCommunity| {
+            (
+                u8::from(community.internal_edges == 0),
+                u8::from(is_test_like_source_path(&community.label)),
+            )
+        };
+        rank(left)
+            .cmp(&rank(right))
             .then_with(|| right.internal_edges.cmp(&left.internal_edges))
+            .then_with(|| right.node_count.cmp(&left.node_count))
             .then_with(|| left.label.cmp(&right.label))
             .then_with(|| left.id.cmp(&right.id))
     });

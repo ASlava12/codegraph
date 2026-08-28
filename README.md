@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A subsystem is what refers to itself, so that is what ranks the communities. They were ordered by
+  node count, and mastodon's `public/` -- 3953 nodes with four edges among them -- led every
+  subsystem of the program. A group whose parts refer to nothing, not even each other, follows even
+  the suite: flask leads with `src` now, then docs and examples, with its tests and its one-node
+  `<computed name>` last.
 - An architecture area matters by how much of the program it holds, and the order decides what
   survives `--group-limit` as well as what a reader sees first. It was ranked by file count, so
   mastodon's `public/` -- 3949 files, four symbols -- led the map. Areas holding none of the program
