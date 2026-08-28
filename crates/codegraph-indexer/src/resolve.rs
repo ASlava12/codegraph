@@ -2050,6 +2050,7 @@ fn add_external_call_placeholder(context: &mut IndexContext, call: PendingCall) 
     let language = call.language.clone();
     let line = call.span.start_line;
     let column = call.span.start_column;
+    let file = call.span.path.clone();
     let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
         *id
     } else {
@@ -2077,6 +2078,7 @@ fn add_external_call_placeholder(context: &mut IndexContext, call: PendingCall) 
             ("call_label".to_string(), label),
             ("resolution".to_string(), "external".to_string()),
             ("language".to_string(), language),
+            ("file".to_string(), file),
             ("line".to_string(), line.to_string()),
             ("column".to_string(), column.to_string()),
         ]),
@@ -3408,6 +3410,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     ("call_label".to_string(), call.label),
                     ("resolution".to_string(), resolution.to_string()),
                     ("language".to_string(), call.language),
+                    ("file".to_string(), call.span.path.clone()),
                     ("line".to_string(), call.span.start_line.to_string()),
                     ("column".to_string(), call.span.start_column.to_string()),
                 ]);
@@ -3637,6 +3640,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     ("call_label".to_string(), call.label),
                     ("resolution".to_string(), "ambiguous".to_string()),
                     ("language".to_string(), call.language),
+                    ("file".to_string(), call.span.path.clone()),
                     ("line".to_string(), call.span.start_line.to_string()),
                     ("column".to_string(), call.span.start_column.to_string()),
                 ]),
@@ -3665,6 +3669,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         metadata.insert("call_label".to_string(), call.label.clone());
         metadata.insert("resolution".to_string(), "resolved".to_string());
         metadata.insert("language".to_string(), call.language);
+        metadata.insert("file".to_string(), call.span.path.clone());
         metadata.insert("line".to_string(), call.span.start_line.to_string());
         metadata.insert("column".to_string(), call.span.start_column.to_string());
         metadata.insert("resolution_basis".to_string(), basis.to_string());
@@ -3908,6 +3913,7 @@ pub(crate) fn resolve_pending_type_references(context: &mut IndexContext) {
                 ("relation".to_string(), "type_reference".to_string()),
                 ("type_label".to_string(), reference.label),
                 ("language".to_string(), reference.language),
+                ("file".to_string(), reference.span.path.clone()),
                 ("line".to_string(), reference.span.start_line.to_string()),
             ]),
         );

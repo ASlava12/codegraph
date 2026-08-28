@@ -8557,6 +8557,63 @@ fn a_compiler_macro_and_a_test_runners_globals_are_provided_rather_than_missing(
 }
 
 #[test]
+fn a_line_on_an_edge_says_which_file_it_is_in() {
+    // `component-contract` answered `bot= -> actor_type` with `line: 224`
+    // and no file, and 82,320 of mastodon's 82,816 edges that carry a line
+    // carried it that way. A line without a file is not a place.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("main.rs"),
+        "mod helper;\n\nfn main() {\n    helper::run();\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("helper.rs"),
+        "pub fn run() {\n    missing_helper();\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let placed = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.metadata.contains_key("line"))
+        .collect::<Vec<_>>();
+    assert!(
+        !placed.is_empty(),
+        "the fixture makes edges that carry a line"
+    );
+    for edge in &placed {
+        let file = edge
+            .metadata
+            .get("file")
+            .unwrap_or_else(|| panic!("an edge with a line says which file: {:?}", edge.metadata));
+        assert!(
+            file.ends_with(".rs"),
+            "the file is the call site's, not a label: {file}"
+        );
+    }
+    let run = graph
+        .edges
+        .iter()
+        .find(|edge| edge.metadata.get("call_label").map(String::as_str) == Some("helper::run"))
+        .expect("main calls helper::run");
+    assert_eq!(
+        run.metadata.get("file").map(String::as_str),
+        Some("src/main.rs"),
+        "and it is the file the call is written in, not the one it reaches"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_slash_in_a_javascript_call_is_a_regular_expression_not_a_name() {
     // `/^\s*$/.test(value)` left `/^\s*$/.test` as a call target, and
     // mastodon reported `+\.json$/.exec` among the calls nothing resolved.
