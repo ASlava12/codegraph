@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A boundary with the suite on one side is neither a seam to extract nor coupling to fix: a suite
+  leans on the program by design, and mastodon's specs reach `app/models` 937 times and `app/lib`
+  832, which topped the seams worth untangling. Both lists now put the boundaries inside the program
+  first, so mastodon leads with `config -> app/controllers` and `app/controllers -> app/models`.
 - A subsystem is what refers to itself, so that is what ranks the communities. They were ordered by
   node count, and mastodon's `public/` -- 3953 nodes with four edges among them -- led every
   subsystem of the program. A group whose parts refer to nothing, not even each other, follows even

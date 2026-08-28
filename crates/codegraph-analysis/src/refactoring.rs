@@ -568,10 +568,23 @@ pub fn seams(graph: &CodeGraph, request: SeamRequest) -> SeamReport {
     }
     let total_pairs = candidates.len();
 
+    // A suite leans on the program by design: mastodon's specs reach
+    // `app/models` 937 times and `app/lib` 832, which topped the seams
+    // worth untangling and said nothing anyone would act on. A boundary
+    // with the suite on one side is neither a seam to extract nor coupling
+    // to fix, so it follows the boundaries inside the program in both
+    // lists.
+    let touches_a_suite = |candidate: &SeamCandidate| {
+        u8::from(
+            is_test_like_source_path(&candidate.source_area)
+                || is_test_like_source_path(&candidate.target_area),
+        )
+    };
     let mut safest = candidates.clone();
     safest.sort_by(|left, right| {
-        left.friction_score
-            .cmp(&right.friction_score)
+        touches_a_suite(left)
+            .cmp(&touches_a_suite(right))
+            .then_with(|| left.friction_score.cmp(&right.friction_score))
             .then_with(|| left.edge_count.cmp(&right.edge_count))
             .then_with(|| {
                 (left.source_area.as_str(), left.target_area.as_str())
@@ -582,9 +595,9 @@ pub fn seams(graph: &CodeGraph, request: SeamRequest) -> SeamReport {
 
     let mut most_needed = candidates;
     most_needed.sort_by(|left, right| {
-        right
-            .friction_score
-            .cmp(&left.friction_score)
+        touches_a_suite(left)
+            .cmp(&touches_a_suite(right))
+            .then_with(|| right.friction_score.cmp(&left.friction_score))
             .then_with(|| right.edge_count.cmp(&left.edge_count))
             .then_with(|| {
                 (left.source_area.as_str(), left.target_area.as_str())

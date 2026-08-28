@@ -15699,3 +15699,66 @@ fn a_subsystem_is_ranked_by_what_refers_to_itself() {
         "the suite follows the program, and a group referring to nothing follows both: {labels:?}"
     );
 }
+
+#[test]
+fn a_boundary_with_the_suite_is_not_a_seam() {
+    // A suite leans on the program by design: mastodon's specs reach
+    // `app/models` 937 times and `app/lib` 832, which topped the seams
+    // worth untangling and said nothing anyone would act on.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(codegraph_core::SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    let symbol = |graph: &mut CodeGraph, area: &str, name: &str| {
+        let path = format!("{area}/{name}.py");
+        let file = graph.add_node(NodeKind::File, path.clone());
+        graph.add_edge(graph.root, file, EdgeKind::Contains, Confidence::Exact);
+        let node = graph.add_node_with_metadata(
+            NodeKind::Function,
+            name.to_string(),
+            span(&path),
+            BTreeMap::from([("language".to_string(), "python".to_string())]),
+        );
+        graph.add_edge(file, node, EdgeKind::Contains, Confidence::Exact);
+        node
+    };
+    let model = symbol(&mut graph, "models", "Account");
+    let service = symbol(&mut graph, "services", "post");
+    let spec = symbol(&mut graph, "spec", "account_spec");
+    // The suite leans on the program far harder than the program leans on
+    // itself.
+    for _ in 0..3 {
+        graph.add_edge(service, model, EdgeKind::Calls, Confidence::Syntactic);
+    }
+    for _ in 0..40 {
+        graph.add_edge(spec, model, EdgeKind::Calls, Confidence::Heuristic);
+    }
+
+    let report = seams(
+        &graph,
+        SeamRequest {
+            limit: 10,
+            edge_limit: 10,
+        },
+    );
+    let needed: Vec<String> = report
+        .most_needed
+        .iter()
+        .map(|seam| format!("{}->{}", seam.source_area, seam.target_area))
+        .collect();
+    assert_eq!(
+        needed.first().map(String::as_str),
+        Some("services->models"),
+        "the boundary inside the program leads: {needed:?}"
+    );
+    assert!(
+        needed.iter().any(|seam| seam.starts_with("spec->")),
+        "the suite is still listed, only later: {needed:?}"
+    );
+}
