@@ -4943,6 +4943,19 @@ fn type_node_named<'graph>(graph: &'graph CodeGraph, name: &str) -> Option<&'gra
                     && node.label.rsplit(['\\', ':']).next().unwrap_or(&node.label) == tail
             })
         })
+        // A qualified call in OCaml, Haskell or Erlang names a module, and
+        // what a module re-exports is recorded on it the way a class records
+        // what it extends. Only the ones that state something are worth
+        // looking at: dune declares four modules named `Fiber` and one of
+        // them is the file that `include`s Core.
+        .or_else(|| {
+            graph.nodes.iter().find(|node| {
+                node.kind == NodeKind::Module
+                    && node.metadata.contains_key("extends")
+                    && (node.label == name
+                        || node.label.rsplit(['\\', ':']).next().unwrap_or(&node.label) == tail)
+            })
+        })
 }
 
 pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {

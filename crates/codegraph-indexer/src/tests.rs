@@ -8610,6 +8610,58 @@ fn a_contract_is_not_a_function_its_methods_are_local_to() {
 }
 
 #[test]
+fn a_module_that_includes_another_answers_for_what_it_re_exports() {
+    // `include M` makes M's definitions the includer's own, and dune builds
+    // whole modules that way: `src/fiber/src/fiber.ml` is 38 lines of
+    // `include Core` and module aliases, so `Fiber.return` names something
+    // core.ml declares. 207 of dune's files include another module and 345
+    // calls to `Fiber.return` alone reached nothing.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src").join("core.ml"), "let answer x = x\n").unwrap();
+    fs::write(root.join("src").join("fiber.ml"), "include Core\n").unwrap();
+    fs::write(
+        root.join("src").join("user.ml"),
+        "let run () = Fiber.answer 1\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let module_node = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.kind == NodeKind::Module
+                && node.label == "Fiber"
+                && node
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.path.ends_with("fiber.ml"))
+        })
+        .expect("the file is a module");
+    assert_eq!(
+        module_node.metadata.get("extends").map(String::as_str),
+        Some("Core"),
+        "what it includes it re-exports"
+    );
+    let answer = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "answer" && node.kind == NodeKind::Function)
+        .expect("core declares it");
+    assert!(
+        graph.edges.iter().any(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.target == answer.id
+                && edge.metadata.get("call_label").map(String::as_str) == Some("Fiber.answer")
+        }),
+        "so a call through the includer reaches it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_contract_states_every_base_it_names() {
     // Solidity composes rather than descends: `abstract contract
     // PaymasterSigner is AbstractSigner, EIP712, Paymaster` reaches

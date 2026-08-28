@@ -2124,6 +2124,15 @@ pub(crate) fn classify_node(
     {
         metadata.insert("module_scope".to_string(), "file".to_string());
     }
+    // What a file `include`s it re-exports, and a call through it means the
+    // included module's definition.
+    if item_kind == ParsedItemKind::Module
+        && language == Language::OCaml
+        && node.kind() == "compilation_unit"
+        && let Some(included) = ocaml_included_modules(node, source)
+    {
+        metadata.insert("extends".to_string(), included);
+    }
     // `local pl_path = require "pl.path"` is the only place a Lua file says
     // what `pl_path.exists(...)` means. Without the name the binding gives
     // it, a qualified call has nothing but its tail to match on, and kong's
@@ -2832,6 +2841,39 @@ fn leading_keyword(node: Node<'_>, source: &[u8]) -> Option<String> {
 /// AdditionalFooterTextsController < Admin::SettingsController`. A route
 /// whose action the class itself does not declare is served by the one
 /// its parent declares, and without this the graph could not say so.
+/// The modules an OCaml file `include`s at its top level.
+///
+/// `include M` makes M's definitions the includer's own, and dune builds
+/// whole modules that way: `src/fiber/src/fiber.ml` is 38 lines of
+/// `include Core` and module aliases, so `Fiber.return` names something
+/// core.ml declares. 207 of dune's files include another module, and 754 of
+/// its unresolved qualified calls are answered by what the included module
+/// declares. Recorded as `extends` so the ancestor walk that answers an
+/// inherited method answers a re-exported one the same way.
+fn ocaml_included_modules(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    let names: Vec<String> = node
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "include_module")
+        .filter_map(|child| node_text(child, source))
+        .filter_map(|text| {
+            let name = text
+                .trim()
+                .strip_prefix("include")?
+                .trim()
+                .split(['(', ' ', '\n'])
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            // `include Foo.Bar` names a submodule; the head is the file.
+            let head = name.split('.').next().unwrap_or_default().to_string();
+            (!head.is_empty() && head.starts_with(char::is_uppercase)).then_some(head)
+        })
+        .collect();
+    (!names.is_empty()).then(|| names.join(","))
+}
+
 /// Every base a solidity contract names, comma-joined the way a CI job's
 /// `extends` list already is.
 ///
