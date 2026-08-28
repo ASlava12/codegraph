@@ -632,9 +632,11 @@ drive("client insights carry the CLI's severities", () => {
       },
     ],
     edges: [
+      // `run` is out of reach, so its error flow is reported as such and
+      // not a second time as a potential one.
       { kind: "may_error", source: 1, target: 2 },
-      // An entrypoint that reaches nothing else, so `run` is out of reach
-      // and its error flow is reported as such.
+      // `orphan` is reached, so its error flow is the potential kind.
+      { kind: "may_error", source: 3, target: 2 },
       { kind: "entrypoint", source: 6, target: 3 },
     ],
   };

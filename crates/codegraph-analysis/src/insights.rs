@@ -25,7 +25,6 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     add_duplicate_entrypoint_insights(graph, &mut insights);
     add_ambiguous_entrypoint_target_insights(graph, &mut insights);
     add_orphan_function_insights(graph, &mut insights);
-    add_error_flow_insights(graph, &mut insights);
     add_unresolved_entrypoint_insights(graph, &mut insights);
     add_unresolved_compose_command_path_insights(graph, &mut insights);
     add_unresolved_compose_env_file_path_insights(graph, &mut insights);
@@ -46,6 +45,7 @@ pub fn insights(graph: &CodeGraph) -> InsightReport {
     let reachable = entrypoint_reachable_nodes(graph);
     add_entrypoint_coverage_insights(graph, &reachable, &mut insights);
     add_unreachable_config_read_insights(graph, &reachable, &mut insights);
+    add_error_flow_insights(graph, &reachable, &mut insights);
     add_unreachable_error_flow_insights(graph, &reachable, &mut insights);
     add_unreachable_source_file_insights(graph, &reachable, &mut insights);
     add_conflicting_config_default_insights(graph, &mut insights);
@@ -995,7 +995,11 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
     }
 }
 
-pub(crate) fn add_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+pub(crate) fn add_error_flow_insights(
+    graph: &CodeGraph,
+    reachable: &BTreeSet<NodeId>,
+    insights: &mut Vec<Insight>,
+) {
     let labels: BTreeMap<NodeId, &str> = graph
         .nodes
         .iter()
@@ -1003,6 +1007,15 @@ pub(crate) fn add_error_flow_insights(graph: &CodeGraph, insights: &mut Vec<Insi
         .collect();
     for (index, edge) in graph.edges.iter().enumerate() {
         if edge.kind != EdgeKind::MayError {
+            continue;
+        }
+        // `unreachable_error_flow` says this about the same edge and adds
+        // that nothing runs it. Every one of the corpus's 369 such findings
+        // named the same two nodes as one of these, so the pair spent two
+        // places in a bounded list to say one thing. An empty set is the
+        // reachability walk saying it found no entrypoint to start from,
+        // and then the other rule stays quiet and this one is all there is.
+        if !reachable.is_empty() && !reachable.contains(&edge.source) {
             continue;
         }
         let source = labels.get(&edge.source).copied().unwrap_or("unknown");

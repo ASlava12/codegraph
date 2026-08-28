@@ -10132,6 +10132,12 @@ fn insights_report_unreachable_error_flows() {
     assert!(report.insights.iter().any(|insight| {
         insight.kind == "potential_error_flow" && insight.nodes.contains(&main)
     }));
+    // The unreachable finding says everything the potential one would and
+    // adds that nothing runs it, so the pair is not both spent on one edge.
+    assert_eq!(report.by_kind.get("potential_error_flow"), Some(&1));
+    assert!(!report.insights.iter().any(|insight| {
+        insight.kind == "potential_error_flow" && insight.nodes.contains(&legacy_worker)
+    }));
 }
 
 #[test]

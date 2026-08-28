@@ -641,15 +641,6 @@ function buildClientInsights(graph) {
     .forEach((edge) => {
       const source = nodesById.get(edge.source);
       const target = nodesById.get(edge.target);
-      insights.push({
-        kind: "potential_error_flow",
-        // Raising is ordinary control flow in Result- and exception-shaped
-        // code, so this is context rather than a defect -- the same
-        // severity the server gives it.
-        severity: "info",
-        message: `${source?.label || edge.source} may error via ${target?.label || edge.target}`,
-        nodeId: source?.id || target?.id,
-      });
       if (reachableIds.size > 0 && !reachableIds.has(edge.source)) {
         insights.push({
           kind: "unreachable_error_flow",
@@ -657,6 +648,16 @@ function buildClientInsights(graph) {
           // constructs are everywhere; context, not a defect.
           severity: "info",
           message: `${source?.label || edge.source} may error via ${target?.label || edge.target} but is not reachable from any entrypoint`,
+          nodeId: source?.id || target?.id,
+        });
+      } else {
+        insights.push({
+          kind: "potential_error_flow",
+          // Raising is ordinary control flow in Result- and exception-shaped
+          // code, so this is context rather than a defect -- the same
+          // severity the server gives it.
+          severity: "info",
+          message: `${source?.label || edge.source} may error via ${target?.label || edge.target}`,
           nodeId: source?.id || target?.id,
         });
       }
