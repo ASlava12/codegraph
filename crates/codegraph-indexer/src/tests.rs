@@ -8557,6 +8557,45 @@ fn a_compiler_macro_and_a_test_runners_globals_are_provided_rather_than_missing(
 }
 
 #[test]
+fn a_contract_states_every_base_it_names() {
+    // Solidity composes rather than descends: `abstract contract
+    // PaymasterSigner is AbstractSigner, EIP712, Paymaster` reaches
+    // `EIP712._hashTypedDataV4` through its second base. Nothing recorded
+    // any of them, so openzeppelin's 354 contracts stated no parent at all.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("contracts")).unwrap();
+    fs::write(
+        root.join("contracts").join("Both.sol"),
+        "pragma solidity ^0.8.0;\n\nabstract contract Base {\n    function plainHelper() internal pure returns (uint256) {\n        return 1;\n    }\n}\n\nabstract contract Mixin {}\n\ncontract Child is Base, Mixin {\n    function run() public pure returns (uint256) {\n        return plainHelper();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let child = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Type && node.label == "Child")
+        .expect("the contract is a type");
+    assert_eq!(
+        child.metadata.get("extends").map(String::as_str),
+        Some("Base,Mixin"),
+        "both bases, in the order the source names them"
+    );
+    let base = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Type && node.label == "Base")
+        .expect("the base is a type");
+    assert_eq!(
+        base.metadata.get("extends"),
+        None,
+        "a contract that names none states none"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_line_on_an_edge_says_which_file_it_is_in() {
     // `component-contract` answered `bot= -> actor_type` with `line: 224`
     // and no file, and 82,320 of mastodon's 82,816 edges that carry a line

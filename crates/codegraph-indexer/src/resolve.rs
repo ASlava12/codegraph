@@ -4886,19 +4886,32 @@ fn bare_call_stays_with_its_object(language: &str) -> bool {
 
 fn ancestor_type_names(graph: &CodeGraph, owner: &str) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
-    let mut current = owner.to_string();
+    // A contract composes rather than descends: solidity writes `is
+    // AbstractSigner, EIP712, Paymaster` and reaches
+    // `EIP712._hashTypedDataV4` through the second of them, so the walk
+    // follows every base a declaration names rather than the first.
+    let mut queue: VecDeque<String> = VecDeque::from([owner.to_string()]);
     // A hierarchy this deep is already unusual, and a cycle cannot be one.
-    for _ in 0..8 {
-        let Some(parent) =
-            type_node_named(graph, &current).and_then(|node| node.metadata.get("extends").cloned())
-        else {
+    while names.len() < 8 {
+        let Some(current) = queue.pop_front() else {
             break;
         };
-        if parent == current || names.contains(&parent) {
-            break;
+        let Some(declared) =
+            type_node_named(graph, &current).and_then(|node| node.metadata.get("extends").cloned())
+        else {
+            continue;
+        };
+        for parent in declared
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            if parent == owner || parent == current || names.iter().any(|seen| seen == parent) {
+                continue;
+            }
+            names.push(parent.to_string());
+            queue.push_back(parent.to_string());
         }
-        names.push(parent.clone());
-        current = parent;
     }
     names
 }

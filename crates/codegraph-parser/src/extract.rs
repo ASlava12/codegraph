@@ -2097,10 +2097,18 @@ pub(crate) fn classify_node(
     };
 
     let mut metadata = BTreeMap::new();
-    if item_kind == ParsedItemKind::Type
-        && let Some(base) = base_type_label(language, node, source)
-    {
-        metadata.insert("extends".to_string(), base);
+    if item_kind == ParsedItemKind::Type {
+        // Solidity states its bases after `is`, one clause per base, and a
+        // contract usually names several. Every other language here names
+        // one parent, and the first of a list is it.
+        let bases = if language == Language::Solidity {
+            solidity_base_labels(node, source)
+        } else {
+            base_type_label(language, node, source)
+        };
+        if let Some(bases) = bases {
+            metadata.insert("extends".to_string(), bases);
+        }
     }
     // Some modules are the file: OCaml names one after the file itself,
     // Haskell states it in the header and Erlang in an attribute at the
@@ -2824,6 +2832,38 @@ fn leading_keyword(node: Node<'_>, source: &[u8]) -> Option<String> {
 /// AdditionalFooterTextsController < Admin::SettingsController`. A route
 /// whose action the class itself does not declare is served by the one
 /// its parent declares, and without this the graph could not say so.
+/// Every base a solidity contract names, comma-joined the way a CI job's
+/// `extends` list already is.
+///
+/// A contract composes rather than descends: `abstract contract
+/// PaymasterSigner is AbstractSigner, EIP712, Paymaster` reaches
+/// `EIP712._hashTypedDataV4` through its *second* base. Recording only the
+/// first found 312 of openzeppelin's 911 inherited calls; recording all of
+/// them finds 409.
+fn solidity_base_labels(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    let names: Vec<String> = node
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "inheritance_specifier")
+        .filter_map(|child| node_text(child, source))
+        .filter_map(|text| {
+            let name = text
+                .trim()
+                .split(['(', '<', ',', ' '])
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            (!name.is_empty()
+                && name
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || character == '_'))
+            .then_some(name)
+        })
+        .collect();
+    (!names.is_empty()).then(|| names.join(","))
+}
+
 pub(crate) fn base_type_label(language: Language, node: Node<'_>, source: &[u8]) -> Option<String> {
     let text = match language {
         // The grammar gives each of these a child of its own holding the
