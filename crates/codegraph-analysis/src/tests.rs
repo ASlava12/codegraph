@@ -3651,6 +3651,76 @@ fn seams_rank_safe_and_needed_boundaries() {
 }
 
 #[test]
+fn a_command_handed_back_names_a_node_by_the_handle_that_survives() {
+    // A numeric id is a node's position in one scan: inserting a function
+    // above a file's others moved `target` from 9 to 10, and a saved
+    // `codegraph impact n9 .` then reports on a different function. Every
+    // command that takes a node accepts the durable id, so that is the one
+    // to offer back.
+    let mut graph = CodeGraph::new("repo");
+    let durable = |graph: &mut CodeGraph, kind, label: &str, id: &str| {
+        graph.add_node_with_metadata(
+            kind,
+            label,
+            None,
+            BTreeMap::from([("stable_id".to_string(), id.to_string())]),
+        )
+    };
+    let entry = durable(
+        &mut graph,
+        NodeKind::Entrypoint,
+        "cargo bin:demo",
+        "cg-entry",
+    );
+    let caller = durable(&mut graph, NodeKind::Function, "handler", "cg-caller");
+    let target = durable(&mut graph, NodeKind::Function, "load_config", "cg-target");
+    graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+    graph.add_edge(entry, caller, EdgeKind::References, Confidence::Exact);
+    graph.add_edge(caller, target, EdgeKind::Calls, Confidence::Syntactic);
+
+    let report = impact(
+        &graph,
+        ImpactRequest {
+            target: "load_config".to_string(),
+            max_depth: 6,
+            limit: 10,
+        },
+    )
+    .expect("impact");
+    assert!(
+        !report.suggested_commands.is_empty(),
+        "impact offers somewhere to go next"
+    );
+    for command in &report.suggested_commands {
+        assert!(
+            command.contains("cg-target"),
+            "the durable handle is the one offered: {command}"
+        );
+        assert!(
+            !command.contains(&format!("n{}", target.0)),
+            "and never the position in this scan: {command}"
+        );
+    }
+
+    let journey = journey(
+        &graph,
+        JourneyRequest {
+            from: "cargo bin:demo".to_string(),
+            to: "load_config".to_string(),
+            max_depth: 6,
+            path_limit: 3,
+        },
+    )
+    .expect("journey");
+    for command in &journey.suggested_commands {
+        assert!(
+            command.contains("cg-target"),
+            "journey offers it too: {command}"
+        );
+    }
+}
+
+#[test]
 fn impact_reports_blast_radius_with_risk_weighted_score() {
     let mut graph = CodeGraph::new("repo");
     let src_file = graph.add_node(NodeKind::File, "crates/app/src/lib.rs");

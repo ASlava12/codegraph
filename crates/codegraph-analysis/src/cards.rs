@@ -393,35 +393,38 @@ pub(crate) fn node_card_actions(node: &Node) -> Vec<NodeCardAction> {
         actions.push(NodeCardAction {
             kind: "document_graph".to_string(),
             label: "Document graph".to_string(),
-            query: format!("docs node_id:{} edge_limit:300", node.id.0),
+            query: format!("docs {} edge_limit:300", node_query_term(node)),
         });
     }
     if is_sql_query_node(node) {
         actions.push(NodeCardAction {
             kind: "sql_graph".to_string(),
             label: "SQL graph".to_string(),
-            query: format!("sql node_id:{} edge_limit:300", node.id.0),
+            query: format!("sql {} edge_limit:300", node_query_term(node)),
         });
     }
     if is_code_symbol(&node.kind) {
         actions.push(NodeCardAction {
             kind: "symbol_graph".to_string(),
             label: "Symbol graph".to_string(),
-            query: format!("symbols node_id:{} direction:out edge_limit:300", node.id.0),
+            query: format!(
+                "symbols {} direction:out edge_limit:300",
+                node_query_term(node)
+            ),
         });
     }
     if is_package_query_node(node) {
         actions.push(NodeCardAction {
             kind: "package_graph".to_string(),
             label: "Package graph".to_string(),
-            query: format!("packages node_id:{} edge_limit:300", node.id.0),
+            query: format!("packages {} edge_limit:300", node_query_term(node)),
         });
     }
     if matches!(node.kind, NodeKind::Config | NodeKind::Environment) {
         actions.push(NodeCardAction {
             kind: "config_graph".to_string(),
             label: "Config readers".to_string(),
-            query: format!("configs node_id:{} depth:6", node.id.0),
+            query: format!("configs {} depth:6", node_query_term(node)),
         });
     }
     if node
@@ -432,7 +435,7 @@ pub(crate) fn node_card_actions(node: &Node) -> Vec<NodeCardAction> {
         actions.push(NodeCardAction {
             kind: "error_graph".to_string(),
             label: "Error paths".to_string(),
-            query: format!("errors node_id:{} depth:6", node.id.0),
+            query: format!("errors {} depth:6", node_query_term(node)),
         });
     }
     actions

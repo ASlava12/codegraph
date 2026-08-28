@@ -137,13 +137,12 @@ pub(crate) fn journey_with_insights(
         path.rank = index + 1;
     }
 
+    let target_reference = durable_node_reference(&target_node);
+    let start_reference = durable_node_reference(&start_node);
     let suggested_commands = vec![
-        format!("codegraph impact {} .", target_node.id),
-        format!(
-            "codegraph refactor-context {} . --from {}",
-            target_node.id, start_node.id
-        ),
-        format!("codegraph node-card . --node-id {}", target_node.id),
+        format!("codegraph impact {target_reference} ."),
+        format!("codegraph refactor-context {target_reference} . --from {start_reference}"),
+        format!("codegraph node-card . --node-id {target_reference}"),
     ];
 
     Ok(JourneyReport {
@@ -864,7 +863,7 @@ pub(crate) fn impact_with_insights_mode(
         + severity_counts.get("warning").copied().unwrap_or(0) * 2
         + severity_counts.get("info").copied().unwrap_or(0);
 
-    let suggested_commands = impact_suggested_commands(target_id, &affected_entrypoints);
+    let suggested_commands = impact_suggested_commands(&target_node, &affected_entrypoints);
 
     Ok(ImpactReport {
         schema: IMPACT_SCHEMA.to_string(),
@@ -901,22 +900,20 @@ pub(crate) fn dependent_source_path(dependent: &ImpactDependent) -> &str {
 /// Copy-paste-ready CLI follow-ups for an impact report: inspect the target,
 /// then read or bundle the path from the nearest affected entrypoint.
 pub(crate) fn impact_suggested_commands(
-    target_id: NodeId,
+    target: &Node,
     affected_entrypoints: &[ImpactEntrypoint],
 ) -> Vec<String> {
-    let mut commands = vec![format!("codegraph node-card . --node-id {target_id}")];
+    let target = durable_node_reference(target);
+    let mut commands = vec![format!("codegraph node-card . --node-id {target}")];
     match affected_entrypoints.first() {
         Some(entrypoint) => {
+            let from = durable_node_reference(&entrypoint.node);
+            commands.push(format!("codegraph journey --from {from} --to {target} ."));
             commands.push(format!(
-                "codegraph journey --from {} --to {target_id} .",
-                entrypoint.node.id
-            ));
-            commands.push(format!(
-                "codegraph refactor-context {target_id} . --from {}",
-                entrypoint.node.id
+                "codegraph refactor-context {target} . --from {from}"
             ));
         }
-        None => commands.push(format!("codegraph refactor-context {target_id} .")),
+        None => commands.push(format!("codegraph refactor-context {target} .")),
     }
     commands
 }

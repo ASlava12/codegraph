@@ -285,16 +285,15 @@ pub(crate) fn query_neighbors(
         .map(|value| parse_neighbor_direction(value, "neighbors"))
         .transpose()?
         .unwrap_or(NeighborDirection::Both);
-    let start = if let Some(id) = spec.terms.get("id").or_else(|| spec.terms.get("node_id")) {
-        let id = parse_node_id(id)?;
-        graph
-            .nodes
-            .iter()
-            .any(|node| node.id == id)
-            .then_some(id)
-            .ok_or_else(|| {
-                QueryError::new(format!("neighbors start `{id}` did not match a node"))
-            })?
+    let start = if let Some(id) = spec
+        .terms
+        .get("id")
+        .or_else(|| spec.terms.get("node_id"))
+        .or_else(|| spec.terms.get("stable_id"))
+    {
+        node_by_reference(graph, id).ok_or_else(|| {
+            QueryError::new(format!("neighbors start `{id}` did not match a node"))
+        })?
     } else if let Some(label) = spec
         .terms
         .get("label")
@@ -2070,6 +2069,7 @@ pub(crate) fn validate_neighbor_terms(spec: &QuerySpec) -> Result<(), QueryError
         if matches!(
             key.as_str(),
             "id" | "node_id"
+                | "stable_id"
                 | "label"
                 | "start"
                 | "node"
@@ -2095,6 +2095,7 @@ pub(crate) fn validate_symbol_terms(spec: &QuerySpec) -> Result<(), QueryError> 
             key.as_str(),
             "id" | "node"
                 | "node_id"
+                | "stable_id"
                 | "label"
                 | "search"
                 | "language"
@@ -2125,6 +2126,7 @@ pub(crate) fn validate_file_terms(spec: &QuerySpec) -> Result<(), QueryError> {
             key.as_str(),
             "id" | "node"
                 | "node_id"
+                | "stable_id"
                 | "label"
                 | "search"
                 | "language"
@@ -2158,6 +2160,7 @@ pub(crate) fn validate_document_terms(spec: &QuerySpec) -> Result<(), QueryError
             key.as_str(),
             "id" | "node"
                 | "node_id"
+                | "stable_id"
                 | "label"
                 | "search"
                 | "language"
@@ -2207,6 +2210,7 @@ pub(crate) fn validate_sql_terms(spec: &QuerySpec) -> Result<(), QueryError> {
             key.as_str(),
             "id" | "node"
                 | "node_id"
+                | "stable_id"
                 | "label"
                 | "search"
                 | "language"
@@ -2251,6 +2255,7 @@ pub(crate) fn validate_entrypoint_terms(spec: &QuerySpec) -> Result<(), QueryErr
         if matches!(
             key.as_str(),
             "id" | "node_id"
+                | "stable_id"
                 | "label"
                 | "search"
                 | "language"
@@ -2275,6 +2280,7 @@ pub(crate) fn validate_route_terms(spec: &QuerySpec) -> Result<(), QueryError> {
         if matches!(
             key.as_str(),
             "id" | "node_id"
+                | "stable_id"
                 | "label"
                 | "search"
                 | "language"
@@ -2308,6 +2314,7 @@ pub(crate) fn validate_package_terms(spec: &QuerySpec) -> Result<(), QueryError>
         if matches!(
             key.as_str(),
             "id" | "node_id"
+                | "stable_id"
                 | "label"
                 | "search"
                 | "package"
@@ -2348,6 +2355,7 @@ pub(crate) fn validate_config_terms(spec: &QuerySpec) -> Result<(), QueryError> 
         if matches!(
             key.as_str(),
             "id" | "node_id"
+                | "stable_id"
                 | "target"
                 | "label"
                 | "search"
@@ -2373,6 +2381,7 @@ pub(crate) fn validate_error_terms(spec: &QuerySpec) -> Result<(), QueryError> {
         if matches!(
             key.as_str(),
             "id" | "node_id"
+                | "stable_id"
                 | "target"
                 | "label"
                 | "search"
@@ -2399,6 +2408,7 @@ pub(crate) fn validate_cycle_terms(spec: &QuerySpec) -> Result<(), QueryError> {
             key.as_str(),
             "id" | "node"
                 | "node_id"
+                | "stable_id"
                 | "label"
                 | "search"
                 | "language"
@@ -2422,6 +2432,7 @@ pub(crate) fn validate_hotspot_terms(spec: &QuerySpec) -> Result<(), QueryError>
             key.as_str(),
             "id" | "node"
                 | "node_id"
+                | "stable_id"
                 | "label"
                 | "search"
                 | "language"
@@ -2492,6 +2503,7 @@ pub(crate) fn validate_annotation_terms(spec: &QuerySpec) -> Result<(), QueryErr
             key.as_str(),
             "id" | "node"
                 | "node_id"
+                | "stable_id"
                 | "label"
                 | "search"
                 | "key"
@@ -2646,6 +2658,13 @@ pub(crate) fn annotation_query_matches(
 
     spec.terms.iter().all(|(key, expected)| match key.as_str() {
         "id" | "node" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        // The durable handle every command hands back. `node-card`
+        // offers `symbols stable_id:cg-...`, and the answer has to be
+        // the node it was asked about.
+        "stable_id" => node
+            .metadata
+            .get("stable_id")
+            .is_some_and(|stable_id| stable_id == expected),
         "label" => text_matches(&node.label, expected),
         "search" => node_search_matches(node, expected) || annotation_matches(node, expected),
         "key" | "annotation" | "annotation_key" => annotation_key_matches(node, expected),
@@ -2791,6 +2810,13 @@ pub(crate) fn symbol_query_matches(
 ) -> bool {
     spec.terms.iter().all(|(key, expected)| match key.as_str() {
         "id" | "node" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        // The durable handle every command hands back. `node-card`
+        // offers `symbols stable_id:cg-...`, and the answer has to be
+        // the node it was asked about.
+        "stable_id" => node
+            .metadata
+            .get("stable_id")
+            .is_some_and(|stable_id| stable_id == expected),
         "label" => text_matches(&node.label, expected),
         "search" => node_search_matches(node, expected),
         "language" | "item_kind" => metadata_matches(node, key, expected),
@@ -2822,6 +2848,13 @@ pub(crate) fn file_query_matches(
 ) -> bool {
     spec.terms.iter().all(|(key, expected)| match key.as_str() {
         "id" | "node" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        // The durable handle every command hands back. `node-card`
+        // offers `symbols stable_id:cg-...`, and the answer has to be
+        // the node it was asked about.
+        "stable_id" => node
+            .metadata
+            .get("stable_id")
+            .is_some_and(|stable_id| stable_id == expected),
         "label" => text_matches(&node.label, expected),
         "search" => node_search_matches(node, expected),
         "language" | "item_kind" => metadata_matches(node, key, expected),
@@ -2886,6 +2919,13 @@ pub(crate) fn document_query_matches(
 ) -> bool {
     spec.terms.iter().all(|(key, expected)| match key.as_str() {
         "id" | "node" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        // The durable handle every command hands back. `node-card`
+        // offers `symbols stable_id:cg-...`, and the answer has to be
+        // the node it was asked about.
+        "stable_id" => node
+            .metadata
+            .get("stable_id")
+            .is_some_and(|stable_id| stable_id == expected),
         "label" => text_matches(&node.label, expected),
         "search" => {
             node_search_matches(node, expected) || document_edges_search(graph, node.id, expected)
@@ -3053,6 +3093,13 @@ pub(crate) fn sql_query_matches(
 ) -> bool {
     spec.terms.iter().all(|(key, expected)| match key.as_str() {
         "id" | "node" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        // The durable handle every command hands back. `node-card`
+        // offers `symbols stable_id:cg-...`, and the answer has to be
+        // the node it was asked about.
+        "stable_id" => node
+            .metadata
+            .get("stable_id")
+            .is_some_and(|stable_id| stable_id == expected),
         "label" => text_matches(&node.label, expected),
         "search" => {
             node_search_matches(node, expected)
@@ -3543,6 +3590,13 @@ pub(crate) fn hotspot_query_matches(
 ) -> bool {
     spec.terms.iter().all(|(key, expected)| match key.as_str() {
         "id" | "node" | "node_id" => parse_node_id(expected).is_ok_and(|id| node.id == id),
+        // The durable handle every command hands back. `node-card`
+        // offers `symbols stable_id:cg-...`, and the answer has to be
+        // the node it was asked about.
+        "stable_id" => node
+            .metadata
+            .get("stable_id")
+            .is_some_and(|stable_id| stable_id == expected),
         "label" => text_matches(&node.label, expected),
         "search" => node_search_matches(node, expected),
         "language" | "item_kind" => metadata_matches(node, key, expected),
@@ -4549,6 +4603,26 @@ pub(crate) fn increment_facet(facets: &mut BTreeMap<String, usize>, key: String)
 
 /// Parse a node id in either bare numeric (`42`) or n-prefixed (`n42`)
 /// form — the format printed by query results and web deep links.
+/// A node named by either handle it can be named by: the numeric id of one
+/// scan, or the durable id that survives an edit above it. `node-card` hands
+/// back `symbols node_id:cg-...` and the answer has to be the same node.
+fn node_by_reference(graph: &CodeGraph, value: &str) -> Option<NodeId> {
+    if let Ok(id) = parse_node_id(value)
+        && graph.nodes.iter().any(|node| node.id == id)
+    {
+        return Some(id);
+    }
+    graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.metadata
+                .get("stable_id")
+                .is_some_and(|stable_id| stable_id == value)
+        })
+        .map(|node| node.id)
+}
+
 pub fn parse_node_id(value: &str) -> Result<NodeId, QueryError> {
     let value = value.trim().trim_start_matches('n');
     value

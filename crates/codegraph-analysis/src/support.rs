@@ -265,6 +265,30 @@ pub(crate) fn is_cycle_edge(kind: &EdgeKind) -> bool {
     )
 }
 
+/// How a command names a node it hands back for the caller to run again.
+///
+/// The numeric id is a node's position in one scan. Inserting a function
+/// above a file's others moves every id below it, so `codegraph impact n9 .`
+/// saved from one answer reports on a different function after an unrelated
+/// edit -- which is why the durable id exists. Every command that takes a
+/// node accepts either, so the one that survives is the one to offer.
+pub(crate) fn durable_node_reference(node: &Node) -> String {
+    node.metadata
+        .get("stable_id")
+        .cloned()
+        .unwrap_or_else(|| format!("n{}", node.id.0))
+}
+
+/// How a query names this node: by the durable handle when it has one, and
+/// by its position in this scan when it does not. The term has to match the
+/// handle -- `stable_id:n5` names nothing.
+pub(crate) fn node_query_term(node: &Node) -> String {
+    match node.metadata.get("stable_id") {
+        Some(stable_id) => format!("stable_id:{stable_id}"),
+        None => format!("node_id:{}", node.id.0),
+    }
+}
+
 pub(crate) fn is_trace_edge(kind: &EdgeKind) -> bool {
     matches!(
         kind,
