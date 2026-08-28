@@ -1,0 +1,4 @@
+interface:
+  display_name: "CodeGraph"
+  short_description: "Analyze local codebases with CodeGraph"
+  default_prompt: "Use $codegraph to analyze this repository with bounded graph queries before reading source files."

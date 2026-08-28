@@ -953,6 +953,39 @@ Planned next:
 - Richer graph queries for humans and agents.
 - Production hardening for large repositories.
 
+## Install
+
+```bash
+git clone https://github.com/ASlava12/codegraph
+cd codegraph
+./install.sh
+```
+
+That builds the CLI, puts `codegraph` on your PATH through `~/.cargo/bin`, and
+installs the agent skill for every project. Rust is the only prerequisite
+(<https://rustup.rs>); the first build takes a few minutes.
+
+| Command | What it does |
+| --- | --- |
+| `./install.sh` | the CLI and the skill for every project |
+| `./install.sh --cli` | the CLI alone |
+| `./install.sh --skill` | the skill alone, in `~/.claude/skills/codegraph` |
+| `./install.sh --project <path>` | the skill for one project, in `<path>/.claude/skills/codegraph` |
+| `./install.sh --uninstall` | remove the CLI and the skill installed for every project |
+
+Check the CLI with `codegraph summary . --no-semantic`.
+
+The skill ([`skills/codegraph`](skills/codegraph)) teaches an agent to reach for
+bounded graph slices before grepping or reading whole files, and it is Markdown
+only — installing it for one project writes nothing outside that project's
+`.claude/skills/codegraph/`. Installing it for every project makes it available
+wherever the agent runs; installing it for one keeps it with that repository, so
+it travels in the repository's own history if you commit it.
+
+To wire CodeGraph into a repository as an MCP server instead — `.mcp.json` plus
+`AGENTS.md` and `CLAUDE.md` guidance — run `codegraph install-agent <repo>
+--platform all`. That writes into the repository, so read the diff afterwards.
+
 ## Usage
 
 Task-oriented walkthroughs — investigate a bug, trace a config value, and
