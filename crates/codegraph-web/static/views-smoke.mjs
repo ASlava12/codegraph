@@ -620,8 +620,9 @@ drive("client insights carry the CLI's severities", () => {
       { id: 1, kind: "function", label: "run" },
       { id: 2, kind: "function", label: "raise" },
       { id: 3, kind: "function", label: "orphan" },
-      { id: 4, kind: "function", label: "twin" },
-      { id: 5, kind: "function", label: "twin" },
+      // Two files answer to `twin` and nothing tells them apart.
+      { id: 4, kind: "function", label: "twin", span: { path: "left.py" } },
+      { id: 5, kind: "function", label: "twin", span: { path: "right.py" } },
       { id: 6, kind: "file", label: "broken.py", metadata: { parse_error: "unexpected token" } },
       {
         id: 7,

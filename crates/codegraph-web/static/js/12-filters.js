@@ -532,15 +532,37 @@ function buildClientInsights(graph) {
       list.push(node);
       functionLabels.set(node.label, list);
     });
+  // A name each owner declares once is not a duplicate: `visit_string` on
+  // three of serde's visitors is what implementing a trait looks like. What
+  // is worth saying is the name nothing tells apart -- one owner declaring
+  // it twice, or no owner at all -- and never a constructor, whose name is
+  // its class's. Mirrors `add_duplicate_function_insights`.
   functionLabels.forEach((nodes, label) => {
-    if (nodes.length > 1) {
+    if (nodes.length < 2) return;
+    const byOwner = new Map();
+    nodes.forEach((node) => {
+      const key = `${node.metadata?.owner_type ?? ""}\u0000${node.metadata?.language ?? ""}`;
+      const list = byOwner.get(key) || [];
+      list.push(node);
+      byOwner.set(key, list);
+    });
+    byOwner.forEach((shared) => {
+      if (shared.length < 2) return;
+      const owner = shared[0].metadata?.owner_type;
+      if (owner === label) return;
+      const files = new Set(
+        shared.map((node) => node.span?.path).filter((path) => typeof path === "string"),
+      );
+      if (files.size < 2) return;
       insights.push({
         kind: "duplicate_function_label",
         severity: "info",
-        message: `${label} appears ${nodes.length} times`,
-        nodeId: nodes[0].id,
+        message: owner
+          ? `Function label ${label} is declared ${shared.length} times by ${owner}, in ${files.size} files`
+          : `Function label ${label} is declared ${shared.length} times in ${files.size} files with no owner to tell them apart`,
+        nodeId: shared[0].id,
       });
-    }
+    });
   });
 
   const entrypointLabels = new Map();

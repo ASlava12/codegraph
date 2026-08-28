@@ -7803,8 +7803,30 @@ fn insights_report_ambiguous_manifest_entrypoint_targets() {
 #[test]
 fn insights_report_duplicate_functions_and_error_flow() {
     let mut graph = CodeGraph::new("repo");
-    let left = graph.add_node(NodeKind::Function, "parse");
-    let right = graph.add_node(NodeKind::Function, "parse");
+    let span = |path: &str| SourceSpan {
+        path: path.to_string(),
+        start_line: 1,
+        start_column: 1,
+        end_line: 2,
+        end_column: 1,
+    };
+    let owned = |owner: &str| BTreeMap::from([("owner_type".to_string(), owner.to_string())]);
+    // Two files answer to `parse` and nothing tells them apart.
+    let left = graph.add_node_with_span(NodeKind::Function, "parse", span("src/left.rs"));
+    let right = graph.add_node_with_span(NodeKind::Function, "parse", span("src/right.rs"));
+    // `Reader::read` and `Writer::read` are two methods, not one name twice.
+    let reader = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "read",
+        Some(span("src/reader.rs")),
+        owned("Reader"),
+    );
+    let writer = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "read",
+        Some(span("src/writer.rs")),
+        owned("Writer"),
+    );
     let error = graph.add_node(NodeKind::Unknown, "panic");
     graph.add_edge(left, error, EdgeKind::MayError, Confidence::Heuristic);
 
@@ -7815,6 +7837,13 @@ fn insights_report_duplicate_functions_and_error_flow() {
             && insight.nodes.contains(&left)
             && insight.nodes.contains(&right)
     }));
+    assert!(
+        !report.insights.iter().any(|insight| {
+            insight.kind == "duplicate_function_label"
+                && (insight.nodes.contains(&reader) || insight.nodes.contains(&writer))
+        }),
+        "a name each owner declares once is not a duplicate"
+    );
     assert!(
         report
             .insights

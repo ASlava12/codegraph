@@ -516,20 +516,74 @@ pub(crate) fn add_cross_language_heuristic_edge_insights(
 }
 
 pub(crate) fn add_duplicate_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
-    let mut groups: BTreeMap<&str, Vec<NodeId>> = BTreeMap::new();
+    let mut groups: BTreeMap<&str, Vec<&codegraph_core::Node>> = BTreeMap::new();
     for node in &graph.nodes {
         if node.kind == NodeKind::Function {
-            groups.entry(&node.label).or_default().push(node.id);
+            groups.entry(&node.label).or_default().push(node);
         }
     }
 
     for (label, nodes) in groups {
-        if nodes.len() > 1 {
+        if nodes.len() < 2 {
+            continue;
+        }
+        // A name each owner declares once is not a duplicate. `visit_string`
+        // on three of serde's visitors is what implementing a trait looks
+        // like, `Setup` on three of Polly's benchmarks is what the harness
+        // asks for, and mastodon's `filtered_statuses` belongs to two
+        // controllers that are two different things. Reported without the
+        // owner, 69% of mastodon's 1028 groups and 71% of Polly's 833 named
+        // nothing a reader could act on. What is worth saying is the name
+        // nothing tells apart: one owner declaring it twice, or no owner at
+        // all.
+        let mut by_owner: BTreeMap<(Option<&str>, Option<&str>), Vec<&codegraph_core::Node>> =
+            BTreeMap::new();
+        for node in &nodes {
+            by_owner
+                .entry((
+                    node.metadata.get("owner_type").map(String::as_str),
+                    node.metadata.get("language").map(String::as_str),
+                ))
+                .or_default()
+                .push(node);
+        }
+        for ((owner, _), shared) in by_owner {
+            if shared.len() < 2 {
+                continue;
+            }
+            // A constructor is named after its class, which is not a choice
+            // anyone made twice: gson declares 338 of them, and four classes
+            // called `Adapter` say only that four classes are called
+            // `Adapter`.
+            if owner == Some(label) {
+                continue;
+            }
+            // An overload set is one declaration site: java's `toJson(Object)`
+            // beside `toJson(Object, Type)` is not two answers to a name.
+            let files: BTreeSet<&str> = shared
+                .iter()
+                .filter_map(|node| node.span.as_ref().map(|span| span.path.as_str()))
+                .collect();
+            if files.len() < 2 {
+                continue;
+            }
+            let message = match owner {
+                Some(owner) => format!(
+                    "Function label `{label}` is declared {} times by `{owner}`, in {} files",
+                    shared.len(),
+                    files.len()
+                ),
+                None => format!(
+                    "Function label `{label}` is declared {} times in {} files with no owner to tell them apart",
+                    shared.len(),
+                    files.len()
+                ),
+            };
             insights.push(Insight {
                 kind: "duplicate_function_label".to_string(),
                 severity: InsightSeverity::Info,
-                message: format!("Function label `{label}` appears {} times", nodes.len()),
-                nodes,
+                message,
+                nodes: shared.iter().map(|node| node.id).collect(),
                 edges: Vec::new(),
             });
         }

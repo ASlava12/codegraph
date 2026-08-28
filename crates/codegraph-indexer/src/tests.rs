@@ -6453,7 +6453,8 @@ fn a_type_nested_in_another_is_not_what_a_bare_name_elsewhere_means() {
         .filter(|edge| {
             edge.target == nested.id
                 && edge.kind == EdgeKind::References
-                && edge.metadata.get("relation").map(String::as_str) == Some("constructor_reference")
+                && edge.metadata.get("relation").map(String::as_str)
+                    == Some("constructor_reference")
         })
         .filter_map(|edge| edge.metadata.get("file").cloned())
         .collect::<Vec<_>>();
