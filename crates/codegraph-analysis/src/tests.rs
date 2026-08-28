@@ -15875,3 +15875,74 @@ fn a_file_the_project_does_not_own_failing_to_parse_is_a_note() {
         "the program's own file is"
     );
 }
+
+#[test]
+fn a_config_trace_shows_the_programs_own_readers_first() {
+    // The order was the file walk, and `.github/` sorts early: mastodon's
+    // `RAILS_ENV` is read by six workflow jobs, one spec helper, `bin/dev`
+    // and `config/boot.rb`, and a bounded answer showed the jobs and none
+    // of the program.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(codegraph_core::SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    let setting = graph.add_node_with_metadata(
+        NodeKind::Environment,
+        "RAILS_ENV",
+        span("config/boot.rb"),
+        BTreeMap::new(),
+    );
+    // The walk reaches `.github/` before `config/`, so the workflow job is
+    // added first on purpose.
+    let job = graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        "github workflow:Ruby Testing/build",
+        span(".github/workflows/test.yml"),
+        BTreeMap::from([("entrypoint_kind".to_string(), "workflow_job".to_string())]),
+    );
+    let helper = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "start",
+        span("spec/support/streaming_server_manager.rb"),
+        BTreeMap::from([("language".to_string(), "ruby".to_string())]),
+    );
+    let boot = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "boot",
+        span("config/boot.rb"),
+        BTreeMap::from([("language".to_string(), "ruby".to_string())]),
+    );
+    for reader in [job, helper, boot] {
+        graph.add_edge(
+            reader,
+            setting,
+            EdgeKind::ReadsEnvironment,
+            Confidence::Heuristic,
+        );
+    }
+
+    let result = trace_config(
+        &graph,
+        ConfigTraceRequest {
+            target: "RAILS_ENV".to_string(),
+            max_depth: 4,
+            limit: 10,
+        },
+    );
+    let readers: Vec<&str> = result.matches[0]
+        .readers
+        .iter()
+        .map(|reader| reader.node.label.as_str())
+        .collect();
+    assert_eq!(
+        readers,
+        vec!["boot", "start", "github workflow:Ruby Testing/build"],
+        "the program's own reader first, then its test, then what runs it"
+    );
+}

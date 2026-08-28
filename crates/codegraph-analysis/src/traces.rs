@@ -83,8 +83,30 @@ pub fn trace_config(graph: &CodeGraph, request: ConfigTraceRequest) -> ConfigTra
                     )
             })
             .collect();
+        let mut reader_edges = reader_edges;
         let total_match_readers = reader_edges.len();
         total_readers += total_match_readers;
+        // The order is the file walk, and `.github/` sorts early:
+        // mastodon's `RAILS_ENV` is read by six workflow jobs, one spec
+        // helper, `bin/dev` and `config/boot.rb`, and a bounded answer
+        // showed the jobs and none of the program. Its own readers come
+        // first, then its tests, then what builds and runs it. The sort is
+        // stable, so the walk still decides the order within a group.
+        reader_edges.sort_by_key(|(_, edge)| {
+            let reader = graph.nodes.iter().find(|node| node.id == edge.source);
+            let path = reader
+                .and_then(|node| node.span.as_ref())
+                .map(|span| span.path.as_str())
+                .or_else(|| reader.map(|node| node.label.as_str()))
+                .unwrap_or_default();
+            if is_repository_tooling_source_path(path) {
+                2u8
+            } else if is_test_like_source_path(path) {
+                1
+            } else {
+                0
+            }
+        });
 
         let mut readers = Vec::new();
         let mut paths = Vec::new();

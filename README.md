@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A configuration trace shows the program's own readers first. The order was the file walk and
+  `.github/` sorts early, so mastodon's `RAILS_ENV` -- read by six workflow jobs, one spec helper,
+  `bin/dev` and `config/boot.rb` -- answered with the jobs and none of the program under the default
+  limit. Its own code comes first now, then its tests, then what builds and runs it.
 - Whose file it is decides how loudly a parse failure is said. redis failed its own quality gate --
   `check` exits 2 -- over `deps/lua/test/life.lua` and `deps/tre/tests/retest.c`: upstream's test
   data, in upstream's tree, not valid utf-8 on purpose. A manifest the scan could not parse was
