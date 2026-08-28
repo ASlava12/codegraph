@@ -8610,6 +8610,57 @@ fn a_contract_is_not_a_function_its_methods_are_local_to() {
 }
 
 #[test]
+fn a_call_is_test_code_when_its_own_file_is() {
+    // "The program does not call its own tests" asked the CALLER node for
+    // its file, and a call written at a lua module's top level has no
+    // caller with a span. Those calls read as program code wherever they
+    // were written, so the rule refused them every helper their own suite
+    // declares: kong writes 287 `helpers.get_db_utils` in `spec/` and not
+    // one reached `spec/internal/db.lua`.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("spec/internal")).unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("spec/internal").join("db.lua"),
+        "local M = {}\n\nfunction M.get_db_utils()\n  return 1\nend\n\nreturn M\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("spec").join("some_spec.lua"),
+        "local db = require \"spec.internal.db\"\n\ndb.get_db_utils()\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("app.lua"),
+        "local db = require \"spec.internal.db\"\n\ndb.get_db_utils()\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let helper = graph
+        .nodes
+        .iter()
+        .find(|node| node.label.ends_with("get_db_utils") && node.kind == NodeKind::Function)
+        .expect("the suite declares it");
+    let callers: Vec<&str> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Calls && edge.target == helper.id)
+        .filter_map(|edge| edge.metadata.get("file").map(String::as_str))
+        .collect();
+    assert!(
+        callers.iter().any(|file| file.starts_with("spec/")),
+        "a call written in the suite reaches its own helper: {callers:?}"
+    );
+    assert!(
+        !callers.iter().any(|file| file.starts_with("src/")),
+        "and the program still does not call its tests: {callers:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_module_that_includes_another_answers_for_what_it_re_exports() {
     // `include M` makes M's definitions the includer's own, and dune builds
     // whole modules that way: `src/fiber/src/fiber.ml` is 38 lines of

@@ -2782,7 +2782,13 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // `builder.close()` in src/flask/app.py resolved to it with full
         // confidence, and 1143 such links existed across the corpora. A
         // caller outside tests, examples and fixtures cannot mean one.
-        let caller_is_test = caller_path.is_some_and(is_test_like_source_path);
+        // The call's own file, not the caller node's: a call whose caller
+        // carries no span -- a lua module's top level, a script's body --
+        // read as program code wherever it was written, and then this rule
+        // refused it every helper its own suite declares. kong writes 287
+        // `helpers.get_db_utils` in `spec/` and not one reached
+        // `spec/internal/db.lua`.
+        let caller_is_test = is_test_like_source_path(&call.span.path);
         if !caller_is_test {
             language_targets.retain(|target| {
                 graph_node(&context.graph, *target)
