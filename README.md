@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A method on a type from a package the file never imports cannot be the one meant. terraform
+  declares `Diagnostics.HasErrors` in `internal/policy` and in `internal/tfdiags`, and every file
+  that calls it imports exactly one of the two. Its ambiguous calls fall from 18005 to 13019 with
+  4413 more resolved -- and a real dependency cycle between four files of
+  `internal/command/jsonformat/differ` surfaces, which is why the corpus sweep rises by one.
 - A julia file is not a module: DataFrames writes `module DataFrames` once and `include`s the rest,
   so only 98 of its 1387 functions sat inside the block that names them all. The include list is the
   only thing that says which module an included file's functions belong to, and following it settles

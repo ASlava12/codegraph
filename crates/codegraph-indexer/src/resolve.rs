@@ -3238,6 +3238,52 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             }
         }
 
+        // A method on a type from a package the file never imports cannot
+        // be the one meant. terraform declares `Diagnostics.HasErrors` in
+        // `internal/policy` and in `internal/tfdiags`, and every file that
+        // calls it imports exactly one of the two -- 3019 of its ambiguous
+        // calls have candidates in more than one package and name only one
+        // of those packages in their imports. A package is a directory, and
+        // the caller's own needs no import.
+        if call.language == "go" && targets.len() > 1 {
+            let caller_directory = caller_path
+                .and_then(|path| path.rsplit_once('/'))
+                .map(|(directory, _)| directory);
+            let imported: BTreeSet<&str> = context
+                .file_import_qualifiers
+                .get(call.span.path.as_str())
+                .map(|qualifiers| {
+                    qualifiers
+                        .values()
+                        .filter_map(|package| match package {
+                            ImportedPackage::Local(candidates) => Some(candidates),
+                            ImportedPackage::External => None,
+                        })
+                        .flatten()
+                        .map(|candidate| candidate.trim_end_matches('/'))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !imported.is_empty() {
+                let reachable = targets
+                    .iter()
+                    .copied()
+                    .filter(|target| {
+                        graph_node(&context.graph, *target)
+                            .and_then(|node| node.span.as_ref())
+                            .and_then(|span| span.path.rsplit_once('/'))
+                            .is_some_and(|(directory, _)| {
+                                Some(directory) == caller_directory || imported.contains(directory)
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                if !reachable.is_empty() && reachable.len() < targets.len() {
+                    targets = reachable;
+                    basis = "import";
+                }
+            }
+        }
+
         let overloads = targets.len() > 1
             && (one_methods_overloads(&context.graph, &targets)
                 || one_macros_arms(&context.graph, &targets));

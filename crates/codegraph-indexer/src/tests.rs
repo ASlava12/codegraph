@@ -16920,3 +16920,53 @@ fn a_julia_function_belongs_to_the_module_that_included_its_file() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_go_method_comes_from_a_package_the_file_imports() {
+    // terraform declares `Diagnostics.HasErrors` in `internal/policy` and
+    // in `internal/tfdiags`, and every file that calls it imports exactly
+    // one of the two -- a method on a type from a package the file never
+    // imports cannot be the one meant.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("internal/tfdiags")).unwrap();
+    fs::create_dir_all(root.join("internal/policy")).unwrap();
+    fs::create_dir_all(root.join("internal/addrs")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
+    fs::write(
+        root.join("internal/tfdiags/diagnostics.go"),
+        "package tfdiags\n\ntype Diagnostics []string\n\nfunc (d Diagnostics) HasErrors() bool {\n\treturn len(d) > 0\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("internal/policy/diagnostics.go"),
+        "package policy\n\ntype Diagnostics []string\n\nfunc (d Diagnostics) HasErrors() bool {\n\treturn len(d) > 0\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("internal/addrs/checkable.go"),
+        "package addrs\n\nimport (\n\t\"example.com/app/internal/tfdiags\"\n)\n\nfunc Check() bool {\n\tvar diags tfdiags.Diagnostics\n\treturn diags.HasErrors()\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("diags.HasErrors")
+        })
+        .expect("the call is recorded");
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == call.target)
+        .expect("the target is a node");
+    assert_eq!(
+        target.span.as_ref().map(|span| span.path.as_str()),
+        Some("internal/tfdiags/diagnostics.go"),
+        "the package the file imports is the one the method comes from"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
