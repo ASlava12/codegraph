@@ -1137,6 +1137,12 @@ pub(crate) fn collect_items(
         facts.items.push(item);
     }
 
+    // Ruby calls a method by writing its name, with no parentheses and no
+    // receiver to tell it from a variable.
+    if language == Language::Ruby {
+        facts.items.extend(ruby_self_calls(node, source, path));
+    }
+
     // A Haskell data constructor is a function — `T_Literal :: Id ->
     // String -> Token` — and code applies it like one. Only the type it
     // belongs to was recorded, so shellcheck's 1474 constructor
@@ -1195,6 +1201,168 @@ const MAX_PARENTHESIS_DEPTH: usize = 8;
 /// carrying the type it builds. Only the subtree under the declaration's
 /// constructor field is read, so the names in a `deriving` clause are not
 /// mistaken for constructors.
+/// The methods a Ruby class calls by writing their name. `filtered_statuses`
+/// calls `default_statuses` and `hashtag_scope` with no parentheses and no
+/// receiver, which is how Ruby is written -- and the syntax gives nothing
+/// to tell such a call from a variable. Only a name the same class
+/// declares counts, so nothing is guessed at: 1248 of mastodon's 1495
+/// private methods with no caller are named this way in the file that
+/// declares them.
+fn ruby_self_calls(node: Node<'_>, source: &[u8], path: &str) -> Vec<ParsedItem> {
+    if !matches!(node.kind(), "class" | "module") {
+        return Vec::new();
+    }
+    let owner =
+        elixir_or_ruby_enclosing_type(node, source).or_else(|| ruby_constant_path(node, source));
+    let methods = ruby_methods_within(node);
+    let declared: BTreeSet<String> = methods
+        .iter()
+        .filter_map(|method| named_child_text(*method, "name", source))
+        .collect();
+    if declared.is_empty() {
+        return Vec::new();
+    }
+
+    let mut items = Vec::new();
+    for method in methods {
+        let Some(caller) = named_child_text(method, "name", source) else {
+            continue;
+        };
+        let Some(body) = method.child_by_field_name("body") else {
+            continue;
+        };
+        let locals = ruby_local_names(method, source);
+        let mut stack = vec![body];
+        while let Some(current) = stack.pop() {
+            // A class written inside is walked as itself.
+            if matches!(current.kind(), "class" | "module") {
+                continue;
+            }
+            let mut cursor = current.walk();
+            stack.extend(current.named_children(&mut cursor));
+            if current.kind() != "identifier" {
+                continue;
+            }
+            let Some(name) = node_text(current, source) else {
+                continue;
+            };
+            if !declared.contains(&name) || locals.contains(&name) {
+                continue;
+            }
+            if ruby_identifier_is_not_a_call(current) {
+                continue;
+            }
+            let mut metadata = BTreeMap::new();
+            if let Some(owner) = owner.clone() {
+                metadata.insert("receiver_type".to_string(), owner);
+            }
+            items.push(ParsedItem {
+                kind: ParsedItemKind::Call,
+                label: name,
+                span: span_for(path, current),
+                parent: Some(caller.clone()),
+                metadata,
+            });
+        }
+    }
+    items.sort_by(|left, right| {
+        left.span
+            .start_line
+            .cmp(&right.span.start_line)
+            .then(left.span.start_column.cmp(&right.span.start_column))
+    });
+    items
+}
+
+/// Whether this identifier is something other than a call: the name a
+/// method is being given, the method of a call the syntax already records,
+/// a parameter, or the left of an assignment, which binds a variable.
+fn ruby_identifier_is_not_a_call(node: Node<'_>) -> bool {
+    let Some(parent) = node.parent() else {
+        return true;
+    };
+    match parent.kind() {
+        "call" => parent.child_by_field_name("method") == Some(node),
+        "method" | "singleton_method" => parent.child_by_field_name("name") == Some(node),
+        "assignment" | "operator_assignment" => parent.child_by_field_name("left") == Some(node),
+        "method_parameters"
+        | "block_parameters"
+        | "optional_parameter"
+        | "keyword_parameter"
+        | "block_parameter"
+        | "splat_parameter"
+        | "hash_splat_parameter"
+        | "destructured_parameter"
+        | "forward_parameter"
+        | "left_assignment_list"
+        | "rest_assignment" => true,
+        _ => false,
+    }
+}
+
+/// The `def`s a class writes, not counting those of a class written inside
+/// it.
+fn ruby_methods_within<'tree>(node: Node<'tree>) -> Vec<Node<'tree>> {
+    let mut methods = Vec::new();
+    let Some(body) = node.child_by_field_name("body") else {
+        return methods;
+    };
+    let mut stack = vec![body];
+    while let Some(current) = stack.pop() {
+        if matches!(current.kind(), "class" | "module") {
+            continue;
+        }
+        if matches!(current.kind(), "method" | "singleton_method") {
+            methods.push(current);
+            continue;
+        }
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    methods
+}
+
+/// The names a Ruby method binds: its parameters and what it assigns. A
+/// bare name that means one of these is a variable, whatever the class
+/// also declares.
+fn ruby_local_names(method: Node<'_>, source: &[u8]) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    let mut stack = vec![method];
+    while let Some(current) = stack.pop() {
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+        match current.kind() {
+            "assignment" | "operator_assignment" => {
+                if let Some(left) = current.child_by_field_name("left")
+                    && left.kind() == "identifier"
+                    && let Some(name) = node_text(left, source)
+                {
+                    names.insert(name);
+                }
+            }
+            "method_parameters" | "block_parameters" => {
+                let mut inner = current.walk();
+                for child in current.named_children(&mut inner) {
+                    let identifier = if child.kind() == "identifier" {
+                        Some(child)
+                    } else {
+                        child
+                            .named_child(0)
+                            .filter(|node| node.kind() == "identifier")
+                    };
+                    if let Some(identifier) = identifier
+                        && let Some(name) = node_text(identifier, source)
+                    {
+                        names.insert(name);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
 fn haskell_data_constructors(node: Node<'_>, source: &[u8], path: &str) -> Vec<ParsedItem> {
     if !matches!(node.kind(), "data_type" | "newtype") {
         return Vec::new();

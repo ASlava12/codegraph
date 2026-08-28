@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Ruby calls a method by writing its name, with no parentheses and no receiver to tell it from a
+  variable: `filtered_statuses` calls `default_statuses` and `hashtag_scope`, and nothing recorded
+  any of it. Only a name the same class declares counts, so nothing is guessed at, and a name the
+  body binds is a variable whatever the class also declares. mastodon's private methods with no
+  caller fall from 1495 to 382 and 2018 more of its calls resolve.
 - Only so many dependency cycles are worth listing, and which ones survive the cap matters: the
   fiftieth found was the last kept, so a cycle across files -- the kind the finding exists to
   surface -- was dropped while ones inside a single file stayed. The most severe survive now, which

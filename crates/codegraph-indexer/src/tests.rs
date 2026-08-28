@@ -17317,3 +17317,60 @@ fn a_files_own_name_is_not_a_module_name() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn ruby_calls_a_method_by_writing_its_name() {
+    // `filtered_statuses` calls `default_statuses` and `hashtag_scope` with
+    // no parentheses and no receiver, which is how Ruby is written -- and
+    // the syntax gives nothing to tell such a call from a variable. 1248 of
+    // mastodon's 1495 private methods with no caller are named this way in
+    // the file that declares them. Only a name the same class declares
+    // counts, and a name the body binds is a variable whatever the class
+    // also declares.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app/controllers")).unwrap();
+    fs::write(
+        root.join("Gemfile"),
+        "source 'https://rubygems.org'\n\ngem 'rails'\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/controllers/accounts_controller.rb"),
+        "class AccountsController\n  def index\n    filtered_statuses\n  end\n\n  private\n\n  def filtered_statuses\n    default_statuses.tap do |statuses|\n      statuses.merge!(hashtag_scope)\n    end\n  end\n\n  def default_statuses\n    []\n  end\n\n  def hashtag_scope\n    {}\n  end\n\n  def shadowed\n    hashtag_scope = 1\n    hashtag_scope\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let callers_of = |label: &str| {
+        let target = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == label)
+            .unwrap_or_else(|| panic!("{label} is declared"));
+        graph
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == EdgeKind::Calls && edge.target == target.id)
+            .filter_map(|edge| graph.nodes.iter().find(|node| node.id == edge.source))
+            .map(|node| node.label.as_str())
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        callers_of("filtered_statuses").contains(&"index"),
+        "a bare name in a body is a call to the method the class declares"
+    );
+    assert!(
+        callers_of("default_statuses").contains(&"filtered_statuses"),
+        "the receiver of another call is a call too"
+    );
+    assert!(
+        callers_of("hashtag_scope").contains(&"filtered_statuses"),
+        "an argument written as a bare name is a call"
+    );
+    assert!(
+        !callers_of("hashtag_scope").contains(&"shadowed"),
+        "a name the body assigns is a variable, whatever the class declares"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
