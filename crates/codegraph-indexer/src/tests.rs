@@ -17493,3 +17493,43 @@ fn a_property_is_read_rather_than_called() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_definition_is_linked_to_the_one_that_holds_it() {
+    // flask's `route` returns a `decorator` that calls `add_url_rule`, and
+    // asking for the way from `route` to `add_url_rule` found no path at
+    // all: the nesting was recorded as metadata and no edge. Every
+    // decorator, factory and callback-returning function was a dead end.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("pyproject.toml"), "[project]\nname = \"app\"\n").unwrap();
+    fs::write(
+        root.join("src/scaffold.py"),
+        "class Scaffold:\n    def route(self, rule):\n        def decorator(f):\n            self.add_url_rule(rule, f)\n            return f\n\n        return decorator\n\n    def add_url_rule(self, rule, f):\n        return None\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let node = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == label)
+            .unwrap_or_else(|| panic!("{label} is declared"))
+    };
+    let holds = graph.edges.iter().any(|edge| {
+        edge.kind == EdgeKind::References
+            && edge.metadata.get("relation").map(String::as_str) == Some("encloses")
+            && edge.source == node("route").id
+            && edge.target == node("decorator").id
+    });
+    assert!(holds, "the function that writes a closure reaches it");
+    let calls = graph.edges.iter().any(|edge| {
+        edge.kind == EdgeKind::Calls
+            && edge.source == node("decorator").id
+            && edge.target == node("add_url_rule").id
+    });
+    assert!(calls, "and the closure reaches what it calls");
+
+    fs::remove_dir_all(root).unwrap();
+}

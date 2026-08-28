@@ -335,6 +335,9 @@ pub(crate) fn scan_project_with_scope(
     // its file, which the include list says and nothing else does.
     assign_julia_included_modules(&mut context);
     resolve_pending_calls(&mut context);
+    // A definition written inside another is reached through the one that
+    // holds it, and only the metadata said so.
+    link_definitions_to_the_ones_that_hold_them(&mut context);
     resolve_pending_type_references(&mut context);
     resolve_pending_local_imports(&mut context);
     // A file that is a module carries the name its importers call it by,

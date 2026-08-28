@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A definition written inside another is reached through the one that holds it, and only the
+  metadata said so: flask's `route` returns a `decorator` that calls `add_url_rule`, and asking for
+  the way from `route` to `add_url_rule` found no path at all. Every decorator, factory and
+  callback-returning function was a dead end. The nesting is an edge now -- the span picks which
+  holder when a file writes several by one name -- and flask gains 605 of them.
 - A boundary with the suite on one side is neither a seam to extract nor coupling to fix: a suite
   leans on the program by design, and mastodon's specs reach `app/models` 937 times and `app/lib`
   832, which topped the seams worth untangling. Both lists now put the boundaries inside the program

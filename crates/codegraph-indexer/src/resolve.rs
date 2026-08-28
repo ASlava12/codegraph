@@ -2385,6 +2385,60 @@ pub(crate) fn name_files_by_their_imports(context: &mut IndexContext) {
     }
 }
 
+/// A definition written inside another is reached through the one that
+/// holds it, and nothing said so: flask's `route` returns a `decorator`
+/// that calls `add_url_rule`, and asking for the way from `route` to
+/// `add_url_rule` found no path at all. Every decorator, factory and
+/// callback-returning function was a dead end.
+///
+/// The metadata names the holder, so the span picks which one it is when a
+/// file writes several by the same name -- the nearest definition whose
+/// span covers the inner one.
+pub(crate) fn link_definitions_to_the_ones_that_hold_them(context: &mut IndexContext) {
+    let mut links: Vec<(NodeId, NodeId)> = Vec::new();
+    for node in &context.graph.nodes {
+        if node.kind != NodeKind::Function {
+            continue;
+        }
+        let (Some(holder), Some(span)) =
+            (node.metadata.get("enclosing_function"), node.span.as_ref())
+        else {
+            continue;
+        };
+        let holder = context
+            .graph
+            .nodes
+            .iter()
+            .filter(|candidate| {
+                candidate.kind == NodeKind::Function
+                    && candidate.id != node.id
+                    && &candidate.label == holder
+            })
+            .filter_map(|candidate| candidate.span.as_ref().map(|outer| (candidate, outer)))
+            .filter(|(_, outer)| {
+                outer.path == span.path
+                    && outer.start_line <= span.start_line
+                    && outer.end_line >= span.end_line
+            })
+            // The nearest one, when a file nests several by the same name.
+            .min_by_key(|(_, outer)| outer.end_line.saturating_sub(outer.start_line))
+            .map(|(candidate, _)| candidate.id);
+        if let Some(holder) = holder {
+            links.push((holder, node.id));
+        }
+    }
+    for (holder, inner) in links {
+        add_edge_once_with_metadata(
+            context,
+            holder,
+            inner,
+            EdgeKind::References,
+            Confidence::Exact,
+            BTreeMap::from([("relation".to_string(), "encloses".to_string())]),
+        );
+    }
+}
+
 pub(crate) fn assign_julia_included_modules(context: &mut IndexContext) {
     let mut module_of_file: BTreeMap<String, String> = BTreeMap::new();
     let mut ambiguous: BTreeSet<String> = BTreeSet::new();
