@@ -4670,9 +4670,22 @@ pub(crate) fn add_parse_error_insights(graph: &CodeGraph, insights: &mut Vec<Ins
             // The reason is the difference between a grammar this scan
             // cannot read and a file nothing can: redis's `life.lua` is
             // Latin-1, which is what "source is not valid utf-8" says.
+            //
+            // And whose file it is decides how loudly to say it. redis
+            // fails its own quality gate over `deps/lua/test/life.lua` and
+            // `deps/tre/tests/retest.c` -- upstream's test data, in
+            // upstream's tree, not valid utf-8 on purpose. A file the
+            // project does not own failing to parse is a note, as a
+            // manifest it cannot parse already is.
+            let elsewhere =
+                is_vendored_source_path(&node.label) || is_test_like_source_path(&node.label);
             insights.push(Insight {
                 kind: "parse_error".to_string(),
-                severity: InsightSeverity::Error,
+                severity: if elsewhere {
+                    InsightSeverity::Info
+                } else {
+                    InsightSeverity::Error
+                },
                 message: format!("{} failed to parse: {reason}", node.label),
                 nodes: vec![node.id],
                 edges: Vec::new(),

@@ -15826,3 +15826,52 @@ fn an_edge_explanation_says_why_the_edge_is_there() {
         explanation.summary
     );
 }
+
+#[test]
+fn a_file_the_project_does_not_own_failing_to_parse_is_a_note() {
+    // redis failed its own quality gate over `deps/lua/test/life.lua` and
+    // `deps/tre/tests/retest.c`: upstream's test data, in upstream's tree,
+    // not valid utf-8 on purpose. A manifest the scan cannot parse was
+    // already quieter when it was not the project's own; a source file was
+    // not.
+    let mut graph = CodeGraph::new("repo");
+    let vendored = graph.add_node_with_metadata(
+        NodeKind::File,
+        "deps/lua/test/life.lua",
+        None,
+        BTreeMap::from([(
+            "parse_error".to_string(),
+            "source is not valid utf-8".to_string(),
+        )]),
+    );
+    let own = graph.add_node_with_metadata(
+        NodeKind::File,
+        "src/server.c",
+        None,
+        BTreeMap::from([(
+            "parse_error".to_string(),
+            "source is not valid utf-8".to_string(),
+        )]),
+    );
+    graph.add_edge(graph.root, vendored, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(graph.root, own, EdgeKind::Contains, Confidence::Exact);
+
+    let report = insights(&graph);
+    let severity_of = |needle: &str| {
+        report
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "parse_error" && insight.message.contains(needle))
+            .map(|insight| insight.severity)
+    };
+    assert_eq!(
+        severity_of("deps/lua/test/life.lua"),
+        Some(InsightSeverity::Info),
+        "upstream's test data is not the program failing to parse"
+    );
+    assert_eq!(
+        severity_of("src/server.c"),
+        Some(InsightSeverity::Error),
+        "the program's own file is"
+    );
+}

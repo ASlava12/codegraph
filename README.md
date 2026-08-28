@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Whose file it is decides how loudly a parse failure is said. redis failed its own quality gate --
+  `check` exits 2 -- over `deps/lua/test/life.lua` and `deps/tre/tests/retest.c`: upstream's test
+  data, in upstream's tree, not valid utf-8 on purpose. A manifest the scan could not parse was
+  already quieter when the project did not own it; a source file is now too, and redis's gate
+  passes.
 - An edge explanation says why the edge is there, not only how: `references` covers a type
   reference, an import that resolved to a file, an entrypoint's handler and a function that writes
   another inside it, and only the relation tells them apart. It sat in the evidence list rather than
