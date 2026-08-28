@@ -15302,3 +15302,61 @@ fn a_package_answers_by_the_name_calls_write_it_with() {
     assert_eq!(report.target.label, "internal/tfdiags");
     assert_eq!(report.total_dependents, 1);
 }
+
+#[test]
+fn a_module_answers_by_the_name_its_importers_write() {
+    // `impact requests.models` used to reach the import statement that
+    // mentions the name rather than the file it names, and
+    // `kong.tools.table` reached nothing at all.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(codegraph_core::SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    let file = graph.add_node_with_metadata(
+        NodeKind::File,
+        "kong/tools/table.lua",
+        None,
+        BTreeMap::from([("module_name".to_string(), "kong.tools.table".to_string())]),
+    );
+    let other = graph.add_node(NodeKind::File, "kong/init.lua");
+    let concat = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "concat",
+        span("kong/tools/table.lua"),
+        BTreeMap::from([("language".to_string(), "lua".to_string())]),
+    );
+    let caller = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "run",
+        span("kong/init.lua"),
+        BTreeMap::from([("language".to_string(), "lua".to_string())]),
+    );
+    for (parent, child) in [
+        (graph.root, file),
+        (graph.root, other),
+        (file, concat),
+        (other, caller),
+    ] {
+        graph.add_edge(parent, child, EdgeKind::Contains, Confidence::Exact);
+    }
+    graph.add_edge(caller, concat, EdgeKind::Calls, Confidence::Syntactic);
+
+    let report = impact(
+        &graph,
+        ImpactRequest {
+            target: "kong.tools.table".to_string(),
+            max_depth: 8,
+            limit: 100,
+        },
+    )
+    .expect("impact report");
+
+    assert_eq!(report.target.label, "kong/tools/table.lua");
+    assert_eq!(report.total_dependents, 1);
+}

@@ -4122,6 +4122,21 @@ pub(crate) fn resolve_node_reference(graph: &CodeGraph, value: &str) -> Option<N
         // An exact label can name many nodes (`main` names 15 on terraform);
         // rank them instead of taking whichever the file walk reached first.
         .or_else(|| best_labelled_node(graph, value))
+        // A lua file is a module and so is a python one, and neither
+        // states its own name: `require "kong.tools.table"` and `import
+        // oscar.core.loading` do, and the scan records what the importers
+        // call the file. That is the name a reader writes.
+        .or_else(|| {
+            let mut matches = graph.nodes.iter().filter(|node| {
+                node.kind == NodeKind::File
+                    && node
+                        .metadata
+                        .get("module_name")
+                        .is_some_and(|name| name == value)
+            });
+            let first = matches.next()?;
+            matches.next().is_none().then_some(first)
+        })
         // A Zig file is a struct and a Java file is its class: `Server`
         // names `src/Server.zig`, which no label matches. Only an
         // unambiguous stem counts, and only when nothing else answered.

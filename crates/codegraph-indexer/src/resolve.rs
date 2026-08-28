@@ -2314,6 +2314,69 @@ fn class_constructor(graph: &CodeGraph, class: NodeId) -> Option<NodeId> {
 /// and only 98 sat inside the `module` block that names them all. Every
 /// name two of its files shared was then a choice the graph could not
 /// make, though multiple dispatch means they are one function.
+/// The name the imports that reach a file call it by. A lua file is a
+/// module and so is a python one, but neither states its own name: only
+/// `require "kong.tools.table"` and `import oscar.core.loading` do, and
+/// without reading them the file could be asked about by path and by
+/// nothing else. A name several imports disagree about is left off.
+pub(crate) fn name_files_by_their_imports(context: &mut IndexContext) {
+    let mut file_ids: BTreeMap<NodeId, ()> = BTreeMap::new();
+    for node in &context.graph.nodes {
+        if node.kind == NodeKind::File {
+            file_ids.insert(node.id, ());
+        }
+    }
+    // An import node sits between the file that writes it and the file it
+    // names.
+    let mut named: BTreeMap<NodeId, BTreeMap<String, usize>> = BTreeMap::new();
+    for edge in &context.graph.edges {
+        if edge
+            .metadata
+            .get("relation")
+            .is_none_or(|relation| relation != "local_import_file")
+            || !file_ids.contains_key(&edge.target)
+        {
+            continue;
+        }
+        let Some(target) = graph_node(&context.graph, edge.source)
+            .and_then(|node| node.metadata.get("import_target"))
+            .map(String::as_str)
+        else {
+            continue;
+        };
+        // A relative path is how the file is spelled already; a dotted
+        // module name is the thing no other node carries.
+        if !target.contains('.')
+            || target.contains('/')
+            || target.contains('\\')
+            || target.starts_with('.')
+        {
+            continue;
+        }
+        *named
+            .entry(edge.target)
+            .or_default()
+            .entry(target.to_string())
+            .or_insert(0usize) += 1;
+    }
+    for (file, names) in named {
+        // A file can be imported under more than one name -- oscar's
+        // sandbox reaches `oscar.core.loading` as `core.loading` too -- and
+        // the one most of its importers write is the one to answer for. A
+        // tie takes the first by name, so the graph is the same every run.
+        let Some(name) = names
+            .iter()
+            .max_by(|left, right| left.1.cmp(right.1).then(right.0.cmp(left.0)))
+            .map(|(name, _)| name.clone())
+        else {
+            continue;
+        };
+        if let Some(node) = graph_node_mut(&mut context.graph, file) {
+            node.metadata.insert("module_name".to_string(), name);
+        }
+    }
+}
+
 pub(crate) fn assign_julia_included_modules(context: &mut IndexContext) {
     let mut module_of_file: BTreeMap<String, String> = BTreeMap::new();
     let mut ambiguous: BTreeSet<String> = BTreeSet::new();

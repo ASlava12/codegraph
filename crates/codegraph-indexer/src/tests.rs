@@ -17245,3 +17245,37 @@ fn a_haskell_file_states_the_module_its_definitions_belong_to() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_file_carries_the_name_its_importers_call_it_by() {
+    // A lua file is a module and so is a python one, and neither states
+    // its own name: `require "kong.tools.table"` does. Without reading the
+    // importers the file could be asked about by path and by nothing else.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("kong/tools")).unwrap();
+    fs::write(root.join("kong-3.0.rockspec"), "package = \"kong\"\n").unwrap();
+    fs::write(
+        root.join("kong/tools/table.lua"),
+        "local _M = {}\n\nfunction _M.concat(t)\n  return t\nend\n\nreturn _M\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("kong/init.lua"),
+        "local tbl = require \"kong.tools.table\"\n\nlocal function run()\n  return tbl.concat({1})\nend\n\nreturn { run = run }\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let file = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::File && node.label == "kong/tools/table.lua")
+        .expect("the file is scanned");
+    assert_eq!(
+        file.metadata.get("module_name").map(String::as_str),
+        Some("kong.tools.table"),
+        "the require says what the file is called"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

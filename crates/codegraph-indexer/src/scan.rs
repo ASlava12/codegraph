@@ -337,6 +337,9 @@ pub(crate) fn scan_project_with_scope(
     resolve_pending_calls(&mut context);
     resolve_pending_type_references(&mut context);
     resolve_pending_local_imports(&mut context);
+    // A file that is a module carries the name its importers call it by,
+    // which nothing else in the graph holds.
+    name_files_by_their_imports(&mut context);
     resolve_pending_namespace_imports(&mut context);
     resolve_pending_entrypoint_targets(&mut context);
     resolve_pending_route_handlers(&mut context);

@@ -236,6 +236,11 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- A lua file is a module and so is a python one, and neither states its own name: `require
+  "kong.tools.table"` and `import oscar.core.loading` do. A file now carries the name its importers
+  call it by -- the one most of them write, when they disagree -- so `kong.tools.table` reaches the
+  file with 1756 dependents and `requests.models` the one with 253, where before the first found
+  nothing and the second found the import statement that mentions it.
 - `module ShellCheck.Analytics where` states the name every import and every qualified call writes,
   and nothing recorded it -- nor did any of shellcheck's 5985 functions know which module it was in.
   Both are read now: its ambiguous calls fall from 308 to 11, and asking about the module answers
