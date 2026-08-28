@@ -165,6 +165,70 @@ pub(crate) fn journey_with_insights(
     })
 }
 
+/// The nodes a container stands for.
+///
+/// Nothing points at a directory, a file or a module: a call reaches the
+/// function, not the thing around it. So asking what depends on
+/// `internal/addrs` answered nothing while its `NewDefaultProvider` alone is
+/// called 1139 times, and asking what `app/models` depends on answered
+/// nothing while `architecture` showed 692 edges into it. What a container
+/// holds is what a question about the container means.
+///
+/// The target itself is not in the set; the caller decides what to do with
+/// it.
+pub(crate) fn contained_members(graph: &CodeGraph, target: &Node) -> BTreeSet<NodeId> {
+    let mut members = BTreeSet::new();
+    if matches!(target.kind, NodeKind::Directory | NodeKind::File) {
+        let mut contained: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+        for edge in &graph.edges {
+            if edge.kind == EdgeKind::Contains {
+                contained.entry(edge.source).or_default().push(edge.target);
+            }
+        }
+        // The repository holds every file directly, so a directory node
+        // holds nothing to walk down from: the files it stands for are the
+        // ones whose path it prefixes.
+        let mut walk = VecDeque::from([target.id]);
+        if target.kind == NodeKind::Directory {
+            let prefix = format!("{}/", target.label);
+            for node in &graph.nodes {
+                if node.kind == NodeKind::File && node.label.starts_with(&prefix) {
+                    walk.push_back(node.id);
+                    members.insert(node.id);
+                }
+            }
+        }
+        while let Some(current) = walk.pop_front() {
+            for held in contained.get(&current).map(Vec::as_slice).unwrap_or(&[]) {
+                if *held != target.id && members.insert(*held) {
+                    walk.push_back(*held);
+                }
+            }
+        }
+    }
+    if target.kind == NodeKind::Module
+        && let Some(module_path) = target.span.as_ref().map(|span| span.path.as_str())
+    {
+        // A module that *is* the file holds everything the file declares:
+        // a Haskell module's types carry no owner, and shellcheck's
+        // `ShellCheck.Analytics` is reached through those as much as
+        // through its functions. A module written inside a file can claim
+        // only what names it.
+        let whole_file = target.metadata.get("module_scope").map(String::as_str) == Some("file");
+        for node in &graph.nodes {
+            if node.id == target.id
+                || node.span.as_ref().map(|span| span.path.as_str()) != Some(module_path)
+                || (!whole_file
+                    && node.metadata.get("owner_type").map(String::as_str) != Some(&target.label))
+            {
+                continue;
+            }
+            members.insert(node.id);
+        }
+    }
+    members
+}
+
 pub fn component_dependencies(
     graph: &CodeGraph,
     request: ComponentDependencyRequest,
@@ -195,16 +259,25 @@ pub fn component_dependencies(
     let mut total_incoming = 0usize;
     let mut total_outgoing = 0usize;
 
+    // A component is what it holds. Asked about `app/models`, this counted
+    // only the edges touching the directory node itself -- there are none,
+    // since nothing calls a directory -- and answered that mastodon's models
+    // depend on nothing and nothing depends on them, while `architecture`
+    // showed 692 edges into them from the controllers alone. `impact` had
+    // already learned this; the boundary question is the same question.
+    let members = contained_members(graph, &target_node);
+    let touches = |id: NodeId| id == target_id || members.contains(&id);
     for (edge_index, edge) in graph.edges.iter().enumerate() {
         if edge.kind == EdgeKind::Contains {
             continue;
         }
-        let (neighbor_id, incoming) = if edge.target == target_id {
-            (edge.source, true)
-        } else if edge.source == target_id {
-            (edge.target, false)
-        } else {
-            continue;
+        // An edge between two things the component holds is inside it, not a
+        // dependency of it.
+        let (neighbor_id, incoming) = match (touches(edge.source), touches(edge.target)) {
+            (true, true) => continue,
+            (false, true) => (edge.source, true),
+            (true, false) => (edge.target, false),
+            (false, false) => continue,
         };
         let Some(neighbor) = nodes_by_id.get(&neighbor_id) else {
             continue;
@@ -683,67 +756,14 @@ pub(crate) fn impact_with_insights_mode(
 
     let mut visited = BTreeSet::from([target_id]);
     let mut queue = VecDeque::from([(target_id, 0usize)]);
-    // Changing a module means changing what it declares. Nothing points at
-    // an OCaml module node -- a call reaches the function, not the module
-    // around it -- so asking what depends on `Path` answered nothing at all
-    // while hundreds of files used what path.ml holds. The members seed the
-    // walk without being dependents of themselves.
-    // The same holds for a directory or a file: nothing points at a Go
-    // package, so asking what depends on `internal/addrs` answered nothing
-    // while its `NewDefaultProvider` alone is called 1139 times. What a
-    // container holds is what changing it changes.
-    if matches!(target_node.kind, NodeKind::Directory | NodeKind::File) {
-        let mut contained: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
-        for edge in &graph.edges {
-            if edge.kind == EdgeKind::Contains {
-                contained.entry(edge.source).or_default().push(edge.target);
-            }
-        }
-        // The repository holds every file directly, so a directory node
-        // holds nothing to walk down from: the files it stands for are the
-        // ones whose path it prefixes.
-        let mut walk = VecDeque::from([target_id]);
-        if target_node.kind == NodeKind::Directory {
-            let prefix = format!("{}/", target_node.label);
-            for node in &graph.nodes {
-                if node.kind == NodeKind::File && node.label.starts_with(&prefix) {
-                    walk.push_back(node.id);
-                    visited.insert(node.id);
-                }
-            }
-        }
-        while let Some(current) = walk.pop_front() {
-            for held in contained.get(&current).map(Vec::as_slice).unwrap_or(&[]) {
-                if !visited.insert(*held) {
-                    continue;
-                }
-                queue.push_back((*held, 0));
-                walk.push_back(*held);
-            }
-        }
-    }
-    if target_node.kind == NodeKind::Module
-        && let Some(module_path) = target_node.span.as_ref().map(|span| span.path.as_str())
-    {
-        // A module that *is* the file holds everything the file declares:
-        // a Haskell module's types carry no owner, and shellcheck's
-        // `ShellCheck.Analytics` is reached through those as much as
-        // through its functions. A module written inside a file can claim
-        // only what names it.
-        let whole_file =
-            target_node.metadata.get("module_scope").map(String::as_str) == Some("file");
-        for node in &graph.nodes {
-            if node.id == target_id
-                || node.span.as_ref().map(|span| span.path.as_str()) != Some(module_path)
-                || (!whole_file
-                    && node.metadata.get("owner_type").map(String::as_str)
-                        != Some(&target_node.label))
-            {
-                continue;
-            }
-            if visited.insert(node.id) {
-                queue.push_back((node.id, 0));
-            }
+    // Changing a container means changing what it holds: nothing points at
+    // an OCaml module, a Go package or a directory, so asking what depends
+    // on `internal/addrs` answered nothing while its `NewDefaultProvider`
+    // alone is called 1139 times. The members seed the walk without being
+    // dependents of themselves.
+    for member in contained_members(graph, &target_node) {
+        if visited.insert(member) {
+            queue.push_back((member, 0));
         }
     }
     let mut reached: Vec<(NodeId, usize)> = Vec::new();

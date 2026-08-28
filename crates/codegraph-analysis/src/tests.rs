@@ -3651,6 +3651,59 @@ fn seams_rank_safe_and_needed_boundaries() {
 }
 
 #[test]
+fn a_component_is_what_it_holds() {
+    // Nothing calls a directory, so counting only the edges that touch the
+    // directory node answered that mastodon's `app/models` depends on
+    // nothing and nothing depends on it -- while `architecture` showed 692
+    // edges into it from the controllers alone.
+    let mut graph = CodeGraph::new("repo");
+    let models_dir = graph.add_node(NodeKind::Directory, "app/models");
+    let model_file = graph.add_node(NodeKind::File, "app/models/status.rb");
+    let status = graph.add_node(NodeKind::Function, "publish");
+    let sibling = graph.add_node(NodeKind::Function, "unpublish");
+    let controller_file = graph.add_node(NodeKind::File, "app/controllers/statuses.rb");
+    let controller = graph.add_node(NodeKind::Function, "create");
+    graph.add_edge(
+        models_dir,
+        model_file,
+        EdgeKind::Contains,
+        Confidence::Exact,
+    );
+    graph.add_edge(model_file, status, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(model_file, sibling, EdgeKind::Contains, Confidence::Exact);
+    graph.add_edge(
+        controller_file,
+        controller,
+        EdgeKind::Contains,
+        Confidence::Exact,
+    );
+    graph.add_edge(controller, status, EdgeKind::Calls, Confidence::Syntactic);
+    // Two members calling each other is inside the component, not a
+    // dependency of it.
+    graph.add_edge(status, sibling, EdgeKind::Calls, Confidence::Syntactic);
+
+    let report = component_dependencies(
+        &graph,
+        ComponentDependencyRequest {
+            target: "app/models".to_string(),
+            group_limit: 10,
+            edge_limit: 10,
+        },
+    )
+    .expect("component dependencies");
+    assert_eq!(
+        report.total_incoming, 1,
+        "the controller's call reaches into the component: {:?}",
+        report.areas
+    );
+    assert_eq!(
+        report.total_outgoing, 0,
+        "and the call between two members is not a dependency: {:?}",
+        report.areas
+    );
+}
+
+#[test]
 fn a_trace_starts_from_the_durable_handle_too() {
     // Every other query kind takes `stable_id:`. A trace asked for a label
     // or a number and answered "invalid node id" to the very handle the
