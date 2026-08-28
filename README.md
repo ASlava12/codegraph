@@ -236,6 +236,12 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- Which directory is a container and which is an architecture area is a question about the program,
+  so it is asked of the files that hold some of it. mastodon keeps 3949 static assets under
+  `public/` and four symbols among them, and counting those hid the fact that `app/` -- 3219 files
+  and 11795 symbols -- is where the program lives: its models, controllers, services and javascript
+  were one box. It now divides into 26 areas, while terraform's 71, koel's 13 and flask's 6 stay as
+  they were.
 - A Python property and a JavaScript accessor are read the same way: `@property def description` is
   reached by writing `obj.description` and `get inSFCRoot()` by writing `parser.inSFCRoot`.
   django-oscar's functions with no caller fall from 1270 to 1032, vue's from 351 to 338 and

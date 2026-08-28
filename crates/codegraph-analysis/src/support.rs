@@ -745,12 +745,39 @@ pub(crate) struct ProjectAreas {
 
 impl ProjectAreas {
     pub(crate) fn from_graph(graph: &CodeGraph) -> Self {
-        let paths: Vec<String> = graph
+        // Which directory is a container and which is an area is a
+        // question about the program, so it is asked of the files that
+        // hold some of it. mastodon keeps 3949 static assets under
+        // `public/` and 4 symbols among them, and counting those hid the
+        // fact that `app/` -- 3219 files and 11795 symbols -- is where the
+        // program lives, so its models, controllers and services were one
+        // box. A repository with no symbols at all is grouped by its files
+        // as before.
+        let carries_symbols: BTreeSet<NodeId> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == EdgeKind::Contains)
+            .filter(|edge| {
+                graph
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == edge.target)
+                    .is_some_and(|node| is_architecture_symbol(&node.kind))
+            })
+            .map(|edge| edge.source)
+            .collect();
+        let files = graph
             .nodes
             .iter()
-            .filter(|node| node.kind == NodeKind::File)
+            .filter(|node| node.kind == NodeKind::File);
+        let mut paths: Vec<String> = files
+            .clone()
+            .filter(|node| carries_symbols.contains(&node.id))
             .map(|node| node.label.replace('\\', "/"))
             .collect();
+        if paths.is_empty() {
+            paths = files.map(|node| node.label.replace('\\', "/")).collect();
+        }
         let total = paths.len();
         let mut beneath: BTreeMap<&str, usize> = BTreeMap::new();
         let mut direct: BTreeMap<&str, usize> = BTreeMap::new();
@@ -776,7 +803,7 @@ impl ProjectAreas {
             .iter()
             .filter(|(top, count)| {
                 // Several children to divide into, almost nothing of its
-                // own, and большая часть проекта underneath: that is a
+                // own, and most of the project underneath: that is a
                 // container rather than an area.
                 children.get(*top).is_some_and(|kids| kids.len() >= 2)
                     && direct.get(*top).copied().unwrap_or(0) * 10 <= **count

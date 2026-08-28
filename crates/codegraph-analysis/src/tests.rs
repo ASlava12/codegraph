@@ -15519,3 +15519,58 @@ fn the_cycles_that_survive_the_cap_are_the_worst_ones() {
         "a surviving cycle still carries the edges that close it"
     );
 }
+
+#[test]
+fn a_directory_of_assets_does_not_decide_where_the_areas_are() {
+    // Which directory is a container and which is an area is a question
+    // about the program, so it is asked of the files that hold some of it.
+    // mastodon keeps 3949 static assets under `public/` and four symbols
+    // among them; counting those hid the fact that `app/` is where the
+    // program lives, and its models, controllers and services were one box.
+    let mut graph = CodeGraph::new("repo");
+    for index in 0..12 {
+        let asset = graph.add_node(NodeKind::File, format!("public/asset{index}.png"));
+        graph.add_edge(graph.root, asset, EdgeKind::Contains, Confidence::Exact);
+    }
+    for (area, name) in [
+        ("app/models", "Account"),
+        ("app/models", "Status"),
+        ("app/controllers", "AccountsController"),
+        ("app/services", "PostService"),
+    ] {
+        let file = graph.add_node(NodeKind::File, format!("{area}/{name}.rb"));
+        let symbol = graph.add_node_with_metadata(
+            NodeKind::Type,
+            name,
+            Some(codegraph_core::SourceSpan {
+                path: format!("{area}/{name}.rb"),
+                start_line: 1,
+                start_column: 1,
+                end_line: 2,
+                end_column: 1,
+            }),
+            BTreeMap::from([("language".to_string(), "ruby".to_string())]),
+        );
+        graph.add_edge(graph.root, file, EdgeKind::Contains, Confidence::Exact);
+        graph.add_edge(file, symbol, EdgeKind::Contains, Confidence::Exact);
+    }
+
+    let map = architecture_map(&graph, 20, 20);
+    let labels: Vec<&str> = map
+        .groups
+        .iter()
+        .map(|group| group.label.as_str())
+        .collect();
+    assert!(
+        labels.contains(&"app/models") && labels.contains(&"app/controllers"),
+        "the directory that holds the program is divided into its areas: {labels:?}"
+    );
+    assert!(
+        !labels.contains(&"app"),
+        "and is not also kept whole: {labels:?}"
+    );
+    assert!(
+        labels.contains(&"public"),
+        "a directory with nothing of the program in it stays one area: {labels:?}"
+    );
+}
