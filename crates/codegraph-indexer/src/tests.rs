@@ -16826,3 +16826,51 @@ fn a_call_through_a_class_is_not_a_method_of_another() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_php_receiver_states_which_method_a_call_means() {
+    // `$handler->handle($record)` reaches the graph as `handle`, and
+    // monolog declares nine of them. PHP states a parameter's type in the
+    // signature and a property's in the class, and `$handler = new
+    // StreamHandler()` names what it builds.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("composer.json"), "{\"name\": \"app/app\"}\n").unwrap();
+    fs::write(
+        root.join("src/StreamHandler.php"),
+        "<?php\n\nclass StreamHandler\n{\n    public function handle(array $record): bool\n    {\n        return true;\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/NullHandler.php"),
+        "<?php\n\nclass NullHandler\n{\n    public function handle(array $record): bool\n    {\n        return false;\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/Logger.php"),
+        "<?php\n\nclass Logger\n{\n    public function write(StreamHandler $handler, array $record): bool\n    {\n        return $handler->handle($record);\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("handle")
+        })
+        .expect("the call is recorded");
+    let target = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == call.target)
+        .expect("the target is a node");
+    assert_eq!(
+        target.metadata.get("owner_type").map(String::as_str),
+        Some("StreamHandler"),
+        "the signature says which handler is meant"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

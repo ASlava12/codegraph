@@ -2713,6 +2713,23 @@ pub(crate) fn classify_call(
             metadata.insert("receiver".to_string(), receiver.to_string());
         }
     }
+    // PHP keeps the receiver in a field of its own -- `$handler->handle(..)`
+    // is `name: handle`, `object: $handler` -- so the label is the method
+    // alone. `$this` names the class the call is already inside, which the
+    // caller's own owner already says.
+    if language == Language::Php
+        && node.kind() == "member_call_expression"
+        && let Some(object) = node
+            .child_by_field_name("object")
+            .and_then(|object| node_text(object, source))
+        && object.trim() != "$this"
+    {
+        let object = object.trim().to_string();
+        if let Some(receiver_type) = scope.variable_types.get(&object) {
+            metadata.insert("receiver_type".to_string(), receiver_type.clone());
+        }
+        metadata.insert("receiver_form".to_string(), "value".to_string());
+    }
     // Java keeps the receiver in a field of its own -- `pet.getName()` is
     // `object: pet`, `name: getName` -- so the label is the method alone and
     // cannot say whether the source named an object at all. `this` and
@@ -2826,6 +2843,13 @@ pub(crate) fn declared_variable_types(
     if language == Language::Swift {
         return swift_declared_variable_types(node, source);
     }
+    // PHP states a parameter's type in the signature and a property's in
+    // the class: `public function handle(LogRecord $record)` and `private
+    // FormatterInterface $formatter`. monolog declares nine `handle` and
+    // 170 calls chose between them.
+    if language == Language::Php {
+        return php_declared_variable_types(node, source);
+    }
     if language != Language::Go {
         return declared;
     }
@@ -2929,6 +2953,121 @@ fn java_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<Strin
         declared.remove(&name);
     }
     declared
+}
+
+/// The names a PHP definition binds with a type: its parameters, the
+/// properties of the class it sits in, and what `$x = new Handler()`
+/// builds. The `$` is part of how PHP writes a variable, and the call site
+/// writes it too, so the names are kept as written.
+fn php_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    let mut declared: BTreeMap<String, String> = BTreeMap::new();
+    let mut conflicting: BTreeSet<String> = BTreeSet::new();
+    let mut record = |name: String, type_name: String, declared: &mut BTreeMap<String, String>| {
+        if declared
+            .get(&name)
+            .is_some_and(|existing| existing != &type_name)
+        {
+            conflicting.insert(name);
+            return;
+        }
+        declared.insert(name, type_name);
+    };
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        let mut cursor = current.walk();
+        for child in current.named_children(&mut cursor) {
+            stack.push(child);
+        }
+        match current.kind() {
+            "simple_parameter" => {
+                let Some(type_name) = named_child_text(current, "type", source)
+                    .map(|text| php_type_name(&text))
+                    .filter(|name| !name.is_empty())
+                else {
+                    continue;
+                };
+                if let Some(name) = named_child_text(current, "name", source) {
+                    record(php_variable_name(&name), type_name, &mut declared);
+                }
+            }
+            "property_declaration" => {
+                let Some(type_name) = named_child_text(current, "type", source)
+                    .map(|text| php_type_name(&text))
+                    .filter(|name| !name.is_empty())
+                else {
+                    continue;
+                };
+                let mut elements = current.walk();
+                for element in current.named_children(&mut elements) {
+                    if element.kind() != "property_element" {
+                        continue;
+                    }
+                    if let Some(name) = named_child_text(element, "name", source) {
+                        record(php_variable_name(&name), type_name.clone(), &mut declared);
+                    }
+                }
+            }
+            // `$handler = new StreamHandler(..)` states the class outright.
+            "assignment_expression" => {
+                let (Some(left), Some(right)) = (
+                    current.child_by_field_name("left"),
+                    current.child_by_field_name("right"),
+                ) else {
+                    continue;
+                };
+                if left.kind() != "variable_name" || right.kind() != "object_creation_expression" {
+                    continue;
+                }
+                let Some(name) = node_text(left, source) else {
+                    continue;
+                };
+                let mut names = right.walk();
+                let Some(class) = right
+                    .named_children(&mut names)
+                    .find(|child| matches!(child.kind(), "name" | "qualified_name"))
+                    .and_then(|child| node_text(child, source))
+                    .map(|text| php_type_name(&text))
+                    .filter(|name| !name.is_empty())
+                else {
+                    continue;
+                };
+                record(php_variable_name(&name), class, &mut declared);
+            }
+            _ => {}
+        }
+    }
+    for name in conflicting {
+        declared.remove(&name);
+    }
+    declared
+}
+
+/// The bare name of a PHP type, without the namespace it may spell in full
+/// or the nullability it may carry: `?\Monolog\Formatter\FormatterInterface`
+/// is `FormatterInterface`.
+fn php_type_name(text: &str) -> String {
+    text.trim()
+        .trim_start_matches('?')
+        .split('|')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_start_matches('\\')
+        .rsplit('\\')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+/// A PHP variable as the call site writes it, with its `$`.
+fn php_variable_name(name: &str) -> String {
+    let name = name.trim();
+    if name.starts_with('$') {
+        name.to_string()
+    } else {
+        format!("${name}")
+    }
 }
 
 /// The names a Swift definition binds with a type: its parameters, which

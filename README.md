@@ -236,6 +236,10 @@ Implemented now:
   follows the `@` as a call, so ecto filed 356 calls to things named `doc`, `type` and `spec`. And
   `fun.(new, current)` invokes whatever the variable holds -- the label it produced, `fun.`, names
   nothing at all, and ecto writes 82 of them. Its unresolved calls fall from 2556 to 2213.
+- PHP keeps the receiver in a field of its own too, and states its types where the class is
+  written: `public function handle(LogRecord $record)`, `private FormatterInterface $formatter`,
+  `$handler = new StreamHandler(..)`. monolog declares nine `handle` and 170 calls chose between
+  them; its ambiguous calls fall from 542 to 318 and koel's from 2663 to 2551.
 - A ruby call keeps only the method in its label and states the constant it was written through
   beside it, so the class a call names has to be asked for rather than read off the label. When the
   project declares that class and none of the candidates is one of its methods, the call means the
