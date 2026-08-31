@@ -3002,6 +3002,71 @@ fn a_factory_and_a_mock_builder_belong_to_the_framework() {
 }
 
 #[test]
+fn a_php_use_says_whose_class_a_bare_name_means() {
+    // guzzle writes `use GuzzleHttp\Psr7\Request;` and then `new
+    // Request(..)` 612 times: the class is psr7's, and without the binding
+    // a bare name could only be matched against everything the project
+    // declares. Two things it must not do, both measured: a name the
+    // project declares is the project's whatever the import list says --
+    // `use GuzzleHttp\Client;` names guzzle's own src/Client.php, and 425
+    // `new Client(..)` calls stopped reaching its constructor -- and `use
+    // function` binds a name PSR-4 cannot place, which took 825 of koel's
+    // own test helpers away from tests/Helpers.php.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("tests")).unwrap();
+    fs::write(
+        root.join("composer.json"),
+        "{\"name\":\"acme/client\",\"require\":{\"guzzlehttp/psr7\":\"^2\"}}",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Client.php"),
+        "<?php\n\nnamespace Acme;\n\nclass Client\n{\n    public function __construct()\n    {\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tests").join("Helpers.php"),
+        "<?php\n\nnamespace Tests;\n\nfunction make_client(): void\n{\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tests").join("ClientTest.php"),
+        "<?php\n\nuse Acme\\Client;\nuse GuzzleHttp\\Psr7\\Request;\n\nuse function Tests\\make_client;\n\nclass ClientTest\n{\n    public function testIt(): void\n    {\n        $client = new Client();\n        $request = new Request('GET', '/');\n        make_client();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    assert_eq!(
+        resolution("Request").as_deref(),
+        Some("external"),
+        "the file says Request is psr7's"
+    );
+    assert_eq!(
+        resolution("Client").as_deref(),
+        Some("constructor"),
+        "a class the project declares is the project's"
+    );
+    assert_eq!(
+        resolution("make_client").as_deref(),
+        Some("resolved"),
+        "PSR-4 places classes, not functions"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle

@@ -3421,6 +3421,14 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             // the call site has no qualifier to look up — the name itself
             // has to say where it came from. A definition the file makes
             // itself wins over the import, which is Python's own rule.
+            // A php `use` binds a class name, but PSR-4 maps a namespace
+            // onto a directory and cannot always tell the project's own
+            // from a dependency's: guzzle writes `use GuzzleHttp\Client;`
+            // for a class in its own `src/`. A name the project declares
+            // is the project's whatever the import list says, and without
+            // this 425 `new Client(..)` calls stopped reaching
+            // `Client::__construct`.
+            None if call.language == "php" && php_classes.contains(call.label.as_str()) => None,
             None if local_targets.is_empty() => context
                 .file_imported_names
                 .get(call.span.path.as_str())

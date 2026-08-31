@@ -1163,6 +1163,12 @@ pub(crate) fn index_file(
                             // bare name the same way python's `from x
                             // import y` does.
                             Language::Java => java_static_imported_names(&item.label),
+                            // `use GuzzleHttp\Psr7\Request;` binds
+                            // `Request` for the rest of the file, which is
+                            // what says whose class a bare `new Request`
+                            // builds: guzzle writes 612 of them and 539
+                            // `Response`, all psr7's.
+                            Language::Php => php_imported_names(&item.label),
                             _ => js_bindings
                                 .map(|bindings| bindings.names)
                                 .unwrap_or_default(),

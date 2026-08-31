@@ -248,6 +248,58 @@ pub(crate) fn possible_local_import_target(
     }
 }
 
+/// The names a php `use` binds. `use GuzzleHttp\Psr7\Request;` makes
+/// `Request` mean that class for the rest of the file, the way python's
+/// `from a.b import c` binds `c`, and an alias renames it outright. guzzle
+/// writes 612 `Request` and 539 `Response`, all of them psr7's, and
+/// without the binding a bare call could only be matched by its name
+/// against everything the project declares.
+pub(crate) fn php_imported_names(import_label: &str) -> Vec<String> {
+    let statement = import_label.trim();
+    let Some(rest) = statement.strip_prefix("use ") else {
+        return Vec::new();
+    };
+    // `use function Tests\create_user;` binds a name too, but PSR-4 maps
+    // classes onto files and not functions, so nothing can say whether
+    // that function is the project's own. koel imports 825 of its own test
+    // helpers that way, and calling them a dependency's took every one of
+    // them away from `tests/Helpers.php`.
+    let rest = rest.trim_start();
+    if rest.starts_with("function ") || rest.starts_with("const ") {
+        return Vec::new();
+    }
+    let rest = rest.split(';').next().unwrap_or(rest).trim();
+    // A grouped use -- `use A\{B, C};` -- binds each name in the braces.
+    if let Some((prefix, group)) = rest.split_once('{') {
+        let _ = prefix;
+        return group
+            .trim_end_matches('}')
+            .split(',')
+            .filter_map(php_bound_name)
+            .collect();
+    }
+    php_bound_name(rest).into_iter().collect()
+}
+
+/// The one name a `use` clause binds: its alias when it renames, and the
+/// last segment of the path otherwise.
+fn php_bound_name(clause: &str) -> Option<String> {
+    let clause = clause.trim();
+    if clause.is_empty() {
+        return None;
+    }
+    let name = match clause.split_once(" as ") {
+        Some((_, alias)) => alias.trim(),
+        None => clause.rsplit('\\').next().unwrap_or(clause).trim(),
+    };
+    let name = name.trim_matches('\\');
+    (!name.is_empty()
+        && name
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_'))
+    .then(|| name.to_string())
+}
+
 /// `use GuzzleHttp\Exception\InvalidArgumentException;` names a class, and
 /// PSR-4 maps its namespace onto a directory -- `GuzzleHttp\` onto `src/`
 /// here. The prefix a project maps varies, so each suffix of the namespace
