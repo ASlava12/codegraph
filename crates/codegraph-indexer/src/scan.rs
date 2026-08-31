@@ -151,6 +151,7 @@ pub(crate) fn scan_project_with_scope(
         npm_packages,
         path_aliases,
         own_package_ids: BTreeSet::new(),
+        file_import_package_ids: BTreeMap::new(),
         dart_packages,
         c_include_dirs,
         julia_exports,
@@ -330,6 +331,23 @@ pub(crate) fn scan_project_with_scope(
             .join(",");
         let root_id = context.graph.root;
         add_node_metadata(&mut context.graph, root_id, "own_package_ids", own);
+    }
+    // A project's tests import it by the name it publishes -- axios's
+    // smoke tests write `import axios from 'axios'` -- and that name is
+    // not an outside dependency however the walk happened to order the
+    // manifest. Dropping the qualifier leaves the call to be resolved by
+    // the name it names, which is this project's own definition.
+    if !context.own_package_ids.is_empty() {
+        let own = context.own_package_ids.clone();
+        for (file, packages) in &context.file_import_package_ids {
+            for (qualifier, package_id) in packages {
+                if own.contains(package_id)
+                    && let Some(qualifiers) = context.file_import_qualifiers.get_mut(file)
+                {
+                    qualifiers.remove(qualifier);
+                }
+            }
+        }
     }
     // A julia function belongs to the module of the file that included
     // its file, which the include list says and nothing else does.
@@ -1084,6 +1102,24 @@ pub(crate) fn index_file(
                             .filter(|candidates| !candidates.is_empty())
                             .map_or(ImportedPackage::External, ImportedPackage::Local);
                         if let Some(qualifier) = import_qualifier {
+                            // A javascript import names its package in the
+                            // string it reads from, and a project's own
+                            // tests import it by the name it publishes.
+                            // The walk has not read every manifest yet, so
+                            // the id is kept and judged once it has.
+                            if matches!(
+                                language,
+                                Language::JavaScript | Language::TypeScript | Language::Tsx
+                            ) && let Some(module) = first_quoted_value(&item.label)
+                                && !module.starts_with('.')
+                                && !module.starts_with('/')
+                            {
+                                context
+                                    .file_import_package_ids
+                                    .entry(label.to_string())
+                                    .or_default()
+                                    .insert(qualifier.clone(), format!("npm:{module}"));
+                            }
                             context
                                 .file_import_qualifiers
                                 .entry(label.to_string())

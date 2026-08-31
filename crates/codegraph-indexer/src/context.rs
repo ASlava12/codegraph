@@ -76,6 +76,10 @@ pub(crate) struct IndexContext {
     /// Package names the project's own manifests claim. Nothing declares
     /// a dependency on itself.
     pub(crate) own_package_ids: BTreeSet<String>,
+    /// For each file, the package id behind each import qualifier it binds,
+    /// so a qualifier naming the project's own package can be dropped once
+    /// the walk has read every manifest.
+    pub(crate) file_import_package_ids: BTreeMap<String, BTreeMap<String, String>>,
     pub(crate) c_include_dirs: Vec<String>,
     /// The names a Julia package exports and the names an R package's
     /// NAMESPACE lists. Both are written in one place for the whole

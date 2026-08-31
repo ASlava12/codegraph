@@ -2613,6 +2613,64 @@ fn a_language_names_its_own_vocabulary() {
 }
 
 #[test]
+fn a_default_import_is_a_name_calls_are_written_through() {
+    // `import path from 'path'` is how a file reaches `path.join`, and
+    // only `import * as path` was recorded as a qualifier. axios writes 22
+    // of the first kind for `path` alone, and a local default import says
+    // as much: `zlib.gzip` had been answered by a `const gzip` the same
+    // test file declares.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(
+        root.join("package.json"),
+        "{\"name\":\"sample\",\"version\":\"1.0.0\"}",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib").join("server.js"),
+        "import path from 'path';\n\nexport function resolveFile(root, name) {\n  return path.join(root, name);\n}\n",
+    )
+    .unwrap();
+    // A project's own tests import it by the name it publishes, which is
+    // not an outside dependency however the walk ordered the manifest.
+    fs::create_dir_all(root.join("tests")).unwrap();
+    fs::write(
+        root.join("lib").join("index.js"),
+        "export function create(config) {\n  return config;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tests").join("smoke.test.js"),
+        "import sample from 'sample';\n\nexport function run() {\n  return sample.create({});\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    assert_eq!(
+        resolution("path.join").as_deref(),
+        Some("external"),
+        "the file says where `path` comes from"
+    );
+    assert_eq!(
+        resolution("sample.create").as_deref(),
+        Some("resolved"),
+        "a project does not import itself from outside"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle

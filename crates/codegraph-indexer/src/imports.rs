@@ -553,8 +553,16 @@ pub(crate) fn js_import_bindings(import_label: &str) -> JsImportBindings {
             }
             continue;
         }
-        // A default import: `import fetch from "node-fetch"`.
+        // A default import: `import fetch from "node-fetch"`. The name it
+        // binds is also a name calls are written through -- `import path
+        // from 'path'` is how a file reaches `path.join`, and axios writes
+        // 22 of those and 25 more of `axios.post` -- so it is a qualifier
+        // as well as a name. Only the first counts: `import React, {
+        // useState } from 'react'` names the module once.
         if !part.is_empty() {
+            if bindings.qualifier.is_none() {
+                bindings.qualifier = Some(part.to_string());
+            }
             bindings.names.push(part.to_string());
         }
     }
