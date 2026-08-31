@@ -4,7 +4,9 @@
 //! show -- an edge to a node that is not there, one fact recorded twice, a
 //! definition that appears to call itself.
 
-use crate::support::edge_kind_name;
+use crate::support::{durable_node_reference, edge_kind_name};
+use crate::{MAX_REPORT_COMMUNITY_LIMIT, communities, entrypoints, hotspots};
+use codegraph_core::is_test_like_source_path;
 use codegraph_core::{CodeGraph, EdgeKind, NodeId};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -185,4 +187,100 @@ fn call_receiver(label: &str) -> Option<&str> {
     let cut = label.rfind('.').or_else(|| label.rfind(':'))?;
     let receiver = label[..cut].trim_end_matches(':');
     (!receiver.is_empty()).then_some(receiver)
+}
+
+/// A question this project's own graph suggests, and the command that
+/// answers it.
+///
+/// graphify ends its report with questions to ask the corpus. The value is
+/// not the question but the pairing: a question the tool cannot answer is a
+/// prompt to go read files, which is what the graph exists to avoid.
+#[derive(Debug, Clone, Serialize)]
+pub struct SuggestedQuestion {
+    pub question: String,
+    /// The measured fact that prompted it, so a reader can tell a suggestion
+    /// from a guess.
+    pub because: String,
+    pub command: String,
+}
+
+/// What to ask about a project, derived from what its graph already says.
+/// Every question names something real in this repository; none is a
+/// template with the project's name in it.
+pub fn suggested_questions(graph: &CodeGraph) -> Vec<SuggestedQuestion> {
+    let mut questions = Vec::new();
+
+    // The thing most of the project points at -- and that the project
+    // declares. mastodon's most-depended-on name is `Rails`, which carries
+    // no span because it is the framework, and "what would break if I
+    // changed Rails" is not a question anyone can act on.
+    // A name the project also declares as a dependency belongs to the
+    // dependency, whatever the project reopens: mastodon's most-depended-on
+    // module is `Rails`, declared in `lib/rails/engine_extensions.rb` and
+    // credited with all 431 references to the framework itself.
+    let dependencies: BTreeSet<String> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.metadata.get("item_kind").map(String::as_str) == Some("dependency"))
+        .map(|node| node.label.to_ascii_lowercase())
+        .collect();
+    if let Some(hotspot) = hotspots(graph, 8).hotspots.iter().find(|hotspot| {
+        hotspot
+            .node
+            .span
+            .as_ref()
+            .is_some_and(|span| !is_test_like_source_path(&span.path))
+            && !dependencies.contains(&hotspot.node.label.to_ascii_lowercase())
+    }) {
+        let reference = durable_node_reference(&hotspot.node);
+        questions.push(SuggestedQuestion {
+            question: format!("What would break if I changed `{}`?", hotspot.node.label),
+            because: format!(
+                "{} other definitions depend on it, more than anything else here",
+                hotspot.score
+            ),
+            command: format!("codegraph impact {reference} ."),
+        });
+    }
+
+    // Where the program starts -- when the project offers a program. Asked
+    // of mastodon, the best-ranked entrypoint is `script:bin/brakeman`, a
+    // linter, and "what runs when the linter starts" is worth nobody's
+    // time. A declared program or a route it serves is.
+    if let Some(entry) = entrypoints(graph).iter().find(|node| {
+        matches!(
+            node.metadata.get("entrypoint_kind").map(String::as_str),
+            Some("program" | "console_script" | "route")
+        )
+    }) {
+        let reference = durable_node_reference(entry);
+        questions.push(SuggestedQuestion {
+            question: format!("What runs when `{}` starts?", entry.label),
+            because: "it is the first program or route this project offers".to_string(),
+            command: format!("codegraph workflow {reference} . --compact"),
+        });
+    }
+
+    // The subsystem least able to stand on its own.
+    let communities = communities(graph, MAX_REPORT_COMMUNITY_LIMIT);
+    if let Some(loosest) = communities
+        .communities
+        .iter()
+        // A subsystem with no internal edges at all is not loosely
+        // coupled, it is not a subsystem: mastodon's `app/views` is 359
+        // templates that reference nothing of each other.
+        .filter(|community| community.node_count >= 50 && community.internal_edges > 0)
+        .min_by_key(|community| community.cohesion_percent)
+    {
+        questions.push(SuggestedQuestion {
+            question: format!("What pulls on `{}`?", loosest.label),
+            because: format!(
+                "only {}% of its edges stay inside it, the least of any subsystem here",
+                loosest.cohesion_percent
+            ),
+            command: format!("codegraph component-dependencies {} .", loosest.label),
+        });
+    }
+
+    questions
 }

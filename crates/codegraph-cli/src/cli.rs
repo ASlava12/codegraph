@@ -89,6 +89,9 @@ pub(crate) enum Command {
     /// Check what the graph says about itself: dangling edges, facts recorded
     /// twice, and definitions that appear to call themselves
     Doctor(ScanArgs),
+    /// Suggest what to ask about this project, with the command that answers
+    /// each question
+    Questions(ScanArgs),
 
     /// Emit a production-oriented project report snapshot as JSON or Markdown.
     Report(ReportArgs),

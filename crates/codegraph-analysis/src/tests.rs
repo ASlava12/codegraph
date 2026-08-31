@@ -3651,6 +3651,78 @@ fn seams_rank_safe_and_needed_boundaries() {
 }
 
 #[test]
+fn a_suggested_question_names_something_the_project_declares() {
+    // A question the tool cannot answer sends the reader back to grep, which
+    // is what the graph exists to avoid -- so each one carries the command
+    // that answers it. And the subject has to be the project's own: asked of
+    // mastodon, the most-depended-on module is `Rails`, declared in
+    // `lib/rails/engine_extensions.rb` and credited with every reference to
+    // the framework, and "what would break if I changed Rails" is not a
+    // question anyone can act on.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| codegraph_core::SourceSpan {
+        path: path.to_string(),
+        start_line: 1,
+        start_column: 1,
+        end_line: 2,
+        end_column: 1,
+    };
+    let framework = graph.add_node_with_metadata(
+        NodeKind::Module,
+        "Rails",
+        Some(span("lib/rails/extensions.rb")),
+        BTreeMap::from([("language".to_string(), "ruby".to_string())]),
+    );
+    graph.add_node_with_metadata(
+        NodeKind::ExternalDependency,
+        "rails",
+        None,
+        BTreeMap::from([("item_kind".to_string(), "dependency".to_string())]),
+    );
+    let own = graph.add_node_with_metadata(
+        NodeKind::Type,
+        "TagManager",
+        Some(span("app/lib/tag_manager.rb")),
+        BTreeMap::from([("language".to_string(), "ruby".to_string())]),
+    );
+    for index in 0..12 {
+        let caller = graph.add_node_with_metadata(
+            NodeKind::Function,
+            format!("caller{index}"),
+            Some(span(&format!("app/models/model{index}.rb"))),
+            BTreeMap::from([("language".to_string(), "ruby".to_string())]),
+        );
+        graph.add_edge(caller, framework, EdgeKind::Calls, Confidence::Syntactic);
+        if index < 6 {
+            graph.add_edge(caller, own, EdgeKind::Calls, Confidence::Syntactic);
+        }
+    }
+
+    let questions = suggested_questions(&graph);
+    assert!(!questions.is_empty(), "the graph suggests something");
+    let subjects: Vec<&str> = questions
+        .iter()
+        .map(|question| question.question.as_str())
+        .collect();
+    assert!(
+        subjects
+            .iter()
+            .any(|question| question.contains("TagManager")),
+        "the project's own most-depended-on definition: {subjects:?}"
+    );
+    assert!(
+        !subjects.iter().any(|question| question.contains("Rails")),
+        "and never a name it also declares as a dependency: {subjects:?}"
+    );
+    assert!(
+        questions
+            .iter()
+            .all(|question| question.command.starts_with("codegraph ")),
+        "every question carries the command that answers it"
+    );
+}
+
+#[test]
 fn a_community_says_how_much_of_its_coupling_stays_inside_it() {
     // mastodon's `app/javascript` is 99% -- a frontend and a backend sharing
     // a repository -- and `app/helpers` 33%, which is what a subsystem that
