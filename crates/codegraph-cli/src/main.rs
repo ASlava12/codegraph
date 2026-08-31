@@ -14,6 +14,7 @@ mod query_commands;
 mod query_log;
 mod refactor_commands;
 mod registry;
+mod repository;
 mod semantic_commands;
 mod watch;
 mod wiki;
@@ -1147,6 +1148,14 @@ pub(crate) fn scan_with_options(
     max_file_size: Option<u64>,
     cache_args: &CacheArgs,
 ) -> Result<codegraph_core::CodeGraph> {
+    // Every command takes a path, so resolving a URL here gives all of them
+    // a repository they do not have yet: `codegraph summary
+    // https://github.com/owner/repo` clones it once under the cache and
+    // reads it from there afterwards.
+    let path = match path.to_str() {
+        Some(target) if repository::is_remote(target) => repository::repository_path(target)?,
+        _ => path,
+    };
     let options = configured_index_options(
         &path,
         &scan_overrides(include_hidden, include_ignored, max_file_size),
