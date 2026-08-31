@@ -2840,7 +2840,9 @@ fn lua_module_returns(node: Node<'_>, source: &[u8], label: &str) -> bool {
     }
     let mut statements = root.walk();
     for statement in root.named_children(&mut statements) {
-        if statement.kind() == "return_statement" && lua_return_exposes(statement, source, label) {
+        if statement.kind() == "return_statement"
+            && lua_return_exposes(root, statement, source, label)
+        {
             return true;
         }
     }
@@ -2902,10 +2904,14 @@ fn lua_assignment_defines_function(node: Node<'_>, source: &[u8], label: &str) -
     names && function
 }
 
-/// The names a `return { … }` gives the table it hands back. Only the
-/// table written in the return counts: a name nested deeper is a field of
-/// something the module exports, not an export of its own.
-fn lua_return_exposes(statement: Node<'_>, source: &[u8], label: &str) -> bool {
+/// The names the table a module returns gives out. The table can be written
+/// in the `return` itself or bound to a name first -- kong's
+/// `kong/api/endpoints.lua` closes with `local Endpoints = { handle_error =
+/// handle_error, … }` and `return Endpoints`, and 95 calls reached a
+/// definition in that file that the resolver had ruled out. Only that table
+/// counts: a name nested deeper is a field of something the module exports
+/// rather than an export of its own.
+fn lua_return_exposes(root: Node<'_>, statement: Node<'_>, source: &[u8], label: &str) -> bool {
     let mut lists = statement.walk();
     for list in statement.named_children(&mut lists) {
         if list.kind() != "expression_list" {
@@ -2913,15 +2919,97 @@ fn lua_return_exposes(statement: Node<'_>, source: &[u8], label: &str) -> bool {
         }
         let mut values = list.walk();
         for value in list.named_children(&mut values) {
-            if value.kind() != "table_constructor" {
+            if value.kind() == "table_constructor" && lua_table_names(value, source, label) {
+                return true;
+            }
+            if value.kind() != "identifier" {
                 continue;
             }
-            let mut fields = value.walk();
-            for field in value.named_children(&mut fields) {
-                if field.kind() == "field"
-                    && field
-                        .child_by_field_name("name")
-                        .and_then(|name| node_text(name, source))
+            let Some(name) = node_text(value, source) else {
+                continue;
+            };
+            if lua_table_bound_to(root, source, &name)
+                .is_some_and(|table| lua_table_names(table, source, label))
+                || lua_field_assigned(root, source, &name, label)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The table constructor a top-level `local M = { … }` binds to this name.
+fn lua_table_bound_to<'tree>(root: Node<'tree>, source: &[u8], name: &str) -> Option<Node<'tree>> {
+    let mut statements = root.walk();
+    for statement in root.named_children(&mut statements) {
+        let assignment = if statement.kind() == "assignment_statement" {
+            Some(statement)
+        } else if statement.kind() == "variable_declaration" {
+            let mut inner = statement.walk();
+            statement
+                .named_children(&mut inner)
+                .find(|child| child.kind() == "assignment_statement")
+        } else {
+            None
+        };
+        let Some(assignment) = assignment else {
+            continue;
+        };
+        let mut parts = assignment.walk();
+        let mut binds = false;
+        let mut table = None;
+        for child in assignment.named_children(&mut parts) {
+            match child.kind() {
+                "variable_list" => {
+                    let mut inner = child.walk();
+                    binds |= child
+                        .named_children(&mut inner)
+                        .any(|target| node_text(target, source).as_deref() == Some(name));
+                }
+                "expression_list" => {
+                    let mut inner = child.walk();
+                    table = child
+                        .named_children(&mut inner)
+                        .find(|value| value.kind() == "table_constructor");
+                }
+                _ => {}
+            }
+        }
+        if binds && table.is_some() {
+            return table;
+        }
+    }
+    None
+}
+
+/// Whether the file writes `M.label = …` at its top level. kong's
+/// `spec/fixtures/balancer_utils.lua` opens an empty table, fills it a line
+/// at a time -- `balancer_utils.begin_testcase_setup =
+/// begin_testcase_setup` -- and returns it, which names its exports just as
+/// plainly as writing them between the braces would.
+fn lua_field_assigned(root: Node<'_>, source: &[u8], table: &str, label: &str) -> bool {
+    let mut statements = root.walk();
+    for statement in root.named_children(&mut statements) {
+        if statement.kind() != "assignment_statement" {
+            continue;
+        }
+        let mut parts = statement.walk();
+        for child in statement.named_children(&mut parts) {
+            if child.kind() != "variable_list" {
+                continue;
+            }
+            let mut targets = child.walk();
+            for target in child.named_children(&mut targets) {
+                if target.kind() == "dot_index_expression"
+                    && target
+                        .child_by_field_name("table")
+                        .and_then(|node| node_text(node, source))
+                        .as_deref()
+                        == Some(table)
+                    && target
+                        .child_by_field_name("field")
+                        .and_then(|node| node_text(node, source))
                         .as_deref()
                         == Some(label)
                 {
@@ -2931,6 +3019,19 @@ fn lua_return_exposes(statement: Node<'_>, source: &[u8], label: &str) -> bool {
         }
     }
     false
+}
+
+/// Whether a table constructor gives one of its fields this name.
+fn lua_table_names(table: Node<'_>, source: &[u8], label: &str) -> bool {
+    let mut fields = table.walk();
+    table.named_children(&mut fields).any(|field| {
+        field.kind() == "field"
+            && field
+                .child_by_field_name("name")
+                .and_then(|name| node_text(name, source))
+                .as_deref()
+                == Some(label)
+    })
 }
 
 fn lua_local_binding(node: Node<'_>) -> bool {

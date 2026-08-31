@@ -1798,6 +1798,87 @@ return { each_strategy = each_strategy }
 }
 
 #[test]
+fn a_lua_module_names_its_exports_three_ways() {
+    let visibility = |parsed: &ParsedFile, label: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::Function && item.label == label)
+            .and_then(|item| item.metadata.get("visibility").cloned())
+    };
+
+    // The table can be bound to a name before it is returned.
+    let named = parse_source(
+        "endpoints.lua",
+        br#"local function handle_error(err)
+  return err
+end
+local function internal_only()
+end
+local Endpoints = {
+  handle_error = handle_error,
+}
+return Endpoints
+"#,
+        Language::Lua,
+    )
+    .unwrap();
+    assert_eq!(
+        visibility(&named, "handle_error").as_deref(),
+        Some("public")
+    );
+    assert_eq!(
+        visibility(&named, "internal_only").as_deref(),
+        Some("private")
+    );
+
+    // Or opened empty and filled a line at a time.
+    let filled = parse_source(
+        "balancer_utils.lua",
+        br#"local balancer_utils = {}
+local function begin_testcase_setup(strategy)
+  return strategy
+end
+local function unexported()
+end
+balancer_utils.begin_testcase_setup = begin_testcase_setup
+return balancer_utils
+"#,
+        Language::Lua,
+    )
+    .unwrap();
+    assert_eq!(
+        visibility(&filled, "begin_testcase_setup").as_deref(),
+        Some("public")
+    );
+    assert_eq!(
+        visibility(&filled, "unexported").as_deref(),
+        Some("private")
+    );
+
+    // A table the module builds but does not return says nothing: kong's
+    // schema keeps its validators in one, and reading those as exports
+    // would hand out every name the file happens to write.
+    let unreturned = parse_source(
+        "schema.lua",
+        br#"local function helper()
+end
+local validators = {
+  helper = helper,
+}
+local Schema = {}
+return Schema
+"#,
+        Language::Lua,
+    )
+    .unwrap();
+    assert_eq!(
+        visibility(&unreturned, "helper").as_deref(),
+        Some("private")
+    );
+}
+
+#[test]
 fn a_call_is_written_where_its_name_is_written() {
     let rust = parse_source(
         "main.rs",
