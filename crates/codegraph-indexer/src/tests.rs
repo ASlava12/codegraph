@@ -2904,6 +2904,55 @@ fn ruby_provides_its_own_methods() {
 }
 
 #[test]
+fn a_matcher_is_part_of_the_runner_that_hands_it_over() {
+    // `expect` was on the list and the matchers that read it were not,
+    // which is most of what a suite writes: 3271 across core, koel, zod
+    // and openzeppelin. chai reads through `to`, which is how openzeppelin
+    // writes `to.be.revertedWithCustomError`.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("test")).unwrap();
+    fs::write(
+        root.join("package.json"),
+        "{\"name\":\"sample\",\"version\":\"1.0.0\"}",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("sum.js"),
+        "export function sum(a, b) {\n  return a + b;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("test").join("sum.test.js"),
+        "import { sum } from '../src/sum.js';\n\ndescribe('sum', () => {\n  it('adds', () => {\n    expect(sum(1, 2)).toBe(3);\n    expect(sum(1, 2)).toEqual(3);\n    expect(() => sum()).toThrow();\n  });\n});\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    for provided in ["expect", "toBe", "toEqual", "toThrow"] {
+        assert_eq!(
+            resolution(provided).as_deref(),
+            Some("builtin"),
+            "{provided} is the runner's"
+        );
+    }
+    // The suite still reaches what the project wrote.
+    assert_eq!(resolution("sum").as_deref(), Some("resolved"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle

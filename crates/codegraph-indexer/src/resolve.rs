@@ -952,6 +952,35 @@ fn test_runner_provides_call(language: &str, path: &str, label: &str) -> bool {
             ) || ["vi.", "jest.", "expect.", "describe.", "it.", "test."]
                 .iter()
                 .any(|prefix| label.starts_with(prefix))
+                // `expect` was here and the matchers that read it were not,
+                // which is most of what a suite actually writes: `toBe`,
+                // `toEqual`, `toHaveBeenCalledWith`, `toThrow`. 3271 across
+                // core, koel, zod and openzeppelin. chai reads the same way
+                // through `to`, which is how openzeppelin writes
+                // `to.be.revertedWithCustomError` and `withArgs`.
+                || [
+                    "toBe",
+                    "toHave",
+                    "toEqual",
+                    "toMatch",
+                    "toThrow",
+                    "toContain",
+                    "toStrict",
+                    "toReturn",
+                    "toSatisfy",
+                    "toNot",
+                ]
+                .iter()
+                .any(|matcher| {
+                    label
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or(label)
+                        .starts_with(matcher)
+                })
+                || label.starts_with("to.")
+                || label.ends_with(".withArgs")
+                || label == "withArgs"
         }
         _ => false,
     }
