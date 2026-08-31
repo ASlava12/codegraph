@@ -331,6 +331,17 @@ pub struct SemanticEdgePatch {
     pub call_label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// Where the call is written. Every other call edge records that under
+    /// `file`/`line`, and a semantic edge recorded the answer's location
+    /// instead -- for a definition in the standard library an absolute path
+    /// on the machine that ran the pass, which no other span in the graph
+    /// is and which cannot mean anything on another machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_column: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1683,10 +1694,32 @@ fn semantic_edge_metadata(edge_patch: &SemanticEdgePatch) -> BTreeMap<String, St
         ("request_id".to_string(), edge_patch.request_id.clone()),
         ("work_item_id".to_string(), edge_patch.work_item_id.clone()),
         ("evidence".to_string(), edge_patch.evidence.to_string()),
-        ("path".to_string(), edge_patch.path.clone()),
-        ("line".to_string(), edge_patch.line.to_string()),
-        ("column".to_string(), edge_patch.column.to_string()),
     ]);
+    // Where the call is written, the way every other call edge says it. The
+    // answer's own location went here before, which for a definition in the
+    // standard library is an absolute path on the machine that ran the
+    // pass: no other span in the graph is one, and it means nothing
+    // anywhere else. A reference edge has no call site and its location is
+    // the site, so it keeps what it had.
+    let (file, line, column) = match &edge_patch.call_file {
+        Some(file) => (
+            file.clone(),
+            edge_patch.call_line.unwrap_or(edge_patch.line),
+            edge_patch.call_column.unwrap_or(edge_patch.column),
+        ),
+        None => (edge_patch.path.clone(), edge_patch.line, edge_patch.column),
+    };
+    metadata.insert("file".to_string(), file);
+    metadata.insert("line".to_string(), line.to_string());
+    metadata.insert("column".to_string(), column.to_string());
+    // Where the definition turned out to be, when that is a place this
+    // project contains. Outside it the evidence and the target already say
+    // which dependency or library answered, and the path would only be
+    // this machine's.
+    if !edge_patch.path.starts_with('/') && !edge_patch.path.contains(":\\") {
+        metadata.insert("definition_file".to_string(), edge_patch.path.clone());
+        metadata.insert("definition_line".to_string(), edge_patch.line.to_string());
+    }
     // A semantic edge is a resolved call, and saying so is what lets every
     // count and filter that groups by resolution see the strongest edges in
     // the graph. Applying the pass to ripgrep had been making its reported
@@ -1819,6 +1852,9 @@ fn collect_definition_edges(
         .unwrap_or(EdgeKind::References);
     let replaced_label = replaced.and_then(|edge| edge.metadata.get("call_label").cloned());
     let replaced_language = replaced.and_then(|edge| edge.metadata.get("language").cloned());
+    let call_file = replaced.and_then(|edge| edge.metadata.get("file").cloned());
+    let call_line = replaced.and_then(|edge| numeric_metadata(edge, "line"));
+    let call_column = replaced.and_then(|edge| numeric_metadata(edge, "column"));
     let original_target = work_item.target.as_ref().map(|target| target.id);
 
     for location in lsp_locations(result) {
@@ -1851,6 +1887,9 @@ fn collect_definition_edges(
                 evidence: "lsp_definition",
                 call_label: replaced_label.clone(),
                 language: replaced_language.clone(),
+                call_file: call_file.clone(),
+                call_line,
+                call_column,
             }),
             // The definition is not this project's, but the path still says
             // whose it is, and a dependency the project declares is a
@@ -1873,6 +1912,9 @@ fn collect_definition_edges(
                     evidence: "lsp_definition_in_dependency",
                     call_label: replaced_label.clone(),
                     language: replaced_language.clone(),
+                    call_file: call_file.clone(),
+                    call_line,
+                    call_column,
                 }),
                 // The language server has placed the definition in the
                 // language's own library, which is a better answer than
@@ -1891,6 +1933,9 @@ fn collect_definition_edges(
                     original_target,
                     replaced_label.clone(),
                     replaced_language.clone(),
+                    call_file.clone(),
+                    call_line,
+                    call_column,
                 ) {
                     Some(edge) => semantic_edges.push(edge),
                     None => unmatched_locations.push(unmatched_location(
@@ -1904,6 +1949,11 @@ fn collect_definition_edges(
             },
         }
     }
+}
+
+/// A number an edge records in its metadata.
+fn numeric_metadata(edge: &Edge, key: &str) -> Option<u32> {
+    edge.metadata.get(key)?.parse().ok()
 }
 
 /// A call whose definition the server placed in the language's own
@@ -1922,6 +1972,9 @@ fn standard_library_edge(
     original_target: Option<NodeId>,
     call_label: Option<String>,
     language: Option<String>,
+    call_file: Option<String>,
+    call_line: Option<u32>,
+    call_column: Option<u32>,
 ) -> Option<SemanticEdgePatch> {
     if !location_is_outside_the_project(workspace_root, &location.uri) {
         return None;
@@ -1946,6 +1999,9 @@ fn standard_library_edge(
         evidence: "lsp_definition_in_standard_library",
         call_label,
         language,
+        call_file,
+        call_line,
+        call_column,
     })
 }
 
@@ -2067,6 +2123,9 @@ fn collect_reference_edges(
                     evidence: "lsp_references",
                     call_label: None,
                     language: None,
+                    call_file: None,
+                    call_line: None,
+                    call_column: None,
                 });
             }
             None => unmatched_locations.push(unmatched_location(
@@ -4282,6 +4341,9 @@ mod tests {
                 evidence: "lsp_definition",
                 call_label: Some("helper".to_string()),
                 language: Some("rust".to_string()),
+                call_file: Some("src/caller.rs".to_string()),
+                call_line: Some(42),
+                call_column: Some(9),
             }],
             diagnostics: vec![SemanticDiagnosticPatch {
                 request_id: "lsp:rust-analyzer:diagnostics:rust:node:2".to_string(),
@@ -4326,6 +4388,26 @@ mod tests {
             Some("helper")
         );
         assert_eq!(applied.get("language").map(String::as_str), Some("rust"));
+        // Where the call is written, the way every other call edge says it.
+        // The answer's own location went here before, and for a definition
+        // in the standard library that is an absolute path on whichever
+        // machine ran the pass: all 919 of ripgrep's spans were one.
+        assert_eq!(
+            applied.get("file").map(String::as_str),
+            Some("src/caller.rs")
+        );
+        assert_eq!(applied.get("line").map(String::as_str), Some("42"));
+        assert_eq!(applied.get("column").map(String::as_str), Some("9"));
+        // The definition's own place, kept because this one is inside the
+        // project.
+        assert_eq!(
+            applied.get("definition_file").map(String::as_str),
+            Some("src/main.rs")
+        );
+        assert_eq!(
+            applied.get("definition_line").map(String::as_str),
+            Some("10")
+        );
         assert_eq!(
             result.graph.edges[1]
                 .metadata
