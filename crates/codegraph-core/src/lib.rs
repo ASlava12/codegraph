@@ -78,6 +78,30 @@ fn is_test_word(word: &str) -> bool {
 /// resolver and the ranking need the same answer: a call in `src/`
 /// resolving to a helper in `tests/` is not a dependency the program
 /// has, and 1143 such links existed across the corpora.
+/// Code a project ships without writing: what it vendors and what a tool
+/// generated for it. It is not the program for the purpose of counting --
+/// hotspots, coverage, orphans -- but the program calls it, which a test
+/// is never called from. dune vendors `lwd` and uses it from its own
+/// source, and treating the two the same cost 1274 of its resolved calls.
+pub fn is_shipped_but_not_written(path: &str) -> bool {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    let file_name = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
+    let generated = matches!(
+        file_name.rsplit_once('.').map(|(stem, _)| stem),
+        Some(stem) if stem.ends_with(".pb")
+    ) || file_name.ends_with("_pb2.py")
+        || file_name.ends_with("_pb2_grpc.py")
+        || file_name.ends_with("_pb.rb")
+        || normalized.contains("/generated/");
+    generated
+        || normalized.split('/').rev().skip(1).any(|part| {
+            matches!(
+                part.trim_matches('_'),
+                "vendor" | "vendored" | "deps" | "third_party" | "thirdparty"
+            )
+        })
+}
+
 pub fn is_test_like_source_path(path: &str) -> bool {
     let normalized_original = path.replace('\\', "/");
     let normalized = normalized_original.to_ascii_lowercase();
@@ -614,6 +638,30 @@ impl CodeGraph {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn what_a_project_ships_is_still_something_it_calls() {
+        // Both are "not the program" for counting, and only one of them is
+        // unreachable from it. A program never calls its own suite; it
+        // calls what it vendors and what a tool generated for it all the
+        // time. dune uses the `lwd` it vendors from its own source, and
+        // reading the two the same way cost 1274 of its resolved calls.
+        assert!(is_shipped_but_not_written("vendor/lwd/lwd/lwd.ml"));
+        assert!(is_shipped_but_not_written("deps/jemalloc/src/jemalloc.c"));
+        assert!(is_shipped_but_not_written(
+            "internal/tfplugin5/tfplugin5.pb.go"
+        ));
+        assert!(is_shipped_but_not_written("api/generated/client.go"));
+
+        // A suite is not shipped code, however the file is named.
+        assert!(!is_shipped_but_not_written("tests/helpers.rb"));
+        assert!(!is_shipped_but_not_written("src/parser_test.go"));
+        assert!(!is_shipped_but_not_written("src/main.rs"));
+
+        // Everything shipped is still outside the program for counting.
+        assert!(is_test_like_source_path("vendor/lwd/lwd/lwd.ml"));
+        assert!(is_test_like_source_path("deps/jemalloc/src/jemalloc.c"));
+    }
 
     #[test]
     fn code_a_project_ships_but_did_not_write_is_not_its_program() {

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use codegraph_core::{
     COMPUTED_ENVIRONMENT_KEY, CodeGraph, Confidence, EdgeKind, Node, NodeId, NodeKind, SourceSpan,
-    is_test_like_source_path,
+    is_shipped_but_not_written, is_test_like_source_path,
 };
 
 #[allow(unused_imports)]
@@ -3211,11 +3211,18 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // `helpers.get_db_utils` in `spec/` and not one reached
         // `spec/internal/db.lua`.
         let caller_is_test = is_test_like_source_path(&call.span.path);
+        // A program never calls its own suite, but it does call what it
+        // vendors and what a tool generated for it: dune uses the `lwd` it
+        // vendors from its own source, and reading the two the same way
+        // cost 1274 of dune's resolved calls and 127 of redis's.
         if !caller_is_test {
             language_targets.retain(|target| {
                 graph_node(&context.graph, *target)
                     .and_then(|node| node.span.as_ref())
-                    .is_none_or(|span| !is_test_like_source_path(&span.path))
+                    .is_none_or(|span| {
+                        !is_test_like_source_path(&span.path)
+                            || is_shipped_but_not_written(&span.path)
+                    })
             });
         }
         // `super.x` written inside `x` means the parent's implementation and
