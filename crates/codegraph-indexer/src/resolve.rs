@@ -776,6 +776,31 @@ fn test_runner_provides_call(language: &str, path: &str, label: &str) -> bool {
                     | "captureAny"
             )
         }
+        // XCTest hands a Swift suite its assertions and its waiting, and
+        // Alamofire writes 2559 of them -- 59% of everything unresolved in
+        // its swift -- led by XCTAssertEqual, expectation, fulfill and
+        // waitForExpectations.
+        "swift" => {
+            label.starts_with("XCTAssert")
+                || matches!(
+                    label,
+                    "XCTFail"
+                        | "XCTUnwrap"
+                        | "XCTSkip"
+                        | "XCTSkipIf"
+                        | "XCTSkipUnless"
+                        | "expectation"
+                        | "fulfill"
+                        | "waitForExpectations"
+                        | "wait"
+                        | "measure"
+                        | "addTeardownBlock"
+                        | "setUp"
+                        | "tearDown"
+                        | "setUpWithError"
+                        | "tearDownWithError"
+                )
+        }
         "ruby" => {
             matches!(
                 label,

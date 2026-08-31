@@ -2671,6 +2671,59 @@ fn a_default_import_is_a_name_calls_are_written_through() {
 }
 
 #[test]
+fn xctest_hands_a_swift_suite_its_assertions() {
+    // 2559 of Alamofire's 4317 unresolved swift calls are XCTest's own --
+    // 59% of them -- led by XCTAssertEqual, expectation, fulfill and
+    // waitForExpectations. None is a method the project wrote.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("Sources")).unwrap();
+    fs::create_dir_all(root.join("Tests")).unwrap();
+    fs::write(
+        root.join("Package.swift"),
+        "// swift-tools-version:5.9\nimport PackageDescription\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("Sources").join("Session.swift"),
+        "public func makeSession() -> Int {\n  return 1\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("Tests").join("SessionTests.swift"),
+        "final class SessionTests: XCTestCase {\n  func testMakes() {\n    let done = expectation(description: \"done\")\n    XCTAssertEqual(makeSession(), 1)\n    done.fulfill()\n    waitForExpectations(timeout: 1)\n  }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    for provided in [
+        "expectation",
+        "XCTAssertEqual",
+        "fulfill",
+        "waitForExpectations",
+    ] {
+        assert_eq!(
+            resolution(provided).as_deref(),
+            Some("builtin"),
+            "{provided} is XCTest's"
+        );
+    }
+    // The suite still reaches what the project wrote.
+    assert_eq!(resolution("makeSession").as_deref(), Some("resolved"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle
