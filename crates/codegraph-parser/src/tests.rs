@@ -1879,6 +1879,41 @@ return Schema
 }
 
 #[test]
+fn a_rust_macro_declares_a_name_calls_reach() {
+    // serde is built out of macro_rules! -- 63 of them, and none was in
+    // the graph, so `seq_impl` and `impl_deserialize_num` existed only as
+    // placeholders standing for calls nothing could answer. Julia's macros
+    // already counted as definitions.
+    let parsed = parse_source(
+        "lib.rs",
+        br#"macro_rules! seq_impl {
+    ($ty:ident) => {
+        impl $ty {}
+    };
+}
+
+pub fn build() {
+    seq_impl!(Vec);
+}
+"#,
+        Language::Rust,
+    )
+    .unwrap();
+    let definitions = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Function)
+        .map(|item| item.label.clone())
+        .collect::<BTreeSet<_>>();
+
+    assert!(
+        definitions.contains("seq_impl"),
+        "expected the macro among the definitions, got {definitions:?}"
+    );
+    assert!(definitions.contains("build"));
+}
+
+#[test]
 fn a_call_is_written_where_its_name_is_written() {
     let rust = parse_source(
         "main.rs",

@@ -1691,6 +1691,11 @@ pub(crate) fn classify_node(
     let item_kind = match language {
         Language::Rust => match kind {
             "function_item" => ParsedItemKind::Function,
+            // `macro_rules! seq_impl` declares a name that call sites
+            // reach, and serde is built out of them: 63 declarations
+            // answering 208 calls the graph reported as unresolved, and
+            // ripgrep 38 answering 184. Julia's macros already count.
+            "macro_definition" => ParsedItemKind::Function,
             "struct_item" | "enum_item" | "trait_item" | "type_item" | "union_item" => {
                 ParsedItemKind::Type
             }
