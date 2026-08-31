@@ -785,6 +785,20 @@ fn test_runner_provides_call(language: &str, path: &str, label: &str) -> bool {
         // 45% of everything unresolved in its kotlin. The one `assertEquals`
         // okio declares is a private helper in a sample, and a call that
         // reaches a definition never gets here.
+        // A python test case gets its assertions from unittest.TestCase,
+        // the way a PHPUnit one does: django-oscar writes `self.assertEqual`
+        // 841 times and `self.assertTrue` 314, 1717 calls in all, none of
+        // them a method the project declares. pytest's own module is named
+        // outright. A project that writes its assertions with the `assert`
+        // statement, as flask and requests do, has nothing here to find.
+        "python" => {
+            label.starts_with("self.assert")
+                || label.starts_with("pytest.")
+                || matches!(
+                    label,
+                    "self.fail" | "self.skipTest" | "self.subTest" | "self.addCleanup"
+                )
+        }
         "kotlin" => {
             label.starts_with("assert")
                 || matches!(

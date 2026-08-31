@@ -2771,6 +2771,50 @@ fn kotlin_test_hands_a_suite_its_assertions() {
 }
 
 #[test]
+fn a_python_test_case_gets_its_assertions_from_unittest() {
+    // django-oscar writes self.assertEqual 841 times and self.assertTrue
+    // 314, 1717 calls in all, and every one comes from the TestCase it
+    // extends. A file that writes its checks with the `assert` statement,
+    // as flask and requests do, has nothing here to find.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("tests")).unwrap();
+    fs::write(root.join("requirements.txt"), "django\n").unwrap();
+    fs::write(
+        root.join("src").join("basket.py"),
+        "def total(lines):\n    return len(lines)\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tests").join("test_basket.py"),
+        "from unittest import TestCase\nfrom src.basket import total\n\n\nclass BasketTests(TestCase):\n    def test_total(self):\n        self.assertEqual(total([]), 0)\n        self.assertTrue(True)\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    for provided in ["self.assertEqual", "self.assertTrue"] {
+        assert_eq!(
+            resolution(provided).as_deref(),
+            Some("builtin"),
+            "{provided} comes from the TestCase"
+        );
+    }
+    assert_eq!(resolution("total").as_deref(), Some("resolved"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle
