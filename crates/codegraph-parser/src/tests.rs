@@ -1741,6 +1741,63 @@ fn type_arguments_are_not_part_of_what_is_called() {
 }
 
 #[test]
+fn a_lua_module_exports_what_it_returns() {
+    let exported = parse_source(
+        "kill.lua",
+        br#"local function is_running(pid)
+  return pid ~= nil
+end
+local function shell_quote(value)
+  return value
+end
+return { is_running = is_running }
+"#,
+        Language::Lua,
+    )
+    .unwrap();
+    let visibility = |parsed: &ParsedFile, label: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::Function && item.label == label)
+            .and_then(|item| item.metadata.get("visibility").cloned())
+    };
+
+    // `local` is how a Lua module writes every one of its functions; the
+    // table it returns is where it says which of them are its interface.
+    assert_eq!(
+        visibility(&exported, "is_running").as_deref(),
+        Some("public")
+    );
+    assert_eq!(
+        visibility(&exported, "shell_quote").as_deref(),
+        Some("private")
+    );
+
+    // A name the file writes twice -- declared empty, then defined -- is
+    // named once by the return, which cannot say which of the two it hands
+    // out. Promoting both made every call to it ambiguous.
+    let declared_then_defined = parse_source(
+        "db.lua",
+        br#"local function each_strategy()
+end
+do
+  each_strategy = function(strategies)
+    return strategies
+  end
+end
+return { each_strategy = each_strategy }
+"#,
+        Language::Lua,
+    )
+    .unwrap();
+    assert_eq!(
+        visibility(&declared_then_defined, "each_strategy").as_deref(),
+        Some("private")
+    );
+}
+
+#[test]
 fn a_call_is_written_where_its_name_is_written() {
     let rust = parse_source(
         "main.rs",

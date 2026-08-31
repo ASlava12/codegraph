@@ -2378,7 +2378,9 @@ pub(crate) fn visibility_label(
             _ => "public",
         }),
         Language::Lua => Some(
-            if leading_keyword(node, source).as_deref() == Some("local") || lua_local_binding(node)
+            if (leading_keyword(node, source).as_deref() == Some("local")
+                || lua_local_binding(node))
+                && !lua_module_returns(node, source, label)
             {
                 "private"
             } else {
@@ -2811,6 +2813,126 @@ fn haskell_exported_names(source: &[u8]) -> Option<BTreeSet<String>> {
 /// handler = function() end` keeps it to its file exactly as `local
 /// function handler()` does, but the expression itself opens with
 /// `function`, so the binding has to be looked at.
+/// Whether the file hands this name out in the table it returns. `local`
+/// is how a Lua module writes every one of its functions, and the `return`
+/// at the end is where it says which of them are its interface: kong's
+/// `kong/cmd/utils/kill.lua` closes with `return { kill = kill, is_running
+/// = is_running }`. Reading `local` alone as private hid the interface --
+/// 456 of kong's qualified calls named a definition in exactly the file the
+/// calling file requires, and every one of them was ruled out for being
+/// local.
+fn lua_module_returns(node: Node<'_>, source: &[u8], label: &str) -> bool {
+    let mut root = node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    if root.kind() != "chunk" {
+        return false;
+    }
+    // `local function each_strategy() end` and a later `each_strategy =
+    // function(..)` are one function declared and then defined -- kong's
+    // `spec/internal/db.lua` writes exactly that so ldoc will document it.
+    // The return names the pair once and cannot say which of the two it
+    // hands out, so a name the file writes twice is left alone: promoting
+    // both turned 202 resolved calls into ambiguous ones.
+    if lua_functions_named(root, source, label) != 1 {
+        return false;
+    }
+    let mut statements = root.walk();
+    for statement in root.named_children(&mut statements) {
+        if statement.kind() == "return_statement" && lua_return_exposes(statement, source, label) {
+            return true;
+        }
+    }
+    false
+}
+
+/// How many times the file writes a function under this name, counting the
+/// two ways Lua has of saying it: `function name(..)` and `name = function
+/// (..)`. Counting stops at two, which is all the caller asks.
+fn lua_functions_named(root: Node<'_>, source: &[u8], label: &str) -> usize {
+    let mut found = 0;
+    let mut cursor = root.walk();
+    let mut pending = vec![root];
+    while let Some(current) = pending.pop() {
+        let names_it = match current.kind() {
+            "function_declaration" => {
+                current
+                    .child_by_field_name("name")
+                    .and_then(|name| node_text(name, source))
+                    .as_deref()
+                    == Some(label)
+            }
+            "assignment_statement" => lua_assignment_defines_function(current, source, label),
+            _ => false,
+        };
+        if names_it {
+            found += 1;
+            if found > 1 {
+                return found;
+            }
+        }
+        pending.extend(current.named_children(&mut cursor));
+    }
+    found
+}
+
+/// Whether an assignment gives this name a function: `f = function(..) end`.
+fn lua_assignment_defines_function(node: Node<'_>, source: &[u8], label: &str) -> bool {
+    let mut cursor = node.walk();
+    let mut names = false;
+    let mut function = false;
+    for child in node.named_children(&mut cursor) {
+        match child.kind() {
+            "variable_list" => {
+                let mut inner = child.walk();
+                names |= child
+                    .named_children(&mut inner)
+                    .any(|name| node_text(name, source).as_deref() == Some(label));
+            }
+            "expression_list" => {
+                let mut inner = child.walk();
+                function |= child
+                    .named_children(&mut inner)
+                    .any(|value| value.kind() == "function_definition");
+            }
+            _ => {}
+        }
+    }
+    names && function
+}
+
+/// The names a `return { … }` gives the table it hands back. Only the
+/// table written in the return counts: a name nested deeper is a field of
+/// something the module exports, not an export of its own.
+fn lua_return_exposes(statement: Node<'_>, source: &[u8], label: &str) -> bool {
+    let mut lists = statement.walk();
+    for list in statement.named_children(&mut lists) {
+        if list.kind() != "expression_list" {
+            continue;
+        }
+        let mut values = list.walk();
+        for value in list.named_children(&mut values) {
+            if value.kind() != "table_constructor" {
+                continue;
+            }
+            let mut fields = value.walk();
+            for field in value.named_children(&mut fields) {
+                if field.kind() == "field"
+                    && field
+                        .child_by_field_name("name")
+                        .and_then(|name| node_text(name, source))
+                        .as_deref()
+                        == Some(label)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 fn lua_local_binding(node: Node<'_>) -> bool {
     let mut current = node.parent();
     while let Some(parent) = current {
