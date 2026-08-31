@@ -3593,7 +3593,7 @@ pub(crate) fn community_response_fields() -> Vec<ApiParameterSpec> {
             "communities",
             true,
             "GraphCommunity[]",
-            "Deterministic graph communities/subsystems with sample nodes.",
+            "Deterministic graph communities/subsystems with sample nodes and the share of each one's edges that stay inside it.",
         ),
         response_field(
             "total_communities",

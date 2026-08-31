@@ -289,6 +289,11 @@ pub(crate) fn node_query_term(node: &Node) -> String {
     }
 }
 
+/// Whole-percent share, reported as 0 when there is nothing to divide.
+pub(crate) fn percentage(part: usize, whole: usize) -> usize {
+    (part * 100).checked_div(whole).unwrap_or_default()
+}
+
 pub(crate) fn is_trace_edge(kind: &EdgeKind) -> bool {
     matches!(
         kind,

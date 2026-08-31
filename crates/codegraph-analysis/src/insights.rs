@@ -2541,11 +2541,6 @@ fn entrypoint_coverage_is_low(graph: &CodeGraph, reachable: &BTreeSet<NodeId>) -
         && reached * LOW_ENTRYPOINT_COVERAGE_DENOMINATOR < total * LOW_ENTRYPOINT_COVERAGE_NUMERATOR
 }
 
-/// Whole-percent share, reported as 0 when there is nothing to divide.
-fn percentage(part: usize, whole: usize) -> usize {
-    (part * 100).checked_div(whole).unwrap_or_default()
-}
-
 pub(crate) fn add_unreachable_config_read_insights(
     graph: &CodeGraph,
     reachable: &BTreeSet<NodeId>,

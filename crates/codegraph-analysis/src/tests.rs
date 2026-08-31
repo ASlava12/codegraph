@@ -3651,6 +3651,72 @@ fn seams_rank_safe_and_needed_boundaries() {
 }
 
 #[test]
+fn a_community_says_how_much_of_its_coupling_stays_inside_it() {
+    // mastodon's `app/javascript` is 99% -- a frontend and a backend sharing
+    // a repository -- and `app/helpers` 33%, which is what a subsystem that
+    // exists to be used by others looks like. The counts were already there;
+    // the share is what makes them comparable across sizes.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| codegraph_core::SourceSpan {
+        path: path.to_string(),
+        start_line: 1,
+        start_column: 1,
+        end_line: 2,
+        end_column: 1,
+    };
+    let area = |graph: &mut CodeGraph, area: &str| {
+        let file = graph.add_node(NodeKind::File, format!("{area}/mod.py"));
+        graph.add_edge(graph.root, file, EdgeKind::Contains, Confidence::Exact);
+        let mut ids = Vec::new();
+        for index in 0..4 {
+            let id = graph.add_node_with_metadata(
+                NodeKind::Function,
+                format!("{area}_fn{index}"),
+                Some(span(&format!("{area}/mod.py"))),
+                BTreeMap::from([("language".to_string(), "python".to_string())]),
+            );
+            graph.add_edge(file, id, EdgeKind::Contains, Confidence::Exact);
+            ids.push(id);
+        }
+        for pair in ids.windows(2) {
+            graph.add_edge(pair[0], pair[1], EdgeKind::Calls, Confidence::Syntactic);
+        }
+        ids
+    };
+    area(&mut graph, "alone");
+    let shared = area(&mut graph, "shared");
+    let user = area(&mut graph, "user");
+    // `shared` is touched from both sides; `alone` is touched by nothing.
+    // The measure counts coupling whichever way it points, so what separates
+    // them is how much of it there is.
+    for id in user.iter().chain(shared.iter()) {
+        graph.add_edge(*id, shared[0], EdgeKind::Calls, Confidence::Syntactic);
+        graph.add_edge(shared[1], *id, EdgeKind::Calls, Confidence::Syntactic);
+    }
+
+    let report = communities(&graph, 10);
+    let cohesion = |label: &str| {
+        report
+            .communities
+            .iter()
+            .find(|community| community.label == label)
+            .unwrap_or_else(|| panic!("{label} is a community"))
+            .cohesion_percent
+    };
+    assert_eq!(
+        cohesion("alone"),
+        100,
+        "a subsystem nothing touches keeps all of its coupling inside it"
+    );
+    assert!(
+        cohesion("shared") < cohesion("alone"),
+        "and one that is reached into does not: alone={} shared={}",
+        cohesion("alone"),
+        cohesion("shared")
+    );
+}
+
+#[test]
 fn the_graph_reports_what_it_says_about_itself() {
     // `insights` reports on the code; this reports on the graph. A graph can
     // be wrong in ways no finding about the code would show.

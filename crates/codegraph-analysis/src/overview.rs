@@ -727,6 +727,10 @@ pub(crate) fn graph_community(
         internal_edges,
         incoming_external_edges,
         outgoing_external_edges,
+        cohesion_percent: percentage(
+            internal_edges,
+            internal_edges + incoming_external_edges + outgoing_external_edges,
+        ),
         languages,
         node_kinds,
         sample_nodes: nodes.into_iter().take(8).collect(),

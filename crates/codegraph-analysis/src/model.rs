@@ -142,6 +142,11 @@ pub struct GraphCommunity {
     pub internal_edges: usize,
     pub incoming_external_edges: usize,
     pub outgoing_external_edges: usize,
+    /// The share of this subsystem's edges that stay inside it, in whole
+    /// percent. mastodon's `app/javascript` is 100 -- a frontend and a
+    /// backend sharing a repository -- while `app/helpers` is 33, which is
+    /// what a subsystem that exists to be used by others looks like.
+    pub cohesion_percent: usize,
     pub languages: BTreeMap<String, usize>,
     pub node_kinds: BTreeMap<String, usize>,
     pub sample_nodes: Vec<Node>,
