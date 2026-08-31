@@ -501,6 +501,9 @@ pub(crate) fn run_semantic_enrichment(
         &batch,
         &SemanticLspRunOptions {
             request_timeout: timeout,
+            settle_timeout: std::time::Duration::from_millis(
+                codegraph_lsp::DEFAULT_SEMANTIC_SETTLE_TIMEOUT_MS,
+            ),
         },
     )?;
     let responses = cached_run.responses;

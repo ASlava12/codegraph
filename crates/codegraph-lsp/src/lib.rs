@@ -19,6 +19,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const DEFAULT_SEMANTIC_WORK_ITEM_LIMIT: usize = 100;
 pub const MAX_SEMANTIC_WORK_ITEM_LIMIT: usize = 1_000;
 pub const DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS: u64 = 30_000;
+/// How long to let a language server finish loading before asking it
+/// anything. rust-analyzer takes tens of seconds on a workspace of any size
+/// and answers with nothing until it is done; the wait ends as soon as the
+/// server goes quiet, so this is the ceiling rather than the cost.
+pub const DEFAULT_SEMANTIC_SETTLE_TIMEOUT_MS: u64 = 120_000;
 pub const MAX_SEMANTIC_REQUEST_TIMEOUT_MS: u64 = 300_000;
 const SEMANTIC_CACHE_SCHEMA_VERSION: u32 = 1;
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
@@ -170,12 +175,17 @@ pub struct SemanticLspError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticLspRunOptions {
     pub request_timeout: Duration,
+    /// How long to let a server finish loading before asking it anything.
+    /// Indexing a workspace takes far longer than answering about one
+    /// position in it, so this is its own budget rather than the request's.
+    pub settle_timeout: Duration,
 }
 
 impl Default for SemanticLspRunOptions {
     fn default() -> Self {
         Self {
             request_timeout: Duration::from_millis(DEFAULT_SEMANTIC_REQUEST_TIMEOUT_MS),
+            settle_timeout: Duration::from_millis(DEFAULT_SEMANTIC_SETTLE_TIMEOUT_MS),
         }
     }
 }
@@ -1194,6 +1204,9 @@ fn run_semantic_server_batch(
             }
         } else if request.request_kind == "notification" {
             write_lsp_notification(&mut stdin, request.method, request.params.clone())?;
+            if request.method == "initialized" {
+                wait_for_server_to_settle(&receiver, &mut stdin, options.settle_timeout);
+            }
         }
     }
 
@@ -1530,6 +1543,67 @@ fn lsp_error_from_message(value: &Value) -> SemanticLspError {
             .unwrap_or("language server error")
             .to_string(),
     }
+}
+
+/// Give a server that reports progress time to finish its first pass.
+///
+/// rust-analyzer answers `textDocument/definition` with `[]` and
+/// `textDocument/references` with `-32801 content modified` until it has
+/// built the crate graph, and both of those read as answers rather than as
+/// "ask me later" -- a run of 297 requests came back 297 times empty. It
+/// says when it is done: a `$/progress` whose value is `{"kind": "end"}`.
+///
+/// Loading has phases, so one `end` is not the end. After the first the wait
+/// keeps draining until the server goes quiet, and the whole thing is
+/// bounded: a server that reports no progress at all costs one idle gap and
+/// nothing else. It never fails -- a server that will not settle is still
+/// worth asking, and its answers are what they are.
+fn wait_for_server_to_settle(
+    receiver: &Receiver<Result<Value, SemanticLspRunError>>,
+    stdin: &mut ChildStdin,
+    timeout: Duration,
+) {
+    /// How long a settled server stays silent before the wait believes it.
+    const QUIET: Duration = Duration::from_millis(750);
+    let deadline = Instant::now() + timeout;
+    let mut ended = false;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        let wait = if ended {
+            QUIET.min(remaining)
+        } else {
+            remaining
+        };
+        let Ok(message) = receiver.recv_timeout(wait) else {
+            // Silence: either the server is done talking, or it never
+            // started. Both mean there is nothing more to wait for.
+            return;
+        };
+        let Ok(message) = message else {
+            return;
+        };
+        if is_server_request(&message) {
+            let _ = write_lsp_server_request_response(stdin, &message);
+            continue;
+        }
+        if progress_ended(&message) {
+            ended = true;
+        }
+    }
+}
+
+/// Whether a message is a server saying one of its jobs has finished.
+fn progress_ended(message: &Value) -> bool {
+    message.get("method").and_then(Value::as_str) == Some("$/progress")
+        && message
+            .get("params")
+            .and_then(|params| params.get("value"))
+            .and_then(|value| value.get("kind"))
+            .and_then(Value::as_str)
+            == Some("end")
 }
 
 fn is_server_request(message: &Value) -> bool {
@@ -4299,6 +4373,7 @@ fn run_auto_enrichment(
         &batch,
         &SemanticLspRunOptions {
             request_timeout: options.request_timeout,
+            settle_timeout: Duration::from_millis(DEFAULT_SEMANTIC_SETTLE_TIMEOUT_MS),
         },
     ) {
         Ok(run) => run,
@@ -4357,6 +4432,29 @@ mod auto_enrichment_tests {
             root.metadata.get("semantic_enrichment").cloned(),
             root.metadata.get("semantic_skip_reason").cloned(),
         )
+    }
+
+    #[test]
+    fn a_server_says_when_it_has_finished_loading() {
+        // rust-analyzer answers `textDocument/definition` with `[]` and
+        // `references` with `-32801 content modified` until it has built the
+        // crate graph, so a run of 297 requests came back 297 times empty.
+        // The `end` is what says the wait is over.
+        assert!(progress_ended(&json!({
+            "method": "$/progress",
+            "params": {"token": "rustAnalyzer/Indexing", "value": {"kind": "end"}}
+        })));
+        assert!(!progress_ended(&json!({
+            "method": "$/progress",
+            "params": {"token": "rustAnalyzer/Indexing", "value": {"kind": "begin"}}
+        })));
+        assert!(!progress_ended(&json!({
+            "method": "$/progress",
+            "params": {"value": {"kind": "report", "percentage": 40}}
+        })));
+        // Anything that is not progress says nothing about readiness.
+        assert!(!progress_ended(&json!({"method": "window/logMessage"})));
+        assert!(!progress_ended(&json!({"id": 3, "result": []})));
     }
 
     #[test]

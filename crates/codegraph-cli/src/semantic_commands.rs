@@ -103,6 +103,9 @@ pub(crate) fn run_semantic_run(args: SemanticRunArgs, max_file_size: Option<u64>
             request_timeout: std::time::Duration::from_millis(
                 normalize_semantic_request_timeout_ms(args.request_timeout_ms),
             ),
+            settle_timeout: std::time::Duration::from_millis(
+                codegraph_lsp::DEFAULT_SEMANTIC_SETTLE_TIMEOUT_MS,
+            ),
         },
     )?;
     // The array is the contract `semantic-patch` reads, so the count goes to
