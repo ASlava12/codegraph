@@ -791,6 +791,25 @@ fn test_runner_provides_call(language: &str, path: &str, label: &str) -> bool {
         // them a method the project declares. pytest's own module is named
         // outright. A project that writes its assertions with the `assert`
         // statement, as flask and requests do, has nothing here to find.
+        // Shouldly, xUnit and Moq hand a C# suite its assertions, its
+        // expectations and its doubles, and Polly writes 5762 of them --
+        // 67% of everything unresolved in its csharp -- led by
+        // `Should.Throw` and the `ShouldBe` that reads it. The name a
+        // project gives its own shim still wins: Newtonsoft declares
+        // XUnitAssert and its 2775 `Assert.AreEqual` calls reach it,
+        // because a call that resolves never asks this.
+        "csharp" => {
+            let tail = label.rsplit('.').next().unwrap_or(label);
+            tail.starts_with("Should")
+                || label.starts_with("Should.")
+                || tail.starts_with("Assert")
+                || label.starts_with("Assert.")
+                || label.starts_with("Mock")
+                || matches!(
+                    tail,
+                    "Returns" | "ReturnsAsync" | "Verify" | "Setup" | "Throws" | "ThrowsAsync"
+                )
+        }
         "python" => {
             label.starts_with("self.assert")
                 || label.starts_with("pytest.")

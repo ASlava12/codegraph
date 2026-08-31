@@ -2815,6 +2815,56 @@ fn a_python_test_case_gets_its_assertions_from_unittest() {
 }
 
 #[test]
+fn shouldly_and_xunit_hand_a_csharp_suite_its_assertions() {
+    // 5762 of Polly's 8552 unresolved csharp calls are the test
+    // framework's -- 67% -- led by Should.Throw and the ShouldBe that
+    // reads it. A project that declares its own shim keeps it: Newtonsoft
+    // writes XUnitAssert and its 2197 Assert.AreEqual calls still reach
+    // it, because a call that resolves never asks this list.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("test")).unwrap();
+    fs::write(
+        root.join("Polly.sln"),
+        "Microsoft Visual Studio Solution File\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Breaker.cs"),
+        "namespace Polly;\n\npublic class Breaker\n{\n    public int Attempt() => 1;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("test").join("BreakerTests.cs"),
+        "namespace Polly.Tests;\n\npublic class BreakerTests\n{\n    public void Opens()\n    {\n        var breaker = new Breaker();\n        breaker.Attempt().ShouldBe(1);\n        Should.Throw<Exception>(() => breaker.Attempt());\n        Assert.Equal(1, breaker.Attempt());\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    for provided in ["Should.Throw", "Assert.Equal"] {
+        assert_eq!(
+            resolution(provided).as_deref(),
+            Some("builtin"),
+            "{provided} is the framework's"
+        );
+    }
+    // The suite still reaches what the project wrote.
+    assert_eq!(resolution("breaker.Attempt").as_deref(), Some("resolved"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle
