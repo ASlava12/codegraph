@@ -1010,6 +1010,126 @@ fn standard_library_module_call(language: &str, label: &str) -> bool {
     }
 }
 
+/// Ruby's own methods on Object, String, Array, Hash and Enumerable. 4434
+/// of mastodon's 22033 unresolved ruby calls are these -- `new` 672,
+/// `to_s` 350, `map` 347, `each` 298 -- and none is a method the project
+/// wrote. This is asked only where the choice is between `builtin` and
+/// `unresolved`, never earlier: a ruby call written through a constant the
+/// project never declares is a gem's and is filed as one, and letting
+/// these names past that rule handed 107 of them to a same-named
+/// definition of the project's own, which is the mistake that rule exists
+/// to prevent. ActiveSupport's `present?` and `blank?` are left out, being
+/// a gem's rather than the language's.
+fn ruby_core_method(label: &str) -> bool {
+    matches!(
+        label,
+        "new"
+            | "allocate"
+            | "to_s"
+            | "to_i"
+            | "to_f"
+            | "to_a"
+            | "to_h"
+            | "to_sym"
+            | "to_proc"
+            | "map"
+            | "flat_map"
+            | "filter_map"
+            | "each"
+            | "each_with_index"
+            | "each_with_object"
+            | "select"
+            | "reject"
+            | "find"
+            | "detect"
+            | "reduce"
+            | "inject"
+            | "partition"
+            | "group_by"
+            | "sort"
+            | "sort_by"
+            | "min"
+            | "max"
+            | "min_by"
+            | "max_by"
+            | "sum"
+            | "tally"
+            | "zip"
+            | "flatten"
+            | "compact"
+            | "uniq"
+            | "reverse"
+            | "size"
+            | "length"
+            | "count"
+            | "first"
+            | "last"
+            | "keys"
+            | "values"
+            | "fetch"
+            | "dig"
+            | "merge"
+            | "store"
+            | "delete"
+            | "clear"
+            | "slice"
+            | "push"
+            | "pop"
+            | "shift"
+            | "unshift"
+            | "concat"
+            | "join"
+            | "split"
+            | "strip"
+            | "chomp"
+            | "upcase"
+            | "downcase"
+            | "capitalize"
+            | "gsub"
+            | "sub"
+            | "match"
+            | "match?"
+            | "start_with?"
+            | "end_with?"
+            | "nil?"
+            | "empty?"
+            | "any?"
+            | "all?"
+            | "none?"
+            | "one?"
+            | "include?"
+            | "key?"
+            | "has_key?"
+            | "member?"
+            | "dup"
+            | "clone"
+            | "hash"
+            | "inspect"
+            | "itself"
+            | "tap"
+            | "then"
+            | "send"
+            | "public_send"
+            | "respond_to?"
+            | "is_a?"
+            | "kind_of?"
+            | "instance_of?"
+            | "times"
+            | "upto"
+            | "downto"
+            | "step"
+            | "abs"
+            | "round"
+            | "floor"
+            | "ceil"
+            | "zero?"
+            | "positive?"
+            | "negative?"
+            | "even?"
+            | "odd?"
+    )
+}
+
 pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
     // PHP writes `\count(..)` to mean the global function rather than one
     // the current namespace might define, and monolog writes 273 of its
@@ -3649,6 +3769,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             // cross-built, so its `compat/Seq.scala` exists once per Scala
             // version, yet a bare `Seq(...)` is the standard library's.
             let is_builtin = builtin_call_target(&call.language, &call.label)
+                || (call.language == "ruby" && ruby_core_method(&call.label))
                 || objc_platform_receiver(&call.language, call.receiver.as_deref())
                 || environment_provides_call(&call.language, &call.span.path, &call.label)
                 || test_runner_provides_call(&call.language, &call.span.path, &call.label)

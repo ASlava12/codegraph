@@ -2865,6 +2865,45 @@ fn shouldly_and_xunit_hand_a_csharp_suite_its_assertions() {
 }
 
 #[test]
+fn ruby_provides_its_own_methods() {
+    // 4434 of mastodon's 22033 unresolved ruby calls are Ruby's own --
+    // `new` 672, `to_s` 350, `map` 347, `each` 298 -- and none is a method
+    // the project wrote. A call through a constant the project never
+    // declares is still a gem's: that rule is asked first, and letting
+    // these names past it handed 107 gem methods to same-named definitions
+    // of the project's own.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app")).unwrap();
+    fs::write(root.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
+    fs::write(
+        root.join("app").join("account.rb"),
+        "class Account\n  def display_name\n    handle.to_s\n  end\n\n  def handle\n    'x'\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    assert_eq!(
+        resolution("to_s").as_deref(),
+        Some("builtin"),
+        "to_s is Ruby's"
+    );
+    // What the project writes is still what a call to it means.
+    assert_eq!(resolution("handle").as_deref(), Some("resolved"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle
