@@ -112,6 +112,16 @@ pub fn is_test_like_source_path(path: &str) -> bool {
                     | "samples"
                     | "mock"
                     | "mocks"
+                    // Code the project ships but did not write. Nearly
+                    // half of what redis was calling its program is
+                    // jemalloc, hiredis and lua under `deps` -- 6138 of
+                    // 13770 definitions -- dune vendors a quarter of its
+                    // own and nlohmann/json a fifth.
+                    | "vendor"
+                    | "vendored"
+                    | "deps"
+                    | "third_party"
+                    | "thirdparty"
             )
         })
         // Case matters for this one: `jvmTest` only gives up its words
@@ -604,6 +614,23 @@ impl CodeGraph {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn code_a_project_ships_but_did_not_write_is_not_its_program() {
+        // Nearly half of what redis was calling its program is jemalloc,
+        // hiredis and lua under `deps`: 6138 of 13770 definitions. dune
+        // vendors a quarter of its own and nlohmann/json a fifth.
+        assert!(is_test_like_source_path("deps/jemalloc/src/jemalloc.c"));
+        assert!(is_test_like_source_path("vendor/lwd/lwd/lwd.ml"));
+        assert!(is_test_like_source_path(
+            "include/nlohmann/thirdparty/hedley/hedley.hpp"
+        ));
+        assert!(is_test_like_source_path("third_party/zlib/deflate.c"));
+
+        // The word has to be a directory of its own, not part of a name.
+        assert!(!is_test_like_source_path("src/vendored_ids.rs"));
+        assert!(!is_test_like_source_path("src/depsgraph.c"));
+    }
 
     #[test]
     fn generated_code_is_not_the_program_either() {

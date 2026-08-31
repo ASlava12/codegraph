@@ -949,8 +949,27 @@ function isTestLikeSourcePath(path) {
           "samples",
           "mock",
           "mocks",
+          // Code the project ships but did not write.
+          "vendor",
+          "vendored",
+          "deps",
+          "third_party",
+          "thirdparty",
         ].includes(segment.replace(/^_+|_+$/g, "")),
       ) || original.split("/").slice(0, -1).some(namesTests);
+  // protobuf names its output the same way in every language, and a
+  // directory called `generated` says the same thing. Both are asked before
+  // Go's own rule, which answers for every `.go` file.
+  const stemOfStem = file.includes(".") ? file.slice(0, file.lastIndexOf(".")) : file;
+  if (
+    stemOfStem.endsWith(".pb") ||
+    file.endsWith("_pb2.py") ||
+    file.endsWith("_pb2_grpc.py") ||
+    file.endsWith("_pb.rb") ||
+    normalized.includes("/generated/")
+  ) {
+    return true;
+  }
   // Go compiles a test only from a file whose name ends `_test.go`.
   if (file.endsWith(".go")) return inTestDirectory || stem.endsWith("_test");
   return (
@@ -965,6 +984,11 @@ function isTestLikeSourcePath(path) {
     stem.endsWith("_specs") ||
     file.includes(".test.") ||
     file.includes(".spec.") ||
+    // Storybook names its own files, and a test runner's configuration is
+    // not the program either.
+    file.includes(".stories.") ||
+    file.includes(".story.") ||
+    namesATestRunnersConfiguration(file) ||
     file.endsWith(".bats") ||
     originalFile.endsWith("Test.php") ||
     originalFile.endsWith("Spec.php") ||
@@ -973,8 +997,17 @@ function isTestLikeSourcePath(path) {
     file.endsWith(".freezed.dart") ||
     file.endsWith(".mocks.dart") ||
     file.endsWith(".gen.dart") ||
-    normalized.includes("/.dart_tool/") ||
-    normalized.includes("/generated/")
+    normalized.includes("/.dart_tool/")
+  );
+}
+
+// `vitest.config.ts`, `jest.config.js`, `playwright.config.ts`: the runner's
+// name opens the file and something else follows it.
+function namesATestRunnersConfiguration(file) {
+  const parts = String(file).split(".");
+  return (
+    parts.length > 2 &&
+    ["vitest", "jest", "playwright", "cypress", "karma", "jasmine", "wdio"].includes(parts[0])
   );
 }
 
