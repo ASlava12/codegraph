@@ -34,6 +34,22 @@ pub const COMPUTED_ENVIRONMENT_KEY: &str = "<computed name>";
 ///
 /// Public because a symbol can be a test where its file is not: Rust keeps
 /// `mod tests` inside the module it exercises.
+/// Whether the file is a test runner's own configuration, which its name
+/// says outright: `vitest.config.ts`, `vitest.root.mjs`, `jest.config.js`,
+/// `playwright.config.ts`. The runner's name alone is not enough -- a file
+/// called `jest.ts` is ordinary code -- so a configuration is a name the
+/// runner opens and something else follows.
+fn names_a_test_runners_configuration(file_name: &str) -> bool {
+    let mut parts = file_name.split('.');
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    matches!(
+        first,
+        "vitest" | "jest" | "playwright" | "cypress" | "karma" | "jasmine" | "wdio"
+    ) && parts.count() > 1
+}
+
 pub fn names_tests(part: &str) -> bool {
     let mut word = String::new();
     let mut found = false;
@@ -123,6 +139,16 @@ pub fn is_test_like_source_path(path: &str) -> bool {
         || stem.ends_with("_specs")
         || file_name.contains(".test.")
         || file_name.contains(".spec.")
+        // Storybook names its own files, and a story is development-only
+        // code the way a test is. mastodon writes 50 of them, and 17
+        // reported `storybook` as a package its production code needs but
+        // the manifest declares only for development.
+        || file_name.contains(".stories.")
+        || file_name.contains(".story.")
+        // A test runner's own configuration is not the program either:
+        // zod's `vitest.root.mjs` imports `vitest`, which no manifest
+        // should declare for production.
+        || names_a_test_runners_configuration(file_name)
         || file_name.ends_with(".bats")
         || original_file_name.ends_with("Test.php")
         || original_file_name.ends_with("Spec.php")
@@ -559,6 +585,28 @@ impl CodeGraph {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_story_is_not_the_program() {
+        // Storybook names its files the way a test framework does, and a
+        // story is development-only code for the same reason a test is.
+        assert!(is_test_like_source_path(
+            "app/javascript/mastodon/components/alert/alert.stories.tsx"
+        ));
+        assert!(is_test_like_source_path("src/Button.story.js"));
+
+        // A test runner's configuration is not the program either.
+        assert!(is_test_like_source_path("vitest.root.mjs"));
+        assert!(is_test_like_source_path("vitest.config.ts"));
+        assert!(is_test_like_source_path("packages/ui/jest.config.js"));
+
+        // The runner's name alone says nothing: a file called `jest.ts` is
+        // ordinary code, and so is a component whose name merely holds the
+        // word.
+        assert!(!is_test_like_source_path("src/jest.ts"));
+        assert!(!is_test_like_source_path("src/history.ts"));
+        assert!(!is_test_like_source_path("src/stories.ts"));
+    }
 
     #[test]
     fn an_area_is_a_directory_all_the_way_down() {
