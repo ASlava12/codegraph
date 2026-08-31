@@ -1692,7 +1692,11 @@ fn semantic_edge_metadata(edge_patch: &SemanticEdgePatch) -> BTreeMap<String, St
     // the graph. Applying the pass to ripgrep had been making its reported
     // resolution rate worse, because 337 calls left every category at once.
     if edge_patch.kind == EdgeKind::Calls {
-        metadata.insert("resolution".to_string(), "resolved".to_string());
+        let resolution = match edge_patch.evidence {
+            "lsp_definition_in_standard_library" => "builtin",
+            _ => "resolved",
+        };
+        metadata.insert("resolution".to_string(), resolution.to_string());
         metadata.insert("resolution_basis".to_string(), "semantic".to_string());
     }
     if let Some(label) = &edge_patch.call_label {
@@ -1870,19 +1874,98 @@ fn collect_definition_edges(
                     call_label: replaced_label.clone(),
                     language: replaced_language.clone(),
                 }),
-                None => unmatched_locations.push(unmatched_location(
+                // The language server has placed the definition in the
+                // language's own library, which is a better answer than
+                // "unresolved" and one no hand-written list can give:
+                // `unwrap` and `clone` were left out of the builtin lists
+                // precisely because a project may declare them, and here
+                // the compiler has said it did not. 595 of ripgrep's first
+                // 1000 answers are this, every one of them.
+                None => match standard_library_edge(
+                    workspace_root,
+                    &location,
                     request,
                     work_item,
-                    &location,
-                    workspace_root,
-                    missing_node_reason(workspace_root, &location.uri),
-                )),
+                    source,
+                    edge_kind,
+                    original_target,
+                    replaced_label.clone(),
+                    replaced_language.clone(),
+                ) {
+                    Some(edge) => semantic_edges.push(edge),
+                    None => unmatched_locations.push(unmatched_location(
+                        request,
+                        work_item,
+                        &location,
+                        workspace_root,
+                        missing_node_reason(workspace_root, &location.uri),
+                    )),
+                },
             },
         }
     }
 }
 
-/// The dependency node a location outside the project belongs to. Every
+/// A call whose definition the server placed in the language's own
+/// library. It keeps the target it had -- the placeholder that already
+/// stands for the call -- and says `builtin` with the evidence that
+/// settled it, so the graph stops reporting a resolver failure where the
+/// compiler has given a plain answer.
+#[allow(clippy::too_many_arguments)]
+fn standard_library_edge(
+    workspace_root: &Path,
+    location: &LspLocation,
+    request: &SemanticLspRequest,
+    work_item: &SemanticWorkItem,
+    source: &SemanticNodeRef,
+    edge_kind: EdgeKind,
+    original_target: Option<NodeId>,
+    call_label: Option<String>,
+    language: Option<String>,
+) -> Option<SemanticEdgePatch> {
+    if !location_is_outside_the_project(workspace_root, &location.uri) {
+        return None;
+    }
+    let path = path_from_file_uri(workspace_root, &location.uri)?;
+    if !path_is_in_a_standard_library(&path) {
+        return None;
+    }
+    let target = original_target?;
+    Some(SemanticEdgePatch {
+        request_id: request.id.clone(),
+        work_item_id: work_item.id.clone(),
+        source: source.id,
+        target,
+        kind: edge_kind,
+        confidence: Confidence::Semantic,
+        replaced_edge_index: work_item.edge_index,
+        original_target,
+        path,
+        line: location.line.unwrap_or(1),
+        column: location.column.unwrap_or(1),
+        evidence: "lsp_definition_in_standard_library",
+        call_label,
+        language,
+    })
+}
+
+/// Whether a path is inside a language's own library. Only the layouts a
+/// path states outright are recognised: rust ships its sources under
+/// `rustlib/src/rust/library`, and python keeps its own modules in `lib/
+/// python3.x` with everything installed beside them in `site-packages`.
+/// A path this cannot name stays unmatched rather than being guessed at.
+fn path_is_in_a_standard_library(path: &str) -> bool {
+    let path = path.replace('\\', "/");
+    if path.contains("/rustlib/src/rust/library/") {
+        return true;
+    }
+    if path.contains("/site-packages/") || path.contains("/dist-packages/") {
+        return false;
+    }
+    path.contains("/lib/python3") || path.contains("/lib/python2")
+}
+
+/// The dependency node a location outside the project belongs to./// The dependency node a location outside the project belongs to. Every
 /// ecosystem keeps its packages in a directory that names them -- cargo's
 /// `registry/src/<index>/regex-1.10.2`, npm's `node_modules/regex`,
 /// python's `site-packages/regex`, composer's `vendor/<org>/<name>`,
@@ -3911,6 +3994,30 @@ mod tests {
         // The offset counts characters, which is what an LSP position
         // counts, not bytes.
         assert_eq!(method_offset_in(Some(&"Ünicöde.read".to_string())), 8);
+    }
+
+    #[test]
+    fn a_language_ships_its_own_library_somewhere_it_says() {
+        // 595 of ripgrep's first 1000 answers put the definition in rust's
+        // own library, and `unwrap` and `clone` were kept out of the
+        // hand-written builtin lists precisely because a project may
+        // declare them. Here the compiler has said it did not.
+        assert!(path_is_in_a_standard_library(
+            "/home/u/.rustup/toolchains/stable/lib/rustlib/src/rust/library/core/src/cmp.rs"
+        ));
+        assert!(path_is_in_a_standard_library(
+            "/usr/lib/python3.12/dataclasses.py"
+        ));
+
+        // What a project installs beside it is a dependency, not the
+        // library, and a path that says neither stays unmatched.
+        assert!(!path_is_in_a_standard_library(
+            "/venv/lib/python3.12/site-packages/click/core.py"
+        ));
+        assert!(!path_is_in_a_standard_library(
+            "/home/u/.cargo/registry/src/index.crates.io-1/regex-1.10.2/src/lib.rs"
+        ));
+        assert!(!path_is_in_a_standard_library("/home/u/project/src/lib.rs"));
     }
 
     #[test]
