@@ -8713,6 +8713,60 @@ fn a_module_that_includes_another_answers_for_what_it_re_exports() {
 }
 
 #[test]
+fn a_super_call_means_the_parent_never_the_caller() {
+    // `super.x` written inside `x` is the parent's implementation. Answering
+    // with the caller's own closes a call edge from a definition to itself,
+    // and openzeppelin wrote 174 of those.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("contracts")).unwrap();
+    fs::write(
+        root.join("contracts").join("Base.sol"),
+        "pragma solidity ^0.8.0;\n\nabstract contract Base {\n    function update() internal virtual {\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("contracts").join("Child.sol"),
+        "pragma solidity ^0.8.0;\n\nimport {Base} from \"./Base.sol\";\n\ncontract Child is Base {\n    function update() internal virtual override {\n        super.update();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let of = |contract: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == NodeKind::Function
+                    && node.label == "update"
+                    && node.metadata.get("owner_type").map(String::as_str) == Some(contract)
+            })
+            .map(|node| node.id)
+            .unwrap_or_else(|| panic!("{contract} declares update"))
+    };
+    let parent = of("Base");
+    let child = of("Child");
+    let supers: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("super.update")
+        })
+        .collect();
+    assert!(!supers.is_empty(), "the call is in the graph");
+    assert!(
+        supers.iter().all(|edge| edge.target != child),
+        "and never answers with the caller's own"
+    );
+    assert!(
+        supers.iter().any(|edge| edge.target == parent),
+        "it answers with the one it inherits"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_contract_states_every_base_it_names() {
     // Solidity composes rather than descends: `abstract contract
     // PaymasterSigner is AbstractSigner, EIP712, Paymaster` reaches

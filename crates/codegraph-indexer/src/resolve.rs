@@ -2796,6 +2796,29 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     .is_none_or(|span| !is_test_like_source_path(&span.path))
             });
         }
+        // `super.x` written inside `x` means the parent's implementation and
+        // never this one. It has to be settled before the same-file
+        // preference below, which would otherwise answer with the caller's
+        // own `x` sitting in the same file -- openzeppelin wrote 174 calls
+        // from a definition to itself that way.
+        if let Some(("super", method)) = split_qualified_call(&call.label) {
+            let inherited: Vec<String> = graph_node(&context.graph, call.caller)
+                .and_then(|node| node.metadata.get("owner_type").cloned())
+                .map(|owner| ancestor_type_names(&context.graph, &owner))
+                .unwrap_or_default();
+            // Nothing inherited declares it: the parent is outside the
+            // project -- an interface, a library base -- and the honest
+            // answer is that the call leaves.
+            language_targets.retain(|target| {
+                graph_node(&context.graph, *target).is_some_and(|node| {
+                    node.label == method
+                        && node
+                            .metadata
+                            .get("owner_type")
+                            .is_some_and(|owner| inherited.contains(owner))
+                })
+            });
+        }
         let local_targets = caller_path
             .map(|path| {
                 language_targets
