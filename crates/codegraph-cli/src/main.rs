@@ -29,11 +29,11 @@ use codegraph_analysis::{
     ProjectReportLimits, ProjectReportMarkdownOptions, RefactorContextRequest, SeamRequest,
     SourceSearchRequest, TraceRequest, TraceStart, architecture_map, check_insights, communities,
     compact_query_result, component_contract, component_dependencies, entrypoints, explain_edge,
-    filter_insight_report, hotspots, impact, impact_fast, insights, journey, language_dependencies,
-    missing_node_error, natural_query, project_report, project_report_markdown, query_graph,
-    read_source_preview, refactor_context, seams, search_source, summarize, surprising_links,
-    trace, trace_config, trace_dependents, trace_entrypoints, trace_errors,
-    validate_query_expression,
+    filter_insight_report, graph_health, hotspots, impact, impact_fast, insights, journey,
+    language_dependencies, missing_node_error, natural_query, project_report,
+    project_report_markdown, query_graph, read_source_preview, refactor_context, seams,
+    search_source, summarize, surprising_links, trace, trace_config, trace_dependents,
+    trace_entrypoints, trace_errors, validate_query_expression,
 };
 use codegraph_analysis::{
     DEFAULT_MERMAID_EDGE_LIMIT, DEFAULT_MERMAID_NODE_LIMIT, DEFAULT_SVG_EDGE_LIMIT,
@@ -137,6 +137,16 @@ fn main() -> Result<()> {
                 &args.cache,
             )?;
             println!("{}", serde_json::to_string_pretty(&summarize(&graph))?);
+        }
+        Command::Doctor(args) => {
+            let graph = scan_with_options(
+                args.path,
+                args.include_hidden,
+                args.include_ignored,
+                max_file_size,
+                &args.cache,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&graph_health(&graph))?);
         }
         Command::Report(args) => {
             let format = args.format;

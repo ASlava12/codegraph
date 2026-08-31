@@ -3651,6 +3651,66 @@ fn seams_rank_safe_and_needed_boundaries() {
 }
 
 #[test]
+fn the_graph_reports_what_it_says_about_itself() {
+    // `insights` reports on the code; this reports on the graph. A graph can
+    // be wrong in ways no finding about the code would show.
+    let mut graph = CodeGraph::new("repo");
+    let walk = graph.add_node(NodeKind::Function, "walk");
+    let session = graph.add_node(NodeKind::Function, "request");
+    let missing = NodeId(9999);
+    // Recursion: a definition calling itself by its bare name.
+    graph.add_edge_with_metadata(
+        walk,
+        walk,
+        EdgeKind::Calls,
+        Confidence::Syntactic,
+        BTreeMap::from([("call_label".to_string(), "walk".to_string())]),
+    );
+    // Not recursion: `session.request` inside `request` is node's session.
+    graph.add_edge_with_metadata(
+        session,
+        session,
+        EdgeKind::Calls,
+        Confidence::Syntactic,
+        BTreeMap::from([("call_label".to_string(), "session.request".to_string())]),
+    );
+    // Always wrong: `super.x` inside `x` means the parent's.
+    graph.add_edge_with_metadata(
+        session,
+        session,
+        EdgeKind::Calls,
+        Confidence::Syntactic,
+        BTreeMap::from([("call_label".to_string(), "super.request".to_string())]),
+    );
+    graph.add_edge(walk, missing, EdgeKind::Calls, Confidence::Syntactic);
+
+    let health = graph_health(&graph);
+    assert_eq!(health.recursive_calls, 1, "a bare self-call is recursion");
+    assert_eq!(
+        health.self_calls_through_a_receiver, 2,
+        "and a call through another object is not"
+    );
+    assert_eq!(health.super_calls_to_self, 1);
+    assert_eq!(
+        health.dangling_edges, 1,
+        "an edge to a node the graph does not hold"
+    );
+    assert_eq!(health.duplicate_edges, 0);
+    assert!(
+        !health.healthy,
+        "a dangling edge is a defect, recursion is not"
+    );
+    assert!(
+        health
+            .samples
+            .iter()
+            .any(|sample| sample.what == "super_call_to_self"),
+        "and the report names one: {:?}",
+        health.samples
+    );
+}
+
+#[test]
 fn a_component_is_what_it_holds() {
     // Nothing calls a directory, so counting only the edges that touch the
     // directory node answered that mastodon's `app/models` depends on

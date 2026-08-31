@@ -86,6 +86,9 @@ pub(crate) enum Command {
 
     /// Emit graph summary counts as JSON.
     Summary(ScanArgs),
+    /// Check what the graph says about itself: dangling edges, facts recorded
+    /// twice, and definitions that appear to call themselves
+    Doctor(ScanArgs),
 
     /// Emit a production-oriented project report snapshot as JSON or Markdown.
     Report(ReportArgs),
