@@ -118,6 +118,26 @@ pub fn is_test_like_source_path(path: &str) -> bool {
         // before it is lowercased.
         || normalized_original.split('/').rev().skip(1).any(names_tests);
 
+    // protobuf names its output the same way in every language and nobody
+    // writes it: 25 `*.pb.go` files carry 4694 of terraform's 18277
+    // definitions, a quarter of what the graph was calling the program.
+    // Dart's generated files were already read this way. This is asked
+    // before Go's own rule below, which answers for every `.go` file and
+    // would otherwise never let the question be put.
+    if matches!(
+        file_name.rsplit_once('.').map(|(stem, _)| stem),
+        Some(stem) if stem.ends_with(".pb")
+    ) || file_name.ends_with("_pb2.py")
+        || file_name.ends_with("_pb2_grpc.py")
+        || file_name.ends_with("_pb.rb")
+        // A directory called `generated` says the same thing and was
+        // already read that way -- for every language but Go, whose rule
+        // below answers first and returned before this was ever asked.
+        || normalized.contains("/generated/")
+    {
+        return true;
+    }
+
     // Go compiles a test only from a file whose name ends `_test.go`, so
     // `test_file.go` is ordinary code however it reads -- terraform writes
     // its `terraform test` command in five files named that way. A test
@@ -158,7 +178,6 @@ pub fn is_test_like_source_path(path: &str) -> bool {
         || file_name.ends_with(".mocks.dart")
         || file_name.ends_with(".gen.dart")
         || normalized.contains("/.dart_tool/")
-        || normalized.contains("/generated/")
 }
 
 /// Whether an area is a suite, asked of a directory rather than a file.
@@ -585,6 +604,27 @@ impl CodeGraph {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn generated_code_is_not_the_program_either() {
+        // protobuf names its output the same way in every language and
+        // nobody writes it: 25 `*.pb.go` files carry 4694 of terraform's
+        // 18277 definitions.
+        assert!(is_test_like_source_path(
+            "internal/tfplugin5/tfplugin5.pb.go"
+        ));
+        assert!(is_test_like_source_path("proto/service_pb2.py"));
+        assert!(is_test_like_source_path("proto/service_pb2_grpc.py"));
+        assert!(is_test_like_source_path("lib/service_pb.rb"));
+        assert!(is_test_like_source_path("src/message.pb.cc"));
+
+        // Go answers for every `.go` file with its own rule, and asking it
+        // first left this question unable to be put at all.
+        assert!(!is_test_like_source_path("internal/tfplugin5/plugin.go"));
+        // A name that merely holds the letters is ordinary code.
+        assert!(!is_test_like_source_path("src/pbkdf2.go"));
+        assert!(!is_test_like_source_path("src/upb.go"));
+    }
 
     #[test]
     fn a_story_is_not_the_program() {
