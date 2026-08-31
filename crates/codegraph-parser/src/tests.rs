@@ -1741,6 +1741,34 @@ fn type_arguments_are_not_part_of_what_is_called() {
 }
 
 #[test]
+fn a_call_is_written_where_its_name_is_written() {
+    let rust = parse_source(
+        "main.rs",
+        br#"fn main() {
+    let first = text
+        .lines()
+        .next();
+}
+"#,
+        Language::Rust,
+    )
+    .unwrap();
+    let at = |label: &str| {
+        rust.items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::Call && item.label == label)
+            .map(|item| (item.span.start_line, item.span.start_column))
+    };
+
+    // A chain written over several lines used to record every call at the
+    // start of the whole expression, so `next` was reported on the line that
+    // reads `let first = text` and at the column of `text`. A reader who
+    // follows the edge lands on the name the edge carries.
+    assert_eq!(at("next"), Some((4, 10)), "calls: {:?}", rust.items.len());
+    assert_eq!(at("text.lines"), Some((2, 17)));
+}
+
+#[test]
 fn a_call_label_names_the_callee_not_the_expression_before_it() {
     let rust = parse_source(
         "main.rs",

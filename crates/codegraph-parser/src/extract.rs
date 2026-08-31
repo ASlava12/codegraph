@@ -3338,13 +3338,71 @@ pub(crate) fn classify_call(
         metadata.insert("callee_form".to_string(), "value".to_string());
     }
 
+    let span = call_name_span(language, node, source, path, &label);
     Some(ParsedItem {
         kind: ParsedItemKind::Call,
         label,
-        span: span_for(path, node),
+        span,
         parent: function_name.map(str::to_string),
         metadata,
     })
+}
+
+/// A call is written where its name is written. `span_for` starts at the
+/// whole expression, so the edge for `plan.term.as_deref().is_some_and(..)`
+/// carried the column of `plan`, and a chain written over several lines
+/// carried a line its name does not appear on at all. 11230 of this
+/// repository's 37344 call edges pointed at a token other than the one they
+/// name.
+///
+/// The rule needs no per-language mirror of `call_label`: point the span at
+/// the node whose text *is* the label. A dotted label keeps the span it had,
+/// because `plan.term.as_deref` is one node's text, and a label the parser
+/// rewrote -- a scope PHP prefixed, the first word of a shell line -- matches
+/// no node, so the call itself stays the answer.
+fn call_name_span(
+    language: Language,
+    node: Node<'_>,
+    source: &[u8],
+    path: &str,
+    label: &str,
+) -> SourceSpan {
+    let Some(callee) = call_callee(language, node) else {
+        return span_for(path, node);
+    };
+    if node_text(callee, source).as_deref() == Some(label) {
+        return span_for(path, callee);
+    }
+    match smallest_node_whose_text_is(callee, source, label) {
+        Some(name) => span_for(path, name),
+        None => span_for(path, node),
+    }
+}
+
+/// The smallest node under `node` -- itself included -- reading exactly
+/// `text`. Smallest, because a name that is the whole callee is also the
+/// text of every wrapper around it, and the innermost one is the name.
+fn smallest_node_whose_text_is<'tree>(
+    node: Node<'tree>,
+    source: &[u8],
+    text: &str,
+) -> Option<Node<'tree>> {
+    let mut cursor = node.walk();
+    let mut best: Option<Node<'tree>> = None;
+    let mut pending = vec![node];
+    while let Some(current) = pending.pop() {
+        if node_text(current, source).as_deref() == Some(text) {
+            let smaller = match best {
+                Some(found) => current.byte_range().len() < found.byte_range().len(),
+                None => true,
+            };
+            if smaller {
+                best = Some(current);
+            }
+        }
+        pending.extend(current.named_children(&mut cursor));
+    }
+    best
 }
 
 /// Variables a definition's own signature declares with a type: a Go
