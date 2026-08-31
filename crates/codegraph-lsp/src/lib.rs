@@ -323,6 +323,14 @@ pub struct SemanticEdgePatch {
     pub line: u32,
     pub column: u32,
     pub evidence: &'static str,
+    /// What the replaced edge said was called, and in which language. A
+    /// semantic edge is the strongest one in the graph and carried neither,
+    /// so every count grouped by resolution lost it and nothing could say
+    /// what the call named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1679,6 +1687,20 @@ fn semantic_edge_metadata(edge_patch: &SemanticEdgePatch) -> BTreeMap<String, St
         ("line".to_string(), edge_patch.line.to_string()),
         ("column".to_string(), edge_patch.column.to_string()),
     ]);
+    // A semantic edge is a resolved call, and saying so is what lets every
+    // count and filter that groups by resolution see the strongest edges in
+    // the graph. Applying the pass to ripgrep had been making its reported
+    // resolution rate worse, because 337 calls left every category at once.
+    if edge_patch.kind == EdgeKind::Calls {
+        metadata.insert("resolution".to_string(), "resolved".to_string());
+        metadata.insert("resolution_basis".to_string(), "semantic".to_string());
+    }
+    if let Some(label) = &edge_patch.call_label {
+        metadata.insert("call_label".to_string(), label.clone());
+    }
+    if let Some(language) = &edge_patch.language {
+        metadata.insert("language".to_string(), language.clone());
+    }
     if let Some(index) = edge_patch.replaced_edge_index {
         metadata.insert("replaced_edge_index".to_string(), index.to_string());
     }
@@ -1785,11 +1807,14 @@ fn collect_definition_edges(
     let Some(source) = work_item.node.as_ref() else {
         return;
     };
-    let edge_kind = work_item
+    let replaced = work_item
         .edge_index
-        .and_then(|index| graph.edges.get(index))
+        .and_then(|index| graph.edges.get(index));
+    let edge_kind = replaced
         .map(|edge| edge.kind)
         .unwrap_or(EdgeKind::References);
+    let replaced_label = replaced.and_then(|edge| edge.metadata.get("call_label").cloned());
+    let replaced_language = replaced.and_then(|edge| edge.metadata.get("language").cloned());
     let original_target = work_item.target.as_ref().map(|target| target.id);
 
     for location in lsp_locations(result) {
@@ -1820,6 +1845,8 @@ fn collect_definition_edges(
                 line: location.line.unwrap_or(1),
                 column: location.column.unwrap_or(1),
                 evidence: "lsp_definition",
+                call_label: replaced_label.clone(),
+                language: replaced_language.clone(),
             }),
             // The definition is not this project's, but the path still says
             // whose it is, and a dependency the project declares is a
@@ -1840,6 +1867,8 @@ fn collect_definition_edges(
                     line: location.line.unwrap_or(1),
                     column: location.column.unwrap_or(1),
                     evidence: "lsp_definition_in_dependency",
+                    call_label: replaced_label.clone(),
+                    language: replaced_language.clone(),
                 }),
                 None => unmatched_locations.push(unmatched_location(
                     request,
@@ -1953,6 +1982,8 @@ fn collect_reference_edges(
                     line: location.line.unwrap_or(1),
                     column: location.column.unwrap_or(1),
                     evidence: "lsp_references",
+                    call_label: None,
+                    language: None,
                 });
             }
             None => unmatched_locations.push(unmatched_location(
@@ -4142,6 +4173,8 @@ mod tests {
                 line: 10,
                 column: 5,
                 evidence: "lsp_definition",
+                call_label: Some("helper".to_string()),
+                language: Some("rust".to_string()),
             }],
             diagnostics: vec![SemanticDiagnosticPatch {
                 request_id: "lsp:rust-analyzer:diagnostics:rust:node:2".to_string(),
@@ -4168,6 +4201,24 @@ mod tests {
         assert_eq!(result.graph.edges[1].source, caller);
         assert_eq!(result.graph.edges[1].target, helper);
         assert_eq!(result.graph.edges[1].confidence, Confidence::Semantic);
+        // A semantic edge is a resolved call and carries what every other
+        // call edge carries. Without this, applying the pass to ripgrep
+        // took 337 calls out of every category at once and made the
+        // reported resolution rate worse rather than better.
+        let applied = &result.graph.edges[1].metadata;
+        assert_eq!(
+            applied.get("resolution").map(String::as_str),
+            Some("resolved")
+        );
+        assert_eq!(
+            applied.get("resolution_basis").map(String::as_str),
+            Some("semantic")
+        );
+        assert_eq!(
+            applied.get("call_label").map(String::as_str),
+            Some("helper")
+        );
+        assert_eq!(applied.get("language").map(String::as_str), Some("rust"));
         assert_eq!(
             result.graph.edges[1]
                 .metadata
