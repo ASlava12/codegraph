@@ -2724,6 +2724,53 @@ fn xctest_hands_a_swift_suite_its_assertions() {
 }
 
 #[test]
+fn kotlin_test_hands_a_suite_its_assertions() {
+    // 1791 of okio's 3985 unresolved kotlin calls are kotlin.test's and
+    // AssertJ's -- 45% -- led by assertEquals 876, assertTrue 216 and
+    // assertThat 171. A suite still reaches what the project wrote.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src/main/kotlin")).unwrap();
+    fs::create_dir_all(root.join("src/test/kotlin")).unwrap();
+    fs::write(
+        root.join("build.gradle.kts"),
+        "dependencies {\n  testImplementation(kotlin(\"test\"))\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main/kotlin").join("Buffer.kt"),
+        "package okio\n\nfun readSize(): Int {\n  return 1\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/test/kotlin").join("BufferTest.kt"),
+        "package okio\n\nclass BufferTest {\n  fun testReads() {\n    assertEquals(1, readSize())\n    assertTrue(true)\n    assertThat(readSize()).isEqualTo(1)\n  }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    for provided in ["assertEquals", "assertTrue", "assertThat", "isEqualTo"] {
+        assert_eq!(
+            resolution(provided).as_deref(),
+            Some("builtin"),
+            "{provided} is the test framework's"
+        );
+    }
+    assert_eq!(resolution("readSize").as_deref(), Some("resolved"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle

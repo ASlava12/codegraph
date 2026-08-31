@@ -780,6 +780,37 @@ fn test_runner_provides_call(language: &str, path: &str, label: &str) -> bool {
         // Alamofire writes 2559 of them -- 59% of everything unresolved in
         // its swift -- led by XCTAssertEqual, expectation, fulfill and
         // waitForExpectations.
+        // kotlin.test hands a Kotlin suite its assertions and AssertJ or
+        // Truth the chain that reads them, and okio writes 1791 of those --
+        // 45% of everything unresolved in its kotlin. The one `assertEquals`
+        // okio declares is a private helper in a sample, and a call that
+        // reaches a definition never gets here.
+        "kotlin" => {
+            label.starts_with("assert")
+                || matches!(
+                    label,
+                    "fail"
+                        | "assertThat"
+                        | "isEqualTo"
+                        | "isNotEqualTo"
+                        | "isTrue"
+                        | "isFalse"
+                        | "isNull"
+                        | "isNotNull"
+                        | "isEmpty"
+                        | "isNotEmpty"
+                        | "hasSize"
+                        | "containsExactly"
+                        | "isInstanceOf"
+                        | "hasMessage"
+                        | "hasMessageThat"
+                        | "isGreaterThan"
+                        | "isLessThan"
+                        | "isSameInstanceAs"
+                        | "runTest"
+                        | "runBlockingTest"
+                )
+        }
         "swift" => {
             label.starts_with("XCTAssert")
                 || matches!(
