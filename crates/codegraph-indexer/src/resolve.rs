@@ -732,6 +732,82 @@ fn test_runner_provides_call(language: &str, path: &str, label: &str) -> bool {
                     | "afterAll"
             )
         }
+        // RSpec hands a Ruby spec its cases, its hooks, its doubles and
+        // its matchers, and not one of them is a method the project wrote:
+        // 7366 of mastodon's 29668 unresolved ruby calls are these, led by
+        // `expect`, `it`, `let` and `before`. minitest's assertions arrive
+        // the same way, and `Fabricate` is the fabrication gem building a
+        // record for a spec to use.
+        "ruby" => {
+            matches!(
+                label,
+                "describe"
+                    | "context"
+                    | "xdescribe"
+                    | "xcontext"
+                    | "fdescribe"
+                    | "feature"
+                    | "scenario"
+                    | "it"
+                    | "specify"
+                    | "example"
+                    | "xit"
+                    | "fit"
+                    | "pending"
+                    | "skip"
+                    | "before"
+                    | "after"
+                    | "around"
+                    | "let"
+                    | "let!"
+                    | "subject"
+                    | "subject!"
+                    | "expect"
+                    | "is_expected"
+                    | "should"
+                    | "should_not"
+                    | "to"
+                    | "to_not"
+                    | "not_to"
+                    | "eq"
+                    | "eql"
+                    | "equal"
+                    | "be_a"
+                    | "be_an"
+                    | "be_within"
+                    | "contain_exactly"
+                    | "match_array"
+                    | "have_attributes"
+                    | "have_received"
+                    | "have_http_status"
+                    | "raise_error"
+                    | "change"
+                    | "satisfy"
+                    | "start_with"
+                    | "end_with"
+                    | "double"
+                    | "instance_double"
+                    | "class_double"
+                    | "spy"
+                    | "allow"
+                    | "receive"
+                    | "and_return"
+                    | "and_raise"
+                    | "and_call_original"
+                    | "stub_request"
+                    | "shared_examples"
+                    | "shared_context"
+                    | "include_examples"
+                    | "it_behaves_like"
+                    | "it_should_behave_like"
+                    | "travel_to"
+                    | "freeze_time"
+                    | "Fabricate"
+                    | "assert"
+                    | "refute"
+            ) || label.starts_with("assert_")
+                || label.starts_with("refute_")
+        }
         "javascript" | "typescript" | "tsx" => {
             matches!(
                 label,

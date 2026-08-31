@@ -2509,6 +2509,55 @@ fn busted_and_munit_hand_a_spec_its_cases() {
 }
 
 #[test]
+fn rspec_hands_a_ruby_spec_its_cases_and_its_matchers() {
+    // 7366 of mastodon's 29668 unresolved ruby calls are RSpec's own:
+    // `it`, `let`, `expect`, `eq`, `allow`. Reporting them as unresolved
+    // reads as a resolver that failed rather than a gem that provides
+    // them, which is the same thing busted and munit already say.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("spec")).unwrap();
+    fs::create_dir_all(root.join("app")).unwrap();
+    fs::write(
+        root.join("Gemfile"),
+        "source 'https://rubygems.org'\ngem 'rspec-rails'\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("account.rb"),
+        "class Account\n  def suspend\n    true\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("spec").join("account_spec.rb"),
+        "describe Account do\n  let(:account) { Account.new }\n\n  before do\n    allow(account).to receive(:suspend)\n  end\n\n  it 'suspends' do\n    expect(account.suspend).to eq(true)\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    for provided in [
+        "describe", "let", "before", "allow", "receive", "it", "expect", "eq",
+    ] {
+        assert_eq!(
+            resolution(provided).as_deref(),
+            Some("builtin"),
+            "{provided} is the runner's"
+        );
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle
