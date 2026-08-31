@@ -1826,7 +1826,7 @@ fn collect_definition_edges(
                 work_item,
                 &location,
                 workspace_root,
-                "no_graph_node_at_lsp_location",
+                missing_node_reason(workspace_root, &location.uri),
             )),
         }
     }
@@ -1871,7 +1871,7 @@ fn collect_reference_edges(
                 work_item,
                 &location,
                 workspace_root,
-                "no_graph_node_at_lsp_location",
+                missing_node_reason(workspace_root, &location.uri),
             )),
         }
     }
@@ -2119,6 +2119,29 @@ fn unmatched_location(
         column: location.column,
         reason,
     }
+}
+
+/// A location the language server reports can fall outside this project: a
+/// definition in a dependency, or one in the standard library. The graph holds
+/// this project's files and nothing else, so finding no node there is the
+/// expected answer. Calling it a missing graph node would report a gap in what
+/// the parser saw and send the reader hunting for a defect that is not there.
+fn missing_node_reason(workspace_root: &Path, uri: &str) -> &'static str {
+    if location_is_outside_the_project(workspace_root, uri) {
+        "location_is_outside_the_project"
+    } else {
+        "no_graph_node_at_lsp_location"
+    }
+}
+
+fn location_is_outside_the_project(workspace_root: &Path, uri: &str) -> bool {
+    let Some(encoded) = uri.strip_prefix("file://") else {
+        return false;
+    };
+    let Some(decoded) = percent_decode_path(encoded) else {
+        return false;
+    };
+    !PathBuf::from(decoded).starts_with(workspace_root)
 }
 
 fn path_from_file_uri(workspace_root: &Path, uri: &str) -> Option<String> {
@@ -3721,6 +3744,21 @@ mod tests {
             Some("definition_resolves_to_the_asking_node")
         );
         let _ = caller;
+    }
+
+    #[test]
+    fn a_definition_in_a_dependency_is_not_a_gap_in_the_graph() {
+        let root = Path::new("/workspace/project");
+        assert_eq!(
+            missing_node_reason(root, "file:///workspace/project/src/lib.rs"),
+            "no_graph_node_at_lsp_location",
+            "a file this project owns is one the graph is expected to know"
+        );
+        assert_eq!(
+            missing_node_reason(root, "file:///home/user/.rustup/lib/std/src/time.rs"),
+            "location_is_outside_the_project",
+            "the standard library is not this project's to have parsed"
+        );
     }
 
     #[test]
