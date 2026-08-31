@@ -4124,6 +4124,36 @@ mod tests {
     }
 
     #[test]
+    fn telling_inside_from_outside_takes_an_absolute_root() {
+        // A language server answers with an absolute path. Given `.` as the
+        // root nothing can be stripped from it, so every answer looks like
+        // it came from somewhere else: that is how `codegraph scan .`
+        // produced no semantic edges at all where the same scan, given the
+        // same directory by its full name, produced 92.
+        assert_eq!(
+            path_from_file_uri(Path::new("."), "file:///workspace/repo/src/lib.rs").as_deref(),
+            Some("/workspace/repo/src/lib.rs")
+        );
+        assert!(location_is_outside_the_project(
+            Path::new("."),
+            "file:///workspace/repo/src/lib.rs"
+        ));
+
+        assert_eq!(
+            path_from_file_uri(
+                Path::new("/workspace/repo"),
+                "file:///workspace/repo/src/lib.rs"
+            )
+            .as_deref(),
+            Some("src/lib.rs")
+        );
+        assert!(!location_is_outside_the_project(
+            Path::new("/workspace/repo"),
+            "file:///workspace/repo/src/lib.rs"
+        ));
+    }
+
+    #[test]
     fn a_definition_in_a_dependency_is_not_a_gap_in_the_graph() {
         let root = Path::new("/workspace/project");
         assert_eq!(
@@ -4753,6 +4783,15 @@ pub fn auto_enrich_graph(
     cache: Option<&SemanticLspCache>,
     options: &AutoEnrichmentOptions,
 ) -> (CodeGraph, AutoEnrichmentReport) {
+    // A language server answers with an absolute path, and telling whether
+    // that path is inside the project means comparing it with an absolute
+    // root. `codegraph scan .` passed `.`, so every answer looked like it
+    // came from somewhere else and the pass produced nothing at all: 0
+    // semantic edges against 92 for the same scan given the same directory
+    // by its full name. The `semantic-*` commands canonicalise for this
+    // reason; the automatic pass did not.
+    let canonical = root.canonicalize();
+    let root = canonical.as_deref().unwrap_or(root);
     let (mut graph, report) = run_auto_enrichment(root, graph, cache, options);
     let root_id = graph.root;
     if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == root_id) {
