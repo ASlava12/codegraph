@@ -2558,6 +2558,61 @@ fn rspec_hands_a_ruby_spec_its_cases_and_its_matchers() {
 }
 
 #[test]
+fn a_language_names_its_own_vocabulary() {
+    // Nix says outright what is the evaluator's -- everything under
+    // `builtins.` and a handful of globals -- and home-manager writes 798
+    // of them. package:test hands a Dart suite its cases, 470 of them in
+    // the `http` package. Neither is a function a project failed to ship.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("test")).unwrap();
+    fs::write(
+        root.join("default.nix"),
+        "{ lib }:\n{\n  mkEntry = name: builtins.toFile name (toString 1);\n  helper = value: map (x: x) value;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("pubspec.yaml"),
+        "name: sample\ndev_dependencies:\n  test: ^1.0.0\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("test").join("client_test.dart"),
+        "void main() {\n  group('client', () {\n    setUp(() {});\n    test('sends', () {\n      expect(1, equals(1));\n    });\n  });\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    for provided in [
+        "builtins.toFile",
+        "toString",
+        "map",
+        "group",
+        "setUp",
+        "test",
+        "expect",
+        "equals",
+    ] {
+        assert_eq!(
+            resolution(provided).as_deref(),
+            Some("builtin"),
+            "{provided} is the language's or the runner's"
+        );
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle

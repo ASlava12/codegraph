@@ -738,6 +738,44 @@ fn test_runner_provides_call(language: &str, path: &str, label: &str) -> bool {
         // `expect`, `it`, `let` and `before`. minitest's assertions arrive
         // the same way, and `Fabricate` is the fabrication gem building a
         // record for a spec to use.
+        // package:test hands a Dart suite its cases and its matchers, and
+        // the `http` package writes 470 of them: `test`, `group`,
+        // `expect`, `setUp`, `throwsA`.
+        "dart" => {
+            matches!(
+                label,
+                "test"
+                    | "group"
+                    | "setUp"
+                    | "tearDown"
+                    | "setUpAll"
+                    | "tearDownAll"
+                    | "expect"
+                    | "expectLater"
+                    | "fail"
+                    | "skip"
+                    | "throwsA"
+                    | "isA"
+                    | "equals"
+                    | "predicate"
+                    | "anyOf"
+                    | "allOf"
+                    | "completion"
+                    | "emits"
+                    | "emitsInOrder"
+                    | "emitsDone"
+                    | "returnsNormally"
+                    | "isNot"
+                    | "startsWith"
+                    | "endsWith"
+                    | "hasLength"
+                    | "addTearDown"
+                    | "registerException"
+                    | "markTestSkipped"
+                    | "verify"
+                    | "captureAny"
+            )
+        }
         "ruby" => {
             matches!(
                 label,
@@ -1486,6 +1524,37 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
                 | "false"
         ),
         "dart" => matches!(base, "print" | "identical" | "assert"),
+        // Nix names its own vocabulary outright: everything under
+        // `builtins.` is the evaluator's, and a handful more sit in the
+        // global scope. home-manager writes 477 of the first and 321 of
+        // the second, and reporting them as unresolved says the resolver
+        // failed to find a function no project ever wrote.
+        "nix" => {
+            base.starts_with("builtins.")
+                || matches!(
+                    base,
+                    "abort"
+                        | "baseNameOf"
+                        | "builtins"
+                        | "derivation"
+                        | "derivationStrict"
+                        | "dirOf"
+                        | "fetchGit"
+                        | "fetchMercurial"
+                        | "fetchTarball"
+                        | "fetchTree"
+                        | "fetchurl"
+                        | "fromTOML"
+                        | "import"
+                        | "isNull"
+                        | "map"
+                        | "placeholder"
+                        | "removeAttrs"
+                        | "scopedImport"
+                        | "throw"
+                        | "toString"
+                )
+        }
         // R's base package is attached in every session, so `c`, `length`, and
         // `UseMethod` are the language. Names from rlang (`abort`, `enquo`,
         // `caller_env`) look just as ubiquitous in modern R code but come from
