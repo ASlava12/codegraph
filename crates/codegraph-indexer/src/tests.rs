@@ -2953,6 +2953,55 @@ fn a_matcher_is_part_of_the_runner_that_hands_it_over() {
 }
 
 #[test]
+fn a_factory_and_a_mock_builder_belong_to_the_framework() {
+    // koel writes `Song::factory` 829 times and `createOne` 526; monolog
+    // writes PHPUnit's `getMock`, `onlyMethods` and `method`. 2030 calls
+    // in all, and a label that names the class it goes through is read
+    // from its end.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app")).unwrap();
+    fs::create_dir_all(root.join("tests")).unwrap();
+    fs::write(
+        root.join("composer.json"),
+        "{\"name\":\"koel/koel\",\"require-dev\":{\"phpunit/phpunit\":\"^10\"}}",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("Song.php"),
+        "<?php\n\nclass Song\n{\n    public function title(): string\n    {\n        return 'x';\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tests").join("SongTest.php"),
+        "<?php\n\nclass SongTest extends TestCase\n{\n    public function testTitle(): void\n    {\n        $song = Song::factory()->createOne();\n        $this->getJson('/songs');\n        $mock = $this->getMock(Song::class);\n        $mock->method('title');\n        $song->title();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    for provided in ["Song::factory", "createOne", "getJson", "getMock", "method"] {
+        assert_eq!(
+            resolution(provided).as_deref(),
+            Some("builtin"),
+            "{provided} is the framework's"
+        );
+    }
+    // What the project writes is still what a call to it means.
+    assert_eq!(resolution("title").as_deref(), Some("resolved"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle

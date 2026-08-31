@@ -647,8 +647,47 @@ fn test_runner_provides_call(language: &str, path: &str, label: &str) -> bool {
     }
     match language {
         "php" => {
+            // A label can name the class it goes through -- koel writes
+            // `Song::factory` 829 times -- so the method is read off the
+            // end. PHPUnit's mock builder and Laravel's factories and JSON
+            // helpers account for 1747 of koel's 7342 unresolved php calls
+            // and 257 of monolog's 1685.
+            let method = label.rsplit("::").next().unwrap_or(label);
             label.starts_with("assert")
                 || label.starts_with("expect")
+                || matches!(
+                    method,
+                    "factory"
+                        | "createOne"
+                        | "createMany"
+                        | "createQuietly"
+                        | "makeOne"
+                        | "makeMany"
+                        | "getMock"
+                        | "getMockForAbstractClass"
+                        | "onlyMethods"
+                        | "setMethods"
+                        | "setConstructorArgs"
+                        | "disableOriginalConstructor"
+                        | "method"
+                        | "once"
+                        | "never"
+                        | "atLeastOnce"
+                        | "atMost"
+                        | "exactly"
+                        | "willReturnSelf"
+                        | "willReturnMap"
+                        | "willReturnOnConsecutiveCalls"
+                        | "getJson"
+                        | "postJson"
+                        | "putJson"
+                        | "patchJson"
+                        | "deleteJson"
+                        | "actingAs"
+                        | "withoutExceptionHandling"
+                        | "artisan"
+                        | "freezeTime"
+                )
                 || matches!(
                     label,
                     "fail"
