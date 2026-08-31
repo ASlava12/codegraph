@@ -2988,8 +2988,33 @@ fn edge_site(edge: &Edge) -> Option<(Option<u32>, Option<u32>)> {
     let column = edge
         .metadata
         .get("column")
-        .and_then(|column| column.parse::<u32>().ok());
+        .and_then(|column| column.parse::<u32>().ok())
+        .map(|column| column + method_offset_in(edge.metadata.get("call_label")));
     Some((Some(line), column))
+}
+
+/// How far past the start of a call its method name begins. A dotted label
+/// names a method on a receiver and the span starts at the receiver, so
+/// asking there answers with the local variable rather than the method:
+/// `builder.add` is ripgrep's own `GlobSetBuilder::add`, and 29 of the
+/// first 100 answers came back pointing at the caller because the question
+/// was about `builder`. No arithmetic on the source is needed -- the parser
+/// rejects a label holding a space or a newline, so a label that survives is
+/// written contiguously and the method starts exactly as far along as
+/// everything before it is long.
+fn method_offset_in(label: Option<&String>) -> u32 {
+    let Some(label) = label else {
+        return 0;
+    };
+    if label.contains([' ', '\n', '\t']) {
+        return 0;
+    }
+    let Some(index) = label.rfind(['.', ':']) else {
+        return 0;
+    };
+    // A char boundary is what the LSP counts, and a label can hold one that
+    // is not a byte: `crate::Ünicode::read` is a legal Rust path.
+    label[..=index].chars().count() as u32
 }
 
 fn node_location(node: &Node) -> (Option<String>, Option<u32>, Option<u32>) {
@@ -3833,6 +3858,28 @@ mod tests {
             Some("definition_resolves_to_the_asking_node")
         );
         let _ = caller;
+    }
+
+    #[test]
+    fn a_question_about_a_call_is_about_its_method() {
+        // The span of a dotted call starts at the receiver, and asking
+        // there answers with the local variable: 29 of ripgrep's first 100
+        // answers came back pointing at the caller. `builder` is 8
+        // characters wide, so `add` begins 8 further along.
+        assert_eq!(method_offset_in(Some(&"builder.add".to_string())), 8);
+        assert_eq!(
+            method_offset_in(Some(&"GlobSetBuilder::new".to_string())),
+            16
+        );
+        assert_eq!(method_offset_in(Some(&"a.b.c".to_string())), 4);
+
+        // A bare name is already the method.
+        assert_eq!(method_offset_in(Some(&"parse".to_string())), 0);
+        assert_eq!(method_offset_in(None), 0);
+
+        // The offset counts characters, which is what an LSP position
+        // counts, not bytes.
+        assert_eq!(method_offset_in(Some(&"Ünicöde.read".to_string())), 8);
     }
 
     #[test]
