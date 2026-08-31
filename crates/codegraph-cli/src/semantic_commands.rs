@@ -105,8 +105,39 @@ pub(crate) fn run_semantic_run(args: SemanticRunArgs, max_file_size: Option<u64>
             ),
         },
     )?;
+    // The array is the contract `semantic-patch` reads, so the count goes to
+    // stderr beside it. A server that answers every request with nothing --
+    // rust-analyzer does exactly that until it has finished loading a
+    // workspace -- otherwise looks the same as one that found nothing to
+    // say, and 297 empty answers scroll past as 297 answers.
+    let answered = run
+        .responses
+        .iter()
+        .filter(|response| response.error.is_none() && !result_is_empty(&response.result))
+        .count();
+    let failed = run
+        .responses
+        .iter()
+        .filter(|response| response.error.is_some())
+        .count();
+    eprintln!(
+        "{} responses: {answered} answered, {} empty, {failed} failed",
+        run.responses.len(),
+        run.responses.len() - answered - failed
+    );
     println!("{}", serde_json::to_string_pretty(&run.responses)?);
     Ok(())
+}
+
+/// Whether a language server said nothing. `null`, `[]` and `{}` are all the
+/// same answer: it has nothing for this position.
+fn result_is_empty(result: &serde_json::Value) -> bool {
+    match result {
+        serde_json::Value::Null => true,
+        serde_json::Value::Array(items) => items.is_empty(),
+        serde_json::Value::Object(fields) => fields.is_empty(),
+        _ => false,
+    }
 }
 
 /// `codegraph semantic-patch`
@@ -173,4 +204,22 @@ pub(crate) fn run_semantic_apply(
         serde_json::to_string_pretty(&apply_semantic_graph_patch(&graph, &patch))?
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::result_is_empty;
+    use serde_json::json;
+
+    #[test]
+    fn a_server_that_says_nothing_is_not_a_server_that_answered() {
+        // rust-analyzer replies `[]` to every request until it has finished
+        // loading a workspace, and 297 of those scrolled past as 297
+        // answers. All three spellings of nothing are nothing.
+        assert!(result_is_empty(&json!(null)));
+        assert!(result_is_empty(&json!([])));
+        assert!(result_is_empty(&json!({})));
+        assert!(!result_is_empty(&json!([{"uri": "file:///x.rs"}])));
+        assert!(!result_is_empty(&json!({"uri": "file:///x.rs"})));
+    }
 }
