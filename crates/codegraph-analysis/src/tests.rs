@@ -9956,6 +9956,69 @@ fn insights_report_entrypoint_dead_ends() {
 }
 
 #[test]
+fn a_rust_test_reads_config_wherever_it_is_written() {
+    // Rust writes its tests inside the file they test, so the path cannot
+    // say what the node already does. This repository's
+    // `fresh_install_creates_all_artifacts` reads `.mcp.json` from
+    // `install.rs`, and five findings of that kind were its own tests.
+    let mut graph = CodeGraph::new("repo");
+    let entry = graph.add_node(NodeKind::Entrypoint, "bin:app");
+    let main = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "main",
+        Some(SourceSpan {
+            path: "src/main.rs".to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 3,
+            end_column: 1,
+        }),
+        BTreeMap::from([("entrypoint_kind".to_string(), "program".to_string())]),
+    );
+    let harnessed = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "fresh_install_creates_all_artifacts",
+        Some(SourceSpan {
+            path: "src/install.rs".to_string(),
+            start_line: 40,
+            start_column: 1,
+            end_line: 50,
+            end_column: 1,
+        }),
+        BTreeMap::from([("invoked_by".to_string(), "test_runner".to_string())]),
+    );
+    let config = graph.add_node(NodeKind::Config, ".mcp.json");
+    graph.add_edge(graph.root, entry, EdgeKind::Entrypoint, Confidence::Exact);
+    graph.add_edge_with_metadata(
+        entry,
+        main,
+        EdgeKind::References,
+        Confidence::Exact,
+        BTreeMap::from([("relation".to_string(), "entrypoint_function".to_string())]),
+    );
+    graph.add_edge(
+        harnessed,
+        config,
+        EdgeKind::ReadsConfig,
+        Confidence::Heuristic,
+    );
+
+    let report = insights(&graph);
+    assert!(
+        !report
+            .insights
+            .iter()
+            .any(|insight| insight.kind == "unreachable_config_read"),
+        "a test is run by its harness wherever it is written: {:?}",
+        report
+            .insights
+            .iter()
+            .map(|insight| insight.message.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn insights_report_unreachable_config_reads() {
     let mut graph = CodeGraph::new("repo");
     let entry = graph.add_node(NodeKind::Entrypoint, "cargo bin:demo");

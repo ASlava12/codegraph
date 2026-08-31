@@ -2377,10 +2377,14 @@ pub(crate) fn add_entrypoint_coverage_insights(
         return;
     }
 
+    // What the entrypoints are expected to reach is the program. A test is
+    // run by its harness and vendored code by whoever wrote it, so counting
+    // either as unreached says the project is worse covered than it is:
+    // nearly half of redis's functions are jemalloc's.
     let functions: Vec<&Node> = graph
         .nodes
         .iter()
-        .filter(|node| node.kind == NodeKind::Function)
+        .filter(|node| node.kind == NodeKind::Function && is_the_programs_own(node))
         .collect();
     if !entrypoint_coverage_is_low(graph, reachable) {
         return;
@@ -2526,11 +2530,21 @@ fn reachability_is_worth_reporting(graph: &CodeGraph, reachable: &BTreeSet<NodeI
     !reachable.is_empty() && !entrypoint_coverage_is_low(graph, reachable)
 }
 
+/// Whether a definition is part of the program rather than of its suite,
+/// its examples or the code it vendors. A rust test is written inside the
+/// file it tests, so the node says what the path cannot.
+fn is_the_programs_own(node: &Node) -> bool {
+    node.span
+        .as_ref()
+        .is_none_or(|span| !is_test_like_source_path(&span.path))
+        && node.metadata.get("invoked_by").map(String::as_str) != Some("test_runner")
+}
+
 fn entrypoint_coverage_is_low(graph: &CodeGraph, reachable: &BTreeSet<NodeId>) -> bool {
     let functions = graph
         .nodes
         .iter()
-        .filter(|node| node.kind == NodeKind::Function);
+        .filter(|node| node.kind == NodeKind::Function && is_the_programs_own(node));
     let (total, reached) = functions.fold((0usize, 0usize), |(total, reached), function| {
         (
             total + 1,
@@ -2588,9 +2602,21 @@ pub(crate) fn add_unreachable_config_read_insights(
                     .and_then(|node| node.span.as_ref())
                     .map(|span| span.path.as_str())
             });
+        // Rust writes its tests inside the file they test, so the path
+        // cannot say what the node already does: this repository's
+        // `fresh_install_creates_all_artifacts` reads `.mcp.json` from
+        // `install.rs`, and it is a test wherever it is written. The orphan
+        // insight has always asked both.
         if reader_path.is_some_and(|path| {
             is_test_like_source_path(path) || is_tool_configuration_source_path(path)
-        }) {
+        }) || graph
+            .nodes
+            .iter()
+            .find(|node| node.id == edge.source)
+            .is_some_and(|node| {
+                node.metadata.get("invoked_by").map(String::as_str) == Some("test_runner")
+            })
+        {
             continue;
         }
 

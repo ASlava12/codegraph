@@ -375,9 +375,24 @@ function clientHeuristicSeverity(graph) {
 // little the scan could start from. mastodon's reach 18% because Rails
 // loads `app/` by convention, and 2114 of its 3127 source files read as
 // unreachable. `low_entrypoint_coverage` says it once instead.
+// Whether a definition is part of the program rather than of its suite,
+// its examples or the code it vendors. A rust test is written inside the
+// file it tests, so the node says what the path cannot.
+function isTheProgramsOwn(node) {
+  const path = node.span && node.span.path;
+  if (path && isTestLikeSourcePath(path)) return false;
+  return !(node.metadata && node.metadata.invoked_by === "test_runner");
+}
+
 function clientReachabilityIsWorthReporting(graph, reachableIds) {
   if (reachableIds.size === 0) return false;
-  const functions = (graph.nodes || []).filter((node) => node.kind === "function");
+  // What the entrypoints are expected to reach is the program: a test is
+  // run by its harness and vendored code by whoever wrote it. The CLI
+  // counts it that way, and this ratio decides whether a finding is worth
+  // reporting at all, so the two must agree.
+  const functions = (graph.nodes || []).filter(
+    (node) => node.kind === "function" && isTheProgramsOwn(node),
+  );
   if (functions.length < 20) return true;
   const reached = functions.filter((node) => reachableIds.has(node.id)).length;
   return reached * 2 >= functions.length;
