@@ -3791,6 +3791,13 @@ pub(crate) fn declared_variable_types(
     if language == Language::Php {
         return php_declared_variable_types(node, source);
     }
+    // Scala states a parameter's type always -- `def map[A, B](fa: F[A])` --
+    // and a `val` often. cats leaves 2166 calls through a named receiver
+    // ambiguous, 630 of them through a receiver whose stated type names a
+    // type the project itself declares.
+    if language == Language::Scala {
+        return scala_declared_variable_types(node, source);
+    }
     // C# states a parameter's type always and a local's most of the time:
     // `void WriteValue(JsonWriter writer)` and `JsonReader reader = ...`.
     // Newtonsoft.Json left 3093 calls through a named receiver ambiguous
@@ -3917,6 +3924,73 @@ fn java_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<Strin
 /// properties of the class it sits in, and what `$x = new Handler()`
 /// builds. The `$` is part of how PHP writes a variable, and the call site
 /// writes it too, so the names are kept as written.
+/// The names a Scala definition binds with a type: its parameters and the
+/// `val`s that state one. A name bound twice to different types is left out
+/// rather than guessed at.
+fn scala_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    let mut declared: BTreeMap<String, String> = BTreeMap::new();
+    let mut conflicting: BTreeSet<String> = BTreeSet::new();
+    let mut bound: Vec<(String, String)> = Vec::new();
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        let mut cursor = current.walk();
+        for child in current.named_children(&mut cursor) {
+            stack.push(child);
+        }
+        if !matches!(
+            current.kind(),
+            "parameter" | "class_parameter" | "val_definition" | "val_declaration"
+        ) {
+            continue;
+        }
+        let Some(type_name) = current
+            .child_by_field_name("type")
+            .and_then(|stated| scala_type_name(stated, source))
+        else {
+            continue;
+        };
+        let name = named_child_text(current, "name", source)
+            .or_else(|| named_child_text(current, "pattern", source))
+            .or_else(|| child_kind_text(current, "identifier", source));
+        if let Some(name) =
+            name.filter(|name| !name.contains(|c: char| !c.is_alphanumeric() && c != '_'))
+        {
+            bound.push((name, type_name));
+        }
+    }
+    for (name, type_name) in bound {
+        if declared
+            .get(&name)
+            .is_some_and(|existing| existing != &type_name)
+        {
+            conflicting.insert(name);
+            continue;
+        }
+        declared.insert(name, type_name);
+    }
+    for name in conflicting {
+        declared.remove(&name);
+    }
+    declared
+}
+
+/// The bare name a Scala type expression states: `F[A]` states `F`,
+/// `Ior.Right[B]` states `Right`, and a function type states nothing a
+/// definition could be looked up by.
+fn scala_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "type_identifier" => node_text(node, source),
+        "generic_type" => node
+            .child_by_field_name("type")
+            .and_then(|inner| scala_type_name(inner, source)),
+        "stable_type_identifier" | "projected_type" => node
+            .child_by_field_name("type")
+            .and_then(|inner| scala_type_name(inner, source))
+            .or_else(|| child_kind_text(node, "type_identifier", source)),
+        _ => None,
+    }
+}
+
 /// The names a C# definition binds with a type: its parameters and the
 /// locals its body declares, including the `var x = new Thing()` that states
 /// the class outright. A name bound twice to different types is left out

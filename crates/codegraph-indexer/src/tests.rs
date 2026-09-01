@@ -19591,3 +19591,50 @@ fn a_stated_receiver_outranks_the_file_the_call_sits_in() {
     );
     assert_ne!(edge.target, populate_of("Serializer"));
 }
+
+#[test]
+fn a_scala_parameter_states_which_eqv_a_call_means() {
+    // cats writes `implicit ev: Eq[A]` and then `ev.eqv(x, y)`, and the name
+    // `eqv` belongs to dozens of its instances: 630 of the 2166 calls it
+    // left ambiguous go through a receiver whose stated type names a type
+    // the project declares.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("Eq.scala"),
+        "package cats\n\ntrait Eq[A] {\n  def eqv(x: A, y: A): Boolean\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Instances.scala"),
+        "package cats\n\ntrait ArrayInstances {\n  def eqv(x: Int, y: Int): Boolean = x == y\n\n  def check[A](ev: Eq[A], x: A, y: A): Boolean =\n    ev.eqv(x, y)\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let eqv_of = |owner: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == "eqv"
+                    && node.metadata.get("owner_type").map(String::as_str) == Some(owner)
+            })
+            .unwrap_or_else(|| panic!("{owner}.eqv"))
+            .id
+    };
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("ev.eqv")
+        })
+        .expect("the call through the stated parameter");
+    assert_eq!(
+        edge.target,
+        eqv_of("Eq"),
+        "the parameter's stated type answers, not the trait the call sits in"
+    );
+    assert_ne!(edge.target, eqv_of("ArrayInstances"));
+}
