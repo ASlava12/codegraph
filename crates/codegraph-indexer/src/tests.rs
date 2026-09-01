@@ -19544,3 +19544,50 @@ fn a_go_binding_reads_the_package_that_hands_it_back() {
     );
     assert_ne!(edge.target, owned("Loader"));
 }
+
+#[test]
+fn a_stated_receiver_outranks_the_file_the_call_sits_in() {
+    // `JsonSerializer.Populate` builds a `JsonSerializerInternalReader` and
+    // calls `serializerReader.Populate`, which the file answered with its
+    // own method: 201 of Newtonsoft.Json's 546 self-calls were a receiver
+    // whose type the line above states.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("InternalReader.cs"),
+        "namespace App;\n\npublic class InternalReader\n{\n    public void Populate(string target) { }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Serializer.cs"),
+        "namespace App;\n\npublic class Serializer\n{\n    public void Populate(string target)\n    {\n        InternalReader reader = new InternalReader();\n        reader.Populate(target);\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let populate_of = |owner: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == "Populate"
+                    && node.metadata.get("owner_type").map(String::as_str) == Some(owner)
+            })
+            .unwrap_or_else(|| panic!("{owner}.Populate"))
+            .id
+    };
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("reader.Populate")
+        })
+        .expect("the call through the built receiver");
+    assert_eq!(
+        edge.target,
+        populate_of("InternalReader"),
+        "the receiver's stated type answers, not the file the call sits in"
+    );
+    assert_ne!(edge.target, populate_of("Serializer"));
+}

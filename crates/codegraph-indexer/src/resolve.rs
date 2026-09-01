@@ -3736,6 +3736,52 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             add_external_call_placeholder(context, call, resolution);
             continue;
         }
+        // `mgr := b.StateMgr()` states the receiver's type in the callee's
+        // signature rather than in its own line, so the parser records which
+        // call bound the name and the join happens here, where every
+        // definition is known.
+        let receiver_type = match call.receiver_type.as_deref() {
+            Some(bound_by) if bound_by.ends_with("()") => {
+                // The name in front may be a package rather than a value, and
+                // then it is the file's imports that say which directory
+                // declares the function whose type the binding takes.
+                let declared_in = bound_by
+                    .strip_suffix("()")
+                    .and_then(|callee| callee.rsplit_once('.'))
+                    .and_then(|(package, _)| {
+                        match context
+                            .file_import_qualifiers
+                            .get(call.span.path.as_str())
+                            .and_then(|qualifiers| qualifiers.get(package))
+                            .cloned()
+                            .map(|package| {
+                                resolved_import_package(context, &mut scanned_candidates, package)
+                            }) {
+                            Some(ImportedPackage::Local(candidates)) => Some(candidates),
+                            _ => None,
+                        }
+                    });
+                what_a_call_hands_back(context, caller_path, bound_by, declared_in.as_deref())
+            }
+            stated => stated.map(str::to_string),
+        };
+        let receiver_type = receiver_type.as_deref();
+
+        // A receiver whose type is stated names the owner of the method, and
+        // that is a stronger fact than the file the call happens to sit in.
+        // Without this, `parser := configs.NewParser(fs)` was answered by
+        // whatever `LoadConfigDir` the calling file declared.
+        let the_receiver_names_another_owner = receiver_type
+            .map(|stated| stated.rsplit(['.', '*']).next().unwrap_or(stated))
+            .is_some_and(|owner| {
+                let owned_by = |target: &NodeId| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.metadata.get("owner_type"))
+                        .is_some_and(|declared| declared == owner)
+                };
+                !local_targets.iter().any(owned_by) && language_targets.iter().any(owned_by)
+            });
+
         // What narrowed the candidates down. A call kept by the syntax —
         // the file it sits in, the import that named the module, the
         // receiver's declared type — is a different kind of fact from one
@@ -3772,7 +3818,8 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             // name the same way.
             _ if !local_targets.is_empty()
                 && !names_another_ocaml_module
-                && !written_through_a_chain_of_values =>
+                && !written_through_a_chain_of_values
+                && !the_receiver_names_another_owner =>
             {
                 basis = "same_file";
                 local_targets
@@ -3883,37 +3930,6 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 }
             }
         }
-
-        // `mgr := b.StateMgr()` states the receiver's type in the callee's
-        // signature rather than in its own line, so the parser records which
-        // call bound the name and the join happens here, where every
-        // definition is known.
-        let receiver_type = match call.receiver_type.as_deref() {
-            Some(bound_by) if bound_by.ends_with("()") => {
-                // The name in front may be a package rather than a value, and
-                // then it is the file's imports that say which directory
-                // declares the function whose type the binding takes.
-                let declared_in = bound_by
-                    .strip_suffix("()")
-                    .and_then(|callee| callee.rsplit_once('.'))
-                    .and_then(|(package, _)| {
-                        match context
-                            .file_import_qualifiers
-                            .get(call.span.path.as_str())
-                            .and_then(|qualifiers| qualifiers.get(package))
-                            .cloned()
-                            .map(|package| {
-                                resolved_import_package(context, &mut scanned_candidates, package)
-                            }) {
-                            Some(ImportedPackage::Local(candidates)) => Some(candidates),
-                            _ => None,
-                        }
-                    });
-                what_a_call_hands_back(context, caller_path, bound_by, declared_in.as_deref())
-            }
-            stated => stated.map(str::to_string),
-        };
-        let receiver_type = receiver_type.as_deref();
 
         // A receiver whose declared type comes from outside the repository
         // cannot be calling anything in it: `t.Fatalf()` on a `*testing.T` is
