@@ -4906,11 +4906,33 @@ pub(crate) fn heuristic_scan_severity(graph: &CodeGraph) -> InsightSeverity {
         .edges
         .iter()
         .any(|edge| edge.confidence == Confidence::Semantic);
-    if semantically_enriched {
+    // A warning here says the language server looked and did not find it,
+    // and the pass looking at some of the project does not license one
+    // about the rest. A scan enriches 100 work items by default: on this
+    // repository that is 100 of 48000, and every one of the other 47900
+    // unresolved calls was being called a warning on the strength of them
+    // -- 5351 warnings where `--no-semantic` reports 3. The graph records
+    // what the pass covered, so the question can be asked.
+    if semantically_enriched && semantic_pass_covered_the_project(graph) {
         InsightSeverity::Warning
     } else {
         InsightSeverity::Info
     }
+}
+
+/// Whether the semantic pass was asked about everything it planned to ask
+/// about. The root records it as `asked/total`; a graph with no record of
+/// a pass cannot say, and is read as a sample rather than a sweep.
+fn semantic_pass_covered_the_project(graph: &CodeGraph) -> bool {
+    graph
+        .nodes
+        .iter()
+        .find(|node| node.id == graph.root)
+        .and_then(|node| node.metadata.get("semantic_work_items"))
+        .and_then(|value| value.split_once('/'))
+        .is_some_and(|(asked, total)| {
+            asked.parse::<u64>().ok() == total.parse::<u64>().ok() && !asked.is_empty()
+        })
 }
 
 pub(crate) fn add_unresolved_call_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {

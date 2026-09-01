@@ -202,10 +202,29 @@ pub(crate) fn run_semantic_apply(
     let response_text = std::fs::read_to_string(&args.responses)?;
     let responses: Vec<SemanticLspResponse> = serde_json::from_str(&response_text)?;
     let patch = semantic_graph_patch_from_responses(&workspace_root, &graph, &batch, &responses);
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&apply_semantic_graph_patch(&graph, &patch))?
-    );
+    let mut applied = apply_semantic_graph_patch(&graph, &patch);
+    // What the pass was asked about, recorded the way a scan records it. An
+    // unresolved call is only a warning once the server has looked at all
+    // of them, and without this an explicit run of the whole plan would
+    // read as the sample a scan takes.
+    let asked: usize = batch
+        .server_batches
+        .iter()
+        .map(|server_batch| server_batch.work_items.len())
+        .sum();
+    let root_id = applied.graph.root;
+    if let Some(root) = applied
+        .graph
+        .nodes
+        .iter_mut()
+        .find(|node| node.id == root_id)
+    {
+        root.metadata.insert(
+            "semantic_work_items".to_string(),
+            format!("{asked}/{}", batch.total_work_items),
+        );
+    }
+    println!("{}", serde_json::to_string_pretty(&applied)?);
     Ok(())
 }
 

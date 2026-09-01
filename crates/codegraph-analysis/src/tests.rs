@@ -7634,7 +7634,11 @@ fn unresolved_call_insights_calibrate_severity_and_group_by_label() {
     assert!(unresolved[0].nodes.contains(&js_helper));
     assert_eq!(unresolved[0].edges.len(), 2);
 
-    // Semantic enrichment present: still-unresolved calls become warnings.
+    // Semantic enrichment present, but only over a sample of the plan: a
+    // warning says the server looked and did not find it, and a scan asks
+    // about 100 work items by default. On this repository that is 100 of
+    // 48000, and reading one answer as a verdict on the rest turned 3
+    // warnings into 5351.
     let resolved_target = graph.add_node(NodeKind::Function, "load_config");
     graph.add_edge(
         caller,
@@ -7642,13 +7646,30 @@ fn unresolved_call_insights_calibrate_severity_and_group_by_label() {
         EdgeKind::Calls,
         Confidence::Semantic,
     );
-    let enriched = insights(&graph);
-    let enriched_unresolved = enriched
-        .insights
-        .iter()
-        .find(|insight| insight.kind == "unresolved_call")
-        .expect("unresolved call finding");
-    assert_eq!(enriched_unresolved.severity, InsightSeverity::Warning);
+    let severity_of_unresolved = |graph: &CodeGraph| {
+        insights(graph)
+            .insights
+            .iter()
+            .find(|insight| insight.kind == "unresolved_call")
+            .expect("unresolved call finding")
+            .severity
+    };
+    let root_id = graph.root;
+    let stamp = |graph: &mut CodeGraph, covered: &str| {
+        let root = graph
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == root_id)
+            .expect("root");
+        root.metadata
+            .insert("semantic_work_items".to_string(), covered.to_string());
+    };
+    stamp(&mut graph, "100/48000");
+    assert_eq!(severity_of_unresolved(&graph), InsightSeverity::Info);
+
+    // Asked about all of them and still not found: that is a warning.
+    stamp(&mut graph, "48000/48000");
+    assert_eq!(severity_of_unresolved(&graph), InsightSeverity::Warning);
 }
 
 #[test]
