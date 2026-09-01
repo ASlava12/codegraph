@@ -1799,6 +1799,48 @@ pub(crate) fn builtin_call_target(language: &str, label: &str) -> bool {
                 | "kill"
                 | "true"
                 | "false"
+                // The rest of the shell's own vocabulary. `pwd`, `:`,
+                // `break`, `continue` and `command` alone account for 54 of
+                // redis's 424 unresolved shell calls, and reporting them
+                // says the resolver failed to find a function no project
+                // ever wrote.
+                | ":"
+                | "pwd"
+                | "break"
+                | "continue"
+                | "command"
+                | "builtin"
+                | "declare"
+                | "typeset"
+                | "readonly"
+                | "shopt"
+                | "type"
+                | "hash"
+                | "let"
+                | "getopts"
+                | "umask"
+                | "ulimit"
+                | "times"
+                | "jobs"
+                | "fg"
+                | "bg"
+                | "disown"
+                | "suspend"
+                | "logout"
+                | "caller"
+                | "alias"
+                | "unalias"
+                | "pushd"
+                | "popd"
+                | "dirs"
+                | "mapfile"
+                | "readarray"
+                | "bind"
+                | "enable"
+                | "complete"
+                | "compgen"
+                | "compopt"
+                | "history"
         ),
         "dart" => matches!(base, "print" | "identical" | "assert"),
         // Nix names its own vocabulary outright: everything under
@@ -3951,9 +3993,16 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                                     .iter()
                                     .any(|name| type_node_named(&context.graph, name).is_none())
                         });
+                // A shell command that is not a function this project
+                // declares and not the shell's own is on PATH: the shell
+                // has no third way to name one, so `unresolved` says a
+                // resolver failed where nothing was ever there to find.
+                // Not one of redis's 424 or shellcheck's 58 unresolved
+                // shell calls names a function either project declares.
+                let comes_from_the_environment = call.language == "bash";
                 let resolution = if is_builtin {
                     "builtin"
-                } else if inherits_from_outside {
+                } else if inherits_from_outside || comes_from_the_environment {
                     "external"
                 } else {
                     "unresolved"

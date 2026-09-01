@@ -9259,6 +9259,56 @@ fn a_contract_is_not_a_function_its_methods_are_local_to() {
 }
 
 #[test]
+fn a_shell_command_is_the_environments_when_it_is_not_the_scripts() {
+    // A shell has three places a command can come from: a function the
+    // script declares, the shell itself, and PATH. There is no fourth, so
+    // `unresolved` says a resolver failed where nothing was there to find
+    // -- and not one of redis's 424 or shellcheck's 58 unresolved shell
+    // calls named a function either project declares.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("scripts")).unwrap();
+    fs::write(
+        root.join("scripts").join("release.sh"),
+        "#!/usr/bin/env bash\n\nannounce() {\n    echo \"$1\"\n}\n\nmain() {\n    announce start\n    pwd\n    git status\n}\n\nmain\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution_of = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    assert_eq!(
+        resolution_of("announce").as_deref(),
+        Some("resolved"),
+        "the script declares it"
+    );
+    assert_eq!(
+        resolution_of("pwd").as_deref(),
+        Some("builtin"),
+        "the shell provides it"
+    );
+    assert_eq!(
+        resolution_of("git").as_deref(),
+        Some("external"),
+        "and PATH provides the rest"
+    );
+    assert!(
+        graph.edges.iter().all(|edge| {
+            edge.metadata.get("language").map(String::as_str) != Some("bash")
+                || edge.metadata.get("resolution").map(String::as_str) != Some("unresolved")
+        }),
+        "nothing shell-shaped is left unresolved"
+    );
+}
+
+#[test]
 fn a_quickcheck_property_is_run_by_its_module() {
     // `$(forAllProperties)` collects every top-level `prop_*` through
     // Template Haskell, so the harness runs it and no edge records that --
