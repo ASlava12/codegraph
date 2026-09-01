@@ -316,7 +316,7 @@ pub(crate) async fn node_card_api(
         .unwrap_or(DEFAULT_NODE_CARD_INSIGHT_LIMIT);
     let include_insights = query.include_insights.unwrap_or(false);
     let graph = scan_graph(&state, query.path.as_deref()).await?;
-    let node_id = resolve_node_id_param(&graph, &query.node_id)?;
+    let (node_id, note) = resolve_node_reference_param(&graph, &query.node_id)?;
     let card = tokio::task::spawn_blocking(move || {
         let card_builder = if include_insights {
             node_card
@@ -339,6 +339,8 @@ pub(crate) async fn node_card_api(
     .map_err(|error| ApiError::internal(format!("node card task failed: {error}")))?
     .map_err(ApiError::internal)?
     .ok_or_else(|| ApiError::not_found("node not found"))?;
+    let mut card = card;
+    card.notes.extend(note);
     Ok(Json(card))
 }
 

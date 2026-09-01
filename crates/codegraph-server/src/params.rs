@@ -281,6 +281,28 @@ pub(crate) fn resolve_node_id_param(
     parse_node_id_param(value)
 }
 
+/// The node a parameter names, and what choosing it decided. `/api/impact`
+/// and `/api/journey` both take a label; this took an id and refused one,
+/// including the labels the answers before it hand back.
+pub(crate) fn resolve_node_reference_param(
+    graph: &CodeGraph,
+    value: &str,
+) -> Result<(codegraph_core::NodeId, Option<String>), ApiError> {
+    if let Some(resolved) = codegraph_analysis::resolve_node_reference_with_note(graph, value) {
+        return Ok(resolved);
+    }
+    // A well-formed id that names nothing is a node this graph does not
+    // have, which the handler answers with 404; only a name the project
+    // never wrote is a bad request.
+    parse_node_id_param(value)
+        .map(|node_id| (node_id, None))
+        .map_err(|_| {
+            ApiError::bad_request(
+                codegraph_analysis::missing_node_error(graph, "node", value).to_string(),
+            )
+        })
+}
+
 /// Every id in a comma-separated list, resolved the way a single one is: the
 /// error message offered the durable `cg-*` id, and this list was the one
 /// place that then refused it.

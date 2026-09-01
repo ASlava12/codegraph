@@ -1142,7 +1142,7 @@ pub(crate) fn api_schema_groups() -> Vec<ApiSchemaGroup> {
                     "Read selected node investigation card with neighboring edges, dependency summary facets, file-level summaries, source preview, related risks including file-scoped contained-node risks, risk summaries, exact edge indexes, and suggested focused graph query actions.",
                     vec![
                         path_param(),
-                        query_param("node_id", true, "string", None, "Node id: numeric (42), n-prefixed (n42), or the durable cg-* id the scan stamps on every node."),
+                        query_param("node_id", true, "string", None, "A label such as `main`, or a node id: numeric (42), n-prefixed (n42), or the durable cg-* id the scan stamps on every node. A label several definitions answer to is picked by rank, and `notes` says which."),
                         query_param(
                             "edge_limit",
                             false,
@@ -3158,6 +3158,12 @@ pub(crate) fn node_context_response_fields() -> Vec<ApiParameterSpec> {
 
 pub(crate) fn node_card_response_fields() -> Vec<ApiParameterSpec> {
     vec![
+        response_field(
+            "notes",
+            false,
+            "string[]",
+            "What the answer had to decide: a label several definitions answer to is picked once, and this says which.",
+        ),
         response_field(
             "context",
             true,

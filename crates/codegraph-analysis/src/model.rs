@@ -1004,6 +1004,10 @@ pub struct SourcePreviewLine {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeCard {
+    /// What the answer had to decide for itself: a label several
+    /// definitions answer to is picked once, and the card says which.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
     pub context: NodeContext,
     #[serde(default)]
     pub dependency_summary: NodeDependencySummary,

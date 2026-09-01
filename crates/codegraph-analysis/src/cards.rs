@@ -149,6 +149,7 @@ pub(crate) fn node_card_impl(
     let insights = related_insights.into_iter().take(insight_limit).collect();
 
     Ok(Some(NodeCard {
+        notes: Vec::new(),
         actions: node_card_actions(&context.node),
         dependency_summary: node_dependency_summary(graph, node_id),
         insight_summary,

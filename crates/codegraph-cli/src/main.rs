@@ -797,8 +797,8 @@ fn main() -> Result<()> {
             };
             // The durable `cg-*` id is what an agent saved; resolving it
             // needs the graph, so it happens here rather than in the flag.
-            let node_id = resolve_node_id(&graph, &args.node_id)?;
-            let card = card_builder(
+            let (node_id, note) = resolve_node_id(&graph, &args.node_id)?;
+            let mut card = card_builder(
                 &graph,
                 Some(&args.scan.path),
                 NodeCardRequest {
@@ -809,6 +809,7 @@ fn main() -> Result<()> {
                 },
             )?
             .ok_or_else(|| anyhow::anyhow!("node {} not found", args.node_id))?;
+            card.notes.extend(note);
             println!("{}", serde_json::to_string_pretty(&card)?);
         }
         Command::SourceSearch(args) => {
@@ -1100,17 +1101,20 @@ fn merge_preview_compact(
 /// accept both that form and the bare numeric id (audit F8).
 /// The node a `--node-id` names: a numeric or n-prefixed id, or the
 /// durable `cg-*` one, which only the graph can resolve.
-fn resolve_node_id(graph: &codegraph_core::CodeGraph, value: &str) -> Result<NodeId> {
-    if let Some(node) = graph.nodes.iter().find(|node| {
-        node.metadata
-            .get("stable_id")
-            .is_some_and(|stable_id| stable_id == value)
-    }) {
-        return Ok(node.id);
-    }
-    let id =
-        codegraph_analysis::parse_node_id(value).map_err(|error| anyhow::anyhow!("{error}"))?;
-    Ok(id)
+/// The node a `--node-id` names, and what choosing it decided. `impact` and
+/// `journey` both take a label; this took an id and said `invalid node id
+/// \`main\`` to one, including the labels its own suggested commands hand
+/// back.
+fn resolve_node_id(
+    graph: &codegraph_core::CodeGraph,
+    value: &str,
+) -> Result<(NodeId, Option<String>)> {
+    codegraph_analysis::resolve_node_reference_with_note(graph, value).ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}",
+            codegraph_analysis::missing_node_error(graph, "node", value)
+        )
+    })
 }
 
 /// A node reference to store: the durable `cg-*` id the scan stamps, or the

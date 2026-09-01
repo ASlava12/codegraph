@@ -4188,6 +4188,21 @@ pub(crate) fn node_not_found_error(graph: &CodeGraph, role: &str, value: &str) -
     }
 }
 
+/// The node a reference names, and what choosing it decided.
+///
+/// A label several definitions answer to is picked by rank, and saying
+/// which -- and that there were others -- is the difference between an
+/// answer and a claim. `node-card` took an id and nothing else, so it said
+/// `invalid node id \`main\`` to the label `impact` and `journey` both
+/// accept, and to the one its own suggested commands hand back.
+pub fn resolve_node_reference_with_note(
+    graph: &CodeGraph,
+    value: &str,
+) -> Option<(NodeId, Option<String>)> {
+    let id = resolve_node_reference(graph, value)?;
+    Some((id, note_for_shared_label(graph, Some(value), id)))
+}
+
 pub(crate) fn resolve_node_reference(graph: &CodeGraph, value: &str) -> Option<NodeId> {
     if let Ok(id) = parse_node_id(value) {
         return graph.nodes.iter().any(|node| node.id == id).then_some(id);

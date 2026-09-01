@@ -2157,6 +2157,59 @@ fn embedded_web_assets_support_keyboard_graph_navigation() {
 }
 
 #[tokio::test]
+async fn a_node_card_takes_the_label_its_neighbours_take() {
+    // `impact` and `journey` both resolve a label, and the card said
+    // `invalid node id \`main\`` to one -- including the labels its own
+    // suggested commands hand back. A label several definitions answer to
+    // is picked by rank, and the card says which, the way impact does.
+    let root = temp_server_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("main.rs"),
+        "fn helper() -> u32 {\n    1\n}\n\nfn main() {\n    let _ = helper();\n}\n",
+    )
+    .unwrap();
+    let state = test_state(root.to_path_buf(), vec![], true);
+
+    let Json(card) = node_card_api(
+        State(state.clone()),
+        ApiQuery(NodeCardQuery {
+            path: Some(root.to_path_buf()),
+            node_id: "helper".to_string(),
+            edge_limit: None,
+            source_context: None,
+            insight_limit: None,
+            include_insights: None,
+        }),
+    )
+    .await
+    .expect("a label resolves");
+    assert_eq!(card.context.node.label, "helper");
+
+    let error = node_card_api(
+        State(state),
+        ApiQuery(NodeCardQuery {
+            path: Some(root.to_path_buf()),
+            node_id: "definitely_not_here".to_string(),
+            edge_limit: None,
+            source_context: None,
+            insight_limit: None,
+            include_insights: None,
+        }),
+    )
+    .await
+    .expect_err("a name nothing answers");
+    assert_eq!(error.status, StatusCode::BAD_REQUEST);
+    assert!(
+        error.message.contains("did not match a node")
+            && (error.message.contains("did you mean") || error.message.contains("try a label")),
+        "the message names a next step the way impact and journey do: {}",
+        error.message
+    );
+    fs::remove_dir_all(root).ok();
+}
+
+#[tokio::test]
 async fn a_published_default_is_the_one_the_handler_uses() {
     // The schema said `/api/node-card` lists 80 context edges by default
     // and the handler listed 24; `/api/impact` said 100 dependents and

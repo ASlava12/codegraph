@@ -200,8 +200,11 @@ impl McpEngine<'_> {
                 .resolve_target(value)
                 .map(|id| id.0)
                 .ok_or_else(|| missing_node_error(self.graph, "node_id", value).to_string()),
+            // `resolve_target` already took a label here while the CLI and
+            // `/api/node-card` refused one; what it did not do is say which
+            // definition it picked.
             _ => Err(
-                "get_node_card requires a `node_id` (integer, n-prefixed id, or stable cg-* id)"
+                "get_node_card requires a `node_id`: a label, an integer, an n-prefixed id, or a stable cg-* id"
                     .to_string(),
             ),
         }?;
@@ -550,7 +553,7 @@ pub fn mcp_tool_definitions() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "node_id": {"type": ["integer", "string"], "description": "Graph node id: numeric, n-prefixed, or stable cg-* id."},
+                    "node_id": {"type": ["integer", "string"], "description": "A label such as `main`, or a graph node id: numeric, n-prefixed, or the durable cg-* id."},
                     "edge_limit": {"type": "integer", "description": "Maximum neighbor edges (default 24)."},
                     "source_context": {"type": "integer", "description": "Source preview context lines (default 5)."},
                     "insight_limit": {"type": "integer", "description": "Maximum related risks (default 8)."},
