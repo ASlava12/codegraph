@@ -3562,7 +3562,20 @@ pub(crate) fn classify_call(
             .and_then(|object| node_text(object, source))
         && object.trim() != "$this"
     {
-        let object = object.trim().to_string();
+        // `$this->formatter->format(..)` reaches the method through a
+        // property of the class the call is already inside, and the class
+        // states that property's type: monolog writes nine `handle`
+        // implementations and its handlers reach each other this way.
+        let object = match object.trim().strip_prefix("$this->") {
+            Some(property)
+                if property
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '_') =>
+            {
+                format!("${property}")
+            }
+            _ => object.trim().to_string(),
+        };
         if let Some(receiver_type) = scope.variable_types.get(&object) {
             metadata.insert("receiver_type".to_string(), receiver_type.clone());
         }
@@ -4202,6 +4215,27 @@ fn csharp_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
 }
 
 fn php_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    // A property is declared in the class, and the arm below has always
+    // known how to read one -- it just never saw one, because the walk
+    // started at the method.
+    let mut declared = php_bindings_in(
+        enclosing_class_members(
+            node,
+            &[
+                "class_declaration",
+                "trait_declaration",
+                "interface_declaration",
+            ],
+            &["property_declaration"],
+        ),
+        source,
+    );
+    declared.extend(php_bindings_in(vec![node], source));
+    declared
+}
+
+/// What one set of declarations binds, read the way php states types.
+fn php_bindings_in(mut stack: Vec<Node<'_>>, source: &[u8]) -> BTreeMap<String, String> {
     let mut declared: BTreeMap<String, String> = BTreeMap::new();
     let mut conflicting: BTreeSet<String> = BTreeSet::new();
     let mut record = |name: String, type_name: String, declared: &mut BTreeMap<String, String>| {
@@ -4214,7 +4248,6 @@ fn php_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String
         }
         declared.insert(name, type_name);
     };
-    let mut stack = vec![node];
     while let Some(current) = stack.pop() {
         let mut cursor = current.walk();
         for child in current.named_children(&mut cursor) {

@@ -19867,3 +19867,50 @@ fn a_kotlin_property_states_the_type_its_method_belongs_to() {
     );
     assert_ne!(edge.target, flush_of("SinkTest"));
 }
+
+#[test]
+fn a_php_property_states_the_type_its_method_belongs_to() {
+    // monolog writes `$this->handler->handle($record)` inside
+    // `HandlerWrapper::handle`, which the graph read as the wrapper calling
+    // itself. The class states the property's type, and that names the
+    // interface the call means.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("HandlerInterface.php"),
+        "<?php\n\nnamespace Monolog;\n\ninterface HandlerInterface\n{\n    public function handle(array $record): bool;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("HandlerWrapper.php"),
+        "<?php\n\nnamespace Monolog;\n\nclass HandlerWrapper implements HandlerInterface\n{\n    protected HandlerInterface $handler;\n\n    public function handle(array $record): bool\n    {\n        return $this->handler->handle($record);\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let handle_of = |owner: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == "handle"
+                    && node.metadata.get("owner_type").map(String::as_str) == Some(owner)
+            })
+            .unwrap_or_else(|| panic!("{owner}::handle"))
+            .id
+    };
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("handle")
+        })
+        .expect("the call through the property");
+    assert_eq!(
+        edge.target,
+        handle_of("HandlerInterface"),
+        "the property states which handle the call means"
+    );
+    assert_ne!(edge.target, handle_of("HandlerWrapper"));
+}
