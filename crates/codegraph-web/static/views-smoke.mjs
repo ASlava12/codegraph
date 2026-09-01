@@ -572,6 +572,37 @@ drive("client insights see both halves of the CLI's ambiguity rule", () => {
   }
 });
 
+drive("client insights skip a file a generator wrote", () => {
+  // gqlgen's `generated.go` sits beside the resolvers a person wrote, so
+  // the path says nothing and the banner in the file's first lines says
+  // everything. The scan records it on the file node; both sides read it
+  // there, and a view that counted it would report 1706 findings the
+  // command line does not.
+  const span = (path) => ({ path, start_line: 1, start_column: 1, end_line: 2, end_column: 1 });
+  const graph = {
+    nodes: [
+      { id: 1, kind: "file", label: "src/bindings.rs", metadata: { written_by: "generator" } },
+      { id: 2, kind: "file", label: "src/hand.rs" },
+      { id: 3, kind: "function", label: "bound", span: span("src/bindings.rs") },
+      { id: 4, kind: "function", label: "written", span: span("src/hand.rs") },
+      { id: 5, kind: "unknown", label: "panic" },
+    ],
+    edges: [
+      { kind: "may_error", source: 3, target: 5 },
+      { kind: "may_error", source: 4, target: 5 },
+    ],
+  };
+  const flows = api
+    .buildClientInsights(graph)
+    .filter((insight) => insight.kind.endsWith("error_flow"));
+  if (!flows.some((insight) => insight.nodeId === 4)) {
+    throw new Error(`the file a person wrote still reports its flow: ${JSON.stringify(flows)}`);
+  }
+  if (flows.some((insight) => insight.nodeId === 3)) {
+    throw new Error("a generator's file is not the program's own");
+  }
+});
+
 drive("client insights read unresolved and ambiguous calls as the CLI does", () => {
   const placeholder = (id, label, resolution, extra = {}) => ({
     id, kind: "function", label,

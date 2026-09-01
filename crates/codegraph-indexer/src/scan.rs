@@ -785,6 +785,15 @@ pub(crate) fn index_file(
         return;
     }
 
+    // A generator says so in its own first lines, and that is the only
+    // thing a generated file reliably has: `generated.go` sits beside the
+    // resolvers someone wrote, and the path tells them apart nowhere.
+    if let Some(source) = source_bytes.as_deref()
+        && generator_banner(source)
+    {
+        metadata.insert("written_by".to_string(), "generator".to_string());
+    }
+
     let adapter = source_bytes
         .as_deref()
         .and_then(|source| parsing_adapter(path, source))

@@ -391,23 +391,36 @@ function clientSemanticPassCoveredTheProject(graph) {
 // Whether a definition is part of the program rather than of its suite,
 // its examples or the code it vendors. A rust test is written inside the
 // file it tests, so the node says what the path cannot.
-function isTheProgramsOwn(node) {
+// The files a generator wrote, by the banner the scan read in their own
+// first lines. The CLI collects the same set from the same file nodes.
+function filesAGeneratorWrote(graph) {
+  const generated = new Set();
+  for (const node of graph.nodes || []) {
+    if (node.kind === "file" && node.metadata && node.metadata.written_by === "generator") {
+      generated.add(node.label);
+    }
+  }
+  return generated;
+}
+
+function isTheProgramsOwn(node, generated) {
   // A file node carries its path in its label and has no span of its own,
   // and ruby and lua write plenty of calls at the top of a file where the
   // file is the caller.
   const path = node.kind === "file" ? node.label : node.span && node.span.path;
-  if (path && isTestLikeSourcePath(path)) return false;
+  if (path && (isTestLikeSourcePath(path) || (generated && generated.has(path)))) return false;
   return !(node.metadata && node.metadata.invoked_by === "test_runner");
 }
 
 function clientReachabilityIsWorthReporting(graph, reachableIds) {
+  const generated = filesAGeneratorWrote(graph);
   if (reachableIds.size === 0) return false;
   // What the entrypoints are expected to reach is the program: a test is
   // run by its harness and vendored code by whoever wrote it. The CLI
   // counts it that way, and this ratio decides whether a finding is worth
   // reporting at all, so the two must agree.
   const functions = (graph.nodes || []).filter(
-    (node) => node.kind === "function" && isTheProgramsOwn(node),
+    (node) => node.kind === "function" && isTheProgramsOwn(node, generated),
   );
   if (functions.length < 20) return true;
   const reached = functions.filter((node) => reachableIds.has(node.id)).length;
@@ -415,6 +428,7 @@ function clientReachabilityIsWorthReporting(graph, reachableIds) {
 }
 
 function buildClientInsights(graph) {
+  const generated = filesAGeneratorWrote(graph);
   const nodesById = new Map((graph.nodes || []).map((node) => [node.id, node]));
   const insights = [];
   const heuristicSeverity = clientHeuristicSeverity(graph);
@@ -565,7 +579,7 @@ function buildClientInsights(graph) {
       edges.length > 0 &&
       edges.every((edge) => {
         const caller = nodesById.get(edge.source);
-        return caller && !isTheProgramsOwn(caller);
+        return caller && !isTheProgramsOwn(caller, generated);
       })
     ) {
       return;
@@ -600,7 +614,7 @@ function buildClientInsights(graph) {
     // duplicate: nobody renames a generated function. The CLI reads them
     // the same way, and 2542 findings across the corpus said nothing a
     // reader could act on.
-    if (nodes.every((node) => !isTheProgramsOwn(node))) return;
+    if (nodes.every((node) => !isTheProgramsOwn(node, generated))) return;
     const byOwner = new Map();
     nodes.forEach((node) => {
       const key = `${node.metadata?.owner_type ?? ""}\u0000${node.metadata?.language ?? ""}`;
@@ -664,7 +678,7 @@ function buildClientInsights(graph) {
         callerEdges.length > 0 &&
         callerEdges.every((edge) => {
           const caller = nodesById.get(edge.source);
-          return caller && !isTheProgramsOwn(caller);
+          return caller && !isTheProgramsOwn(caller, generated);
         })
       ) {
         return;
@@ -717,7 +731,7 @@ function buildClientInsights(graph) {
       // generator wrote: neither is a path through the program. The CLI
       // reads them the same way, and 3758 of gqlgen's findings of this kind
       // were its examples and generated servers.
-      if (source && !isTheProgramsOwn(source)) return;
+      if (source && !isTheProgramsOwn(source, generated)) return;
       if (reachabilityIsWorthReporting && !reachableIds.has(edge.source)) {
         insights.push({
           kind: "unreachable_error_flow",

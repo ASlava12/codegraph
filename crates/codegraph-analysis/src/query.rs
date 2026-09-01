@@ -4936,6 +4936,7 @@ fn semantic_pass_covered_the_project(graph: &CodeGraph) -> bool {
 }
 
 pub(crate) fn add_unresolved_call_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let generated = crate::insights::files_a_generator_wrote(graph);
     // On syntactic-only scans an unresolved call is the expected default and
     // reads as info; once semantic enrichment has run, a target that still
     // cannot be resolved is a real warning.
@@ -5008,7 +5009,7 @@ pub(crate) fn add_unresolved_call_insights(graph: &CodeGraph, insights: &mut Vec
                         .nodes
                         .iter()
                         .find(|node| node.id == edge.source)
-                        .is_some_and(|node| !crate::insights::is_the_programs_own(node))
+                        .is_some_and(|node| !crate::insights::is_the_programs_own(node, &generated))
                 })
             })
         {
@@ -5037,6 +5038,7 @@ pub(crate) fn add_ambiguous_call_resolution_insights(
     graph: &CodeGraph,
     insights: &mut Vec<Insight>,
 ) {
+    let generated = crate::insights::files_a_generator_wrote(graph);
     // Severity and the callers of a placeholder were both recomputed by
     // scanning every edge, once per placeholder: on terraform that is 6700
     // placeholders times 223000 edges, twice over. One pass builds what the
@@ -5075,7 +5077,7 @@ pub(crate) fn add_ambiguous_call_resolution_insights(
                     .nodes
                     .iter()
                     .find(|node| node.id == *source)
-                    .is_some_and(|node| !crate::insights::is_the_programs_own(node))
+                    .is_some_and(|node| !crate::insights::is_the_programs_own(node, &generated))
             })
         {
             continue;

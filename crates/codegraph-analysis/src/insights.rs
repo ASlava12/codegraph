@@ -1026,6 +1026,7 @@ pub(crate) fn add_error_flow_insights(
     reachable: &BTreeSet<NodeId>,
     insights: &mut Vec<Insight>,
 ) {
+    let generated = files_a_generator_wrote(graph);
     let labels: BTreeMap<NodeId, &str> = graph
         .nodes
         .iter()
@@ -1052,7 +1053,7 @@ pub(crate) fn add_error_flow_insights(
             .nodes
             .iter()
             .find(|node| node.id == edge.source)
-            .is_some_and(|node| !is_the_programs_own(node))
+            .is_some_and(|node| !is_the_programs_own(node, &generated))
         {
             continue;
         }
@@ -2414,6 +2415,7 @@ pub(crate) fn add_entrypoint_coverage_insights(
     if reachable.is_empty() {
         return;
     }
+    let generated = files_a_generator_wrote(graph);
 
     // What the entrypoints are expected to reach is the program. A test is
     // run by its harness and vendored code by whoever wrote it, so counting
@@ -2422,7 +2424,7 @@ pub(crate) fn add_entrypoint_coverage_insights(
     let functions: Vec<&Node> = graph
         .nodes
         .iter()
-        .filter(|node| node.kind == NodeKind::Function && is_the_programs_own(node))
+        .filter(|node| node.kind == NodeKind::Function && is_the_programs_own(node, &generated))
         .collect();
     if !entrypoint_coverage_is_low(graph, reachable) {
         return;
@@ -2571,7 +2573,22 @@ fn reachability_is_worth_reporting(graph: &CodeGraph, reachable: &BTreeSet<NodeI
 /// Whether a definition is part of the program rather than of its suite,
 /// its examples or the code it vendors. A rust test is written inside the
 /// file it tests, so the node says what the path cannot.
-pub(crate) fn is_the_programs_own(node: &Node) -> bool {
+/// The files a generator wrote, by the banner they carry in their own
+/// first lines. Collected once: the check runs per node, and looking the
+/// file up in the node list each time would make it quadratic.
+pub(crate) fn files_a_generator_wrote(graph: &CodeGraph) -> BTreeSet<&str> {
+    graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == NodeKind::File
+                && node.metadata.get("written_by").map(String::as_str) == Some("generator")
+        })
+        .map(|node| node.label.as_str())
+        .collect()
+}
+
+pub(crate) fn is_the_programs_own(node: &Node, generated: &BTreeSet<&str>) -> bool {
     // A file node carries its path in its label and has no span of its
     // own, and ruby and lua write plenty of calls at the top of a file
     // where the file is the caller: without this a spec's own top-level
@@ -2580,15 +2597,16 @@ pub(crate) fn is_the_programs_own(node: &Node) -> bool {
         NodeKind::File => Some(node.label.as_str()),
         _ => node.span.as_ref().map(|span| span.path.as_str()),
     };
-    path.is_none_or(|path| !is_test_like_source_path(path))
+    path.is_none_or(|path| !is_test_like_source_path(path) && !generated.contains(path))
         && node.metadata.get("invoked_by").map(String::as_str) != Some("test_runner")
 }
 
 fn entrypoint_coverage_is_low(graph: &CodeGraph, reachable: &BTreeSet<NodeId>) -> bool {
+    let generated = files_a_generator_wrote(graph);
     let functions = graph
         .nodes
         .iter()
-        .filter(|node| node.kind == NodeKind::Function && is_the_programs_own(node));
+        .filter(|node| node.kind == NodeKind::Function && is_the_programs_own(node, &generated));
     let (total, reached) = functions.fold((0usize, 0usize), |(total, reached), function| {
         (
             total + 1,
@@ -2701,6 +2719,7 @@ pub(crate) fn add_unreachable_error_flow_insights(
     if !reachability_is_worth_reporting(graph, reachable) {
         return;
     }
+    let generated = files_a_generator_wrote(graph);
 
     for (index, edge) in graph.edges.iter().enumerate() {
         if edge.kind != EdgeKind::MayError || reachable.contains(&edge.source) {
@@ -2713,7 +2732,7 @@ pub(crate) fn add_unreachable_error_flow_insights(
             .nodes
             .iter()
             .find(|node| node.id == edge.source)
-            .is_some_and(|node| !is_the_programs_own(node))
+            .is_some_and(|node| !is_the_programs_own(node, &generated))
         {
             continue;
         }

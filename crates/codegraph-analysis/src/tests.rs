@@ -8357,6 +8357,52 @@ fn insights_report_duplicate_functions_and_error_flow() {
 }
 
 #[test]
+fn a_generators_own_file_is_not_counted_as_the_program() {
+    // A generated file ships and runs, and nobody wrote it: gqlgen's
+    // `generated.go` files hold 14363 of its 18653 functions and 168 of
+    // them sit where no path rule looks. Findings about them are findings
+    // nobody can act on, which is what `is_the_programs_own` decides -- and
+    // the file node says who wrote it because the scan read the banner.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| SourceSpan {
+        path: path.to_string(),
+        start_line: 1,
+        start_column: 1,
+        end_line: 2,
+        end_column: 1,
+    };
+    graph.add_node_with_metadata(
+        NodeKind::File,
+        "src/bindings.rs",
+        None,
+        BTreeMap::from([("written_by".to_string(), "generator".to_string())]),
+    );
+    graph.add_node(NodeKind::File, "src/hand.rs");
+    let generated = graph.add_node_with_span(NodeKind::Function, "bound", span("src/bindings.rs"));
+    let written = graph.add_node_with_span(NodeKind::Function, "written", span("src/hand.rs"));
+    let error = graph.add_node(NodeKind::Unknown, "panic");
+    graph.add_edge(generated, error, EdgeKind::MayError, Confidence::Heuristic);
+    graph.add_edge(written, error, EdgeKind::MayError, Confidence::Heuristic);
+
+    let report = insights(&graph);
+    let flows = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "potential_error_flow")
+        .collect::<Vec<_>>();
+    assert!(
+        flows.iter().any(|insight| insight.nodes.contains(&written)),
+        "the file a person wrote still reports its flow"
+    );
+    assert!(
+        !flows
+            .iter()
+            .any(|insight| insight.nodes.contains(&generated)),
+        "and the generator's does not"
+    );
+}
+
+#[test]
 fn a_variable_set_before_a_command_is_read_as_the_path_it_holds() {
     let mut graph = CodeGraph::new("repo");
     // openzeppelin runs `env SRC=./fv/harnesses hardhat build`: the shell
