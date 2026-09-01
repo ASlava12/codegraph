@@ -5043,6 +5043,21 @@ pub(crate) fn add_ambiguous_call_resolution_insights(
             .get(&placeholder.id)
             .map(Vec::as_slice)
             .unwrap_or_default();
+        // A call written only outside the program is not the program's
+        // ambiguity either: 1299 of terraform's 3658 and 565 of
+        // nlohmann/json's 1821 are reached only from a suite, an example
+        // or a generated file.
+        if !matches.is_empty()
+            && matches.iter().all(|(_, source)| {
+                graph
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == *source)
+                    .is_some_and(|node| !crate::insights::is_the_programs_own(node))
+            })
+        {
+            continue;
+        }
         let mut nodes = vec![placeholder.id];
         nodes.extend(matches.iter().map(|(_, source)| *source));
         nodes.sort_unstable();

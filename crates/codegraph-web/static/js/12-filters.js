@@ -643,9 +643,19 @@ function buildClientInsights(graph) {
     .forEach((node) => {
       const count = node.metadata?.candidate_count || "multiple";
       const sample = node.metadata?.candidate_sample;
-      const callers = (unresolvedCallers.get(node.id) || [])
-        .map((edge) => nodesById.get(edge.source)?.label)
-        .filter(Boolean);
+      const callerEdges = unresolvedCallers.get(node.id) || [];
+      // A call written only outside the program is not the program's
+      // ambiguity. The CLI reads them the same way.
+      if (
+        callerEdges.length > 0 &&
+        callerEdges.every((edge) => {
+          const caller = nodesById.get(edge.source);
+          return caller && !isTheProgramsOwn(caller);
+        })
+      ) {
+        return;
+      }
+      const callers = callerEdges.map((edge) => nodesById.get(edge.source)?.label).filter(Boolean);
       const from = callers.length > 0 ? ` called from ${callers.slice(0, 3).join(", ")}` : "";
       insights.push({
         kind: "ambiguous_call_resolution",

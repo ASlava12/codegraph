@@ -9956,6 +9956,77 @@ fn insights_report_entrypoint_dead_ends() {
 }
 
 #[test]
+fn an_ambiguity_only_a_suite_reaches_is_not_the_programs() {
+    // 1299 of terraform's 3658 ambiguous calls and 1320 of
+    // nlohmann/json's are reached only from a suite, an example or a
+    // generated file. The same reading the unresolved half already gets.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    let shipped = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "run",
+        span("src/run.go"),
+        BTreeMap::new(),
+    );
+    let suite = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "TestRun",
+        span("src/run_test.go"),
+        BTreeMap::new(),
+    );
+    let ambiguous = |graph: &mut CodeGraph, label: &str| {
+        graph.add_node_with_metadata(
+            NodeKind::ExternalDependency,
+            label,
+            None,
+            BTreeMap::from([
+                ("item_kind".to_string(), "call".to_string()),
+                ("resolution".to_string(), "ambiguous".to_string()),
+                ("candidate_count".to_string(), "2".to_string()),
+            ]),
+        )
+    };
+    let reached_by_both = ambiguous(&mut graph, "Encode");
+    let reached_by_the_suite = ambiguous(&mut graph, "Helper");
+    graph.add_edge(
+        shipped,
+        reached_by_both,
+        EdgeKind::Calls,
+        Confidence::Heuristic,
+    );
+    graph.add_edge(
+        suite,
+        reached_by_the_suite,
+        EdgeKind::Calls,
+        Confidence::Heuristic,
+    );
+
+    let report = insights(&graph);
+    let found: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "ambiguous_call_resolution")
+        .map(|insight| insight.message.as_str())
+        .collect();
+    assert!(
+        found.iter().any(|message| message.contains("Encode")),
+        "the program's own ambiguity is still worth saying: {found:?}"
+    );
+    assert!(
+        !found.iter().any(|message| message.contains("Helper")),
+        "one only a suite reaches is not: {found:?}"
+    );
+}
+
+#[test]
 fn a_file_carries_its_path_in_its_label() {
     // Ruby and Lua write plenty of calls at the top of a file, where the
     // file itself is the caller and has no span of its own. Reading only
