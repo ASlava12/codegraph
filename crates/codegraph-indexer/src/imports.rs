@@ -1055,6 +1055,95 @@ pub(crate) fn bash_local_import_target(
     })
 }
 
+/// Every path a Rust `use` names, with its braces expanded.
+///
+/// `use a::{b::{C, D}, E};` names `a::b::C`, `a::b::D` and `a::E`, and
+/// ripgrep writes `use {grep_matcher::LineTerminator, std::io};`, where the
+/// brace comes first and each part carries its own crate. Reading one root
+/// for the whole statement made a sibling crate of the workspace look like
+/// a dependency and took 7 of ripgrep's own calls with it.
+fn rust_use_paths(value: &str, out: &mut Vec<String>) {
+    let value = value.trim();
+    let Some(open) = value.find('{') else {
+        if !value.is_empty() {
+            out.push(value.to_string());
+        }
+        return;
+    };
+    let mut depth = 0usize;
+    let mut close = None;
+    for (index, character) in value.char_indices().skip(open) {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(index);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else { return };
+    let prefix = &value[..open];
+    let mut depth = 0usize;
+    let mut part = String::new();
+    for character in value[open + 1..close].chars() {
+        match character {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                rust_use_paths(&format!("{prefix}{}", part.trim()), out);
+                part.clear();
+                continue;
+            }
+            _ => {}
+        }
+        part.push(character);
+    }
+    if !part.trim().is_empty() {
+        rust_use_paths(&format!("{prefix}{}", part.trim()), out);
+    }
+}
+
+/// The names a Rust `use` binds, each with the crate it comes from.
+///
+/// `use std::collections::{BTreeMap, BTreeSet};` binds both names from
+/// `std`, `use walkdir::WalkDir;` binds one from `walkdir`. Only the names
+/// written with a leading capital come back: those are the ones a call can
+/// be qualified by -- `BTreeMap::new` -- while a lowercase import binds a
+/// function whose calls carry no qualifier to look up. `crate`, `self` and
+/// `super` are the file's own tree and are left to
+/// [`rust_local_import_target`].
+pub(crate) fn rust_import_qualifiers(label: &str) -> Vec<(String, String)> {
+    let Some(value) = label.trim().strip_prefix("use ") else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    rust_use_paths(value.trim().trim_end_matches(';'), &mut paths);
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let (path, alias) = match path.split_once(" as ") {
+                Some((path, alias)) => (path, Some(alias.trim().to_string())),
+                None => (path.as_str(), None),
+            };
+            let root = path.split("::").next()?.trim();
+            if root.is_empty() || matches!(root, "crate" | "self" | "super") {
+                return None;
+            }
+            let bound = alias.unwrap_or_else(|| path.rsplit("::").next().unwrap_or("").to_string());
+            let bound = bound.trim().to_string();
+            bound
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_ascii_uppercase())
+                .then(|| (root.to_string(), bound))
+        })
+        .collect()
+}
+
 pub(crate) fn rust_local_import_target(
     source_label: &str,
     import_label: &str,

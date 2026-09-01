@@ -2466,7 +2466,10 @@ fn declared_in_module(path: &str, target: &str) -> bool {
 /// edge — the dependency is real — but the target is marked `external`, not
 /// `ambiguous`, so the graph stops claiming an in-repo name collision that a
 /// resolver could one day settle.
-fn add_external_call_placeholder(context: &mut IndexContext, call: PendingCall) {
+/// A call that leaves the project. `resolution` says what provides it: a
+/// dependency is `external`, and the language's own library is `builtin` --
+/// `BTreeMap::new` is not a package this project depends on.
+fn add_external_call_placeholder(context: &mut IndexContext, call: PendingCall, resolution: &str) {
     let key = (call.language.clone(), call.label.clone());
     let label = call.label.clone();
     let language = call.language.clone();
@@ -2480,7 +2483,7 @@ fn add_external_call_placeholder(context: &mut IndexContext, call: PendingCall) 
         metadata.insert("language".to_string(), call.language);
         metadata.insert("parser".to_string(), "tree-sitter".to_string());
         metadata.insert("item_kind".to_string(), "call".to_string());
-        metadata.insert("resolution".to_string(), "external".to_string());
+        metadata.insert("resolution".to_string(), resolution.to_string());
         let id = context.graph.add_node_with_metadata(
             NodeKind::ExternalDependency,
             call.label,
@@ -2498,7 +2501,7 @@ fn add_external_call_placeholder(context: &mut IndexContext, call: PendingCall) 
         Confidence::Heuristic,
         BTreeMap::from([
             ("call_label".to_string(), label),
-            ("resolution".to_string(), "external".to_string()),
+            ("resolution".to_string(), resolution.to_string()),
             ("language".to_string(), language),
             ("file".to_string(), file),
             ("line".to_string(), line.to_string()),
@@ -3076,7 +3079,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             && let Some((owner, _)) = split_qualified_call(&call.label)
             && !php_classes.contains(php_class_name(owner))
         {
-            add_external_call_placeholder(context, call);
+            add_external_call_placeholder(context, call, "external");
             continue;
         }
         // `Rails.application.configure` and mastodon's own
@@ -3095,7 +3098,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 .as_deref()
                 .is_some_and(|receiver| !declares_ruby_constant(&ruby_constants, receiver))
         {
-            add_external_call_placeholder(context, call);
+            add_external_call_placeholder(context, call, "external");
             continue;
         }
         // A qualified name the language itself provides is answered by the
@@ -3445,7 +3448,32 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         }
         .map(|package| resolved_import_package(context, &mut scanned_candidates, package));
         if imported_package == Some(ImportedPackage::External) {
-            add_external_call_placeholder(context, call);
+            // `use std::collections::BTreeMap;` and `use walkdir::WalkDir;`
+            // both rule out this project's own declarations, but only the
+            // second names a dependency: the standard library is what the
+            // language provides, and `builtin` is what the graph calls that.
+            let provided_by_the_language = context
+                .file_import_package_ids
+                .get(call.span.path.as_str())
+                .zip(split_qualified_call(&call.label))
+                .is_some_and(|(packages, (owner, _))| {
+                    let head = call
+                        .label
+                        .split_once("::")
+                        .or_else(|| call.label.split_once('.'))
+                        .map(|(head, _)| head);
+                    [Some(owner), head].into_iter().flatten().any(|name| {
+                        packages.get(name).is_some_and(|package| {
+                            matches!(package.as_str(), "cargo:std" | "cargo:core" | "cargo:alloc")
+                        })
+                    })
+                });
+            let resolution = if provided_by_the_language {
+                "builtin"
+            } else {
+                "external"
+            };
+            add_external_call_placeholder(context, call, resolution);
             continue;
         }
         // What narrowed the candidates down. A call kept by the syntax —
@@ -3604,7 +3632,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 .and_then(|qualifiers| qualifiers.get(package))
                 == Some(&ImportedPackage::External)
         {
-            add_external_call_placeholder(context, call);
+            add_external_call_placeholder(context, call, "external");
             continue;
         }
 

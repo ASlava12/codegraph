@@ -1126,6 +1126,28 @@ pub(crate) fn index_file(
                                 .or_default()
                                 .insert(qualifier, package.clone());
                         }
+                        // A rust `use` binds every name it names, and a
+                        // qualified call is written through one of them:
+                        // `BTreeMap::new` is `std`'s, not one of the 8
+                        // functions this project happens to call `new`. The
+                        // crate it names is kept beside the qualifier so a
+                        // sibling crate of the same workspace is dropped
+                        // below with every other package this project owns.
+                        if language == Language::Rust {
+                            for (crate_name, name) in rust_import_qualifiers(&item.label) {
+                                let package_id = format!("cargo:{}", crate_name.replace('_', "-"));
+                                context
+                                    .file_import_package_ids
+                                    .entry(label.to_string())
+                                    .or_default()
+                                    .insert(name.clone(), package_id);
+                                context
+                                    .file_import_qualifiers
+                                    .entry(label.to_string())
+                                    .or_default()
+                                    .insert(name, package.clone());
+                            }
+                        }
                         // `using Assert = ..XUnitAssert;` renames a type,
                         // and every call written through the alias means
                         // the type it stands for.

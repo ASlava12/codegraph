@@ -16788,6 +16788,82 @@ fn code_outside_the_tests_does_not_call_into_them() {
 }
 
 #[test]
+fn a_rust_use_says_whose_name_the_call_is_written_through() {
+    // `BTreeMap::new` was matched against the 8 functions this repository
+    // calls `new` and kept as one bounded ambiguity: 395 of its 464
+    // ambiguous calls were a standard library or dependency type, and
+    // `PathBuf::from` had picked up a project `from` outright. A rust `use`
+    // says which crate the name comes from, and rust's own scoping makes
+    // that answer safe -- a file cannot both import `BTreeMap` and declare
+    // one. A sibling crate of the same workspace is this project, not a
+    // dependency, and must keep resolving by name: ripgrep writes its
+    // imports as `use {grep_matcher::LineTerminator, ..};`, where the brace
+    // comes first and every part carries its own crate, and reading one
+    // root for the whole statement took 7 of its own calls with it.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app").join("src")).unwrap();
+    fs::create_dir_all(root.join("engine").join("src")).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"app\", \"engine\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("engine").join("Cargo.toml"),
+        "[package]\nname = \"engine\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("engine").join("src").join("lib.rs"),
+        "pub struct Engine;\n\nimpl Engine {\n    pub fn new() -> Self {\n        Engine\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("Cargo.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nengine = { path = \"../engine\" }\nwalkdir = \"2\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app").join("src").join("main.rs"),
+        "use {engine::Engine, walkdir::WalkDir};\nuse std::collections::BTreeMap;\n\npub struct Config;\n\nimpl Config {\n    pub fn build() -> Self {\n        Config\n    }\n}\n\nfn main() {\n    let _: BTreeMap<u8, u8> = BTreeMap::new();\n    let _ = WalkDir::new(\".\");\n    let _ = Engine::new();\n    let _ = Config::build();\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution_of = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+
+    assert_eq!(
+        resolution_of("BTreeMap::new").as_deref(),
+        Some("builtin"),
+        "the standard library provides it, and this crate's own `new` is not a candidate"
+    );
+    assert_eq!(
+        resolution_of("WalkDir::new").as_deref(),
+        Some("external"),
+        "a dependency provides it"
+    );
+    assert_eq!(
+        resolution_of("Engine::new").as_deref(),
+        Some("resolved"),
+        "a sibling crate of the same workspace is this project"
+    );
+    assert_eq!(
+        resolution_of("Config::build").as_deref(),
+        Some("resolved"),
+        "and a type declared here keeps resolving to what it declares"
+    );
+}
+
+#[test]
 fn a_call_edge_says_what_settled_it() {
     // Every call edge claimed `heuristic` confidence, so a link the syntax
     // settles read exactly like a name matched across the repository —
