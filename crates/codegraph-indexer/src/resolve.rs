@@ -3120,6 +3120,82 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         })
         .collect();
 
+    // The files an ocaml module answers from: the file named after it, the
+    // files that declare it, and whatever those include. `Fiber` is
+    // `src/fiber/src/fiber.ml`, which is `include Core`, so `Fiber.return`
+    // is `core.ml`'s. dune answers 20163 of its 21194 module-qualified
+    // calls inside that closure; the 796 that land outside are `String.sub`
+    // in bigstringaf and `Unix.lstat` in stdune's `path.ml` -- a standard
+    // library module answered by an unrelated file that happens to declare
+    // the name.
+    let mut ocaml_module_files: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut ocaml_module_includes: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut ocaml_nested_modules: BTreeSet<(String, String)> = BTreeSet::new();
+    for node in &context.graph.nodes {
+        if node.metadata.get("language").map(String::as_str) != Some("ocaml") {
+            continue;
+        }
+        if node.kind == NodeKind::File
+            && let Some(stem) = node
+                .label
+                .rsplit('/')
+                .next()
+                .and_then(|name| name.rsplit_once('.'))
+                .filter(|(_, extension)| matches!(*extension, "ml" | "mli"))
+                .map(|(stem, _)| stem)
+        {
+            let mut module = stem.to_string();
+            if let Some(first) = module.get_mut(..1) {
+                first.make_ascii_uppercase();
+            }
+            ocaml_module_files
+                .entry(module)
+                .or_default()
+                .insert(node.label.clone());
+        }
+        if node.kind == NodeKind::Module
+            && let Some(span) = node.span.as_ref()
+        {
+            // A module declared inside a file is that file's own: from
+            // anywhere else it is `Csexp_rpc.Unix`, not `Unix`. Treating
+            // the declaration as a project-wide answer let `csexp_rpc.ml`
+            // answer `Unix.close` for stdune's `fd.ml` and closed a
+            // dependency cycle that does not exist.
+            ocaml_nested_modules.insert((span.path.clone(), node.label.clone()));
+            if let Some(extends) = node.metadata.get("extends") {
+                ocaml_module_includes
+                    .entry(node.label.clone())
+                    .or_default()
+                    .extend(
+                        extends
+                            .split(',')
+                            .filter_map(|part| part.trim().rsplit('.').next())
+                            .filter(|part| !part.is_empty())
+                            .map(ToString::to_string),
+                    );
+            }
+        }
+    }
+    // What a module includes answers for it too, three levels deep: beyond
+    // that the chains in dune are aliases of aliases and add nothing.
+    for _ in 0..3 {
+        let grown: Vec<(String, BTreeSet<String>)> = ocaml_module_includes
+            .iter()
+            .map(|(module, included)| {
+                let mut files = ocaml_module_files.get(module).cloned().unwrap_or_default();
+                for other in included {
+                    if let Some(more) = ocaml_module_files.get(other) {
+                        files.extend(more.iter().cloned());
+                    }
+                }
+                (module.clone(), files)
+            })
+            .collect();
+        for (module, files) in grown {
+            ocaml_module_files.entry(module).or_default().extend(files);
+        }
+    }
+
     // Every module an ocaml file declares, by the file that declares it.
     // `Process.run` is that module's function, and letting a same-file
     // `run` answer it said 2366 of dune's calls belong to the definition
@@ -3333,6 +3409,55 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                             || is_shipped_but_not_written(&span.path)
                     })
             });
+        }
+        // What narrowed the call, when the module's own files did.
+        let mut narrowed_to_the_module = false;
+        // A module answers for its own files and for what they include,
+        // and for nothing else. `Unix.lstat` is not stdune's `path.ml`
+        // because that file declares an `lstat`; 796 of dune's resolutions
+        // were of that kind, one of them closing a dependency cycle that
+        // does not exist.
+        if call.language == "ocaml"
+            && let Some((module, _)) = call.label.split_once('.')
+            && !module.contains('.')
+            && module
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_uppercase())
+        {
+            // A module with no file and no node here is the standard
+            // library's or a dependency's: dune writes 890 such calls and
+            // 237 of them were answered by an unrelated project file --
+            // `Printf.printf` by stdune's `console.ml` 161 times, and
+            // `Unix.close` by the scheduler's own `close`, which closed a
+            // dependency cycle between stdune and the scheduler that does
+            // not exist.
+            let answers = ocaml_module_files.get(module);
+            let declared_here = caller_path.is_some_and(|path| {
+                ocaml_nested_modules.contains(&(path.to_string(), module.to_string()))
+            });
+            let before = language_targets.len();
+            match answers {
+                Some(answers) if !answers.is_empty() => {
+                    language_targets.retain(|target| {
+                        graph_node(&context.graph, *target)
+                            .and_then(|node| node.span.as_ref())
+                            .is_some_and(|span| {
+                                answers.contains(&span.path)
+                                    || (declared_here && Some(span.path.as_str()) == caller_path)
+                            })
+                    });
+                }
+                _ if declared_here => {
+                    language_targets.retain(|target| {
+                        graph_node(&context.graph, *target)
+                            .and_then(|node| node.span.as_ref())
+                            .is_some_and(|span| Some(span.path.as_str()) == caller_path)
+                    });
+                }
+                _ => language_targets.clear(),
+            }
+            narrowed_to_the_module = language_targets.len() < before;
         }
         // `super.x` written inside `x` means the parent's implementation and
         // never this one. It has to be settled before the same-file
@@ -4300,6 +4425,11 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             }
         }
 
+        // The module's files are what chose, and `name` would say the
+        // name matched and nothing else did.
+        if narrowed_to_the_module && basis == "name" && !targets.is_empty() {
+            basis = "module_file";
+        }
         let overloads = targets.len() > 1
             && (one_methods_overloads(&context.graph, &targets)
                 || one_macros_arms(&context.graph, &targets));

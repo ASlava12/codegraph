@@ -17548,24 +17548,29 @@ fn an_ocaml_module_call_finds_the_file_that_is_that_module() {
         "{}",
         target_path("Json.assoc")
     );
-    // The file is the module, so `assoc` there belongs to `Json` outright
-    // and the owner settles the call before the file name has to.
+    // The module's own files answer for it, and they are what narrows the
+    // call now -- `owner_type` said the receiver's type chose, which was
+    // true and less specific: a module answers for its file and for what
+    // that file includes, and for nothing else.
     assert_eq!(
         call("Json.assoc")
             .metadata
             .get("resolution_basis")
             .map(String::as_str),
-        Some("owner_type")
+        Some("module_file")
     );
     // A path-qualified module is still that module.
     assert!(target_path("Stdune.Json.assoc").ends_with("json.ml"));
-    // A module the project does not define settles nothing.
+    // A module the project does not define settles nothing -- and saying
+    // `ambiguous` claimed several of this project's definitions answer to
+    // the name, when not one of them is `Missing`'s. dune wrote 890 such
+    // calls and 237 were answered outright by an unrelated file.
     assert_eq!(
         call("Missing.assoc")
             .metadata
             .get("resolution")
             .map(String::as_str),
-        Some("ambiguous")
+        Some("unresolved")
     );
 }
 
