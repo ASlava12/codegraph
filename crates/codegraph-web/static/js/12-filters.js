@@ -524,7 +524,13 @@ function buildClientInsights(graph) {
       // point at one. The CLI skips those too.
       node.metadata?.definition_form !== "accessor" &&
       !entrypointIds.has(node.id) &&
-      !calledIds.has(node.id)
+      !calledIds.has(node.id) &&
+      // A call the resolver could not settle names no definition, so every
+      // definition it might have meant reads as uncalled: cats declares
+      // `eqv` 72 times, 46 with no incoming edge, while 39 unsettled calls
+      // reach for that name. The resolver marks the candidates it found,
+      // and both sides read the mark rather than matching the name again.
+      node.metadata?.may_be_called_by !== "unsettled_call"
     ) {
       const exported = node.metadata?.visibility === "public";
       insights.push({

@@ -572,6 +572,34 @@ drive("client insights see both halves of the CLI's ambiguity rule", () => {
   }
 });
 
+drive("client insights keep a definition an unsettled call may mean", () => {
+  // A call the resolver could not narrow becomes one placeholder, so none
+  // of the definitions it might mean has an incoming edge and each reads as
+  // a function nobody calls. The resolver marks the candidates it found;
+  // both sides read that mark rather than matching the name again.
+  const span = (path) => ({ path, start_line: 1, start_column: 1, end_line: 2, end_column: 1 });
+  const graph = {
+    nodes: [
+      { id: 1, kind: "function", label: "eqv", span: span("src/left.rs"),
+        metadata: { visibility: "public", may_be_called_by: "unsettled_call" } },
+      { id: 2, kind: "function", label: "eqv", span: span("src/right.rs"),
+        metadata: { visibility: "public", may_be_called_by: "unsettled_call" } },
+      { id: 3, kind: "function", label: "only_here", span: span("src/left.rs"),
+        metadata: { visibility: "public" } },
+    ],
+    edges: [],
+  };
+  const uncalled = api
+    .buildClientInsights(graph)
+    .filter((insight) => insight.kind === "orphan_function" || insight.kind === "export_with_no_local_caller");
+  if (uncalled.some((insight) => insight.nodeId === 1 || insight.nodeId === 2)) {
+    throw new Error("a call that may mean it is not the absence of one");
+  }
+  if (!uncalled.some((insight) => insight.nodeId === 3)) {
+    throw new Error(`a name nothing reaches for is still worth saying: ${JSON.stringify(uncalled)}`);
+  }
+});
+
 drive("client insights skip a file a generator wrote", () => {
   // gqlgen's `generated.go` sits beside the resolvers a person wrote, so
   // the path says nothing and the banner in the file's first lines says

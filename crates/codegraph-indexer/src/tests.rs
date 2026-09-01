@@ -9259,6 +9259,74 @@ fn a_contract_is_not_a_function_its_methods_are_local_to() {
 }
 
 #[test]
+fn an_unsettled_call_marks_the_definitions_it_may_mean() {
+    // The placeholder was the only record of an ambiguity, so none of the
+    // definitions it might mean had an incoming edge and each read as a
+    // function nobody calls. The narrowing that produced the candidates is
+    // gone by the time an insight runs, so the resolver says which they
+    // were: terraform's 3658 unsettled calls have 77707 candidates against
+    // 333455 declarations that merely share their names.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("left.rs"),
+        "pub struct Left;\n\nimpl Left {\n    pub fn eqv(&self) -> bool {\n        true\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("right.rs"),
+        "pub struct Right;\n\nimpl Right {\n    pub fn eqv(&self) -> bool {\n        false\n    }\n}\n\npub fn only_here() -> bool {\n    true\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("main.rs"),
+        "mod left;\nmod right;\n\nfn main() {\n    let value = pick();\n    let _ = value.eqv();\n}\n\nfn pick() -> left::Left {\n    left::Left\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let marked = |path: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == NodeKind::Function
+                    && node.label == "eqv"
+                    && node
+                        .span
+                        .as_ref()
+                        .is_some_and(|span| span.path.ends_with(path))
+            })
+            .map(|node| node.metadata.get("may_be_called_by").cloned())
+    };
+    assert_eq!(
+        marked("left.rs"),
+        Some(Some("unsettled_call".to_string())),
+        "the call could mean this one"
+    );
+    assert_eq!(
+        marked("right.rs"),
+        Some(Some("unsettled_call".to_string())),
+        "and this one"
+    );
+    let unmarked = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Function && node.label == "only_here")
+        .expect("only_here");
+    assert_eq!(
+        unmarked.metadata.get("may_be_called_by"),
+        None,
+        "a name nothing reaches for is not marked"
+    );
+}
+
+#[test]
 fn a_file_that_says_a_generator_wrote_it_is_not_the_programs_own() {
     // 219 of gqlgen's 865 go files carry a generator's banner and hold
     // 14363 of its 18653 functions; 168 of them sit where no path rule

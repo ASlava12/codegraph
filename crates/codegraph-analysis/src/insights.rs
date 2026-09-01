@@ -976,9 +976,19 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
         if !is_the_programs_own(node, &generated) {
             continue;
         }
+        // A call the resolver could not settle names no definition, so
+        // every definition it might have meant reads as uncalled: cats
+        // declares `eqv` 72 times, 46 of them with no incoming edge, while
+        // 39 unsettled calls reach for that name. 32479 of the corpus's
+        // 116130 uncalled functions are of that kind, and for each of them
+        // the honest answer is the one `ambiguous_call_resolution` already
+        // gives -- that which one is meant cannot be told.
+        let unsettled_call_may_mean_it =
+            node.metadata.get("may_be_called_by").map(String::as_str) == Some("unsettled_call");
         if node.kind == NodeKind::Function
             && !entrypoints.contains(&node.id)
             && !called.contains(&node.id)
+            && !unsettled_call_may_mean_it
         {
             // A function nobody in the repository calls is either dead or
             // the API: terraform has 11406 exported functions with no

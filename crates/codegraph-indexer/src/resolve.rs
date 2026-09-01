@@ -4164,6 +4164,24 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // O(call-sites * duplicate-labels). Preserve the uncertainty as one
         // bounded node instead; semantic enrichment can replace it later.
         if targets.len() > 1 && !overloads {
+            // Which definitions the call might have meant. Without this the
+            // placeholder is the only thing that records the ambiguity, so
+            // none of the candidates has an incoming edge and every one of
+            // them reads as a function nobody calls: cats declares `eqv` 72
+            // times, 46 of them with no caller, while 39 unsettled calls
+            // reach for that name. Matching the name again in the insight
+            // instead of saying so here would be four times too wide --
+            // terraform's 77707 candidates against 333455 same-name
+            // declarations -- because the narrowing that got here is gone
+            // by then.
+            for target in &targets {
+                add_node_metadata(
+                    &mut context.graph,
+                    *target,
+                    "may_be_called_by",
+                    "unsettled_call",
+                );
+            }
             let key = (call.language.clone(), call.label.clone());
             let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
                 *id

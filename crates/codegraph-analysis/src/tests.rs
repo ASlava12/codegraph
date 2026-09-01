@@ -8357,6 +8357,65 @@ fn insights_report_duplicate_functions_and_error_flow() {
 }
 
 #[test]
+fn a_definition_an_unsettled_call_may_mean_is_not_uncalled() {
+    // A call the resolver could not narrow becomes one placeholder, so none
+    // of the definitions it might mean gets an incoming edge and every one
+    // reads as a function nobody calls: cats declares `eqv` 72 times, 46 of
+    // them with no caller, while 39 unsettled calls reach for that name.
+    // The resolver marks the candidates it actually found -- matching the
+    // name again here would be four times too wide, 333455 same-name
+    // declarations against terraform's 77707 candidates.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| SourceSpan {
+        path: path.to_string(),
+        start_line: 1,
+        start_column: 1,
+        end_line: 2,
+        end_column: 1,
+    };
+    let candidate = |graph: &mut CodeGraph, path: &str| {
+        graph.add_node_with_metadata(
+            NodeKind::Function,
+            "eqv",
+            Some(span(path)),
+            BTreeMap::from([
+                ("visibility".to_string(), "public".to_string()),
+                ("may_be_called_by".to_string(), "unsettled_call".to_string()),
+            ]),
+        )
+    };
+    let left = candidate(&mut graph, "src/left.rs");
+    let right = candidate(&mut graph, "src/right.rs");
+    let alone = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "only_here",
+        Some(span("src/left.rs")),
+        BTreeMap::from([("visibility".to_string(), "public".to_string())]),
+    );
+
+    let report = insights(&graph);
+    let uncalled = report
+        .insights
+        .iter()
+        .filter(|insight| {
+            insight.kind == "orphan_function" || insight.kind == "export_with_no_local_caller"
+        })
+        .collect::<Vec<_>>();
+    for id in [left, right] {
+        assert!(
+            !uncalled.iter().any(|insight| insight.nodes.contains(&id)),
+            "a call that may mean it is not the absence of one"
+        );
+    }
+    assert!(
+        uncalled
+            .iter()
+            .any(|insight| insight.nodes.contains(&alone)),
+        "while a name nothing reaches for is still worth saying"
+    );
+}
+
+#[test]
 fn a_generators_own_file_is_not_counted_as_the_program() {
     // A generated file ships and runs, and nobody wrote it: gqlgen's
     // `generated.go` files hold 14363 of its 18653 functions and 168 of
