@@ -603,10 +603,37 @@ drive("client insights read unresolved and ambiguous calls as the CLI does", () 
     throw new Error(`ambiguity is a placeholder node: ${JSON.stringify(ambiguous)}`);
   }
 
+  // A warning says the server looked and did not find it. A scan asks
+  // about 100 work items, so enrichment alone is a sample: reading it as a
+  // verdict on the rest turned 3 warnings into 5351 at the command line
+  // and 5353 in the view.
   const enriched = { ...graph, edges: graph.edges.map((edge) => ({ ...edge, confidence: "semantic" })) };
-  const after = api.buildClientInsights(enriched).filter((insight) => insight.kind === "unresolved_call");
+  const sampled = {
+    ...enriched,
+    nodes: [
+      { id: 9, kind: "repository", label: "repo", metadata: { semantic_work_items: "100/48000" } },
+      ...enriched.nodes,
+    ],
+  };
+  const afterSample = api
+    .buildClientInsights(sampled)
+    .filter((insight) => insight.kind === "unresolved_call");
+  if (afterSample[0]?.severity !== "info") {
+    throw new Error("a pass over part of the plan says nothing about the rest");
+  }
+
+  const swept = {
+    ...enriched,
+    nodes: [
+      { id: 9, kind: "repository", label: "repo", metadata: { semantic_work_items: "48000/48000" } },
+      ...enriched.nodes,
+    ],
+  };
+  const after = api
+    .buildClientInsights(swept)
+    .filter((insight) => insight.kind === "unresolved_call");
   if (after[0]?.severity !== "warning") {
-    throw new Error("after semantic enrichment an unresolved target is a warning");
+    throw new Error("asked about all of them and still not found is a warning");
   }
 });
 

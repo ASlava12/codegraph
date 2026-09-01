@@ -367,7 +367,20 @@ function showFocusedGraph(result, label, selectedId = null, options = {}) {
 // and only becomes a warning once semantic enrichment has run and the
 // target still cannot be found.
 function clientHeuristicSeverity(graph) {
-  return (graph.edges || []).some((edge) => edge.confidence === "semantic") ? "warning" : "info";
+  const enriched = (graph.edges || []).some((edge) => edge.confidence === "semantic");
+  return enriched && clientSemanticPassCoveredTheProject(graph) ? "warning" : "info";
+}
+
+// A warning here says the language server looked and did not find it, and a
+// scan asks about 100 work items by default -- 100 of this repository's
+// 48000. The root records what the pass covered as `asked/total`, and the
+// CLI asks the same question, so the two must agree on it.
+function clientSemanticPassCoveredTheProject(graph) {
+  const root = (graph.nodes || []).find((node) => node.kind === "repository");
+  const covered = root && root.metadata && root.metadata.semantic_work_items;
+  if (!covered) return false;
+  const [asked, total] = String(covered).split("/");
+  return asked !== undefined && total !== undefined && asked !== "" && asked === total;
 }
 
 // Mirrors `reachability_is_worth_reporting`: when entrypoints reach under
