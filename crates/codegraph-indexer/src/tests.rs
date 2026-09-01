@@ -9259,6 +9259,55 @@ fn a_contract_is_not_a_function_its_methods_are_local_to() {
 }
 
 #[test]
+fn an_erlang_call_names_the_module_that_answers_it() {
+    // `gun:open(..)` says which module answers, and a module this project
+    // has no file for is a dependency's or OTP's -- OTP is answered before
+    // this, so what is left is a dependency. cowboy writes 1764 such calls
+    // to `gun`, `ranch`, `cow_hpack` and `quicer`, every one of them
+    // reported as a resolver failure. A capitalised head is a variable
+    // holding a module name and says nothing about where it points.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("listener.erl"),
+        "-module(listener).\n-export([start/0]).\n\nstart() ->\n    ok = gun:open(\"host\", 80),\n    helper:assist(),\n    lists:map(fun(X) -> X end, []),\n    Transport:send(<<>>).\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("helper.erl"),
+        "-module(helper).\n-export([assist/0]).\n\nassist() ->\n    ok.\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution_of = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    assert_eq!(
+        resolution_of("gun:open").as_deref(),
+        Some("external"),
+        "the project has no `gun` module"
+    );
+    assert_eq!(
+        resolution_of("helper:assist").as_deref(),
+        Some("resolved"),
+        "while it does have `helper`"
+    );
+    assert_ne!(
+        resolution_of("Transport:send").as_deref(),
+        Some("external"),
+        "a module held in a variable says nothing about where it points"
+    );
+}
+
+#[test]
 fn testthat_hands_an_r_suite_its_assertions() {
     // testthat is R's harness and its vocabulary is closed: every assertion
     // is an `expect_*` and the blocks around them are named outright. dplyr

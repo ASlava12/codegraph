@@ -3102,6 +3102,24 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     // Every class this project declares, by the short name a call writes.
     // A PHP static call names the class it goes through, and a class the
     // project never declares is a package's or the language's.
+    // Every module this project declares, by the file that is it. An erlang
+    // call names its module outright -- `gun:open(..)` -- so a module the
+    // project does not have is a dependency's or OTP's, and OTP is already
+    // answered before this. cowboy writes 1764 such calls to `gun`,
+    // `ranch`, `cow_hpack` and `quicer`, every one of them reported as a
+    // resolver failure.
+    let erlang_modules: BTreeSet<String> = context
+        .graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::File)
+        .filter_map(|node| {
+            let name = node.label.rsplit('/').next()?;
+            let (stem, extension) = name.rsplit_once('.')?;
+            matches!(extension, "erl" | "hrl").then(|| stem.to_string())
+        })
+        .collect();
+
     let php_classes: BTreeSet<String> = context
         .graph
         .nodes
@@ -4027,7 +4045,23 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 // resolver failed where nothing was ever there to find.
                 // Not one of redis's 424 or shellcheck's 58 unresolved
                 // shell calls names a function either project declares.
-                let comes_from_the_environment = call.language == "bash"
+                // `gun:open(..)` names the module that answers it, and a
+                // module this project has no file for is a dependency's.
+                // A capitalised head is an erlang variable holding a module
+                // name, which says nothing about where it points.
+                let names_a_foreign_erlang_module = call.language == "erlang"
+                    && call
+                        .label
+                        .split_once(':')
+                        .filter(|(module, _)| {
+                            module
+                                .chars()
+                                .next()
+                                .is_some_and(|first| first.is_lowercase())
+                        })
+                        .is_some_and(|(module, _)| !erlang_modules.contains(module));
+                let comes_from_the_environment = names_a_foreign_erlang_module
+                    || call.language == "bash"
                     // `lifecycle::signal_stage` names the package that
                     // answers it, and it is not this one. dplyr writes 189
                     // such calls and reporting them says a resolver failed
