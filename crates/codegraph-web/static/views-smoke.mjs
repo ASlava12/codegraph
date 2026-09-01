@@ -586,6 +586,11 @@ drive("client insights skip a file a generator wrote", () => {
       { id: 3, kind: "function", label: "bound", span: span("src/bindings.rs") },
       { id: 4, kind: "function", label: "written", span: span("src/hand.rs") },
       { id: 5, kind: "unknown", label: "panic" },
+      { id: 6, kind: "file", label: "src/more_bindings.rs", metadata: { written_by: "generator" } },
+      { id: 7, kind: "function", label: "reset", span: span("src/bindings.rs") },
+      { id: 8, kind: "function", label: "reset", span: span("src/more_bindings.rs") },
+      { id: 9, kind: "function", label: "parse", span: span("src/bindings.rs") },
+      { id: 10, kind: "function", label: "parse", span: span("src/hand.rs") },
     ],
     edges: [
       { kind: "may_error", source: 3, target: 5 },
@@ -612,6 +617,20 @@ drive("client insights skip a file a generator wrote", () => {
   }
   if (uncalled.some((insight) => insight.nodeId === 3)) {
     throw new Error("a function nobody wrote is nobody's to delete");
+  }
+  // The CLI spelled the same question out in its duplicate rule and this
+  // side did not: on gqlgen the command line reported 1878 of these groups
+  // and the view 727, and parity had only ever run on a repository with no
+  // generated source, so nothing compared them.
+  const duplicates = api
+    .buildClientInsights(graph)
+    .filter((insight) => insight.kind === "duplicate_function_label");
+  const named = (label) => duplicates.filter((insight) => insight.message.includes(label));
+  if (named("reset").length !== 0) {
+    throw new Error("a name only a generator repeats is not the program's duplicate");
+  }
+  if (named("parse").length !== 1) {
+    throw new Error(`but a name a person also wrote is: ${JSON.stringify(duplicates)}`);
   }
 });
 

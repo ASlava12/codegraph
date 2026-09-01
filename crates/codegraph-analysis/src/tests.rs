@@ -8378,8 +8378,24 @@ fn a_generators_own_file_is_not_counted_as_the_program() {
         BTreeMap::from([("written_by".to_string(), "generator".to_string())]),
     );
     graph.add_node(NodeKind::File, "src/hand.rs");
+    graph.add_node_with_metadata(
+        NodeKind::File,
+        "src/more_bindings.rs",
+        None,
+        BTreeMap::from([("written_by".to_string(), "generator".to_string())]),
+    );
     let generated = graph.add_node_with_span(NodeKind::Function, "bound", span("src/bindings.rs"));
     let written = graph.add_node_with_span(NodeKind::Function, "written", span("src/hand.rs"));
+    // Two generated files answering to one name is the generator repeating
+    // itself; a generated file and a person's is still worth saying.
+    let both_generated = [
+        graph.add_node_with_span(NodeKind::Function, "reset", span("src/bindings.rs")),
+        graph.add_node_with_span(NodeKind::Function, "reset", span("src/more_bindings.rs")),
+    ];
+    let mixed = [
+        graph.add_node_with_span(NodeKind::Function, "parse", span("src/bindings.rs")),
+        graph.add_node_with_span(NodeKind::Function, "parse", span("src/hand.rs")),
+    ];
     let error = graph.add_node(NodeKind::Unknown, "panic");
     graph.add_edge(generated, error, EdgeKind::MayError, Confidence::Heuristic);
     graph.add_edge(written, error, EdgeKind::MayError, Confidence::Heuristic);
@@ -8421,6 +8437,28 @@ fn a_generators_own_file_is_not_counted_as_the_program() {
             .iter()
             .any(|insight| insight.nodes.contains(&generated)),
         "and a function nobody wrote is nobody's to delete"
+    );
+
+    // The duplicate rule spelled the same question out itself, and the
+    // browser did not: on gqlgen the command line reported 1878 of these
+    // groups and the view 727, which no gate had ever compared because
+    // parity had only ever run on a repository with no generated source.
+    let duplicates = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "duplicate_function_label")
+        .collect::<Vec<_>>();
+    assert!(
+        !duplicates
+            .iter()
+            .any(|insight| both_generated.iter().all(|id| insight.nodes.contains(id))),
+        "a name only a generator repeats is not the program's duplicate"
+    );
+    assert!(
+        duplicates
+            .iter()
+            .any(|insight| mixed.iter().all(|id| insight.nodes.contains(id))),
+        "but a name a person also wrote is"
     );
 }
 

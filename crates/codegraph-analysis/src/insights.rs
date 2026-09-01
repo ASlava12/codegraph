@@ -625,6 +625,7 @@ pub(crate) fn add_cross_language_heuristic_edge_insights(
 }
 
 pub(crate) fn add_duplicate_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let generated = files_a_generator_wrote(graph);
     let mut groups: BTreeMap<&str, Vec<&codegraph_core::Node>> = BTreeMap::new();
     for node in &graph.nodes {
         if node.kind == NodeKind::Function {
@@ -642,12 +643,10 @@ pub(crate) fn add_duplicate_function_insights(graph: &CodeGraph, insights: &mut 
         // 1552 groups are its generated protobuf declaring `Reset` and
         // `String` once per message, and 49 of mastodon's are its specs.
         // The orphan insight has always read them this way.
-        if nodes.iter().all(|node| {
-            node.span
-                .as_ref()
-                .is_some_and(|span| is_test_like_source_path(&span.path))
-                || node.metadata.get("invoked_by").map(String::as_str) == Some("test_runner")
-        }) {
+        if nodes
+            .iter()
+            .all(|node| !is_the_programs_own(node, &generated))
+        {
             continue;
         }
         // A name each owner declares once is not a duplicate. `visit_string`
@@ -2624,6 +2623,7 @@ pub(crate) fn add_unreachable_config_read_insights(
     if reachable.is_empty() {
         return;
     }
+    let generated = files_a_generator_wrote(graph);
 
     // When entrypoints reach less than half the code, the coverage finding
     // has already said so, and repeating it once per configuration read
@@ -2668,15 +2668,12 @@ pub(crate) fn add_unreachable_config_read_insights(
         // `fresh_install_creates_all_artifacts` reads `.mcp.json` from
         // `install.rs`, and it is a test wherever it is written. The orphan
         // insight has always asked both.
-        if reader_path.is_some_and(|path| {
-            is_test_like_source_path(path) || is_tool_configuration_source_path(path)
-        }) || graph
-            .nodes
-            .iter()
-            .find(|node| node.id == edge.source)
-            .is_some_and(|node| {
-                node.metadata.get("invoked_by").map(String::as_str) == Some("test_runner")
-            })
+        if reader_path.is_some_and(is_tool_configuration_source_path)
+            || graph
+                .nodes
+                .iter()
+                .find(|node| node.id == edge.source)
+                .is_some_and(|node| !is_the_programs_own(node, &generated))
         {
             continue;
         }
