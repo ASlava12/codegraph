@@ -9956,6 +9956,58 @@ fn insights_report_entrypoint_dead_ends() {
 }
 
 #[test]
+fn a_suite_throws_on_purpose() {
+    // A test raises to fail and a generated file raises whatever its
+    // generator wrote: neither is a path through the program. 3758 of
+    // gqlgen's 5846 findings of this kind are its `_examples` and
+    // generated servers, and 9817 across 39 projects said nothing about
+    // the program at all.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    let shipped = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "parse",
+        span("src/parse.go"),
+        BTreeMap::new(),
+    );
+    let suite = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "assert_parses",
+        span("src/parse_test.go"),
+        BTreeMap::new(),
+    );
+    let raised = graph.add_node(NodeKind::ControlFlow, "return err");
+    graph.add_edge(shipped, raised, EdgeKind::MayError, Confidence::Heuristic);
+    graph.add_edge(suite, raised, EdgeKind::MayError, Confidence::Heuristic);
+
+    let report = insights(&graph);
+    let flows: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "potential_error_flow")
+        .map(|insight| insight.message.as_str())
+        .collect();
+    assert!(
+        flows.iter().any(|message| message.contains("parse")),
+        "the program's own error flow is still worth saying: {flows:?}"
+    );
+    assert!(
+        !flows
+            .iter()
+            .any(|message| message.contains("assert_parses")),
+        "a suite throwing on purpose is not: {flows:?}"
+    );
+}
+
+#[test]
 fn a_name_repeated_only_outside_the_program_is_not_its_duplicate() {
     // Nobody renames a generated function, and a suite's repeated helper
     // is the harness's business. 766 of terraform's 1500 groups are its

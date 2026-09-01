@@ -675,6 +675,11 @@ function buildClientInsights(graph) {
     .forEach((edge) => {
       const source = nodesById.get(edge.source);
       const target = nodesById.get(edge.target);
+      // A suite throws on purpose and a generated file throws whatever its
+      // generator wrote: neither is a path through the program. The CLI
+      // reads them the same way, and 3758 of gqlgen's findings of this kind
+      // were its examples and generated servers.
+      if (source && !isTheProgramsOwn(source)) return;
       if (reachabilityIsWorthReporting && !reachableIds.has(edge.source)) {
         insights.push({
           kind: "unreachable_error_flow",

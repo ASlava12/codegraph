@@ -1032,6 +1032,18 @@ pub(crate) fn add_error_flow_insights(
         if reachability_is_worth_reporting(graph, reachable) && !reachable.contains(&edge.source) {
             continue;
         }
+        // A suite throws on purpose and a generated file throws whatever
+        // its generator wrote: neither is a path through the program.
+        // 3758 of gqlgen's 5846 findings of this kind are its `_examples`
+        // and generated servers, and 1254 of kong's are its specs.
+        if graph
+            .nodes
+            .iter()
+            .find(|node| node.id == edge.source)
+            .is_some_and(|node| !is_the_programs_own(node))
+        {
+            continue;
+        }
         let source = labels.get(&edge.source).copied().unwrap_or("unknown");
         let target = labels.get(&edge.target).copied().unwrap_or("unknown");
         insights.push(Insight {
@@ -2674,6 +2686,17 @@ pub(crate) fn add_unreachable_error_flow_insights(
 
     for (index, edge) in graph.edges.iter().enumerate() {
         if edge.kind != EdgeKind::MayError || reachable.contains(&edge.source) {
+            continue;
+        }
+        // The same reason the reachable half of this pair skips them: a
+        // suite throws on purpose and a generated file throws whatever its
+        // generator wrote.
+        if graph
+            .nodes
+            .iter()
+            .find(|node| node.id == edge.source)
+            .is_some_and(|node| !is_the_programs_own(node))
+        {
             continue;
         }
 
