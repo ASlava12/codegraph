@@ -4009,6 +4009,28 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             if !owned.is_empty() {
                 basis = "receiver_type";
                 targets = owned;
+            } else {
+                // A method the receiver's type inherits is still reached
+                // through it: Polly states 545 receivers whose type the
+                // project declares and whose method is a base class's, and
+                // cats writes `fa: CommutativeSemigroup[A]` for a `combine`
+                // that `Semigroup` declares.
+                let inherited_from = ancestor_type_names(&context.graph, owner);
+                let inherited = targets
+                    .iter()
+                    .copied()
+                    .filter(|target| {
+                        graph_node(&context.graph, *target)
+                            .and_then(|node| node.metadata.get("owner_type"))
+                            .is_some_and(|declared| {
+                                inherited_from.iter().any(|name| name == declared)
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                if !inherited.is_empty() {
+                    basis = "receiver_type";
+                    targets = inherited;
+                }
             }
         }
 

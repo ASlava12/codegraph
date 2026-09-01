@@ -19721,3 +19721,50 @@ fn a_go_interface_states_the_methods_it_declares() {
         "a call through a field of an interface type means the contract"
     );
 }
+
+#[test]
+fn a_receiver_reaches_the_method_its_type_inherits() {
+    // Polly writes `bulkhead.Execute(..)` where `BulkheadPolicy` states no
+    // `Execute` and `Policy` does: 545 of its calls name a type the project
+    // declares and a method that type's base holds.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("Policy.cs"),
+        "namespace App;\n\npublic class Policy\n{\n    public void Execute(string action) { }\n}\n\npublic class BulkheadPolicy : Policy\n{\n}\n",
+    )
+    .unwrap();
+    // A namesake elsewhere, so the name alone settles nothing.
+    fs::write(
+        root.join("src").join("Runner.cs"),
+        "namespace App;\n\npublic class Runner\n{\n    public void Execute(string action) { }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Specs.cs"),
+        "namespace App;\n\npublic class Specs\n{\n    public void Run()\n    {\n        BulkheadPolicy bulkhead = new BulkheadPolicy();\n        bulkhead.Execute(\"x\");\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let inherited = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "Execute"
+                && node.metadata.get("owner_type").map(String::as_str) == Some("Policy")
+        })
+        .expect("Policy.Execute");
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("bulkhead.Execute")
+        })
+        .expect("the call through the derived receiver");
+    assert_eq!(
+        edge.target, inherited.id,
+        "the method the receiver's type inherits is still reached through it"
+    );
+}
