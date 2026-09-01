@@ -8357,6 +8357,39 @@ fn insights_report_duplicate_functions_and_error_flow() {
 }
 
 #[test]
+fn a_truncated_query_says_what_widens_it() {
+    // The bound belongs to the expression, not to a flag: `query` is the one
+    // command that takes no `--limit`, and clap rejects it. The answer said
+    // `truncated: true` and the totals and stopped there, so a reader who
+    // wanted the rest had to already know. `notes` is where an answer says
+    // what it decided for itself, and how many to show is such a decision.
+    let mut graph = CodeGraph::new("repo");
+    for index in 0..5 {
+        graph.add_node(NodeKind::Function, format!("handler{index}"));
+    }
+
+    let narrow = query_graph(&graph, "nodes kind:function limit:2").expect("query");
+    assert!(narrow.truncated);
+    assert_eq!(narrow.returned_nodes, 2);
+    assert_eq!(narrow.total_nodes, 5);
+    let note = narrow.notes.join(" ");
+    assert!(note.contains("2 of 5 nodes"), "{note}");
+    assert!(note.contains("limit:"), "{note}");
+    assert!(note.contains(" 2 here"), "{note}");
+    assert!(
+        !note.contains("edges"),
+        "a query that matched no edge says nothing about edges: {note}"
+    );
+
+    let whole = query_graph(&graph, "nodes kind:function limit:20").expect("query");
+    assert!(!whole.truncated);
+    assert!(
+        whole.notes.iter().all(|note| !note.contains("limit:")),
+        "an answer that held everything decided nothing to say"
+    );
+}
+
+#[test]
 fn a_go_package_tells_two_declarations_of_a_name_apart() {
     // `Add` in five of terraform's packages is five functions, not one name
     // five things answer to: 3433 of the corpus's 3477 go groups have every

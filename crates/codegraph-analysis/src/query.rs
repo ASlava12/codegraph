@@ -11,6 +11,34 @@ use crate::*;
 
 pub fn query_graph(graph: &CodeGraph, expression: &str) -> Result<QueryResult, QueryError> {
     let spec = QuerySpec::parse(expression)?;
+    let limit = spec.limit;
+    let result = query_slice(graph, spec);
+    // A truncated answer that does not say how to widen it leaves the
+    // reader to guess. Every neighbouring command takes `--limit`; this one
+    // does not, because the bound belongs to the expression -- and nothing
+    // said so, so `--limit` is what a reader reaches for and clap rejects.
+    result.map(|mut result| {
+        if result.truncated {
+            let mut shown = vec![format!(
+                "{} of {} nodes",
+                result.returned_nodes, result.total_nodes
+            )];
+            if result.total_edges > 0 {
+                shown.push(format!(
+                    "{} of {} edges",
+                    result.returned_edges, result.total_edges
+                ));
+            }
+            result.notes.push(format!(
+                "showing {}; `limit:` in the expression decides how many, and it is {limit} here",
+                shown.join(" and ")
+            ));
+        }
+        result
+    })
+}
+
+fn query_slice(graph: &CodeGraph, spec: QuerySpec) -> Result<QueryResult, QueryError> {
     match spec.command.as_str() {
         "nodes" | "node" => query_nodes(graph, spec),
         "edges" | "edge" => query_edges(graph, spec, None),
