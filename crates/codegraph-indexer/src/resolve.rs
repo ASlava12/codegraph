@@ -3904,7 +3904,32 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 ambiguous_candidates_are_types = true;
             } else {
                 let key = (call.language.clone(), call.label.clone());
-                let resolution = if is_builtin { "builtin" } else { "unresolved" };
+                // A ruby class that descends from outside the project
+                // answers with its base's methods, and none of them is
+                // among what this project declares: `where`, `present?`,
+                // `redirect_to` and `permit` are ActiveRecord's and
+                // ActionController's. mastodon writes 3684 such calls from
+                // inside a class whose ancestry leaves it, and reporting
+                // them as unresolved says a resolver failed where a gem
+                // simply provides them -- the same thing the constant
+                // receiver already says for a call written through one.
+                let inherits_from_outside = call.language == "ruby"
+                    && graph_node(&context.graph, call.caller)
+                        .and_then(|node| node.metadata.get("owner_type").cloned())
+                        .is_some_and(|owner| {
+                            let ancestors = ancestor_type_names(&context.graph, &owner);
+                            !ancestors.is_empty()
+                                && ancestors
+                                    .iter()
+                                    .any(|name| type_node_named(&context.graph, name).is_none())
+                        });
+                let resolution = if is_builtin {
+                    "builtin"
+                } else if inherits_from_outside {
+                    "external"
+                } else {
+                    "unresolved"
+                };
                 let call_id = if let Some(id) = context.unresolved_call_placeholders.get(&key) {
                     *id
                 } else {

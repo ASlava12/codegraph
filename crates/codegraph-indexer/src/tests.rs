@@ -3111,6 +3111,53 @@ fn a_module_names_the_file_that_holds_it_even_with_nothing_to_narrow() {
 }
 
 #[test]
+fn a_ruby_class_that_descends_from_outside_answers_with_its_base() {
+    // `where`, `present?`, `redirect_to` and `permit` are ActiveRecord's
+    // and ActionController's, and none of them is among what the project
+    // declares. mastodon writes 403 such calls from inside a class whose
+    // ancestry leaves it, and calling them unresolved says a resolver
+    // failed where a gem provides them.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app/models")).unwrap();
+    fs::write(
+        root.join("Gemfile"),
+        "source 'https://rubygems.org'\ngem 'rails'\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/models").join("application_record.rb"),
+        "class ApplicationRecord < ActiveRecord::Base\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app/models").join("account.rb"),
+        "class Account < ApplicationRecord\n  def suspended\n    where(suspended: true)\n  end\n\n  def own_helper\n    suspended\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution = |label: &str| -> Option<String> {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    assert_eq!(
+        resolution("where").as_deref(),
+        Some("external"),
+        "the base is outside the project and so is its method"
+    );
+    // What the class writes itself is still what a call to it means.
+    assert_eq!(resolution("suspended").as_deref(), Some("resolved"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle
