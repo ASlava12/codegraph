@@ -9259,6 +9259,52 @@ fn a_contract_is_not_a_function_its_methods_are_local_to() {
 }
 
 #[test]
+fn a_quickcheck_property_is_run_by_its_module() {
+    // `$(forAllProperties)` collects every top-level `prop_*` through
+    // Template Haskell, so the harness runs it and no edge records that --
+    // the same thing `#[test]` does. shellcheck writes 2252 of them and
+    // read as functions nobody calls they made 2756 orphan findings where
+    // 579 belonged. The file has to say it collects them: a `prop_` prefix
+    // in a module that does not is a name, not a property.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("Checks.hs"),
+        "module Checks where\n\nimport Test.QuickCheck.All (forAllProperties)\n\nprop_addsUp :: Bool\nprop_addsUp = True\n\nhelper :: Bool\nhelper = False\n\nrunTests = $( [| $(forAllProperties) |] )\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Plain.hs"),
+        "module Plain where\n\nprop_notCollected :: Bool\nprop_notCollected = True\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let invoked_by = |label: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Function && node.label == label)
+            .and_then(|node| node.metadata.get("invoked_by").cloned())
+    };
+    assert_eq!(
+        invoked_by("prop_addsUp").as_deref(),
+        Some("test_runner"),
+        "the module collects it"
+    );
+    assert_eq!(
+        invoked_by("helper"),
+        None,
+        "while an ordinary definition beside it is the program's"
+    );
+    assert_eq!(
+        invoked_by("prop_notCollected"),
+        None,
+        "and a module that collects nothing runs nothing"
+    );
+}
+
+#[test]
 fn an_unsettled_call_marks_the_definitions_it_may_mean() {
     // The placeholder was the only record of an ambiguity, so none of the
     // definitions it might mean had an incoming edge and each read as a

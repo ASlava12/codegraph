@@ -384,6 +384,23 @@ fn names_an_exported_c_class(node: Node<'_>) -> bool {
         .is_some_and(|declarator| declarator.kind() == "identifier")
 }
 
+/// Whether a Haskell definition is a QuickCheck property its module runs.
+///
+/// `$(forAllProperties)` collects every top-level name starting with
+/// `prop_` through Template Haskell, so the harness runs it and no edge
+/// records that -- the same thing `#[test]` does. shellcheck writes 2252
+/// of them and every one sits in one of the 11 files that collect them,
+/// which is why the file has to say so rather than the prefix alone.
+fn haskell_property_definition(label: &str, source: &[u8]) -> bool {
+    if !label.starts_with("prop_") {
+        return false;
+    }
+    let Ok(source) = std::str::from_utf8(source) else {
+        return false;
+    };
+    source.contains("forAllProperties") || source.contains("quickCheckAll")
+}
+
 /// Whether a Rust definition is a test the harness runs: the attribute
 /// says so -- `#[test]`, `#[tokio::test]`, `#[bench]` -- or it sits inside
 /// the `#[cfg(test)] mod tests` a crate keeps beside its code.
@@ -2177,6 +2194,9 @@ pub(crate) fn classify_node(
         // as functions nobody calls buried the code somebody could delete:
         // 684 of this repository's 1018 orphan functions were tests.
         if language == Language::Rust && rust_test_definition(node, source) {
+            metadata.insert("invoked_by".to_string(), "test_runner".to_string());
+        }
+        if language == Language::Haskell && haskell_property_definition(&label, source) {
             metadata.insert("invoked_by".to_string(), "test_runner".to_string());
         }
         // A function-like macro is called like a function and resolves like
