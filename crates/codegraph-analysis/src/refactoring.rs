@@ -569,6 +569,8 @@ pub fn refactor_context(
 
     Ok(RefactorContextBundle {
         schema: REFACTOR_CONTEXT_SCHEMA.to_string(),
+        // The sections already said it; the bundle is what a reader reads.
+        notes: impact_report.notes.clone(),
         target: impact_report.target.clone(),
         area: impact_report.area.clone(),
         impact: impact_report,

@@ -538,6 +538,12 @@ pub struct RefactorContextRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RefactorContextBundle {
     pub schema: String,
+    /// What the answer had to decide for itself. Every other command that
+    /// takes a label says at the top which definition it picked; this
+    /// bundle carried the sentence only inside its impact and dependency
+    /// sections, where a reader of the bundle does not look.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
     pub target: Node,
     #[serde(default)]
     pub area: Option<String>,

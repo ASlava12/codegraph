@@ -3822,6 +3822,12 @@ pub(crate) fn refactor_context_response_fields() -> Vec<ApiParameterSpec> {
             "string",
             "Bundle schema id, currently codegraph.refactor_context.v1.",
         ),
+        response_field(
+            "notes",
+            false,
+            "string[]",
+            "What the answer had to decide: a label several definitions answer to is picked by rank, and this says which.",
+        ),
         response_field("target", true, "Node", "Resolved refactor target node."),
         response_field(
             "area",

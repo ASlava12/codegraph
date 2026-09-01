@@ -2044,6 +2044,70 @@ fn how_a_project_is_laid_out_is_not_a_search_for_the_word_project() {
 }
 
 #[test]
+fn every_answer_about_a_shared_label_says_which_one() {
+    // A label several definitions answer to is picked by rank, and saying
+    // which is the difference between an answer and a claim. `impact`,
+    // `component-dependencies`, `trace`, `trace-dependents`, `workflow` and
+    // the node card all print that sentence; the refactor bundle carried it
+    // only inside its impact and dependency sections, where a reader of the
+    // bundle does not look.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| SourceSpan {
+        path: path.to_string(),
+        start_line: 1,
+        start_column: 1,
+        end_line: 2,
+        end_column: 1,
+    };
+    graph.add_node_with_span(NodeKind::Function, "main", span("src/one.rs"));
+    graph.add_node_with_span(NodeKind::Function, "main", span("src/two.rs"));
+    graph.add_node_with_span(NodeKind::Function, "alone", span("src/one.rs"));
+
+    let shared = refactor_context(
+        &graph,
+        RefactorContextRequest {
+            target: "main".to_string(),
+            from: None,
+            max_depth: 4,
+            path_limit: 1,
+            dependent_limit: 10,
+            risk_limit: 5,
+        },
+    )
+    .expect("bundle");
+    assert!(
+        shared
+            .notes
+            .iter()
+            .any(|note| note.contains("2 definitions")),
+        "the bundle says which of the two it is about: {:?}",
+        shared.notes
+    );
+    assert_eq!(
+        shared.notes, shared.impact.notes,
+        "and it is the same sentence the section already carried"
+    );
+
+    let alone = refactor_context(
+        &graph,
+        RefactorContextRequest {
+            target: "alone".to_string(),
+            from: None,
+            max_depth: 4,
+            path_limit: 1,
+            dependent_limit: 10,
+            risk_limit: 5,
+        },
+    )
+    .expect("bundle");
+    assert!(
+        alone.notes.is_empty(),
+        "a name only one definition answers to decided nothing: {:?}",
+        alone.notes
+    );
+}
+
+#[test]
 fn a_question_verb_is_not_a_name_to_search_for() {
     // "which types does insights use" ends on its verb, so the anchor
     // guesser took `use` -- and the caller recognised it as a question verb
