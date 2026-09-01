@@ -379,7 +379,10 @@ function clientHeuristicSeverity(graph) {
 // its examples or the code it vendors. A rust test is written inside the
 // file it tests, so the node says what the path cannot.
 function isTheProgramsOwn(node) {
-  const path = node.span && node.span.path;
+  // A file node carries its path in its label and has no span of its own,
+  // and ruby and lua write plenty of calls at the top of a file where the
+  // file is the caller.
+  const path = node.kind === "file" ? node.label : node.span && node.span.path;
   if (path && isTestLikeSourcePath(path)) return false;
   return !(node.metadata && node.metadata.invoked_by === "test_runner");
 }
@@ -539,6 +542,17 @@ function buildClientInsights(graph) {
     if (
       edges.length > 0 &&
       edges.every((edge) => edge.metadata?.unresolved_reason === "local_value")
+    ) {
+      return;
+    }
+    // A call written only outside the program is not the program's
+    // unresolved call. The CLI reads them the same way.
+    if (
+      edges.length > 0 &&
+      edges.every((edge) => {
+        const caller = nodesById.get(edge.source);
+        return caller && !isTheProgramsOwn(caller);
+      })
     ) {
       return;
     }

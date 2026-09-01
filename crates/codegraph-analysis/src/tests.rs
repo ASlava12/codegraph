@@ -9956,6 +9956,38 @@ fn insights_report_entrypoint_dead_ends() {
 }
 
 #[test]
+fn a_file_carries_its_path_in_its_label() {
+    // Ruby and Lua write plenty of calls at the top of a file, where the
+    // file itself is the caller and has no span of its own. Reading only
+    // the span made a spec's own top-level calls the program's: kong's
+    // error flows alone fell from 7135 to 1039 once the label counted.
+    let mut graph = CodeGraph::new("repo");
+    let spec = graph.add_node(NodeKind::File, "spec/router_spec.lua");
+    let source = graph.add_node(NodeKind::File, "kong/router.lua");
+    let raised = graph.add_node(NodeKind::ControlFlow, "error");
+    graph.add_edge(spec, raised, EdgeKind::MayError, Confidence::Heuristic);
+    graph.add_edge(source, raised, EdgeKind::MayError, Confidence::Heuristic);
+
+    let report = insights(&graph);
+    let flows: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "potential_error_flow")
+        .map(|insight| insight.message.as_str())
+        .collect();
+    assert!(
+        flows
+            .iter()
+            .any(|message| message.contains("kong/router.lua")),
+        "the program's own file is still worth saying: {flows:?}"
+    );
+    assert!(
+        !flows.iter().any(|message| message.contains("router_spec")),
+        "a spec file is not: {flows:?}"
+    );
+}
+
+#[test]
 fn a_suite_throws_on_purpose() {
     // A test raises to fail and a generated file raises whatever its
     // generator wrote: neither is a path through the program. 3758 of

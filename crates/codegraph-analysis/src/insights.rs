@@ -2559,10 +2559,16 @@ fn reachability_is_worth_reporting(graph: &CodeGraph, reachable: &BTreeSet<NodeI
 /// Whether a definition is part of the program rather than of its suite,
 /// its examples or the code it vendors. A rust test is written inside the
 /// file it tests, so the node says what the path cannot.
-fn is_the_programs_own(node: &Node) -> bool {
-    node.span
-        .as_ref()
-        .is_none_or(|span| !is_test_like_source_path(&span.path))
+pub(crate) fn is_the_programs_own(node: &Node) -> bool {
+    // A file node carries its path in its label and has no span of its
+    // own, and ruby and lua write plenty of calls at the top of a file
+    // where the file is the caller: without this a spec's own top-level
+    // calls read as the program's.
+    let path = match node.kind {
+        NodeKind::File => Some(node.label.as_str()),
+        _ => node.span.as_ref().map(|span| span.path.as_str()),
+    };
+    path.is_none_or(|path| !is_test_like_source_path(path))
         && node.metadata.get("invoked_by").map(String::as_str) != Some("test_runner")
 }
 
