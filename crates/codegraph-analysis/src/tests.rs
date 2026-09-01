@@ -3392,6 +3392,97 @@ fn journey_ranks_alternative_paths_and_explains_hops() {
 }
 
 #[test]
+fn a_settled_call_is_not_a_fragile_hop() {
+    // Half of every journey's hops were called fragile for `low_confidence_edge`,
+    // which only said the resolver matched a name. On four projects, 23,515
+    // call sites resolved to exactly one definition each and not one to two, so
+    // that reason marked hops where nothing had been guessed. The graph records
+    // a real guess as `ambiguous` and a miss as `unresolved`, and a journey
+    // already reports those under their own names.
+    let mut graph = CodeGraph::new("repo");
+    let main = graph.add_node(NodeKind::Function, "main");
+    let settled = graph.add_node(NodeKind::Function, "settled");
+    let guessed = graph.add_node(NodeKind::Function, "guessed");
+    let target = graph.add_node(NodeKind::Function, "target");
+    graph.add_edge(graph.root, main, EdgeKind::Contains, Confidence::Exact);
+
+    let resolved = BTreeMap::from([
+        ("resolution".to_string(), "resolved".to_string()),
+        ("resolution_basis".to_string(), "name".to_string()),
+    ]);
+    let ambiguous = BTreeMap::from([("resolution".to_string(), "ambiguous".to_string())]);
+    for (source, sink) in [(main, settled), (settled, target)] {
+        graph.add_edge_with_metadata(
+            source,
+            sink,
+            EdgeKind::Calls,
+            Confidence::Heuristic,
+            resolved.clone(),
+        );
+    }
+    for (source, sink) in [(main, guessed), (guessed, target)] {
+        graph.add_edge_with_metadata(
+            source,
+            sink,
+            EdgeKind::Calls,
+            Confidence::Heuristic,
+            ambiguous.clone(),
+        );
+    }
+
+    let report = journey(
+        &graph,
+        JourneyRequest {
+            from: "main".to_string(),
+            to: "target".to_string(),
+            max_depth: 8,
+            path_limit: 0,
+        },
+    )
+    .expect("journey report");
+
+    let path_through = |label: &str| {
+        report
+            .paths
+            .iter()
+            .find(|path| path.steps.iter().any(|step| step.block.node.label == label))
+            .unwrap_or_else(|| panic!("a path through {label}"))
+            .clone()
+    };
+
+    let through_settled = path_through("settled");
+    assert!(
+        through_settled.steps.iter().all(|step| !step.fragile),
+        "a call the resolver settled on is not a guess: {:?}",
+        through_settled
+            .steps
+            .iter()
+            .map(|step| step.fragile_reasons.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(through_settled.risk_summary.fragile_transitions, 0);
+    assert_eq!(through_settled.risk_summary.low_confidence_hops, 0);
+
+    let through_guessed = path_through("guessed");
+    let fragile = through_guessed
+        .steps
+        .iter()
+        .find(|step| step.fragile)
+        .expect("an ambiguous hop stays fragile");
+    assert!(
+        fragile
+            .fragile_reasons
+            .contains(&"low_confidence_edge".to_string())
+    );
+    assert!(
+        fragile
+            .fragile_reasons
+            .contains(&"ambiguous_call".to_string())
+    );
+    assert!(through_guessed.risk_summary.low_confidence_hops >= 1);
+}
+
+#[test]
 fn component_dependencies_group_by_area_package_and_language() {
     let mut graph = CodeGraph::new("repo");
     let app_file = graph.add_node_with_metadata(

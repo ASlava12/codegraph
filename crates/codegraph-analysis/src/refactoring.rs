@@ -1007,13 +1007,25 @@ pub(crate) fn journey_confidence_weight(confidence: Confidence) -> usize {
     }
 }
 
+/// A call the resolver settled on names one definition and had no other
+/// candidate: `ambiguous` and `unresolved` are recorded under their own
+/// resolutions, and a journey already reports those as their own reasons.
+/// Calling such a hop low-confidence describes only how the fact was learned,
+/// which is not what a reader of the risk summary is asking.
+fn one_definition_answered(edge: &Edge) -> bool {
+    edge.kind == EdgeKind::Calls
+        && edge.metadata.get("resolution").map(String::as_str) == Some("resolved")
+}
+
 pub(crate) fn journey_fragile_reasons(
     edge: &Edge,
     transition: &WorkflowTransition,
     block: &WorkflowBlock,
 ) -> Vec<String> {
     let mut reasons = Vec::new();
-    if matches!(edge.confidence, Confidence::Heuristic | Confidence::Unknown) {
+    if matches!(edge.confidence, Confidence::Heuristic | Confidence::Unknown)
+        && !one_definition_answered(edge)
+    {
         reasons.push("low_confidence_edge".to_string());
     }
     let risk_kinds = transition
