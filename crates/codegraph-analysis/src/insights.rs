@@ -1251,10 +1251,26 @@ pub(crate) fn add_unresolved_entrypoint_insights(graph: &CodeGraph, insights: &m
             } else {
                 InsightSeverity::Warning
             },
-            message: format!(
-                "Entrypoint `{}` declares target `{target}` but no matching file or function was found",
-                node.label
-            ),
+            // Which manifest declared it. zod writes `npm script:lint`
+            // twice -- biome in `package.json:71` and tslint in
+            // `packages/tsc/package.json:27` -- and the label alone sends a
+            // reader through eight manifests to find which one is stale.
+            // Every neighbouring warning names its place; this one did not.
+            message: match node
+                .span
+                .as_ref()
+                .map(|span| format!("{}:{}", span.path, span.start_line))
+                .or_else(|| declared_in.clone())
+            {
+                Some(where_declared) => format!(
+                    "Entrypoint `{}` declared at {where_declared} names target `{target}` but no matching file or function was found",
+                    node.label
+                ),
+                None => format!(
+                    "Entrypoint `{}` declares target `{target}` but no matching file or function was found",
+                    node.label
+                ),
+            },
             nodes: vec![node.id],
             edges: incoming_edge_indexes(graph, node.id, EdgeKind::Entrypoint),
         });

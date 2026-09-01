@@ -8562,6 +8562,73 @@ fn a_variable_set_before_a_command_is_read_as_the_path_it_holds() {
 }
 
 #[test]
+fn an_unresolved_entrypoint_says_which_manifest_declared_it() {
+    // zod writes `npm script:lint` twice: biome in `package.json:71`, which
+    // runs, and tslint in `packages/tsc/package.json:27`, which is stale.
+    // The warning named neither, so a reader went through eight manifests to
+    // find the one meant. Every neighbouring warning names its place.
+    let mut graph = CodeGraph::new("repo");
+    let script = |graph: &mut CodeGraph, path: &str, line: u32, target: &str| {
+        let id = graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            "npm script:lint",
+            Some(SourceSpan {
+                path: path.to_string(),
+                start_line: line,
+                start_column: 1,
+                end_line: line,
+                end_column: 1,
+            }),
+            BTreeMap::from([
+                ("item_kind".to_string(), "manifest_entrypoint".to_string()),
+                ("target".to_string(), target.to_string()),
+            ]),
+        );
+        graph.add_edge(graph.root, id, EdgeKind::Entrypoint, Confidence::Exact);
+        id
+    };
+    let root_script = script(
+        &mut graph,
+        "package.json",
+        71,
+        "biome lint --write missing.js",
+    );
+    let nested = script(
+        &mut graph,
+        "packages/tsc/package.json",
+        27,
+        "tslint -c tslint.json src/gone.ts",
+    );
+
+    let report = insights(&graph);
+    let message_of = |id: NodeId| {
+        report
+            .insights
+            .iter()
+            .find(|insight| {
+                insight.kind == "unresolved_entrypoint_target" && insight.nodes.contains(&id)
+            })
+            .map(|insight| insight.message.clone())
+            .unwrap_or_else(|| panic!("a warning for {id}"))
+    };
+    assert!(
+        message_of(root_script).contains("package.json:71"),
+        "{}",
+        message_of(root_script)
+    );
+    assert!(
+        message_of(nested).contains("packages/tsc/package.json:27"),
+        "{}",
+        message_of(nested)
+    );
+    assert_ne!(
+        message_of(root_script),
+        message_of(nested),
+        "one label, two manifests, and the reader has to be able to tell them apart"
+    );
+}
+
+#[test]
 fn insights_report_unresolved_manifest_entrypoints() {
     let mut graph = CodeGraph::new("repo");
     let broken = graph.add_node_with_metadata(
