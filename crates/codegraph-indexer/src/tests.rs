@@ -9259,6 +9259,36 @@ fn a_contract_is_not_a_function_its_methods_are_local_to() {
 }
 
 #[test]
+fn a_scala_type_alias_is_a_type_the_project_declares() {
+    // `type NonEmptyMap[K, +A] = NonEmptyMapImpl.Type[K, A]` declares a
+    // type as much as a class does. cats writes 106 alias names and the
+    // graph had 34 of them, so asking what depends on `NonEmptyMap` found
+    // nothing -- and every rule that asks whether the project declares a
+    // name read the alias as someone else's.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("data.scala"),
+        "package demo\n\nobject Impl {\n  type Inner = String\n}\n\ntype Alias = Impl.Inner\n\nclass Holder\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let types: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Type)
+        .map(|node| node.label.as_str())
+        .collect();
+    for declared in ["Alias", "Inner", "Holder", "Impl"] {
+        assert!(
+            types.contains(&declared),
+            "the project declares {declared}: {types:?}"
+        );
+    }
+}
+
+#[test]
 fn an_ocaml_module_call_is_not_answered_by_a_same_named_local() {
     // `Process.run` is that module's function, whatever this file happens
     // to call `run`. Letting the same-file name answer said 2366 of dune's

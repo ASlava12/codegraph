@@ -1921,9 +1921,12 @@ pub(crate) fn classify_node(
         },
         Language::Scala => match kind {
             "function_definition" | "function_declaration" => ParsedItemKind::Function,
-            "class_definition" | "object_definition" | "trait_definition" | "enum_definition" => {
-                ParsedItemKind::Type
-            }
+            // `type NonEmptyMap[K, +A] = NonEmptyMapImpl.Type[K, A]` declares
+            // a type as much as a class does, and cats writes 106 of them --
+            // 72 of which the graph did not have, so asking what depends on
+            // `NonEmptyMap` found nothing at all.
+            "class_definition" | "object_definition" | "trait_definition" | "enum_definition"
+            | "type_definition" => ParsedItemKind::Type,
             "import_declaration" => ParsedItemKind::Import,
             _ => return None,
         },
