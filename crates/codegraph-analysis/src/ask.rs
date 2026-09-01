@@ -291,7 +291,7 @@ pub(crate) fn natural_query_plan_with_anchor(
             "зависят от",
             "влияни",
         ],
-    ) && !(routing.contains("does") && routing.contains("depend"))
+    ) && !natural_query_asks_forward_dependency(&routing)
     {
         // The subject of an impact question is a name even when it is
         // spelled like a topic: `router`, `config`, `main`. The topic rules
@@ -319,6 +319,25 @@ pub(crate) fn natural_query_plan_with_anchor(
                 "low".to_string(),
             ),
         }
+    } else if natural_query_asks_forward_dependency(&routing)
+        // A named subject only. The reverse rule reaches for the first
+        // candidate because an impact question is about a name however it
+        // is spelled, but `what does this project depend on` names no
+        // symbol -- it is the package question, and reading `project` as a
+        // symbol answered it with a search for one.
+        && let Some(subject) = filter_term.clone()
+    {
+        // The other direction of the same question, and it had no rule at
+        // all: `what does scan_project depend on?` fell through to the
+        // package rule and answered `packages package:scan_project`, which
+        // is 0 nodes, where what the caller reaches is 101. The reverse
+        // rule above declines this shape on purpose; the two now read the
+        // same phrase and cannot drift apart.
+        (
+            format!("neighbors label:{subject} direction:out depth:2"),
+            "forward_dependency".to_string(),
+            "high".to_string(),
+        )
     } else if natural_query_mentions_any(
         &routing,
         &[
@@ -818,6 +837,22 @@ pub(crate) fn natural_call_direction(lower: &str, term: Option<&str>) -> &'stati
         (Some(verb), Some(subject)) if verb < subject => "in",
         _ => "out",
     }
+}
+
+/// Whether the question asks what a name reaches rather than what reaches
+/// it. `what does X depend on` is the forward direction and `what depends
+/// on X` the reverse, and the reverse rule declined the first shape without
+/// anything picking it up: it fell through to the package rule, which
+/// answered `packages package:scan_project` with 0 nodes where the caller
+/// reaches 101. Both directions read this, so neither can drift.
+pub(crate) fn natural_query_asks_forward_dependency(routing: &str) -> bool {
+    (routing.contains("does") && routing.contains("depend"))
+        || routing.contains("dependencies of")
+        // `зависит от` alone is the reverse direction in russian -- `кто
+        // зависит от X` -- and belongs to the rule above; only the
+        // question word makes it forward.
+        || routing.contains("от чего завис")
+        || routing.contains("чего зависит")
 }
 
 pub(crate) fn natural_query_mentions_any(haystack: &str, needles: &[&str]) -> bool {

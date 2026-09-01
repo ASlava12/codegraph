@@ -2044,6 +2044,41 @@ fn how_a_project_is_laid_out_is_not_a_search_for_the_word_project() {
 }
 
 #[test]
+fn the_two_directions_of_a_dependency_question_are_told_apart() {
+    // `what depends on X` and `what does X depend on` are opposite
+    // questions. The reverse rule declined the second on purpose and
+    // nothing picked it up, so it fell through to the package rule and
+    // answered `packages package:scan_project` -- 0 nodes, where what the
+    // caller reaches is 101. Both rules read one phrase now, so neither can
+    // drift into the other's half.
+    let forward = natural_query_plan("what does scan_project depend on?").expect("routes");
+    assert_eq!(
+        forward.generated_query,
+        "neighbors label:scan_project direction:out depth:2"
+    );
+    assert_eq!(forward.rule, "forward_dependency");
+
+    let reverse = natural_query_plan("what depends on scan_project?").expect("routes");
+    assert_eq!(
+        reverse.generated_query,
+        "dependents label:scan_project depth:4"
+    );
+    assert_eq!(reverse.rule, "reverse_dependency_or_impact");
+
+    // `зависит от` alone is the reverse direction in russian and belongs to
+    // the rule above; only the question word makes it forward.
+    let reverse_ru = natural_query_plan("кто зависит от scan_project?").expect("routes");
+    assert_eq!(reverse_ru.rule, "reverse_dependency_or_impact");
+    let forward_ru = natural_query_plan("от чего зависит scan_project?").expect("routes");
+    assert_eq!(forward_ru.rule, "forward_dependency");
+
+    // Without a name the question is about the project, and its packages
+    // are the answer the package rule already gave.
+    let project = natural_query_plan("what does this project depend on?").expect("routes");
+    assert_eq!(project.rule, "package_or_import");
+}
+
+#[test]
 fn asking_what_breaks_settles_the_question_before_any_topic_word() {
     // The topic rules key on nouns a symbol's own name may sit beside:
     // "what breaks if I change the SongResource endpoint" was answered with
