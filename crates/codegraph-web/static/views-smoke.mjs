@@ -572,6 +572,29 @@ drive("client insights see both halves of the CLI's ambiguity rule", () => {
   }
 });
 
+drive("client insights tell two go packages apart", () => {
+  // `Add` in two of terraform's packages is two functions, not one name two
+  // things answer to. The CLI groups by owner, language and -- for go --
+  // the package, and the view has to group by the same three.
+  const span = (path) => ({ path, start_line: 1, start_column: 1, end_line: 2, end_column: 1 });
+  const go = (id, path) => ({ id, kind: "function", label: "Add", span: span(path), metadata: { language: "go" } });
+  const graph = {
+    nodes: [
+      go(1, "internal/addrs/set.go"),
+      go(2, "internal/states/set.go"),
+      go(3, "internal/plans/one.go"),
+      go(4, "internal/plans/two.go"),
+    ],
+    edges: [],
+  };
+  const duplicates = api
+    .buildClientInsights(graph)
+    .filter((insight) => insight.kind === "duplicate_function_label");
+  if (duplicates.length !== 1) {
+    throw new Error(`one package declares it twice, two others once each: ${JSON.stringify(duplicates)}`);
+  }
+});
+
 drive("client insights keep a definition an unsettled call may mean", () => {
   // A call the resolver could not narrow becomes one placeholder, so none
   // of the definitions it might mean has an incoming edge and each reads as

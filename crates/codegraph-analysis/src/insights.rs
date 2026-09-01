@@ -624,6 +624,10 @@ pub(crate) fn add_cross_language_heuristic_edge_insights(
     }
 }
 
+/// What tells two declarations of one name apart: the type that owns them,
+/// the language, and -- where the language says so -- the package.
+type DeclarationIdentity<'a> = (Option<&'a str>, Option<&'a str>, Option<&'a str>);
+
 pub(crate) fn add_duplicate_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let generated = files_a_generator_wrote(graph);
     let mut groups: BTreeMap<&str, Vec<&codegraph_core::Node>> = BTreeMap::new();
@@ -658,18 +662,35 @@ pub(crate) fn add_duplicate_function_insights(graph: &CodeGraph, insights: &mut 
         // nothing a reader could act on. What is worth saying is the name
         // nothing tells apart: one owner declaring it twice, or no owner at
         // all.
-        let mut by_owner: BTreeMap<(Option<&str>, Option<&str>), Vec<&codegraph_core::Node>> =
+        // A go package is a directory, and a package-level name belongs to
+        // its package: `Add` in five of terraform's packages is five
+        // functions, not one name five things answer to, and gqlgen writes
+        // a `queryResolver` per example. 3433 of the corpus's 3477 go
+        // groups have every declaration in its own directory -- 98% --
+        // while no other language is above 53%, so this is go's rule rather
+        // than a general one about directories.
+        let mut by_owner: BTreeMap<DeclarationIdentity<'_>, Vec<&codegraph_core::Node>> =
             BTreeMap::new();
         for node in &nodes {
+            let language = node.metadata.get("language").map(String::as_str);
+            let package = (language == Some("go"))
+                .then(|| {
+                    node.span
+                        .as_ref()
+                        .and_then(|span| span.path.rsplit_once('/'))
+                        .map(|(directory, _)| directory)
+                })
+                .flatten();
             by_owner
                 .entry((
                     node.metadata.get("owner_type").map(String::as_str),
-                    node.metadata.get("language").map(String::as_str),
+                    language,
+                    package,
                 ))
                 .or_default()
                 .push(node);
         }
-        for ((owner, _), shared) in by_owner {
+        for ((owner, _, _), shared) in by_owner {
             if shared.len() < 2 {
                 continue;
             }

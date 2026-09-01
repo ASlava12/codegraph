@@ -8357,6 +8357,53 @@ fn insights_report_duplicate_functions_and_error_flow() {
 }
 
 #[test]
+fn a_go_package_tells_two_declarations_of_a_name_apart() {
+    // `Add` in five of terraform's packages is five functions, not one name
+    // five things answer to: 3433 of the corpus's 3477 go groups have every
+    // declaration in its own directory. No other language is above 53%, so
+    // a name repeated across two directories of one java or cpp project
+    // still says what it said.
+    let mut graph = CodeGraph::new("repo");
+    let go = |graph: &mut CodeGraph, path: &str| {
+        graph.add_node_with_metadata(
+            NodeKind::Function,
+            "Add",
+            Some(SourceSpan {
+                path: path.to_string(),
+                start_line: 1,
+                start_column: 1,
+                end_line: 2,
+                end_column: 1,
+            }),
+            BTreeMap::from([("language".to_string(), "go".to_string())]),
+        )
+    };
+    let apart = [
+        go(&mut graph, "internal/addrs/set.go"),
+        go(&mut graph, "internal/states/set.go"),
+    ];
+    let together = [
+        go(&mut graph, "internal/plans/one.go"),
+        go(&mut graph, "internal/plans/two.go"),
+    ];
+
+    let report = insights(&graph);
+    let named = |id: NodeId| {
+        report.insights.iter().any(|insight| {
+            insight.kind == "duplicate_function_label" && insight.nodes.contains(&id)
+        })
+    };
+    assert!(
+        !apart.iter().any(|id| named(*id)),
+        "two packages declaring `Add` once each are two functions"
+    );
+    assert!(
+        together.iter().all(|id| named(*id)),
+        "while one package declaring it twice is the name nothing tells apart"
+    );
+}
+
+#[test]
 fn a_definition_an_unsettled_call_may_mean_is_not_uncalled() {
     // A call the resolver could not narrow becomes one placeholder, so none
     // of the definitions it might mean gets an incoming edge and every one

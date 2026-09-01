@@ -620,9 +620,17 @@ function buildClientInsights(graph) {
     // the same way, and 2542 findings across the corpus said nothing a
     // reader could act on.
     if (nodes.every((node) => !isTheProgramsOwn(node, generated))) return;
+    // A go package is a directory, and a package-level name belongs to its
+    // package: `Add` in five of terraform's packages is five functions.
+    // 3433 of the corpus's 3477 go groups have every declaration in its own
+    // directory; no other language is above 53%, so this is go's rule. The
+    // CLI groups by the same three things.
     const byOwner = new Map();
     nodes.forEach((node) => {
-      const key = `${node.metadata?.owner_type ?? ""}\u0000${node.metadata?.language ?? ""}`;
+      const language = node.metadata?.language ?? "";
+      const path = node.span?.path ?? "";
+      const pkg = language === "go" && path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+      const key = `${node.metadata?.owner_type ?? ""}\u0000${language}\u0000${pkg}`;
       const list = byOwner.get(key) || [];
       list.push(node);
       byOwner.set(key, list);
