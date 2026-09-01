@@ -620,6 +620,9 @@ drive("client insights carry the CLI's severities", () => {
       { id: 1, kind: "function", label: "run" },
       { id: 2, kind: "function", label: "raise" },
       { id: 3, kind: "function", label: "orphan" },
+      // Exported and uncalled: the API rather than dead code, and its own
+      // kind since a reader asking what to delete wants the other one.
+      { id: 8, kind: "function", label: "Exported", metadata: { visibility: "public" } },
       // Two files answer to `twin` and nothing tells them apart.
       { id: 4, kind: "function", label: "twin", span: { path: "left.py" } },
       { id: 5, kind: "function", label: "twin", span: { path: "right.py" } },
@@ -647,6 +650,7 @@ drive("client insights carry the CLI's severities", () => {
     potential_error_flow: "info",
     unreachable_error_flow: "info",
     orphan_function: "info",
+    export_with_no_local_caller: "info",
     duplicate_function_label: "info",
     parse_error: "error",
     unreadable_file: "error",

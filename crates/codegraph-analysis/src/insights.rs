@@ -990,16 +990,28 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
                 .metadata
                 .get("visibility")
                 .is_some_and(|visibility| visibility == "public");
-            let message = if exported {
-                format!(
-                    "Function `{}` has no incoming call edge; it is exported, so its callers may be outside this repository",
-                    node.label
+            // The two say different things and were one kind, so a reader
+            // asking what can be deleted got the API as well: 77573 of the
+            // corpus's 115277 uncalled functions are exported. The one
+            // whose callers this repository could see and does not have is
+            // `orphan_function`; the one whose callers it cannot see is
+            // its own kind, and neither buries the other now.
+            let (kind, message) = if exported {
+                (
+                    "export_with_no_local_caller",
+                    format!(
+                        "Function `{}` has no incoming call edge; it is exported, so its callers may be outside this repository",
+                        node.label
+                    ),
                 )
             } else {
-                format!("Function `{}` has no incoming call edge", node.label)
+                (
+                    "orphan_function",
+                    format!("Function `{}` has no incoming call edge", node.label),
+                )
             };
             insights.push(Insight {
-                kind: "orphan_function".to_string(),
+                kind: kind.to_string(),
                 severity: InsightSeverity::Info,
                 message,
                 nodes: vec![node.id],

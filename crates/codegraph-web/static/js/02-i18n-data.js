@@ -1571,6 +1571,7 @@ const I18N = {
     "kind.syntax_error": "синтаксическая ошибка",
     "kind.semantic_diagnostic": "семантическая диагностика",
     "kind.orphan_function": "изолированная функция",
+    "kind.export_with_no_local_caller": "экспорт без вызовов внутри проекта",
     "kind.potential_error_flow": "потенциальный поток ошибки",
     "kind.conflicting_config_default": "конфликт default конфига",
     "kind.conflicting_dependency_declaration": "конфликт версии зависимости",

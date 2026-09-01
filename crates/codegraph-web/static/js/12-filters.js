@@ -500,16 +500,17 @@ function buildClientInsights(graph) {
       !entrypointIds.has(node.id) &&
       !calledIds.has(node.id)
     ) {
+      const exported = node.metadata?.visibility === "public";
       insights.push({
-        kind: "orphan_function",
+        // Dead or the API. They were one kind, so a reader asking what can
+        // be deleted got the API as well: terraform's actionable count
+        // falls from 3044 to 336 once they are named apart, which is what
+        // the CLI does.
+        kind: exported ? "export_with_no_local_caller" : "orphan_function",
         severity: "info",
-        // Dead or the API: terraform has 11406 exported functions with no
-        // in-repo caller against 592 unexported ones, and the CLI says
-        // which is which.
-        message:
-          node.metadata?.visibility === "public"
-            ? `${node.label} has no incoming call edge; it is exported, so its callers may be outside this repository`
-            : `${node.label} has no incoming call edge`,
+        message: exported
+          ? `${node.label} has no incoming call edge; it is exported, so its callers may be outside this repository`
+          : `${node.label} has no incoming call edge`,
         nodeId: node.id,
       });
     }

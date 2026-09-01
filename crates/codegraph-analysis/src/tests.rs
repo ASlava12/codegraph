@@ -13378,24 +13378,29 @@ fn an_orphan_says_whether_it_is_dead_or_the_api() {
     );
 
     let report = insights(&graph);
-    let orphans: Vec<&str> = report
-        .insights
-        .iter()
-        .filter(|insight| insight.kind == "orphan_function")
-        .map(|insight| insight.message.as_str())
-        .collect();
-    assert_eq!(orphans.len(), 2, "{orphans:?}");
-    assert!(
-        orphans
+    let of_kind = |kind: &str| -> Vec<&str> {
+        report
+            .insights
             .iter()
-            .any(|message| message.contains("`ParseAddress`") && message.contains("exported")),
+            .filter(|insight| insight.kind == kind)
+            .map(|insight| insight.message.as_str())
+            .collect()
+    };
+    // The two say different things and are two kinds, so a reader asking
+    // what can be deleted is not handed the API as well: 77573 of the
+    // corpus's 115277 uncalled functions are exported, and terraform's
+    // actionable count falls from 3044 to 336.
+    let orphans = of_kind("orphan_function");
+    assert_eq!(orphans.len(), 1, "{orphans:?}");
+    assert!(
+        orphans[0].contains("`parseInternal`") && !orphans[0].contains("exported"),
         "{orphans:?}"
     );
+    let exports = of_kind("export_with_no_local_caller");
+    assert_eq!(exports.len(), 1, "{exports:?}");
     assert!(
-        orphans
-            .iter()
-            .any(|message| message.contains("`parseInternal`") && !message.contains("exported")),
-        "{orphans:?}"
+        exports[0].contains("`ParseAddress`") && exports[0].contains("exported"),
+        "{exports:?}"
     );
 }
 

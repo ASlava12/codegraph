@@ -21,6 +21,7 @@ pub const KNOWN_INSIGHT_KINDS: &[&str] = &[
     "duplicate_function_label",
     "duplicate_migration_sequence",
     "entrypoint_dead_end",
+    "export_with_no_local_caller",
     "mixed_dependency_scope",
     "mixed_config_requirement",
     "non_runtime_dependency_import",
