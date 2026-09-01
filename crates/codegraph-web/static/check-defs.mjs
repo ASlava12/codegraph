@@ -158,6 +158,44 @@ for (const [constant, signature] of SHARED_LISTS) {
   sharedNames += rustNames.size;
 }
 
+// The bundle keeps its own copy of the path classifier -- not a list this
+// time but a whole rule -- and it has drifted every time the CLI's grew:
+// vendored directories, protobuf naming, storybook stories, a test runner's
+// configuration. Nothing compared them: `insight-parity` compares what the
+// two sides compute, so it is silent while they agree, and they agree until
+// a graph reaches the difference. Comparing the path tokens each side
+// spells out fails the moment one grows a rule the other does not.
+const blockAfter = (text, signature) => {
+  const start = text.indexOf(signature);
+  if (start < 0) throw new Error(`check-defs: ${signature} is gone`);
+  const end = text.indexOf("\n}\n", start);
+  return text.slice(start, end < 0 ? text.length : end);
+};
+// A token shorter than two characters is punctuation the rule splits on,
+// not a name it matches: the bundle writes `lastIndexOf(".")`.
+const pathTokens = (text) =>
+  new Set(
+    [...text.matchAll(/"([^"\\\n]+)"/g)]
+      .map((match) => match[1])
+      .filter((token) => /^[A-Za-z0-9._/-]{2,}$/.test(token)),
+  );
+const coreSource = rustSources.find(([name]) => name === "codegraph-core/lib.rs")[1];
+const rustPathTokens = pathTokens(
+  blockAfter(coreSource, "fn is_test_word(") +
+    blockAfter(coreSource, "pub fn is_test_like_source_path("),
+);
+const jsPathTokens = pathTokens(blockAfter(raw, "function isTestLikeSourcePath("));
+{
+  const onlyRust = [...rustPathTokens].filter((token) => !jsPathTokens.has(token));
+  const onlyJs = [...jsPathTokens].filter((token) => !rustPathTokens.has(token));
+  if (onlyRust.length > 0 || onlyJs.length > 0) {
+    console.error("check-defs: is_test_like_source_path and isTestLikeSourcePath disagree");
+    if (onlyRust.length > 0) console.error(`  only in the Rust rule: ${onlyRust.join(", ")}`);
+    if (onlyJs.length > 0) console.error(`  only in the bundle: ${onlyJs.join(", ")}`);
+    process.exit(1);
+  }
+}
+
 // Every finding the analysis can emit is rendered by name in the view. A
 // kind with no Russian name shows English words in the Russian UI, and 30
 // of the 52 did before anyone compared the two lists.
@@ -234,5 +272,5 @@ if (untranslated.length > 0) {
 }
 
 console.log(
-  `check-defs: ok (${defined.size} defs, ${calls.size} called names, 0 undefined, ${sharedNames} shared names in step, ${kinds.length + vocabulary.length} kinds named)`,
+  `check-defs: ok (${defined.size} defs, ${calls.size} called names, 0 undefined, ${sharedNames + rustPathTokens.size} shared names in step, ${kinds.length + vocabulary.length} kinds named)`,
 );
