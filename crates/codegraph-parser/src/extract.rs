@@ -4020,7 +4020,25 @@ fn csharp_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<Str
     let mut declared: BTreeMap<String, String> = BTreeMap::new();
     let mut conflicting: BTreeSet<String> = BTreeSet::new();
     let mut bound: Vec<(String, String)> = Vec::new();
-    let mut stack = vec![node];
+    // A field is declared in the class rather than in the method that uses
+    // it, and Polly reaches for `_cache` and `_policy` that way in 591 of the
+    // calls it could not place. The method's own bindings are read after and
+    // win, since a local of the same name is what the line in front means.
+    let mut stack = Vec::new();
+    if let Some(class) = csharp_enclosing_class(node)
+        && let Some(members) = class.child_by_field_name("body")
+    {
+        let mut cursor = members.walk();
+        stack.extend(
+            members
+                .named_children(&mut cursor)
+                .filter(|member| {
+                    matches!(member.kind(), "field_declaration" | "property_declaration")
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    stack.push(node);
     while let Some(current) = stack.pop() {
         let mut cursor = current.walk();
         for child in current.named_children(&mut cursor) {
@@ -4077,6 +4095,22 @@ fn csharp_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<Str
         declared.remove(&name);
     }
     declared
+}
+
+/// The class, struct or record a C# definition is written in, whose fields
+/// its body reaches without declaring them.
+fn csharp_enclosing_class<'tree>(node: Node<'tree>) -> Option<Node<'tree>> {
+    let mut current = node.parent();
+    while let Some(ancestor) = current {
+        if matches!(
+            ancestor.kind(),
+            "class_declaration" | "struct_declaration" | "record_declaration"
+        ) {
+            return Some(ancestor);
+        }
+        current = ancestor.parent();
+    }
+    None
 }
 
 /// The class a C# declarator builds: `= new JsonTextReader(..)`.

@@ -19768,3 +19768,50 @@ fn a_receiver_reaches_the_method_its_type_inherits() {
         "the method the receiver's type inherits is still reached through it"
     );
 }
+
+#[test]
+fn a_csharp_field_states_the_type_its_method_belongs_to() {
+    // `private readonly BsonBinaryWriter _writer;` is declared in the class
+    // rather than in the method that uses it, so `_writer.Flush()` was
+    // answered by the writer it sits in -- a self-call. Polly reaches for a
+    // field that way in 591 of the calls it could not place.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("BsonBinaryWriter.cs"),
+        "namespace App;\n\npublic class BsonBinaryWriter\n{\n    public void Flush() { }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("BsonWriter.cs"),
+        "namespace App;\n\npublic class BsonWriter\n{\n    private readonly BsonBinaryWriter _writer;\n\n    public void Flush()\n    {\n        _writer.Flush();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let flush_of = |owner: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == "Flush"
+                    && node.metadata.get("owner_type").map(String::as_str) == Some(owner)
+            })
+            .unwrap_or_else(|| panic!("{owner}.Flush"))
+            .id
+    };
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("_writer.Flush")
+        })
+        .expect("the call through the field");
+    assert_eq!(
+        edge.target,
+        flush_of("BsonBinaryWriter"),
+        "the field states which Flush the call means"
+    );
+    assert_ne!(edge.target, flush_of("BsonWriter"));
+}
