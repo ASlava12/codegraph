@@ -19815,3 +19815,55 @@ fn a_csharp_field_states_the_type_its_method_belongs_to() {
     );
     assert_ne!(edge.target, flush_of("BsonWriter"));
 }
+
+#[test]
+fn a_kotlin_property_states_the_type_its_method_belongs_to() {
+    // okio writes `val sink: BufferedSink` in the class and `sink.flush()` in
+    // the tests, and the call was answered by the test class's own `flush`:
+    // 2108 of the calls it could not place reach for a property that way.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("BufferedSink.kt"),
+        "package okio\n\nclass BufferedSink {\n    fun flush() {\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("SinkTest.kt"),
+        "package okio\n\nclass SinkTest {\n    val sink: BufferedSink = BufferedSink()\n\n    fun flush() {\n    }\n\n    fun writes() {\n        sink.flush()\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let flush_of = |owner: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == "flush"
+                    && node.metadata.get("owner_type").map(String::as_str) == Some(owner)
+            })
+            .unwrap_or_else(|| panic!("{owner}.flush"))
+            .id
+    };
+    let writes = graph
+        .nodes
+        .iter()
+        .find(|node| node.label == "writes")
+        .expect("the calling method");
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.source == writes.id
+                && edge.metadata.get("call_label").map(String::as_str) == Some("flush")
+        })
+        .expect("the call through the property");
+    assert_eq!(
+        edge.target,
+        flush_of("BufferedSink"),
+        "the property states which flush the call means"
+    );
+    assert_ne!(edge.target, flush_of("SinkTest"));
+}

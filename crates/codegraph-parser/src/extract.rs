@@ -3885,6 +3885,28 @@ pub(crate) fn declared_variable_types(
 /// local declaration in its body. A name bound twice to different types is
 /// left out rather than guessed at.
 fn java_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    // A local of the same name as a field is what the line in front
+    // means, so the definition's own bindings are read after the class's
+    // and win rather than colliding with them.
+    let mut declared = java_bindings_in(
+        enclosing_class_members(
+            node,
+            &[
+                "class_declaration",
+                "interface_declaration",
+                "enum_declaration",
+                "record_declaration",
+            ],
+            &["field_declaration"],
+        ),
+        source,
+    );
+    declared.extend(java_bindings_in(vec![node], source));
+    declared
+}
+
+/// What one set of declarations binds, read the way java states types.
+fn java_bindings_in(mut stack: Vec<Node<'_>>, source: &[u8]) -> BTreeMap<String, String> {
     let mut declared: BTreeMap<String, String> = BTreeMap::new();
     let mut conflicting: BTreeSet<String> = BTreeSet::new();
     let mut record = |name: String, type_name: String, declared: &mut BTreeMap<String, String>| {
@@ -3897,7 +3919,6 @@ fn java_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<Strin
         }
         declared.insert(name, type_name);
     };
-    let mut stack = vec![node];
     while let Some(current) = stack.pop() {
         let mut cursor = current.walk();
         for child in current.named_children(&mut cursor) {
@@ -4012,11 +4033,71 @@ fn scala_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
     }
 }
 
+/// The declarations a class holds directly, which every definition inside it
+/// reaches without declaring: a field is written in the class and used in the
+/// methods, and a scope that reads only the definition never sees it. okio
+/// reaches for one in 2108 of the calls it cannot place, gson in 811,
+/// Alamofire in 784 and Polly in 591. Only the class's own members are taken
+/// -- walking all of it would drag every sibling method's parameters in.
+fn enclosing_class_members<'tree>(
+    node: Node<'tree>,
+    class_kinds: &[&str],
+    member_kinds: &[&str],
+) -> Vec<Node<'tree>> {
+    let mut current = node.parent();
+    while let Some(ancestor) = current {
+        if class_kinds.contains(&ancestor.kind()) {
+            let mut members = Vec::new();
+            let mut cursor = ancestor.walk();
+            for child in ancestor.named_children(&mut cursor) {
+                if member_kinds.contains(&child.kind()) {
+                    members.push(child);
+                    continue;
+                }
+                // A grammar states the members in a body of their own --
+                // `class_body`, `enum_class_body`, `declaration_list`.
+                if child.kind().ends_with("body") || child.kind() == "declaration_list" {
+                    let mut inner = child.walk();
+                    members.extend(
+                        child
+                            .named_children(&mut inner)
+                            .filter(|member| member_kinds.contains(&member.kind())),
+                    );
+                }
+            }
+            return members;
+        }
+        current = ancestor.parent();
+    }
+    Vec::new()
+}
+
 /// The names a C# definition binds with a type: its parameters and the
 /// locals its body declares, including the `var x = new Thing()` that states
 /// the class outright. A name bound twice to different types is left out
 /// rather than guessed at.
 fn csharp_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    // A local of the same name as a field is what the line in front
+    // means, so the definition's own bindings are read after the class's
+    // and win rather than colliding with them.
+    let mut declared = csharp_bindings_in(
+        enclosing_class_members(
+            node,
+            &[
+                "class_declaration",
+                "struct_declaration",
+                "record_declaration",
+            ],
+            &["field_declaration", "property_declaration"],
+        ),
+        source,
+    );
+    declared.extend(csharp_bindings_in(vec![node], source));
+    declared
+}
+
+/// What one set of declarations binds, read the way csharp states types.
+fn csharp_bindings_in(mut stack: Vec<Node<'_>>, source: &[u8]) -> BTreeMap<String, String> {
     let mut declared: BTreeMap<String, String> = BTreeMap::new();
     let mut conflicting: BTreeSet<String> = BTreeSet::new();
     let mut bound: Vec<(String, String)> = Vec::new();
@@ -4024,21 +4105,6 @@ fn csharp_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<Str
     // it, and Polly reaches for `_cache` and `_policy` that way in 591 of the
     // calls it could not place. The method's own bindings are read after and
     // win, since a local of the same name is what the line in front means.
-    let mut stack = Vec::new();
-    if let Some(class) = csharp_enclosing_class(node)
-        && let Some(members) = class.child_by_field_name("body")
-    {
-        let mut cursor = members.walk();
-        stack.extend(
-            members
-                .named_children(&mut cursor)
-                .filter(|member| {
-                    matches!(member.kind(), "field_declaration" | "property_declaration")
-                })
-                .collect::<Vec<_>>(),
-        );
-    }
-    stack.push(node);
     while let Some(current) = stack.pop() {
         let mut cursor = current.walk();
         for child in current.named_children(&mut cursor) {
@@ -4095,22 +4161,6 @@ fn csharp_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<Str
         declared.remove(&name);
     }
     declared
-}
-
-/// The class, struct or record a C# definition is written in, whose fields
-/// its body reaches without declaring them.
-fn csharp_enclosing_class<'tree>(node: Node<'tree>) -> Option<Node<'tree>> {
-    let mut current = node.parent();
-    while let Some(ancestor) = current {
-        if matches!(
-            ancestor.kind(),
-            "class_declaration" | "struct_declaration" | "record_declaration"
-        ) {
-            return Some(ancestor);
-        }
-        current = ancestor.parent();
-    }
-    None
 }
 
 /// The class a C# declarator builds: `= new JsonTextReader(..)`.
@@ -4266,9 +4316,29 @@ fn php_variable_name(name: &str) -> String {
 /// always state one, and the properties that do. `let session = Session()`
 /// states none, but what it builds is written right there.
 fn swift_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    // A local of the same name as a field is what the line in front
+    // means, so the definition's own bindings are read after the class's
+    // and win rather than colliding with them.
+    let mut declared = swift_bindings_in(
+        enclosing_class_members(
+            node,
+            &[
+                "class_declaration",
+                "protocol_declaration",
+                "struct_declaration",
+            ],
+            &["property_declaration"],
+        ),
+        source,
+    );
+    declared.extend(swift_bindings_in(vec![node], source));
+    declared
+}
+
+/// What one set of declarations binds, read the way swift states types.
+fn swift_bindings_in(mut stack: Vec<Node<'_>>, source: &[u8]) -> BTreeMap<String, String> {
     let mut declared: BTreeMap<String, String> = BTreeMap::new();
     let mut conflicting: BTreeSet<String> = BTreeSet::new();
-    let mut stack = vec![node];
     while let Some(current) = stack.pop() {
         let mut cursor = current.walk();
         for child in current.named_children(&mut cursor) {
@@ -4345,9 +4415,25 @@ fn swift_built_type(node: Node<'_>, source: &[u8]) -> Option<String> {
 /// always state one, and the bindings that do. `val gson = Gson()` states
 /// none, but what it builds is written right there.
 fn kotlin_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    // A local of the same name as a field is what the line in front
+    // means, so the definition's own bindings are read after the class's
+    // and win rather than colliding with them.
+    let mut declared = kotlin_bindings_in(
+        enclosing_class_members(
+            node,
+            &["class_declaration", "object_declaration"],
+            &["property_declaration"],
+        ),
+        source,
+    );
+    declared.extend(kotlin_bindings_in(vec![node], source));
+    declared
+}
+
+/// What one set of declarations binds, read the way kotlin states types.
+fn kotlin_bindings_in(mut stack: Vec<Node<'_>>, source: &[u8]) -> BTreeMap<String, String> {
     let mut declared: BTreeMap<String, String> = BTreeMap::new();
     let mut conflicting: BTreeSet<String> = BTreeSet::new();
-    let mut stack = vec![node];
     while let Some(current) = stack.pop() {
         let mut cursor = current.walk();
         for child in current.named_children(&mut cursor) {
