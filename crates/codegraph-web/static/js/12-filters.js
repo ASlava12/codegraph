@@ -568,6 +568,11 @@ function buildClientInsights(graph) {
   // its class's. Mirrors `add_duplicate_function_insights`.
   functionLabels.forEach((nodes, label) => {
     if (nodes.length < 2) return;
+    // A name repeated only outside the program is not the program's
+    // duplicate: nobody renames a generated function. The CLI reads them
+    // the same way, and 2542 findings across the corpus said nothing a
+    // reader could act on.
+    if (nodes.every((node) => !isTheProgramsOwn(node))) return;
     const byOwner = new Map();
     nodes.forEach((node) => {
       const key = `${node.metadata?.owner_type ?? ""}\u0000${node.metadata?.language ?? ""}`;

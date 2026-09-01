@@ -9956,6 +9956,64 @@ fn insights_report_entrypoint_dead_ends() {
 }
 
 #[test]
+fn a_name_repeated_only_outside_the_program_is_not_its_duplicate() {
+    // Nobody renames a generated function, and a suite's repeated helper
+    // is the harness's business. 766 of terraform's 1500 groups are its
+    // generated protobuf declaring `Reset` once per message; 2542 findings
+    // across 34 projects say nothing a reader could act on.
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| {
+        Some(SourceSpan {
+            path: path.to_string(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+        })
+    };
+    graph.add_node_with_metadata(
+        NodeKind::Function,
+        "Reset",
+        span("internal/a/a.pb.go"),
+        BTreeMap::new(),
+    );
+    graph.add_node_with_metadata(
+        NodeKind::Function,
+        "Reset",
+        span("internal/b/b.pb.go"),
+        BTreeMap::new(),
+    );
+    graph.add_node_with_metadata(
+        NodeKind::Function,
+        "Parse",
+        span("internal/a/parse.go"),
+        BTreeMap::new(),
+    );
+    graph.add_node_with_metadata(
+        NodeKind::Function,
+        "Parse",
+        span("internal/b/parse.go"),
+        BTreeMap::new(),
+    );
+
+    let report = insights(&graph);
+    let duplicates: Vec<&str> = report
+        .insights
+        .iter()
+        .filter(|insight| insight.kind == "duplicate_function_label")
+        .map(|insight| insight.message.as_str())
+        .collect();
+    assert!(
+        duplicates.iter().any(|message| message.contains("Parse")),
+        "a name the program repeats is still worth saying: {duplicates:?}"
+    );
+    assert!(
+        !duplicates.iter().any(|message| message.contains("Reset")),
+        "a name only generated code repeats is not: {duplicates:?}"
+    );
+}
+
+#[test]
 fn a_rust_test_reads_config_wherever_it_is_written() {
     // Rust writes its tests inside the file they test, so the path cannot
     // say what the node already does. This repository's

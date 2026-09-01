@@ -636,6 +636,20 @@ pub(crate) fn add_duplicate_function_insights(graph: &CodeGraph, insights: &mut 
         if nodes.len() < 2 {
             continue;
         }
+        // A name repeated only outside the program is not the program's
+        // duplicate: nobody renames a generated function, and a suite's
+        // repeated helper is the harness's business. 1054 of terraform's
+        // 1552 groups are its generated protobuf declaring `Reset` and
+        // `String` once per message, and 49 of mastodon's are its specs.
+        // The orphan insight has always read them this way.
+        if nodes.iter().all(|node| {
+            node.span
+                .as_ref()
+                .is_some_and(|span| is_test_like_source_path(&span.path))
+                || node.metadata.get("invoked_by").map(String::as_str) == Some("test_runner")
+        }) {
+            continue;
+        }
         // A name each owner declares once is not a duplicate. `visit_string`
         // on three of serde's visitors is what implementing a trait looks
         // like, `Setup` on three of Polly's benchmarks is what the harness
