@@ -3783,6 +3783,13 @@ pub(crate) fn declared_variable_types(
     if language == Language::Php {
         return php_declared_variable_types(node, source);
     }
+    // C# states a parameter's type always and a local's most of the time:
+    // `void WriteValue(JsonWriter writer)` and `JsonReader reader = ...`.
+    // Newtonsoft.Json left 3093 calls through a named receiver ambiguous
+    // because a dozen of its classes declare `Read`.
+    if language == Language::CSharp {
+        return csharp_declared_variable_types(node, source);
+    }
     if language != Language::Go {
         return declared;
     }
@@ -3892,6 +3899,111 @@ fn java_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<Strin
 /// properties of the class it sits in, and what `$x = new Handler()`
 /// builds. The `$` is part of how PHP writes a variable, and the call site
 /// writes it too, so the names are kept as written.
+/// The names a C# definition binds with a type: its parameters and the
+/// locals its body declares, including the `var x = new Thing()` that states
+/// the class outright. A name bound twice to different types is left out
+/// rather than guessed at.
+fn csharp_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    let mut declared: BTreeMap<String, String> = BTreeMap::new();
+    let mut conflicting: BTreeSet<String> = BTreeSet::new();
+    let mut bound: Vec<(String, String)> = Vec::new();
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        let mut cursor = current.walk();
+        for child in current.named_children(&mut cursor) {
+            stack.push(child);
+        }
+        match current.kind() {
+            "parameter" => {
+                let Some(type_name) = current
+                    .child_by_field_name("type")
+                    .and_then(|stated| csharp_type_name(stated, source))
+                else {
+                    continue;
+                };
+                if let Some(name) = named_child_text(current, "name", source)
+                    .or_else(|| child_kind_text(current, "identifier", source))
+                {
+                    bound.push((name, type_name));
+                }
+            }
+            "variable_declaration" => {
+                let stated = current
+                    .child_by_field_name("type")
+                    .and_then(|stated| csharp_type_name(stated, source));
+                let mut declarators = current.walk();
+                for declarator in current.named_children(&mut declarators) {
+                    if declarator.kind() != "variable_declarator" {
+                        continue;
+                    }
+                    let Some(name) = child_kind_text(declarator, "identifier", source) else {
+                        continue;
+                    };
+                    // `var reader = new JsonTextReader(..)` names the class in
+                    // the value when the declaration writes `var`.
+                    let built = csharp_constructed_type(declarator, source);
+                    if let Some(type_name) = stated.clone().or(built) {
+                        bound.push((name, type_name));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    for (name, type_name) in bound {
+        if declared
+            .get(&name)
+            .is_some_and(|existing| existing != &type_name)
+        {
+            conflicting.insert(name);
+            continue;
+        }
+        declared.insert(name, type_name);
+    }
+    for name in conflicting {
+        declared.remove(&name);
+    }
+    declared
+}
+
+/// The class a C# declarator builds: `= new JsonTextReader(..)`.
+fn csharp_constructed_type(declarator: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut stack = vec![declarator];
+    while let Some(current) = stack.pop() {
+        if current.kind() == "object_creation_expression" {
+            return current
+                .child_by_field_name("type")
+                .and_then(|stated| csharp_type_name(stated, source));
+        }
+        let mut cursor = current.walk();
+        for child in current.named_children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+    None
+}
+
+/// The bare name a C# type expression states. `int` and `string` are the
+/// language's own, and nothing in a repository declares them, so they are
+/// left out; `List<JToken>` and `Newtonsoft.Json.JsonReader` state a name
+/// the repository may well declare.
+fn csharp_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "identifier" => node_text(node, source),
+        "generic_name" => node
+            .child_by_field_name("name")
+            .and_then(|name| csharp_type_name(name, source))
+            .or_else(|| child_kind_text(node, "identifier", source)),
+        "qualified_name" => node
+            .child_by_field_name("name")
+            .and_then(|name| csharp_type_name(name, source)),
+        "nullable_type" | "array_type" | "pointer_type" => node
+            .child_by_field_name("type")
+            .and_then(|inner| csharp_type_name(inner, source)),
+        _ => None,
+    }
+}
+
 fn php_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
     let mut declared: BTreeMap<String, String> = BTreeMap::new();
     let mut conflicting: BTreeSet<String> = BTreeSet::new();

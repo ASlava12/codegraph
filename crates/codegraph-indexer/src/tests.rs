@@ -17463,10 +17463,11 @@ fn overloads_of_one_method_are_not_a_choice() {
         "namespace Alpha {\n    public class Writer {\n        public void Write(string value) { }\n        public void Write(int value) { }\n    }\n}\n",
     )
     .unwrap();
-    // A different file, so nothing but the overload rule can settle it.
+    // A different file, and a receiver whose type nothing states, so
+    // nothing but the overload rule can settle it.
     fs::write(
         root.join("src").join("alpha").join("user.cs"),
-        "namespace Alpha {\n    public class User {\n        public void Run(Writer writer) { writer.Write(\"x\"); }\n    }\n}\n",
+        "namespace Alpha {\n    public class User {\n        public void Run() { var writer = Fetch(); writer.Write(\"x\"); }\n    }\n}\n",
     )
     .unwrap();
     fs::write(
@@ -19392,4 +19393,55 @@ fn a_call_through_a_field_is_not_the_callers_own_method() {
             .any(|edge| edge.kind == EdgeKind::Calls && edge.target == own.id),
         "a call through a field is not answered by the caller's own method"
     );
+}
+
+#[test]
+fn a_csharp_receiver_states_which_read_a_call_means() {
+    // Newtonsoft.Json declares `Read` on a dozen classes, and 3093 calls
+    // through a named receiver chose between all of them. C# states the type
+    // of a parameter always and of a local most of the time, and that names
+    // the owner outright.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("Readers.cs"),
+        "namespace App;\n\npublic class JsonReader\n{\n    public bool Read() { return true; }\n}\n\npublic class BsonReader\n{\n    public bool Read() { return false; }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Loader.cs"),
+        "namespace App;\n\npublic class Loader\n{\n    public bool Load(JsonReader reader)\n    {\n        return reader.Read();\n    }\n\n    public bool LoadBson()\n    {\n        var other = new BsonReader();\n        return other.Read();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let read_of = |owner: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == "Read"
+                    && node.metadata.get("owner_type").map(String::as_str) == Some(owner)
+            })
+            .unwrap_or_else(|| panic!("{owner}.Read"))
+            .id
+    };
+    for (caller, owner) in [("Load", "JsonReader"), ("LoadBson", "BsonReader")] {
+        let source = graph
+            .nodes
+            .iter()
+            .find(|node| node.label == caller)
+            .unwrap_or_else(|| panic!("{caller}"));
+        let target = read_of(owner);
+        assert!(
+            graph.edges.iter().any(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.source == source.id
+                    && edge.target == target
+                    && edge.metadata.get("resolution_basis").map(String::as_str)
+                        == Some("receiver_type")
+            }),
+            "{caller} calls {owner}.Read, and the receiver's declared type says so"
+        );
+    }
 }
