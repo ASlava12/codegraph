@@ -17244,7 +17244,7 @@ fn a_rust_use_says_whose_name_the_call_is_written_through() {
     .unwrap();
     fs::write(
         root.join("app").join("src").join("main.rs"),
-        "use {engine::Engine, walkdir::WalkDir};\nuse std::collections::BTreeMap;\n\npub struct Config;\n\nimpl Config {\n    pub fn build() -> Self {\n        Config\n    }\n}\n\nfn main() {\n    let _: BTreeMap<u8, u8> = BTreeMap::new();\n    let _ = WalkDir::new(\".\");\n    let _ = Engine::new();\n    let _ = Config::build();\n}\n",
+        "use {engine::Engine, walkdir::WalkDir};\nuse std::collections::BTreeMap;\nuse std::env;\n\npub struct Config;\n\nimpl Config {\n    pub fn build() -> Self {\n        Config\n    }\n}\n\nfn main() {\n    let _: BTreeMap<u8, u8> = BTreeMap::new();\n    let _ = WalkDir::new(\".\");\n    let _ = Engine::new();\n    let _ = Config::build();\n    let _ = env::temp_dir();\n}\n",
     )
     .unwrap();
 
@@ -17279,6 +17279,16 @@ fn a_rust_use_says_whose_name_the_call_is_written_through() {
         resolution_of("Config::build").as_deref(),
         Some("resolved"),
         "and a type declared here keeps resolving to what it declares"
+    );
+    // `use std::env;` binds a module, and `env::temp_dir` is written
+    // through it. Reading only capitalised names left 1194 such calls
+    // unresolved on this repository and matched one to a project function
+    // of that name inside the very function that calls it, which `doctor`
+    // reported as a definition calling itself.
+    assert_eq!(
+        resolution_of("env::temp_dir").as_deref(),
+        Some("builtin"),
+        "a lowercase module is imported the same way a type is"
     );
 }
 

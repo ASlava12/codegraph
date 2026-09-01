@@ -1135,11 +1135,8 @@ pub(crate) fn rust_import_qualifiers(label: &str) -> Vec<(String, String)> {
             }
             let bound = alias.unwrap_or_else(|| path.rsplit("::").next().unwrap_or("").to_string());
             let bound = bound.trim().to_string();
-            bound
-                .chars()
-                .next()
-                .is_some_and(|first| first.is_ascii_uppercase())
-                .then(|| (root.to_string(), bound))
+            (!bound.is_empty() && !matches!(bound.as_str(), "*" | "self" | "super"))
+                .then_some((root.to_string(), bound))
         })
         .collect()
 }
