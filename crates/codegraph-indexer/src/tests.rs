@@ -9259,6 +9259,62 @@ fn a_contract_is_not_a_function_its_methods_are_local_to() {
 }
 
 #[test]
+fn a_nix_file_takes_lib_and_pkgs_from_whoever_imports_it() {
+    // A nix file is a function: `{ config, lib, pkgs, ... }:` says what its
+    // caller supplies, so `lib.optionalAttrs` names something inside a
+    // value this file was handed and nothing in the project can be looked
+    // up for it. home-manager writes 1834 such calls, 1505 through `lib`
+    // and 311 through `pkgs`. That is what a call through a bound value
+    // means everywhere else, and the resolution stays unresolved because
+    // saying `external` would claim to know which package answers.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("modules")).unwrap();
+    fs::write(
+        root.join("modules").join("program.nix"),
+        "{ lib, pkgs ? import <nixpkgs> { }, ... }:\n\nlet\n  render = name: lib.optionalString true name;\n  wrap = name: pkgs.writeText name \"body\";\n  stray = name: missing.thing name;\nin {\n  inherit render wrap stray;\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reason_of = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .map(|edge| {
+                (
+                    edge.metadata.get("resolution").cloned(),
+                    edge.metadata.get("unresolved_reason").cloned(),
+                )
+            })
+    };
+    assert_eq!(
+        reason_of("lib.optionalString"),
+        Some((
+            Some("unresolved".to_string()),
+            Some("local_value".to_string())
+        )),
+        "the caller supplies `lib`"
+    );
+    assert_eq!(
+        reason_of("pkgs.writeText"),
+        Some((
+            Some("unresolved".to_string()),
+            Some("local_value".to_string())
+        )),
+        "and `pkgs`, whose default does not end the parameter list"
+    );
+    assert_eq!(
+        reason_of("missing.thing").map(|(_, reason)| reason),
+        Some(None),
+        "while a name the file never took is still a name nothing answers"
+    );
+}
+
+#[test]
 fn a_shell_command_is_the_environments_when_it_is_not_the_scripts() {
     // A shell has three places a command can come from: a function the
     // script declares, the shell itself, and PATH. There is no fourth, so

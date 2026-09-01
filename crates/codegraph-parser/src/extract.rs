@@ -3578,11 +3578,77 @@ pub(crate) fn classify_call(
             metadata.insert("receiver_form".to_string(), "value".to_string());
         }
     }
+    /// The names a nix file takes from whoever imports it.
+    ///
+    /// A nix file is a function, and `{ config, lib, pkgs, ... }:` at the top
+    /// says what its caller supplies. `lib.optionalAttrs` therefore names
+    /// something inside a value this file was handed: nothing in the file, and
+    /// nothing in the project, can be looked up for it. home-manager writes
+    /// 1828 such calls -- 1491 through `lib` and 312 through `pkgs` -- and
+    /// that is what a call through a bound value already means everywhere else.
+    fn nix_file_parameters(source: &[u8]) -> BTreeSet<String> {
+        let Ok(text) = std::str::from_utf8(source) else {
+            return BTreeSet::new();
+        };
+        let mut rest = text;
+        loop {
+            rest = rest.trim_start();
+            match rest.strip_prefix('#') {
+                Some(comment) => rest = comment.split_once('\n').map_or("", |(_, tail)| tail),
+                None => break,
+            }
+        }
+        let Some(inner) = rest.strip_prefix('{') else {
+            return BTreeSet::new();
+        };
+        // A parameter may carry a default that is itself a set --
+        // `pkgs ? import <nixpkgs> { }` -- so the brace that ends the list is
+        // the one that returns to depth zero.
+        let mut depth = 0usize;
+        let mut end = None;
+        for (index, character) in inner.char_indices() {
+            match character {
+                '{' => depth += 1,
+                '}' if depth == 0 => {
+                    end = Some(index);
+                    break;
+                }
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        let Some(end) = end else {
+            return BTreeSet::new();
+        };
+        if !inner[end + 1..].trim_start().starts_with(':') {
+            return BTreeSet::new();
+        }
+        inner[..end]
+            .split(',')
+            .filter_map(|part| {
+                let name = part.split('?').next()?.trim();
+                (!name.is_empty()
+                    && name.chars().all(|character| {
+                        character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '\'')
+                    }))
+                .then(|| name.to_string())
+            })
+            .collect()
+    }
+
     // `done()` where the body wrote `runningCtx, done := context.WithCancel(…)`
     // calls a value, not a definition. Saying so separates a call that has
     // nothing to find from one the resolver failed on: 1499 of terraform's
     // 3536 unresolved bare Go calls are of this kind.
     if !label.contains('.') && scope.local_values.contains(&label) {
+        metadata.insert("callee_form".to_string(), "value".to_string());
+    }
+    // `lib.optionalAttrs` where the file begins `{ lib, pkgs, ... }:` calls
+    // through a value its caller supplied, which is the same thing.
+    if language == Language::Nix
+        && let Some((head, _)) = label.split_once('.')
+        && nix_file_parameters(source).contains(head)
+    {
         metadata.insert("callee_form".to_string(), "value".to_string());
     }
 
