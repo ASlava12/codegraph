@@ -8400,6 +8400,28 @@ fn a_generators_own_file_is_not_counted_as_the_program() {
             .any(|insight| insight.nodes.contains(&generated)),
         "and the generator's does not"
     );
+
+    // The orphan rule asked the same question in its own words, so it kept
+    // reporting generated functions after every other kind had stopped.
+    let uncalled = report
+        .insights
+        .iter()
+        .filter(|insight| {
+            insight.kind == "orphan_function" || insight.kind == "export_with_no_local_caller"
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        uncalled
+            .iter()
+            .any(|insight| insight.nodes.contains(&written)),
+        "a function a person wrote and nobody calls is still worth saying"
+    );
+    assert!(
+        !uncalled
+            .iter()
+            .any(|insight| insight.nodes.contains(&generated)),
+        "and a function nobody wrote is nobody's to delete"
+    );
 }
 
 #[test]

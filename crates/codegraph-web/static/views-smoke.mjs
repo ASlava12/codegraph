@@ -601,6 +601,18 @@ drive("client insights skip a file a generator wrote", () => {
   if (flows.some((insight) => insight.nodeId === 3)) {
     throw new Error("a generator's file is not the program's own");
   }
+  // The orphan rule asked the same question in its own words on both
+  // sides, so it kept reporting generated functions after every other kind
+  // had stopped.
+  const uncalled = api
+    .buildClientInsights(graph)
+    .filter((insight) => insight.kind === "orphan_function" || insight.kind === "export_with_no_local_caller");
+  if (!uncalled.some((insight) => insight.nodeId === 4)) {
+    throw new Error(`a function a person wrote and nobody calls is still worth saying: ${JSON.stringify(uncalled)}`);
+  }
+  if (uncalled.some((insight) => insight.nodeId === 3)) {
+    throw new Error("a function nobody wrote is nobody's to delete");
+  }
 });
 
 drive("client insights read unresolved and ambiguous calls as the CLI does", () => {

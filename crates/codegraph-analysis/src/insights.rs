@@ -898,6 +898,7 @@ fn reached_types(graph: &CodeGraph) -> BTreeSet<NodeId> {
 }
 
 pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
+    let generated = files_a_generator_wrote(graph);
     let entrypoints: BTreeSet<NodeId> = graph
         .edges
         .iter()
@@ -970,12 +971,10 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
         // that is how a test works. 3160 of vue's 3937 orphan functions
         // and 4381 of terraform's 12120 are of that kind, and they bury
         // the code somebody could actually delete.
-        if node
-            .span
-            .as_ref()
-            .is_some_and(|span| is_test_like_source_path(&span.path))
-            || node.metadata.get("invoked_by").map(String::as_str) == Some("test_runner")
-        {
+        // The same question the other kinds ask, and asking it in this
+        // one's own words is how a generated file kept being reported: a
+        // function nobody wrote is not one anybody can delete.
+        if !is_the_programs_own(node, &generated) {
             continue;
         }
         if node.kind == NodeKind::Function

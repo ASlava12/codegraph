@@ -506,15 +506,14 @@ function buildClientInsights(graph) {
       (["__construct", "constructor", "__init__"].includes(node.label) ||
         node.metadata?.definition_form === "constructor") &&
       reachedTypeIds.has(typeIdsByLabel.get(node.metadata?.owner_type));
-    // A test is run by its runner, which no edge records: the CLI skips a
-    // function declared in a test-like file and one a `#[test]` attribute
-    // marks, and 3160 of vue's 3937 orphan functions were of that kind.
-    const testRun =
-      node.metadata?.invoked_by === "test_runner" ||
-      (node.span?.path && isTestLikeSourcePath(node.span.path));
+    // A test is run by its runner, which no edge records, and a generated
+    // file is nobody's to delete: the CLI asks one question here, and
+    // asking it in this rule's own words is how a generated file kept
+    // being reported. 3160 of vue's 3937 orphan functions are test code.
+    const nobodysToDelete = !isTheProgramsOwn(node, generated);
     if (
       node.kind === "function" &&
-      !testRun &&
+      !nobodysToDelete &&
       !builtByItsClass &&
       !node.metadata?.enclosing_function &&
       // `const onMounted = createHook(MOUNTED)` declares a value a factory
