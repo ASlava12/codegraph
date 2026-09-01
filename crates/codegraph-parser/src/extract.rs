@@ -3843,7 +3843,11 @@ pub(crate) fn declared_variable_types(
     // join happens where every definition is known. An explicit `var x T`
     // and a composite literal both state the type outright, so they follow
     // and win.
-    declared.extend(go_call_result_types(node, source));
+    // A name the signature or a `var` already typed keeps that type: the
+    // call it was bound to is an answer only where there is no other.
+    for (name, bound_by) in go_call_result_types(node, source, &declared) {
+        declared.entry(name).or_insert(bound_by);
+    }
     declared.extend(go_declared_var_types(node, source));
     declared.extend(go_composite_literal_types(node, source));
     declared
@@ -4403,7 +4407,11 @@ fn go_result_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
 /// that bound them -- `mgr := b.StateMgr()` leaves `mgr` as `StateMgr()`.
 /// Only a call written as a bare name is recorded: it means a function of the
 /// caller's own package, which is a name the graph can look up.
-fn go_call_result_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+fn go_call_result_types(
+    node: Node<'_>,
+    source: &[u8],
+    known: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
     let mut declared = BTreeMap::new();
     let Some(body) = node.child_by_field_name("body") else {
         return declared;
@@ -4429,11 +4437,30 @@ fn go_call_result_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, Strin
         if value.kind() != "call_expression" {
             continue;
         }
-        let Some(callee) = value
-            .child_by_field_name("function")
-            .filter(|function| function.kind() == "identifier")
-            .and_then(|function| node_text(function, source))
-        else {
+        let Some(called) = value.child_by_field_name("function") else {
+            continue;
+        };
+        let callee = match called.kind() {
+            "identifier" => node_text(called, source),
+            // `mgr := b.StateMgr()` names a method of whatever `b` is, and
+            // the signature above already said. terraform binds 2751 of its
+            // receivers through a method of a name it has typed.
+            "selector_expression" => called
+                .child_by_field_name("operand")
+                .filter(|operand| operand.kind() == "identifier")
+                .and_then(|operand| node_text(operand, source))
+                .zip(named_child_text(called, "field", source))
+                .and_then(|(operand, method)| match known.get(&operand) {
+                    Some(owner) if owner.ends_with("()") => None,
+                    Some(owner) => Some(format!("{owner}.{method}")),
+                    // A name the signature never bound is a package:
+                    // `parser := configs.NewParser(fs)` says which directory
+                    // holds the answer through the file's own imports.
+                    None => Some(format!("{operand}.{method}")),
+                }),
+            _ => None,
+        };
+        let Some(callee) = callee else {
             continue;
         };
         // `mgr, err := f()` hands the first name what the signature states
@@ -4444,7 +4471,21 @@ fn go_call_result_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, Strin
             .find(|name| name.kind() == "identifier")
             .and_then(|name| node_text(name, source))
         {
-            declared.insert(name, format!("{callee}()"));
+            let bound_by = format!("{callee}()");
+            // A name bound twice in one body has one entry, and a call
+            // written as a bare name is the surer of the two: it means a
+            // function of the caller's own package, while a name in front of
+            // the call may be a package this file never imported. terraform
+            // rebinds `b` in a test after `b := testBackend(t)`, and letting
+            // the second binding win cost the first its answer.
+            let surer = !bound_by.contains('.');
+            if declared
+                .get(&name)
+                .is_some_and(|existing| !existing.contains('.') && !surer)
+            {
+                continue;
+            }
+            declared.insert(name, bound_by);
         }
     }
     declared

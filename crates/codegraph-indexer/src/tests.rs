@@ -19489,3 +19489,58 @@ fn a_go_binding_takes_the_type_its_call_hands_back() {
         Some("receiver_type")
     );
 }
+
+#[test]
+fn a_go_binding_reads_the_package_that_hands_it_back() {
+    // `parser := configs.NewParser(fs)` types `parser` in another package's
+    // signature. The file's own import says which directory that is, and
+    // 1181 of terraform's unplaceable receivers are bound that way.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("internal").join("configs")).unwrap();
+    fs::create_dir_all(root.join("internal").join("command")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
+    fs::write(
+        root.join("internal").join("configs").join("parser.go"),
+        "package configs\n\ntype Parser struct{}\n\nfunc (p *Parser) LoadConfigDir(path string) string {\n\treturn path\n}\n\nfunc NewParser() *Parser {\n\treturn &Parser{}\n}\n",
+    )
+    .unwrap();
+    // A namesake in a third package, so the name alone settles nothing.
+    fs::write(
+        root.join("internal").join("command").join("meta.go"),
+        "package command\n\ntype Loader struct{}\n\nfunc (l *Loader) LoadConfigDir(path string) string {\n\treturn path\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("internal").join("command").join("load.go"),
+        "package command\n\nimport (\n\t\"example.com/app/internal/configs\"\n)\n\ntype Meta struct{}\n\nfunc (m *Meta) Load() string {\n\tparser := configs.NewParser()\n\treturn parser.LoadConfigDir(\".\")\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let owned = |owner: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == "LoadConfigDir"
+                    && node.metadata.get("owner_type").map(String::as_str) == Some(owner)
+            })
+            .unwrap_or_else(|| panic!("{owner}.LoadConfigDir"))
+            .id
+    };
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str)
+                    == Some("parser.LoadConfigDir")
+        })
+        .expect("the call through the bound name");
+    assert_eq!(
+        edge.target,
+        owned("Parser"),
+        "the binding takes the type the package hands back, not the caller's own method"
+    );
+    assert_ne!(edge.target, owned("Loader"));
+}

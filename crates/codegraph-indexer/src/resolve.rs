@@ -3890,7 +3890,26 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // definition is known.
         let receiver_type = match call.receiver_type.as_deref() {
             Some(bound_by) if bound_by.ends_with("()") => {
-                what_a_call_hands_back(context, caller_path, bound_by)
+                // The name in front may be a package rather than a value, and
+                // then it is the file's imports that say which directory
+                // declares the function whose type the binding takes.
+                let declared_in = bound_by
+                    .strip_suffix("()")
+                    .and_then(|callee| callee.rsplit_once('.'))
+                    .and_then(|(package, _)| {
+                        match context
+                            .file_import_qualifiers
+                            .get(call.span.path.as_str())
+                            .and_then(|qualifiers| qualifiers.get(package))
+                            .cloned()
+                            .map(|package| {
+                                resolved_import_package(context, &mut scanned_candidates, package)
+                            }) {
+                            Some(ImportedPackage::Local(candidates)) => Some(candidates),
+                            _ => None,
+                        }
+                    });
+                what_a_call_hands_back(context, caller_path, bound_by, declared_in.as_deref())
             }
             stated => stated.map(str::to_string),
         };
@@ -7380,22 +7399,44 @@ fn what_a_call_hands_back(
     context: &IndexContext,
     caller_path: Option<&str>,
     bound_by: &str,
+    declared_in: Option<&[String]>,
 ) -> Option<String> {
     let callee = bound_by.strip_suffix("()")?;
+    // `mgr := b.StateMgr()` names a method of a type the signature already
+    // stated, and the owner picks the definition where a directory cannot:
+    // a bare name means the caller's own package, which is one directory.
+    let (owner, callee) = match callee.rsplit_once('.') {
+        Some((owner, method)) => (Some(owner.rsplit(['.', '*']).next()?), method),
+        None => (None, callee),
+    };
     let directory = caller_path
         .and_then(|path| path.rsplit_once('/'))
-        .map(|(directory, _)| directory)?;
+        .map(|(directory, _)| directory);
     let mut handed_back: Option<String> = None;
     for target in resolve_function_targets(&context.function_symbols, callee) {
         let Some(node) = graph_node(&context.graph, target) else {
             continue;
         };
-        let next_door = node
-            .span
-            .as_ref()
-            .and_then(|span| span.path.rsplit_once('/'))
-            .is_some_and(|(declared_in, _)| declared_in == directory);
-        if !next_door {
+        let named_by = match owner {
+            Some(owner) => {
+                node.metadata
+                    .get("owner_type")
+                    .is_some_and(|declared| declared == owner)
+                    || declared_in.is_some_and(|candidates| {
+                        node.span.as_ref().is_some_and(|span| {
+                            candidates
+                                .iter()
+                                .any(|candidate| declared_in_module(&span.path, candidate))
+                        })
+                    })
+            }
+            None => node
+                .span
+                .as_ref()
+                .and_then(|span| span.path.rsplit_once('/'))
+                .is_some_and(|(declared_in, _)| Some(declared_in) == directory),
+        };
+        if !named_by {
             continue;
         }
         let Some(returns) = node.metadata.get("returns") else {
