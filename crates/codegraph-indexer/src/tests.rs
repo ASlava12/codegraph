@@ -19682,3 +19682,42 @@ fn a_go_chain_is_a_field_whatever_the_case_of_its_name() {
         "a call through a field is not the method it is written in"
     );
 }
+
+#[test]
+fn a_go_interface_states_the_methods_it_declares() {
+    // `type Backend interface { Configure(..) }` declares `Configure` as
+    // surely as an implementation does, and a call through a field of that
+    // type means the contract rather than any one implementer. gqlgen states
+    // 1206 methods that way and terraform 510, none of which the graph held.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("internal").join("backend")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
+    fs::write(
+        root.join("internal").join("backend").join("backend.go"),
+        "package backend\n\ntype Backend interface {\n\tConfigure(path string) error\n}\n\ntype Local struct{}\n\nfunc (l *Local) Configure(path string) error {\n\treturn nil\n}\n\ntype Init struct {\n\tBackend Backend\n}\n\nfunc (i *Init) Start(path string) error {\n\treturn i.Backend.Configure(path)\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let stated = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "Configure"
+                && node.metadata.get("owner_type").map(String::as_str) == Some("Backend")
+        })
+        .expect("the method the interface states");
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str)
+                    == Some("i.Backend.Configure")
+        })
+        .expect("the call through the interface-typed field");
+    assert_eq!(
+        edge.target, stated.id,
+        "a call through a field of an interface type means the contract"
+    );
+}

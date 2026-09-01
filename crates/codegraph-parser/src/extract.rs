@@ -1760,6 +1760,12 @@ pub(crate) fn classify_node(
         },
         Language::Go => match kind {
             "function_declaration" | "method_declaration" => ParsedItemKind::Function,
+            // `type Backend interface { Configure(..) }` declares
+            // `Configure` as surely as an implementation does, and a call
+            // written through a field of that type means the contract
+            // rather than any one implementer. gqlgen states 1206 methods
+            // that way and terraform 510, none of which the graph held.
+            "method_spec" | "method_elem" => ParsedItemKind::Function,
             "type_declaration" => ParsedItemKind::Type,
             "import_spec" => ParsedItemKind::Import,
             _ => return None,
@@ -3226,6 +3232,21 @@ pub(crate) fn enclosing_type_label(
             .and_then(|receiver| receiver.named_child(0))
             .and_then(|declaration| declaration.child_by_field_name("type"))
             .and_then(|type_node| go_type_name(type_node, source));
+    }
+
+    // A method an interface states belongs to the interface, whose name is
+    // written two steps up: `type Backend interface { Configure(..) }`.
+    if language == Language::Go && matches!(node.kind(), "method_spec" | "method_elem") {
+        let mut current = node.parent();
+        while let Some(ancestor) = current {
+            if ancestor.kind() == "type_spec" {
+                return ancestor
+                    .child_by_field_name("name")
+                    .and_then(|name| node_text(name, source));
+            }
+            current = ancestor.parent();
+        }
+        return None;
     }
 
     // C++ writes a member's definition outside its class and names the
