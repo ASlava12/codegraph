@@ -3120,6 +3120,24 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         })
         .collect();
 
+    // Every module an ocaml file declares, by the file that declares it.
+    // `Process.run` is that module's function, and letting a same-file
+    // `run` answer it said 2366 of dune's calls belong to the definition
+    // that contains them -- which is what `doctor` reports as a definition
+    // calling itself, 1027 times on dune and 822 on cats. A file may
+    // declare the module inside itself, and then the same-file answer is
+    // the right one.
+    let ocaml_modules_by_file: BTreeSet<(String, String)> = context
+        .graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == NodeKind::Module
+                && node.metadata.get("language").map(String::as_str) == Some("ocaml")
+        })
+        .filter_map(|node| Some((node.span.as_ref()?.path.clone(), node.label.clone())))
+        .collect();
+
     let php_classes: BTreeSet<String> = context
         .graph
         .nodes
@@ -3339,6 +3357,18 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 })
             });
         }
+        let names_another_ocaml_module = call.language == "ocaml"
+            && call.label.split_once('.').is_some_and(|(module, _)| {
+                module
+                    .chars()
+                    .next()
+                    .is_some_and(|first| first.is_uppercase())
+                    && caller_path.is_some_and(|path| {
+                        !module_named_file("ocaml", path, module)
+                            && !ocaml_modules_by_file
+                                .contains(&(path.to_string(), module.to_string()))
+                    })
+            });
         let local_targets = caller_path
             .map(|path| {
                 language_targets
@@ -3595,7 +3625,10 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     in_module
                 }
             }
-            _ if !local_targets.is_empty() => {
+            // A call written through a module this file neither is nor
+            // declares is that module's, whatever this file happens to
+            // name the same way.
+            _ if !local_targets.is_empty() && !names_another_ocaml_module => {
                 basis = "same_file";
                 local_targets
             }

@@ -9259,6 +9259,59 @@ fn a_contract_is_not_a_function_its_methods_are_local_to() {
 }
 
 #[test]
+fn an_ocaml_module_call_is_not_answered_by_a_same_named_local() {
+    // `Process.run` is that module's function, whatever this file happens
+    // to call `run`. Letting the same-file name answer said 2366 of dune's
+    // calls belong to the definition that contains them, which `doctor`
+    // reports as a definition calling itself -- 1027 times on dune, 822 on
+    // cats. A file that declares the module inside itself is the exception,
+    // and opam's `opamStd.ml` is why: it writes `module List = struct .. end`
+    // and then calls `List.map`.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("caller.ml"),
+        "let run () = 1\n\nlet start () = Process.run ()\n",
+    )
+    .unwrap();
+    fs::write(root.join("src").join("process.ml"), "let run () = 2\n").unwrap();
+    fs::write(
+        root.join("src").join("nested.ml"),
+        "module Local = struct\n  let step () = 3\nend\n\nlet step () = 4\n\nlet go () = Local.step ()\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let target_of = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| {
+                graph
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == edge.target)
+                    .and_then(|node| node.span.as_ref())
+                    .map(|span| span.path.clone())
+            })
+    };
+    assert_ne!(
+        target_of("Process.run").as_deref(),
+        Some("src/caller.ml"),
+        "the module names whose `run` it is, and this file is not that module"
+    );
+    assert_eq!(
+        target_of("Local.step").as_deref(),
+        Some("src/nested.ml"),
+        "while a module the file declares itself is answered where it is declared"
+    );
+}
+
+#[test]
 fn an_erlang_call_names_the_module_that_answers_it() {
     // `gun:open(..)` says which module answers, and a module this project
     // has no file for is a dependency's or OTP's -- OTP is answered before
